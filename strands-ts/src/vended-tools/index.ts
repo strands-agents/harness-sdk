@@ -9,6 +9,7 @@
  *   handoffToUser,
  *   httpRequest,
  *   notebook,
+ *   pythonRepl,
  *   sleep,
  *   subagent,
  *   webFetch,
@@ -28,6 +29,7 @@ export * from './mcp-router/index.js'
 export * from './shell/index.js'
 export * from './http-request/index.js'
 export * from './notebook/index.js'
+export * from './python-repl/index.js'
 export * from './sleep/index.js'
 export * from './subagent/index.js'
 export * from './web-fetch/index.js'

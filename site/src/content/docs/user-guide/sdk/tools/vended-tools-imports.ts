@@ -56,6 +56,17 @@ import { Agent } from '@strands-agents/sdk'
 import { makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
 // --8<-- [end:sleep_custom_import]
 
+// --8<-- [start:python_repl_import]
+import { Agent } from '@strands-agents/sdk'
+import { pythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+// --8<-- [end:python_repl_import]
+
+// --8<-- [start:python_repl_custom_import]
+import { Agent } from '@strands-agents/sdk'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
+import { makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+// --8<-- [end:python_repl_custom_import]
+
 // --8<-- [start:stop_import]
 import { Agent } from '@strands-agents/sdk'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'

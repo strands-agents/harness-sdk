@@ -16,6 +16,7 @@ sourceLinks:
   - path: strands-ts/src/experimental/vended-tools/stop/stop.ts
   - path: strands-ts/src/vended-tools/a2a-client/a2a-client.ts
   - path: strands-ts/src/vended-tools/subagent/subagent.ts
+  - path: strands-ts/src/vended-tools/python-repl/python-repl.ts
   - path: strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
   - path: strands-py/src/strands/vended_tools/notebook/notebook.py
@@ -57,7 +58,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
-| [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python |
+| [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
 
 ### File editor
@@ -736,13 +737,25 @@ Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/b
 
 ### Python REPL
 
-Runs model-generated Python through the agent's [sandbox](../sandbox/index.mdx) by calling `sandbox.execute_code(code, "python3")`. It returns `output` (stdout), `error` (stderr, including tracebacks), and `exit_code`. Each call runs in a fresh interpreter, so variables, imports, and definitions do not persist across calls. Files written to the sandbox filesystem do persist, so the model can checkpoint intermediate results to disk and load them in a later call.
+Runs model-generated Python through the agent's [sandbox](../sandbox/index.mdx) by calling `sandbox.execute_code(code, "python3")` (`sandbox.executeCode(code, 'python3')` in TypeScript). It returns `output` (stdout), `error` (stderr, including tracebacks), and `exit_code`. Each call runs in a fresh interpreter, so variables, imports, and definitions do not persist across calls. Files written to the sandbox filesystem do persist, so the model can checkpoint intermediate results to disk and load them in a later call.
 
-_Supported in: Python only._
+_Supported in: Node.js on Unix/Linux/macOS (TypeScript), Python._
 
 :::caution[Security Warning]
 This tool executes arbitrary Python code. Without a [Sandbox](../sandbox/index.mdx), code runs with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../sandbox/index.mdx) for production.
 :::
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:python_repl_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:python_repl_example"
+```
+
+</Tab>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -752,7 +765,22 @@ agent = Agent(tools=[python_repl])
 agent("Use python_repl to compute the first 10 Fibonacci numbers and print them.")
 ```
 
+</Tab>
+</Tabs>
+
 **Bound sandbox or custom interpreter:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:python_repl_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:python_repl_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -765,6 +793,11 @@ python_repl = make_python_repl(
 )
 agent = Agent(tools=[python_repl])
 ```
+
+</Tab>
+</Tabs>
+
+[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/python-repl/README.md)
 
 ---
 

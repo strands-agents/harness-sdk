@@ -80,6 +80,10 @@
       "types": "./dist/src/vended-tools/bash/index.d.ts",
       "default": "./dist/src/vended-tools/bash/index.js"
     },
+    "./vended-tools/python-repl": {
+      "types": "./dist/src/vended-tools/python-repl/index.d.ts",
+      "default": "./dist/src/vended-tools/python-repl/index.js"
+    },
     "./vended-tools/sleep": {
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
       "default": "./dist/src/vended-tools/sleep/index.js"
