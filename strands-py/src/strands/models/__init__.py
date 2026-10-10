@@ -25,6 +25,7 @@ __all__ = [
     "routing",
     "BaseModelConfig",
     "BedrockModel",
+    "BedrockInvokeModel",
     "CacheConfig",
     "CacheToolsConfig",
     "CandidateInput",
@@ -48,6 +49,10 @@ def __getattr__(name: str) -> Any:
         from .anthropic import AnthropicModel
 
         return AnthropicModel
+    if name == "BedrockInvokeModel":
+        from .bedrock_invoke import BedrockInvokeModel
+
+        return BedrockInvokeModel
     if name == "GeminiModel":
         from .gemini import GeminiModel
 

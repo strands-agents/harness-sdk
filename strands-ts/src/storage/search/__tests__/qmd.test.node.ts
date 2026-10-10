@@ -1,39 +1,42 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { LocalFileStorage } from '../../local-file-storage.js'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { QmdSearchStrategy } from '../qmd.js'
+import type { LocalFileStorage } from '../../local-file-storage.js'
 
 vi.mock('@tobilu/qmd', () => ({
   createStore: vi.fn(),
 }))
 
-vi.mock('node:path', () => ({
-  resolve: (...args: string[]) => args.join('/'),
-  dirname: (path: string) => path.split('/').slice(0, -1).join('/') || '/',
-  basename: (path: string) => path.split('/').pop() || '',
-}))
-
 describe('QmdSearchStrategy', () => {
+  let tempDir: string
+  let mockStorage: LocalFileStorage
   const mockQmdStore = {
     update: vi.fn().mockResolvedValue(undefined),
     searchLex: vi.fn().mockResolvedValue([]),
     close: vi.fn().mockResolvedValue(undefined),
   }
 
-  const mockStorage = {
-    baseDir: '/tmp/test-storage',
-    write: vi.fn(),
-    read: vi.fn(),
-    delete: vi.fn(),
-    list: vi.fn(),
-  } as unknown as LocalFileStorage
-
   beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'strands-qmd-test-'))
+    mockStorage = {
+      baseDir: join(tempDir, 'storage'),
+      write: vi.fn(),
+      read: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+    } as unknown as LocalFileStorage
     vi.clearAllMocks()
     mockQmdStore.searchLex.mockResolvedValue([])
     const { createStore } = await (import('@tobilu/qmd' as string) as Promise<{
       createStore: ReturnType<typeof vi.fn>
     }>)
     vi.mocked(createStore).mockResolvedValue(mockQmdStore as never)
+  })
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true })
   })
 
   describe('search', () => {
@@ -45,11 +48,12 @@ describe('QmdSearchStrategy', () => {
 
       await strategy.search(mockStorage, 'test query')
 
+      expect((await stat(mockStorage.baseDir)).isDirectory()).toBe(true)
       expect(createStore).toHaveBeenCalledWith({
-        dbPath: '/tmp/.test-storage-qmd.sqlite',
+        dbPath: join(tempDir, '.storage-qmd.sqlite'),
         config: {
           collections: {
-            storage: { path: '/tmp/test-storage', pattern: '**/*' },
+            storage: { path: mockStorage.baseDir, pattern: '**/*' },
           },
         },
       })
@@ -70,11 +74,12 @@ describe('QmdSearchStrategy', () => {
       const { createStore } = await (import('@tobilu/qmd' as string) as Promise<{
         createStore: ReturnType<typeof vi.fn>
       }>)
-      const strategy = new QmdSearchStrategy({ dbPath: '/custom/index.sqlite' })
+      const dbPath = join(tempDir, 'custom.sqlite')
+      const strategy = new QmdSearchStrategy({ dbPath })
 
       await strategy.search(mockStorage, 'test query')
 
-      expect(createStore).toHaveBeenCalledWith(expect.objectContaining({ dbPath: '/custom/index.sqlite' }))
+      expect(createStore).toHaveBeenCalledWith(expect.objectContaining({ dbPath }))
     })
 
     it('returns empty array when no matches', async () => {
