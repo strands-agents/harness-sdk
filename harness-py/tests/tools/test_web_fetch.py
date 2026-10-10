@@ -502,6 +502,12 @@ def test_summarizer_reuses_the_main_model_on_a_repointed_openai_endpoint(monkeyp
     assert model.get_config()["model_id"] == "gpt-oss-20b"
 
 
+def test_summarizer_reuses_the_main_model_on_a_repointed_google_endpoint(monkeypatch):
+    monkeypatch.setenv("GOOGLE_GEMINI_BASE_URL", "https://proxy.example")
+    model = resolve_web_fetch_model("google/gemini-3.5-pro", None)
+    assert model.get_config()["model_id"] == "gemini-3.5-pro"
+
+
 def test_summarizer_still_uses_the_small_model_on_the_first_party_endpoint(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     model = resolve_web_fetch_model("anthropic/claude-opus-4-5-20251101", None)
