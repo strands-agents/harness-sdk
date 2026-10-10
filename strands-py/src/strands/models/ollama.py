@@ -19,6 +19,7 @@ from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._validation import (
     _has_location_source,
+    _warn_unsupported_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -177,11 +178,10 @@ class OllamaModel(Model):
         system_message = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
         formatted_messages = []
+        _warn_unsupported_blocks(messages, "Ollama", logger)
         for message in messages:
             for content in message["content"]:
-                # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Ollama | skipping content block")
                     continue
                 formatted_messages.extend(self._format_request_message_contents(message["role"], content))
 

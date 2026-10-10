@@ -64,7 +64,7 @@ from ._defaults import resolve_config_metadata  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
-from ._validation import _has_location_source, validate_config_keys  # noqa: E402
+from ._validation import _has_location_source, _warn_unsupported_blocks, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -645,17 +645,13 @@ class OpenAIResponsesModel(Model):
         """
         formatted_messages: list[dict[str, Any]] = []
 
+        if any("reasoningContent" in content for message in messages for content in message["content"]):
+            logger.warning("reasoningContent is not yet supported in multi-turn conversations with the Responses API")
+        _warn_unsupported_blocks(messages, "OpenAI Responses", logger, cache_point=True)
+
         for message in messages:
             role = message["role"]
             contents = message["content"]
-
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not yet supported in multi-turn conversations with the Responses API"
-                )
-
-            if any("cachePoint" in content for content in contents):
-                logger.warning("cachePoint content block is not supported by OpenAI Responses | skipping")
 
             filtered_contents = []
             for content in contents:
@@ -664,7 +660,6 @@ class OpenAIResponsesModel(Model):
                 ):
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
                     continue
                 filtered_contents.append(content)
 
