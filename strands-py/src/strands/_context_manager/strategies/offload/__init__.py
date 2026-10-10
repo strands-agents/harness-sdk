@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .drop import DropStrategy
+from .relevance import RelevanceStrategy
 from .summarize import SummarizeStrategy
 from .truncate import TruncateStrategy
 
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     from ...methods.summarize import SummarizeConfig
     from ...methods.truncate import TruncateConfig
     from .base import OffloadTarget
+    from .relevance import RelevanceConfig
 
 
 class _OffloadNamespace:
@@ -57,6 +59,18 @@ class _OffloadNamespace:
             A SummarizeStrategy builder (usable directly or with .when()).
         """
         return SummarizeStrategy(target, config)
+
+    def relevance(self, target: OffloadTarget, config: RelevanceConfig | None = None) -> RelevanceStrategy:
+        """Replace an oversized tool result with the chunks the current question asks about.
+
+        Args:
+            target: What content to target for relevance filtering.
+            config: Method-specific config (reranker, relevance_threshold, chunk_tokens).
+
+        Returns:
+            A RelevanceStrategy builder (usable directly or with .when()).
+        """
+        return RelevanceStrategy(target, config)
 
 
 Offload = _OffloadNamespace()
