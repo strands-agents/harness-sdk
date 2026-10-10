@@ -243,6 +243,7 @@ class BedrockModel(Model):
         Args:
             boto_session: Boto Session to use when calling the Bedrock Model.
             boto_client_config: Configuration to use when creating the Bedrock-Runtime Boto Client.
+                A `read_timeout` left unset falls back to the SDK default of 120 seconds.
             region_name: AWS region to use for the Bedrock service.
                 Defaults to the AWS_REGION environment variable if set, or "us-west-2" if not set.
             endpoint_url: Custom endpoint URL for VPC endpoints (PrivateLink)
@@ -274,10 +275,15 @@ class BedrockModel(Model):
             else:
                 new_user_agent = "strands-agents"
 
-            client_config = boto_client_config.merge(
-                BotocoreConfig(
-                    user_agent_extra=new_user_agent,
-                    **({"signature_version": UNSIGNED} if api_key else {}),
+            # merge() only carries over options the caller set, so an explicit read_timeout (None included) wins.
+            client_config = (
+                BotocoreConfig(read_timeout=DEFAULT_READ_TIMEOUT)
+                .merge(boto_client_config)
+                .merge(
+                    BotocoreConfig(
+                        user_agent_extra=new_user_agent,
+                        **({"signature_version": UNSIGNED} if api_key else {}),
+                    )
                 )
             )
         else:
