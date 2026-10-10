@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
+import { ApiError, GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
@@ -519,6 +519,30 @@ describe('GoogleModel', () => {
                 },
               })
             )
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+    })
+
+    it('throws ModelThrottledError for a 429 with a non-JSON response body', async () => {
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw new ApiError({
+              status: 429,
+              message: JSON.stringify({
+                error: {
+                  message: 'Resource exhausted. Please try again later.',
+                  code: 429,
+                  status: 'Too Many Requests',
+                },
+              }),
+            })
           }),
         },
       } as unknown as GoogleGenAI
