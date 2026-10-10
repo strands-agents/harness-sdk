@@ -62,6 +62,10 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
 
+# Bedrock reports this substring when a model rejects tool use over streaming Converse
+# but accepts it over unary Converse (e.g. Llama), tracked in #4857.
+_STREAMING_TOOL_USE_UNSUPPORTED_MESSAGE = "doesn't support tool use in streaming mode"
+
 # Models that should include tool result status (include_tool_result_status = True)
 _MODELS_INCLUDE_STATUS = [
     "anthropic.claude",
@@ -260,6 +264,7 @@ class BedrockModel(Model):
             include_tool_result_status="auto",
         )
         self._tool_result_turn_separation_model_id: str | None = None
+        self._streaming_tool_use_unsupported_model_id: str | None = None
         self.update_config(**model_config)
 
         logger.debug("config=<%s> | initializing", self.config)
@@ -1453,27 +1458,46 @@ class BedrockModel(Model):
 
             logger.debug("invoking model")
             streaming = self.config.get("streaming", True)
+            if streaming and self._streaming_tool_use_unsupported_model_id == model_id:
+                logger.debug(
+                    "model_id=<%s> | streaming tool use previously rejected, using unary converse",
+                    model_id,
+                )
+                streaming = False
             converse_method = self.client.converse_stream if streaming else self.client.converse
 
             try:
                 response = converse_method(**request)
             except ClientError as error:
                 error_details = error.response.get("Error", {})
-                if error_details.get(
-                    "Code"
-                ) != "ValidationException" or _TOOL_RESULT_TURN_VALIDATION_MESSAGE not in error_details.get(
-                    "Message", ""
+                error_code = error_details.get("Code")
+                error_message = error_details.get("Message", "")
+
+                if (
+                    streaming
+                    and error_code == "ValidationException"
+                    and _STREAMING_TOOL_USE_UNSUPPORTED_MESSAGE in error_message
                 ):
+                    # Some Bedrock models (e.g. Llama) reject tool use over streaming Converse
+                    # but accept it over unary Converse; retry this turn without streaming.
+                    logger.debug(
+                        "model_id=<%s> | streaming tool use unsupported, falling back to unary converse",
+                        model_id,
+                    )
+                    response = self.client.converse(**request)
+                    streaming = False
+                    self._streaming_tool_use_unsupported_model_id = model_id
+                elif error_code != "ValidationException" or _TOOL_RESULT_TURN_VALIDATION_MESSAGE not in error_message:
                     raise
+                else:
+                    separated_messages = self._separate_tool_result_turns(request["messages"])
+                    if separated_messages == request["messages"]:
+                        raise
 
-                separated_messages = self._separate_tool_result_turns(request["messages"])
-                if separated_messages == request["messages"]:
-                    raise
-
-                logger.debug("model_id=<%s> | separating tool result and conversation turns", model_id)
-                request = {**request, "messages": separated_messages}
-                response = converse_method(**request)
-                self._tool_result_turn_separation_model_id = model_id
+                    logger.debug("model_id=<%s> | separating tool result and conversation turns", model_id)
+                    request = {**request, "messages": separated_messages}
+                    response = converse_method(**request)
+                    self._tool_result_turn_separation_model_id = model_id
 
             logger.debug("got response from model")
             if streaming:
