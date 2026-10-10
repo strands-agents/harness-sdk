@@ -10,6 +10,7 @@ import {
   ToolUseBlock,
 } from '../types/messages.js'
 import { CitationsBlock } from '../types/citations.js'
+import type { JSONValue } from '../types/json.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
@@ -475,7 +476,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let finalStopReason: StopReason | null = null
       let metadata: ModelMetadataEvent | undefined = undefined
       let redactionMessage: string | undefined = undefined
-      let toolInputParseError: SyntaxError | undefined = undefined
 
       for await (const event_data of this.stream(messages, options)) {
         const event = this._convert_to_class_event(event_data)
@@ -523,45 +523,53 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
           case 'modelContentBlockStopEvent': {
             // Finalize and emit complete ContentBlock
             let block: ContentBlock
-            try {
-              if (toolUseId) {
-                block = new ToolUseBlock({
-                  name: toolName,
-                  toolUseId: toolUseId,
-                  input: accumulatedToolInput ? JSON.parse(accumulatedToolInput) : {},
-                  ...(toolReasoningSignature && { reasoningSignature: toolReasoningSignature }),
-                })
-                toolUseId = '' // Reset
-                toolName = ''
-                toolReasoningSignature = ''
-              } else if (Object.keys(accumulatedReasoning).length > 0) {
-                block = new ReasoningBlock({
-                  ...accumulatedReasoning,
-                })
-                accumulatedReasoning = {} // Reset after creating reasoning block
-              } else if (accumulatedCitations.hasData()) {
-                block = new CitationsBlock({
-                  citations: accumulatedCitations.citations,
-                  // Citations deltas that ground already-streamed text carry no content of their own.
-                  content:
-                    accumulatedCitations.content.length > 0
-                      ? accumulatedCitations.content
-                      : accumulatedText
-                        ? [{ text: accumulatedText }]
-                        : [],
-                })
-                accumulatedCitations.reset()
-              } else {
-                block = new TextBlock(accumulatedText)
+            if (toolUseId) {
+              let toolInput: JSONValue = {}
+              if (accumulatedToolInput) {
+                try {
+                  toolInput = JSON.parse(accumulatedToolInput)
+                } catch (e: unknown) {
+                  if (!(e instanceof SyntaxError)) {
+                    throw e
+                  }
+                  // Match the Python SDK: log a warning and continue with empty input so the
+                  // rest of the turn is preserved.
+                  logger.warn(
+                    `tool_name=<${toolName}>, raw_input=<${accumulatedToolInput.slice(0, 200)}> | failed to parse tool input json, defaulting to empty dict`
+                  )
+                }
               }
-              contentBlocks.push(block)
-              yield block
-            } catch (e: unknown) {
-              if (e instanceof SyntaxError) {
-                logger.error('unable to parse tool input JSON', e)
-                toolInputParseError = e
-              }
+              block = new ToolUseBlock({
+                name: toolName,
+                toolUseId: toolUseId,
+                input: toolInput,
+                ...(toolReasoningSignature && { reasoningSignature: toolReasoningSignature }),
+              })
+              toolUseId = '' // Reset
+              toolName = ''
+              toolReasoningSignature = ''
+            } else if (Object.keys(accumulatedReasoning).length > 0) {
+              block = new ReasoningBlock({
+                ...accumulatedReasoning,
+              })
+              accumulatedReasoning = {} // Reset after creating reasoning block
+            } else if (accumulatedCitations.hasData()) {
+              block = new CitationsBlock({
+                citations: accumulatedCitations.citations,
+                // Citations deltas that ground already-streamed text carry no content of their own.
+                content:
+                  accumulatedCitations.content.length > 0
+                    ? accumulatedCitations.content
+                    : accumulatedText
+                      ? [{ text: accumulatedText }]
+                      : [],
+              })
+              accumulatedCitations.reset()
+            } else {
+              block = new TextBlock(accumulatedText)
             }
+            contentBlocks.push(block)
+            yield block
             break
           }
 
@@ -607,10 +615,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
       if (!stoppedMessage || !finalStopReason) {
         // If we exit the loop without completing a message or stop reason, throw an error
-        throw new ModelError(
-          'Stream ended without completing a message',
-          toolInputParseError ? { cause: toolInputParseError } : undefined
-        )
+        throw new ModelError('Stream ended without completing a message')
       }
 
       // Attach metadata after redaction so it applies to the final message.
@@ -632,10 +637,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
           'Model reached maximum token limit. This is an unrecoverable state that requires intervention.',
           stoppedMessage
         )
-      }
-
-      if (toolInputParseError !== undefined) {
-        throw new ModelError('unable to parse tool input JSON', { cause: toolInputParseError })
       }
 
       // Return the final message with stop reason and optional metadata
