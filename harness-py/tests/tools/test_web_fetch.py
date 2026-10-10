@@ -425,6 +425,14 @@ def test_resolve_web_fetch_model_reuses_main_model_for_unknown_bedrock_family(ca
     assert "could not identify the Bedrock model family" in caplog.text
 
 
+def test_resolve_web_fetch_model_quiet_fallback_silences_unmapped_family_warning(caplog):
+    with caplog.at_level("WARNING"):
+        model = resolve_web_fetch_model("bedrock/cohere.command-r-plus-v1:0", None, warn_unmapped_family=False)
+    assert isinstance(model, BedrockModel)
+    assert model.get_config()["model_id"] == "cohere.command-r-plus-v1:0"
+    assert "could not identify the Bedrock model family" not in caplog.text
+
+
 def test_resolve_web_fetch_model_no_warning_with_explicit_override_for_unknown_bedrock(caplog):
     override = BedrockModel(model_id="explicit")
     with caplog.at_level("WARNING"):

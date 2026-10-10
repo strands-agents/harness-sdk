@@ -716,7 +716,6 @@ def test_bedrock_web_fetch_summarizer_keeps_the_inference_profile_prefix():
         "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
     assert _bedrock_web_fetch_model("meta.llama3") == "meta.llama3-2-3b-instruct-v1:0"
-    assert _bedrock_web_fetch_model("google.gemma-3-27b-it") is None
 
 
 def test_bedrock_web_fetch_summarizer_maps_known_families_to_small_regionals():
@@ -726,6 +725,39 @@ def test_bedrock_web_fetch_summarizer_maps_known_families_to_small_regionals():
     assert _bedrock_web_fetch_model("us.amazon.nova-pro-v1:0") == "amazon.nova-lite-v1:0"
     assert _bedrock_web_fetch_model("us.meta.llama3-2-70b-instruct-v1:0") == "meta.llama3-2-3b-instruct-v1:0"
     assert _bedrock_web_fetch_model("mistral.mistral-large-2407-v1:0") == "mistral.mistral-small-2402-v1:0"
+    assert _bedrock_web_fetch_model("google.gemma-3-27b-it") == "google.gemma-3-4b-it"
+
+
+def test_bedrock_web_fetch_family_models_env_override_swaps_a_pick(monkeypatch):
+    from strands_harness.models import _bedrock_web_fetch_model
+
+    monkeypatch.setenv("STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS", '{"google.": "google.gemma-3-12b-it"}')
+    assert _bedrock_web_fetch_model("google.gemma-3-27b-it") == "google.gemma-3-12b-it"
+    # families without an override keep their built-in pick
+    assert _bedrock_web_fetch_model("meta.llama3") == "meta.llama3-2-3b-instruct-v1:0"
+
+
+def test_bedrock_web_fetch_family_models_env_override_adds_a_family(monkeypatch):
+    from strands_harness.models import _bedrock_web_fetch_model
+
+    monkeypatch.setenv("STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS", '{"qwen.": "qwen.qwen3-coder-30b-a3b-v1:0"}')
+    assert _bedrock_web_fetch_model("qwen.qwen3-32b-v1:0") == "qwen.qwen3-coder-30b-a3b-v1:0"
+
+
+def test_bedrock_web_fetch_family_models_env_null_unmaps_a_family(monkeypatch):
+    from strands_harness.models import _bedrock_web_fetch_model
+
+    monkeypatch.setenv("STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS", '{"google.": null}')
+    assert _bedrock_web_fetch_model("google.gemma-3-27b-it") is None
+
+
+@pytest.mark.parametrize("raw", ['{"google.": 1}', '["google."]', "not json"])
+def test_bedrock_web_fetch_family_models_env_rejects_malformed_override(monkeypatch, raw):
+    from strands_harness.models import _bedrock_web_fetch_model
+
+    monkeypatch.setenv("STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS", raw)
+    with pytest.raises(ValueError, match="STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS"):
+        _bedrock_web_fetch_model("google.gemma-3-27b-it")
 
 
 def test_supports_media_reads_a_bedrock_instance_model_id():

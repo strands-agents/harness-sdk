@@ -14,6 +14,7 @@ instance can't be honored (its provider is unknown), so a warning is logged.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -83,7 +84,37 @@ _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
     "amazon.": "amazon.nova-lite-v1:0",
     "meta.": "meta.llama3-2-3b-instruct-v1:0",
     "mistral.": "mistral.mistral-small-2402-v1:0",
+    "google.": "google.gemma-3-4b-it",
 }
+
+# Env var holding a JSON object merged over _BEDROCK_WEB_FETCH_FAMILY_MODELS, so a small-model
+# pick can be swapped (or a family unmapped with null) without waiting for a release.
+_BEDROCK_WEB_FETCH_FAMILY_MODELS_ENV_VAR = "STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS"
+
+
+def _bedrock_web_fetch_family_models() -> dict[str, str | None]:
+    """Family->small-model map: built-ins merged with the env-var JSON override."""
+    models: dict[str, str | None] = dict(_BEDROCK_WEB_FETCH_FAMILY_MODELS)
+    raw = os.environ.get(_BEDROCK_WEB_FETCH_FAMILY_MODELS_ENV_VAR)
+    if not raw:
+        return models
+    try:
+        override = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"{_BEDROCK_WEB_FETCH_FAMILY_MODELS_ENV_VAR} must be a JSON object mapping Bedrock "
+            f"family prefixes to model ids (or null to unmap a family), got {raw!r}"
+        ) from error
+    if not isinstance(override, dict) or any(
+        not isinstance(family, str) or not (isinstance(small, str) or small is None)
+        for family, small in override.items()
+    ):
+        raise ValueError(
+            f"{_BEDROCK_WEB_FETCH_FAMILY_MODELS_ENV_VAR} must be a JSON object mapping Bedrock "
+            f"family prefixes to model ids (or null to unmap a family), got {raw!r}"
+        )
+    models.update(override)
+    return models
 
 
 # Reasoning levels each provider's API accepts. The harness validates against the resolved
@@ -498,9 +529,11 @@ def _bedrock_web_fetch_model(name: str) -> str | None:
     ``us.``) gets Anthropic Haiku; an OpenAI-on-Bedrock model (an ``openai.`` prefix) gets the OpenAI
     small model hosted on Bedrock (``openai.`` + the OpenAI-provider summarizer), carrying the main
     model's cross-region prefix because those ids are only served through an inference profile.
-    Amazon, Meta, and Mistral families get their small regional models. The summarizer always shares
+    Amazon, Meta, Mistral, and Google families get their small regional models. The summarizer always shares
     the main model's credentials. A family with no mapped small model returns ``None`` so the caller
-    can reuse the main model rather than guess.
+    can reuse the main model rather than guess. The map itself can be overridden without a release
+    via the ``STRANDS_HARNESS_BEDROCK_WEB_FETCH_MODELS`` env var (a JSON object of family prefix to
+    model id, or null to unmap a family).
     """
     family = _bedrock_family(name)
     if family.startswith("anthropic."):
@@ -509,7 +542,11 @@ def _bedrock_web_fetch_model(name: str) -> str | None:
         prefix = name[: len(name) - len(family)]
         return f"{prefix}openai.{_WEB_FETCH_MODELS['openai']}"
     return next(
-        (small for fam_prefix, small in _BEDROCK_WEB_FETCH_FAMILY_MODELS.items() if family.startswith(fam_prefix)),
+        (
+            small
+            for fam_prefix, small in _bedrock_web_fetch_family_models().items()
+            if small is not None and family.startswith(fam_prefix)
+        ),
         None,
     )
 
@@ -517,6 +554,8 @@ def _bedrock_web_fetch_model(name: str) -> str | None:
 def resolve_web_fetch_model(
     main_model: Model | ModelRouter | str | None,
     web_fetch_model: Model | ModelRouter | str | None,
+    *,
+    warn_unmapped_family: bool = True,
 ) -> Model:
     """Resolve the model the web_fetch summarizer runs on.
 
@@ -526,9 +565,10 @@ def resolve_web_fetch_model(
     reuse it as the summarizer. A router uses its concrete default model because auxiliary calls are
     outside the primary agent invocation and cannot share its routing decision. On Bedrock the
     summarizer follows the main model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets
-    the OpenAI small model, Amazon/Meta/Mistral get their small regional models); a Bedrock family
-    with no mapped small model reuses the main model and logs a warning
-    rather than guessing. Thinking is never applied: summarizing a page is a fast task.
+    the OpenAI small model, Amazon/Meta/Mistral/Google get their small regional models); a Bedrock family
+    with no mapped small model reuses the main model and logs a warning rather than guessing
+    (pass ``warn_unmapped_family=False`` to reuse quietly when that is intentional).
+    Thinking is never applied: summarizing a page is a fast task.
 
     ``caching`` is deliberately not forwarded: the single message carries the per-call prompt before
     the page body, so every fetch would write a cache entry no later call can read.
@@ -549,11 +589,12 @@ def resolve_web_fetch_model(
     if provider_name == "bedrock":
         small = _bedrock_web_fetch_model(name)
         if small is None:
-            logger.warning(
-                f"model=<{main}> | could not identify the Bedrock model family for the web_fetch "
-                "summarizer; reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a "
-                "smaller one."
-            )
+            if warn_unmapped_family:
+                logger.warning(
+                    f"model=<{main}> | could not identify the Bedrock model family for the web_fetch "
+                    "summarizer; reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a "
+                    "smaller one, or {'quiet_fallback': True} to silence this warning."
+                )
             return _concrete_model(resolve_model(main, main, effort="off"))
     elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):
         logger.warning(
