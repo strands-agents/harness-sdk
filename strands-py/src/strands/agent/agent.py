@@ -1078,6 +1078,14 @@ class Agent(AgentBase, LocalAgent):
             category=DeprecationWarning,
             stacklevel=2,
         )
+        # Model.structured_output only takes the flattened system prompt string, so non-text blocks are lost.
+        if dropped := sorted({key for block in self._system_prompt_content or [] for key in block} - {"text"}):
+            warnings.warn(
+                f"System prompt blocks {dropped} are dropped by Agent.structured_output_async."
+                " Pass `structured_output_model` into the agent invocation instead to keep them.",
+                category=UserWarning,
+                stacklevel=2,
+            )
         await self.hooks.invoke_callbacks_async(BeforeInvocationEvent(agent=self, invocation_state={}))
         with self.tracer.tracer.start_as_current_span(
             "execute_structured_output", kind=trace_api.SpanKind.CLIENT
