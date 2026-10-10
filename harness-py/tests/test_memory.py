@@ -122,11 +122,11 @@ class TestResolveMemory:
         assert stack.exists()
         assert "Python" in stack.read_text()
 
-    def test_extracts_on_an_explicit_web_fetch_model_override(self, tmp_path):
+    def test_extracts_on_an_explicit_aux_model(self, tmp_path):
         manager = resolve_memory(
             model=DEFAULT_MODEL,
             memory_dir=str(tmp_path),
-            web_fetch_model="bedrock/us.amazon.nova-lite-v1:0",
+            aux_model="bedrock/us.amazon.nova-lite-v1:0",
         )
         assert _model_id(_extraction_model(manager)) == "us.amazon.nova-lite-v1:0"
 

@@ -27,8 +27,8 @@ export type WebFetchTransport = 'curl' | 'direct'
 export interface WebFetchConfig {
   /**
    * Model the `web_fetch` summarizer runs on: a `Model` or `ModelRouter` instance, a
-   * `"provider/name"` string, or `undefined` (the default) to use the small fast model for the main
-   * agent's provider so credentials align. A router uses its concrete default model.
+   * `"provider/name"` string, or `undefined` (the default) to use the agent's `auxModel`. A router
+   * uses its concrete default model.
    */
   model?: Model | ModelRouter | string
   /**

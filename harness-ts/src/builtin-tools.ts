@@ -4,7 +4,7 @@
  * from the same record.
  */
 
-import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
+import { type Agent, McpClient, MemoryManager, type Model, Tool, type ToolList } from '@strands-agents/sdk'
 import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
 
 import type { HarnessAgentOptions } from './agent.js'
@@ -17,7 +17,7 @@ import {
 import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
-import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
+import { resolveAuxModel, supportsMedia, supportsWebSearch } from './models.js'
 import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
@@ -145,13 +145,14 @@ export function webSearchMode(
 /** The `createHarness` factory, injected to avoid a value import from `agent.ts`. */
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
-// `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
-// it only when the setting is `'exa'`.
+// `web_fetch` summarizes on its own `model` override or else the agent's `auxModel`, and `subagent`
+// takes the whole parent config to rebuild a child. `web_search` here is the Exa tool;
+// `createHarness` selects it only when the setting is `'exa'`.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
-  builtins: ResolvedBuiltinTools
+  builtins: ResolvedBuiltinTools,
+  auxModel: Model
 ): Promise<Record<BuiltinToolName, Tool>> {
   const webFetch = builtinToolConfig(builtins, 'web_fetch')
   const caller = builtinToolConfig(builtins, 'programmatic_tool_caller') ?? {}
@@ -166,7 +167,7 @@ export async function buildBuiltinTools(
     write,
     edit,
     web_fetch: makeWebFetch({
-      model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
+      model: webFetch?.model === undefined ? auxModel : await resolveAuxModel(parentConfig.model, webFetch.model),
       transport: webFetch?.transport,
     }),
     web_search: exaWebSearch,
@@ -258,7 +259,6 @@ export function buildDefaultSubagent(
         stores: memoryConfig.stores,
         model: parentConfig.model,
         dir: memoryConfig.dir,
-        webFetch: builtinToolConfig(parentBuiltins, 'web_fetch'),
         writable: false,
       })
     }

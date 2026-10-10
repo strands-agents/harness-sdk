@@ -25,8 +25,8 @@ from strands_harness.interventions import InterventionsOption, resolve_intervent
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
     _supports_media,
+    resolve_aux_model,
     resolve_model,
-    resolve_web_fetch_model,
     supports_web_search,
 )
 from strands_harness.options import (
@@ -76,16 +76,19 @@ _ALWAYS_BACKGROUND_TOOL_NAMES = frozenset({"subagent"})
 _UNSET: Any = object()
 
 
-def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
+def _builtin_tools(parent_config: dict[str, Any], aux_model: Model) -> dict[str, Any]:
     """The built-in tools by name. Each configurable one is built from its factory with the config it
-    was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` also
-    derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
-    can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
+    was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` summarizes
+    on its own ``model`` override or else the agent's ``aux_model``, ``subagent`` takes the whole parent
+    config so it can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
     lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa tool;
     ``create_harness`` selects it only when the setting is ``"exa"``."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
-    web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
+    web_fetch_override = web_fetch_config.pop("model", None)
+    web_fetch_model = (
+        aux_model if web_fetch_override is None else resolve_aux_model(parent_config["model"], web_fetch_override)
+    )
     tools = (
         make_shell(**_builtin_tool_config(enabled, "shell")),
         make_read(**{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}),
@@ -238,6 +241,7 @@ def _resolve_background_tasks(
 def create_harness(
     *,
     model: Model | ModelRouter | str | None = None,
+    aux_model: Model | str | None = None,
     effort: Effort = defaults.DEFAULT_EFFORT,
     instructions: str | None = None,
     tools: list[Any] | None = None,
@@ -265,6 +269,11 @@ def create_harness(
         model: A ``Model`` or ``ModelRouter`` instance, a ``"provider/name"`` string (e.g.
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
             harness default (Bedrock Opus 5).
+        aux_model: The model for the SDK's auxiliary side calls (``Agent(aux_model=...)``: context
+            summarization, memory extraction, the ``web_fetch`` summarizer, ...). Takes the same forms
+            as ``model`` except a router; ``None`` (the default) picks the small fast model of the main
+            model's provider so credentials align (Bedrock follows the main model's family). Reasoning
+            is always off and caching never applied. A ``Model`` instance as ``model`` is reused as-is.
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
             fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
@@ -303,8 +312,8 @@ def create_harness(
             "programmatic_tool_caller", "subagent"]``.
             ``web_fetch`` fetches a URL and answers a prompt about it via a small summarizer model,
             keeping the raw page out of the main context; ``{"web_fetch": {"model": ...}}`` picks that
-            model (a ``Model``/``ModelRouter`` instance or ``"provider/name"`` string; the default is the
-            small fast model of the main agent's provider so credentials align), and ``{"web_fetch":
+            model (a ``Model``/``ModelRouter`` instance or ``"provider/name"`` string; the default is
+            ``aux_model``), and ``{"web_fetch":
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
@@ -413,6 +422,9 @@ def create_harness(
         caching=caching_on,
         caching_explicit=caching_explicit,
     )
+    if isinstance(aux_model, ModelRouter):
+        raise TypeError("aux_model must be a Model, a 'provider/name' string, or None, not a ModelRouter")
+    resolved_aux_model = resolve_aux_model(model, aux_model)
 
     if "system_prompt" not in agent_kwargs:
         agent_kwargs["system_prompt"] = build_system_prompt(instructions)
@@ -440,6 +452,7 @@ def create_harness(
     # normalized and ``session`` forced off so a throwaway delegate never persists session state.
     parent_config: dict[str, Any] = {
         "model": model,
+        "aux_model": aux_model,
         "effort": effort,
         "caching": caching,
         "context_manager": context_manager,
@@ -456,7 +469,9 @@ def create_harness(
         "sandbox": agent_kwargs.get("sandbox"),
     }
 
-    builtin = _select_builtin_tools({**enabled_tools, "web_search": web_search == "exa"}, _builtin_tools(parent_config))
+    builtin = _select_builtin_tools(
+        {**enabled_tools, "web_search": web_search == "exa"}, _builtin_tools(parent_config, resolved_aux_model)
+    )
     context_enabled = context_manager is not None and context_manager is not False
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
     if isinstance(context_manager, Mapping):
@@ -499,7 +514,7 @@ def create_harness(
             stores=child_memory.get("stores"),
             model=model,
             memory_dir=child_memory.get("dir") or defaults.DEFAULT_MEMORY_DIR,
-            web_fetch_model=_builtin_tool_config(enabled_tools, "web_fetch").get("model"),
+            aux_model=resolved_aux_model,
         )
     memory_tools = memory_manager.tools if isinstance(memory_manager, MemoryManager) else []
 
@@ -525,6 +540,7 @@ def create_harness(
 
     agent = Agent(
         model=resolved_model,
+        aux_model=resolved_aux_model,
         tools=agent_tools,
         plugins=all_plugins,
         background_tasks=resolved_background_tasks,

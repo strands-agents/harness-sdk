@@ -13,7 +13,7 @@ from strands.sandbox.errors import SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 
 from strands_harness import create_harness
-from strands_harness.models import resolve_web_fetch_model
+from strands_harness.models import resolve_aux_model
 from strands_harness.tools import make_web_fetch
 from strands_harness.tools import web_fetch as web_fetch_module
 
@@ -390,72 +390,72 @@ async def test_web_fetch_caches_within_ttl(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_resolve_web_fetch_model_defaults_to_provider_small_model():
-    model = resolve_web_fetch_model("bedrock/global.anthropic.claude-opus-4-8", None)
+def test_resolve_aux_model_defaults_to_provider_small_model():
+    model = resolve_aux_model("bedrock/global.anthropic.claude-opus-4-8", None)
     assert isinstance(model, BedrockModel)
     assert model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
-def test_resolve_web_fetch_model_uses_openai_small_model_for_openai_on_bedrock():
-    model = resolve_web_fetch_model("bedrock/openai.gpt-5.6-luna", None)
+def test_resolve_aux_model_uses_openai_small_model_for_openai_on_bedrock():
+    model = resolve_aux_model("bedrock/openai.gpt-5.6-luna", None)
     assert isinstance(model, BedrockModel)
     assert model.get_config()["model_id"] == "openai.gpt-5.6-luna"
 
 
-def test_resolve_web_fetch_model_keeps_cross_region_prefix_for_openai_on_bedrock():
-    model = resolve_web_fetch_model("bedrock/us.openai.gpt-5.6-sol", None)
+def test_resolve_aux_model_keeps_cross_region_prefix_for_openai_on_bedrock():
+    model = resolve_aux_model("bedrock/us.openai.gpt-5.6-sol", None)
     assert model.get_config()["model_id"] == "us.openai.gpt-5.6-luna"
 
 
-def test_resolve_web_fetch_model_keeps_global_prefix_for_openai_on_bedrock():
-    model = resolve_web_fetch_model("bedrock/global.openai.gpt-5.6-sol", None)
+def test_resolve_aux_model_keeps_global_prefix_for_openai_on_bedrock():
+    model = resolve_aux_model("bedrock/global.openai.gpt-5.6-sol", None)
     assert model.get_config()["model_id"] == "global.openai.gpt-5.6-luna"
 
 
-def test_resolve_web_fetch_model_keeps_haiku_for_anthropic_on_bedrock():
-    model = resolve_web_fetch_model("bedrock/global.anthropic.claude-opus-4-8", None)
+def test_resolve_aux_model_keeps_haiku_for_anthropic_on_bedrock():
+    model = resolve_aux_model("bedrock/global.anthropic.claude-opus-4-8", None)
     assert model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
-def test_resolve_web_fetch_model_reuses_main_model_for_unknown_bedrock_family(caplog):
+def test_resolve_aux_model_reuses_main_model_for_unknown_bedrock_family(caplog):
     with caplog.at_level("WARNING"):
-        model = resolve_web_fetch_model("bedrock/cohere.command-r-plus-v1:0", None)
+        model = resolve_aux_model("bedrock/cohere.command-r-plus-v1:0", None)
     assert isinstance(model, BedrockModel)
     assert model.get_config()["model_id"] == "cohere.command-r-plus-v1:0"
     assert "could not identify the Bedrock model family" in caplog.text
 
 
-def test_resolve_web_fetch_model_no_warning_with_explicit_override_for_unknown_bedrock(caplog):
+def test_resolve_aux_model_no_warning_with_explicit_override_for_unknown_bedrock(caplog):
     override = BedrockModel(model_id="explicit")
     with caplog.at_level("WARNING"):
-        assert resolve_web_fetch_model("bedrock/amazon.nova-pro-v1:0", override) is override
+        assert resolve_aux_model("bedrock/amazon.nova-pro-v1:0", override) is override
     assert "could not identify the Bedrock model family" not in caplog.text
 
 
-def test_resolve_web_fetch_model_reuses_main_model_instance():
+def test_resolve_aux_model_reuses_main_model_instance():
     main = BedrockModel(model_id="whatever")
-    assert resolve_web_fetch_model(main, None) is main
+    assert resolve_aux_model(main, None) is main
 
 
-def test_resolve_web_fetch_model_uses_router_default():
+def test_resolve_aux_model_uses_router_default():
     default = BedrockModel(model_id="fast")
     router = ModelRouter([default, BedrockModel(model_id="deep")])
-    assert resolve_web_fetch_model(router, None) is default
+    assert resolve_aux_model(router, None) is default
 
 
-def test_resolve_web_fetch_model_uses_explicit_router_default():
+def test_resolve_aux_model_uses_explicit_router_default():
     default = BedrockModel(model_id="fast")
     router = ModelRouter([default, BedrockModel(model_id="deep")])
-    assert resolve_web_fetch_model(None, router) is default
+    assert resolve_aux_model(None, router) is default
 
 
-def test_resolve_web_fetch_model_uses_explicit_override():
+def test_resolve_aux_model_uses_explicit_override():
     override = BedrockModel(model_id="explicit")
-    assert resolve_web_fetch_model("bedrock/global.anthropic.claude-opus-4-8", override) is override
+    assert resolve_aux_model("bedrock/global.anthropic.claude-opus-4-8", override) is override
 
 
-def test_resolve_web_fetch_model_has_a_default_for_bedrock_mantle():
-    model = resolve_web_fetch_model("bedrock-mantle/openai.gpt-oss-120b", None)
+def test_resolve_aux_model_has_a_default_for_bedrock_mantle():
+    model = resolve_aux_model("bedrock-mantle/openai.gpt-oss-120b", None)
     assert model.get_config()["model_id"] == "openai.gpt-5.6-luna"
 
 
@@ -488,27 +488,27 @@ def test_web_fetch_absent_when_not_selected():
     assert "web_fetch" not in agent.tool_registry.registry
 
 
-def test_summarizer_reuses_the_main_model_on_a_repointed_anthropic_endpoint(monkeypatch, caplog):
+def test_aux_model_reuses_the_main_model_on_a_repointed_anthropic_endpoint(monkeypatch, caplog):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1")
     with caplog.at_level("WARNING"):
-        model = resolve_web_fetch_model("anthropic/anthropic.claude-fable-5", None)
+        model = resolve_aux_model("anthropic/anthropic.claude-fable-5", None)
     assert model.get_config()["model_id"] == "anthropic.claude-fable-5"
     assert "non-default endpoint" in caplog.text
 
 
-def test_summarizer_reuses_the_main_model_on_a_repointed_openai_endpoint(monkeypatch):
+def test_aux_model_reuses_the_main_model_on_a_repointed_openai_endpoint(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", "https://bedrock-mantle.us-west-2.api.aws/v1")
-    model = resolve_web_fetch_model("openai/gpt-oss-20b", None)
+    model = resolve_aux_model("openai/gpt-oss-20b", None)
     assert model.get_config()["model_id"] == "gpt-oss-20b"
 
 
-def test_summarizer_still_uses_the_small_model_on_the_first_party_endpoint(monkeypatch):
+def test_aux_model_still_uses_the_small_model_on_the_first_party_endpoint(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-    model = resolve_web_fetch_model("anthropic/claude-opus-4-5-20251101", None)
+    model = resolve_aux_model("anthropic/claude-opus-4-5-20251101", None)
     assert model.get_config()["model_id"] == "claude-haiku-4-5-20251001"
 
 
 def test_a_repointed_endpoint_does_not_affect_bedrock(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://example.invalid/anthropic")
-    model = resolve_web_fetch_model("bedrock/global.anthropic.claude-opus-4-8", None)
+    model = resolve_aux_model("bedrock/global.anthropic.claude-opus-4-8", None)
     assert model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"

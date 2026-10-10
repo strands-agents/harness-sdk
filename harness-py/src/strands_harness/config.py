@@ -51,6 +51,7 @@ DEFAULT_HARNESS_AGENT_CONFIG: dict[str, Any] = {
     "instructions": "",
     "model": defaults.DEFAULT_MODEL,
     "modelModule": None,
+    "auxModel": None,
     "effort": defaults.DEFAULT_EFFORT,
     "tools": [],
     "subagents": [],
@@ -147,6 +148,7 @@ def harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") 
         {
             "name": config["name"],
             "model": config["model"] if model is None else model,
+            "aux_model": _load_model_setting(config["auxModel"], root),
             "effort": config["effort"],
             "context_manager": config["contextManager"],
             "session": _session_kwarg(config["session"], root),
@@ -323,10 +325,14 @@ class _ShellConfig(_Model):
     description: NonBlankStr = _UNSET
 
 
+# A model as a ``"provider/name"`` string or a model module reference.
+_ModelSetting = _one_of(
+    "Input should be a non-empty string or a model module reference", (str, NonBlankStr), (dict, _ModelReference)
+)
+
+
 class _WebFetchConfig(_Model):
-    model: _one_of(
-        "Input should be a non-empty string or a model module reference", (str, NonBlankStr), (dict, _ModelReference)
-    ) = _UNSET
+    model: _ModelSetting = _UNSET
     transport: WebFetchTransport = _UNSET
 
 
@@ -406,6 +412,7 @@ class _HarnessAgentConfig(_Model):
     instructions: str
     model: NonBlankStr
     model_module: _ModelReference | None
+    aux_model: _ModelSetting | None
     effort: Effort
     tools: list[_reference("tool")]
     subagents: list[_reference("subagent")]
@@ -457,8 +464,8 @@ def _builtin_tools_kwarg(value: list[str] | dict[str, Any], root: Path) -> list[
         if isinstance(setting, dict):
             fields = {field.alias or key: key for key, field in _BUILTIN_TOOL_CONFIGS[name].model_fields.items()}
             setting = {fields[key]: item for key, item in setting.items()}
-            if isinstance(setting.get("model"), dict):
-                setting["model"] = _load_reference(setting["model"], root)
+            if "model" in setting:
+                setting["model"] = _load_model_setting(setting["model"], root)
         resolved[name] = setting
     return resolved
 
@@ -507,6 +514,10 @@ def _load_many(references: list[dict[str, Any]], root: Path, *, invoke: bool = F
 
 def _load_optional(reference: dict[str, Any] | None, root: Path) -> Any:
     return None if reference is None else _load_reference(reference, root)
+
+
+def _load_model_setting(setting: str | dict[str, Any] | None, root: Path) -> Any:
+    return _load_reference(setting, root) if isinstance(setting, dict) else setting
 
 
 def _load_reference(reference: dict[str, Any], root: Path) -> Any:

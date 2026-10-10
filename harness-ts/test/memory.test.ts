@@ -68,11 +68,11 @@ describe('resolveMemory', () => {
     expect(readFileSync(join(dir, 'stack.md'), 'utf8')).toContain('TypeScript')
   })
 
-  it('extracts on an explicit web_fetch.model override when one is set', async () => {
+  it('extracts on an explicit auxModel when one is set', async () => {
     const manager = await resolveMemory({
       model: 'bedrock/global.anthropic.claude-opus-4-8',
       dir: makeTempDir(),
-      webFetch: { model: 'bedrock/us.amazon.nova-lite-v1:0' },
+      auxModel: 'bedrock/us.amazon.nova-lite-v1:0',
     })
     expect(extractionModel(manager)?.getConfig().modelId).toBe('us.amazon.nova-lite-v1:0')
   })

@@ -3,8 +3,8 @@
  *
  * Fetches the URL, reduces it to text, and asks a small fast model to answer the prompt over that
  * content, returning the answer rather than the raw page so large payloads never reach the main
- * agent's context. The summarizer runs on the same provider as the main agent (see
- * `resolveWebFetchModel` in `models.ts`), so credentials always align.
+ * agent's context. The summarizer defaults to the agent's `auxModel` (see
+ * `resolveAuxModel` in `models.ts`), so credentials always align.
  *
  * By default the HTTP request runs as `curl` inside the agent's `sandbox` (the same seam `shell` and
  * the file tools use), so a sandbox with network isolation or egress rules covers `web_fetch` too.

@@ -119,6 +119,7 @@ def test_config_maps_to_harness_agent_kwargs(tmp_path):
     assert kwargs == {
         "name": "Strands harness",
         "model": DEFAULT_HARNESS_AGENT_CONFIG["model"],
+        "aux_model": None,
         "effort": "auto",
         "context_manager": "auto",
         "session": True,
@@ -133,6 +134,7 @@ def test_config_every_create_harness_parameter_has_a_bridge_key_or_is_factory_on
     bridged = {
         "instructions": "instructions",
         "model": "model",
+        "aux_model": "auxModel",
         "effort": "effort",
         "builtin_tools": "builtinTools",
         "caching": "caching",
@@ -225,6 +227,25 @@ def test_config_builtin_tools_mapping_passes_edits_and_loads_web_fetch_model(tmp
     assert kwargs["builtin_tools"]["web_search"] is False
     assert kwargs["builtin_tools"]["web_fetch"]["model"] is not None
     assert not isinstance(kwargs["builtin_tools"]["web_fetch"]["model"], dict)
+
+
+def test_config_aux_model_string_reaches_the_factory():
+    kwargs = harness_agent_kwargs_from_config(define_harness_agent_config({"auxModel": "openai/gpt-5-mini"}), ".")
+    assert kwargs["aux_model"] == "openai/gpt-5-mini"
+    assert harness_agent_kwargs_from_config(define_harness_agent_config({}), ".")["aux_model"] is None
+
+
+def test_config_aux_model_loads_a_model_module_reference(tmp_path):
+    module = tmp_path / "models.py"
+    module.write_text("model = object()\n")
+    config = define_harness_agent_config(
+        {"auxModel": {"kind": "model", "module": str(module), "export": "model", "language": "python"}}
+    )
+    kwargs = harness_agent_kwargs_from_config(config, tmp_path)
+    assert kwargs["aux_model"] is not None
+    assert not isinstance(kwargs["aux_model"], dict)
+    with pytest.raises(ValueError, match="auxModel"):
+        normalize_harness_agent_config({"auxModel": ""})
 
 
 def test_config_builtin_tools_web_fetch_transport_passes_through_and_is_validated():

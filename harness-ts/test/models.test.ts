@@ -2,13 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
-import {
-  resolveModel,
-  resolveWebFetchModel,
-  supportsMedia,
-  supportsThinking,
-  supportsWebSearch,
-} from '../src/models.js'
+import { resolveModel, resolveAuxModel, supportsMedia, supportsThinking, supportsWebSearch } from '../src/models.js'
 import type { Effort } from '../src/types/agent.js'
 import { DEFAULT_EFFORT } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
@@ -701,9 +695,9 @@ describe('supportsWebSearch', () => {
   })
 })
 
-describe('resolveWebFetchModel', () => {
+describe('resolveAuxModel', () => {
   it('defaults to the provider small model with no thinking', async () => {
-    const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
+    const model = await resolveAuxModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
     expect(model).toBeInstanceOf(BedrockModel)
     const config = model.getConfig()
     expect(config.modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
@@ -711,30 +705,30 @@ describe('resolveWebFetchModel', () => {
   })
 
   it('uses the openai small model for an openai-on-bedrock main model', async () => {
-    const model = await resolveWebFetchModel('bedrock/openai.gpt-5.6-luna', undefined)
+    const model = await resolveAuxModel('bedrock/openai.gpt-5.6-luna', undefined)
     expect(model).toBeInstanceOf(BedrockModel)
     expect(model.getConfig().modelId).toBe('openai.gpt-5.6-luna')
   })
 
   it('keeps a cross-region prefix for openai-on-bedrock', async () => {
-    const model = await resolveWebFetchModel('bedrock/us.openai.gpt-5.6-sol', undefined)
+    const model = await resolveAuxModel('bedrock/us.openai.gpt-5.6-sol', undefined)
     expect(model.getConfig().modelId).toBe('us.openai.gpt-5.6-luna')
   })
 
   it('keeps a global prefix for openai-on-bedrock', async () => {
-    const model = await resolveWebFetchModel('bedrock/global.openai.gpt-5.6-sol', undefined)
+    const model = await resolveAuxModel('bedrock/global.openai.gpt-5.6-sol', undefined)
     expect(model.getConfig().modelId).toBe('global.openai.gpt-5.6-luna')
   })
 
   it('keeps haiku for an anthropic-on-bedrock main model', async () => {
-    const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
+    const model = await resolveAuxModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
   })
 
   it('reuses the main model and warns for an unidentifiable bedrock family', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
-    const model = await resolveWebFetchModel('bedrock/amazon.nova-pro-v1:0', undefined)
+    const model = await resolveAuxModel('bedrock/amazon.nova-pro-v1:0', undefined)
     expect(model).toBeInstanceOf(BedrockModel)
     expect(model.getConfig().modelId).toBe('amazon.nova-pro-v1:0')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not identify the Bedrock model family'))
@@ -744,34 +738,34 @@ describe('resolveWebFetchModel', () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
     const override = new BedrockModel({ modelId: 'explicit' })
-    expect(await resolveWebFetchModel('bedrock/amazon.nova-pro-v1:0', override)).toBe(override)
+    expect(await resolveAuxModel('bedrock/amazon.nova-pro-v1:0', override)).toBe(override)
     expect(warn).not.toHaveBeenCalled()
   })
 
   it('reuses a main Model instance when no override is given', async () => {
     const main = new BedrockModel({ modelId: 'whatever' })
-    expect(await resolveWebFetchModel(main, undefined)).toBe(main)
+    expect(await resolveAuxModel(main, undefined)).toBe(main)
   })
 
   it('uses a main ModelRouter default when no override is given', async () => {
     const defaultModel = new BedrockModel({ modelId: 'fast' })
     const router = new ModelRouter([defaultModel, new BedrockModel({ modelId: 'deep' })])
-    expect(await resolveWebFetchModel(router, undefined)).toBe(defaultModel)
+    expect(await resolveAuxModel(router, undefined)).toBe(defaultModel)
   })
 
   it('uses an explicit ModelRouter default', async () => {
     const defaultModel = new BedrockModel({ modelId: 'fast' })
     const router = new ModelRouter([defaultModel, new BedrockModel({ modelId: 'deep' })])
-    expect(await resolveWebFetchModel(undefined, router)).toBe(defaultModel)
+    expect(await resolveAuxModel(undefined, router)).toBe(defaultModel)
   })
 
   it('uses an explicit Model instance override', async () => {
     const override = new BedrockModel({ modelId: 'explicit' })
-    expect(await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', override)).toBe(override)
+    expect(await resolveAuxModel('bedrock/global.anthropic.claude-opus-4-8', override)).toBe(override)
   })
 
   it('resolves an explicit provider/name override string', async () => {
-    const model = await resolveWebFetchModel(
+    const model = await resolveAuxModel(
       'bedrock/global.anthropic.claude-opus-4-8',
       'anthropic/claude-haiku-4-5-20251001'
     )
@@ -780,7 +774,7 @@ describe('resolveWebFetchModel', () => {
   })
 
   it('has a default fetch model for bedrock-mantle', async () => {
-    const model = await resolveWebFetchModel('bedrock-mantle/openai.gpt-oss-120b', undefined)
+    const model = await resolveAuxModel('bedrock-mantle/openai.gpt-oss-120b', undefined)
     expect(model.getConfig().modelId).toBe('openai.gpt-5.6-luna')
   })
 })
@@ -815,7 +809,7 @@ describe('supportsMedia', () => {
   })
 })
 
-describe('web_fetch summarizer on a repointed endpoint', () => {
+describe('aux model on a repointed endpoint', () => {
   afterEach(() => {
     delete process.env.ANTHROPIC_BASE_URL
     delete process.env.OPENAI_BASE_URL
@@ -823,24 +817,24 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
 
   it('reuses the main model when ANTHROPIC_BASE_URL is set', async () => {
     process.env.ANTHROPIC_BASE_URL = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1'
-    const model = await resolveWebFetchModel('anthropic/anthropic.claude-fable-5', undefined)
+    const model = await resolveAuxModel('anthropic/anthropic.claude-fable-5', undefined)
     expect(model.getConfig().modelId).toBe('anthropic.claude-fable-5')
   })
 
   it('reuses the main model when OPENAI_BASE_URL is set', async () => {
     process.env.OPENAI_BASE_URL = 'https://bedrock-mantle.us-west-2.api.aws/v1'
-    const model = await resolveWebFetchModel('openai/gpt-oss-20b', undefined)
+    const model = await resolveAuxModel('openai/gpt-oss-20b', undefined)
     expect(model.getConfig().modelId).toBe('gpt-oss-20b')
   })
 
   it('still uses the small model on the first-party endpoint', async () => {
-    const model = await resolveWebFetchModel('anthropic/claude-opus-4-5-20251101', undefined)
+    const model = await resolveAuxModel('anthropic/claude-opus-4-5-20251101', undefined)
     expect(model.getConfig().modelId).toBe('claude-haiku-4-5-20251001')
   })
 
   it('does not affect bedrock', async () => {
     process.env.ANTHROPIC_BASE_URL = 'https://example.invalid/anthropic'
-    const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
+    const model = await resolveAuxModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
   })
 })

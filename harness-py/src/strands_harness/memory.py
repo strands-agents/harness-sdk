@@ -30,7 +30,7 @@ from strands.storage import LocalFileStorage
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 
 from strands_harness.defaults import DEFAULT_MEMORY_DIR
-from strands_harness.models import resolve_web_fetch_model
+from strands_harness.models import resolve_aux_model
 
 # Store name, surfaced as the ``source`` attribute on each injected ``<memory>`` entry.
 MEMORY_STORE_NAME = "memory"
@@ -41,7 +41,7 @@ def resolve_memory(
     stores: MemoryStore | list[MemoryStore] | None = None,
     model: Model | ModelRouter | str | None = None,
     memory_dir: str = DEFAULT_MEMORY_DIR,
-    web_fetch_model: Model | ModelRouter | str | None = None,
+    aux_model: Model | ModelRouter | str | None = None,
     writable: bool = True,
 ) -> MemoryManager:
     """Build the memory manager: a ``MemoryManager`` wrapping either the consumer's ``stores`` or a
@@ -50,19 +50,19 @@ def resolve_memory(
 
     The default store's keys are pre-namespaced to ``memory_dir`` itself, so files land at
     ``memory_dir/<slug>.md`` without the store's own ``memory/<name>/`` scoping doubling the path.
-    Extraction runs on the same small, credential-aligned model ``web_fetch`` summarizes with (the
-    agent's ``web_fetch_model`` override, or the small model for its provider) rather than the main
-    model, so distilling facts every few turns stays cheap.
+    Extraction runs on the agent's small, credential-aligned ``aux_model`` (explicit, or the small
+    model for its provider) rather than the main model, so distilling facts every few turns stays cheap.
 
     Args:
         stores: Consumer-supplied store(s) to manage instead of the default file store. When omitted
             or an empty list, the harness builds a ``FileMemoryStore`` under ``memory_dir``.
-            ``model``/``memory_dir``/``web_fetch_model`` are used only to build that default store and
+            ``model``/``memory_dir``/``aux_model`` are used only to build that default store and
             are ignored when ``stores`` is non-empty.
         model: The agent's ``model`` argument, used to derive the small extraction model for the
             default store.
         memory_dir: Directory the default store's memory files live in.
-        web_fetch_model: Explicit summarizer/extraction model override, forwarded to the resolver.
+        aux_model: The agent's ``aux_model`` argument (or already-resolved ``Model``); forwarded to
+            the resolver, which derives the small model from ``model`` when it is ``None``.
         writable: Whether the manager may write to its stores. ``True`` (default) builds a writable
             default store and passes consumer stores through as-is. ``False`` builds a recall-only
             manager: the default store is created read-only and consumer stores are wrapped in a
@@ -83,7 +83,7 @@ def resolve_memory(
     if supplied:
         managed = [store if writable else _to_read_only(store) for store in supplied]
     else:
-        managed = [_build_default_store(model, memory_dir, web_fetch_model, writable)]
+        managed = [_build_default_store(model, memory_dir, aux_model, writable)]
     # Inject on every model call, not only on a fresh user ask: the harness runs multi-step tool loops, so an
     # autonomous step (or a delegate) consults memory at each turn rather than only when the user speaks.
     return MemoryManager(stores=managed, injection=MemoryInjectionConfig(trigger="everyTurn"))
@@ -92,19 +92,19 @@ def resolve_memory(
 def _build_default_store(
     model: Model | ModelRouter | str | None,
     memory_dir: str,
-    web_fetch_model: Model | ModelRouter | str | None,
+    aux_model: Model | ModelRouter | str | None,
     writable: bool,
 ) -> FileMemoryStore:
     """The default file-backed store, writing markdown directly under ``memory_dir``."""
     storage = LocalFileStorage(memory_dir).namespace("")
     if not writable:
         return FileMemoryStore(name=MEMORY_STORE_NAME, storage=storage, writable=False)
-    summarizer = resolve_web_fetch_model(model, web_fetch_model)
+    extractor_model = resolve_aux_model(model, aux_model)
     return FileMemoryStore(
         name=MEMORY_STORE_NAME,
         storage=storage,
         writable=True,
-        extraction=ExtractionConfig(extractor=ModelExtractor(model=summarizer)),
+        extraction=ExtractionConfig(extractor=ModelExtractor(model=extractor_model)),
     )
 
 

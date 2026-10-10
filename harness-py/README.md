@@ -135,6 +135,15 @@ from strands.models.openai import OpenAIModel
 create_harness(model=OpenAIModel(model_id="gpt-5.6-sol"))   # full control
 ```
 
+The SDK's auxiliary side calls (context summarization, memory extraction, the `web_fetch`
+summarizer, the approval classifier) run on `aux_model`, which defaults to the small fast model of
+your main provider so credentials line up (Bedrock Haiku for the default). Pass `aux_model` in the
+same forms as `model` to choose it:
+
+```python
+create_harness(aux_model="bedrock/us.amazon.nova-lite-v1:0")
+```
+
 The `provider/model` string is a shorthand with aliases for `bedrock`, `bedrock-mantle`, `anthropic`,
 `openai`, `google`, `ollama`, and `litellm`. For any other provider, pass a `Model` instance (as above)
 and it's used as-is. Reasoning effort is mapped to whatever each provider expects, so you set it once
@@ -297,8 +306,8 @@ exposing the same tool don't clash; set a server's `"prefix"` to choose the name
 Two of the built-ins put the web in reach. `web_fetch` is always on: it fetches a URL,
 reduces it to text, and asks a small fast model to answer your prompt over the content, returning
 the answer rather than the raw page so a long article never floods the conversation. The
-summarizer runs on the small model for your main provider by default (so credentials line up);
-override it through the tool's config in `builtin_tools`:
+summarizer runs on the agent's `aux_model` (see [Choosing a model](#choosing-a-model)); override it
+for `web_fetch` alone through the tool's config in `builtin_tools`:
 
 ```python
 create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5-20251001"}})

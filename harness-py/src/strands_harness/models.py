@@ -58,10 +58,10 @@ def _claude_max_tokens(model_id: str) -> int | None:
     return next((tokens for needle, tokens in _CLAUDE_MAX_TOKENS.items() if needle in model_id), None)
 
 
-# Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
-# so the summarizer shares its credentials. Kept byte-identical with ``_WEB_FETCH_MODELS`` in the
-# TypeScript ``models.ts``.
-_WEB_FETCH_MODELS = {
+# Small, fast model per provider for the agent's auxiliary side calls (web_fetch summarizing, memory
+# extraction, context summarization). Keyed by the main agent's provider so the aux model shares its
+# credentials. Kept byte-identical with ``AUX_MODELS`` in the TypeScript ``models.ts``.
+_AUX_MODELS = {
     "bedrock": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
     "bedrock-mantle": "openai.gpt-5.6-luna",
     "anthropic": "claude-haiku-4-5-20251001",
@@ -72,14 +72,14 @@ _WEB_FETCH_MODELS = {
 # Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 # provider family. Kept byte-identical with ``models.ts``.
 # Providers whose endpoint can be repointed by an env var. A non-default endpoint publishes its
-# own model list, so the vended small summarizer is not guaranteed to exist on it.
+# own model list, so the vended small aux model is not guaranteed to exist on it.
 _CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
 
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
 
-# Small regional summarizer per Bedrock model family, keyed by family prefix. These ids are served
+# Small regional aux model per Bedrock model family, keyed by family prefix. These ids are served
 # regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
-_BEDROCK_WEB_FETCH_FAMILY_MODELS = {
+_BEDROCK_AUX_FAMILY_MODELS = {
     "amazon.": "amazon.nova-lite-v1:0",
     "meta.": "meta.llama3-2-3b-instruct-v1:0",
     "mistral.": "mistral.mistral-small-2402-v1:0",
@@ -489,56 +489,56 @@ def resolve_model(
     return provider.build(name, level, native_search, caching and provider.caching and not unsupported_caching)
 
 
-def _bedrock_web_fetch_model(name: str) -> str | None:
-    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if the family is
+def _bedrock_aux_model(name: str) -> str | None:
+    """Small Bedrock aux model id for a Bedrock main model ``name``, or ``None`` if the family is
     unidentifiable.
 
-    Bedrock hosts models from several providers, so the summarizer follows the main model's family.
+    Bedrock hosts models from several providers, so the aux model follows the main model's family.
     An Anthropic-on-Bedrock model (an ``anthropic.`` prefix, after any cross-region prefix like
     ``us.``) gets Anthropic Haiku; an OpenAI-on-Bedrock model (an ``openai.`` prefix) gets the OpenAI
-    small model hosted on Bedrock (``openai.`` + the OpenAI-provider summarizer), carrying the main
+    small model hosted on Bedrock (``openai.`` + the OpenAI-provider small model), carrying the main
     model's cross-region prefix because those ids are only served through an inference profile.
-    Amazon, Meta, and Mistral families get their small regional models. The summarizer always shares
+    Amazon, Meta, and Mistral families get their small regional models. The aux model always shares
     the main model's credentials. A family with no mapped small model returns ``None`` so the caller
     can reuse the main model rather than guess.
     """
     family = _bedrock_family(name)
     if family.startswith("anthropic."):
-        return _WEB_FETCH_MODELS["bedrock"]
+        return _AUX_MODELS["bedrock"]
     if family.startswith("openai."):
         prefix = name[: len(name) - len(family)]
-        return f"{prefix}openai.{_WEB_FETCH_MODELS['openai']}"
+        return f"{prefix}openai.{_AUX_MODELS['openai']}"
     return next(
-        (small for fam_prefix, small in _BEDROCK_WEB_FETCH_FAMILY_MODELS.items() if family.startswith(fam_prefix)),
+        (small for fam_prefix, small in _BEDROCK_AUX_FAMILY_MODELS.items() if family.startswith(fam_prefix)),
         None,
     )
 
 
-def resolve_web_fetch_model(
+def resolve_aux_model(
     main_model: Model | ModelRouter | str | None,
-    web_fetch_model: Model | ModelRouter | str | None,
+    aux_model: Model | ModelRouter | str | None,
 ) -> Model:
-    """Resolve the model the web_fetch summarizer runs on.
+    """Resolve the model the agent's auxiliary side calls run on (``Agent(aux_model=...)``).
 
-    An explicit ``web_fetch_model`` (a ``Model`` or ``ModelRouter`` instance, or ``"provider/name"``
-    string) wins. With none set, pick the small fast model for the main agent's provider so the
-    summarizer shares its credentials; when the main model is a ``Model`` instance (provider unknown),
-    reuse it as the summarizer. A router uses its concrete default model because auxiliary calls are
-    outside the primary agent invocation and cannot share its routing decision. On Bedrock the
-    summarizer follows the main model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets
-    the OpenAI small model, Amazon/Meta/Mistral get their small regional models); a Bedrock family
-    with no mapped small model reuses the main model and logs a warning
-    rather than guessing. Thinking is never applied: summarizing a page is a fast task.
+    An explicit ``aux_model`` (a ``Model`` or ``ModelRouter`` instance, or ``"provider/name"`` string)
+    wins. With none set, pick the small fast model for the main agent's provider so the aux model
+    shares its credentials; when the main model is a ``Model`` instance (provider unknown), reuse it.
+    A router uses its concrete default model because auxiliary calls are outside the primary agent
+    invocation and cannot share its routing decision. On Bedrock the aux model follows the main
+    model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets the OpenAI small model,
+    Amazon/Meta/Mistral get their small regional models); a Bedrock family with no mapped small model
+    reuses the main model and logs a warning rather than guessing. Thinking is never applied: side
+    calls are fast tasks.
 
-    ``caching`` is deliberately not forwarded: the single message carries the per-call prompt before
-    the page body, so every fetch would write a cache entry no later call can read.
+    ``caching`` is deliberately not forwarded: side calls are single-shot prompts whose cache entries
+    no later call could read.
     """
-    if isinstance(web_fetch_model, ModelRouter):
-        return web_fetch_model.default_model
-    if isinstance(web_fetch_model, Model):
-        return web_fetch_model
-    if web_fetch_model is not None:
-        return _concrete_model(resolve_model(web_fetch_model, web_fetch_model, effort="off"))
+    if isinstance(aux_model, ModelRouter):
+        return aux_model.default_model
+    if isinstance(aux_model, Model):
+        return aux_model
+    if aux_model is not None:
+        return _concrete_model(resolve_model(aux_model, aux_model, effort="off"))
 
     if isinstance(main_model, ModelRouter):
         return main_model.default_model
@@ -547,35 +547,30 @@ def resolve_web_fetch_model(
     main = main_model if main_model is not None else defaults.DEFAULT_MODEL
     provider_name, name = _split_provider(main)
     if provider_name == "bedrock":
-        small = _bedrock_web_fetch_model(name)
+        small = _bedrock_aux_model(name)
         if small is None:
             logger.warning(
-                f"model=<{main}> | could not identify the Bedrock model family for the web_fetch "
-                "summarizer; reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a "
-                "smaller one."
+                f"model=<{main}> | could not identify the Bedrock model family for the aux model; reusing "
+                "the main model. Pass aux_model to choose a smaller one."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
     elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):
         logger.warning(
             f"model=<{main}> | {base_url_var} points provider <{provider_name}> at a non-default "
-            "endpoint, which serves its own model list, so the vended summarizer may not exist "
-            "there; reusing the main model. Pass web_fetch_model to choose a smaller one."
+            "endpoint, which serves its own model list, so the vended aux model may not exist "
+            "there; reusing the main model. Pass aux_model to choose a smaller one."
         )
         return _concrete_model(resolve_model(main, main, effort="off"))
     else:
-        small = _WEB_FETCH_MODELS.get(provider_name)
+        small = _AUX_MODELS.get(provider_name)
     if small is None:
         if provider_name in ("ollama", "litellm"):
             logger.warning(
-                f"model=<{main}> | no separate web_fetch summarizer is configured for provider "
-                f"<{provider_name}>; reusing the main model. Set builtin_tools={{'web_fetch': {{'model': ...}}}} "
-                "to choose another model."
+                f"model=<{main}> | no separate aux model is configured for provider <{provider_name}>; "
+                "reusing the main model. Pass aux_model to choose another model."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
-        raise ValueError(
-            f"No default web_fetch model for provider {provider_name!r}. "
-            "Set builtin_tools={'web_fetch': {'model': ...}} explicitly, or disable web_fetch via builtin_tools."
-        )
+        raise ValueError(f"No default aux model for provider {provider_name!r}. Pass aux_model explicitly.")
     return _concrete_model(resolve_model(f"{provider_name}/{small}", small, effort="off"))
 
 

@@ -58,10 +58,10 @@ function claudeMaxTokens(modelId: string): number | undefined {
   return Object.entries(CLAUDE_MAX_TOKENS).find(([needle]) => modelId.includes(needle))?.[1]
 }
 
-// Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
-// so the summarizer shares its credentials. Kept byte-identical with `_WEB_FETCH_MODELS` in the
-// Python `models.py`.
-const WEB_FETCH_MODELS: Record<string, string> = {
+// Small, fast model per provider for the agent's auxiliary side calls (web_fetch summarizing, memory
+// extraction, context summarization). Keyed by the main agent's provider so the aux model shares its
+// credentials. Kept byte-identical with `_AUX_MODELS` in the Python `models.py`.
+const AUX_MODELS: Record<string, string> = {
   bedrock: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
   'bedrock-mantle': 'openai.gpt-5.6-luna',
   anthropic: 'claude-haiku-4-5-20251001',
@@ -72,7 +72,7 @@ const WEB_FETCH_MODELS: Record<string, string> = {
 // Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 // provider family. Kept byte-identical with `_BEDROCK_REGION_PREFIXES` in the Python `models.py`.
 // Providers whose endpoint can be repointed by an env var. A non-default endpoint publishes its
-// own model list, so the vended small summarizer is not guaranteed to exist on it.
+// own model list, so the vended small aux model is not guaranteed to exist on it.
 const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
   anthropic: 'ANTHROPIC_BASE_URL',
   openai: 'OPENAI_BASE_URL',
@@ -557,35 +557,36 @@ function hasWebSearch(providerName: string, name: string): boolean {
 }
 
 /**
- * Resolve the model the web_fetch summarizer runs on.
+ * Resolve the model the agent's auxiliary side calls run on (`Agent({ auxModel })`).
  *
- * An explicit `webFetchModel` (`builtinTools.web_fetch.model`: a `Model` instance or
- * `"provider/name"` string) wins. With none set, pick the small fast model for the main agent's
- * provider so the summarizer shares its credentials; when the main model is a `Model` instance
- * (provider unknown), reuse it as the summarizer. On Bedrock the summarizer follows the main
- * model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets the OpenAI small model);
- * a Bedrock family we can't identify reuses the main model and logs a warning rather than
- * guessing. Thinking is never applied: summarizing a page is a fast task.
+ * An explicit `auxModel` (a `Model` or `ModelRouter` instance, or `"provider/name"` string) wins.
+ * With none set, pick the small fast model for the main agent's provider so the aux model shares
+ * its credentials; when the main model is a `Model` instance (provider unknown), reuse it. A router
+ * uses its concrete default model because auxiliary calls are outside the primary agent invocation
+ * and cannot share its routing decision. On Bedrock the aux model follows the main model's family
+ * (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets the OpenAI small model); a Bedrock
+ * family we can't identify reuses the main model and logs a warning rather than guessing. Thinking
+ * is never applied: side calls are fast tasks.
  *
- * `caching` is deliberately not forwarded: the single message carries the per-call prompt before the
- * page body, so every fetch would write a cache entry no later call can read.
+ * `caching` is deliberately not forwarded: side calls are single-shot prompts whose cache entries no
+ * later call could read.
  *
  * @param mainModel - The main agent's `model` argument (instance, string, or undefined).
- * @param webFetchModel - Explicit summarizer override, or undefined to use the provider table.
- * @returns The resolved summarizer `Model` instance.
+ * @param auxModel - Explicit aux model, or undefined to use the provider table.
+ * @returns The resolved aux `Model` instance.
  */
-export async function resolveWebFetchModel(
+export async function resolveAuxModel(
   mainModel: Model | ModelRouter | string | undefined,
-  webFetchModel: Model | ModelRouter | string | undefined
+  auxModel: Model | ModelRouter | string | undefined
 ): Promise<Model> {
-  if (webFetchModel instanceof ModelRouter) {
-    return webFetchModel.defaultModel
+  if (auxModel instanceof ModelRouter) {
+    return auxModel.defaultModel
   }
-  if (webFetchModel instanceof Model) {
-    return webFetchModel
+  if (auxModel instanceof Model) {
+    return auxModel
   }
-  if (webFetchModel !== undefined) {
-    return concreteModel(await resolveModel(webFetchModel, webFetchModel, 'off'))
+  if (auxModel !== undefined) {
+    return concreteModel(await resolveModel(auxModel, auxModel, 'off'))
   }
 
   if (mainModel instanceof ModelRouter) {
@@ -598,11 +599,11 @@ export async function resolveWebFetchModel(
   const [providerName, name] = splitProvider(main)
   let small: string | undefined
   if (providerName === 'bedrock') {
-    small = bedrockWebFetchModel(name)
+    small = bedrockAuxModel(name)
     if (small === undefined) {
       warnOnce(
-        `model=<${main}> | could not identify the Bedrock model family for the web_fetch ` +
-          'summarizer; reusing the main model. Pass builtinTools.web_fetch.model to choose a smaller one.'
+        `model=<${main}> | could not identify the Bedrock model family for the aux model; reusing the ` +
+          'main model. Pass auxModel to choose a smaller one.'
       )
       return concreteModel(await resolveModel(main, main, 'off'))
     }
@@ -610,25 +611,22 @@ export async function resolveWebFetchModel(
     const baseUrlVar = CUSTOM_ENDPOINT_VARS[providerName]!
     warnOnce(
       `model=<${main}> | ${baseUrlVar} points provider <${providerName}> at a non-default endpoint, ` +
-        'which serves its own model list, so the vended summarizer may not exist there; reusing the ' +
-        'main model. Pass builtinTools.web_fetch.model to choose a smaller one.'
+        'which serves its own model list, so the vended aux model may not exist there; reusing the ' +
+        'main model. Pass auxModel to choose a smaller one.'
     )
     return concreteModel(await resolveModel(main, main, 'off'))
   } else {
-    small = WEB_FETCH_MODELS[providerName]
+    small = AUX_MODELS[providerName]
   }
   if (small === undefined) {
     if (providerName === 'ollama' || providerName === 'litellm') {
       warnOnce(
-        `model=<${main}> | no separate web_fetch summarizer is configured for provider ` +
-          `<${providerName}>; reusing the main model. Pass builtinTools.web_fetch.model to choose another model.`
+        `model=<${main}> | no separate aux model is configured for provider <${providerName}>; ` +
+          'reusing the main model. Pass auxModel to choose another model.'
       )
       return concreteModel(await resolveModel(main, main, 'off'))
     }
-    throw new Error(
-      `No default web_fetch model for provider ${JSON.stringify(providerName)}. ` +
-        'Pass builtinTools.web_fetch.model explicitly, or disable web_fetch via builtinTools.'
-    )
+    throw new Error(`No default aux model for provider ${JSON.stringify(providerName)}. Pass auxModel explicitly.`)
   }
   return concreteModel(await resolveModel(`${providerName}/${small}`, small, 'off'))
 }
@@ -638,24 +636,24 @@ function concreteModel(model: Model | ModelRouter): Model {
 }
 
 /**
- * Small Bedrock summarizer id for a Bedrock main model `name`, or `undefined` if the family is
+ * Small Bedrock aux model id for a Bedrock main model `name`, or `undefined` if the family is
  * unidentifiable.
  *
- * Bedrock hosts models from several providers, so the summarizer follows the main model's family.
+ * Bedrock hosts models from several providers, so the aux model follows the main model's family.
  * An Anthropic-on-Bedrock model (an `anthropic.` prefix, after any cross-region prefix like `us.`)
  * gets Anthropic Haiku; an OpenAI-on-Bedrock model (an `openai.` prefix) gets the OpenAI small model
- * hosted on Bedrock (`openai.` + the OpenAI-provider summarizer). Either way the summarizer shares
+ * hosted on Bedrock (`openai.` + the OpenAI-provider small model). Either way the aux model shares
  * the main model's provider. Any other family is unidentifiable and returns `undefined` so the
  * caller can reuse the main model rather than guess.
  */
-function bedrockWebFetchModel(name: string): string | undefined {
+function bedrockAuxModel(name: string): string | undefined {
   const family = bedrockFamily(name)
   if (family.startsWith('anthropic.')) {
-    return WEB_FETCH_MODELS.bedrock!
+    return AUX_MODELS.bedrock!
   }
   if (family.startsWith('openai.')) {
     const prefix = name.slice(0, name.length - family.length)
-    return `${prefix}openai.${WEB_FETCH_MODELS.openai}`
+    return `${prefix}openai.${AUX_MODELS.openai}`
   }
   return undefined
 }

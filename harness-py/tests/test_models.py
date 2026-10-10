@@ -706,26 +706,24 @@ def test_supports_media_is_false_for_openai_on_bedrock_converse():
     assert _supports_media(None) is True
 
 
-def test_bedrock_web_fetch_summarizer_keeps_the_inference_profile_prefix():
-    from strands_harness.models import _bedrock_web_fetch_model
+def test_bedrock_aux_model_keeps_the_inference_profile_prefix():
+    from strands_harness.models import _bedrock_aux_model
 
-    assert _bedrock_web_fetch_model("us.openai.gpt-6-astra") == "us.openai.gpt-5.6-luna"
-    assert _bedrock_web_fetch_model("global.openai.gpt-5.6-sol") == "global.openai.gpt-5.6-luna"
-    assert _bedrock_web_fetch_model("openai.gpt-5.6-sol") == "openai.gpt-5.6-luna"
-    assert _bedrock_web_fetch_model("us.anthropic.claude-opus-4-8") == (
-        "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-    )
-    assert _bedrock_web_fetch_model("meta.llama3") == "meta.llama3-2-3b-instruct-v1:0"
-    assert _bedrock_web_fetch_model("google.gemma-3-27b-it") is None
+    assert _bedrock_aux_model("us.openai.gpt-6-astra") == "us.openai.gpt-5.6-luna"
+    assert _bedrock_aux_model("global.openai.gpt-5.6-sol") == "global.openai.gpt-5.6-luna"
+    assert _bedrock_aux_model("openai.gpt-5.6-sol") == "openai.gpt-5.6-luna"
+    assert _bedrock_aux_model("us.anthropic.claude-opus-4-8") == ("global.anthropic.claude-haiku-4-5-20251001-v1:0")
+    assert _bedrock_aux_model("meta.llama3") == "meta.llama3-2-3b-instruct-v1:0"
+    assert _bedrock_aux_model("google.gemma-3-27b-it") is None
 
 
-def test_bedrock_web_fetch_summarizer_maps_known_families_to_small_regionals():
-    from strands_harness.models import _bedrock_web_fetch_model
+def test_bedrock_aux_model_maps_known_families_to_small_regionals():
+    from strands_harness.models import _bedrock_aux_model
 
-    assert _bedrock_web_fetch_model("amazon.nova-2-lite-v1:0") == "amazon.nova-lite-v1:0"
-    assert _bedrock_web_fetch_model("us.amazon.nova-pro-v1:0") == "amazon.nova-lite-v1:0"
-    assert _bedrock_web_fetch_model("us.meta.llama3-2-70b-instruct-v1:0") == "meta.llama3-2-3b-instruct-v1:0"
-    assert _bedrock_web_fetch_model("mistral.mistral-large-2407-v1:0") == "mistral.mistral-small-2402-v1:0"
+    assert _bedrock_aux_model("amazon.nova-2-lite-v1:0") == "amazon.nova-lite-v1:0"
+    assert _bedrock_aux_model("us.amazon.nova-pro-v1:0") == "amazon.nova-lite-v1:0"
+    assert _bedrock_aux_model("us.meta.llama3-2-70b-instruct-v1:0") == "meta.llama3-2-3b-instruct-v1:0"
+    assert _bedrock_aux_model("mistral.mistral-large-2407-v1:0") == "mistral.mistral-small-2402-v1:0"
 
 
 def test_supports_media_reads_a_bedrock_instance_model_id():

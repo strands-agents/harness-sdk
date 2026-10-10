@@ -40,7 +40,7 @@ import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-calle
 import { buildDefaultSubagent } from '../src/builtin-tools.js'
 import { AgentSpec, makeSubagent } from '../src/tools/subagent.js'
 import type { HarnessAgentOptions } from '../src/agent.js'
-import { storeOf } from './memory-internals.js'
+import { extractionModel, storeOf } from './memory-internals.js'
 
 // Wrap the configurable built-ins' factories so tests can see the config each was built with.
 vi.mock('@strands-agents/sdk/vended-tools/bash', async (importOriginal) => {
@@ -54,6 +54,10 @@ vi.mock('../src/tools/programmatic-tool-caller.js', async (importOriginal) => {
 vi.mock('../src/tools/subagent.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/tools/subagent.js')>()
   return { ...actual, makeSubagent: vi.fn(actual.makeSubagent) }
+})
+vi.mock('../src/tools/web-fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/tools/web-fetch.js')>()
+  return { ...actual, makeWebFetch: vi.fn(actual.makeWebFetch) }
 })
 
 const sampleTool = tool({
@@ -192,6 +196,58 @@ describe('createHarness', () => {
 
     expect((agent as unknown as { _modelRouter: unknown })._modelRouter).toBe(router)
     expect(agent.model).toBe(defaultModel)
+  })
+
+  it('defaults auxModel to the small model of the main provider', async () => {
+    const agent = await createHarness()
+    expect(agent.auxModel.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
+    expect(agent.auxModel).not.toBe(agent.model)
+    const anthropic = await createHarness({ model: 'anthropic/claude-opus-4-5-20251101' })
+    expect(anthropic.auxModel.getConfig().modelId).toBe('claude-haiku-4-5-20251001')
+  })
+
+  it('accepts auxModel as a provider string or a Model instance', async () => {
+    const fromString = await createHarness({ auxModel: 'openai/gpt-5-mini' })
+    expect(fromString.auxModel.getConfig().modelId).toBe('gpt-5-mini')
+    const aux = new BedrockModel({ modelId: 'us.amazon.nova-lite-v1:0' })
+    const fromInstance = await createHarness({ auxModel: aux })
+    expect(fromInstance.auxModel).toBe(aux)
+  })
+
+  it('runs memory extraction and the web_fetch summarizer on auxModel unless web_fetch overrides it', async () => {
+    const { makeWebFetch } = await import('../src/tools/web-fetch.js')
+    const aux = new BedrockModel({ modelId: 'us.amazon.nova-lite-v1:0' })
+    const agent = await createHarness({ auxModel: aux, memory: { dir: makeTempDir() } })
+    expect(extractionModel(agent.memoryManager as MemoryManager)).toBe(aux)
+    expect(vi.mocked(makeWebFetch).mock.lastCall?.[0].model).toBe(aux)
+
+    const overridden = await createHarness({
+      auxModel: aux,
+      builtinTools: { web_fetch: { model: 'openai/gpt-5-mini' } },
+    })
+    expect(overridden.auxModel).toBe(aux)
+    expect(vi.mocked(makeWebFetch).mock.lastCall?.[0].model.getConfig().modelId).toBe('gpt-5-mini')
+  })
+
+  it('rejects a ModelRouter as auxModel like the SDK does', async () => {
+    const router = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new BedrockModel({ modelId: 'deep' })])
+    await expect(createHarness({ auxModel: router as unknown as Model })).rejects.toThrow(/ModelRouter/)
+  })
+
+  it('forwards auxModel to subagent children, and a child with its own model re-resolves it', async () => {
+    const { makeSubagent, AgentSpec } = await import('../src/tools/subagent.js')
+    const aux = new BedrockModel({ modelId: 'us.amazon.nova-lite-v1:0' })
+    await createHarness({ auxModel: aux })
+    const builder = vi.mocked(makeSubagent).mock.lastCall?.[0].builder
+    const child = await builder!(new AgentSpec('go'))
+    expect(child.auxModel).toBe(aux)
+
+    await createHarness()
+    const rebuilder = vi.mocked(makeSubagent).mock.lastCall?.[0].builder
+    const spec = new AgentSpec('go')
+    spec.model = 'openai/gpt-5.6-sol'
+    const rerouted = await rebuilder!(spec)
+    expect(rerouted.auxModel.getConfig().modelId).toBe('gpt-5.6-luna')
   })
 
   it('backgrounds the subagent and leaves other compatible tools agent-selectable', async () => {

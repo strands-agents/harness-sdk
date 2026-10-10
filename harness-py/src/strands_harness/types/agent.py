@@ -47,9 +47,8 @@ class WebFetchConfig(TypedDict, total=False):
     """Per-tool configuration for ``web_fetch``.
 
     Attributes:
-        model: Summarizer model for fetched pages (also reused for memory extraction). A
-            ``provider/name`` string, a ``Model``, or a ``ModelRouter``; omit for the provider's
-            small model.
+        model: Summarizer model for fetched pages. A ``provider/name`` string, a ``Model``, or a
+            ``ModelRouter`` (its default model is used); omit to use the agent's ``aux_model``.
         transport: ``"curl"`` (the default) runs the request as ``curl`` inside the agent's
             ``sandbox``, so the sandbox's network controls apply; ``"direct"`` issues it from the
             harness process with the standard library, bypassing the sandbox.

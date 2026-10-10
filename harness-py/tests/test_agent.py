@@ -23,9 +23,9 @@ from strands.vended_tools.shell import make_shell
 from strands_harness import BUILTIN_TOOL_NAMES, HARNESS_CONTRACT, create_harness
 from strands_harness import agent as agent_module
 from strands_harness.defaults import DEFAULT_BUILTIN_TOOLS, DEFAULT_SUBAGENT_MAX_DEPTH
-from strands_harness.models import resolve_web_fetch_model
 from strands_harness.options import _memory_config, _normalize_builtin_tools
 from strands_harness.tools.subagent import build_default_subagent
+from strands_harness.tools.web_fetch import make_web_fetch
 
 
 def _context_managed(agent: Agent) -> bool:
@@ -167,6 +167,66 @@ def test_model_router_is_attached_through_the_model_parameter():
 
     assert agent._model_router is router
     assert agent.model is default
+
+
+def test_aux_model_defaults_to_the_small_model_of_the_main_provider():
+    agent = create_harness()
+    assert agent.aux_model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert agent.aux_model is not agent.model
+
+
+def test_aux_model_follows_the_main_models_provider():
+    agent = create_harness(model="anthropic/claude-opus-4-5-20251101")
+    assert agent.aux_model.get_config()["model_id"] == "claude-haiku-4-5-20251001"
+
+
+def test_aux_model_accepts_a_provider_string():
+    agent = create_harness(aux_model="openai/gpt-5-mini")
+    assert agent.aux_model.get_config()["model_id"] == "gpt-5-mini"
+
+
+def test_aux_model_instance_is_used_verbatim():
+    aux = BedrockModel(model_id="us.amazon.nova-lite-v1:0")
+    agent = create_harness(aux_model=aux)
+    assert agent.aux_model is aux
+
+
+def test_aux_model_rejects_a_router_like_the_sdk():
+    router = ModelRouter([BedrockModel(model_id="fast"), BedrockModel(model_id="deep")])
+    with pytest.raises(TypeError, match="ModelRouter"):
+        create_harness(aux_model=router)
+
+
+def test_aux_model_is_reused_for_memory_extraction(tmp_path):
+    aux = BedrockModel(model_id="us.amazon.nova-lite-v1:0")
+    agent = create_harness(aux_model=aux, memory={"dir": str(tmp_path)})
+    assert agent.memory_manager._extraction_stores[0].config.extractor._model is aux
+
+
+def test_aux_model_is_forwarded_to_subagent_children(monkeypatch):
+    aux = BedrockModel(model_id="us.amazon.nova-lite-v1:0")
+    seen: dict = {}
+
+    def spy(build_agent, parent_config, **config):
+        seen.update(parent_config)
+        return build_default_subagent(build_agent, parent_config, **config)
+
+    monkeypatch.setattr(agent_module, "build_default_subagent", spy)
+    create_harness(aux_model=aux)
+    assert seen["aux_model"] is aux
+
+
+def test_subagent_child_with_its_own_model_resolves_aux_model_for_that_provider(monkeypatch):
+    seen: dict = {}
+
+    def spy(build_agent, parent_config, **config):
+        seen["parent_config"] = parent_config
+        return build_default_subagent(build_agent, parent_config, **config)
+
+    monkeypatch.setattr(agent_module, "build_default_subagent", spy)
+    create_harness()
+    child = create_harness(**{**seen["parent_config"], "model": "openai/gpt-5.6-sol"})
+    assert child.aux_model.get_config()["model_id"] == "gpt-5.6-luna"
 
 
 def test_instructions_appended():
@@ -313,16 +373,17 @@ class TestBuiltinToolsUnion:
     def test_web_fetch_model_config_reaches_the_summarizer(self, monkeypatch):
         seen: list = []
 
-        def spy(main_model, web_fetch_model):
-            seen.append(web_fetch_model)
-            return resolve_web_fetch_model(main_model, web_fetch_model)
+        def spy(**kwargs):
+            seen.append(kwargs["model"])
+            return make_web_fetch(**kwargs)
 
-        monkeypatch.setattr(agent_module, "resolve_web_fetch_model", spy)
-        create_harness(builtin_tools={"web_fetch": {"model": "openai/gpt-5-mini"}})
-        assert seen == ["openai/gpt-5-mini"]
+        monkeypatch.setattr(agent_module, "make_web_fetch", spy)
+        agent = create_harness(builtin_tools={"web_fetch": {"model": "openai/gpt-5-mini"}})
+        assert [m.get_config()["model_id"] for m in seen] == ["gpt-5-mini"]
+        assert agent.aux_model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
         seen.clear()
-        create_harness(builtin_tools=["web_fetch"])
-        assert seen == [None]
+        agent = create_harness(builtin_tools=["web_fetch"])
+        assert seen == [agent.aux_model]
 
     @pytest.mark.parametrize(
         ("name", "factory", "config"),
