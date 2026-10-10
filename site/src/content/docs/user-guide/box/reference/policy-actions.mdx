@@ -1,0 +1,227 @@
+---
+title: Policy action reference
+description: Every Strands Box policy action, the enforcement point that raises it, its context.input and output fields, event types, decision causes, and fixed load-time checks.
+sidebar:
+  label: "Policy actions"
+---
+
+Every Box policy rule scopes by an action from this page and conditions on the action's
+`context.input` fields. Each action belongs to the `Box` namespace, written
+`Box::Action::"<name>"`. The principal is always `Box::Agent::"self"` and the resource is
+always `Box::Resource::"unused"`, so rules write both bare.
+
+## Actions
+
+| Action | Raised by | Raised when |
+|---|---|---|
+| `fs:read` | Strands Shell, Monty | A file or directory is read, listed, inspected, or entered |
+| `fs:write` | Strands Shell, Monty | A file is written or created, a directory is created, permissions change, or a symlink is made |
+| `fs:delete` | Strands Shell, Monty | A file or directory is removed |
+| `fs:move` | Strands Shell, Monty | A file or directory is renamed |
+| `fs:other` | Reserved | Never raised today |
+| `shell:exec` | Strands Shell | A command line runs a command the shell implements |
+| `shell:spawn` | Strands Shell, MCP broker | A command line starts a host binary, or Box starts a stdio MCP server |
+| `net:connect` | Egress gateway | A connection is opened to a host |
+| `http:request` | Egress gateway | An HTTP request is sent |
+| `mcp:call` | MCP broker, egress gateway | An MCP request is sent to a local or remote server |
+| `<server>::Action::"<tool>"` | MCP broker, egress gateway | A `tools/call` names a tool the server listed |
+
+### Filesystem
+
+Each `fs:*` action carries the same input:
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | String | The resolved absolute path. Under your home it's spelled `~/…`. From Monty, `.` and `..` are resolved but a symlink keeps the script's spelling. |
+| `operation` | Enum | The specific operation, below. |
+
+| Action | `operation` values (`Box::<Enum>::"<value>"`) |
+|---|---|
+| `fs:read` | `FsReadOperation`: `read_content`, `read_metadata`, `enumerate`, `read_link`, `change_dir`, `exec` |
+| `fs:write` | `FsWriteOperation`: `write_content`, `create_dir`, `set_permissions`, `symlink` |
+| `fs:delete` | `FsDeleteOperation`: `remove_file`, `remove_dir` |
+| `fs:move` | `FsMoveOperation`: `rename` |
+| `fs:other` | `FsOtherOperation`: `other` |
+
+`fs:read` with `exec` is a check that a file is executable, not running it.
+
+A rename or symlink checks several legs in order, and the first denial wins: the source
+as `fs:move` or `fs:write`, the source as `fs:read`, an existing destination as
+`fs:delete`, then the destination. A relative symlink target is judged on the path it
+resolves to from the link's directory.
+
+The `::response` event carries `output.result`, a `FsResponseResult`:
+`completed`, `descriptor_issued`, or `indeterminate`.
+
+### Shell
+
+| Field | Type | `shell:exec` | `shell:spawn` | Description |
+|---|---|---|---|---|
+| `command` | String | Yes | Yes | The program and its expanded arguments, joined by spaces. |
+| `program` | String | Yes | Yes | What the first word resolved to. Write rules on this field. |
+| `program_path` | String | No | Yes | The binary's canonical path, `~/…` under your home. |
+| `arg1` | String | Optional | Optional | The first argument. Guard with `has`. |
+| `arg2` | String | Optional | Optional | The second argument. Guard with `has`. |
+| `arg_count` | Long | Yes | Yes | The number of arguments. |
+| `cwd` | String | Yes | Yes | The working directory. |
+| `credential_reads` | Set of String | No | Optional | Credential-store files the started tool's grants name. |
+
+Each command raises one decision after parsing, expansion, and resolution, including
+each stage of a pipeline and commands run from command substitution, `find -exec`,
+`xargs`, `source`, and traps. Rule on `program` and the `arg` fields rather than
+`command`: `command` joins the arguments, so it can't be split back into them. A glob
+raises `fs:read` `enumerate` for every directory it reads, from its literal prefix down
+to each match.
+
+`shell:exec` and `shell:spawn` record a `::response` whatever the command's exit status.
+Its `output.status` is the exit status. A process ended by a signal reports 128 plus the
+signal number, a permitted host binary that can't start reports 126, a command with no
+reported status reports -1, and a background `&` command records its status when it
+ends. The workload can set the status of a `shell:exec` command, for example with a
+shell function of the same name, so a rule that depends on a host binary succeeding
+reads `shell:spawn` and pins `program_path`.
+
+### Network
+
+| Field | Type | `net:connect` | `http:request` | Description |
+|---|---|---|---|---|
+| `host` | String | Yes | Yes | Lowercased, without a trailing dot. |
+| `port` | Long | Yes | Yes | |
+| `ip` | String | Optional | No | The resolved address the gateway will dial. Guard with `has`. |
+| `method` | String | No | Yes | Such as `GET` or `POST`. |
+| `path` | String | No | Yes | The URL path, without the query string. |
+| `body_bytes` | Long | No | Yes | On `::request`, the body bytes offered; on `::response`, the request bytes delivered, headers included. |
+| `intercepted` | Bool | No | Yes | Whether the gateway terminated TLS for the request. |
+
+`net:connect` is decided when the host resolves, without `ip`, and again for each
+address, with `ip`. Permit on `host` and `port`: a permit that needs `ip` never passes
+the first decision. Refuse addresses with a `forbid` that matches `ip` as a string, such
+as `context.input has ip && context.input.ip like "169.254.*"`. An IPv6 address that
+carries an IPv4 address, such as `::ffff:169.254.169.254`, reads as that IPv4 address,
+and any other IPv6 address reads in its compressed lowercase form. Cedar's `ipaddr`
+functions don't apply, and a policy that uses them fails to load.
+
+The `http:request` `::response` event carries `output.status`, the HTTP status code,
+when a reply arrived.
+
+### MCP
+
+| Field | Type | Description |
+|---|---|---|
+| `server` | String | The `[mcp.<name>]` name. |
+| `method` | String | The JSON-RPC method, such as `tools/call` or `tools/list`. For the agent's reply to a local server's own request, the method of that request, such as `roots/list`. |
+| `tool` | String, optional | Present for `tools/call`. |
+| `prompt` | String, optional | Present for `prompts/get`. |
+| `uri` | String, optional | Present for `resources/read`. Box normalizes a `file`, `http`, or `https` URI before the decision, and forwards the normalized form. |
+
+`initialize`, `ping`, `server/discover`, `subscriptions/listen`, and notifications pass
+a local server's broker undecided. A remote server's `initialize` is decided. The
+agent's reply to a local server's own request, such as `roots/list`, is decided as
+`mcp:call`; a reply to `ping` passes undecided.
+
+A per-tool action is named `<server>::Action::"<tool>"`. The namespace is the server
+name with every character other than a letter, digit, or `_` replaced by `_`, a leading
+digit prefixed with `_`, and a reserved word suffixed with `_`: `builder-mcp` becomes
+`builder_mcp`.
+Its `context.input` holds the tool's arguments, typed from the server's input schema.
+Run [`box policy generate-schema`](cli.md#policy-generate-schema) to see them.
+
+A per-tool action refines `mcp:call`. When no per-tool rule matches, the `mcp:call`
+decision stands; only a matching `forbid` denies. Box learns a server's tools from the replies to
+the agent's own `tools/list` and sends no list of its own. It holds the reply to the
+last page until the tools' rules enforce, and a later list that changes the tools
+replaces them. Until the server's tools are known, a typed call is denied as
+`policy_pending`, and the agent can retry it. A server whose client never lists it, or
+stops paging, stays unknown, and its typed calls are refused. Box refuses a
+`tools/call` for a tool that isn't in the server's accepted tool catalog, including
+every call before a catalog is accepted, with the rule `enforcement:mcp-catalog`.
+[Write policy for an MCP server](https://github.com/strands-agents/box/blob/main/docs/user/mcp-policy.md)
+in the Box repository walks through narrowing a server.
+
+## Events
+
+Temporal patterns name an action and one of three events, such as
+`Box::Action::"http:request"::response{ … }`. Each event carries the action's `input`
+fields as `input.<field>`.
+
+| Event | Recorded when | Extra fields |
+|---|---|---|
+| `::request` | The action is asked for, before the decision. Includes denied attempts. | |
+| `::response` | The action ran. | `output.<field>`, where the action has outputs |
+| `::error` | The action was allowed and then failed. | |
+
+In a pattern, `_` matches any value. The
+[Dogwood guide](https://dogwood-policy.github.io/dogwood/) covers binding and
+correlating values.
+
+## Decisions
+
+| Cause | Rule shown | Meaning |
+|---|---|---|
+| `permitted` | The permit's `@id` | A permit matched and no forbid did. |
+| `forbidden` | The forbid's `@id` | A forbid matched. |
+| `no_match` | `<default-deny>` | No permit matched. |
+| `policy_pending` | `<policy-pending>` | An MCP server's tools aren't known yet. |
+| `internal_fault` | `<default-deny>` | The request couldn't be evaluated. |
+| `enforcement` | `enforcement:<gate>` | Box decided the action itself, outside the policy: for example `reach-floor` (the [reachable paths check](#what-box-always-refuses)), `mcp-catalog` (a tool outside the server's accepted catalog), `native-egress` (a tool or server that skips the gateway), or Box's own startup traffic. |
+
+A rule without an `@id` is named `policy_<index>` in decisions, counting from 0.
+
+## Load-time checks
+
+Box refuses to load a policy that does any of the following. In a box with a stdio MCP
+server, Box checks only the syntax before the box starts, and the rest once it knows the
+servers' tools.
+
+- Fails to parse, or uses an unknown action, field, or type.
+- Reads an optional field such as `arg1` without a `has` guard.
+- Gives one `@id` to more than one rule.
+- Scopes a rule to `fs:other` alone.
+- In an `fs:*` or `shell:spawn` rule, compares a `path` or `program_path` to a home
+  path spelled absolutely, or a directory spelled with a trailing slash.
+- Calls an information provider.
+- Writes a cap as a `permit`: a `permit` with a `when temporal` clause, beside a
+  `permit` that admits the same action with no condition.
+- Uses a temporal window longer than 24 hours.
+
+Box warns, and still loads the policy, when a `program` literal contains `/`, when a
+`like` pattern names your home after a `*`, or when a cap written as a `permit` sits
+beside a conditioned `permit` for the same action.
+
+## What Box always refuses
+
+After policy permits a file operation through the box's shell or Python, the reachable
+paths check refuses these, whatever the policy says:
+
+- **Box's own state, through the box's shell and Python.** Every path in this box's
+  `box_dir` and Box's machine state, and any operation on the `box.toml` and policy
+  file this run loaded.
+- **Paths outside the interpreters' reach.** Python file operations outside your home,
+  the agent's `HOME`, and the workspace, and any path whose spelling resolves to a
+  different path, such as one through a symlink. A refusal is recorded with the rule
+  `enforcement:reach-floor`. The shell binds only those roots: a path outside them
+  lives in the shell's memory for one command and never touches the surrounding OS.
+
+## Refuse cloud metadata endpoints
+
+Box doesn't refuse cloud metadata endpoints on its own: the gateway keeps no list of
+refused destinations. Add these rules to every policy:
+
+```text
+@id("metadata_hosts")
+forbid (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input.host == "metadata.google.internal" ||
+  context.input.host == "metadata.azure.internal"
+};
+
+@id("metadata_addresses")
+forbid (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input has ip && (
+    context.input.ip like "169.254.*" ||
+    context.input.ip == "fd00:ec2::254" ||
+    context.input.ip like "fe8*" || context.input.ip like "fe9*" ||
+    context.input.ip like "fea*" || context.input.ip like "feb*")
+};
+```

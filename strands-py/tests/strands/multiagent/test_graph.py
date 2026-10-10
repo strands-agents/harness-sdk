@@ -1,5 +1,6 @@
 import asyncio
 import time
+import warnings
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
@@ -706,6 +707,36 @@ async def test_graph_node_timeout(mock_strands_tracer, mock_use_span):
 
     mock_strands_tracer.start_multiagent_span.assert_called()
     mock_use_span.assert_called()
+
+
+def test_build_warns_when_execution_is_unbounded():
+    """A graph built with no execution limits warns, attributed to the caller's ``build()`` line."""
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("agent_a", "Response A"), "a")
+
+    with pytest.warns(UserWarning, match="execution is unbounded") as record:
+        builder.build()
+
+    assert record[0].filename == __file__
+
+
+@pytest.mark.parametrize(
+    "configure_limit",
+    [
+        lambda builder: builder.set_max_node_executions(10),
+        lambda builder: builder.set_execution_timeout(30.0),
+    ],
+    ids=["max_node_executions", "execution_timeout"],
+)
+def test_build_does_not_warn_when_execution_limits_are_set(configure_limit):
+    """Setting either execution limit silences the unbounded-execution nudge."""
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("agent_a", "Response A"), "a")
+    configure_limit(builder)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        builder.build()
 
 
 @pytest.mark.asyncio
@@ -2175,8 +2206,7 @@ def test_graph_serialize_deserialize_serialize_preserves_cumulative_state():
 async def test_graph_execution_time_reflects_active_invocation(mock_strands_tracer, mock_use_span):
     """The final GraphResult includes the current invocation's interval on top of restored prior time.
 
-    execution_time is committed to state once, at finalization. GraphResult is built before that
-    commit, so it must fold in the in-flight interval itself — and finalization must not double-count.
+    Finalization commits execution_time to state exactly once before building GraphResult.
     """
     # Monotonic fake clock advanced explicitly; robust to how many times time.time() is called.
     clock = {"now": 1000.0}

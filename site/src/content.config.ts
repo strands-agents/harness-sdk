@@ -62,7 +62,7 @@ export type ChangelogEntry = z.infer<typeof changelogEntrySchema>
 
 export const changelogFrontmatterSchema = z
   .object({
-    sdk: z.enum(['harness', 'evals']),
+    sdk: z.enum(['sdk', 'evals']),
     language: z.enum(['python', 'typescript']).optional(),
     version: z.string(),
     tag: z.string(),
@@ -74,14 +74,14 @@ export const changelogFrontmatterSchema = z
     newContributors: z.array(z.object({ login: z.string(), pr: z.number() })).default([]),
   })
   // Tie `language` to `sdk` so bad data can't create bogus streams/routes:
-  // harness releases are per-language (python|typescript); evals is python-only
+  // sdk releases are per-language (python|typescript); evals is python-only
   // and omits the field entirely.
   .superRefine((d, ctx) => {
-    if (d.sdk === 'harness' && d.language === undefined) {
+    if (d.sdk === 'sdk' && d.language === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['language'],
-        message: 'harness releases require a language (python or typescript)',
+        message: 'sdk releases require a language (python or typescript)',
       })
     }
     if (d.sdk === 'evals' && d.language !== undefined) {
@@ -124,6 +124,7 @@ export const catalogEntrySchema = z
       'storage',
       'integration',
       'plugin',
+      'observability',
       'agent-extension',
       'intervention',
     ]),
@@ -246,6 +247,22 @@ export const eventSchema = z
   })
 export type LearnEvent = z.infer<typeof eventSchema>
 
+export const announcementSchema = z
+  .object({
+    title: z.string(),
+    href: z.string(),
+    linkText: z.string().default('Learn more'),
+    // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
+    date: eventDate,
+    // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
+    expires: eventDate.optional(),
+  })
+  .refine((a) => a.expires === undefined || a.expires >= a.date, {
+    message: 'expires must not be before date',
+    path: ['expires'],
+  })
+export type Announcement = z.infer<typeof announcementSchema>
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -301,6 +318,13 @@ export const collections = {
     }),
     schema: eventSchema,
   }),
+  announcements: defineCollection({
+    loader: glob({
+      base: 'src/content/announcements',
+      pattern: '**/*.{yml,yaml}',
+    }),
+    schema: announcementSchema,
+  }),
   docs: defineCollection({
     loader: glob({
       base: 'src/content',
@@ -342,6 +366,7 @@ export const collections = {
             'storage',
             'integration',
             'plugin',
+            'observability',
             'agent-extension',
             'intervention',
           ])

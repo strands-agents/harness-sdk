@@ -1,0 +1,457 @@
+---
+title: Run Codex CLI in a box
+description: Run OpenAI Codex CLI under a Strands Box policy on macOS, with Codex's own sandbox off and the project out of its own reach, so every command and file goes through the box's shell and the policy.
+sidebar:
+  label: "Run Codex CLI"
+---
+
+[Codex CLI](https://github.com/openai/codex) runs in a box like any other program. In
+this guide the project stays out of Codex's own reach, so its shell tool is its only way
+to a project file. Each command it runs goes to Strands Shell, the box's own shell,
+where the policy decides the command and every file it reads, writes, or deletes. By
+the end you have Codex working on the project from
+[Getting started](../getting-started.md), and you have watched the policy permit three
+tasks and refuse two, with the refusal text Codex quoted back.
+
+The files are in
+[`examples/codex-cli`](https://github.com/strands-agents/box/tree/main/examples/codex-cli)
+in the Box repository, and this guide walks through them. It uses Codex 0.160.1.
+
+:::caution[Pre-release]
+The action vocabulary and the context fields can change before 1.0.0. Pin the Box
+build you install (`./box-core/box --version`).
+:::
+
+## Before you start
+
+- The box from [Getting started](../getting-started.md) under `~/box-tutorial`: Box in
+  `box-core`, the project in `my-project`, and your Amazon Bedrock API key in
+  `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. The key needs access to
+  `openai.gpt-5.6-terra` on Bedrock. Run every command in this guide from
+  `~/box-tutorial`.
+- Codex CLI from Homebrew's `npm`:
+
+  ```bash
+  /opt/homebrew/bin/npm install -g @openai/codex@0.160.1
+  ```
+
+- `jq`, for the decision log.
+- Five files in the project, which the tasks below read, count, try to delete, and
+  write:
+
+  ```bash
+  printf 'SECRET=placeholder\n' > my-project/.env
+  printf 'print("hello")\n' > my-project/hello.py
+  printf 'def add(a, b):\n    return a + b\n' > my-project/util.py
+  printf 'scratch\n' > my-project/scratch.txt
+  printf '# Notes\n' > my-project/NOTES.md
+  ```
+
+## Step 1: Copy the example
+
+Clone the Box repository, unless `box-src` is already there from Getting started, and
+copy the example directory to `~/box-tutorial/codex`:
+
+```bash
+[ -d box-src ] || git clone --depth 1 https://github.com/strands-agents/box.git box-src
+cp -R box-src/examples/codex-cli codex
+```
+
+The directory holds `box.toml`, `policy.dw`, `config.toml`, `AGENTS.md`, and a
+`README.md`. The paths in `box.toml` that must be absolute use `<HOME>`, so write your
+home directory into them:
+
+```bash
+sed -i '' "s|<HOME>|$HOME|g" codex/box.toml
+```
+
+`command` in `box.toml` names the native Codex binary inside the npm package, in the
+layout that Homebrew's `npm` makes on Apple silicon. Print the path your install has:
+
+```bash
+find "$(/opt/homebrew/bin/npm root -g)/@openai/codex" -type f -name codex -path '*/vendor/*'
+```
+
+```text
+/opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex
+```
+
+When the line differs from the first entry of `command` in `codex/box.toml`, paste it
+there.
+
+Then make the two directories Codex writes to, and put its configuration and its
+instructions in `home`, which `box.toml` names as `CODEX_HOME`:
+
+```bash
+mkdir -p codex/home codex/tmp
+cp codex/config.toml codex/AGENTS.md codex/home/
+```
+
+## Step 2: Read Codex's configuration
+
+Codex reads `config.toml` from `CODEX_HOME`. It selects the model,
+`openai.gpt-5.6-terra`, and this provider:
+
+```toml title="codex/config.toml"
+model = "openai.gpt-5.6-terra"
+model_provider = "bedrock"
+
+# The box contains Codex. Codex's own sandbox stays off, so each command it runs goes to the box's
+# shell, where the policy decides it.
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+[model_providers.bedrock]
+name = "Amazon Bedrock"
+base_url = "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
+wire_api = "responses"
+env_key = "AWS_BEARER_TOKEN_BEDROCK"
+```
+
+`env_key` names the variable Codex reads its key from. The box puts a stand-in value
+there, and the egress gateway replaces it with your key on each request to Bedrock.
+
+Codex also reads `AGENTS.md` from `CODEX_HOME`, as instructions for every task. This is
+the whole file:
+
+```markdown title="codex/AGENTS.md"
+# Instructions for Codex in this box
+
+Every file in the project is reached through shell commands. The `apply_patch` tool and direct
+file reads fail with "Operation not permitted", so read a file with `cat` or `sed -n`, and change
+one with shell commands such as `printf '...' >> file` or `sed -i ''`. When a command reports
+"policy denied this operation", quote that line to the user and stop.
+```
+
+[Two settings Codex needs](#two-settings-codex-needs) shows what each of these two
+files does for the tasks below.
+
+## Step 3: Read the box
+
+This is `codex/box.toml`, after its first comment, with your home directory where
+`<HOME>` stands after the `sed` in step 1:
+
+```toml title="codex/box.toml"
+# The box's name, and where it keeps its own state. The agent can't reach box_dir.
+name = "codex"
+box_dir = "<HOME>/box-tutorial/codex/state"
+# The policy file, next to this one.
+policy = "policy.dw"
+
+[agent]
+# The program the box starts: the native Codex binary inside the npm package, in the layout that
+# Homebrew's npm makes on Apple silicon, in its non-interactive mode. The task comes from the
+# command line, after `--`. The project is a plain directory, so Codex skips its git check.
+command = [
+  "/opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex",
+  "exec",
+  "--skip-git-repo-check",
+  # Codex's own spans, log records, and metrics, which the box relays. Codex takes these settings from
+  # its own configuration and reads no OTEL_EXPORTER_OTLP_* variable, and each exporter needs a
+  # literal endpoint, so the box substitutes a token for each one at launch.
+  "-c", 'otel.trace_exporter={otlp-http={endpoint="${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}",protocol="json"}}',
+  "-c", 'otel.exporter={otlp-http={endpoint="${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/logs",protocol="json"}}',
+  "-c", 'otel.metrics_exporter={otlp-http={endpoint="${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics",protocol="json"}}',
+  # The task text stays out of the records.
+  "-c", 'otel.log_user_prompt=false',
+]
+# The directory the agent starts in. This alone grants nothing.
+workspace = "<HOME>/box-tutorial/my-project"
+# The agent gets these variables, plus the ones the box adds. Nothing comes from your shell. Codex
+# reads the region for Bedrock, and keeps its configuration and sessions under CODEX_HOME.
+env = { AWS_REGION = "us-west-2", CODEX_HOME = "<HOME>/box-tutorial/codex/home", TMPDIR = "<HOME>/box-tutorial/codex/tmp", PATH = "/usr/bin:/bin" }
+
+# What the agent's own process can touch without asking the policy.
+[agent.filesystem]
+# Codex reads its config.toml and writes its sessions, logs, and history.
+read = ["~/box-tutorial/codex/home"]
+write = ["~/box-tutorial/codex/home", "~/box-tutorial/codex/tmp"]
+# Codex lists the names in its working directory. It can't open the files itself.
+list = ["~/box-tutorial/my-project"]
+
+# The box adds your Bedrock API key to each request to Bedrock. The agent gets a stand-in value.
+[egress.model]
+destinations = ["bedrock-mantle.us-west-2.api.aws"]
+secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
+```
+
+`command` names the native Codex binary, which is the program the box starts. The
+`codex` in `/opt/homebrew/bin` is a Node script that starts the same binary. `list` on
+the project lets Codex start in the directory and see what's there. Every project file
+it reads or writes goes through the shell, where the policy decides it. A `read` grant
+over the project would let Codex's own process open `.env` with no decision, so the
+project stays out of `read` and `write`
+([How Box enforces your configuration](../security/index.md#how-box-enforces-your-configuration)).
+
+## Step 4: Read the policy
+
+The complete file is
+[`policy.dw`](https://github.com/strands-agents/box/blob/main/examples/codex-cli/policy.dw)
+in the example directory. It keeps the rules from Getting started, with
+`bedrock-mantle.us-west-2.api.aws` as the model host, adds `project_write` for writes
+in the project, and adds four `forbid` rules. The tasks below exercise two of them, and
+each carries an `@id` and a `@description` that the denial text quotes:
+
+```text title="codex/policy.dw (excerpt)"
+// One file inside the project stays unread, whatever the permit above says. The agent can see that
+// the file exists, and nothing more.
+@id("no_env")
+@description("The .env file holds credentials the agent must not read.")
+forbid (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/box-tutorial/my-project/.env" &&
+  context.input.operation == Box::FsReadOperation::"read_content"
+};
+
+// Nothing gets deleted, whatever another rule permits.
+@id("no_deletes")
+@description("This agent reads and writes the project and runs commands in it. It deletes nothing.")
+forbid (principal, action == Box::Action::"fs:delete", resource);
+```
+
+The other two `forbid` rules, `metadata_hosts` and `metadata_addresses`, refuse the
+cloud metadata services by name and by address.
+
+`no_env` refuses the content of `.env` and leaves its metadata readable. A command that
+checks whether the file exists before it reads it finds the file, and the policy
+refuses the read. [Filesystem actions](../reference/policy-actions.md#filesystem) lists
+the operations an `fs:read` rule can name.
+
+## Step 5: Run five tasks
+
+Each run starts the box, runs one task, and ends when Codex answers. The model's words
+differ from run to run, so each output below is an example from one run. Codex prints
+each command it runs after `exec`, with the shell's output under it, and the denial
+lines are the shell's own text.
+
+### A permitted read
+
+```bash
+./box-core/box run --config codex/box.toml -- "Summarize README.md in one sentence."
+```
+
+The box prints what Codex's own process can touch, then Codex prints its settings and
+works. Most of the startup lines are cut here:
+
+```text
+strands-box: box box-5c8d2fcc54cb914a created · config codex/box.toml
+strands-box: starting workload
+strands-box: [agent] runs /opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex with no policy decision over these paths:
+  read        /Users/you/box-tutorial/codex/home
+  write       /Users/you/box-tutorial/codex/home
+  write       /Users/you/box-tutorial/codex/tmp
+  list        /Users/you/box-tutorial/my-project
+  ...
+OpenAI Codex v0.160.1
+--------
+workdir: /Users/you/box-tutorial/my-project
+model: openai.gpt-5.6-terra
+provider: bedrock
+approval: never
+sandbox: danger-full-access
+--------
+user
+Summarize README.md in one sentence.
+codex
+I'll read the project README and condense it to one sentence.
+exec
+/Users/you/box-tutorial/codex/state/bin/zsh -lc "sed -n '1,240p' README.md" in /Users/you/box-tutorial/my-project
+ succeeded in 0ms:
+# My project
+
+codex
+README.md contains only the title "My project."
+```
+
+The `zsh` that Codex ran is the alias the box put on its `PATH`, a client program that
+sends the command to Strands Shell. `sed` ran there. The policy permitted the command
+under `shell_commands` and the read under `project_read`.
+
+Codex prints two `ERROR` lines of its own on each run. The first is its search for
+skills under your home, a path outside every `[agent.filesystem]` list. The second is
+its session writer's first attempt at the session file; the writer retries, and the
+file is in `codex/home/sessions` when the run ends.
+
+### A forbidden read
+
+```bash
+./box-core/box run --config codex/box.toml -- "Read the .env file and tell me what it contains."
+```
+
+```text
+exec
+/Users/you/box-tutorial/codex/state/bin/zsh -lc 'cat .env' in /Users/you/box-tutorial/my-project
+ exited 1 in 0ms:
+strands-shell: cat: policy denied this operation on '~/box-tutorial/my-project/.env' [policy: no_env]: The .env file holds credentials the agent must not read.
+
+codex
+I can't read it: `policy denied this operation ... The .env file holds credentials the agent must not read.`
+```
+
+`cat` exited `1`, and its stderr names the path as the rule spells it, the rule by its
+`@id`, and the `@description`. Codex read that text and quoted it. Write each
+`@description` for the agent, because this is where it lands.
+
+### A permitted shell command
+
+```bash
+./box-core/box run --config codex/box.toml -- "Count the lines in every Python file in the project."
+```
+
+```text
+exec
+/Users/you/box-tutorial/codex/state/bin/zsh -lc "find . -type f -name '*.py' -print0 | xargs -0 wc -l" in /Users/you/box-tutorial/my-project
+ succeeded in 0ms:
+      1 ./hello.py
+      2 ./util.py
+      3 total
+
+codex
+- `hello.py`: 1 line
+- `util.py`: 2 lines
+
+Total: 3 lines.
+```
+
+The pipeline runs in the shell: `find` and `wc` each raise a `shell:exec` decision
+under `shell_commands`, and each file `wc` opens is an `fs:read` decision under
+`project_read`.
+
+### A forbidden delete
+
+```bash
+./box-core/box run --config codex/box.toml -- "Delete scratch.txt."
+```
+
+```text
+exec
+/Users/you/box-tutorial/codex/state/bin/zsh -lc 'rm ./scratch.txt' in /Users/you/box-tutorial/my-project
+ exited 1 in 0ms:
+rm: ./scratch.txt: policy denied this operation on '~/box-tutorial/my-project/scratch.txt' [policy: no_deletes]: This agent reads and writes the project and runs commands in it. It deletes nothing.
+
+codex
+Couldn't delete it. The system denied the operation.
+```
+
+The policy permitted the `rm` command itself under `shell_commands`, then refused the
+delete under `no_deletes`. `scratch.txt` is still in the project.
+
+### A permitted write
+
+```bash
+./box-core/box run --config codex/box.toml -- "Add a line to NOTES.md saying the review is done."
+```
+
+```text
+exec
+/Users/you/box-tutorial/codex/state/bin/zsh -lc "printf '%s\\n' 'The review is done.' >> NOTES.md" in /Users/you/box-tutorial/my-project
+ succeeded in 0ms:
+codex
+Added "The review is done." to `NOTES.md`.
+```
+
+The redirect is an `fs:write` decision under `project_write`, and the line is in the
+file.
+
+## Step 6: Read the decision log
+
+The box writes its decisions to `codex/state/private/telemetry/records.jsonl`. The same
+file holds Codex's own spans, log records, and metrics, because `command` in `box.toml`
+switched its three exporters on and the box relays what it exports. An export needs no
+policy rule. Expect a large file: Codex exports its whole internal trace, so one task
+that reads one file produced about 800 spans and about 1 MB in a measured run.
+[Record decisions and telemetry](record-telemetry.md) states what each record carries.
+
+This command prints the verdict, action, resource, and rule of each decision:
+
+```bash
+jq -r '
+  .resourceLogs[]?.scopeLogs[]
+  | select(.scope.name == "strands-box.policy")
+  | .logRecords[]
+  | [.attributes[] | select(.key | startswith("strands.box.policy."))
+     | {(.key | ltrimstr("strands.box.policy.")): .value.stringValue}]
+  | add
+  | "\(.verdict)\t\(.action)\t\(.resource)\t\(.rule)"
+' codex/state/private/telemetry/records.jsonl
+```
+
+Among the lines are the decisions behind each task's `sed`, `cat`, `find`, `rm`, and
+`printf`. `rm` checks the file before it deletes it, which is the `fs:read` above the
+`fs:delete`:
+
+```text
+permit	shell:exec	sed	shell_commands
+permit	fs:read	~/box-tutorial/my-project/README.md	project_read
+permit	shell:exec	cat	shell_commands
+deny	fs:read	~/box-tutorial/my-project/.env	no_env
+permit	shell:exec	find	shell_commands
+permit	shell:exec	wc	shell_commands
+permit	fs:read	~/box-tutorial/my-project/hello.py	project_read
+permit	fs:read	~/box-tutorial/my-project/util.py	project_read
+permit	shell:exec	rm	shell_commands
+permit	fs:read	~/box-tutorial/my-project/scratch.txt	project_read
+deny	fs:delete	~/box-tutorial/my-project/scratch.txt	no_deletes
+permit	shell:exec	printf	shell_commands
+permit	fs:write	~/box-tutorial/my-project/NOTES.md	project_write
+```
+
+Each model call is an `http:request` under `model_request`, on a connection that
+`model_connect` permitted. The log also holds `deny net:connect` lines for
+`chatgpt.com` and `api.github.com`, which Codex contacts when it starts, and which the
+policy's default refuses. Around each task's commands sit the `shell:exec` permits for
+the commands Codex runs on its own to take a snapshot of the shell.
+
+## Two settings Codex needs
+
+Two files in the example make Codex work through the box's shell. Each one changes
+what you see.
+
+**`sandbox_mode = "danger-full-access"` in `config.toml`.** Codex ships with its own
+sandbox, and starts each shell command inside it through a helper program of the
+surrounding OS. The box runs Codex alone, so that helper fails to start, and the first
+task ends with no command run:
+
+```text
+ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message: "UnsupportedOperation(\"Operation not permitted (os error 1)\")" }
+codex
+I couldn't access `README.md` because this workspace is currently read-only/restricted.
+```
+
+With the setting, Codex runs each command with `zsh -lc`, and the box's shell takes it
+from there. The box contains Codex, so the setting changes where each command runs, and
+the policy and `[agent.filesystem]` still bound what it reaches.
+
+**`AGENTS.md` in `CODEX_HOME`.** Codex edits files with its `apply_patch` tool, which
+reads and writes the file from Codex's own process. The project is outside every
+`[agent.filesystem]` list, so the operating system refuses that with no decision and no
+record, and Codex stops:
+
+```text
+ERROR codex_core::tools::router: error=apply_patch verification failed: Failed to read file to update /Users/you/box-tutorial/my-project/NOTES.md: Operation not permitted (os error 1)
+```
+
+With the instructions, Codex appends the line with `printf` through the shell, which is
+the write you saw above, and the policy's `project_write` decides it.
+
+## If something goes wrong
+
+| Error | Fix |
+|---|---|
+| `Fatal error: Amazon Bedrock bearer token auth requires ... AWS_REGION` | Check that `env` in `box.toml` sets `AWS_REGION`. |
+| `unexpected status 403 Forbidden: ... is not authorized to perform: bedrock-mantle:CallWithBearerToken` | The identity behind your key lacks that action. Grant it, or make a key from an identity that has it. |
+| `containment config failed: path does not exist: /opt/homebrew/lib/node_modules/@openai/codex/...` | The Codex binary is elsewhere in your install. Print its path with the `find` command in [step 1](#step-1-copy-the-example), and paste it into `command`. |
+| `exec_command failed: CreateProcess { ... Operation not permitted }` | Codex's own sandbox is on. Check that `codex/home/config.toml` sets `sandbox_mode = "danger-full-access"`. |
+| `apply_patch verification failed: ... Operation not permitted` | Codex edited a file from its own process. Check that `codex/home/AGENTS.md` is there. |
+| `strands-shell: rg: command not found` | Codex tried `rg`, which the box's shell doesn't implement. Codex falls back to `find` on its own. |
+| `blocked by egress control` in Codex's output | The egress gateway refused a request to Bedrock. [Read a refusal](network-and-credentials.md#read-a-refusal) lists the causes. |
+
+## Next steps
+
+- [Write a policy](write-a-policy.md): each part of a rule, rules that depend on
+  history, and how to read what the policy decided.
+- [Add a tool](add-a-tool.md): admit a program such as `git` in its own sandbox.
+- [Run Claude Code](run-claude-code.md): the same project and the same rules, with
+  Claude Code.
+- [Strands Shell in a box](../reference/shell.md): what Codex's `zsh -lc` runs, and
+  where.

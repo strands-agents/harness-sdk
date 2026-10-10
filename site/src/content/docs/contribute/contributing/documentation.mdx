@@ -1,15 +1,15 @@
 ---
-title: Contributing to Documentation
+title: Contributing to documentation
 description: 'Contribute to Strands Agents documentation: run the Astro site locally, use the docs agent skills, and submit anything from typo fixes to new guides.'
 sidebar:
   label: "Documentation"
 ---
 
-Good documentation helps developers succeed with Strands. We welcome contributions that make our docs clearer, more complete, or more helpful. Our documentation lives in the `site/` directory of the [Strands SDK repository](https://github.com/strands-agents/harness-sdk).
+Good documentation helps developers succeed with Strands. We welcome contributions that make our docs clearer, more complete, or more helpful. Our documentation lives in the `site/` directory of the [Strands Harness SDK repository](https://github.com/strands-agents/harness-sdk).
 
 ## Agent skills
 
-The repository ships agent skills in `.agents/skills/` that encode our documentation conventions, site components, and quality standards. If you're using an AI coding assistant, activate these skills before making documentation changes — they'll produce output that matches our style without you needing to internalize everything on this page.
+The repository ships agent skills in `.agents/skills/` that encode our documentation conventions, site components, and quality standards. If you're using an AI coding assistant, activate these skills before making documentation changes. They produce output that matches our style, so you don't have to internalize everything on this page.
 
 | Skill | What it does |
 |-------|--------------|
@@ -42,7 +42,7 @@ We're looking for contributions that improve the developer experience. Documenta
 
 ## Setup
 
-Let's get the docs running locally so you can preview your changes as you work. The docs are built with [Astro](https://astro.build/) and the [Starlight](https://starlight.astro.build/) theme.
+Run the docs locally to preview your changes as you work. The site is built with [Astro](https://astro.build/) and the [Starlight](https://starlight.astro.build/) theme.
 
 ```bash
 # Clone the repository
@@ -76,7 +76,7 @@ The submission process varies based on the size of your change. Small fixes can 
 
 ## Style guidelines
 
-We aim for documentation that teaches, not just describes. A reader finishes understanding the "why" before the "how." This section covers our voice, writing style, and code example conventions.
+We aim for documentation that teaches, not just describes. The reader should understand the "why" before the "how."
 
 ### Voice and tone
 
@@ -103,13 +103,13 @@ Keep prose tight and focused. Readers scan documentation looking for answers.
 
 ### Code examples
 
-Code examples are critical—they show developers exactly what to do. Always test your examples before submitting.
+Code examples show developers exactly what to do, so always test them before submitting.
 
-- Test all code — every example must actually work
-- Include both languages — provide Python and TypeScript when both are supported
-- Start simple — show the minimal example first, then add complexity
-- Add comments — explain non-obvious parts
-- Use realistic names — avoid foo/bar, use descriptive names
+- Test all code: every example must actually work
+- Include both languages: provide Python and TypeScript when both are supported
+- Start simple: show the minimal example first, then add complexity
+- Add comments: explain non-obvious parts
+- Use realistic names: avoid foo/bar, use descriptive names
 
 <Tabs>
 <Tab label="Python">

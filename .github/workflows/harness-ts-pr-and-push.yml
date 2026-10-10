@@ -1,0 +1,21 @@
+name: "Harness TypeScript: Pull Request and Push"
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'harness-ts/**'
+      - '.github/workflows/harness-ts-*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-test-lint:
+    uses: ./.github/workflows/harness-ts-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}

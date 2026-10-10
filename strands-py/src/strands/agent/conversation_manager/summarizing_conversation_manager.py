@@ -14,6 +14,7 @@ from ...types.tools import AgentTool
 from .compression.context_compression import (
     DEFAULT_SUMMARIZATION_PROMPT,
     adjust_split_point_for_tool_pairs,
+    as_user_summary,
     generate_summary,
 )
 from .compression.pin_message import apply_pin_first, partition_pinned
@@ -204,9 +205,10 @@ class SummarizingConversationManager(ConversationManager):
         When a dedicated summarization_agent was provided at init time, it is invoked as before
         (full agent pipeline, tool execution, etc.).
 
-        In the default case (no summarization_agent), the parent agent's *model* is called
-        directly via ``model.stream()``.  This avoids re-entering the agent pipeline which
-        would deadlock on ``_invocation_lock`` and corrupt metrics / traces / interrupt state.
+        In the default case (no summarization_agent), the parent agent's model (``agent.aux_model``
+        > ``agent.model``) is called directly via ``model.stream()``. This avoids re-entering the
+        agent pipeline which would deadlock on ``_invocation_lock`` and corrupt metrics / traces /
+        interrupt state.
 
         Args:
             messages: The messages to summarize.
@@ -260,7 +262,7 @@ class SummarizingConversationManager(ConversationManager):
             summarization_agent.messages = messages
 
             result = summarization_agent("Please summarize this conversation.")
-            return cast(Message, {**result.message, "role": "user"})
+            return as_user_summary(result.message)
 
         finally:
             summarization_agent.system_prompt = original_system_prompt
@@ -274,7 +276,7 @@ class SummarizingConversationManager(ConversationManager):
     # ------------------------------------------------------------------
 
     def _generate_summary_with_model(self, messages: list[Message], agent: "Agent") -> Message:
-        """Generate a summary by calling the agent's model directly.
+        """Generate a summary by calling the agent's summarization model directly.
 
         This bypasses the full agent pipeline (lock, metrics, traces, tool loop) and
         simply asks the underlying model to summarize the conversation. Delegates the
@@ -283,12 +285,12 @@ class SummarizingConversationManager(ConversationManager):
 
         Args:
             messages: The messages to summarize.
-            agent: The parent agent whose model is used.
+            agent: The parent agent. Summarizes with ``agent.aux_model`` > ``agent.model``.
 
         Returns:
             A message containing the conversation summary.
         """
-        return run_async(lambda: generate_summary(messages, agent.model, self.summarization_system_prompt))
+        return run_async(lambda: generate_summary(messages, agent.aux_model, self.summarization_system_prompt))
 
     def _adjust_split_point_for_tool_pairs(self, messages: list[Message], split_point: int) -> int:
         """Adjust the split point to avoid breaking ToolUse/ToolResult pairs.

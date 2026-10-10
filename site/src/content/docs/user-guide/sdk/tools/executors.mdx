@@ -1,0 +1,129 @@
+---
+title: Tool Executors
+description: 'Control whether Strands agents run tool calls concurrently or sequentially. Covers tool executors, event ordering, cancellation, and custom executors.'
+sidebar:
+  label: "Executors"
+tags: [tool-execution, event-loop]
+sourceLinks:
+  - path: strands-py/src/strands/tools/executors/concurrent.py
+  - path: strands-py/src/strands/tools/executors/sequential.py
+  - path: strands-ts/src/tools/executors/concurrent.ts
+  - path: strands-ts/src/tools/executors/sequential.ts
+---
+
+Tool executors control whether tools from a single assistant turn run concurrently or sequentially. Both SDKs default to concurrent execution.
+
+## Concurrent Executor
+
+Concurrent execution runs all tool calls from a single turn in parallel. This is the default in both SDKs, so you get it without extra configuration.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.tools.executors import ConcurrentToolExecutor
+
+agent = Agent(
+    tool_executor=ConcurrentToolExecutor(), 
+    tools=[weather_tool, time_tool]
+)
+# equivalent to Agent(tools=[weather_tool, time_tool])
+
+agent("What is the weather and time in New York?")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/executors_imports.ts:concurrent_imports"
+
+--8<-- "user-guide/sdk/tools/executors.ts:concurrent"
+```
+
+The `'concurrent'` string shorthand keeps your imports minimal. Passing `new ConcurrentToolExecutor()` is equivalent if you prefer to be explicit.
+
+</Tab>
+</Tabs>
+
+Assuming the model returns `weather_tool` and `time_tool` use requests, the concurrent executor runs both at the same time. End-to-end latency scales with the slowest tool rather than their sum.
+
+### Sequential Behavior
+
+Sometimes the model returns one tool use request at a time. Those tools then execute sequentially: concurrency happens only when the model returns multiple tool use requests in a single response. Some models let you influence this. Anthropic, for example, exposes an explicit parallel tool use setting ([docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use#parallel-tool-use)).
+
+## Sequential Executor
+
+Use sequential execution when tool order matters, for example when a later tool depends on a side effect of an earlier one:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.tools.executors import SequentialToolExecutor
+
+agent = Agent(
+    tool_executor=SequentialToolExecutor(), 
+    tools=[screenshot_tool, email_tool]
+)
+
+agent("Please take a screenshot and then email the screenshot to my friend")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/executors_imports.ts:sequential_imports"
+
+--8<-- "user-guide/sdk/tools/executors.ts:sequential"
+```
+
+The `'sequential'` string shorthand keeps your imports minimal. Passing `new SequentialToolExecutor()` is equivalent if you prefer to be explicit.
+
+</Tab>
+</Tabs>
+
+Assuming the model returns `screenshot_tool` and `email_tool` use requests, the sequential executor runs both in the order given.
+
+## Event Ordering
+
+Both modes preserve per-tool event order. In concurrent mode, events from different tools may interleave across that per-tool sequence.
+
+<Tabs>
+<Tab label="Python">
+
+Per-tool event order: `BeforeToolCallEvent` → `ToolStreamEvent*` → `AfterToolCallEvent` → `ToolResultEvent`.
+
+</Tab>
+<Tab label="TypeScript">
+
+Per-tool event order: `BeforeToolCallEvent` → `ToolStreamUpdateEvent*` → `AfterToolCallEvent` → `ToolResultEvent`.
+
+</Tab>
+</Tabs>
+
+## Cancellation
+
+Cancellation works identically in both modes. Call `agent.cancel()` to request cooperative cancellation. In TypeScript, this flips `agent.cancelSignal`.
+
+<Tabs>
+<Tab label="Python">
+
+- **Pre-launch cancel**: set `BeforeToolCallEvent.cancel_tool` on a per-tool hook to produce an error result for that tool, set `BeforeToolsEvent.cancel` on the batch-level hook to produce error results for every tool in the batch before any execute, or call `agent.cancel()` before the batch starts to cancel all pending tools.
+- **Mid-flight cancel** in sequential mode short-circuits not-yet-started tools. In concurrent mode, all tools have already launched, so each in-flight tool must cooperatively check for cancellation to stop early.
+
+</Tab>
+<Tab label="TypeScript">
+
+- **Pre-launch cancel**: set `BeforeToolsEvent.cancel` on the batch-level hook, or call `agent.cancel()` before tools start, to produce error results for every tool in the batch.
+- **Mid-flight cancel** in sequential mode short-circuits not-yet-started tools. In concurrent mode, all tools have already launched, so each in-flight tool must cooperatively observe `context.cancelSignal` to stop early.
+
+</Tab>
+</Tabs>
+
+## Custom Executors
+
+Custom tool executors are not currently supported but are planned for a future release. You can track progress on this feature at [GitHub Issue #762](https://github.com/strands-agents/harness-sdk/issues/762).

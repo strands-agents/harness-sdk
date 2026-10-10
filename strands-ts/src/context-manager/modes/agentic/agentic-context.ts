@@ -119,7 +119,7 @@ export const summarizeContextTool = tool({
 
     let summaryMessage
     try {
-      summaryMessage = await generateSummary(eligible, agent.model)
+      summaryMessage = await generateSummary(eligible, agent.auxModel)
     } catch (err) {
       return `Summarization failed: ${err instanceof Error ? err.message : 'unknown error'}`
     }
@@ -193,8 +193,8 @@ export function createTokenUsageMiddleware(): MiddlewareInputHandler<InvokeModel
 
     const statusText =
       `\n\n<context-status>\n` +
-      `<used>${projectedInputTokens.toLocaleString()} / ${contextWindowLimit.toLocaleString()} tokens (${percentUsed}%)</used>\n` +
-      `<remaining>~${remaining.toLocaleString()} tokens</remaining>\n` +
+      `<used>${projectedInputTokens.toLocaleString('en-US')} / ${contextWindowLimit.toLocaleString('en-US')} tokens (${percentUsed}%)</used>\n` +
+      `<remaining>~${remaining.toLocaleString('en-US')} tokens</remaining>\n` +
       `</context-status>`
 
     const messages = [...context.messages]

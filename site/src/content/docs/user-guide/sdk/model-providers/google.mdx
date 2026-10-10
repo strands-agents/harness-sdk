@@ -1,0 +1,515 @@
+---
+title: Google
+description: 'Run Strands agents on Google Gemini models. Configure the provider, use built-in tools and structured output, and send image and video input.'
+tags: [vision]
+integrationType: model-provider
+redirectFrom:
+  - docs/user-guide/concepts/model-providers/gemini
+sourceLinks:
+  - path: strands-py/src/strands/models/gemini.py
+  - path: strands-ts/src/models/google/model.ts
+---
+
+[Google Gemini](https://ai.google.dev/api) is Google's family of multimodal large language models. The Strands Agents SDK implements a Google/Gemini provider, letting you run agents against the Gemini models available through Google's AI API.
+
+## Installation
+
+Gemini is configured as an optional dependency in Strands Agents.
+
+To install it, run:
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+pip install 'strands-agents[gemini]'
+```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk @google/genai
+```
+</Tab>
+</Tabs>
+
+## Usage
+
+After installing dependencies, you can import and initialize the Strands Agents' Gemini provider as follows:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models.gemini import GeminiModel
+from strands.vended_tools import notebook
+
+model = GeminiModel(
+    client_args={
+        "api_key": "<KEY>",
+    },
+    # **model_config
+    model_id="gemini-2.5-flash",
+    params={
+        # some sample model parameters
+        "temperature": 0.7,
+        "max_output_tokens": 2048,
+        "top_p": 0.9,
+        "top_k": 40
+    }
+)
+
+agent = Agent(model=model, tools=[notebook])
+response = agent('Create a notebook named "ideas" and add three project ideas.')
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google_imports.ts:basic_usage_imports"
+
+--8<-- "user-guide/sdk/model-providers/google.ts:basic_usage"
+```
+</Tab>
+</Tabs>
+
+## Configuration
+
+### Client Configuration
+
+<Tabs>
+<Tab label="Python">
+
+The `client_args` configure the underlying Google GenAI client. For a complete list of available arguments, please refer to the [Google GenAI documentation](https://googleapis.github.io/python-genai/).
+</Tab>
+<Tab label="TypeScript">
+
+The `clientConfig` configures the underlying Google GenAI client. You can also pass a pre-configured `client` instance directly. For a complete list of available options, please refer to the [@google/genai documentation](https://github.com/googleapis/js-genai).
+</Tab>
+</Tabs>
+
+### Model Configuration
+
+<Tabs>
+<Tab label="Python">
+
+The `model_config` configures the underlying model selected for inference. The supported configurations are:
+
+|  Parameter | Description | Example | Options |
+|------------|-------------|---------|---------|
+| `model_id` | ID of a Gemini model to use | `"gemini-2.5-flash"` | [Available models](#available-models) |
+| `params` | Model specific parameters | `{"temperature": 0.7, "maxOutputTokens": 2048}` | [Parameter reference](#model-parameters) |
+</Tab>
+<Tab label="TypeScript">
+
+|  Parameter | Description | Example | Options |
+|------------|-------------|---------|---------|
+| `modelId` | ID of a Gemini model to use | `'gemini-2.5-flash'` | [Available models](#available-models) |
+| `params` | Model specific parameters | `{ temperature: 0.7, maxOutputTokens: 2048 }` | [Parameter reference](#model-parameters) |
+</Tab>
+</Tabs>
+
+### Model Parameters
+
+For a complete list of supported parameters, see the [Gemini API documentation](https://ai.google.dev/api/generate-content#generationconfig).
+
+<Tabs>
+<Tab label="Python">
+
+| Parameter | Description | Type |
+|-----------|-------------|------|
+| `temperature` | Controls randomness in responses | `float` |
+| `max_output_tokens` | Maximum tokens to generate | `int` |
+| `top_p` | Nucleus sampling parameter | `float` |
+| `top_k` | Top-k sampling parameter | `int` |
+| `candidate_count` | Number of response candidates | `int` |
+| `stop_sequences` | Custom stopping sequences | `list[str]` |
+
+**Example:**
+
+```python
+params = {
+    "temperature": 0.8,
+    "max_output_tokens": 4096,
+    "top_p": 0.95,
+    "top_k": 40,
+    "candidate_count": 1,
+    "stop_sequences": ['STOP!']
+}
+```
+</Tab>
+<Tab label="TypeScript">
+
+| Parameter | Description | Type |
+|-----------|-------------|------|
+| `temperature` | Controls randomness in responses | `number` |
+| `maxOutputTokens` | Maximum tokens to generate | `number` |
+| `topP` | Nucleus sampling parameter | `number` |
+| `topK` | Top-k sampling parameter | `number` |
+| `candidateCount` | Number of response candidates | `number` |
+| `stopSequences` | Custom stopping sequences | `string[]` |
+
+**Example:**
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google.ts:params_example"
+```
+</Tab>
+</Tabs>
+
+### Available Models
+
+For a complete list of supported models, see the [Gemini API documentation](https://ai.google.dev/gemini-api/docs/models).
+
+**Popular Models:**
+
+- `gemini-2.5-pro` - Most advanced model for complex reasoning and thinking
+- `gemini-2.5-flash` - Best balance of performance and cost
+- `gemini-2.5-flash-lite` - Most cost-efficient option
+- `gemini-2.0-flash` - Next-gen features with improved speed
+- `gemini-2.0-flash-lite` - Cost-optimized version of 2.0
+
+### Built-in Tools
+
+<Tabs>
+<Tab label="Python">
+
+Google's built-in tools (Google Search, Code Execution, URL Context) can be passed via the `gemini_tools` config option. These are appended alongside any function tools registered on the agent.
+
+```python
+from google import genai
+from strands import Agent
+from strands.models.gemini import GeminiModel
+
+model = GeminiModel(
+    client_args={"api_key": "<KEY>"},
+    model_id="gemini-2.5-flash",
+    gemini_tools=[
+        genai.types.Tool(google_search=genai.types.GoogleSearch()),
+    ],
+)
+
+agent = Agent(model=model)
+response = agent("What are the latest AI news today?")
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+Google's built-in tools (Google Search, Code Execution, URL Context) can be passed via the `builtInTools` config option. These are appended alongside any function tools registered on the agent.
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google.ts:builtin_tools"
+```
+</Tab>
+</Tabs>
+
+For available built-in tools, see the [Gemini tools documentation](https://ai.google.dev/gemini-api/docs/tools).
+
+## Troubleshooting
+
+### Module Not Found
+
+<Tabs>
+<Tab label="Python">
+
+If you encounter the error `ModuleNotFoundError: No module named 'google.genai'`, this means the `google-genai` dependency hasn't been properly installed in your environment. To fix this, run `pip install 'strands-agents[gemini]'`.
+</Tab>
+<Tab label="TypeScript">
+
+If you encounter import errors for `@google/genai`, ensure the package is installed: `npm install @google/genai`.
+</Tab>
+</Tabs>
+
+### API Key Issues
+
+Make sure your Google AI API key is properly set via <Syntax py="client_args" ts="apiKey" />, or as the `GOOGLE_API_KEY` / `GEMINI_API_KEY` environment variable. You can obtain an API key from the [Google AI Studio](https://aistudio.google.com/app/apikey).
+
+### Rate Limiting and Safety Issues
+
+The Gemini provider handles several types of errors automatically:
+
+- **Safety/Content Policy**: When content is blocked due to safety concerns, the model will return a safety message
+- **Rate Limiting**: When quota limits are exceeded, a `ModelThrottledException` is raised
+- **Server Errors**: Temporary server issues are handled with appropriate error messages
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.types.exceptions import ModelThrottledException
+
+try:
+    response = agent("Your query here")
+except ModelThrottledException as e:
+    print(f"Rate limit exceeded: {e}")
+    # Implement backoff strategy
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google.ts:error_handling"
+```
+</Tab>
+</Tabs>
+
+## Advanced Features
+
+### Structured Output
+
+Gemini models support structured output through their native JSON schema capabilities. Pass a schema to the agent, and Strands converts it to Gemini's JSON schema format and validates the response.
+
+<Tabs>
+<Tab label="Python">
+
+Define a Pydantic model and pass it to [`agent.structured_output()`](@api/python/strands.agent.agent#Agent.structured_output):
+
+```python
+from pydantic import BaseModel, Field
+from strands import Agent
+from strands.models.gemini import GeminiModel
+
+class MovieReview(BaseModel):
+    """Analyze a movie review."""
+    title: str = Field(description="Movie title")
+    rating: int = Field(description="Rating from 1-10", ge=1, le=10)
+    genre: str = Field(description="Primary genre")
+    sentiment: str = Field(description="Overall sentiment: positive, negative, or neutral")
+    summary: str = Field(description="Brief summary of the review")
+
+model = GeminiModel(
+    client_args={"api_key": "<KEY>"},
+    model_id="gemini-2.5-flash",
+    params={
+        "temperature": 0.3,
+        "max_output_tokens": 1024,
+        "top_p": 0.85
+    }
+)
+
+agent = Agent(model=model)
+
+result = agent.structured_output(
+    MovieReview,
+    """
+    Just watched "The Matrix" - what an incredible sci-fi masterpiece!
+    The groundbreaking visual effects and philosophical themes make this
+    a must-watch. Keanu Reeves delivers a solid performance. 9/10!
+    """
+)
+
+print(f"Movie: {result.title}")
+print(f"Rating: {result.rating}/10")
+print(f"Genre: {result.genre}")
+print(f"Sentiment: {result.sentiment}")
+```
+</Tab>
+<Tab label="TypeScript">
+
+Define a Zod schema and pass it as `structuredOutputSchema`. Validated output is on `result.structuredOutput`:
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google_imports.ts:structured_output_imports"
+
+--8<-- "user-guide/sdk/model-providers/google.ts:structured_output"
+```
+</Tab>
+</Tabs>
+
+For schema patterns, error handling, and per-invocation overrides, see [Structured Output](../agents/structured-output/).
+
+### Custom client
+
+You can pass your own Gemini client to the GeminiModel for Strands Agents to use directly. You are responsible for handling the lifecycle (e.g., closing) of the client.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from google import genai
+from strands import Agent
+from strands.models.gemini import GeminiModel
+from strands.vended_tools import notebook
+
+client = genai.Client(api_key="<KEY>")
+
+model = GeminiModel(
+    client=client,
+    # **model_config
+    model_id="gemini-2.5-flash",
+    params={
+        # some sample model parameters
+        "temperature": 0.7,
+        "max_output_tokens": 2048,
+        "top_p": 0.9,
+        "top_k": 40
+    }
+)
+
+agent = Agent(model=model, tools=[notebook])
+response = agent('Create a notebook named "ideas" and add three project ideas.')
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google_imports.ts:custom_client_imports"
+
+--8<-- "user-guide/sdk/model-providers/google.ts:custom_client"
+```
+</Tab>
+</Tabs>
+
+### Multimodal Capabilities
+
+Gemini models support text, image, document, and video inputs, making them ideal for multimodal applications.
+
+#### Image Input
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models.gemini import GeminiModel
+
+model = GeminiModel(
+    client_args={"api_key": "<KEY>"},
+    model_id="gemini-2.5-flash",
+    params={
+        "temperature": 0.5,
+        "max_output_tokens": 2048,
+        "top_p": 0.9
+    }
+)
+
+agent = Agent(model=model)
+
+# Process image with text
+response = agent([
+    {
+        "role": "user",
+        "content": [
+            {"text": "What do you see in this image?"},
+            {"image": {"format": "png", "source": {"bytes": image_bytes}}}
+        ]
+    }
+])
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google_imports.ts:image_imports"
+
+--8<-- "user-guide/sdk/model-providers/google.ts:image_input"
+```
+</Tab>
+</Tabs>
+
+#### Document Input
+
+<Tabs>
+<Tab label="Python">
+
+```python
+response = agent([
+    {
+        "role": "user",
+        "content": [
+            {"text": "Summarize this document"},
+            {"document": {"format": "pdf", "source": {"bytes": document_bytes}}}
+        ]
+    }
+])
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google_imports.ts:document_imports"
+
+--8<-- "user-guide/sdk/model-providers/google.ts:document_input"
+```
+</Tab>
+</Tabs>
+
+#### Video Input
+
+<Tabs>
+<Tab label="Python">
+
+```python
+response = agent([
+    {
+        "role": "user",
+        "content": [
+            {"text": "Describe what happens in this video"},
+            {"video": {"format": "mp4", "source": {"bytes": video_bytes}}}
+        ]
+    }
+])
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/google_imports.ts:video_imports"
+
+--8<-- "user-guide/sdk/model-providers/google.ts:video_input"
+```
+</Tab>
+</Tabs>
+
+**Supported formats:**
+
+- **Images**: PNG, JPEG, GIF, WebP (automatically detected via MIME type)
+- **Documents**: PDF and other binary formats (automatically detected via MIME type)
+- **Video**: MP4 and other video formats (automatically detected via MIME type)
+
+### Token Counting
+
+Token counting is used by context management strategies to estimate input tokens before each model call.
+
+<Tabs>
+<Tab label="Python">
+
+The Google provider can use the native `models.count_tokens()` API for message content. However, the Gemini API does not support counting system instructions or tool specifications natively. These are estimated separately using a character-based heuristic (characters ÷ 4 for text, characters ÷ 2 for JSON).
+
+You can enable native token counting with:
+
+```python
+model = GeminiModel(
+    model_id="gemini-2.5-flash",
+    use_native_token_count=True,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+The Google provider can use the native `models.countTokens()` API for message content. However, the Gemini API does not support counting system instructions or tool specifications natively. These are estimated separately using a character-based heuristic (characters ÷ 4 for text, characters ÷ 2 for JSON).
+
+You can enable native token counting with:
+
+```typescript
+const model = new GoogleModel({
+  modelId: 'gemini-2.5-flash',
+  useNativeTokenCount: true,
+})
+```
+
+When disabled (or if the API call fails), falls back to estimation using the character-based heuristic.
+</Tab>
+</Tabs>
+
+## References
+
+- [Python API](@api/python/strands.models.model)
+- [Google Gemini](https://ai.google.dev/api)
+- [Google GenAI SDK documentation](https://googleapis.github.io/python-genai/)
+- [Google AI Studio](https://aistudio.google.com/)
+- [@google/genai TypeScript SDK](https://github.com/googleapis/js-genai)

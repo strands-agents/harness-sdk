@@ -463,6 +463,34 @@ describe('HumanInTheLoop', () => {
       expect(toolExecuted).toBe(false)
     })
 
+    it('classifier: true evaluates with agent.auxModel when no classifier model is configured', async () => {
+      const auxModel = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'strands_structured_output',
+        toolUseId: 'inner-1',
+        input: { requiresApproval: true, reason: 'destructive operation' },
+      })
+      const agentModel = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'deleteFile', toolUseId: 'tool-1', input: { path: '/data' } })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+      const auxStreamSpy = vi.spyOn(auxModel, 'stream')
+      const agentStreamSpy = vi.spyOn(agentModel, 'stream')
+
+      const agent = new Agent({
+        model: agentModel,
+        auxModel,
+        tools: [createMockTool('deleteFile', () => 'deleted')],
+        interventions: [new HumanInTheLoop({ classifier: true })],
+        printer: false,
+      })
+
+      const result = await agent.invoke('Delete the file')
+
+      expect(result.stopReason).toBe('interrupt')
+      expect(auxStreamSpy).toHaveBeenCalledTimes(1)
+      expect(agentStreamSpy).toHaveBeenCalledTimes(1)
+    })
+
     it('classifier: true allows tool when LLM says no approval needed', async () => {
       const classifierModel = new MockMessageModel().addTurn({
         type: 'toolUseBlock',

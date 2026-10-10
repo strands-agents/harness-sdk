@@ -418,12 +418,11 @@ class Swarm(MultiAgentBase):
             - multi_agent_node_stop: When a node stops execution
             - result: Final swarm result
         """
-        self._interrupt_state.resume(task)
-
         if invocation_state is None:
             invocation_state = {}
 
         await self.hooks.invoke_callbacks_async(BeforeMultiAgentInvocationEvent(self, invocation_state))
+        self._interrupt_state.resume(task)
 
         logger.debug("starting swarm execution")
 

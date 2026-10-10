@@ -19,6 +19,7 @@ import copy
 import inspect
 import logging
 import time
+import warnings
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeGuard, cast
@@ -494,9 +495,11 @@ class GraphBuilder:
         if invalid_entries:
             raise ValueError(f"Entry points not found in nodes: {invalid_entries}")
 
-        # Warn about potential infinite loops if no execution limits are set
         if self._max_node_executions is None and self._execution_timeout is None:
-            logger.warning("Graph without execution limits may run indefinitely if cycles exist")
+            warnings.warn(
+                "graph has no max_node_executions or execution_timeout set; execution is unbounded",
+                stacklevel=3,
+            )
 
 
 class Graph(MultiAgentBase):
@@ -641,14 +644,13 @@ class Graph(MultiAgentBase):
             - multi_agent_node_stop: When a node stops execution
             - result: Final graph result
         """
-        self._interrupt_state.resume(task)
-
         if invocation_state is None:
             invocation_state = {}
 
         self._current_invocation_state = invocation_state
 
         await self.hooks.invoke_callbacks_async(BeforeMultiAgentInvocationEvent(self, invocation_state))
+        self._interrupt_state.resume(task)
 
         logger.debug("task=<%s> | starting graph execution", task)
 
@@ -696,21 +698,18 @@ class Graph(MultiAgentBase):
 
                 logger.debug("status=<%s> | graph execution completed", self.state.status)
 
-                # Yield final result (consistent with Agent's AgentResultEvent format)
-                result = self._build_result(interrupts)
-
-                # Use the same event format as Agent for consistency
-                yield MultiAgentResultEvent(result=result).as_dict()
-
             except Exception:
                 logger.exception("graph execution failed")
                 self.state.status = Status.FAILED
                 raise
             finally:
                 self.state.execution_time = self._commit_active_interval(self.state.execution_time)
-                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self))
+                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self, invocation_state))
                 self._resume_from_session = False
                 self._resume_next_nodes.clear()
+
+            result = self._build_result(interrupts)
+            yield MultiAgentResultEvent(result=result).as_dict()
 
     def _validate_graph(self, nodes: dict[str, GraphNode]) -> None:
         """Validate graph nodes for duplicate instances."""

@@ -8,7 +8,7 @@
   --cl-accent-text: var(--sl-color-accent);
   /* Local tokens for values repeated with shared intent (not a full scale —
      deliberately-distinct sizes/radii are left inline). */
-  --cl-text-meta: 0.72rem;   /* secondary metadata: counts, links, authors, tags */
+  --cl-text-meta: 0.75rem;   /* secondary metadata: counts, links, authors, tags */
   --cl-radius-control: 8px;  /* interactive controls: chips, search, buttons */
   --cl-radius-pill: 999px;   /* fully-round: dots, tags, badges */
 }
@@ -30,6 +30,8 @@
   padding: 2rem 1.5rem 4rem;
   font-family: var(--sl-font);
 }
+/* The content panel already pads the page on phones. */
+@media (max-width: 49.9375rem) { .cl-page { padding-inline: 0; } }
 
 .cl-head {
   display: flex;
@@ -51,8 +53,8 @@
 
 /* Controls stack: SDK toggle on top, language toggle beneath, right-aligned. */
 .cl-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
-.cl-control-row { display: flex; align-items: center; gap: 0.6rem; }
-.cl-control-label { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+.cl-control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.cl-control-label { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--sl-color-gray-3); font-weight: 700; min-width: 4.5rem; text-align: right; }
 
 /* SDK segmented toggle */
@@ -104,7 +106,7 @@
   /* Perf: skip layout/paint for off-screen versions; the intrinsic-size hint
      keeps the scrollbar stable. DOM stays complete, so filtering, anchors,
      and find-in-page all keep working. */
-  content-visibility: auto; contain-intrinsic-size: auto 320px;
+  content-visibility: auto; contain-intrinsic-size: auto 600px;
   /* Anchored version lands clear of the site header. */
   scroll-margin-top: 5.5rem; }
 /* Fixed width (not min-width): the "Latest" badge must not widen this column,
@@ -114,9 +116,11 @@
 .cl-version-num { color: var(--sl-color-white); font-weight: 700; font-size: 1.3rem; margin: 0;
   position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem; flex-wrap: wrap; }
 /* "Latest" badge — marks the newest release of the active stream. */
-.cl-latest { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+.cl-latest { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   padding: 0.1rem 0.4rem; border-radius: var(--cl-radius-pill);
-  background: var(--cl-accent-text); color: #fff; }
+  /* Fixed dark green in both themes: the dark-mode accent (#00cc60) gives
+     white text only 2.14:1. #067a39 clears AA (5.45:1) against white. */
+  background: #067a39; color: #fff; }
 /* The version number links to its per-release page on the combined index;
    inherits the heading color, accent + underline on hover. On the detail page
    it's plain text (.cl-version-numtext). */
@@ -174,7 +178,7 @@
 a.cl-entry-title { color: var(--sl-color-gray-1); }
 a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 3px; }
 .cl-atag { font-size: var(--cl-text-meta); padding: 0.1rem 0.5rem; border-radius: var(--cl-radius-pill); border: 1px solid var(--sl-color-gray-5); color: var(--sl-color-gray-3); white-space: nowrap; }
-.cl-break { font-size: 0.65rem; font-weight: 700; color: var(--changelog-danger);
+.cl-break { font-size: 0.75rem; font-weight: 700; color: var(--changelog-danger);
   border: 1px solid color-mix(in srgb, var(--changelog-danger) 45%, transparent); border-radius: 4px;
   padding: 0 0.25rem; text-transform: uppercase; letter-spacing: 0.03em; }
 
@@ -218,7 +222,7 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
   padding: 0.6rem 0.9rem; border-radius: var(--cl-radius-control); border: 1px solid var(--sl-color-gray-5); }
 .cl-pager-next { text-align: right; }
 .cl-pager-link:hover { border-color: var(--cl-accent-text); }
-.cl-pager-dir { font-size: 0.72rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.cl-pager-dir { font-size: 0.75rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
 .cl-pager-ver { font-size: 0.95rem; font-weight: 600; color: var(--sl-color-white); }
 
 /* visually-hidden live region announcing filter result changes to AT */
@@ -230,24 +234,29 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
 .cl-note { color: var(--sl-color-gray-3); font-size: var(--cl-text-meta); margin-bottom: 1rem; }
 
 /* mobile drawer */
-.cl-filter-btn, .cl-mobile-bar { display: none; }
+.cl-filter-btn, .cl-mobile-bar, .cl-rail-close { display: none; }
 @media (max-width: 800px) {
   .cl-body { display: block; }
   .cl-rail {
     /* Start below the sticky site header so the search bar isn't hidden by it. */
-    position: fixed; top: var(--sl-nav-height, 3.5rem); left: 0; bottom: 0; width: 260px; z-index: 60;
+    position: fixed; top: var(--sl-nav-height, 3.5rem); left: 0; bottom: 0; width: 260px; z-index: 60; margin: 0;
     background: var(--sl-color-bg-nav); border-right: 1px solid var(--sl-color-hairline);
-    transform: translateX(-100%); transition: transform 0.2s ease; overflow: auto;
+    transform: translateX(-100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; overflow: auto;
   }
-  .cl-rail[data-open='true'] { transform: translateX(0); }
+  .cl-rail[data-open] { transform: translateX(0); visibility: visible; transition: transform 0.2s ease; }
+  .cl-rail-close { display: block; margin: -0.5rem -0.35rem 0.5rem auto; min-height: 2.75rem; padding: 0 0.75rem;
+    font-size: 0.9rem; font-weight: 600; color: var(--cl-accent-text); background: transparent; border: 0; cursor: pointer; }
+  /* Below 16px iOS zooms the page on focus. */
+  .cl-search { font-size: 1rem; }
   .cl-scrim { display: none; position: fixed; inset: var(--sl-nav-height, 3.5rem) 0 0 0; background: rgba(0,0,0,0.5); z-index: 55; }
-  .cl-scrim[data-open='true'] { display: block; }
+  .cl-scrim[data-open] { display: block; }
+  html[data-header-hidden] :is(.cl-rail, .cl-scrim) { top: 0; }
   .cl-mobile-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
   .cl-filter-btn { display: inline-flex; align-items: center; gap: 0.4rem; font-size: var(--cl-text-meta);
     padding: 0.4rem 0.7rem; border-radius: var(--cl-radius-control); border: 1px solid var(--sl-color-gray-5);
     color: var(--sl-color-white); background: transparent; cursor: pointer; }
   .cl-filter-btn .cl-badge { background: var(--sl-color-accent); color: var(--sl-color-text-invert);
-    font-weight: 700; border-radius: var(--cl-radius-pill); font-size: 0.55rem; padding: 0 0.3rem; }
+    font-weight: 700; border-radius: var(--cl-radius-pill); font-size: 0.75rem; padding: 0 0.3rem; }
   /* Keep entry text off the card border so it doesn't look cramped. */
   .cl-feed-inner { padding: 0 1.1rem; }
   /* Stack title over controls so the SDK/language toggles don't run off the
@@ -258,7 +267,7 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
   /* Stack the version block: the right-aligned meta column starves entry titles
      into one-word-per-line wraps on narrow screens. Single column gives titles
      the full width; meta reads left-aligned above the body. */
-  .cl-version { flex-direction: column; gap: 0.5rem; }
+  .cl-version { flex-direction: column; gap: 0.5rem; contain-intrinsic-size: auto 1000px; }
   .cl-version-meta { width: auto; text-align: left; }
   .cl-version-num { justify-content: flex-start; }
   .cl-version-links { align-items: flex-start; }

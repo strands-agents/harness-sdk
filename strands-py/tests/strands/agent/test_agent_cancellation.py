@@ -7,7 +7,7 @@ from unittest.mock import ANY
 
 import pytest
 
-from strands import Agent, tool
+from strands import Agent, LocalAgent, ToolContext, tool
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, BeforeToolsEvent
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -575,7 +575,7 @@ async def test_hook_cancelled_tool_batch_does_not_replay_the_stored_tool_use():
 
 def _approver_agent(ran, cancel_on_first_run=False):
     @tool(context=True)
-    def approver(tool_context) -> str:
+    def approver(tool_context: ToolContext[LocalAgent]) -> str:
         """Require approval before doing the work."""
         tool_context.interrupt("approve", reason="proceed?")
         ran.append("executed")

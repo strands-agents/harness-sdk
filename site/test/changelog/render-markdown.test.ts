@@ -3,7 +3,7 @@ import { renderMarkdown, mergePreserving } from '../../scripts/changelog/render-
 
 describe('render-markdown', () => {
   const file = {
-    sdk: 'harness' as const,
+    sdk: 'sdk' as const,
     language: 'python' as const,
     version: '1.42.0',
     tag: 'python/v1.42.0',
@@ -30,7 +30,7 @@ describe('render-markdown', () => {
   it('renders valid frontmatter markdown', () => {
     const md = renderMarkdown(file)
     expect(md).toMatch(/^---\n/)
-    expect(md).toMatch(/\nsdk: harness\n/)
+    expect(md).toMatch(/\nsdk: sdk\n/)
     expect(md).toMatch(/\nlanguage: python\n/)
     expect(md).toMatch(/\nversion: "1\.42\.0"\n/)
     expect(md).toMatch(/\ntag: python\/v1\.42\.0\n/)
@@ -129,7 +129,7 @@ describe('render-markdown', () => {
 
   it('mergePreserving keeps existing highlights + body, refreshes entries', () => {
     const existing = `---
-sdk: harness
+sdk: sdk
 language: python
 version: "1.42.0"
 tag: python/v1.42.0

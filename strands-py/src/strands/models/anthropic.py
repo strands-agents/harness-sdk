@@ -7,6 +7,7 @@
 import base64
 import json
 import logging
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
@@ -423,7 +424,12 @@ class AnthropicModel(Model):
             return messages, None
 
         if cache_config.strategy not in ("auto", "anthropic"):
-            logger.warning("strategy=<%s> | unknown cache strategy, prompt caching disabled", cache_config.strategy)
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per distinct strategy value).
+            warnings.warn(
+                f"cache_config.strategy={cache_config.strategy!r} is an unknown cache strategy;"
+                " prompt caching is disabled",
+                stacklevel=1,
+            )
             return messages, None
 
         target_idx = next(
@@ -810,10 +816,12 @@ class AnthropicModel(Model):
                 output_tokens = usage["output_tokens"]
                 cache_read = usage.get("cache_read_input_tokens") or 0
                 cache_write = usage.get("cache_creation_input_tokens") or 0
+                # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+                # billed total is the sum of all four counters.
                 usage_chunk: Usage = {
                     "inputTokens": input_tokens,
                     "outputTokens": output_tokens,
-                    "totalTokens": input_tokens + output_tokens,
+                    "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
                 }
                 if cache_read:
                     usage_chunk["cacheReadInputTokens"] = cache_read

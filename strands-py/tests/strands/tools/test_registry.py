@@ -2,6 +2,7 @@
 Tests for the SDK tool registry module.
 """
 
+import copy
 import json
 import logging
 import sys
@@ -86,12 +87,49 @@ def test_get_all_tool_specs_returns_right_tool_specs():
     tool_registry.register_tool(tool_1)
     tool_registry.register_tool(tool_2)
 
-    tool_specs = tool_registry.get_all_tool_specs()
+    tru_tool_specs = tool_registry.get_all_tool_specs()
 
-    assert tool_specs == [
-        tool_1.tool_spec,
-        tool_2.tool_spec,
+    exp_tool_specs = [
+        {
+            "name": "tool_1",
+            "description": "<lambda>",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {"a": {"type": "string", "description": "Parameter a"}},
+                    "required": ["a"],
+                }
+            },
+        },
+        {
+            "name": "tool_2",
+            "description": "<lambda>",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {"b": {"type": "string", "description": "Parameter b"}},
+                    "required": ["b"],
+                }
+            },
+        },
     ]
+    assert tru_tool_specs == exp_tool_specs
+
+
+def test_get_all_tool_specs_does_not_mutate_registered_tool_specs():
+    """Reading tool configuration leaves the registered tools' own specs as their author defined them.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3910.
+    """
+    tool_1 = strands.tool(lambda a: a, name="tool_1")
+    raw_tool_spec = copy.deepcopy(tool_1.tool_spec)
+
+    tool_registry = ToolRegistry()
+    tool_registry.register_tool(tool_1)
+
+    tool_registry.get_all_tool_specs()
+
+    assert tool_1.tool_spec == raw_tool_spec
 
 
 def test_scan_module_for_tools():

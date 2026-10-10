@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import threading
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar
@@ -339,13 +340,13 @@ class Model(abc.ABC):
         context_window_limit = self.context_window_limit
         if not context_window_limit:
             context_window_limit = DEFAULT_CONTEXT_WINDOW_LIMIT
-            if not getattr(self, "_utilization_limit_warned", False):
-                self._utilization_limit_warned = True
-                logger.warning(
-                    "context_window_limit=<%s> | context_window_limit not set on model, using default"
-                    " for utilization estimate | set context_window_limit in your model config for accurate results",
-                    DEFAULT_CONTEXT_WINDOW_LIMIT,
-                )
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                f"context_window_limit is not set on the model, using default of"
+                f" {DEFAULT_CONTEXT_WINDOW_LIMIT} for the utilization estimate; set context_window_limit"
+                " in your model config for accurate results",
+                stacklevel=1,
+            )
 
         return input_tokens / context_window_limit
 

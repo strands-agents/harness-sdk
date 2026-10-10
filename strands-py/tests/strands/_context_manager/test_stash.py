@@ -165,6 +165,34 @@ class TestStoreMessage:
         result = await stash.retrieve("tu-skip_0")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_keep_existing_leaves_stored_entries_untouched(self, stash):
+        await stash.load_snapshot({"tu-1_0": {"text": "original result"}, "track-1_1": {"text": "original text"}})
+        message = Message(
+            role="user",
+            content=[
+                ContentBlock(
+                    toolResult=ToolResult(
+                        toolUseId="tu-1",
+                        status="success",
+                        content=[{"text": "preview result"}, {"text": "second result"}],
+                    )
+                ),
+                ContentBlock(text="preview text"),
+            ],
+            tracking_id="track-1",
+        )
+
+        await stash.store_message(message, keep_existing=True)
+
+        tru_entries = await stash.take_snapshot()
+        exp_entries = {
+            "tu-1_0": {"text": "original result"},
+            "tu-1_1": {"text": "second result"},
+            "track-1_1": {"text": "original text"},
+        }
+        assert tru_entries == exp_entries
+
 
 class TestNamespacing:
     """Tests for storage namespace isolation."""
@@ -238,6 +266,18 @@ class TestStoreMessageErrorHandling:
         )
         message = Message(role="user", content=[block])
         await stash.store_message(message)
+
+    @pytest.mark.asyncio
+    async def test_keep_existing_does_not_write_when_existence_check_fails(self):
+        stash = Stash(InMemoryStorage(), "s", "a")
+        stash._storage.read = unittest.mock.AsyncMock(side_effect=RuntimeError("read failed"))
+        stash._storage.write = unittest.mock.AsyncMock()
+        block = ContentBlock(text="hello")
+        message = Message(role="assistant", content=[block], tracking_id="track-1")
+
+        await stash.store_message(message, keep_existing=True)
+
+        stash._storage.write.assert_not_called()
 
 
 class TestStorageTypeName:
@@ -343,3 +383,42 @@ class TestClearSession:
 
         assert await stash_s1.list() == []
         assert await stash_s10.list() == ["tool-1_0"]
+
+
+class TestCallerScopedRoot:
+    """Tests for stashes rooted at a caller-scoped storage view."""
+
+    @pytest.mark.asyncio
+    async def test_view_is_exact_root(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("tenants/t1/research"), "sess-1", "agent-a", custom_stash_namespace=True)
+        await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
+
+        assert await storage.list("") == ["tenants/t1/research/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_view_uses_per_agent_root_unless_allowed(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("tenant"), "sess-1", "agent-a")
+        await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
+
+        assert await storage.list("") == ["tenant/context/sess-1/scopes/agent/agent-a/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_agents_in_different_sessions_sharing_a_view_read_each_others_entries(self):
+        storage = InMemoryStorage()
+        stash_a = Stash(storage.namespace("team"), "sess-1", "agent-a", custom_stash_namespace=True)
+        stash_b = Stash(storage.namespace("team"), "sess-2", "agent-b", custom_stash_namespace=True)
+        await stash_a.store("tool-1", 0, json.dumps({"text": "from a"}).encode("utf-8"))
+
+        assert await stash_b.retrieve("tool-1_0") == {"text": "from a"}
+
+    @pytest.mark.asyncio
+    async def test_clear_session_keeps_shared_view(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("team"), "sess-1", "agent-a", custom_stash_namespace=True)
+        await stash.store("tool-1", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+
+        await stash.clear_session()
+
+        assert await storage.list("") == ["team/tool-1_0"]

@@ -1,0 +1,74 @@
+---
+title: 'generate: Synthesize an experiment'
+description: 'Generate evaluation experiments from the command line with strands-evals generate: LLM-created test cases from a context description, with or without topics.'
+sidebar:
+  label: "generate"
+---
+
+`strands-evals generate` wraps [`ExperimentGenerator`](../experiment_generator.md) to produce a starter experiment from either a free-form context or an existing experiment file. The two source flags are mutually exclusive.
+
+## From a context description
+
+The simplest form takes a description of your agent's tools and task and writes an experiment file:
+
+```bash
+strands-evals generate \
+  --context "$(cat tools.txt)" \
+  --task-description "Calculation and time-aware assistant" \
+  --num-cases 10 \
+  --evaluator TrajectoryEvaluator \
+  -o experiments/generated.json
+```
+
+- `--context` accepts free-form text. Use shell substitution for file contents.
+- `--num-cases` (default `5`) is the number of test cases to generate.
+- `--evaluator` (context mode only) attaches a default evaluator with a generated rubric. Choices: `OutputEvaluator`, `TrajectoryEvaluator`, `InteractionsEvaluator`. Omit to produce an experiment with a placeholder `Evaluator`.
+
+## With topic planning
+
+For larger experiments, pass `--num-topics` to split generation across N topic-specific prompts so cases spread across the different things your agent does instead of clustering on one:
+
+```bash
+strands-evals generate \
+  --context "$(cat tools.txt)" \
+  --task-description "Customer service assistant" \
+  --num-cases 15 \
+  --num-topics 3 \
+  --evaluator TrajectoryEvaluator \
+  -o experiments/generated.json
+```
+
+`--num-topics` only applies in context mode. See [Plan topics for coverage](../topic_planning.md) for how topic planning distributes cases and how to inspect the planned topics from Python.
+
+## From an existing experiment
+
+```bash
+strands-evals generate \
+  --experiment experiments/baseline.json \
+  --num-cases 20 \
+  --extra-information "Focus on edge cases involving timezone handling." \
+  -o experiments/expanded.json
+```
+
+- New cases are inspired by the source; evaluators are inherited from the source's defaults (so `--evaluator` and `--num-topics` are rejected).
+- `--custom-evaluator MODULE:CLASS` (experiment mode only, repeatable) registers custom evaluators before loading the source.
+- `--extra-information` (experiment mode only) is extra context for the new cases and rubric.
+
+## Output and model selection
+
+`--model MODEL_ID` overrides the judge model used by the generator. With `-o`, the experiment is written via `Experiment.to_file` (a `.json` extension is enforced). Without `-o`, the JSON document is written to stdout. A one-line summary on stderr reports the case and evaluator counts.
+
+## Generate, then run
+
+The generated file feeds straight into [`run`](run.md):
+
+```bash
+strands-evals generate --context "$(cat tools.txt)" --num-cases 10 -o experiment.json
+strands-evals run experiment.json --agent my_pkg.agents:build_agent --display
+```
+
+## Next steps
+
+- [Experiment Generator](../experiment_generator.md): the API behind `strands-evals generate`.
+- [Plan topics for coverage](../topic_planning.md): what `--num-topics` does under the hood.
+- [Serialization](../how-to/serialization.md): the on-disk shape of the experiment file.

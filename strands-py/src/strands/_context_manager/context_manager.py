@@ -193,7 +193,13 @@ class ContextManager(Plugin):
         if not self._stash_disabled:
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
             self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
-            self._stash = Stash(storage, agent.session_id, agent.agent_id)
+            # Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+            self._stash = Stash(
+                storage,
+                agent.session_id,
+                agent.agent_id,
+                custom_stash_namespace=self._stash_explicit_storage is not None,
+            )
 
         if self._stash is not None:
             stash = self._stash
@@ -250,6 +256,8 @@ class ContextManager(Plugin):
         """Stash any messages already on the agent that were not seen by the hook.
 
         Covers Agent(messages=[...]) and session restore, which bypass MessageAddedEvent.
+        Existing entries are kept: after a restore the stash holds the originals, while the
+        matching messages on the agent may already be offloaded previews.
         """
         if self._backfill_done or self._stash is None:
             return
@@ -257,7 +265,7 @@ class ContextManager(Plugin):
         skip = frozenset(self._retrieval_tool_use_ids)
         for message in agent.messages:
             try:
-                await self._stash.store_message(message, skip)
+                await self._stash.store_message(message, skip, keep_existing=True)
             except Exception:
                 logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
 

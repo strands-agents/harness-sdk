@@ -1,0 +1,147 @@
+---
+title: 'run: Execute an experiment'
+description: 'Execute an evaluation experiment or a one-off ad-hoc case from the command line with strands-evals run: agent factories, caching, and CI exit codes.'
+sidebar:
+  label: "run"
+---
+
+`strands-evals run` executes an evaluation and prints or writes an `EvaluationReport`. Two modes:
+
+- **Experiment file mode**: pass an `EXPERIMENT_FILE` (a JSON document produced by `Experiment.to_file`).
+- **Ad-hoc mode**: omit the file and provide `--input` + at least one of `--evaluator`, `--expected-output`, or `--rubric` for a single-case run without authoring an experiment.
+
+The two modes are mutually exclusive: argparse rejects mixing them.
+
+## Choosing `--agent` vs `--task`
+
+`--agent` is the standard path. It expects a factory callable that returns a fresh `strands.Agent` per invocation:
+
+```python
+# my_pkg/agents.py
+from strands import Agent
+from strands.vended_tools import notebook
+
+def build_agent():
+    return Agent(tools=[notebook], callback_handler=None)
+```
+
+The CLI synthesizes the standard task wrapper around it: telemetry setup → per-case OTel context (`session.id`, `gen_ai.conversation.id`) → factory call → invoke with `case.input` → map spans to a `Session` → return `{"output", "trajectory"}`. Trace-based evaluators (`HelpfulnessEvaluator`, `FaithfulnessEvaluator`, `GoalSuccessRateEvaluator`, etc.) read the `trajectory` directly.
+
+The factory may also take a single `Case` argument for per-case customization:
+
+```python
+def build_agent(case):
+    tools = [notebook] if (case.metadata or {}).get("use_notebook") else []
+    return Agent(tools=tools, callback_handler=None)
+```
+
+A prebuilt `strands.Agent` instance or an `Agent` subclass is rejected, because the conversation state would leak across cases.
+
+`--task` is the escape hatch for non-standard task shapes (multi-turn loops, custom session mapping, and similar). It expects a `Callable[[Case], dict|str]`. When `--task` is used, the user owns agent instantiation; `--trace-attributes` is a no-op and is logged as a warning.
+
+Both flags take a `MODULE:ATTR` reference; see the [entry point convention](index.md#entry-point-convention).
+
+## Experiment file run
+
+```bash
+# Schema-check first, then run against a factory
+strands-evals validate experiments/customer_service.json
+strands-evals run experiments/customer_service.json \
+  --agent my_pkg.agents:build_agent \
+  --display
+```
+
+`--display` renders a Rich table on stdout with input, expected output, actual output, and per-evaluator scores.
+
+`run` is the one subcommand whose primary stdout output does **not** follow the global `--rich`/`--json` TTY auto-detection. Building the Rich table eagerly walks every case row, which is wasteful on large experiments where output is typically piped to `strands-evals report` or written via `-o`. Concretely, with no `--display` and no `-o`:
+
+- `--json` (or stdout is a pipe) → flattened report JSON on stdout.
+- TTY with no `--json`/`--rich` → silent on stdout (pass `--display` to see results).
+- `-o PATH` → JSON written to the file; nothing on stdout.
+
+## Ad-hoc run
+
+For a one-off check with no experiment file:
+
+```bash
+# Substring match against the agent's response
+strands-evals run \
+  --input "What is the capital of France?" \
+  --expected-output "Paris" \
+  --agent my_pkg.agents:build_agent
+
+# LLM-as-judge with a rubric
+strands-evals run \
+  --input "Explain recursion in one paragraph." \
+  --rubric "Score 1.0 if accurate and one paragraph. Score 0.0 otherwise." \
+  --agent my_pkg.agents:build_agent
+
+# Built-in shortname evaluator
+strands-evals run \
+  --input "Is 17 prime?" \
+  --evaluator helpfulness \
+  --agent my_pkg.agents:build_agent
+```
+
+Auto-wiring rules in ad-hoc mode:
+
+- `--expected-output TEXT` (without `--evaluator`) → `Contains(value=TEXT)`.
+- `--rubric TEXT` (without `--evaluator`) → `OutputEvaluator(rubric=TEXT)`.
+- `--expected-output` and `--rubric` compose: both auto-evaluators are appended.
+- An explicit `--evaluator` disables the auto-wiring; pass it again to add more (`--evaluator` is repeatable).
+
+`--evaluator` accepts either a built-in shortname or `MODULE:CLASS` for a custom `Evaluator` subclass. Built-in shortnames instantiate with no arguments; richer config (custom rubrics, judge models, target tool names) belongs in an experiment file.
+
+Built-in shortnames: `coherence`, `conciseness`, `correctness`, `equals`, `faithfulness`, `goal-success-rate`, `harmfulness`, `helpfulness`, `instruction-following`, `refusal`, `response-relevance`, `stereotyping`, `tool-parameter-accuracy`, `tool-selection-accuracy`.
+
+## Concurrency, caching, and exit codes
+
+```bash
+strands-evals run experiments/regression.json \
+  --agent my_pkg.agents:build_agent \
+  --max-workers 8 \
+  --data-store ./.cache/regression \
+  --fail-on threshold:0.8 \
+  -o reports/regression.json
+```
+
+- `--max-workers` controls parallelism for `run_evaluations_async` (default `1`).
+- `--data-store DIR` enables `LocalFileTaskResultStore` so cached task outputs short-circuit reruns. See [Result Caching](../how-to/result_caching.md) for details.
+- `--fail-on` chooses the exit-code rule: `any` (default, exit non-zero on any case failure), `none` (always exit 0 on completion), or `threshold:0.X` (exit non-zero when the report's overall score falls below the threshold).
+- `--exit-zero` overrides `--fail-on` and always returns 0. Useful when you want to record the report without breaking the build.
+- `-o PATH` writes the flattened report JSON to a file. Without `-o`, the JSON goes to stdout.
+
+The exit-code scheme shared by every subcommand is listed in the [CLI overview](index.md#exit-codes).
+
+## Diagnosis during a run
+
+Combine `run` with on-failure diagnosis to capture root causes alongside scores:
+
+```bash
+strands-evals run experiments/regression.json \
+  --agent my_pkg.agents:build_agent \
+  --diagnose on_failure \
+  --confidence medium \
+  --display
+```
+
+`--diagnose` accepts `on_failure` or `always`. Diagnosis requires `Session` trajectories, which only `--agent` produces. With `--display`, recommendations render in the Rich table.
+
+## Trace attributes and custom evaluators
+
+```bash
+strands-evals run experiments/regression.json \
+  --agent my_pkg.agents:build_agent \
+  --trace-attributes service.name=billing \
+  --trace-attributes deployment.env=staging \
+  --custom-evaluator my_pkg.evaluators:DomainSafetyEvaluator
+```
+
+- `--trace-attributes KEY=VALUE` is repeatable. The pairs are set as W3C Baggage on the per-case context and stamped on every span the agent emits. `session.id` and `gen_ai.conversation.id` are always set from the case; `--trace-attributes` is for additional keys. No-op when `--task` is used.
+- `--custom-evaluator MODULE:CLASS` registers a custom `Evaluator` subclass before `Experiment.from_file` so the deserializer can rehydrate it. Repeatable. Ignored in ad-hoc mode (pass `MODULE:CLASS` directly to `--evaluator` instead).
+
+## Next steps
+
+- [Task Decorator](../how-to/eval_task.md): the Python equivalent of `--agent`'s synthesized task wrapper, for use in scripts.
+- [Result Caching](../how-to/result_caching.md): what `--data-store` writes and how cache hits work.
+- [`report`](report.md): render the report JSON that `run` emits.

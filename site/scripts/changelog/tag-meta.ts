@@ -24,18 +24,18 @@ export function tagToMeta(repo: string, tag: string): TagMeta | null {
   // harness/typescript history (used only by the one-time backfill).
   if (repo.endsWith('/sdk-typescript')) {
     if (!/^v\.?\d/.test(tag)) return null
-    return { sdk: 'harness', language: 'typescript', version: cleanVersion(tag) }
+    return { sdk: 'sdk', language: 'typescript', version: cleanVersion(tag) }
   }
   // harness-sdk
   if (tag.startsWith('python-wasm/')) return null
   if (tag.startsWith('python/')) {
-    return { sdk: 'harness', language: 'python', version: cleanVersion(tag.slice('python/'.length)) }
+    return { sdk: 'sdk', language: 'python', version: cleanVersion(tag.slice('python/'.length)) }
   }
   if (tag.startsWith('typescript/')) {
-    return { sdk: 'harness', language: 'typescript', version: cleanVersion(tag.slice('typescript/'.length)) }
+    return { sdk: 'sdk', language: 'typescript', version: cleanVersion(tag.slice('typescript/'.length)) }
   }
   if (/^v\.?\d/.test(tag)) {
-    return { sdk: 'harness', language: 'python', version: cleanVersion(tag) }
+    return { sdk: 'sdk', language: 'python', version: cleanVersion(tag) }
   }
   return null
 }

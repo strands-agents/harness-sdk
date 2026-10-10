@@ -1,0 +1,96 @@
+name: "Harness Python: Test Package Build"
+
+# End-to-end wheel install smoke test for harness-py (`strands-harness`).
+# Reusable; called by release-harness-py.yml. Mirrors the SDK's
+# python-test-package-build.yml: build with `python -m build`, install the
+# wheel in a venv OUTSIDE the repo tree (no editable fallback to source),
+# then import the public surface. Catches a misconfigured wheel that pytest
+# (editable source) would not.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      version:
+        description: 'If set, pin the wheel to this version via SETUPTOOLS_SCM_PRETEND_VERSION. Required at release time (the release tag does not exist yet, so hatch-vcs would otherwise derive a dev version). PR-time callers leave this empty.'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  test-package-build:
+    name: Wheel install
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install build tooling
+        run: pip install --no-cache-dir build
+
+      - name: Build wheel + sdist
+        working-directory: harness-py
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PINNED_VERSION" ]; then
+            echo "Building with SETUPTOOLS_SCM_PRETEND_VERSION=$PINNED_VERSION"
+            export SETUPTOOLS_SCM_PRETEND_VERSION="$PINNED_VERSION"
+          else
+            echo "No version pinned; hatch-vcs will derive from git tags."
+          fi
+          python -m build
+
+      - name: Install the wheel in a clean venv outside the repo and import
+        # The venv MUST live outside the monorepo tree, or pip could fall back to
+        # the in-tree source if the wheel is incomplete, masking the bug.
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          WHEEL=$(find "$GITHUB_WORKSPACE/harness-py/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          if [ -z "$WHEEL" ]; then
+            echo "::error::no wheel produced under harness-py/dist"
+            exit 1
+          fi
+          python -m venv "$WORK/venv"
+          "$WORK/venv/bin/pip" install --upgrade pip
+          "$WORK/venv/bin/pip" install "$WHEEL"
+          cd "$WORK"
+          if [ -n "$PINNED_VERSION" ]; then
+            PINNED_VERSION="$PINNED_VERSION" "$WORK/venv/bin/python" - <<'PYEOF'
+          import os
+          from importlib.metadata import version
+          import strands_harness  # noqa: F401  ensure the wheel imports from a clean venv
+          expected = os.environ["PINNED_VERSION"]
+          actual = version("strands-harness")
+          assert actual == expected, f"strands-harness version is {actual!r}, expected {expected!r}"
+          print(f"version OK: {actual}")
+          PYEOF
+          else
+            "$WORK/venv/bin/python" -c "import strands_harness; from importlib.metadata import version; print('strands-harness version:', version('strands-harness'))"
+          fi
+
+      - name: Upload wheel + sdist for downstream inspect/publish
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-pypi-build-output
+          path: harness-py/dist/*
+          if-no-files-found: error
+          retention-days: 7

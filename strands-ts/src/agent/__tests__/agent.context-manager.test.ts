@@ -120,4 +120,23 @@ describe('Agent contextManager', () => {
       expect(plugins.get('strands:context-manager')).toBeInstanceOf(ContextManager)
     })
   })
+
+  describe('when ContextManager instance', () => {
+    it('uses the instance as-is', () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
+      const contextManager = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }] })
+      const agent = new Agent({ model, contextManager })
+      expect(agent.contextManager).toBe(contextManager)
+      expect(getConversationManager(agent)).toBeInstanceOf(NullConversationManager)
+    })
+
+    it('registers the instance as a plugin', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
+      const contextManager = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }] })
+      const agent = new Agent({ model, contextManager })
+      await agent.invoke('hi')
+      const plugins = internals(agent)._pluginRegistry._plugins
+      expect(plugins.get('strands:context-manager')).toBe(contextManager)
+    })
+  })
 })

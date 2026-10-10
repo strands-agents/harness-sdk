@@ -11,12 +11,12 @@ const LANGUAGE_INDEX_FILES: Array<{
   typescriptTitle: string;
 }> = [
   {
-    path: "src/content/docs/user-guide/deploy/deploy_to_bedrock_agentcore/index.mdx",
+    path: "src/content/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/index.mdx",
     pythonTitle: "Python Deployment",
     typescriptTitle: "TypeScript Deployment",
   },
   {
-    path: "src/content/docs/user-guide/deploy/deploy_to_docker/index.mdx",
+    path: "src/content/docs/user-guide/sdk/deploy/deploy_to_docker/index.mdx",
     pythonTitle: "Python Deployment",
     typescriptTitle: "TypeScript Deployment",
   },

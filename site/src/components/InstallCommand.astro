@@ -1,0 +1,138 @@
+---
+/**
+ * Copyable install command that follows the site-wide Python/TypeScript
+ * preference. Shows `pip install …` for Python and `npm install …` for
+ * TypeScript, swapping live on the `lang-change` event that the language
+ * toggles broadcast (same channel as the banner/UseCases terminal). The copy
+ * button writes the *visible* command, so users always copy what they see.
+ *
+ * Rendered in two places (homepage banner + site footer); the inline script is
+ * idempotent and event-driven, so multiple instances stay in sync.
+ */
+import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
+
+// Defaults install the SDK; callers (e.g. the homepage banner) can override to
+// lead with another package such as Strands harness.
+interface Props {
+  pip?: string
+  npm?: string
+}
+const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strands-agents/sdk' } = Astro.props
+---
+
+<div class="install" data-install>
+  <code class="install__cmd">
+    <span class="install__prompt" aria-hidden="true">$</span>
+    <span class="install__text" data-install-text data-py={PIP} data-ts={NPM}>{NPM}</span>
+  </code>
+  <button type="button" class="install__copy" data-install-copy aria-label="Copy install command">
+    <span class="install__copy-label" data-install-copy-label>copy</span>
+  </button>
+</div>
+
+<style>
+  .install {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    max-width: 100%;
+    padding: 8px 8px 8px 14px;
+    background: var(--toggle-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+  }
+
+  .install__cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    color: var(--fg);
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .install__cmd::-webkit-scrollbar {
+    display: none;
+  }
+
+  .install__prompt {
+    color: var(--accent-green, var(--strands-green));
+    flex: none;
+  }
+
+  .install__copy {
+    flex: none;
+    padding: 6px 14px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+    background: var(--toggle-inactive-bg);
+    color: var(--toggle-inactive-fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+
+  .install__copy:hover {
+    color: var(--toggle-hover-fg);
+  }
+
+  .install__copy.is-copied {
+    background: var(--toggle-active-bg);
+    border-color: transparent;
+    color: var(--strands-black);
+  }
+</style>
+
+<script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>
+  (function () {
+    var blocks = document.querySelectorAll('[data-install]');
+    if (!blocks.length) return;
+
+    function currentLang() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        return DEFAULT_LANG;
+      }
+    }
+
+    function render(lang) {
+      blocks.forEach(function (block) {
+        var text = block.querySelector('[data-install-text]');
+        if (!text) return;
+        text.textContent = lang === 'Python' ? text.dataset.py : text.dataset.ts;
+      });
+    }
+
+    render(currentLang());
+
+    // Follow site-wide language changes (banner toggle, UseCases, docs tabs).
+    window.addEventListener('lang-change', function (e) {
+      if (e && e.detail) render(e.detail);
+    });
+  })();
+</script>
+
+<script>
+  // Copy wiring + analytics via the shared helper. Kept separate from the
+  // inline render above so the pip/npm command still paints before hydration.
+  import { attachCopyButton } from '../util/clipboard'
+
+  document.querySelectorAll<HTMLElement>('[data-install]').forEach((block) => {
+    const btn = block.querySelector<HTMLButtonElement>('[data-install-copy]')
+    const text = block.querySelector<HTMLElement>('[data-install-text]')
+    if (!btn || !text) return
+    attachCopyButton(btn, {
+      label: block.querySelector<HTMLElement>('[data-install-copy-label]'),
+      getText: () => text.textContent ?? '',
+      // pip = Python, npm = TypeScript — distinguish which command was copied.
+      track: { surface: 'install', detail: () => ((text.textContent ?? '').startsWith('pip') ? 'pip' : 'npm') },
+    })
+  })
+</script>

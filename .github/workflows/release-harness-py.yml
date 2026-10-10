@@ -1,0 +1,478 @@
+name: "Harness Python: Release"
+
+# Manual release of the harness-py library (`strands-harness`) to PyPI.
+# Mirrors the SDK's release-python.yml, retargeted to the harness package:
+# tag prefix `harness-python/v*` (NOT `python/v*`, which the SDK's own
+# `strands-agents` release owns), package `strands-harness`, working-directory
+# harness-py, and the harness-* reusable CI workflows.
+#
+# Shape: scan -> test-lint / integ / audit / build -> inspect -> notes ->
+#        approve -> tag + release -> publish -> verify.
+#
+# Publish is the last step and the only one that needs the PyPI trusted-publisher
+# registration; everything before it is reviewable on the run page.
+#
+# The version is not committed anywhere: hatch-vcs derives it from the
+# `harness-python/v*` tag (see harness-py/pyproject.toml). The tag does not exist
+# at build time, so the build job pins it via SETUPTOOLS_SCM_PRETEND_VERSION.
+#
+# One-time setup before the first non-dry run:
+#   - GitHub environments `release-gate` (required reviewers, deployment branch
+#     `main`) and `pypi` (both already used by the SDK releases).
+#   - Register this repo + THIS workflow file (environment `pypi`) as a Trusted
+#     Publisher on the `strands-harness` PyPI project (separate from the SDK's
+#     `strands-agents` trusted-publisher config).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit version, e.g. 1.4.0 (no leading v, no prefix).'
+        required: true
+        type: string
+      sha:
+        description: 'Optional commit SHA to release (must be an ancestor of origin/main). Defaults to current origin/main.'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Skip approval + tag + publish. Build/inspect/notes still run so you can review the artifact on the run page.'
+        required: true
+        default: true
+        type: boolean
+      run_integ_tests:
+        description: 'Run integration tests. No effect on upstream (integ always runs there). On a fork: false skips integ; true runs integ but requires the fork to have its own AWS credentials configured.'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-harness-py
+  cancel-in-progress: false
+
+jobs:
+  scan-commits:
+    name: Resolve SHA and validate version
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    outputs:
+      release_sha: ${{ steps.scan.outputs.release_sha }}
+      prev_tag: ${{ steps.scan.outputs.prev_tag }}
+      new_tag: ${{ steps.scan.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Resolve SHA, find previous tag, validate version
+        id: scan
+        env:
+          NEW_VERSION: ${{ inputs.version }}
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # 1. Validate the typed version (bare semver, no prefix).
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$NEW_VERSION' is not bare semver (expected MAJOR.MINOR.PATCH, no 'v')."
+            exit 1
+          fi
+
+          # 2. Resolve the SHA. Default to origin/main; a typed sha is accepted
+          #    only if it is an ancestor of origin/main.
+          if [ -n "$SHA_INPUT" ]; then
+            RELEASE_SHA=$(git rev-parse --verify "$SHA_INPUT^{commit}" 2>/dev/null) || {
+              echo "::error::sha '$SHA_INPUT' is not a valid commit."
+              exit 1
+            }
+            if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+              echo "::error::sha $RELEASE_SHA is not an ancestor of origin/main -- release only from main history."
+              exit 1
+            fi
+          else
+            RELEASE_SHA=$(git rev-parse origin/main)
+          fi
+
+          # 3. Pick tag prefix and resolve previous tag. A baseline is required.
+          #    The prefix must match harness-py/pyproject.toml's hatch-vcs tag_regex.
+          TAG_PREFIX="harness-python/v"
+          PREV_TAG=$(git tag --list "${TAG_PREFIX}*" --sort=-v:refname | head -n1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "::error::No prior tag matching ${TAG_PREFIX}* -- refusing to release without a baseline. (Fork-testing? Push a baseline tag first, e.g. \`git tag ${TAG_PREFIX}0.0.1 <sha> && git push origin ${TAG_PREFIX}0.0.1\`.)"
+            exit 1
+          fi
+          PREV_VERSION="${PREV_TAG#"${TAG_PREFIX}"}"
+          NEW_TAG="${TAG_PREFIX}${NEW_VERSION}"
+
+          # 4. Reject duplicate / non-monotonic / pre-existing tags, and require a
+          #    single-step increment (major, minor, or patch).
+          if [ "$NEW_VERSION" = "$PREV_VERSION" ]; then
+            echo "::error::version $NEW_VERSION matches existing tag $PREV_TAG."
+            exit 1
+          fi
+          HIGHER=$(printf '%s\n%s\n' "$PREV_VERSION" "$NEW_VERSION" | sort -V | tail -n1)
+          if [ "$HIGHER" != "$NEW_VERSION" ]; then
+            echo "::error::version $NEW_VERSION is not greater than previous $PREV_VERSION."
+            exit 1
+          fi
+          if ! [[ "$PREV_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::previous tag version '$PREV_VERSION' is not bare semver -- cannot compute the increment baseline."
+            exit 1
+          fi
+          IFS=. read -r P_MAJ P_MIN P_PAT <<< "$PREV_VERSION"
+          VALID="$((P_MAJ+1)).0.0 ${P_MAJ}.$((P_MIN+1)).0 ${P_MAJ}.${P_MIN}.$((P_PAT+1))"
+          case " $VALID " in
+            *" $NEW_VERSION "*) ;;
+            *)
+              echo "::error::version $NEW_VERSION is not a single increment of $PREV_VERSION (expected one of: $VALID)."
+              exit 1;;
+          esac
+          if git rev-parse --verify "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            echo "::error::tag $NEW_TAG already exists."
+            exit 1
+          fi
+
+          # 5. Sanity-check: at least one commit since prev tag.
+          COUNT=$(git rev-list --count "$PREV_TAG..$RELEASE_SHA")
+          if [ "$COUNT" = "0" ]; then
+            echo "::error::no commits between $PREV_TAG and $RELEASE_SHA -- nothing to release."
+            exit 1
+          fi
+
+          {
+            echo "release_sha=$RELEASE_SHA"
+            echo "prev_tag=$PREV_TAG"
+            echo "new_tag=$NEW_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release scan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package | \`strands-harness\` (PyPI) |"
+            echo "| Previous tag | \`$PREV_TAG\` (v$PREV_VERSION) |"
+            echo "| Proposed tag | \`$NEW_TAG\` (v$NEW_VERSION) |"
+            echo "| Pinned SHA | \`$RELEASE_SHA\` |"
+            echo "| Commits since prev tag | **$COUNT** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Lint + unit-test gates ─────────────────────────────────────────────
+  test-lint:
+    name: Harness Python lint + unit tests
+    needs: scan-commits
+    uses: ./.github/workflows/harness-py-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Integration tests ──────────────────────────────────────────────────
+  # Always runs on upstream. On a fork: opt-in via `run_integ_tests: true`
+  # (fork needs its own AWS credentials).
+  integ:
+    name: Harness Python integration tests
+    needs: scan-commits
+    if: github.event.repository.fork != true || inputs.run_integ_tests == true
+    uses: ./.github/workflows/harness-py-integration-test.yml
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Security audit (informational) ─────────────────────────────────────
+  security-audit:
+    name: Harness Python security audit
+    needs: scan-commits
+    uses: ./.github/workflows/harness-py-security-audit.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Build + smoke test (uploads harness-pypi-build-output) ─────────────
+  package-build:
+    name: Harness Python wheel install smoke test
+    needs: scan-commits
+    uses: ./.github/workflows/harness-py-test-package-build.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+      version: ${{ inputs.version }}
+
+  # ── Inspect the built artifact ─────────────────────────────────────────
+  # Downloads harness-pypi-build-output, checks metadata and version, re-uploads
+  # as harness-pypi-dist-bundle. publish-pypi pulls from the same bundle, so the
+  # bytes on the run page are the bytes uploaded to PyPI.
+  inspect:
+    name: Inspect Python dists
+    needs: package-build
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - name: Download build output
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: harness-pypi-build-output
+          path: dist
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.10'
+
+      - name: List wheel + sdist contents
+        run: |
+          set -euo pipefail
+          for f in dist/*.whl; do
+            echo "::group::$f"; python -m zipfile -l "$f"; echo "::endgroup::"
+          done
+          for f in dist/*.tar.gz; do
+            echo "::group::$f"; tar tzf "$f"; echo "::endgroup::"
+          done
+
+      - name: Assert artifacts are stamped with the typed version
+        # Wheel filenames encode the version (PEP 427) and publish cannot change
+        # them. package-build already checks the installed metadata -- this catches
+        # the filename side.
+        env:
+          EXPECTED: ${{ inputs.version }}
+        run: |
+          python - <<'PYEOF'
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          expected = os.environ["EXPECTED"]
+          errors = []
+          checked = 0
+          for f in sorted(Path("dist").iterdir()):
+              name = f.name
+              if name.endswith(".whl"):
+                  m = re.match(r"^[^-]+-([^-]+)-", name)
+              elif name.endswith(".tar.gz"):
+                  m = re.match(r"^[^-]+-(.+)\.tar\.gz$", name)
+              else:
+                  continue
+              checked += 1
+              version = m.group(1) if m else None
+              if version != expected:
+                  errors.append(f"{name}: version is {version!r}, expected {expected!r}")
+          if not checked:
+              print("::error::No wheel or sdist found in dist/", file=sys.stderr)
+              sys.exit(1)
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              sys.exit(1)
+          print(f"All {checked} artifact(s) stamped with version {expected}")
+          PYEOF
+
+      - name: twine check (metadata + README rendering)
+        run: |
+          pip install --no-cache-dir twine
+          twine check dist/*
+
+      - name: Upload verified bundle for publish
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-pypi-dist-bundle
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── Draft notes grouped by commit type ─────────────────────────────────
+  draft-notes:
+    name: Draft release notes (grouped by commit type)
+    needs: [scan-commits, test-lint, integ, security-audit, package-build, inspect]
+    # always() so a skipped integ (fork opt-out) still drafts notes; the guards
+    # keep it gated on every other job actually succeeding.
+    if: |
+      always() &&
+      needs.scan-commits.result == 'success' &&
+      needs.test-lint.result == 'success' &&
+      (needs.integ.result == 'success' || needs.integ.result == 'skipped') &&
+      needs.security-audit.result == 'success' &&
+      needs.package-build.result == 'success' &&
+      needs.inspect.result == 'success'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.10'
+
+      - name: Render notes
+        env:
+          PREV_TAG: ${{ needs.scan-commits.outputs.prev_tag }}
+          NEW_REF: ${{ needs.scan-commits.outputs.release_sha }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+          # Feed commits to the grouper as `hash<TAB>subject` lines and let it
+          # bucket them by conventional-commit type (feat, fix, ...).
+          git log --no-merges --pretty=format:'%h%x09%s' "$PREV_TAG..$NEW_REF" \
+            | NEW_TAG="$NEW_TAG" PREV_TAG="$PREV_TAG" \
+              python .github/scripts/group-release-notes.py > release-notes.md
+
+      - name: Render release summary
+        env:
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          IS_FORK: ${{ github.event.repository.fork }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release proposal"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package | \`strands-harness\` (PyPI) |"
+            echo "| Proposed tag | \`$NEW_TAG\` |"
+            echo "| Pinned SHA | \`$RELEASE_SHA\` |"
+            echo "| Dry run | \`$DRY_RUN\` |"
+            echo "| Running on fork | \`$IS_FORK\` |"
+            echo ""
+            echo "> Reviewers: the verified artifact is uploaded as \`harness-pypi-dist-bundle\` on this run's page. Download and install in a fresh venv to sanity-check before approving."
+            echo ""
+            echo "### Drafted notes"
+            echo ""
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 30
+
+  # ── Reviewer approval (skipped on dry runs) ────────────────────────────
+  approve-release:
+    name: Wait for reviewer approvals
+    needs: [scan-commits, draft-notes]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    environment:
+      # Shared with the SDK releases. Configure reviewers + main-only deployment
+      # branches in repo settings. On forks the environment has no reviewer
+      # config, so this just passes -- the publish step is the one that fails there.
+      name: release-gate
+    permissions: {}
+    steps:
+      - name: Acknowledge approval
+        env:
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+        run: |
+          echo "Approved to release $NEW_TAG at $RELEASE_SHA."
+
+  # ── Tag + GitHub release (before publish) ──────────────────────────────
+  # Runs before publish so the tag is the source of truth. If publish fails, the
+  # tag stays -- just re-run publish.
+  create-gh-release:
+    name: Create GitHub release
+    needs: [scan-commits, draft-notes, approve-release]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          # This job pushes the tag, so keep the GITHUB_TOKEN in git config.
+          persist-credentials: true
+
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-notes
+
+      - name: Tag the pinned SHA and create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          # Push the tag over git rather than through the releases API: that path
+          # returns 403 for the GITHUB_TOKEN (cli/cli#9514); a ref push works.
+          # Both steps are guarded so re-running after a partial failure is safe.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            git tag "$NEW_TAG" "$RELEASE_SHA"
+            git push origin "refs/tags/$NEW_TAG"
+          fi
+
+          if ! gh release view "$NEW_TAG" >/dev/null 2>&1; then
+            gh release create "$NEW_TAG" \
+              --title "$NEW_TAG" \
+              --notes-file release-notes.md
+          fi
+
+  # ── Publish to PyPI ────────────────────────────────────────────────────
+  # Last step. Uses PyPI trusted publishing (OIDC): register this repo + workflow
+  # file (environment `pypi`) as a trusted publisher on the `strands-harness`
+  # project. On a fork this fails at the OIDC step, by design.
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [inspect, approve-release, create-gh-release]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    environment:
+      name: pypi
+      url: https://pypi.org/p/strands-harness
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download verified dists
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: harness-pypi-dist-bundle
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ── Post-publish smoke check ───────────────────────────────────────────
+  verify-published:
+    name: Verify version on PyPI
+    needs: [publish-pypi]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions: {}
+    steps:
+      - name: Poll PyPI for the new version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            # Cache-buster: registry CDNs cache negative (404) responses.
+            if curl -sf "https://pypi.org/pypi/strands-harness/$VERSION/json?t=$(date +%s)" >/dev/null; then
+              echo "strands-harness $VERSION is live on PyPI."
+              exit 0
+            fi
+            echo "attempt $i/30: not visible yet, retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::strands-harness $VERSION not visible on PyPI after 5 minutes."
+          exit 1

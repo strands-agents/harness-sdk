@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/file_editor
-docsPage: docs/user-guide/concepts/tools/vended-tools
+docsPage: docs/user-guide/sdk/tools/vended-tools
 addedDate: 2025-11-10

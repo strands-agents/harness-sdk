@@ -171,4 +171,4 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return ContentBlock(text=marker)
 
     def _resolve_model(self, agent: Agent) -> Model | None:
-        return self._config.get("model") or agent.model
+        return self._config.get("model") or agent.aux_model

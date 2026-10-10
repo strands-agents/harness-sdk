@@ -1,23 +1,23 @@
 ---
-title: Multimodal Faithfulness Evaluator
+title: Multimodal faithfulness evaluator
 description: 'Catch visual hallucinations with MultimodalFaithfulnessEvaluator, which checks agent responses for invented details not grounded in the image.'
 tags: [multimodal-evaluation, vision]
 sidebar:
-  label: "Multimodal Faithfulness"
+  label: "Multimodal faithfulness"
 ---
 
 ## Overview
 
 The `MultimodalFaithfulnessEvaluator` assesses whether an agent response is grounded in the image content, detecting hallucinations such as invented details, unsupported assumptions, external knowledge, and speculation.
 
-## Key Features
+## Key features
 
 - **Output-Level Evaluation**: Scores a single agent response per case
 - **Binary Scoring**: `1.0` if fully grounded, `0.0` if any hallucination is found
 - **Automatic Reference Comparison**: Appends a reference suffix to the rubric when `expected_output` is provided on the case
 - **Hallucination Detection**: Designed to catch invented details, unsupported assumptions, and speculation
 
-## When to Use
+## When to use
 
 Use the `MultimodalFaithfulnessEvaluator` when you need to:
 
@@ -26,7 +26,7 @@ Use the `MultimodalFaithfulnessEvaluator` when you need to:
 - Screen for inferred-but-unseen details (emotions, off-screen events, brand names, locations)
 - Complement correctness checks with a groundedness check
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response per case.
 
@@ -54,7 +54,12 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 - **Type**: `str | None`
 - **Default**: `None` (uses the built-in default suffix)
 
-## Scoring System
+### `uses_environment_state` (optional)
+- **Type**: `bool`
+- **Default**: `False`
+- **Description**: Whether to include environment state in the evaluation prompt, enabling assessment of agent side effects alongside the output.
+
+## Scoring system
 
 | Score | Label | Meaning |
 |-------|-------|---------|
@@ -63,7 +68,7 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 
 A response passes only if the score is `1.0`.
 
-## Basic Usage
+## Basic usage
 
 ```python
 import asyncio
@@ -98,9 +103,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Combining with Other Evaluators
+## Combining with other evaluators
 
-Pair with correctness to distinguish "wrong" from "ungrounded". `Experiment.run_evaluations` returns one combined report across all evaluators — each row in `report.cases` carries an `evaluator` key naming the producing evaluator:
+Pair with correctness to distinguish "wrong" from "ungrounded". `Experiment.run_evaluations` returns one combined report across all evaluators. Each row in `report.cases` carries an `evaluator` key naming the producing evaluator:
 
 ```python
 from strands_evals import Experiment
@@ -124,7 +129,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**MultimodalOutputEvaluator**](multimodal_output_evaluator.md): Parent class with full parameter reference
 - [**MultimodalCorrectnessEvaluator**](multimodal_correctness_evaluator.md): Strict factual correctness

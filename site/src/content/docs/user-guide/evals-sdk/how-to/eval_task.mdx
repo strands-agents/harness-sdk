@@ -1,18 +1,18 @@
 ---
-title: Task Decorator
+title: Task decorator
 description: 'Write evaluation task functions with the @eval_task decorator, which handles telemetry, session mapping, and result normalization for you.'
 tags: [observability]
 sidebar:
-  label: "Task Decorator"
+  label: "Task decorator"
 ---
 
 ## Overview
 
-The `@eval_task` decorator simplifies writing task functions for evaluation. Instead of manually wiring up telemetry, session mapping, and result normalization, you decorate a function and let the framework handle the boilerplate.
+Write evaluation task functions without wiring up telemetry, session mapping, and result normalization yourself. Decorate a function with `@eval_task` and it handles that boilerplate.
 
-## Basic Usage
+## Basic usage
 
-The simplest form — return an `Agent` and the decorator invokes it with `case.input` automatically:
+In the simplest form, return an `Agent` and the decorator invokes it with `case.input` automatically:
 
 ```python
 from strands import Agent
@@ -21,7 +21,7 @@ from strands_evals.evaluators import OutputEvaluator
 
 @eval_task()
 def my_task():
-    return Agent(model="global.anthropic.claude-sonnet-4-6", callback_handler=None)
+    return Agent(model="global.anthropic.claude-sonnet-5", callback_handler=None)
 
 cases = [Case(name="greeting", input="Hello!")]
 evaluator = OutputEvaluator(rubric="Score 1.0 if friendly. Score 0.0 otherwise.")
@@ -29,35 +29,39 @@ experiment = Experiment(cases=cases, evaluators=[evaluator])
 report = experiment.run_evaluations(my_task)
 ```
 
-## How It Works
+## How it works
 
 The decorator wraps your function so that `Experiment.run_evaluations` receives a properly formatted task callable. Your function can:
 
-1. **Take no arguments** — the decorator calls it once per case and invokes the returned Agent with `case.input`
-2. **Take a `Case` argument** — for per-case customization (different tools, system prompts, etc.)
-3. **Return an `Agent`** — auto-invoked with `case.input`
-4. **Return a `str`** — used directly as the output
-5. **Return a `dict`** — passed through as-is (must have at least an `"output"` key)
+1. **Take no arguments**: the decorator calls it once per case and invokes the returned `Agent` with `case.input`
+2. **Take a `Case` argument**: for per-case customization (different tools, system prompts, and so on)
+3. **Return an `Agent`**: auto-invoked with `case.input`
+4. **Return a `str`**: used directly as the output
+5. **Return a `dict`**: passed through as-is (must have at least an `"output"` key)
 
-## Per-Case Customization
+## Per-case customization
 
 Accept a `Case` parameter to customize agent behavior per test case:
 
 ```python
-from strands_tools import calculator
+from strands.vended_tools import notebook
 
 @eval_task()
 def my_task(case):
-    tools = [calculator] if (case.metadata or {}).get("use_calc") else []
+    tools = [notebook] if (case.metadata or {}).get("use_notebook") else []
     return Agent(tools=tools, callback_handler=None)
 
 cases = [
-    Case(name="math", input="What is 15 * 23?", metadata={"use_calc": True}),
-    Case(name="chat", input="Tell me a joke", metadata={"use_calc": False}),
+    Case(
+        name="notes",
+        input='Create a notebook named "ideas" with three project ideas.',
+        metadata={"use_notebook": True},
+    ),
+    Case(name="chat", input="Tell me a joke", metadata={"use_notebook": False}),
 ]
 ```
 
-## Collecting Traces with TracedHandler
+## Collecting traces with TracedHandler
 
 For evaluators that need trajectory data (HelpfulnessEvaluator, CorrectnessEvaluator, etc.), use `TracedHandler`. It automatically collects OpenTelemetry spans and maps them to a `Session`:
 
@@ -86,7 +90,7 @@ report = experiment.run_evaluations(my_task)
 `TracedHandler` shares a single span exporter across calls. Use it with sequential execution (`run_evaluations`) or `run_evaluations_async(max_workers=1)`. For concurrent execution, each worker needs its own `TracedHandler` instance.
 :::
 
-## Custom Handlers
+## Custom handlers
 
 Create custom handlers by subclassing `EvalTaskHandler`:
 
@@ -107,11 +111,12 @@ def my_task():
     return Agent(callback_handler=None)
 ```
 
-## Before and After: Comparison
+## Before and after: Comparison
 
 Without the decorator:
 
 ```python
+from strands import Agent
 from strands_evals.telemetry import StrandsEvalsTelemetry
 from strands_evals.mappers import StrandsInMemorySessionMapper
 
@@ -138,7 +143,7 @@ def task_function():
     return Agent(callback_handler=None)
 ```
 
-## Related Documentation
+## Related documentation
 
 - [Getting Started](../quickstart.md): Quickstart guide
 - [Evaluators Overview](../evaluators/index.md): Available evaluators

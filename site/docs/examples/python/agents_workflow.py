@@ -7,7 +7,7 @@ This example demonstrates an agentic workflow using Strands agents with web rese
 ## Key Features
 - Specialized agent roles working in sequence
 - Direct passing of information between workflow stages
-- Web research using http_request and retrieve tools
+- Web research using the HTTP request tool
 - Fact-checking and information synthesis
 
 ## How to Run
@@ -26,7 +26,7 @@ This example demonstrates an agentic workflow using Strands agents with web rese
 """
 
 from strands import Agent
-from strands_tools import http_request
+from strands.vended_tools import http_request
 
 
 def run_research_workflow(user_input):
@@ -50,7 +50,7 @@ def run_research_workflow(user_input):
         system_prompt=(
             "You are a Researcher Agent that gathers information from the web. "
             "1. Determine if the input is a research query or factual claim "
-            "2. Use your research tools (http_request, retrieve) to find relevant information "
+            "2. Use the http_request tool to fetch relevant information from known URLs "
             "3. Include source URLs and keep findings under 500 words"
         ),
         callback_handler=None,

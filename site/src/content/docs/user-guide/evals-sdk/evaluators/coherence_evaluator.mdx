@@ -1,5 +1,5 @@
 ---
-title: Coherence Evaluator
+title: Coherence evaluator
 description: 'Assess the logical consistency and flow of agent responses with CoherenceEvaluator, an LLM judge with a five-level scoring rubric.'
 tags: [conversation-management]
 sidebar:
@@ -10,14 +10,14 @@ sidebar:
 
 The `CoherenceEvaluator` assesses whether an agent's response maintains logical consistency, flows naturally, and presents ideas in a well-organized manner. It uses an LLM-as-judge approach with a five-level scoring rubric.
 
-## Key Features
+## Key features
 
 - **Trace-Level Evaluation**: Evaluates the most recent turn in the conversation
 - **Five-Level Scoring**: Granular scale from "Not At All" to "Completely Yes"
 - **Context-Aware**: Considers conversation history when evaluating coherence
 - **Structured Reasoning**: Provides step-by-step reasoning for each evaluation
 
-## When to Use
+## When to use
 
 Use the `CoherenceEvaluator` when you need to:
 
@@ -26,7 +26,7 @@ Use the `CoherenceEvaluator` when you need to:
 - Evaluate whether responses flow naturally
 - Measure quality of multi-step reasoning
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn in the conversation.
 
@@ -52,7 +52,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 - **Default**: `"v0"`
 - **Description**: Prompt template version.
 
-## Scoring System
+## Scoring system
 
 | Rating | Score | Description |
 |--------|-------|-------------|
@@ -64,7 +64,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 
 A response passes the evaluation if the score is >= 0.5.
 
-## Basic Usage
+## Basic usage
 
 :::caution[Required: Session ID Trace Attributes]
 When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
@@ -104,7 +104,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**ConcisenessEvaluator**](conciseness_evaluator.md): Evaluates response brevity
 - [**ResponseRelevanceEvaluator**](response_relevance_evaluator.md): Evaluates relevance to user questions

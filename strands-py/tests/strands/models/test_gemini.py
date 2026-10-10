@@ -219,6 +219,38 @@ async def test_stream_request_with_image(gemini_client, model, model_id):
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+@pytest.mark.parametrize(
+    ("video_format", "mime_type"),
+    [
+        ("flv", "video/x-flv"),
+        ("mkv", "video/x-matroska"),
+        ("mov", "video/quicktime"),
+        ("mpeg", "video/mpeg"),
+        ("mpg", "video/mpeg"),
+        ("mp4", "video/mp4"),
+        ("three_gp", "video/3gpp"),
+        ("webm", "video/webm"),
+        ("wmv", "video/x-ms-wmv"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_request_with_video(video_format, mime_type, gemini_client, model, model_id):
+    messages = [
+        {
+            "role": "user",
+            "content": [{"video": {"format": video_format, "source": {"bytes": b"video"}}}],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [{"parts": [{"inline_data": {"data": "dmlkZW8=", "mime_type": mime_type}}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
 @pytest.mark.asyncio
 async def test_stream_request_with_reasoning(gemini_client, model, model_id):
     messages = [
@@ -1177,6 +1209,22 @@ async def test_stream_response_throttled_exception(gemini_client, model, message
 
 
 @pytest.mark.asyncio
+async def test_stream_response_throttled_exception_non_json_body(gemini_client, model, messages):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/4523.
+
+    For a 429 with a non-JSON body, google-genai sets status to the HTTP reason phrase; the 429
+    code alone must be enough to classify it as throttling.
+    """
+    body = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
+    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
+        429, {"message": body, "status": "Too Many Requests"}
+    )
+
+    with pytest.raises(ModelThrottledException, match="RESOURCE_EXHAUSTED"):
+        await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
 async def test_stream_response_context_overflow_exception(gemini_client, model, messages):
     gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
         400,
@@ -1753,3 +1801,51 @@ class TestCountTokens:
         gemini_client.aio.models.count_tokens.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "finish_reason,stop_reason",
+    [("STOP", "end_turn"), ("SAFETY", "guardrail_intervened"), ("RECITATION", "content_filtered")],
+)
+async def test_stream_response_without_usage_metadata(
+    gemini_client, model, messages, agenerator, alist, finish_reason, stop_reason
+):
+    response = genai.types.GenerateContentResponse.model_validate(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "Hello"}]},
+                    "finishReason": finish_reason,
+                }
+            ]
+        }
+    )
+    assert response.usage_metadata is None
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator([response])
+
+    chunks = await alist(model.stream(messages))
+
+    assert {"contentBlockDelta": {"delta": {"text": "Hello"}}} in chunks
+    assert chunks[-1] == {"messageStop": {"stopReason": stop_reason}}
+    assert not any("metadata" in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_empty_usage_metadata_is_preserved(gemini_client, model, messages, agenerator, alist):
+    response = genai.types.GenerateContentResponse.model_validate(
+        {
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {},
+        }
+    )
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator([response])
+
+    chunks = await alist(model.stream(messages))
+
+    assert chunks[-1] == {
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 0},
+        }
+    }

@@ -22,7 +22,8 @@ import {
   VideoBlock,
   DocumentBlock,
 } from '../../index.js'
-import type { InvokeOptions } from '../../index.js'
+import type { InvokeOptions, MemoryStore } from '../../index.js'
+import { MemoryManager } from '../../index.js'
 import { AgentPrinter } from '../printer.js'
 import {
   AfterInvocationEvent,
@@ -33,6 +34,8 @@ import {
   BeforeToolsEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
+import { ModelRouter } from '../../models/routing/router.js'
+import type { Model } from '../../models/model.js'
 import { StructuredOutputError } from '../../errors.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
@@ -1377,6 +1380,57 @@ describe('Agent', () => {
     })
   })
 
+  describe('auxModel', () => {
+    it('defaults to model', () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model })
+
+      expect(agent.auxModel).toBe(model)
+    })
+
+    it('uses the configured auxModel', () => {
+      const auxModel = new MockMessageModel()
+      const agent = new Agent({ model: new MockMessageModel(), auxModel })
+
+      expect(agent.auxModel).toBe(auxModel)
+    })
+
+    it('creates BedrockModel from a string model id', () => {
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        auxModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+      })
+
+      expect(agent.auxModel).toBeInstanceOf(BedrockModel)
+      expect(agent.auxModel.getConfig().modelId).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    })
+
+    it('rejects a ModelRouter', () => {
+      const router = new ModelRouter([new MockMessageModel()])
+
+      expect(() => new Agent({ auxModel: router as unknown as Model })).toThrow(/ModelRouter/)
+    })
+
+    it('is reassignable at runtime', () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model })
+      const auxModel = new MockMessageModel()
+
+      agent.auxModel = auxModel
+      expect(agent.auxModel).toBe(auxModel)
+
+      agent.auxModel = 'us.anthropic.claude-haiku-4-5-20251001-v1:0'
+      expect(agent.auxModel).toBeInstanceOf(BedrockModel)
+
+      agent.auxModel = undefined
+      expect(agent.auxModel).toBe(model)
+
+      expect(() => {
+        agent.auxModel = new ModelRouter([new MockMessageModel()]) as unknown as Model
+      }).toThrow(/ModelRouter/)
+    })
+  })
+
   describe('model initialization', () => {
     describe('when model is a string', () => {
       it('creates BedrockModel with specified modelId', () => {
@@ -2472,6 +2526,65 @@ describe('normalizeToolUseNames', () => {
 
       const sessionIds = model.receivedOptions.map((options) => options.agentMetadata?.sessionId)
       expect(sessionIds).toEqual(['s1', 's2'])
+    })
+  })
+
+  describe('shutdown and async disposal', () => {
+    const searchOnlyStore = (): MemoryStore => ({
+      name: 'notes',
+      writable: false,
+      search: vi.fn().mockResolvedValue([]),
+    })
+
+    it('flushes the memory manager when shutdown is called directly', async () => {
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model, memoryManager })
+
+      await agent.shutdown()
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('flushes the memory manager when an `await using` scope exits', async () => {
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+
+      {
+        await using agent = new Agent({ model, memoryManager })
+        await agent.invoke('Test prompt')
+        expect(flush).not.toHaveBeenCalled()
+      }
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('flushes even when the scope exits via a thrown error', async () => {
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+
+      await expect(
+        (async () => {
+          await using agent = new Agent({ model: new MockMessageModel(), memoryManager })
+          void agent
+          throw new Error('boom')
+        })()
+      ).rejects.toThrow('boom')
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('is a no-op when no memory manager is configured', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+
+      await expect(
+        (async () => {
+          await using agent = new Agent({ model })
+          await agent.invoke('Test prompt')
+        })()
+      ).resolves.toBeUndefined()
     })
   })
 })
