@@ -914,6 +914,7 @@ class TestInlineGuidance:
         await plugin._handle_tool_result(event)
         result_text = event.result["content"][0]["text"]
         assert "retrieve_offloaded_content" in result_text
+        assert "Pass a reference exactly as listed below." in result_text
         assert "pattern" in result_text
         assert "line_range" in result_text
 
@@ -975,6 +976,40 @@ class TestActionableReferences:
 
         result_text = event.result["content"][0]["text"]
         assert "mem_" in result_text
+
+    @pytest.mark.asyncio
+    async def test_text_and_json_reference_lines_include_line_counts(self, mock_agent):
+        storage = InMemoryStorage()
+        plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
+        text = "first line\nsecond line\n" + "x" * 120
+        json_value = {"items": ["y" * 120, "z" * 120]}
+        json_text = json.dumps(json_value, indent=2)
+        event = _make_event(mock_agent, [{"text": text}, {"json": json_value}])
+
+        await plugin._handle_tool_result(event)
+
+        result_text = event.result["content"][0]["text"]
+        text_line_count = len(text.split("\n"))
+        json_line_count = len(json_text.split("\n"))
+        assert f"text, {len(text):,} chars, {text_line_count:,} lines" in result_text
+        assert f"json, {len(json_text.encode('utf-8')):,} bytes, {json_line_count:,} lines" in result_text
+
+    @pytest.mark.asyncio
+    async def test_missing_reference_lists_available_references(self, mock_agent):
+        storage = InMemoryStorage()
+        plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
+        event = _make_event(mock_agent, "x" * 200, tool_use_id="tool_a")
+        await plugin._handle_tool_result(event)
+        event = _make_event(mock_agent, "y" * 200, tool_use_id="tool_b")
+        await plugin._handle_tool_result(event)
+
+        tool_use = ToolUse(toolUseId="retrieve_1", name="retrieve_offloaded_content", input={})
+        tool_context = ToolContext(tool_use=tool_use, agent=mock_agent, invocation_state={})
+        references = sorted(storage._store)
+        with pytest.raises(ValueError) as error_info:
+            await plugin.retrieve_offloaded_content(reference="missing", tool_context=tool_context)
+
+        assert str(error_info.value) == (f"reference not found: missing. Available references: {', '.join(references)}")
 
 
 class TestBeforeModelCallHook:

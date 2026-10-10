@@ -277,6 +277,7 @@ class ContextOffloader(Plugin):
         self._should_offload = should_offload
         self._evict_after_cycles = evict_after_cycles
         self._stored_cycles: weakref.WeakKeyDictionary[Agent, dict[str, int]] = weakref.WeakKeyDictionary()
+        self._stored_references: weakref.WeakKeyDictionary[Agent, set[str]] = weakref.WeakKeyDictionary()
         super().__init__()
 
     @staticmethod
@@ -340,6 +341,9 @@ class ContextOffloader(Plugin):
         cycle = event.agent.event_loop_metrics.cycle_count
         if isinstance(self._storage, InMemoryStorage):
             self._storage._evict(cycle)
+            agent_references = self._stored_references.get(event.agent)
+            if agent_references is not None:
+                agent_references.intersection_update(self._storage._store)
             return
 
         if _is_offloader_storage(self._storage) or self._evict_after_cycles is None:
@@ -361,6 +365,9 @@ class ContextOffloader(Plugin):
                     logger.debug("key=<%s> | failed to evict stale entry", key)
                     continue
                 del agent_cycles[key]
+                agent_references = self._stored_references.get(event.agent)
+                if agent_references is not None:
+                    agent_references.discard(key)
                 evicted += 1
             if evicted:
                 logger.debug("evicted=<%d>, cycle=<%d> | stale entries removed", evicted, cycle)
@@ -415,7 +422,11 @@ class ContextOffloader(Plugin):
         try:
             content_bytes, content_type = await _retrieve_content(storage, reference)
         except KeyError as error:
-            raise ValueError(f"reference not found: {reference}") from error
+            available_references = await self._available_references(tool_context.agent, storage, reference)
+            message = f"reference not found: {reference}"
+            if available_references:
+                message += f". Available references: {', '.join(available_references)}"
+            raise ValueError(message) from error
 
         # Refresh the eviction cycle so actively-retrieved content survives
         # eviction for unified Storage backends, matching InMemoryStorage.retrieve.
@@ -523,13 +534,19 @@ class ContextOffloader(Plugin):
             for i, block in enumerate(content):
                 key = f"{tool_use_id}_{i}"
                 if block.get("text"):
-                    ref = await _store_content(storage, key, block["text"].encode("utf-8"), "text/plain")
-                    references.append((ref, "text/plain", f"text, {len(block['text']):,} chars"))
+                    text = block["text"]
+                    ref = await _store_content(storage, key, text.encode("utf-8"), "text/plain")
+                    line_count = len(text.split("\n"))
+                    references.append((ref, "text/plain", f"text, {len(text):,} chars, {line_count:,} lines"))
                     self._track_stored_cycle(event.agent, ref, cycle)
                 elif "json" in block:
-                    json_bytes = json.dumps(block["json"], indent=2).encode("utf-8")
+                    json_text = json.dumps(block["json"], indent=2)
+                    json_bytes = json_text.encode("utf-8")
                     ref = await _store_content(storage, key, json_bytes, "application/json")
-                    references.append((ref, "application/json", f"json, {len(json_bytes):,} bytes"))
+                    line_count = len(json_text.split("\n"))
+                    references.append(
+                        (ref, "application/json", f"json, {len(json_bytes):,} bytes, {line_count:,} lines")
+                    )
                     self._track_stored_cycle(event.agent, ref, cycle)
                 elif "image" in block:
                     image = block["image"]
@@ -581,6 +598,7 @@ class ContextOffloader(Plugin):
         if self._include_retrieval_tool:
             guidance += (
                 "If you need more detail, use retrieve_offloaded_content with a reference and:\n"
+                "Pass a reference exactly as listed below.\n"
                 "  - pattern: regex or keyword to find matching lines with context\n"
                 "  - line_range: { start, end } to read a specific span of lines\n"
                 "Retrieve full content (omit pattern/line_range) as a last resort."
@@ -635,13 +653,39 @@ class ContextOffloader(Plugin):
         )
 
     def _track_stored_cycle(self, agent: Agent, ref: str, cycle: int) -> None:
-        """Record the cycle at which a key was stored (unified Storage eviction)."""
+        """Record a stored reference and its cycle for unified Storage eviction."""
+        agent_references = self._stored_references.get(agent)
+        if agent_references is None:
+            agent_references = set()
+            self._stored_references[agent] = agent_references
+        agent_references.add(ref)
         if self._storage is not None and not _is_offloader_storage(self._storage):
             agent_cycles = self._stored_cycles.get(agent)
             if agent_cycles is None:
                 agent_cycles = {}
                 self._stored_cycles[agent] = agent_cycles
             agent_cycles[ref] = cycle
+
+    async def _available_references(
+        self,
+        agent: Agent,
+        storage: Storage | _LegacyStorage,
+        missing_reference: str,
+    ) -> list[str]:
+        """Return references tracked for an agent that are still present in storage."""
+        agent_references = self._stored_references.get(agent)
+        if agent_references is None:
+            return []
+
+        agent_references.discard(missing_reference)
+        if not _is_offloader_storage(storage):
+            try:
+                stored_references = await storage.list("")  # type: ignore[union-attr]
+                agent_references.intersection_update(stored_references)
+            except Exception:
+                logger.debug(" | failed to list available references", exc_info=True)
+
+        return sorted(agent_references)
 
     def _refresh_eviction_cycle(self, agent: Agent, reference: str) -> None:
         """Refresh the eviction cycle for a retrieved reference.
