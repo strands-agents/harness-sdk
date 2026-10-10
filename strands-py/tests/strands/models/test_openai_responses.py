@@ -18,11 +18,16 @@ from strands.types.exceptions import ContextWindowOverflowException, ModelThrott
 
 
 @pytest.fixture
-def openai_client():
+def openai_client_cls():
     with unittest.mock.patch.object(strands.models.openai_responses.openai, "AsyncOpenAI") as mock_client_cls:
-        mock_client = unittest.mock.AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-        yield mock_client
+        yield mock_client_cls
+
+
+@pytest.fixture
+def openai_client(openai_client_cls):
+    mock_client = unittest.mock.AsyncMock()
+    openai_client_cls.return_value.__aenter__.return_value = mock_client
+    return mock_client
 
 
 @pytest.fixture
@@ -1235,6 +1240,189 @@ async def test_structured_output_forwards_request_params(openai_client, model_id
     assert "stream" not in parse_kwargs
 
 
+@pytest.fixture
+def injected_client():
+    return unittest.mock.AsyncMock()
+
+
+@pytest.mark.asyncio
+async def test_stream_creates_and_closes_client_per_request(
+    openai_client, openai_client_cls, model_id, messages, agenerator, alist
+):
+    """Guards the default path: without an injected client, each request opens a fresh client and closes it."""
+    mock_client = openai_client
+    mock_client.responses.create = unittest.mock.AsyncMock(side_effect=lambda **_: agenerator([]))
+    model = OpenAIResponsesModel(model_id=model_id, client_args={"api_key": "k1"})
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    assert openai_client_cls.call_args_list == [unittest.mock.call(api_key="k1")] * 2
+    assert openai_client_cls.return_value.__aexit__.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_with_injected_client(openai_client_cls, injected_client, model_id, messages, agenerator, alist):
+    injected_client.responses.create = unittest.mock.AsyncMock(side_effect=lambda **_: agenerator([]))
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    assert injected_client.responses.create.await_count == 2
+    openai_client_cls.assert_not_called()
+    injected_client.__aexit__.assert_not_called()
+    injected_client.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_structured_output_with_injected_client(
+    openai_client_cls, injected_client, model_id, messages, test_output_model_cls, alist
+):
+    mock_parsed_instance = test_output_model_cls(name="John", age=30)
+    injected_client.responses.parse = unittest.mock.AsyncMock(
+        return_value=unittest.mock.Mock(output_parsed=mock_parsed_instance)
+    )
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
+
+    tru_events = await alist(model.structured_output(test_output_model_cls, messages))
+    exp_events = [{"output": mock_parsed_instance}]
+
+    assert tru_events == exp_events
+    injected_client.responses.parse.assert_awaited_once()
+    openai_client_cls.assert_not_called()
+    injected_client.__aexit__.assert_not_called()
+    injected_client.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_with_injected_client(openai_client_cls, injected_client, model_id, messages):
+    injected_client.responses.input_tokens.count = unittest.mock.AsyncMock(
+        return_value=unittest.mock.Mock(input_tokens=42)
+    )
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id, use_native_token_count=True)
+
+    tru_tokens = await model.count_tokens(messages=messages)
+
+    assert tru_tokens == 42
+    openai_client_cls.assert_not_called()
+    injected_client.__aexit__.assert_not_called()
+    injected_client.close.assert_not_called()
+
+
+def test__init__with_both_client_and_client_args_raises_error(injected_client):
+    with pytest.raises(ValueError, match="Only one of 'client' or 'client_args' should be provided"):
+        OpenAIResponsesModel(client=injected_client, client_args={"api_key": "test"}, model_id="test-model")
+
+
+class _ClosableStream:
+    """Response stream stand-in that records how far it was read and whether it was closed."""
+
+    def __init__(self, events):
+        self.remaining = list(events)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.remaining:
+            raise StopAsyncIteration
+        event = self.remaining.pop(0)
+        if isinstance(event, Exception):
+            raise event
+        return event
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inject_client", [True, False])
+async def test_stream_reads_past_terminal_event_only_with_injected_client(
+    openai_client, injected_client, model_id, messages, alist, inject_client
+):
+    completed_event = unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None))
+    trailing_event = unittest.mock.Mock(type="response.output_text.delta", delta="ignored")
+    response_stream = _ClosableStream([completed_event, trailing_event])
+    request_client = injected_client if inject_client else openai_client
+    request_client.responses.create = unittest.mock.AsyncMock(return_value=response_stream)
+    model_kwargs = {"client": injected_client} if inject_client else {}
+    model = OpenAIResponsesModel(model_id=model_id, **model_kwargs)
+
+    tru_events = await alist(model.stream(messages))
+    exp_events = [{"messageStart": {"role": "assistant"}}, {"messageStop": {"stopReason": "end_turn"}}]
+
+    assert tru_events == exp_events
+    assert response_stream.remaining == ([] if inject_client else [trailing_event])
+    assert response_stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        httpx.RemoteProtocolError("peer closed connection without sending complete message body"),
+        openai.APIError("An error occurred during streaming", request=httpx.Request("POST", "https://x"), body=None),
+    ],
+)
+async def test_stream_completes_when_reading_after_terminal_event_fails(
+    injected_client, model_id, messages, alist, read_error
+):
+    text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
+    completed_event = unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None))
+    response_stream = _ClosableStream([text_event, completed_event, read_error])
+    injected_client.responses.create = unittest.mock.AsyncMock(return_value=response_stream)
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
+
+    tru_events = await alist(model.stream(messages))
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Hello"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+
+    assert tru_events == exp_events
+    assert response_stream.closed
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_without_reading_it_when_consumer_stops_early(injected_client, model_id, messages):
+    text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
+    completed_event = unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None))
+    response_stream = _ClosableStream([text_event, completed_event])
+    injected_client.responses.create = unittest.mock.AsyncMock(return_value=response_stream)
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
+
+    stream = model.stream(messages)
+    await anext(stream)
+    await stream.aclose()
+
+    assert response_stream.remaining == [text_event, completed_event]
+    assert response_stream.closed
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_without_reading_it_on_error(injected_client, model_id, messages):
+    error = ResponseError(message="The model failed while processing the request.", code="server_error")
+    failed_event = ResponseFailedEvent.model_construct(
+        type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
+    )
+    trailing_event = unittest.mock.Mock(type="response.output_text.delta", delta="ignored")
+    response_stream = _ClosableStream([failed_event, trailing_event])
+    injected_client.responses.create = unittest.mock.AsyncMock(return_value=response_stream)
+    model = OpenAIResponsesModel(client=injected_client, model_id=model_id)
+
+    with pytest.raises(RuntimeError, match="The model failed while processing the request"):
+        async for _ in model.stream(messages):
+            pass
+
+    assert response_stream.remaining == [trailing_event]
+    assert response_stream.closed
+
+
 @pytest.mark.asyncio
 async def test_stream_response_failed_raises_provider_error(openai_client, model, messages, agenerator):
     error = ResponseError(message="The model failed while processing the request.", code="server_error")
@@ -2102,6 +2290,15 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
         assert resolved["api_key"] == "bedrock-api-key-deadbeef&Version=1"
         assert resolved["timeout"] == 42
         assert resolved["http_client"] is sentinel_http_client
+
+    def test_bedrock_mantle_config_conflicts_with_custom_client(self, injected_client):
+        """Cannot pass both bedrock_mantle_config and a pre-built client."""
+        with pytest.raises(ValueError, match="bedrock_mantle_config"):
+            OpenAIResponsesModel(
+                model_id="openai.gpt-oss-120b",
+                client=injected_client,
+                bedrock_mantle_config={"region": "us-east-1"},
+            )
 
     def test_bedrock_mantle_config_rejects_base_url_in_client_args(self, openai_client):
         """client_args must not contain base_url or api_key when bedrock_mantle_config is set."""

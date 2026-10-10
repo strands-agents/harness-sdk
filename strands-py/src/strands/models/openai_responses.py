@@ -22,7 +22,8 @@ import base64
 import json
 import logging
 import mimetypes
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from importlib.metadata import version as get_package_version
 from types import SimpleNamespace
 from typing import Any, Protocol, TypedDict, TypeVar, cast
@@ -51,6 +52,7 @@ except Exception as e:
         f"OpenAIResponsesModel requires openai>={_MIN_OPENAI_VERSION}. Install with: pip install -U openai"
     ) from e
 
+import httpx  # noqa: E402
 import openai  # noqa: E402 - must import after version check
 
 from ..agent.agent_metadata import AgentMetadata  # noqa: E402
@@ -85,6 +87,13 @@ class _OpenAIResponsesStreamError(RuntimeError):
     def __init__(self, message: str | None, code: str | None) -> None:
         super().__init__(message or "OpenAI Responses API response failed")
         self.code = code
+
+
+async def _close_response_stream(response: Any) -> None:
+    """Close a streamed response, releasing its connection even when the stream was not read to the end."""
+    close = getattr(response, "close", None)
+    if close is not None:
+        await close()
 
 
 def _encode_media_to_data_url(data: bytes, format_ext: str, media_type: str = "image") -> str:
@@ -167,6 +176,8 @@ class OpenAIResponsesModel(Model):
         self,
         client_args: dict[str, Any] | None = None,
         bedrock_mantle_config: BedrockMantleConfig | None = None,
+        *,
+        client: Client | None = None,
         **model_config: Unpack[OpenAIResponsesConfig],
     ) -> None:
         """Initialize provider instance.
@@ -180,24 +191,61 @@ class OpenAIResponsesModel(Model):
                 OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
                 ``bedrock-runtime`` via the config's ``endpoint`` key. See
                 :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
-                token is minted on every request.
+                token is minted on every request. Cannot be combined with a pre-built
+                ``client``.
+            client: Pre-configured OpenAI-compatible client to reuse across requests.
+                When provided, this client will be reused for all requests and will NOT be closed
+                by the model. The caller is responsible for managing the client lifecycle.
+                This is useful for:
+                - Injecting custom client wrappers (e.g., GuardrailsAsyncOpenAI)
+                - Reusing connection pools within a single event loop/worker
+                - Centralizing observability, retries, and networking policy
+                - Pointing to custom model gateways
+                Note: Use the client from a single asyncio event loop. Avoid synchronous
+                ``agent(...)`` calls, which each run on their own event loop; call
+                ``invoke_async`` or ``stream_async`` from one loop instead.
             **model_config: Configuration options for the OpenAI Responses API model.
+
+        Raises:
+            ValueError: If ``client`` is combined with ``client_args`` or ``bedrock_mantle_config``,
+                or if ``client_args`` sets ``api_key`` or ``base_url`` alongside ``bedrock_mantle_config``.
         """
         validate_config_keys(model_config, self.OpenAIResponsesConfig)
         self.config = dict(model_config)
 
+        self._validate_client_options(client, client_args, bedrock_mantle_config)
+
+        self._custom_client = client
         self.client_args = client_args or {}
         self._bedrock_mantle_config = bedrock_mantle_config
 
-        if bedrock_mantle_config is not None and client_args:
-            conflicting = [k for k in ("api_key", "base_url") if k in client_args]
-            if conflicting:
-                raise ValueError(
-                    f"client_args must not contain {conflicting} when bedrock_mantle_config is set; "
-                    "these are derived from the Mantle config automatically."
-                )
-
         logger.debug("config=<%s> | initializing", self.config)
+
+    @staticmethod
+    def _validate_client_options(
+        client: Client | None,
+        client_args: dict[str, Any] | None,
+        bedrock_mantle_config: BedrockMantleConfig | None,
+    ) -> None:
+        """Reject client options that conflict with each other.
+
+        Raises:
+            ValueError: If ``client`` is combined with ``client_args`` or ``bedrock_mantle_config``,
+                or if ``client_args`` sets ``api_key`` or ``base_url`` alongside ``bedrock_mantle_config``.
+        """
+        if client is not None and client_args:
+            raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
+        if client is not None and bedrock_mantle_config is not None:
+            raise ValueError("'bedrock_mantle_config' cannot be combined with a pre-built 'client'.")
+        if bedrock_mantle_config is None or not client_args:
+            return
+
+        conflicting = [key for key in ("api_key", "base_url") if key in client_args]
+        if conflicting:
+            raise ValueError(
+                f"client_args must not contain {conflicting} when bedrock_mantle_config is set; "
+                "these are derived from the Mantle config automatically."
+            )
 
     def _resolve_client_args(self) -> dict[str, Any]:
         """Return the kwargs to pass to ``openai.AsyncOpenAI`` for the current request.
@@ -209,6 +257,45 @@ class OpenAIResponsesModel(Model):
                 self._bedrock_mantle_config, self.client_args, model_id=str(self.config.get("model_id", ""))
             )
         return self.client_args
+
+    async def _drain_for_connection_reuse(self, response: AsyncIterable[Any]) -> None:
+        """Read the rest of a completed streamed response so its connection can return to the client's pool.
+
+        Only a pooled connection needs the rest of the body read; a per-request client is closed right after.
+        Best effort: the response is already complete, so a failed read only costs the connection.
+        """
+        if self._custom_client is None:
+            return
+
+        try:
+            async for _event in response:
+                pass
+        except (openai.APIError, httpx.HTTPError, httpx.StreamError, ValueError) as error:
+            logger.debug("error=<%s> | failed to read the rest of the response stream after the terminal event", error)
+
+    @asynccontextmanager
+    async def _get_client(self) -> AsyncIterator[Any]:
+        """Get an OpenAI client for making requests.
+
+        This context manager handles client lifecycle management:
+        - If an injected client was provided during initialization, it yields that client
+          without closing it (caller manages lifecycle).
+        - Otherwise, creates a new AsyncOpenAI client from client_args and automatically
+          closes it when the context exits.
+
+        Note: We create a new client per request to avoid connection sharing in the underlying
+        httpx client, as the asyncio event loop does not allow connections to be shared.
+        For more details, see https://github.com/encode/httpx/discussions/2959.
+
+        Yields:
+            Client: An OpenAI-compatible client instance.
+        """
+        if self._custom_client is not None:
+            yield self._custom_client
+            return
+
+        async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+            yield client
 
     @property
     @override
@@ -275,7 +362,7 @@ class OpenAIResponsesModel(Model):
             count_tokens_fields = {"model", "input", "instructions", "tools"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
-            async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+            async with self._get_client() as client:
                 response = await client.responses.input_tokens.count(**request)
                 total_tokens: int = response.input_tokens
 
@@ -329,9 +416,10 @@ class OpenAIResponsesModel(Model):
 
         logger.debug("invoking OpenAI Responses API model")
 
-        async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+        async with self._get_client() as client, AsyncExitStack() as cleanup:
             try:
                 response = await client.responses.create(**request)
+                cleanup.push_async_callback(_close_response_stream, response)
 
                 logger.debug("streaming response from OpenAI Responses API model")
 
@@ -458,6 +546,10 @@ class OpenAIResponsesModel(Model):
                             if hasattr(event, "response") and hasattr(event.response, "usage"):
                                 final_usage = event.response.usage
                             break
+
+                # The loop stops at the terminal event; the rest of the stream must be read before the
+                # connection can be reused.
+                await self._drain_for_connection_reuse(response)
             except (openai.APIError, _OpenAIResponsesStreamError) as error:
                 error_kind = classify_openai_error(error)
                 if error_kind == "throttling":
@@ -523,7 +615,7 @@ class OpenAIResponsesModel(Model):
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
-        async with openai.AsyncOpenAI(**self._resolve_client_args()) as client:
+        async with self._get_client() as client:
             try:
                 request = self._format_request(prompt, system_prompt=system_prompt)
                 request.pop("stream", None)

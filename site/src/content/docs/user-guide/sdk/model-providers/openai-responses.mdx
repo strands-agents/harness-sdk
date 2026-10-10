@@ -320,6 +320,54 @@ The OpenAI Responses provider does not currently implement native token counting
 </Tab>
 </Tabs>
 
+### Custom client
+
+You can pass your own OpenAI client to the OpenAIResponsesModel for Strands Agents to use
+directly. The model reuses it for every request, so its connection pool and HTTP settings
+carry across agent invocations. You are responsible for handling the lifecycle (e.g.,
+closing) of the client.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from openai import AsyncOpenAI
+from strands import Agent
+from strands.models.openai_responses import OpenAIResponsesModel
+
+client = AsyncOpenAI(api_key="<KEY>")
+
+agent = Agent(model=OpenAIResponsesModel(model_id="gpt-4o", client=client))
+
+async def main():
+    await agent.invoke_async("What is 2+2")
+    await agent.invoke_async("What is 2*2")
+    await client.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+`client` cannot be combined with `client_args` or `bedrock_mantle_config`.
+
+:::caution
+Use an injected client from one event loop: call `invoke_async` or `stream_async`.
+Each synchronous `agent(...)` call runs its own event loop, so the pooled connection
+belongs to a closed loop and shows up as retries or connection errors.
+:::
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/openai-responses_imports.ts:custom_client_imports"
+
+--8<-- "user-guide/sdk/model-providers/openai-responses.ts:custom_client"
+```
+</Tab>
+</Tabs>
+
 ## References
 
 - [Migrate from OpenAI to Strands](../../migrate/openai.md) — move a hand-written OpenAI loop or an OpenAI Agents SDK app to Strands
