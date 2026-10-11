@@ -62,6 +62,12 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
 
+# Bedrock reports one of these substrings when a model cannot be forced to use a tool (#1241).
+_FORCED_TOOL_CHOICE_VALIDATION_MESSAGES = [
+    'tool_choice: type "tool" and "any" are not supported',
+    "support the toolConfig.toolChoice",
+]
+
 # Models that should include tool result status (include_tool_result_status = True)
 _MODELS_INCLUDE_STATUS = [
     "anthropic.claude",
@@ -260,6 +266,7 @@ class BedrockModel(Model):
             include_tool_result_status="auto",
         )
         self._tool_result_turn_separation_model_id: str | None = None
+        self._rejected_forced_tool_choices: set[tuple[str, str]] = set()
         self.update_config(**model_config)
 
         logger.debug("config=<%s> | initializing", self.config)
@@ -1352,7 +1359,9 @@ class BedrockModel(Model):
             messages: List of message objects to be processed by the model.
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
-            tool_choice: Selection strategy for tool invocation.
+            tool_choice: Selection strategy for tool invocation. If Bedrock rejects a forced choice (``any`` or
+                ``tool``) for the model, the call is sent again with ``auto``, and later calls from this instance
+                send that choice type as ``auto``, so the model may answer in text or call any offered tool.
             system_prompt_content: System prompt content blocks to provide context to the model.
             cancel_signal: Event that aborts an in-flight streaming request. The caller stops
                 receiving events as soon as it is set, and the HTTP response is closed at the next
@@ -1456,7 +1465,7 @@ class BedrockModel(Model):
             converse_method = self.client.converse_stream if streaming else self.client.converse
 
             try:
-                response = converse_method(**request)
+                response = self._converse_with_tool_choice_fallback(converse_method, request)
             except ClientError as error:
                 error_details = error.response.get("Error", {})
                 if error_details.get(
@@ -1472,7 +1481,7 @@ class BedrockModel(Model):
 
                 logger.debug("model_id=<%s> | separating tool result and conversation turns", model_id)
                 request = {**request, "messages": separated_messages}
-                response = converse_method(**request)
+                response = self._converse_with_tool_choice_fallback(converse_method, request)
                 self._tool_result_turn_separation_model_id = model_id
 
             logger.debug("got response from model")
@@ -1571,6 +1580,60 @@ class BedrockModel(Model):
         finally:
             callback()
             logger.debug("finished streaming response from model")
+
+    def _converse_with_tool_choice_fallback(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
+        """Call Converse, sending auto tool choice in place of a forced tool choice the model rejects.
+
+        Only the call is retried, never a failure while reading the stream, so no event is sent twice.
+        """
+        model_id = request["modelId"]
+        choice_type = next(iter(request.get("toolConfig", {}).get("toolChoice", {})), "auto")
+        if (model_id, choice_type) in self._rejected_forced_tool_choices:
+            logger.debug(
+                "model_id=<%s>, tool_choice=<%s> | model does not support forced tool choice"
+                " | sending auto tool choice",
+                model_id,
+                choice_type,
+            )
+            return converse_method(**self._with_auto_tool_choice(request))
+
+        try:
+            return converse_method(**request)
+        except ClientError as error:
+            if choice_type not in ("any", "tool") or not self._rejects_forced_tool_choice(error):
+                raise
+
+            logger.warning(
+                "model_id=<%s>, tool_choice=<%s> | model does not support forced tool choice"
+                " | retrying with auto tool choice",
+                model_id,
+                choice_type,
+            )
+            # The rejection alone shows the model cannot be forced, so it is remembered even if the retry fails.
+            self._rejected_forced_tool_choices.add((model_id, choice_type))
+            return converse_method(**self._with_auto_tool_choice(request))
+
+    @staticmethod
+    def _rejects_forced_tool_choice(error: ClientError) -> bool:
+        """Check whether Bedrock rejected a request because the model cannot be forced to use a tool."""
+        error_details = error.response.get("Error", {})
+        message = error_details.get("Message", "")
+        return error_details.get("Code") == "ValidationException" and any(
+            pattern in message for pattern in _FORCED_TOOL_CHOICE_VALIDATION_MESSAGES
+        )
+
+    def _with_auto_tool_choice(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Return the request with auto tool choice, keeping the messages as sent.
+
+        The messages may already have separated tool-result turns. Thinking comes back because it is removed only
+        while a tool is forced. additional_args overrides every field except toolChoice, which must stay auto.
+        """
+        return {
+            **request,
+            **self._get_additional_request_fields(None),
+            **(self.config.get("additional_args") or {}),
+            "toolConfig": {**request["toolConfig"], "toolChoice": {"auto": {}}},
+        }
 
     def convert_non_streaming_to_streaming(self, response: dict[str, Any], **kwargs: Any) -> Iterable[StreamEvent]:
         """Convert a non-streaming response to the streaming format.
