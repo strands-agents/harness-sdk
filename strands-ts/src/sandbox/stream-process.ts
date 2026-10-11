@@ -49,7 +49,22 @@ export async function* streamProcess(
   args: string[],
   options?: StreamProcessOptions
 ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
-  const proc = spawn(command, args)
+  // Spawn in its own process group so the whole tree can be killed at once. Otherwise
+  // killing the `sh -c` wrapper orphans its children (e.g. the interpreter in
+  // `base64 -d | python3`), which keep running and hold the stdio pipes open.
+  const useProcessGroup = process.platform !== 'win32'
+  const proc = spawn(command, args, { detached: useProcessGroup })
+  const kill = (signal: 'SIGTERM' | 'SIGKILL'): void => {
+    if (!useProcessGroup || proc.pid === undefined) {
+      proc.kill(signal)
+      return
+    }
+    try {
+      process.kill(-proc.pid, signal)
+    } catch {
+      // The group is already gone.
+    }
+  }
   // Decode with a StringDecoder that holds partial multibyte bytes across chunk
   // boundaries, so a UTF-8 sequence split across two pipe reads is not decoded
   // as two invalid halves.
@@ -78,10 +93,10 @@ export async function* streamProcess(
     if (terminating || done) return
     terminating = true
     error = reason
-    proc.kill('SIGTERM')
+    kill('SIGTERM')
     wake()
     killTimer = setTimeout(() => {
-      if (!done) proc.kill('SIGKILL')
+      if (!done) kill('SIGKILL')
     }, 1000)
   }
 
@@ -182,6 +197,6 @@ export async function* streamProcess(
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
     if (killTimer !== undefined) clearTimeout(killTimer)
     if (options?.signal) options.signal.removeEventListener('abort', onAbort)
-    if (!done) proc.kill()
+    if (!done) kill('SIGTERM')
   }
 }

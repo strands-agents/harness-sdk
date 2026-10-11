@@ -8,6 +8,25 @@ import type { ExecutionResult, StreamChunk } from '../types.js'
 
 const TEST_DIR = '/tmp/strands-test-shell-sandbox'
 
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Poll until `pid` is gone (an orphan may linger briefly before init reaps it). */
+const waitForExit = async (pid: number, ms = 2000): Promise<boolean> => {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return !isAlive(pid)
+}
+
 describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
   let sandbox: TestSandbox
 
@@ -261,6 +280,15 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       expect(error.stderr).toBe('warn\n')
     })
 
+    it('kills the whole process tree on timeout', async () => {
+      // The backgrounded sleep is a grandchild of the spawned `sh`, like the interpreter in executeCode's pipeline.
+      const error = await sandbox.execute('sleep 60 & echo $!; wait', { timeout: 0.3 }).catch((e) => e)
+      expect(error).toBeInstanceOf(SandboxTimeoutError)
+      const pid = Number(error.stdout.trim())
+      expect(pid).toBeGreaterThan(0)
+      expect(await waitForExit(pid)).toBe(true)
+    })
+
     it('does not timeout fast commands', async () => {
       const result = await sandbox.execute('echo fast', { timeout: 5 })
       expect(result.exitCode).toBe(0)
@@ -274,6 +302,19 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       const promise = sandbox.execute('sleep 60', { signal: controller.signal })
       setTimeout(() => controller.abort(), 100)
       await expect(promise).rejects.toThrow('aborted')
+    })
+
+    it('kills the whole process tree when signal is aborted', async () => {
+      const controller = new AbortController()
+      const pidFile = `${TEST_DIR}/grandchild.pid`
+      const promise = sandbox.execute(`sleep 60 & echo $! > ${pidFile}; wait`, { signal: controller.signal })
+      while (!fs.existsSync(pidFile) || fs.readFileSync(pidFile, 'utf8').trim() === '') {
+        await new Promise((r) => setTimeout(r, 20))
+      }
+      const pid = Number(fs.readFileSync(pidFile, 'utf8').trim())
+      controller.abort()
+      await expect(promise).rejects.toThrow('aborted')
+      expect(await waitForExit(pid)).toBe(true)
     })
 
     it('rejects immediately if signal is already aborted', async () => {
