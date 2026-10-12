@@ -32,7 +32,12 @@ export function formatStashRefs(refs: string[]): string {
   return ` [refs: ${refs.join(', ')}]`
 }
 
-/** Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent. */
+/**
+ * Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent.
+ *
+ * Only views from the built-in `namespace()` carry {@link NAMESPACED}, so a custom backend's own
+ * `namespace()` view gets the per-agent prefix. Mirrors `strands-py`, where `_NamespacedStorage` is private.
+ */
 function resolveStashNamespace(
   storage: Storage,
   sessionId: string,
@@ -154,6 +159,9 @@ export class Stash {
 
   /**
    * Delete all entries in this stash instance.
+   *
+   * On a caller-scoped stash this deletes the whole view, including other agents' entries.
+   * Not called during session deletion; kept for parity with `strands-py`.
    */
   async clear(): Promise<void> {
     const keys = await this.list()
@@ -163,13 +171,16 @@ export class Stash {
   /**
    * Delete all stash data for this session across all agents.
    *
-   * Unlike {@link clear}, which is scoped to this agent's namespace,
-   * this scans `context/<sessionId>/` on the base storage to catch data
-   * from every agent that wrote to the session. A stash rooted at a
-   * caller-scoped view is shared beyond this session, so its data is left
-   * to the caller.
+   * Scans `context/<sessionId>/` on the base storage to catch data from every
+   * agent that wrote to the session. This covers every key {@link clear}
+   * would delete for the default per-agent root. A stash rooted at a
+   * caller-scoped view may be shared beyond this session, so its data is left
+   * to the caller, including keys written under the pre-sharing
+   * `context/...` layout.
    */
   async clearSession(): Promise<void> {
+    // resolveStashNamespace returns the view itself only when it is the caller-scoped root.
+    // Same identity check as `strands-py` (`self._storage is self._base_storage`).
     if (this._storage === this._baseStorage) {
       logger.debug(`session_id=<${this._sessionId}> | skipping stash deletion, stash is caller-scoped`)
       return
@@ -181,6 +192,9 @@ export class Stash {
 
   /**
    * Serialize all stash entries into a plain object for snapshot persistence.
+   *
+   * On a caller-scoped stash this captures every entry in the shared view, not only this
+   * agent's, and {@link loadSnapshot} writes them all back. Same as `strands-py`.
    *
    * @returns Map of reference keys to their stored JSON values
    */

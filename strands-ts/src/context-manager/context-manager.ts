@@ -127,6 +127,7 @@ export class ContextManager implements Plugin {
       const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
       this._stashIsDurable = !(EPHEMERAL in storage)
       // Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+      // Plain (non-namespaced) explicit storage still gets the per-agent prefix. Mirrors strands-py.
       this._stash = new Stash(storage, agent.sessionId, agent.id, {
         customStashNamespace: this._stashStorage !== undefined,
       })

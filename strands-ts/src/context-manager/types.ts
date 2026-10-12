@@ -64,9 +64,10 @@ export interface ContextState {
  * Configuration for the L1 stash (offloaded content persistence).
  *
  * Each agent stashes under `context/<sessionId>/scopes/agent/<agentId>/`. The prefix is dropped
- * only when a namespaced view is passed as this config's `storage`; that view becomes the exact
- * stash root, so agents given the same view share one stash. Deleting a session leaves a shared
- * stash in place.
+ * only when a namespaced view from a built-in backend's `namespace()` is passed as this config's
+ * `storage`; that view becomes the exact stash root, so agents given the same view share one
+ * stash. Deleting a session leaves a caller-scoped stash in place, and on in-memory storage each
+ * session snapshot captures and restores the whole view.
  *
  * @example
  * ```typescript
@@ -87,7 +88,7 @@ export interface ContextState {
  * @experimental
  */
 export interface StashConfig {
-  /** Storage backend. Defaults to InMemoryStorage when omitted. */
+  /** Storage backend. Defaults to the agent's `storage`, then InMemoryStorage, when omitted. */
   storage?: Storage
 
   /**
