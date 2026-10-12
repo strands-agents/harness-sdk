@@ -443,14 +443,16 @@ class OpenAIResponsesModel(Model):
                             if hasattr(event, "response"):
                                 if hasattr(event.response, "usage"):
                                     final_usage = event.response.usage
-                                # Check if stopped due to max_output_tokens
-                                if (
-                                    hasattr(event.response, "incomplete_details")
-                                    and event.response.incomplete_details
-                                    and getattr(event.response.incomplete_details, "reason", None)
-                                    == "max_output_tokens"
-                                ):
+                                # Check if stopped due to max_output_tokens or a content filter
+                                incomplete_reason = (
+                                    getattr(event.response.incomplete_details, "reason", None)
+                                    if getattr(event.response, "incomplete_details", None)
+                                    else None
+                                )
+                                if incomplete_reason == "max_output_tokens":
                                     stop_reason = "length"
+                                elif incomplete_reason == "content_filter":
+                                    stop_reason = "content_filter"
                             break
 
                         elif event.type == "response.completed":
@@ -488,11 +490,11 @@ class OpenAIResponsesModel(Model):
                 yield self._format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": tool_call})
                 yield self._format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
 
-            # Determine finish reason: max_tokens (length) > tool_calls > normal stop.
+            # Determine finish reason: max_tokens (length) or content_filter > tool_calls > normal stop.
             # A function call that is still in flight when the response is cut off has truncated
-            # arguments, so it must surface as max_tokens rather than be executed.
-            if stop_reason == "length":
-                finish_reason = "length"
+            # arguments, so it must surface as the cut-off reason rather than be executed.
+            if stop_reason in ("length", "content_filter"):
+                finish_reason = stop_reason
             elif tool_calls:
                 finish_reason = "tool_calls"
             else:
@@ -914,6 +916,8 @@ class OpenAIResponsesModel(Model):
                         return {"messageStop": {"stopReason": "tool_use"}}
                     case "length":
                         return {"messageStop": {"stopReason": "max_tokens"}}
+                    case "content_filter":
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 

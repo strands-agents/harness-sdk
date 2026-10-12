@@ -1077,6 +1077,58 @@ async def test_stream_response_incomplete_with_truncated_tool_call(openai_client
 
 
 @pytest.mark.asyncio
+async def test_stream_response_incomplete_content_filter(openai_client, model, agenerator, alist):
+    """Test that response.incomplete with reason content_filter surfaces as content_filtered."""
+    mock_text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Partial resp")
+    mock_incomplete_event = unittest.mock.Mock(
+        type="response.incomplete",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason="content_filter"),
+        ),
+    )
+
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_text_event, mock_incomplete_event])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in tru_events
+    assert {"messageStop": {"stopReason": "end_turn"}} not in tru_events
+
+
+@pytest.mark.asyncio
+async def test_stream_response_incomplete_content_filter_with_tool_call(openai_client, model, agenerator, alist):
+    """Test that a function call cut off by the content filter is not reported as tool_use."""
+    mock_item_added_event = unittest.mock.Mock(
+        type="response.output_item.added",
+        item=unittest.mock.Mock(type="function_call", call_id="call_1", name="write_file", id="fc_1"),
+    )
+    mock_args_event = unittest.mock.Mock(
+        type="response.function_call_arguments.delta", item_id="fc_1", delta='{"path": "notes.md"}'
+    )
+    mock_incomplete_event = unittest.mock.Mock(
+        type="response.incomplete",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason="content_filter"),
+        ),
+    )
+
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_item_added_event, mock_args_event, mock_incomplete_event])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "save my notes"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in tru_events
+    assert {"messageStop": {"stopReason": "tool_use"}} not in tru_events
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "event_type",
     [
