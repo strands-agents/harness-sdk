@@ -7,7 +7,7 @@ authors:
 tags:
   - Open Source
   - Announcement
-draft: true
+draft: false
 ---
 
 You've probably noticed a wave of smaller, purpose-built models appearing
@@ -43,6 +43,13 @@ one or more typed questions:
 | [E4B](https://huggingface.co/StrandsAgents/strands-decider-E4B-gemma4-v1-2610)         | `google/gemma-4-E4B-it`     |                  187/231 (81.0%) | 0.243 |              139 ms |
 | [12B](https://huggingface.co/StrandsAgents/strands-decider-12B-gemma4-v1-2610)         | `google/gemma-4-12B-it`     |                  200/231 (86.6%) | 0.173 |              136 ms |
 | [26B-A4B](https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610) | `google/gemma-4-26B-A4B-it` |                  207/231 (89.6%) | 0.162 |              245 ms |
+
+In Gemma 4 names, `E` denotes effective parameters. The
+[26B-A4B mixture-of-experts model](https://huggingface.co/google/gemma-4-26B-A4B-it)
+activates about 4B of its 26B parameters during inference. E4B and 12B use
+different Gemma 4 architectures, and their published H100 medians were close:
+139 ms and 136 ms. This single release run does not establish that 12B is
+inherently faster.
 
 <div style="overflow-x: auto;">
   <div style="min-width: 640px;">
