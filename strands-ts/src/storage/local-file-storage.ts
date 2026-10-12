@@ -3,6 +3,7 @@ import type { SearchStrategy } from './search/types.js'
 import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
+import { logger } from '../logging/logger.js'
 import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
@@ -75,6 +76,7 @@ export class LocalFileStorage implements Storage {
   /**
    * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
    * @param config - Optional sandbox and search strategy. See {@link LocalFileStorageConfig}.
+   * @throws Error if `config.sandbox` is set and `config.searchStrategy.requiresHostFs` is true
    */
   constructor(baseDir?: string, config?: LocalFileStorageConfig)
   /**
@@ -82,6 +84,7 @@ export class LocalFileStorage implements Storage {
    * @param sandbox - Optional sandbox to route I/O through. Usually set via {@link forSandbox}.
    * @param searchStrategy - Optional search strategy. When set, `write()` automatically indexes
    *   entries and `search()` delegates to the strategy instead of the default keyword scan.
+   * @throws Error if `sandbox` is set and `searchStrategy.requiresHostFs` is true
    */
   constructor(baseDir?: string, sandbox?: Sandbox, searchStrategy?: SearchStrategy<LocalFileStorage>)
   constructor(
@@ -98,6 +101,9 @@ export class LocalFileStorage implements Storage {
       sandbox = sandboxOrConfig.sandbox
       strategy = sandboxOrConfig.searchStrategy
     }
+    if (sandbox && strategy?.requiresHostFs) {
+      throw new Error(`${strategy.constructor.name} requires host filesystem access and cannot be used with a sandbox`)
+    }
     this._baseDir = baseDir.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
     this._sandbox = sandbox
     this._searchStrategy = strategy
@@ -106,14 +112,24 @@ export class LocalFileStorage implements Storage {
   /**
    * Returns a storage instance whose I/O is routed through `sandbox`.
    *
-   * Instances already bound to a sandbox return themselves unchanged.
+   * Instances already bound to a sandbox return themselves unchanged. A search strategy that
+   * requires host filesystem access is dropped with a warning, falling back to the keyword scan
+   * (which reads through the sandbox).
    *
    * @param sandbox - Sandbox to route the returned instance's I/O through
    * @returns A new `LocalFileStorage` with the same base directory, routed through `sandbox`
    */
   forSandbox(sandbox: Sandbox): LocalFileStorage {
     if (this._sandbox) return this
-    return new LocalFileStorage(this._baseDir, sandbox, this._searchStrategy)
+    let strategy = this._searchStrategy
+    if (strategy?.requiresHostFs) {
+      logger.warn(
+        `${strategy.constructor.name} requires host filesystem access and is not compatible with sandboxed ` +
+          'storage — dropping search strategy, falling back to keyword search'
+      )
+      strategy = undefined
+    }
+    return new LocalFileStorage(this._baseDir, sandbox, strategy)
   }
 
   /**

@@ -14,6 +14,15 @@ import type { Storage, StorageSearchResult } from '../storage.js'
  */
 export interface SearchStrategy<S extends Storage = Storage, SearchQuery = string> {
   /**
+   * Whether the strategy reads or writes the host filesystem directly instead of going through
+   * the storage (e.g. an index file next to the storage directory). A sandboxed
+   * {@link LocalFileStorage} rejects such strategies, because their view of the data would
+   * not match the sandbox's. Omit or set `false` for strategies that only use the storage's
+   * own methods.
+   */
+  readonly requiresHostFs?: boolean
+
+  /**
    * Indexes a single entry for future searches.
    *
    * Called on each write so strategies that maintain an index (FTS5, vector,
