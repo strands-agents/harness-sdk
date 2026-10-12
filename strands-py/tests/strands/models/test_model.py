@@ -1,5 +1,6 @@
 import json
 import math
+import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -665,14 +666,22 @@ class TestEstimateUtilization:
 
         assert model.estimate_utilization(100_000) == 100_000 / 200_000
 
-    def test_warns_only_once(self):
-        """Logs the fallback warning only on the first call."""
+    def test_warns_when_limit_not_set(self):
+        """Nudges the developer through warnings.warn when context_window_limit is unset."""
         model = self.ConfigurableModel(context_window_limit=None)
 
-        model.estimate_utilization(1000)
-        model.estimate_utilization(2000)
+        with pytest.warns(UserWarning, match="context_window_limit is not set on the model"):
+            model.estimate_utilization(1000)
 
-        assert model._utilization_limit_warned is True
+    def test_warning_is_deduplicated_across_calls_and_instances(self):
+        """The fallback nudge surfaces once per process, not per call or per model instance."""
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("default", UserWarning)
+
+            self.ConfigurableModel(context_window_limit=None).estimate_utilization(1000)
+            self.ConfigurableModel(context_window_limit=None).estimate_utilization(2000)
+
+        assert len(recorded) == 1
 
 
 class TestCacheConfig:

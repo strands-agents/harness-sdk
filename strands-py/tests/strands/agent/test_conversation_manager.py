@@ -826,7 +826,6 @@ def _make_mock_agent(messages=None, context_window_limit=1000):
     agent.messages = messages if messages is not None else []
     agent.model = MagicMock()
     agent.model.context_window_limit = context_window_limit
-    agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     return agent
 
@@ -942,26 +941,10 @@ def test_proactive_compression_uses_default_when_context_window_limit_not_set():
 
     # projected_input_tokens=150_000 is 75% of the 200k default, exceeding 0.7 threshold
     event = _make_threshold_event(agent, projected_input_tokens=150_000)
-    with patch("strands.models.model.logger") as mock_logger:
+    with pytest.warns(UserWarning, match="using default"):
         registry.invoke_callbacks(event)
-        mock_logger.warning.assert_called_once()
-        assert "using default" in mock_logger.warning.call_args[0][0]
 
     assert manager.reduce_context_call_count == 1
-
-
-def test_proactive_compression_warns_only_once_per_instance():
-    """Second invocation on the same manager instance suppresses the context_window_limit warning."""
-    manager = _MinimalManager(proactive_compression={"compression_threshold": 0.7})
-    agent = _make_mock_agent(context_window_limit=None)
-    registry = HookRegistry()
-    manager.register_hooks(registry)
-
-    event = _make_threshold_event(agent, projected_input_tokens=150_000)
-    with patch("strands.models.model.logger") as mock_logger:
-        registry.invoke_callbacks(event)
-        registry.invoke_callbacks(event)
-        assert mock_logger.warning.call_count == 1
 
 
 def test_proactive_compression_exception_swallowed():
