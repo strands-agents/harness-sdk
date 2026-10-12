@@ -24,7 +24,7 @@ export type HumanInTheLoopClassifier = (event: BeforeToolCallEvent) => Classifie
 export interface LlmClassifierConfig {
   /** System prompt describing risk criteria. Defaults to a general-purpose risk prompt. */
   systemPrompt?: string
-  /** Model for risk evaluation. Defaults to the parent agent's model. */
+  /** Model for risk evaluation. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
 }
 
@@ -72,7 +72,7 @@ export function createLlmRiskClassifier(config?: LlmClassifierConfig): HumanInTh
   const configuredModel = config?.model
 
   return async (event: BeforeToolCallEvent): Promise<ClassifierResult> => {
-    const model = configuredModel ?? event.agent.model
+    const model = configuredModel ?? event.agent.auxModel
     if (!model) {
       throw new Error(
         'LLM risk classifier has no model — pass `model` in `classifier: { model }`, or ensure the parent agent has a model.'

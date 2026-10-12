@@ -107,6 +107,23 @@ describe('Offload.summarize', () => {
       expect((block.content[0] as TextBlock).text).toContain('[Summarized:')
     })
 
+    it('summarizes with agent.auxModel when the strategy has no model', async () => {
+      const { summarizeContent } = await import('../../methods/summarize.js')
+      vi.mocked(summarizeContent).mockClear()
+      const largeText = 'x'.repeat(2500 * 4 + 100)
+      const messages = [makeToolResultMessage(largeText)]
+      const mainModel = { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) }
+      const auxModel = { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) }
+      const agent = createMockAgent({ messages, extra: { model: mainModel, auxModel } as unknown as Partial<Agent> })
+      const strategy = Offload.summarize('toolResults')
+
+      const result = await strategy.apply({ messages, agent, utilization: 0.9 })
+
+      expect(result).toBe(true)
+      expect(summarizeContent).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(summarizeContent).mock.calls[0]![1]).toBe(auxModel)
+    })
+
     it('summarizes assistant text blocks', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const message = new Message({

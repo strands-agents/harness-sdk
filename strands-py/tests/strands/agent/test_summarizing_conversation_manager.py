@@ -871,7 +871,6 @@ def _make_summarizing_threshold_agent(messages, summary_response="Summary of con
     agent.messages = messages
     agent.model = MagicMock()
     agent.model.context_window_limit = context_window_limit
-    agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_response))
     agent.aux_model = agent.model
@@ -936,7 +935,6 @@ def test_proactive_compression_swallows_errors():
     agent.messages = messages
     agent.model = MagicMock()
     agent.model.context_window_limit = 1000
-    agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model failed")))
     agent.aux_model = agent.model

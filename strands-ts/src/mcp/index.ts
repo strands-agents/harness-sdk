@@ -15,3 +15,27 @@ export {
   McpTaskFailedError,
 } from './client.js'
 export type { McpLoadServersOptions, McpServerConfig, SerializableMcpToolFilters } from './config.js'
+
+export type { McpTaskRequestOptions } from './client.js'
+export type {
+  McpSubmitToolResult,
+  McpCancelTaskResult,
+  McpCancelledTask,
+  McpCompletedTask,
+  McpCreateTaskResult,
+  McpDetailedTask,
+  McpDirectCallToolResult,
+  McpFailedTask,
+  McpGetTaskResult,
+  McpInputRequest,
+  McpInputRequests,
+  McpInputRequiredTask,
+  McpInputResponse,
+  McpInputResponses,
+  McpTask,
+  McpTaskError,
+  McpTaskResult,
+  McpTaskStatus,
+  McpUpdateTaskResult,
+  McpWorkingTask,
+} from './task-types.js'

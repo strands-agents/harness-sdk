@@ -26,6 +26,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/a2a_client/a2a_client.py
   - path: strands-py/src/strands/vended_tools/subagent/subagent.py
   - path: strands-py/src/strands/experimental/tools/stop/stop.py
+  - path: strands-py/src/strands/vended_tools/python_repl/python_repl.py
 ---
 
 Vended tools are pre-built tools included directly in the Strands Harness SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
@@ -56,6 +57,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
+| [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python |
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
 
 ### File editor
@@ -495,8 +497,8 @@ configured at construction time via `make_web_fetch` / `makeWebFetch`:
 The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
 `max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
 analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
-the factory also accepts a `model` for the analyst; the agent's own model is
-used when none is supplied.
+the factory also accepts a `model` for the analyst; <Syntax py="agent.aux_model" ts="agent.auxModel" />
+is used when none is supplied.
 
 The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
 `make_web_fetch` factory to supply a pre-configured client with custom
@@ -729,6 +731,40 @@ agent("What has the research agent found recently?")
 </Tabs>
 
 Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/a2a-client/README.md)
+
+---
+
+### Python REPL
+
+Runs model-generated Python through the agent's [sandbox](../sandbox/index.mdx) by calling `sandbox.execute_code(code, "python3")`. It returns `output` (stdout), `error` (stderr, including tracebacks), and `exit_code`. Each call runs in a fresh interpreter, so variables, imports, and definitions do not persist across calls. Files written to the sandbox filesystem do persist, so the model can checkpoint intermediate results to disk and load them in a later call.
+
+_Supported in: Python only._
+
+:::caution[Security Warning]
+This tool executes arbitrary Python code. Without a [Sandbox](../sandbox/index.mdx), code runs with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../sandbox/index.mdx) for production.
+:::
+
+```python
+from strands import Agent
+from strands.vended_tools import python_repl
+
+agent = Agent(tools=[python_repl])
+agent("Use python_repl to compute the first 10 Fibonacci numbers and print them.")
+```
+
+**Bound sandbox or custom interpreter:**
+
+```python
+from strands import Agent
+from strands.sandbox.docker import DockerSandbox
+from strands.vended_tools import make_python_repl
+
+python_repl = make_python_repl(
+    sandbox=DockerSandbox("my-container"),  # bind at creation instead of reading agent.sandbox
+    language="python3.12",  # interpreter on the sandbox's PATH
+)
+agent = Agent(tools=[python_repl])
+```
 
 ---
 
