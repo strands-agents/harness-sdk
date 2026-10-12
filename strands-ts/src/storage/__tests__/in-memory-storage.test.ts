@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { InMemoryStorage } from '../in-memory-storage.js'
 import { StorageError } from '../../errors.js'
+import type { SearchStrategy } from '../search/types.js'
 
 describe('InMemoryStorage', () => {
   let storage: InMemoryStorage
@@ -122,6 +123,38 @@ describe('InMemoryStorage', () => {
 
     it('rejects prefixes with .. segments', async () => {
       await expect(storage.list('../')).rejects.toThrow(StorageError)
+    })
+  })
+
+  describe('constructor', () => {
+    const fakeStrategy = (): SearchStrategy<InMemoryStorage> & { index: Mock; search: Mock } => ({
+      index: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockResolvedValue([{ key: 'hit', score: 1 }]),
+    })
+
+    it('indexes writes and delegates search to a searchStrategy from config', async () => {
+      const strategy = fakeStrategy()
+      const configured = new InMemoryStorage({ searchStrategy: strategy })
+
+      await configured.write('a', new Uint8Array([1]))
+      expect(strategy.index).toHaveBeenCalledWith(configured, 'a', new Uint8Array([1]))
+      expect(await configured.search('query')).toEqual([{ key: 'hit', score: 1 }])
+    })
+
+    it('accepts a positional search strategy', async () => {
+      const strategy = fakeStrategy()
+      const positional = new InMemoryStorage(strategy)
+
+      await positional.write('a', new Uint8Array([1]))
+      expect(strategy.index).toHaveBeenCalledTimes(1)
+      await positional.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses the default keyword scan with an empty config', async () => {
+      const configured = new InMemoryStorage({})
+      await configured.write('notes', new TextEncoder().encode('dark mode'))
+      expect((await configured.search('dark')).map((result) => result.key)).toEqual(['notes'])
     })
   })
 })

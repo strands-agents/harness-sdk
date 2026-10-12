@@ -15,6 +15,7 @@
 
 export type { Storage } from './storage.js'
 export { InMemoryStorage } from './in-memory-storage.js'
+export type { InMemoryStorageConfig } from './in-memory-storage.js'
 export { LocalFileStorage } from './local-file-storage.js'
 export type { LocalFileStorageConfig } from './local-file-storage.js'
 export { S3Storage } from './s3-storage.js'
