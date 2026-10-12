@@ -15,11 +15,9 @@ async function keywordSearch() {
 async function bm25Search() {
   // --8<-- [start:bm25_search]
   const search = new QmdSearchStrategy()
-  const storage = new LocalFileStorage(
-    './memory/',
-    undefined,
-    search,
-  )
+  const storage = new LocalFileStorage('./memory/', {
+    searchStrategy: search,
+  })
 
   await storage.write(
     'auth.md',
@@ -37,10 +35,8 @@ async function bm25Search() {
 
 async function storageWithStrategy() {
   // --8<-- [start:storage_with_strategy]
-  const storage = new LocalFileStorage(
-    './memory/',
-    undefined,
-    new QmdSearchStrategy(),
-  )
+  const storage = new LocalFileStorage('./memory/', {
+    searchStrategy: new QmdSearchStrategy(),
+  })
   // --8<-- [end:storage_with_strategy]
 }
