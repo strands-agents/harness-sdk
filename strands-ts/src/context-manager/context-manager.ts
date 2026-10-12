@@ -126,7 +126,10 @@ export class ContextManager implements Plugin {
     if (this._stashStorage !== false) {
       const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
       this._stashIsDurable = !(EPHEMERAL in storage)
-      this._stash = new Stash(storage, agent.sessionId, agent.id)
+      // Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+      this._stash = new Stash(storage, agent.sessionId, agent.id, {
+        customStashNamespace: this._stashStorage !== undefined,
+      })
     }
 
     if (this._stash) {

@@ -385,7 +385,6 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
 
   private async _deleteStashData(): Promise<void> {
     if (this._agentStash) {
-      await this._agentStash.clear()
       await this._agentStash.clearSession()
     }
   }

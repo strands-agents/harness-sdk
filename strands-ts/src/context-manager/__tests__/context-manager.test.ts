@@ -5,6 +5,7 @@ import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js
 import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 function makeMockAgent(overrides?: {
   id?: string
@@ -89,6 +90,29 @@ describe('ContextManager', () => {
       const agent = makeMockAgent()
       await cm.initAgent(agent)
       expect(initCalled).toBe(true)
+    })
+  })
+
+  describe('stash root', () => {
+    it('uses an explicitly configured scoped stash storage as the exact root', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(makeMockAgent())
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+
+    it('keeps the per-agent root under a scoped agent storage', async () => {
+      const storage = new InMemoryStorage()
+      const agent = createMockAgent({
+        extra: { id: 'test-agent', storage: storage.namespace('tenant') } as Partial<Agent>,
+      })
+      const cm = new ContextManager()
+      await cm.initAgent(agent)
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['tenant/context/test-ses/scopes/agent/test-agent/tool-1_0'])
     })
   })
 
