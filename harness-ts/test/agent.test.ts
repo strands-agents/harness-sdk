@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
   Agent,
+  type BackgroundTasksConfig,
   type BaseModelConfig,
   BeforeModelCallEvent,
   FileStorage as SessionFileStorage,
@@ -226,6 +227,13 @@ describe('createHarness', () => {
       ['subagent', 'always'],
       ['*', 'never'],
     ])
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5083
+  it.each(['agentic', 'always', 'never'])('rejects a bare string as the %s selector list', async (mode) => {
+    await expect(
+      createHarness({ backgroundTasks: { [mode]: 'shell' } as unknown as BackgroundTasksConfig })
+    ).rejects.toThrow(`'${mode}' must be an array of tools or tool names, got the string 'shell'`)
   })
 
   it('disables Background Tasks when requested', async () => {

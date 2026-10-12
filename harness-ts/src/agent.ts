@@ -314,6 +314,13 @@ function resolveBackgroundTasks(
 
   const policy: BackgroundTasksConfig =
     configured === undefined || configured === true ? { agentic: ['*'] } : configured
+  for (const mode of ['agentic', 'always', 'never'] as const) {
+    // Checked here, not only in the SDK, because omitForced below would fail on a string with an unclear error first.
+    const selectors: unknown = policy[mode]
+    if (typeof selectors === 'string') {
+      throw new TypeError(`'${mode}' must be an array of tools or tool names, got the string '${selectors}'`)
+    }
+  }
   const forcedNames = new Set(forced.map((tool) => tool.name))
   const omitForced = (
     selectors: NonNullable<BackgroundTasksConfig['agentic']>

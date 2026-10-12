@@ -13,7 +13,7 @@ import { ImageBlock } from '../../types/media.js'
 import { TextBlock } from '../../types/messages.js'
 import type { ToolUseBlock } from '../../types/messages.js'
 import type { ToolSpec } from '../../tools/types.js'
-import type { BackgroundTask } from '../types.js'
+import type { BackgroundTask, BackgroundTasksConfig } from '../types.js'
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 
@@ -306,6 +306,17 @@ describe('BackgroundTasks', () => {
     await expect.poll(() => probeRan).toBe(true)
     expect(submittingInvocationContext).toBeDefined()
     expect(probeInvocationContext).toBe(submittingInvocationContext)
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5083
+  it('rejects a bare string where a selector array is expected', () => {
+    expect(
+      () =>
+        new Agent({
+          model: new MockMessageModel(),
+          backgroundTasks: { never: 'shell' } as unknown as BackgroundTasksConfig,
+        })
+    ).toThrow("'never' must be an array of tools or tool names, got the string 'shell'")
   })
 
   it('delivers work that finishes between invocations', async () => {
