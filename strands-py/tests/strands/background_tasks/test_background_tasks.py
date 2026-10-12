@@ -144,6 +144,8 @@ def test__init__registers_management_tool_only_when_enabled(background_tasks: An
     ("tools", "config", "message"),
     [
         ([work], {"always": [work], "never": [work]}, "Tool 'work' cannot be configured as both 'always' and 'never'"),
+        # https://github.com/strands-agents/harness-sdk/issues/5083
+        ([work], {"never": "work"}, "'never' must be a list of tools or tool names, got the string 'work'"),
         (
             [tool(name="summarize_context")(lambda: None)],
             {"always": ["summarize_context"]},
