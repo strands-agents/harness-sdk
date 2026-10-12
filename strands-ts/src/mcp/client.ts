@@ -251,7 +251,7 @@ export interface McpClientOptions extends RuntimeConfig {
 
 /** Arguments for configuring an MCP Client. */
 export type McpClientConfig = McpClientOptions & {
-  /** Pre-constructed transport. Mutually exclusive with `url`. */
+  /** Pre-constructed transport. Mutually exclusive with `url`. Reconnecting requires a transport that can start again. */
   transport?: McpTransport
 
   /** Server URL. When provided, a StreamableHTTP transport is constructed automatically. */
@@ -323,12 +323,16 @@ export class McpClient {
 
   private _clientName: string
   private _clientVersion: string
-  private _transport: McpTransport
+  // Assigned through _installTransport in the constructor and on every rebuild.
+  private _transport!: McpTransport
   private _taskTransport: TaskTransport | undefined
   private _taskSession: TaskEnabledSession | undefined
   /** Caller-supplied Streamable HTTP transports cannot carry the Mcp-Name task routing headers. */
   private _taskRoutingUnavailable = false
   private _taskRoutingWarned = false
+  /** Set only when the transport was built from `url`, so a retry can build a fresh one. */
+  private _urlConfig: McpClientConfig | undefined
+  private _connectAttempted = false
   private _state: McpConnectionState
   private _client: TaskClient
   private _continueOnError: boolean
@@ -341,6 +345,8 @@ export class McpClient {
   /** Server-side name of each listed tool, which differs from `tool.name` when a prefix is set. */
   private _serverToolNames = new WeakMap<McpTool, string>()
   private _serverToolDefinitions = new Map<string, McpServerToolDefinition>()
+  /** Whether tools/list ran for this client, independent of how many tools it returned. */
+  private _serverToolsListed = false
   private _registeredToolNames = new Set<string>()
   private _onToolsChanged: ((oldTools: string[], newTools: McpTool[]) => void) | undefined
   private _refreshingTools = false
@@ -352,6 +358,7 @@ export class McpClient {
   constructor(args: McpClientConfig) {
     this._clientName = args.applicationName || 'strands-agents-ts-sdk'
     this._clientVersion = args.applicationVersion || '0.0.1'
+    this._urlConfig = McpClient._resolveUrlConfig(args)
     this._state = 'disconnected'
     this._continueOnError = args.continueOnError ?? false
     this._logHandler = args.logHandler ?? defaultLogHandler
@@ -359,21 +366,29 @@ export class McpClient {
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
     this._toolFilters = args.toolFilters
-    const capabilities = {
-      ...(this._elicitationCallback ? { elicitation: { form: {}, url: {} } } : undefined),
-      ...(this._tasksConfig ? { extensions: { [TASKS_EXTENSION]: {} } } : undefined),
-    }
-
-    const transport = McpClient._resolveTransport(args)
     this._taskRoutingUnavailable = args.transport instanceof StreamableHTTPClientTransport
+    this._installTransport(McpClient._resolveTransport(args))
+    this._client = this._createClient()
+
+    this._disableMcpInstrumentation = args.disableMcpInstrumentation ?? false
+  }
+
+  /** Wraps the transport for task traffic when tasks are configured; reused on rebuilds. */
+  private _installTransport(transport: McpTransport): void {
     if (this._tasksConfig) {
       this._taskTransport = new TaskTransport(transport, () => this._client.outboundMetadata())
       this._transport = this._taskTransport
     } else {
       this._transport = transport
     }
+  }
 
-    this._client = new TaskClient(
+  private _createClient(): TaskClient {
+    const capabilities = {
+      ...(this._elicitationCallback ? { elicitation: { form: {}, url: {} } } : undefined),
+      ...(this._tasksConfig ? { extensions: { [TASKS_EXTENSION]: {} } } : undefined),
+    }
+    const client = new TaskClient(
       {
         name: this._clientName,
         version: this._clientVersion,
@@ -393,11 +408,23 @@ export class McpClient {
       }
     )
 
-    this._client.setNotificationHandler('notifications/message', (notification) => {
+    client.setNotificationHandler('notifications/message', (notification) => {
       this._logHandler(notification.params)
     })
 
-    this._disableMcpInstrumentation = args.disableMcpInstrumentation ?? false
+    return client
+  }
+
+  /** Extracts the transport-relevant config of a url-configured client, or undefined for a caller-supplied transport. */
+  private static _resolveUrlConfig(args: McpClientConfig): McpClientConfig | undefined {
+    if (args.transport) return undefined
+    return {
+      ...(args.url && { url: args.url }),
+      ...(args.auth && { auth: args.auth }),
+      ...(args.authProvider && { authProvider: args.authProvider }),
+      ...(args.headers && { headers: args.headers }),
+      ...(args.tasksConfig !== undefined && { tasksConfig: args.tasksConfig }),
+    }
   }
 
   private static _resolveTransport(args: McpClientConfig): McpTransport {
@@ -464,11 +491,29 @@ export class McpClient {
   }
 
   /**
+   * Replaces the transport and vendor client of a url-configured client before a repeat connect
+   * attempt. A streamable HTTP transport cannot start twice, and a reused transport carrying a
+   * sessionId makes the vendor client skip protocol negotiation, so every attempt after the first
+   * needs fresh instances. A caller-supplied transport cannot be rebuilt and is kept as is.
+   */
+  private async _rebuildForRetry(): Promise<void> {
+    if (!this._urlConfig || !this._connectAttempted) return
+    await this._closeTaskSession()
+    this._installTransport(McpClient._resolveTransport(this._urlConfig))
+    this._client = this._createClient()
+  }
+
+  /**
    * Connects the MCP client to the server.
    *
    * Called lazily before any operation that requires a connection. When `continueOnError` is true,
-   * connection failures are swallowed and the client enters a `'failed'` state — subsequent
-   * calls are no-ops until `connect(true)` is called explicitly to retry.
+   * connection failures are swallowed and the client enters a `'failed'` state. Subsequent
+   * calls are then no-ops until `connect(true)` is called explicitly to retry.
+   *
+   * A client configured with `url` retries on a fresh transport and connection. A client
+   * configured with a `transport` instance reuses it, so the retry only works when that
+   * transport can be started again (a `StreamableHTTPClientTransport` cannot, so construct a
+   * new `McpClient` instead).
    *
    * @param reconnect - When true, forces a reconnect even if already connected or failed.
    * @param options - Optional abort signal that stops this caller's wait. The connection attempt
@@ -512,6 +557,8 @@ export class McpClient {
       this._state = 'disconnected'
     }
 
+    await this._rebuildForRetry()
+
     if (this._elicitationCallback) {
       const callback = this._elicitationCallback
       this._client.setRequestHandler('elicitation/create', async (request, requestContext) => {
@@ -521,6 +568,7 @@ export class McpClient {
       })
     }
 
+    this._connectAttempted = true
     try {
       await this._client.connect(this._transport as Transport)
       this._assertConnectionCurrent(generation)
@@ -633,6 +681,7 @@ export class McpClient {
     }
 
     this._serverToolDefinitions = toolDefinitions
+    this._serverToolsListed = true
 
     // Per-call overrides are transient, so they must not become the baseline that a later
     // tools-changed refresh reports as the previously registered names.
@@ -843,10 +892,21 @@ export class McpClient {
     operation?: TaskOperation,
     completeLegacyTask = false
   ): Promise<McpToolCallOutcome> {
-    await this.connect(false, operation ? { signal: operation.signal } : undefined)
+    const connectSignal = operation?.signal ?? options.signal
+    await this.connect(false, connectSignal ? { signal: connectSignal } : undefined)
     if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
 
     const params = this._prepareToolCall(tool, args)
+
+    // Task support is read from tools/list metadata, so a tool invoked before any listing
+    // fetches it once.
+    if (
+      completeLegacyTask &&
+      this._client.getNegotiatedProtocolVersion() === '2025-11-25' &&
+      this._client.getServerCapabilities()?.tasks?.requests?.tools?.call !== undefined
+    ) {
+      await this._ensureServerToolDefinitions(operation!)
+    }
 
     // The upstream codec rejects extension result types before custom result schemas run.
     if (completeLegacyTask && this._supportsLegacyTask(params.name)) {
@@ -1105,6 +1165,24 @@ export class McpClient {
     if (!this._supportsTaskExtension()) {
       throw new Error(`MCP server did not advertise the ${TASKS_EXTENSION} extension`)
     }
+  }
+
+  private async _ensureServerToolDefinitions(operation: TaskOperation): Promise<void> {
+    if (this._serverToolsListed) return
+    try {
+      const result = await this._client.listTools(undefined, {
+        timeout: remainingTime(operation.deadline, this._tasksConfig!.requestTimeoutMs),
+        signal: operation.signal,
+      })
+      this._serverToolDefinitions = new Map(result.tools.map((tool) => [tool.name, toMcpServerToolDefinition(tool)]))
+    } catch (error) {
+      // A cancelled or expired operation must surface as such, not as a listing failure.
+      if (operation.signal.aborted) throw error
+      logger.warn(`error=<${error}> | failed to list tools for legacy task support detection`)
+    }
+    // Set only once the listing settles: an aborted fetch must stay retryable, and a concurrent
+    // first call must not skip the fetch while this one is still in flight.
+    this._serverToolsListed = true
   }
 
   private async _callLegacyTask(params: CallToolRequest['params'], operation: TaskOperation): Promise<CallToolResult> {
