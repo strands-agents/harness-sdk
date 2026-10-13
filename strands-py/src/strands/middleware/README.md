@@ -17,9 +17,9 @@ Instead, the **result is an event in the stream**, recognized by type: `ModelSto
 `AgentStreamStage`. Each stage token records its result event class (`MiddlewareStage.result_event`),
 and the registry's Output adapter and every call site select the result with `isinstance`, so a Wrap
 handler may yield its own events before or after it (the TS spec's "inject events before or after
-the inner chain's events"). When a chain yields more than one result event (a hook-driven retry
-re-running the chain), the last one wins; a chain that yields none raises `RuntimeError` at the call
-site. This matches the existing Python SDK convention where `ModelStopReason` is the last event from
+the inner chain's events"). When a chain yields more than one result event (a Wrap handler
+forwarding two attempts), the last one wins; a chain that yields none raises `RuntimeError` at the
+call site. This matches the existing Python SDK convention where `ModelStopReason` is the last event from
 `stream_messages()` and `ToolResultEvent` the last from tool execution.
 
 Pass-through is:
@@ -35,10 +35,12 @@ async def cached(context, next_fn):
     yield ModelStopReason(stop_reason="end_turn", message=cached_msg, usage=usage, metrics=metrics)
 ```
 
-Wrap handlers see the raw event stream; only **Output** handlers see a wrapper. The registry wraps
-the result event in the stage's result type before calling the handler and yields the returned
-wrapper's `result` back into the stream in its place, so the rest of the chain and the call site
-still see a plain event:
+Wrap handlers see the raw event stream; only **Output** handlers see a wrapper. As in TS, the
+Output handler runs once, after the inner chain completes, on the final result: other events stream
+through as they arrive, and the registry wraps the result event in the stage's result type, calls
+the handler, and yields the returned wrapper's `result` as the chain's last event, so the rest of
+the chain and the call site still see a plain event. A chain that raises or halts on an interrupt
+never reaches the handler. For example:
 ```python
 def output_handler(result: InvokeModelResult) -> InvokeModelResult:
     event = result.result
@@ -61,7 +63,9 @@ the stage's result *event* rather than TS's `StreamAggregatedResult` / `ToolResu
 - `InvokeModelStage` → `InvokeModelResult(result: ModelStopReason)`. `ModelStopReason` exposes
   `stop_reason`, `message`, `usage` and `metrics`, the fields of TS's `StreamAggregatedResult`.
 - `ExecuteToolStage` → `ExecuteToolResult(result: ToolResultEvent)`. The event carries both
-  `tool_result` and `exception`.
+  `tool_result` and `exception`; TS carries the error on the result block itself, so an Output
+  handler that builds a new `ToolResultEvent` must pass `exception=result.result.exception` to keep
+  it on `AfterToolCallEvent`.
 - `AgentStreamStage` → `AgentStreamResult(result: EventLoopStopEvent)` (internal). The event carries
   the full stop tuple the `AgentResult` is built from.
 
@@ -258,6 +262,11 @@ before the handler runs, so the stop event has already been produced. A post-hoc
 ("inspect the finished stream, then ask a human") must be a Wrap handler that interrupts *before*
 `next()` on the following pass.
 
+Known gap, shared with TS: input is appended inside the terminal, so a gate that interrupts before
+`next()` on the pass that carries the invocation's input interrupts before that input reaches
+history, and the resume pass (which takes no new input) calls the model without it. This must be
+resolved before `AgentStreamStage` goes public.
+
 The refusal only catches the case it can detect precisely. Interrupting mid-drain *after* the model
 turn has landed (e.g. from a `ModelMessageEvent`) is past the point where the assistant message
 entered history, so resuming re-calls the model exactly as above — the run loop cannot distinguish
@@ -292,8 +301,8 @@ type parameters. Python async generators cannot carry a return type, so the Wrap
 explicitly, are generic over it.
 
 Type checkers differ on unannotated lambdas: pyright infers the lambda's parameter from the matched
-overload, while mypy types it as `Any` (its overload resolution does not feed the phase token back
-into lambda inference). Annotated handlers are fully checked by both.
+overload; mypy still checks the lambda body against that overload (an unknown context attribute is
+reported) but reveals the parameter as `Any`. Annotated handlers are fully checked by both.
 
 `InvokeModelStage` and `ExecuteToolStage` are exported from `strands.middleware` together with
 their contexts, the per-stage result event types `ModelStopReason` and `ToolResultEvent`, and the
@@ -336,6 +345,19 @@ rewrites and Input middleware), a hook cancel or a middleware short-circuit reco
 metrics, a background dispatch acknowledgement records nothing (the background run records its own),
 and a hook-driven retry records one span per attempt. Direct `agent.tool.<name>()` calls record no
 tool span, as in TS.
+
+Because the span and metrics now cover only the tool run, agents without any middleware also see,
+matching TS:
+
+- `BeforeToolCallEvent` / `AfterToolCallEvent` hooks run outside the tool span (spans they open
+  parent to the cycle span), and the recorded duration excludes hook time.
+- The span status and the success/error metric reflect the raw tool result, not a result an
+  `AfterToolCallEvent` hook or Wrap middleware rewrote afterwards.
+- A `BeforeToolCallEvent` interrupt or a background admission error records no span and no metrics.
+- A hook-driven retry counts each attempt in `call_count`, and the call is already counted when
+  `AfterToolCallEvent` fires.
+- A background run's span parents to the (already ended) dispatching cycle span rather than to a
+  dispatch span.
 
 ## Direct tool calls run through the chain
 
