@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { getCollection } from 'astro:content'
-import { activeAnnouncement, announcementExpires, ANNOUNCEMENT_DAYS } from '../src/util/announcements'
+import { activeAnnouncement, announcementExpires, ANNOUNCEMENT_DAYS, homepageBanner } from '../src/util/announcements'
 import { announcementSchema } from '../src/content.config'
 import type { Announcement } from '../src/content.config'
 
@@ -9,6 +9,13 @@ function makeAnnouncement(date: string, title = 'Announcement'): Announcement {
 }
 
 const day = (iso: string) => new Date(`${iso}T12:00:00Z`)
+
+function makePost(date: string, title = 'Blog post') {
+  return {
+    id: title.toLowerCase().replaceAll(' ', '-'),
+    data: { title, date: new Date(`${date}T00:00:00Z`) },
+  }
+}
 
 describe('announcementExpires', () => {
   it('is the last day of the window', () => {
@@ -52,6 +59,40 @@ describe('activeAnnouncement', () => {
 
   it('returns undefined when there are no announcements', () => {
     expect(activeAnnouncement([], day('2026-10-01'))).toBeUndefined()
+  })
+})
+
+describe('homepageBanner', () => {
+  it('uses the latest blog post when there is no manual announcement', () => {
+    expect(homepageBanner([], [makePost('2026-10-15', 'New post')], day('2026-10-15'))).toEqual({
+      title: 'New post',
+      href: '/blog/new-post/',
+      linkText: 'Read the post',
+    })
+  })
+
+  it('lets a newer blog post replace an older manual announcement', () => {
+    const manual = makeAnnouncement('2026-10-07', 'Campaign')
+    expect(homepageBanner([manual], [makePost('2026-10-15', 'New post')], day('2026-10-15'))?.title).toBe('New post')
+  })
+
+  it('uses a same-day manual announcement as an explicit override', () => {
+    const manual = makeAnnouncement('2026-10-15', 'Campaign')
+    const post = makePost('2026-10-15', 'New post')
+    post.data.date = new Date('2026-10-15T18:00:00Z')
+    expect(homepageBanner([manual], [post], day('2026-10-15'))).toEqual({
+      title: 'Campaign',
+      href: '/blog/post/',
+      linkText: 'Learn more',
+      expires: '2026-10-28',
+    })
+  })
+
+  it('falls back to the latest blog post after a manual announcement expires', () => {
+    const manual = makeAnnouncement('2026-10-01', 'Campaign')
+    expect(homepageBanner([manual], [makePost('2026-09-30', 'Latest post')], day('2026-10-15'))?.title).toBe(
+      'Latest post'
+    )
   })
 })
 

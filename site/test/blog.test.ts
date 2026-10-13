@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tagToSlug, slugToTag, formatDate } from '../src/util/blog'
+import { BLOG_PUBLISH_TIME_ZONE, formatDate, isBlogPostPublished, slugToTag, tagToSlug } from '../src/util/blog'
 
 describe('tagToSlug', () => {
   it('converts tags to URL-safe slugs', () => {
@@ -49,5 +49,19 @@ describe('formatDate', () => {
     const result = formatDate(date)
     expect(result).toContain('December')
     expect(result).toContain('2025')
+  })
+})
+
+describe('isBlogPostPublished', () => {
+  const post = { date: new Date('2026-10-15T00:00:00Z'), draft: false }
+
+  it('uses the New York editorial calendar date', () => {
+    expect(BLOG_PUBLISH_TIME_ZONE).toBe('America/New_York')
+    expect(isBlogPostPublished(post, new Date('2026-10-15T03:59:59Z'))).toBe(false)
+    expect(isBlogPostPublished(post, new Date('2026-10-15T04:00:00Z'))).toBe(true)
+  })
+
+  it('keeps drafts unpublished after their date', () => {
+    expect(isBlogPostPublished({ ...post, draft: true }, new Date('2026-10-16T12:00:00Z'))).toBe(false)
   })
 })

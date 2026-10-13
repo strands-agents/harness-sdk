@@ -3,13 +3,42 @@ import { getCollection, getEntry, type CollectionEntry } from 'astro:content'
 export type BlogPost = CollectionEntry<'blog'>
 export type Author = CollectionEntry<'authors'>
 
+export const BLOG_PUBLISH_TIME_ZONE = 'America/New_York'
+
+const BLOG_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: BLOG_PUBLISH_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+type PublishableBlogData = Pick<BlogPost['data'], 'date' | 'draft'>
+
+function calendarDateInPublishTimeZone(date: Date): string {
+  const parts = BLOG_DATE_FORMATTER.formatToParts(date)
+  const value = (type: 'year' | 'month' | 'day') => {
+    const part = parts.find((candidate) => candidate.type === type)
+    if (!part) throw new Error(`[blog] Could not resolve ${type} for publication date`)
+    return part.value
+  }
+  return `${value('year')}-${value('month')}-${value('day')}`
+}
+
+/** Whether a non-draft post has reached its publication date. */
+export function isBlogPostPublished(data: PublishableBlogData, now: Date): boolean {
+  return !data.draft && data.date.toISOString().slice(0, 10) <= calendarDateInPublishTimeZone(now)
+}
+
 /**
  * Get all published blog posts, sorted by date descending.
- * In production, excludes drafts. In dev, includes everything.
+ * Production excludes drafts and future-dated posts. Development includes everything.
  */
-export async function getPublishedPosts(): Promise<BlogPost[]> {
+export async function getPublishedPosts(now: Date = new Date()): Promise<BlogPost[]> {
+  const includeFuturePosts = process.env.INCLUDE_FUTURE_BLOG_POSTS === 'true'
   const posts = await getCollection('blog', ({ data }) => {
-    return import.meta.env.PROD ? !data.draft : true
+    if (!import.meta.env.PROD) return true
+    if (includeFuturePosts) return !data.draft
+    return isBlogPostPublished(data, now)
   })
   return posts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
 }

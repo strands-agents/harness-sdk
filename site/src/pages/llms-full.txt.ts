@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro'
 import { getCollection } from 'astro:content'
+import { getPublishedPosts } from '@util/blog'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
 import { getBase, getSiteOrigin } from '@util/links'
 
@@ -34,10 +35,8 @@ export const GET: APIRoute = async () => {
   }
 
   // Render blog posts
-  const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
-  const sortedPosts = [...blogPosts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
-
-  for (const post of sortedPosts) {
+  const blogPosts = await getPublishedPosts()
+  for (const post of blogPosts) {
     lines.push(`## ${post.data.title}`)
     lines.push('')
     lines.push(`Date: ${post.data.date.toISOString()}`)
