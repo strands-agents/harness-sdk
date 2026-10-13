@@ -36,6 +36,7 @@ navbar:
     href: /docs/user-guide/sdk/
     basePath:
       - /docs/user-guide/sdk/
+      - /docs/user-guide/build-with-ai/
       # The "choosing a foundation" decision and the migration guides live with
       # the Strands Harness SDK — they compare and migrate onto the Strands Harness SDK.
       - /docs/user-guide/migrate/
@@ -235,6 +236,7 @@ sidebar:
             slug: docs/user-guide/sdk/quickstart/python
           - label: "Quickstart"
             slug: docs/user-guide/sdk/quickstart/typescript
+          - docs/user-guide/build-with-ai
       - label: Migrate
         items:
           - label: "Choosing an agent foundation"
