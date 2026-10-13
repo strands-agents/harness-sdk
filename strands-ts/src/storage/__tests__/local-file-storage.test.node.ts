@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { LocalFileStorage } from '../local-file-storage.js'
+import type { SearchStrategy } from '../search/types.js'
+import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
 import { rm, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -166,6 +168,53 @@ describe('LocalFileStorage', () => {
     it('exposes baseDir pointing to the subdirectory', () => {
       const namespaced = storage.namespace('nested')
       expect(namespaced.baseDir).toBe(`${baseDir}/nested`)
+    })
+  })
+
+  describe('constructor config', () => {
+    const fakeStrategy = (): SearchStrategy<LocalFileStorage> & { index: Mock; search: Mock } => ({
+      index: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockResolvedValue([{ key: 'hit.txt', score: 1 }]),
+    })
+
+    it('indexes writes and delegates search to a searchStrategy from config', async () => {
+      const strategy = fakeStrategy()
+      const configured = new LocalFileStorage(baseDir, { searchStrategy: strategy })
+
+      await configured.write('a.txt', new Uint8Array([1]))
+      expect(strategy.index).toHaveBeenCalledWith(configured, 'a.txt', new Uint8Array([1]))
+      expect(await configured.search('query')).toEqual([{ key: 'hit.txt', score: 1 }])
+      expect(strategy.search).toHaveBeenCalledWith(configured, 'query')
+    })
+
+    it('routes I/O through a sandbox from config', async () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      const writeFile = vi.spyOn(sandbox, 'writeFile')
+      const configured = new LocalFileStorage(baseDir, { sandbox })
+
+      await configured.write('a.txt', new Uint8Array([1]))
+      expect(writeFile).toHaveBeenCalledWith(`${baseDir}/a.txt`, new Uint8Array([1]))
+    })
+
+    it('accepts a positional sandbox and search strategy', async () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      const writeFile = vi.spyOn(sandbox, 'writeFile')
+      const strategy = fakeStrategy()
+      const positional = new LocalFileStorage(baseDir, sandbox, strategy)
+
+      await positional.write('a.txt', new Uint8Array([1]))
+      expect(writeFile).toHaveBeenCalledTimes(1)
+      await positional.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('carries a searchStrategy from config through forSandbox and namespace', async () => {
+      const strategy = fakeStrategy()
+      const configured = new LocalFileStorage(baseDir, { searchStrategy: strategy })
+
+      await configured.forSandbox(new NotASandboxLocalEnvironment()).search('one')
+      await configured.namespace('sub').search('two')
+      expect(strategy.search.mock.calls.map((call) => call[1])).toEqual(['one', 'two'])
     })
   })
 })

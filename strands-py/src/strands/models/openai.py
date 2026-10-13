@@ -594,6 +594,8 @@ class OpenAIModel(Model):
                         return {"messageStop": {"stopReason": "tool_use"}}
                     case "length":
                         return {"messageStop": {"stopReason": "max_tokens"}}
+                    case "content_filter":
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 

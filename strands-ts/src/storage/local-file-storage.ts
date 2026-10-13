@@ -7,6 +7,30 @@ import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
+ * Configuration for {@link LocalFileStorage}.
+ */
+export interface LocalFileStorageConfig {
+  /** Sandbox to route I/O through. Usually set via {@link LocalFileStorage.forSandbox}. */
+  sandbox?: Sandbox
+  /**
+   * Search strategy. When set, `write()` automatically indexes entries and `search()` delegates to
+   * the strategy instead of the default keyword scan.
+   */
+  searchStrategy?: SearchStrategy<LocalFileStorage>
+}
+
+/**
+ * Tells a sandbox passed positionally apart from a {@link LocalFileStorageConfig}. Checks the shape
+ * rather than `instanceof` so structurally-typed sandboxes are recognised too.
+ *
+ * @param value - The constructor's second argument
+ * @returns True if `value` is a sandbox
+ */
+function isSandbox(value: Sandbox | LocalFileStorageConfig): value is Sandbox {
+  return typeof (value as Sandbox).writeFile === 'function'
+}
+
+/**
  * Returns true if the error represents a missing or non-directory path (ENOENT or ENOTDIR).
  *
  * @param error - The caught error to inspect
@@ -33,6 +57,9 @@ function isNotFoundError(error: unknown): boolean {
  *
  * const storage = new LocalFileStorage('./.strands/')
  * await storage.write('sessions/abc/snapshot.json', bytes)
+ *
+ * // With a search strategy
+ * const indexed = new LocalFileStorage('./memory/', { searchStrategy: new QmdSearchStrategy() })
  * ```
  */
 export class LocalFileStorage implements Storage {
@@ -47,14 +74,33 @@ export class LocalFileStorage implements Storage {
 
   /**
    * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
+   * @param config - Optional sandbox and search strategy. See {@link LocalFileStorageConfig}.
+   */
+  constructor(baseDir?: string, config?: LocalFileStorageConfig)
+  /**
+   * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
    * @param sandbox - Optional sandbox to route I/O through. Usually set via {@link forSandbox}.
    * @param searchStrategy - Optional search strategy. When set, `write()` automatically indexes
    *   entries and `search()` delegates to the strategy instead of the default keyword scan.
    */
-  constructor(baseDir: string = './.strands/', sandbox?: Sandbox, searchStrategy?: SearchStrategy<LocalFileStorage>) {
+  constructor(baseDir?: string, sandbox?: Sandbox, searchStrategy?: SearchStrategy<LocalFileStorage>)
+  constructor(
+    baseDir: string = './.strands/',
+    sandboxOrConfig?: Sandbox | LocalFileStorageConfig,
+    searchStrategy?: SearchStrategy<LocalFileStorage>
+  ) {
+    let sandbox: Sandbox | undefined
+    let strategy: SearchStrategy<LocalFileStorage> | undefined
+    if (sandboxOrConfig === undefined || isSandbox(sandboxOrConfig)) {
+      sandbox = sandboxOrConfig
+      strategy = searchStrategy
+    } else {
+      sandbox = sandboxOrConfig.sandbox
+      strategy = sandboxOrConfig.searchStrategy
+    }
     this._baseDir = baseDir.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
     this._sandbox = sandbox
-    this._searchStrategy = searchStrategy
+    this._searchStrategy = strategy
   }
 
   /**

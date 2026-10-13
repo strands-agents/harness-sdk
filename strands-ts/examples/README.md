@@ -27,3 +27,4 @@ npm start
 | [agents-as-tools](./agents-as-tools/) | Agents as tools pattern (orchestrator delegates to specialized tool agents) |
 | [browser-agent](./browser-agent/) | Browser-based agent with DOM manipulation canvas (OpenAI, Anthropic, Bedrock) |
 | [telemetry](./telemetry/) | OpenTelemetry tracing with Jaeger (requires Docker, see its [README](./telemetry/README.md)) |
+| [decisions](./decisions/) | Decision-model primitive — ask closed questions with typed answers and `Uncertain(reason)` |

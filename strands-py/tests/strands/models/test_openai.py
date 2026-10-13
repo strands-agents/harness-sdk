@@ -1012,6 +1012,11 @@ def test_format_request_with_tool_choice_tool(model, messages, tool_specs, syste
             {"chunk_type": "message_stop", "data": "length"},
             {"messageStop": {"stopReason": "max_tokens"}},
         ),
+        # Message Stop - Content Filtered
+        (
+            {"chunk_type": "message_stop", "data": "content_filter"},
+            {"messageStop": {"stopReason": "content_filtered"}},
+        ),
         # Message Stop - End Turn
         (
             {"chunk_type": "message_stop", "data": "stop"},
