@@ -8,6 +8,6 @@
  * @packageDocumentation
  */
 
-export type { SearchStrategy } from './types.js'
+export type { SandboxSafeSearchStrategy, SearchStrategy } from './types.js'
 export type { StorageSearchResult } from '../storage.js'
 export { KeywordSearchStrategy } from './keyword.js'

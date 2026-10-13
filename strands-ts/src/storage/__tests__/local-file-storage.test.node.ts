@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { LocalFileStorage } from '../local-file-storage.js'
 import { QmdSearchStrategy } from '../search/qmd.js'
-import type { SearchStrategy } from '../search/types.js'
+import type { SandboxSafeSearchStrategy } from '../search/types.js'
 import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
 import { logger } from '../../logging/logger.js'
 import { rm, readFile, stat } from 'node:fs/promises'
@@ -174,7 +174,7 @@ describe('LocalFileStorage', () => {
   })
 
   describe('constructor config', () => {
-    const fakeStrategy = (): SearchStrategy<LocalFileStorage> & { index: Mock; search: Mock } => ({
+    const fakeStrategy = (): SandboxSafeSearchStrategy<LocalFileStorage> & { index: Mock; search: Mock } => ({
       index: vi.fn().mockResolvedValue(undefined),
       search: vi.fn().mockResolvedValue([{ key: 'hit.txt', score: 1 }]),
     })
@@ -221,7 +221,7 @@ describe('LocalFileStorage', () => {
   })
 
   describe('host filesystem strategies with a sandbox', () => {
-    const sandboxSafeStrategy = (): SearchStrategy<LocalFileStorage> & { search: Mock } => ({
+    const sandboxSafeStrategy = (): SandboxSafeSearchStrategy<LocalFileStorage> & { search: Mock } => ({
       search: vi.fn().mockResolvedValue([]),
     })
 
@@ -230,19 +230,19 @@ describe('LocalFileStorage', () => {
     })
 
     it('rejects a host filesystem strategy passed with a sandbox', () => {
-      expect(() => new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), new QmdSearchStrategy())).toThrow(
+      const sandbox = new NotASandboxLocalEnvironment()
+      // @ts-expect-error the overloads reject this at compile time; the runtime check covers JS callers
+      expect(() => new LocalFileStorage(baseDir, sandbox, new QmdSearchStrategy())).toThrow(
         'QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox'
       )
     })
 
     it('rejects a host filesystem strategy passed with a sandbox in config', () => {
-      expect(
-        () =>
-          new LocalFileStorage(baseDir, {
-            sandbox: new NotASandboxLocalEnvironment(),
-            searchStrategy: new QmdSearchStrategy(),
-          })
-      ).toThrow('QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox')
+      const config = { sandbox: new NotASandboxLocalEnvironment(), searchStrategy: new QmdSearchStrategy() }
+      // @ts-expect-error the overloads reject this at compile time; the runtime check covers JS callers
+      expect(() => new LocalFileStorage(baseDir, config)).toThrow(
+        'QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
     })
 
     it('accepts a sandbox-safe strategy passed with a sandbox', async () => {

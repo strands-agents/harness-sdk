@@ -44,3 +44,18 @@ export interface SearchStrategy<S extends Storage = Storage, SearchQuery = strin
    */
   search(storage: S, query: SearchQuery): Promise<StorageSearchResult[]>
 }
+
+/**
+ * A {@link SearchStrategy} that only uses the storage's own methods, so it works when the storage
+ * is bound to a sandbox. A sandboxed {@link LocalFileStorage} only accepts strategies of this type.
+ *
+ * Strategies that leave `requiresHostFs` out (or set it to `false`) already satisfy this type.
+ * Declare `readonly requiresHostFs = true` on a strategy that touches the host filesystem so the
+ * type checker rejects it alongside a sandbox.
+ */
+export interface SandboxSafeSearchStrategy<S extends Storage = Storage, SearchQuery = string> extends SearchStrategy<
+  S,
+  SearchQuery
+> {
+  readonly requiresHostFs?: false
+}
