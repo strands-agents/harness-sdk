@@ -102,7 +102,8 @@ class ToolExecutor(abc.ABC):
                 _background_interrupt=middleware_interrupt,
             )
             result_event: ToolResultEvent | None = None
-            # The cycle that dispatched this call has already ended, so the span and trace have no parent.
+            # The dispatching cycle has ended: the metrics trace gets no parent, and the span parents to
+            # whatever span this background task's context captured.
             chain = agent._middleware_registry.invoke(
                 ExecuteToolStage,
                 middleware_context,
@@ -127,8 +128,8 @@ class ToolExecutor(abc.ABC):
 
             if result_event is None:
                 raise RuntimeError(
-                    "ExecuteToolStage middleware chain did not yield a ToolResultEvent. "
-                    "Ensure middleware forwards events from next()."
+                    "ExecuteToolStage middleware chain did not yield a ToolResultEvent. A Wrap handler must "
+                    "forward the events from next_fn(context), or yield its own ToolResultEvent to short-circuit."
                 )
             after_event, _ = await agent.hooks.invoke_callbacks_async(
                 AfterToolCallEvent[LocalAgent](
@@ -316,8 +317,9 @@ class ToolExecutor(abc.ABC):
                         kwargs, admission_error, tracer=tracer, cycle_span=cycle_span, cycle_trace=cycle_trace
                     ),
                 )
-                # Closing the chain explicitly runs the terminal's telemetry cleanup here, in this
-                # context, rather than whenever an abandoned generator is finalized.
+                # Closing the chain when this generator exits runs the terminal's telemetry cleanup here,
+                # in this context. If an outer consumer abandons this generator without closing it, the
+                # cleanup still waits for the asyncgen finalizer.
                 try:
                     async for event in chain:
                         # Tool-originated interrupt: a ToolInterruptEvent yielded from tool.stream()
@@ -346,8 +348,8 @@ class ToolExecutor(abc.ABC):
 
                 if result_event is None:
                     raise RuntimeError(
-                        "ExecuteToolStage middleware chain did not yield a ToolResultEvent. "
-                        "Ensure middleware forwards events from next()."
+                        "ExecuteToolStage middleware chain did not yield a ToolResultEvent. A Wrap handler must "
+                        "forward the events from next_fn(context), or yield its own ToolResultEvent to short-circuit."
                     )
 
                 result = result_event.tool_result

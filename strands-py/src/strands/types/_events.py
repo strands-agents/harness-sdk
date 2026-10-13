@@ -212,27 +212,33 @@ class ModelStopReason(TypedEvent):
             usage: Usage information from the model
             metrics: Execution metrics and performance data
         """
+        # The "stop" tuple is the payload that model providers' structured_output and the
+        # summarization helpers unpack positionally; the properties below are the named form.
         super().__init__({"stop": (stop_reason, message, usage, metrics)})
+        self._stop_reason = stop_reason
+        self._message = message
+        self._usage = usage
+        self._metrics = metrics
 
     @property
     def stop_reason(self) -> StopReason:
         """Why the model stopped generating."""
-        return cast(StopReason, self["stop"][0])
+        return self._stop_reason
 
     @property
     def message(self) -> Message:
         """Final message from the model."""
-        return cast(Message, self["stop"][1])
+        return self._message
 
     @property
     def usage(self) -> Usage:
         """Usage information from the model."""
-        return cast(Usage, self["stop"][2])
+        return self._usage
 
     @property
     def metrics(self) -> Metrics:
         """Execution metrics and performance data."""
-        return cast(Metrics, self["stop"][3])
+        return self._metrics
 
     @property
     @override

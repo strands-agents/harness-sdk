@@ -299,13 +299,13 @@ async def event_loop_cycle(
                 model_events = _handle_model_execution(
                     agent, cycle_span, cycle_trace, invocation_state, tracer, structured_output_context
                 )
-                stop_event: ModelStopReason | None = None
+                # Always bound: _handle_model_execution raises when the chain yields no ModelStopReason.
+                stop_event: ModelStopReason
                 async for model_event in model_events:
                     if isinstance(model_event, ModelStopReason):
                         stop_event = model_event
                     else:
                         yield model_event
-                assert stop_event is not None  # _handle_model_execution raises when the chain yields no result
 
                 stop_reason, message = stop_event.stop_reason, stop_event.message
                 yield ModelMessageEvent(message=message)
@@ -621,7 +621,8 @@ async def _handle_model_execution(
 
             if stop_event is None:
                 raise RuntimeError(
-                    "Middleware chain did not yield a result event. Ensure middleware forwards events from next()."
+                    "InvokeModelStage middleware chain did not yield a ModelStopReason. A Wrap handler must "
+                    "forward the events from next_fn(context), or yield its own ModelStopReason to short-circuit."
                 )
 
             # Write the post-stream model state back to the agent. Skipped on error

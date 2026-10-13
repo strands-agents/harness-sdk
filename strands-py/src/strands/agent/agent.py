@@ -1280,14 +1280,9 @@ class Agent(AgentBase, LocalAgent):
     @overload
     def add_middleware(
         self,
-        stage_or_phase: MiddlewareWrapPhase[_MwContext, _MwResult, _MwEvent],
-        handler: MiddlewareHandler[_MwContext, _MwEvent],
-    ) -> None: ...
-
-    @overload
-    def add_middleware(
-        self,
-        stage_or_phase: MiddlewareStage[_MwContext, _MwResult, _MwEvent],
+        stage_or_phase: (
+            MiddlewareStage[_MwContext, _MwResult, _MwEvent] | MiddlewareWrapPhase[_MwContext, _MwResult, _MwEvent]
+        ),
         handler: MiddlewareHandler[_MwContext, _MwEvent],
     ) -> None: ...
 

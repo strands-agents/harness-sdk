@@ -258,7 +258,7 @@ def test_wrap_yields_nothing_raises_runtime_error(agent):
             yield  # noqa: B901
 
     agent.add_middleware(InvokeModelStage, silent)
-    with pytest.raises(RuntimeError, match="did not yield a result event"):
+    with pytest.raises(RuntimeError, match="InvokeModelStage middleware chain did not yield a ModelStopReason"):
         agent("test")
 
 
