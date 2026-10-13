@@ -56,6 +56,17 @@ import { Agent } from '@strands-agents/sdk'
 import { makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
 // --8<-- [end:sleep_custom_import]
 
+// --8<-- [start:python_repl_import]
+import { Agent } from '@strands-agents/sdk'
+import { pythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+// --8<-- [end:python_repl_import]
+
+// --8<-- [start:python_repl_custom_import]
+import { Agent } from '@strands-agents/sdk'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
+import { makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+// --8<-- [end:python_repl_custom_import]
+
 // --8<-- [start:stop_import]
 import { Agent } from '@strands-agents/sdk'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
@@ -87,3 +98,14 @@ import { Agent } from '@strands-agents/sdk'
 import { ClientFactory, DefaultAgentCardResolver, JsonRpcTransportFactory, RestTransportFactory, createAuthenticatingFetchWithRetry } from '@a2a-js/sdk/client'
 import { makeA2AClient } from '@strands-agents/sdk/vended-tools/a2a-client'
 // --8<-- [end:a2a_client_import]
+
+// --8<-- [start:subagent_import]
+import { Agent } from '@strands-agents/sdk'
+import { subagent } from '@strands-agents/sdk/vended-tools/subagent'
+// --8<-- [end:subagent_import]
+
+// --8<-- [start:subagent_custom_import]
+import { Agent } from '@strands-agents/sdk'
+import { Choice, Option, Preset } from '@strands-agents/sdk/multiagent'
+import { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
+// --8<-- [end:subagent_custom_import]

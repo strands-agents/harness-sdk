@@ -27,6 +27,11 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("anthropic.claude-fable-5-1") == 1_000_000
         assert get_context_window_limit("global.anthropic.claude-opus-5-5") == 1_000_000
         assert get_context_window_limit("us.anthropic.claude-fable-5-1") == 1_000_000
+        # Claude Haiku 5.5 has the same 1M window (#4996).
+        assert get_context_window_limit("claude-haiku-5-5") == 1_000_000
+        assert get_context_window_limit("anthropic.claude-haiku-5-5") == 1_000_000
+        assert get_context_window_limit("eu.anthropic.claude-haiku-5-5") == 1_000_000
+        assert get_context_window_limit("global.anthropic.claude-haiku-5-5") == 1_000_000
 
     def test_known_bedrock_nova(self):
         assert get_context_window_limit("amazon.nova-pro-v1:0") == 300_000

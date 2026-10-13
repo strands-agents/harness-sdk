@@ -83,7 +83,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
         throw new Error('web_fetch: agentic mode requires a non-empty prompt.')
       }
 
-      const effectiveModel = analystModel ?? context?.agent.model
+      const effectiveModel = analystModel ?? context?.agent.auxModel
       if (!effectiveModel) {
         throw new Error(
           'web_fetch: agentic mode requires a model. ' + 'Pass model to makeWebFetch or call the tool from an agent.'

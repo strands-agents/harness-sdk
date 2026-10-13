@@ -7,6 +7,7 @@
 import base64
 import json
 import logging
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
@@ -423,7 +424,12 @@ class AnthropicModel(Model):
             return messages, None
 
         if cache_config.strategy not in ("auto", "anthropic"):
-            logger.warning("strategy=<%s> | unknown cache strategy, prompt caching disabled", cache_config.strategy)
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per distinct strategy value).
+            warnings.warn(
+                f"cache_config.strategy={cache_config.strategy!r} is an unknown cache strategy;"
+                " prompt caching is disabled",
+                stacklevel=1,
+            )
             return messages, None
 
         target_idx = next(

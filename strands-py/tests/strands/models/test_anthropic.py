@@ -2001,14 +2001,13 @@ class TestPromptCaching:
 
         assert self._breakpoints(model.format_request(messages)) == []
 
-    def test_unknown_strategy_disables_caching(self, model, messages, caplog):
-        caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    def test_unknown_strategy_disables_caching(self, model, messages):
         model.update_config(cache_config=CacheConfig(strategy="nonsense"))
 
-        request = model.format_request(messages)
+        with pytest.warns(UserWarning, match="unknown cache strategy"):
+            request = model.format_request(messages)
 
         assert self._breakpoints(request) == []
-        assert "unknown cache strategy" in caplog.text
 
     def test_manual_cache_point_ttl_is_honored(self, model):
         """A hand-placed cache point carries its own TTL; ``cache_config`` need not be set."""

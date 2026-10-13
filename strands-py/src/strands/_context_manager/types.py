@@ -71,9 +71,30 @@ class ContextStrategy(Protocol):
 class StashConfig(TypedDict, total=False):
     """Configuration for the L1 stash.
 
+    Each agent stashes under ``context/<session_id>/scopes/agent/<agent_id>/``. The prefix is dropped
+    only when a namespaced view is passed as this config's ``storage``; that view becomes the exact
+    stash root, so agents given the same view share one stash. Deleting a session leaves a shared
+    stash in place.
+
     Attributes:
         storage: Storage backend. Defaults to InMemoryStorage when omitted.
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
+
+    Example:
+        ```python
+        storage = S3Storage(bucket="my-bucket")
+
+        # Namespaced view passed to the stash: stashes at "team/" (prefix dropped, shared).
+        ContextManager(stash={"storage": storage.namespace("team")})
+
+        # Plain storage passed to the stash:
+        # stashes at "context/<session_id>/scopes/agent/<agent_id>/".
+        ContextManager(stash={"storage": storage})
+
+        # Namespaced view passed as agent-level storage: prefix still applies, under the view:
+        # stashes at "team/context/<session_id>/scopes/agent/<agent_id>/".
+        Agent(storage=storage.namespace("team"), context_manager=ContextManager())
+        ```
     """
 
     storage: Storage

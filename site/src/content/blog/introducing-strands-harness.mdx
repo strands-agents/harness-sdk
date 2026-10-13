@@ -28,6 +28,8 @@ Today we're releasing [Strands harness](https://github.com/strands-agents/harnes
 
 Strands harness **costs 28% less** when using the same Claude or GPT models across six benchmarks. We found Strands harness showed better token-efficiency and nearly equal benchmark scores compared to Claude Code, Codex, and other popular harnesses. That's important because we never want to sacrifice accuracy for lower cost. Deepseek Harness proved to be the most token-efficient overall, however, it typically reported the lowest accuracy scores. Our testing setup was distributed benchmarking on EC2 with Harbor.
 
+> **Explore the results:** The chart below is interactive. Hover over any point to see the model, harness, accuracy score, and cost per task.
+
 <iframe
   src={`${import.meta.env.BASE_URL}embeds/strands-harness-benchmarks.html`}
   title="Strands harness cost and accuracy across six benchmarks"

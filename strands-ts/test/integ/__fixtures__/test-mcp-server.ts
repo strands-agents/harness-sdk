@@ -172,10 +172,12 @@ export interface HttpServerInfo {
 }
 
 /**
- * Creates and starts a Streamable HTTP MCP server on a random port.
+ * Creates and starts a Streamable HTTP MCP server.
  * Uses stateless mode - creates a new transport for each request.
+ *
+ * @param port - Port to listen on. The default 0 picks a random free port.
  */
-export async function startHTTPServer(): Promise<HttpServerInfo> {
+export async function startHTTPServer(port: number = 0): Promise<HttpServerInfo> {
   const mcpServer = createTestServer()
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -228,14 +230,14 @@ export async function startHTTPServer(): Promise<HttpServerInfo> {
   })
 
   return new Promise((resolve) => {
-    httpServer.listen(0, () => {
+    httpServer.listen(port, () => {
       const address = httpServer.address() as AddressInfo
-      const port = address.port
-      const url = `http://localhost:${port}/mcp`
+      const boundPort = address.port
+      const url = `http://localhost:${boundPort}/mcp`
 
       resolve({
         server: httpServer,
-        port,
+        port: boundPort,
         url,
         close: async () => {
           return new Promise((resolveClose) => {

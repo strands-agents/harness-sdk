@@ -27,9 +27,8 @@ import type { Model } from '../models/model.js'
  */
 export type SummarizingConversationManagerConfig = {
   /**
-   * Model to use for generating summaries. When provided, overrides the model
-   * attached to the agent. Useful when you want to use a different model than
-   * the one attached to the agent.
+   * Model to use for generating summaries. Resolution order:
+   * `this model > agent.auxModel > agent.model`.
    */
   model?: Model
 
@@ -103,12 +102,15 @@ export class SummarizingConversationManager extends ConversationManager {
    * When `error` is undefined (proactive compression), summarization failure is logged
    * and returns `false` — the model call proceeds regardless.
    *
+   * Summarizes with `this model > agent.auxModel > agent.model`; the triggering `model` in
+   * the options is not used.
+   *
    * @param options - The reduction options
    * @returns `true` if the history was reduced, `false` otherwise
    */
-  async reduce({ agent, model, error }: ConversationManagerReduceOptions): Promise<boolean> {
+  async reduce({ agent, error }: ConversationManagerReduceOptions): Promise<boolean> {
     try {
-      return await this._summarizeOldest(agent, this._model ?? model)
+      return await this._summarizeOldest(agent, this._model ?? agent.auxModel)
     } catch (summarizationError) {
       if (error) {
         // Reactive: rethrow so the ContextWindowOverflowError propagates

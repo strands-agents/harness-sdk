@@ -281,6 +281,20 @@ describe('MCP Integration', () => {
       expect(sdkClientMock.connect).not.toHaveBeenCalled()
     })
 
+    it('stops waiting for the connection when callTool is aborted without tasksConfig', async () => {
+      sdkClientMock.connect.mockReturnValue(new Promise<void>(() => {}))
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client })
+      const controller = new AbortController()
+      const reason = new Error('caller aborted during connect')
+
+      const pending = client.callTool(tool, {}, { signal: controller.signal })
+      const rejection = expect(pending).rejects.toBe(reason)
+      controller.abort(reason)
+
+      await rejection
+      expect(sdkClientMock.callTool).not.toHaveBeenCalled()
+    })
+
     it('converts SDK tool specs to McpTool instances', async () => {
       const longName = 'a'.repeat(65)
       const outputSchema = {
@@ -1392,6 +1406,74 @@ describe('continueOnError', () => {
     expect(secondTools).toEqual([])
     expect(client.connectionState).toBe('connected')
     expect(sdkClientMock.connect).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('connect retry transport rebuild', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  // Guards against #4095: a StreamableHTTP transport cannot start twice, so the
+  // continueOnError recovery path must build a fresh transport and client for the retry.
+  it('retries a url-configured client on a fresh transport and client', async () => {
+    const client = new McpClient({ applicationName: 'TestApp', url: 'http://localhost:9', continueOnError: true })
+    const firstSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    firstSdkClientMock.connect.mockRejectedValue(new Error('connection refused'))
+
+    await client.connect()
+    expect(client.connectionState).toBe('failed')
+    expect(vi.mocked(StreamableHTTPClientTransport)).toHaveBeenCalledTimes(1)
+
+    await client.connect(true)
+
+    const secondSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    expect(vi.mocked(StreamableHTTPClientTransport)).toHaveBeenCalledTimes(2)
+    expect(secondSdkClientMock).not.toBe(firstSdkClientMock)
+    expect(secondSdkClientMock.connect).toHaveBeenCalledTimes(1)
+    expect(client.connectionState).toBe('connected')
+  })
+
+  it('forces reconnection of a url-configured client on a fresh transport', async () => {
+    const client = new McpClient({ applicationName: 'TestApp', url: 'http://localhost:9' })
+    const firstSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+
+    await client.connect()
+    await client.connect(true)
+
+    expect(firstSdkClientMock.close).toHaveBeenCalled()
+    expect(vi.mocked(StreamableHTTPClientTransport)).toHaveBeenCalledTimes(2)
+    expect(client.connectionState).toBe('connected')
+  })
+
+  it('connects a url-configured client on a fresh transport after disconnect', async () => {
+    const client = new McpClient({ applicationName: 'TestApp', url: 'http://localhost:9' })
+
+    await client.connect()
+    await client.disconnect()
+    await client.connect()
+
+    expect(vi.mocked(StreamableHTTPClientTransport)).toHaveBeenCalledTimes(2)
+    expect(client.connectionState).toBe('connected')
+  })
+
+  it('retries a caller-supplied transport on the same client and transport', async () => {
+    const clientCountBefore = vi.mocked(Client).mock.results.length
+    const client = new McpClient({ applicationName: 'TestApp', transport: mockTransport, continueOnError: true })
+    const sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    sdkClientMock.connect.mockRejectedValueOnce(new Error('connection refused'))
+
+    await client.connect()
+    await client.connect(true)
+
+    expect(vi.mocked(Client).mock.results.length).toBe(clientCountBefore + 1)
+    expect(sdkClientMock.connect).toHaveBeenCalledTimes(2)
+    expect(sdkClientMock.connect).toHaveBeenLastCalledWith(mockTransport)
+    expect(client.connectionState).toBe('connected')
   })
 })
 

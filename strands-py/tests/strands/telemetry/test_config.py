@@ -1,6 +1,7 @@
 from unittest import mock
 
 import pytest
+from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS
 
 import strands.telemetry.config as telemetry_config
 from strands.telemetry import StrandsTelemetry
@@ -189,6 +190,51 @@ def test_setup_otlp_exporter(mock_resource, mock_tracer_provider, mock_otlp_expo
     mock_batch_processor.assert_called_once_with(mock_otlp_exporter.return_value)
 
     mock_tracer_provider.return_value.add_span_processor.assert_called()
+
+
+def test_setup_baggage_processor(mock_resource, mock_tracer_provider):
+    """Test add baggage span processor."""
+    with mock.patch("opentelemetry.processor.baggage.BaggageSpanProcessor") as mock_baggage_processor:
+        telemetry = StrandsTelemetry()
+        telemetry.tracer_provider = mock_tracer_provider.return_value
+        result = telemetry.setup_baggage_processor()
+
+    mock_baggage_processor.assert_called_once_with(ALLOW_ALL_BAGGAGE_KEYS)
+    mock_tracer_provider.return_value.add_span_processor.assert_called_once_with(mock_baggage_processor.return_value)
+    assert result is telemetry
+
+
+@pytest.mark.parametrize(
+    "baggage_key_predicate",
+    [
+        lambda key: key.startswith("tenant."),
+        [lambda key: key == "session.id", lambda key: key.startswith("tenant.")],
+    ],
+    ids=["single", "sequence"],
+)
+def test_setup_baggage_processor_with_predicate(mock_resource, mock_tracer_provider, baggage_key_predicate):
+    """Test baggage span processor forwards the given predicate(s) unchanged."""
+    with mock.patch("opentelemetry.processor.baggage.BaggageSpanProcessor") as mock_baggage_processor:
+        telemetry = StrandsTelemetry()
+        telemetry.tracer_provider = mock_tracer_provider.return_value
+        result = telemetry.setup_baggage_processor(baggage_key_predicate)
+
+    mock_baggage_processor.assert_called_once_with(baggage_key_predicate)
+    mock_tracer_provider.return_value.add_span_processor.assert_called_once_with(mock_baggage_processor.return_value)
+    assert result is telemetry
+
+
+def test_setup_baggage_processor_exception(mock_resource, mock_tracer_provider):
+    """Test baggage span processor with exception."""
+    with mock.patch(
+        "opentelemetry.processor.baggage.BaggageSpanProcessor", side_effect=Exception("Test exception")
+    ) as mock_baggage_processor:
+        telemetry = StrandsTelemetry()
+        telemetry.tracer_provider = mock_tracer_provider.return_value
+        # This should not raise an exception
+        telemetry.setup_baggage_processor()
+
+    mock_baggage_processor.assert_called_once()
 
 
 def test_setup_console_exporter_exception(mock_resource, mock_tracer_provider, mock_console_exporter):

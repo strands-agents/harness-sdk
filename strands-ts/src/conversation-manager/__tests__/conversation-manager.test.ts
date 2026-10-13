@@ -156,6 +156,7 @@ describe('ConversationManager', () => {
       expect(receivedArgs).toHaveLength(1)
       expect(receivedArgs[0]!.error).toBe(error)
       expect(receivedArgs[0]!.agent).toBe(mockAgent)
+      expect(receivedArgs[0]!.model).toBe(event.model)
     })
   })
 
