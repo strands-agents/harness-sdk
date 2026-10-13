@@ -75,9 +75,12 @@ BM25 full-text search backed by a SQLite inverted
 index. Scores results by term frequency, inverse
 document frequency, and document length normalization,
 producing significantly better relevance ranking than
-keyword overlap for large stores. It works with
-`LocalFileStorage`, which it needs to locate the index
-file next to the storage directory.
+keyword overlap for large stores. It works only with
+`LocalFileStorage`, because it keeps its index file on
+the host filesystem next to the storage directory. For
+the same reason it can't be used with a sandboxed
+`LocalFileStorage`; use keyword search there, which
+works with every backend.
 
 <Tabs>
 <Tab label="Python">
