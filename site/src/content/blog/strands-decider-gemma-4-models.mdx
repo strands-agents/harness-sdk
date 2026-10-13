@@ -10,17 +10,19 @@ tags:
 draft: false
 ---
 
-You've probably seen smaller, purpose-built models showing up across the
-industry. Many agent decisions don't need a large, general-purpose LLM. For
-focused work such as routing, guardrails, or checking tool arguments, teams can
-choose a model that meets their accuracy and latency targets and runs where
-they need it.
+You've probably noticed a wave of smaller, purpose-built models appearing
+across the industry. That's because not every agent decision needs a
+large, general-purpose LLM. For focused decisions like routing work, checking
+tool arguments, and applying guardrails, teams can choose a model size that
+fits their accuracy, latency, and deployment needs.
 
-We released [Strands Decider 2B](/blog/introducing-strands-decider/) earlier
-this month as a small, open source model for these decisions. Gemma 4 gave us
-four sizes in one base-model family, so you can test how much model a workflow
-needs without changing the interface. Today we're releasing E2B, E4B, 12B, and
-26B-A4B, along with their evaluation artifacts, on
+That was the idea behind
+[Strands Decider 2B](/blog/introducing-strands-decider/), the small, open source
+decision model we released earlier this month. That first release led to a
+practical question: how much model do you need for the decisions in your
+workflow? Today, we're announcing E2B, E4B, 12B, and 26B-A4B, giving you four
+sizes within the Gemma 4 family to compare. The models and their evaluation
+artifacts are available now on
 [Hugging Face](https://huggingface.co/StrandsAgents).
 
 ## Ask the same questions at every size
