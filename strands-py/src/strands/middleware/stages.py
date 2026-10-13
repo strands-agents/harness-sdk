@@ -10,15 +10,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ..interrupt import Interrupt, InterruptException
-from ..types._events import ModelStopReason, ToolResultEvent
+from ..types.events import ModelStopReason, ToolResultEvent
 from .types import MiddlewareStage
 
 if TYPE_CHECKING:
     from ..interrupt import _InterruptState
     from ..models.model import Model
-    from ..types._events import TypedEvent
     from ..types.agent import LocalAgent
     from ..types.content import Messages, SystemPrompt
+    from ..types.events import TypedEvent
     from ..types.tools import AgentTool, ToolChoice, ToolSpec, ToolUse
 
 _UNSET: Any = object()

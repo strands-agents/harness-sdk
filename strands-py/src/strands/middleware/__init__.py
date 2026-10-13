@@ -27,7 +27,7 @@ Example:
     ```
 """
 
-from ..types._events import ModelStopReason, ToolResultEvent, TypedEvent
+from ..types.events import ModelStopReason, ToolResultEvent, TypedEvent
 from .stages import (
     ExecuteToolContext,
     ExecuteToolResult,

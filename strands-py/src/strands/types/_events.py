@@ -2,7 +2,7 @@
 
 This module defines the event types that are emitted during agent execution,
 providing a structured way to observe to different events of the event loop and
-agent lifecycle.
+agent lifecycle. The public event types live in ``strands.types.events``.
 """
 
 from collections.abc import Sequence
@@ -15,44 +15,18 @@ from ..interrupt import Interrupt
 from ..telemetry import EventLoopMetrics
 from .citations import Citation
 from .content import Message
-from .event_loop import Metrics, StopReason, Usage
+from .event_loop import StopReason
+from .events import ModelStopReason as ModelStopReason  # re-exported: SDK modules import it from here
+from .events import ToolResultEvent as ToolResultEvent  # re-exported: SDK modules import it from here
+from .events import TypedEvent
 from .streaming import ContentBlockDelta, StreamEvent
-from .tools import ToolResult, ToolUse
+from .tools import ToolUse
 
 if TYPE_CHECKING:
     from ..agent import AgentResult
     from ..agent._agent_as_tool import _AgentAsTool
     from ..experimental.checkpoint import Checkpoint
     from ..multiagent.base import MultiAgentResult, NodeResult
-
-
-class TypedEvent(dict):
-    """Base class for all typed events in the agent system."""
-
-    def __init__(self, data: dict[str, Any] | None = None) -> None:
-        """Initialize the typed event with optional data.
-
-        Args:
-            data: Optional dictionary of event data to initialize with
-        """
-        super().__init__(data or {})
-
-    @property
-    def is_callback_event(self) -> bool:
-        """True if this event should trigger the callback_handler to fire."""
-        return True
-
-    def as_dict(self) -> dict:
-        """Convert this event to a raw dictionary for emitting purposes."""
-        return {**self}
-
-    def prepare(self, invocation_state: dict) -> None:
-        """Prepare the event for emission by adding invocation state.
-
-        This allows a subset of events to merge with the invocation_state without needing to
-        pass around the invocation_state throughout the system.
-        """
-        ...
 
 
 class InitEventLoopEvent(TypedEvent):
@@ -191,61 +165,6 @@ class ReasoningSignatureStreamEvent(ModelStreamEvent):
         super().__init__({"reasoning_signature": reasoning_signature, "delta": delta, "reasoning": True})
 
 
-class ModelStopReason(TypedEvent):
-    """Final event of a model call, carrying the aggregated response.
-
-    This is the result event of ``InvokeModelStage`` middleware.
-    """
-
-    def __init__(
-        self,
-        stop_reason: StopReason,
-        message: Message,
-        usage: Usage,
-        metrics: Metrics,
-    ) -> None:
-        """Initialize with the final execution results.
-
-        Args:
-            stop_reason: Why the model stopped generating
-            message: Final message from the model
-            usage: Usage information from the model
-            metrics: Execution metrics and performance data
-        """
-        # The "stop" tuple is the payload that model providers' structured_output and the
-        # summarization helpers unpack positionally; the properties below are the named form.
-        super().__init__({"stop": (stop_reason, message, usage, metrics)})
-        self._stop_reason = stop_reason
-        self._message = message
-        self._usage = usage
-        self._metrics = metrics
-
-    @property
-    def stop_reason(self) -> StopReason:
-        """Why the model stopped generating."""
-        return self._stop_reason
-
-    @property
-    def message(self) -> Message:
-        """Final message from the model."""
-        return self._message
-
-    @property
-    def usage(self) -> Usage:
-        """Usage information from the model."""
-        return self._usage
-
-    @property
-    def metrics(self) -> Metrics:
-        """Execution metrics and performance data."""
-        return self._metrics
-
-    @property
-    @override
-    def is_callback_event(self) -> bool:
-        return False
-
-
 class EventLoopStopEvent(TypedEvent):
     """Event emitted when the agent execution completes normally."""
 
@@ -306,46 +225,6 @@ class EventLoopThrottleEvent(TypedEvent):
     @override
     def prepare(self, invocation_state: dict) -> None:
         self.update(invocation_state)
-
-
-class ToolResultEvent(TypedEvent):
-    """Event emitted when a tool execution completes."""
-
-    def __init__(
-        self, tool_result: ToolResult, exception: Exception | None = None, *, backgrounded: bool = False
-    ) -> None:
-        """Initialize tool result event."""
-        super().__init__({"type": "tool_result", "tool_result": tool_result})
-        self._exception = exception
-        self._backgrounded = backgrounded
-
-    @property
-    def backgrounded(self) -> bool:
-        """Whether this result only acknowledges that the tool was dispatched to the background."""
-        return self._backgrounded
-
-    @property
-    def exception(self) -> Exception | None:
-        """The original exception that occurred, if any.
-
-        Can be used for re-raising or type-based error handling.
-        """
-        return self._exception
-
-    @property
-    def tool_use_id(self) -> str:
-        """The toolUseId associated with this result."""
-        return cast(ToolResult, self.get("tool_result"))["toolUseId"]
-
-    @property
-    def tool_result(self) -> ToolResult:
-        """Final result from the completed tool execution."""
-        return cast(ToolResult, self.get("tool_result"))
-
-    @property
-    @override
-    def is_callback_event(self) -> bool:
-        return False
 
 
 class ToolStreamEvent(TypedEvent):

@@ -5,6 +5,7 @@ tags: [event-loop, tool-execution]
 sourceLinks:
   - path: strands-py/src/strands/middleware/stages.py
   - path: strands-py/src/strands/middleware/_registry.py
+  - path: strands-py/src/strands/types/events.py
   - path: strands-ts/src/middleware/stages.ts
   - path: strands-ts/src/middleware/registry.ts
 ---
@@ -171,8 +172,9 @@ agent.add_middleware(InvokeModelStage, timing)
 ```
 
 An async generator cannot return a value, so the stage result is an event in the stream:
-a `ModelStopReason` for a model call, a `ToolResultEvent` for a tool call. The agent picks
-it out by type, so a handler may yield its own events before or after it.
+a [`ModelStopReason`](@api/python/strands.types.events#ModelStopReason) for a model call,
+a [`ToolResultEvent`](@api/python/strands.types.events#ToolResultEvent) for a tool call.
+The agent picks it out by type, so a handler may yield its own events before or after it.
 
 </Tab>
 <Tab label="TypeScript">

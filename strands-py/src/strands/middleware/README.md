@@ -307,8 +307,11 @@ reported) but reveals the parameter as `Any`. Annotated handlers are fully check
 `InvokeModelStage` and `ExecuteToolStage` are exported from `strands.middleware` together with
 their contexts, the per-stage result event types `ModelStopReason` and `ToolResultEvent`, and the
 stream event base `TypedEvent` (the stages' event type parameter), so a fully annotated handler
-such as `MiddlewareHandler[InvokeModelContext, TypedEvent]` needs no private import. This mirrors
-TS exporting `AgentStreamEvent` at the top level.
+such as `MiddlewareHandler[InvokeModelContext, TypedEvent]` needs no private import. Because the
+result travels as an event, users construct and receive these three classes, so they are defined
+in the public `strands.types.events` module; the other stream events stay internal in
+`strands.types._events`, which re-exports the three for the SDK's own imports. TS exports its
+stream event types from the package root.
 `AgentStreamStage`/`AgentStreamContext` stay internal in the private `strands.middleware._agent_stream`
 module because their copy-vs-reference contract is not finalized (see "AgentStreamStage context
 fields" above). TS marks them `@internal` and its typedoc build hides them; the Python API-docs
