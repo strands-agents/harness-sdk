@@ -74,22 +74,29 @@ class MiddlewareRegistry:
     def _add_output(self, phase: MiddlewareOutputPhase[Any, Any, Any], handler: MiddlewareOutputHandler) -> None:
         stage = phase._stage
 
-        # The result event is recognized by type, so other events (stream chunks, interrupts, anything
-        # a Wrap handler injects before or after it) flow through untouched and the handler runs only
-        # when the stage actually produced a result.
+        # Like TS (`return await handler(yield* next(context))`), the handler runs once, after the inner
+        # chain completes, on the stage's final result. The result event is recognized by type: other
+        # events (stream chunks, interrupts, anything a Wrap handler injects) stream through as they
+        # arrive, the last result event wins, and the transformed result is yielded last. A chain that
+        # raises or halts on an interrupt never reaches the handler; one that yields no result skips it.
         async def adapted(context: Any, next_fn: MiddlewareNext) -> AsyncGenerator[Any, None]:
+            result_event = None
             async for event in next_fn(context):
-                if not isinstance(event, stage.result_event):
+                if isinstance(event, stage.result_event):
+                    result_event = event
+                else:
                     yield event
-                    continue
-                transformed = handler(stage.result_type(result=event))
-                if inspect.isawaitable(transformed):
-                    transformed = await transformed
-                if not isinstance(transformed, stage.result_type):
-                    raise TypeError(
-                        f"Output handler must return {stage.result_type.__name__}, got {type(transformed).__name__}"
-                    )
-                yield transformed.result
+            if result_event is None:
+                return
+            transformed = handler(stage.result_type(result=result_event))
+            if inspect.isawaitable(transformed):
+                transformed = await transformed
+            if not isinstance(transformed, stage.result_type) or not isinstance(transformed.result, stage.result_event):
+                raise TypeError(
+                    f"Output handler must return {stage.result_type.__name__} wrapping a "
+                    f"{stage.result_event.__name__}, got {_describe_output(transformed)}"
+                )
+            yield transformed.result
 
         handlers = self._handlers.setdefault(stage, [])
         handlers.append(_TaggedHandler(phase="output", handler=adapted))
@@ -148,3 +155,11 @@ class MiddlewareRegistry:
                 yield event
         finally:
             await gen.aclose()
+
+
+def _describe_output(value: Any) -> str:
+    """Name what an Output handler returned, including the wrapped payload when there is one."""
+    payload = getattr(value, "result", None)
+    if payload is None:
+        return type(value).__name__
+    return f"{type(value).__name__} wrapping a {type(payload).__name__}"

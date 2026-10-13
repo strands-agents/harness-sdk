@@ -392,7 +392,7 @@ async def test_output_runs_after_wrap(registry, stage, alist):
     registry.add_middleware(stage, wrap_handler)
     terminal = _make_terminal(result="base")
     *events, result = await alist(registry.invoke(stage, {}, terminal))
-    assert "output" in order
+    assert order == ["wrap_before", "wrap_after", "output"]
     assert result == "base_out"
 
 
@@ -403,7 +403,7 @@ async def test_output_handler_must_return_stage_result_type(registry, stage, ali
 
     registry.add_middleware(stage.Output, bad_handler)
     terminal = _make_terminal(result="base")
-    with pytest.raises(TypeError, match="Output handler must return _DoneResult, got _Done"):
+    with pytest.raises(TypeError, match="Output handler must return _DoneResult wrapping a _Done, got _Done"):
         await alist(registry.invoke(stage, {}, terminal))
 
 
@@ -448,8 +448,8 @@ async def test_output_handler_skipped_when_chain_yields_no_result_event(registry
 
 
 @pytest.mark.asyncio
-async def test_output_transforms_result_event_wherever_it_appears(registry, stage, alist):
-    """The result event is selected by type, so events after it are forwarded untransformed."""
+async def test_output_yields_transformed_result_after_trailing_events(registry, stage, alist):
+    """The result event is selected by type; events after it stream through and the result comes last."""
 
     def output_handler(result):
         return _DoneResult(result=_Done(result.result + "_out"))
@@ -462,7 +462,69 @@ async def test_output_transforms_result_event_wherever_it_appears(registry, stag
     registry.add_middleware(stage.Output, output_handler)
     events = await alist(registry.invoke(stage, {}, terminal))
 
-    assert events == ["before", "result_out", "after"]
+    assert events == ["before", "after", "result_out"]
+
+
+@pytest.mark.asyncio
+async def test_output_runs_once_on_the_last_result(registry, stage, alist):
+    """A Wrap handler that forwards two attempts produces one Output call, on the final result."""
+    received: list[str] = []
+
+    def output_handler(result):
+        received.append(str(result.result))
+        return _DoneResult(result=_Done(result.result + "_out"))
+
+    async def retry_twice(context, next_fn):
+        async for event in next_fn(context):
+            yield event
+        async for event in next_fn(context):
+            yield event
+
+    attempts = iter(["first", "second"])
+
+    async def terminal(context):
+        yield "chunk"
+        yield _Done(next(attempts))
+
+    registry.add_middleware(stage.Output, output_handler)
+    registry.add_middleware(stage, retry_twice)
+    events = await alist(registry.invoke(stage, {}, terminal))
+
+    assert received == ["second"]
+    assert events == ["chunk", "chunk", "second_out"]
+
+
+@pytest.mark.asyncio
+async def test_output_not_called_when_wrap_raises_after_the_result(registry, stage, alist):
+    called = False
+
+    def output_handler(result):
+        nonlocal called
+        called = True
+        return result
+
+    async def reject_after(context, next_fn):
+        async for event in next_fn(context):
+            yield event
+        raise ValueError("rejected")
+
+    registry.add_middleware(stage.Output, output_handler)
+    registry.add_middleware(stage, reject_after)
+
+    with pytest.raises(ValueError, match="rejected"):
+        await alist(registry.invoke(stage, {}, _make_terminal(result="base")))
+    assert not called
+
+
+@pytest.mark.asyncio
+async def test_output_handler_must_wrap_the_stage_result_event(registry, stage, alist):
+    def bad_payload(result):
+        return _DoneResult(result="plain string")  # type: ignore[arg-type]
+
+    registry.add_middleware(stage.Output, bad_payload)
+
+    with pytest.raises(TypeError, match="wrapping a _Done, got _DoneResult wrapping a str"):
+        await alist(registry.invoke(stage, {}, _make_terminal(result="base")))
 
 
 # --- error propagation ---
