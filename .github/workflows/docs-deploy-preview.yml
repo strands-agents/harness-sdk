@@ -92,6 +92,7 @@ jobs:
         working-directory: .
         run: |
           aws s3 sync ${{ env.BUILD_OUTPUT_DIR }}/ s3://${{ env.S3_BUCKET }}/${{ env.S3_PATH }}/ \
+            --delete \
             --cache-control "public, max-age=3600"
 
       - name: Invalidate CloudFront cache for PR preview

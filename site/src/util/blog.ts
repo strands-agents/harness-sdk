@@ -14,6 +14,10 @@ const BLOG_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 
 type PublishableBlogData = Pick<BlogPost['data'], 'date' | 'draft'>
 
+export function includesFutureBlogPosts(env: Record<string, string | undefined>): boolean {
+  return env.INCLUDE_FUTURE_BLOG_POSTS === 'true' || /^pr-cms-\d+$/.test(env.S3_PATH ?? '')
+}
+
 function calendarDateInPublishTimeZone(date: Date): string {
   const parts = BLOG_DATE_FORMATTER.formatToParts(date)
   const value = (type: 'year' | 'month' | 'day') => {
@@ -34,7 +38,7 @@ export function isBlogPostPublished(data: PublishableBlogData, now: Date): boole
  * Production excludes drafts and future-dated posts. Development includes everything.
  */
 export async function getPublishedPosts(now: Date = new Date()): Promise<BlogPost[]> {
-  const includeFuturePosts = process.env.INCLUDE_FUTURE_BLOG_POSTS === 'true'
+  const includeFuturePosts = includesFutureBlogPosts(process.env)
   const posts = await getCollection('blog', ({ data }) => {
     if (!import.meta.env.PROD) return true
     if (includeFuturePosts) return !data.draft

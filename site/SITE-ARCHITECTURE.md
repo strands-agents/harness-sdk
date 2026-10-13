@@ -838,10 +838,11 @@ coverImage: "/path/to/image"  # Optional
 
 The `readingTime` field is injected automatically by the remark plugin (see below).
 Blog dates use the `America/New_York` editorial calendar. Pull request previews set
-`INCLUDE_FUTURE_BLOG_POSTS=true` so reviewers can open scheduled posts. Production
-deployments omit future posts from HTML routes, feeds, OG images, and `llms` outputs.
-The GitHub Pages workflow runs daily after midnight Eastern so a merged post appears
-on its publication date without another commit.
+`INCLUDE_FUTURE_BLOG_POSTS=true` and use a `pr-cms-*` deployment path, so reviewers
+can open scheduled posts. Production deployments omit future posts from HTML routes,
+feeds, OG images, and `llms` outputs. The GitHub Pages workflow runs daily after
+midnight Eastern so a merged post appears on its publication date without another
+commit.
 
 Both collections are registered in `src/content.config.ts` using glob loaders, following the same pattern as testimonials.
 

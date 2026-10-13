@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { BLOG_PUBLISH_TIME_ZONE, formatDate, isBlogPostPublished, slugToTag, tagToSlug } from '../src/util/blog'
+import {
+  BLOG_PUBLISH_TIME_ZONE,
+  formatDate,
+  includesFutureBlogPosts,
+  isBlogPostPublished,
+  slugToTag,
+  tagToSlug,
+} from '../src/util/blog'
 
 describe('tagToSlug', () => {
   it('converts tags to URL-safe slugs', () => {
@@ -63,5 +70,19 @@ describe('isBlogPostPublished', () => {
 
   it('keeps drafts unpublished after their date', () => {
     expect(isBlogPostPublished({ ...post, draft: true }, new Date('2026-10-16T12:00:00Z'))).toBe(false)
+  })
+})
+
+describe('includesFutureBlogPosts', () => {
+  it('includes future posts when explicitly requested', () => {
+    expect(includesFutureBlogPosts({ INCLUDE_FUTURE_BLOG_POSTS: 'true' })).toBe(true)
+  })
+
+  it('recognizes pull request preview deployments', () => {
+    expect(includesFutureBlogPosts({ S3_PATH: 'pr-cms-5080' })).toBe(true)
+  })
+
+  it('keeps future posts out of production by default', () => {
+    expect(includesFutureBlogPosts({})).toBe(false)
   })
 })
