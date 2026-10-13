@@ -30,5 +30,5 @@ override a blog post:
 
 Future-dated blog posts stay out of production until their date in the
 `America/New_York` time zone. Pull request previews include them for review. The
-production deployment workflow rebuilds daily after midnight Eastern so merged
-posts appear automatically.
+site continues to deploy manually, so a scheduled post appears on the first
+production deployment on or after its publication date.

@@ -2,9 +2,6 @@ name: "Docs: Deploy to GitHub Pages"
 
 on:
   workflow_dispatch:
-  schedule:
-    # Rebuild after midnight Eastern so future-dated blog posts publish automatically.
-    - cron: '15 5 * * *'
 
 permissions:
   contents: write
