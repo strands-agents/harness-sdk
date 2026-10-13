@@ -13,6 +13,8 @@ import {
 import { handoffToUser, HANDOFF_INTERRUPT_NAME } from '@strands-agents/sdk/vended-tools/handoff-to-user'
 import { sleep, makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
+import { pythonRepl, makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { webFetch, makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { makeMcpRouter } from '@strands-agents/sdk/vended-tools'
@@ -193,6 +195,25 @@ async function sleepCustomExample() {
   const shortSleep = makeSleep({ maxDuration: 5 })
   const agent = new Agent({ tools: [shortSleep] })
   // --8<-- [end:sleep_custom_example]
+}
+
+// Python REPL tool example
+async function pythonReplExample() {
+  // --8<-- [start:python_repl_example]
+  const agent = new Agent({ tools: [pythonRepl] })
+  await agent.invoke('Use python_repl to compute the first 10 Fibonacci numbers and print them.')
+  // --8<-- [end:python_repl_example]
+}
+
+// Python REPL tool with a bound sandbox and custom interpreter
+async function pythonReplCustomExample() {
+  // --8<-- [start:python_repl_custom_example]
+  const pythonRepl = makePythonRepl(
+    new DockerSandbox({ container: 'my-container' }),
+    { language: 'python3.12' }
+  )
+  const agent = new Agent({ tools: [pythonRepl] })
+  // --8<-- [end:python_repl_custom_example]
 }
 
 // Stop tool example

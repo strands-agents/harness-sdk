@@ -266,6 +266,136 @@ describe('McpClient legacy task execution', () => {
     expect(server.requests('tasks/result')).toHaveLength(0)
   })
 
+  it('fetches task metadata for a tool invoked before any listTools call', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+    })
+    server.handle('tools/list', () => ({
+      tools: [{ name: 'task_tool', inputSchema: { type: 'object' }, execution: { taskSupport: 'required' } }],
+    }))
+    server.handle('tools/call', () => ({ task: legacyTask('completed') }))
+    server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'unlisted tool result' }] }))
+
+    await expect(client.callTool(tool, {})).resolves.toEqual({
+      content: [{ type: 'text', text: 'unlisted tool result' }],
+    })
+    expect(server.requests('tools/list')).toHaveLength(1)
+    expect(requestParams(server.requests('tools/call')[0]!)).toMatchObject({ task: {} })
+  })
+
+  it('lists tools once even when the listing is empty or the tool is unknown', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+    })
+    server.handle('tools/list', () => ({ tools: [] }))
+    server.handle('tools/call', () => ({ content: [{ type: 'text', text: 'plain' }] }))
+
+    await client.callTool(tool, {})
+    await client.callTool(tool, {})
+    await client.callTool(tool, {})
+
+    expect(server.requests('tools/list')).toHaveLength(1)
+    expect(server.requests('tools/call')).toHaveLength(3)
+  })
+
+  it('skips the metadata fetch when the server does not advertise legacy tasks', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {} },
+    })
+    server.handle('tools/call', () => ({ content: [{ type: 'text', text: 'plain' }] }))
+
+    await expect(client.callTool(tool, {})).resolves.toEqual({ content: [{ type: 'text', text: 'plain' }] })
+    expect(server.requests('tools/list')).toHaveLength(0)
+  })
+
+  it('surfaces an abort during the metadata fetch instead of calling the tool', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+    })
+    server.handle('tools/list', () => NO_RESPONSE)
+    const controller = new AbortController()
+    const reason = new Error('aborted during metadata fetch')
+
+    const pending = client.callTool(tool, {}, { signal: controller.signal })
+    const rejection = expect(pending).rejects.toBe(reason)
+    await vi.waitFor(() => expect(server.requests('tools/list')).toHaveLength(1))
+    controller.abort(reason)
+
+    await rejection
+    expect(server.requests('tools/call')).toHaveLength(0)
+  })
+
+  it('refetches the metadata after an aborted fetch so a later call keeps task support', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+    })
+    server.handle('tools/list', () => NO_RESPONSE)
+    const controller = new AbortController()
+    const reason = new Error('aborted during metadata fetch')
+    const pending = client.callTool(tool, {}, { signal: controller.signal })
+    const rejection = expect(pending).rejects.toBe(reason)
+    await vi.waitFor(() => expect(server.requests('tools/list')).toHaveLength(1))
+    controller.abort(reason)
+    await rejection
+
+    server.handle('tools/list', () => ({
+      tools: [{ name: 'task_tool', inputSchema: { type: 'object' }, execution: { taskSupport: 'required' } }],
+    }))
+    server.handle('tools/call', () => ({ task: legacyTask('completed') }))
+    server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'after retry' }] }))
+
+    await expect(client.callTool(tool, {})).resolves.toEqual({ content: [{ type: 'text', text: 'after retry' }] })
+    expect(server.requests('tools/list')).toHaveLength(2)
+    expect(requestParams(server.requests('tools/call')[0]!)).toMatchObject({ task: {} })
+  })
+
+  it('augments concurrent first calls while the metadata fetch is still in flight', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+    })
+    let releaseListing!: () => void
+    const listingGate = new Promise<void>((resolve) => {
+      releaseListing = resolve
+    })
+    server.handle('tools/list', async () => {
+      await listingGate
+      return { tools: [{ name: 'task_tool', inputSchema: { type: 'object' }, execution: { taskSupport: 'required' } }] }
+    })
+    server.handle('tools/call', () => ({ task: legacyTask('completed') }))
+    server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'concurrent result' }] }))
+
+    const calls = Promise.all([client.callTool(tool, {}), client.callTool(tool, {})])
+    await vi.waitFor(() => expect(server.requests('tools/list').length).toBeGreaterThan(0))
+    releaseListing()
+
+    await expect(calls).resolves.toEqual([
+      { content: [{ type: 'text', text: 'concurrent result' }] },
+      { content: [{ type: 'text', text: 'concurrent result' }] },
+    ])
+    expect(server.requests('tools/call')).toHaveLength(2)
+    for (const request of server.requests('tools/call')) {
+      expect(requestParams(request)).toMatchObject({ task: {} })
+    }
+  })
+
+  it('warns once when a progress callback is set on a legacy task call', async () => {
+    const { client, server, tool } = await legacyHarness()
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    warnSpy.mockClear()
+    server.handle('tools/call', () => ({ task: legacyTask('completed') }))
+    server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'legacy result' }] }))
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    const progressWarnings = warnSpy.mock.calls.filter(([message]) => String(message).includes('progress callbacks'))
+    expect(progressWarnings).toHaveLength(1)
+  })
+
   it('waits for queued input on tasks/result beyond the request timeout without progress', async () => {
     vi.useFakeTimers()
     const { client, server, tool } = await legacyHarness({ requestTimeout: 100, pollTimeout: 5_000 })
@@ -481,6 +611,17 @@ describe('McpClient SEP-2663 task execution', () => {
     await expect(client.callTool(tool, { value: 1 })).resolves.toEqual({
       content: [{ type: 'text', text: 'direct answer' }],
     })
+  })
+
+  it('warns once when a progress callback is set on a task-routed call', async () => {
+    const { client, server, tool } = await modernHarness()
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    warnSpy.mockClear()
+    server.handle('tools/call', () => directResult('done'))
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    const progressWarnings = warnSpy.mock.calls.filter(([message]) => String(message).includes('progress callbacks'))
+    expect(progressWarnings).toHaveLength(1)
   })
 
   it('completes a task through polling and returns the final result', async () => {

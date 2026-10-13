@@ -301,6 +301,46 @@ def test_call_tool_sync_no_progress_callback_by_default(mock_transport, mock_ses
         assert_session_call_tool_once_with(mock_session, "test_tool", {})
 
 
+def test_client_meta_forwarded_on_tool_calls(mock_transport, mock_session):
+    """Test that the client-level meta is sent with tool calls that pass no per-call meta."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    with MCPClient(mock_transport["transport_callable"], meta={"com.example/request_id": "abc-123"}) as client:
+        result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={})
+
+        assert result["status"] == "success"
+        # Trace context may be merged on top, so assert our key survives.
+        assert received_meta["com.example/request_id"] == "abc-123"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_async_per_call_meta_overrides_client_meta(mock_transport, mock_session):
+    """Test that a per-call meta takes precedence over the client-level one."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    with MCPClient(mock_transport["transport_callable"], meta={"com.example/request_id": "client"}) as client:
+        result = await client.call_tool_async(
+            tool_use_id="test-123", name="test_tool", arguments={}, meta={"com.example/request_id": "per-call"}
+        )
+
+        assert result["status"] == "success"
+        assert received_meta["com.example/request_id"] == "per-call"
+
+
 def test_call_tool_sync_pre_set_cancel_signal_skips_request(mock_transport, mock_session):
     """Test a pre-set cancellation signal short-circuits before sending a request."""
     cancel_signal = threading.Event()

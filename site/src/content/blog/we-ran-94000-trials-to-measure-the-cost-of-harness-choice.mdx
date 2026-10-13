@@ -1,0 +1,126 @@
+---
+title: "We ran 94,000 trials to measure the cost of harness choice"
+date: 2026-10-13
+description: "We analyzed 94,000 benchmark trials to measure how harness choice affects token usage, estimated costs, and accuracy with Claude, GPT, and open-weight models."
+authors:
+  - albert-zhao
+  - fabio-nonato-de-paula
+  - ariel-nabavian
+  - owen-kaplan
+  - morgan-willis
+  - chris-smith
+tags:
+  - Strands harness
+  - Harness SDK
+  - Evaluation
+  - Benchmarks
+  - Context Management
+draft: false
+---
+
+A few weeks ago, we [announced](/blog/introducing-strands-harness) Strands harness with 28% lower token cost than other leading harnesses with Claude and GPT models while maintaining accuracy. In this follow-up, we discovered the cost reduction is actually closer to 34% for Strands harness, a general purpose harness that can be customized for any task. What stood out to us was Strands harness's defaults performed well on benchmarks ranging from coding to other knowledge work tasks.
+
+To be rigorous, we analyzed roughly 94,000 benchmark trials across 8 benchmarks, 12 models, and 6 harnesses. By comparing harnesses running the same models on the same tasks, we could measure how harness selection affected efficiency and accuracy. Two harnesses can drive the same model on the same task but do it very differently. The question is how much that difference is worth.
+
+<iframe
+  src={`${import.meta.env.BASE_URL}embeds/benchmark-run-sep-17-2026.html`}
+  title="Strands harness has 34% lower estimated costs at the median across matched Claude and GPT runs"
+  loading="lazy"
+  scrolling="no"
+  style="width: 100%; aspect-ratio: 1320 / 1633; height: auto; border: 0; border-radius: 14px;"
+></iframe>
+
+The results showed that token usage can vary by roughly 2x depending on the harness, often with little difference in accuracy. Higher token usage did not consistently correspond to higher accuracy among frontier models. The model sets the accuracy ceiling, but the harness determines how efficiently a developer reaches it.
+
+Strands harness had the lowest estimated cost and highest accuracy in the Anthropic and OpenAI comparisons. On open-weight models, it had the second-highest accuracy at a lower estimated cost than OpenCode, the highest-scoring harness. The takeaway is that choosing the right model is important, but how a harness manages context, tools, caching, and memory can significantly impact the cost of running an agent. For Strands harness, one of the keys was its default context management, particularly with tool offloading where tool results get stored in a JSON file to avoid filling up the context window during tool invocations. In this post, we'll walk through how we ran the benchmarks, what we found across different model families, and why harness selection deserves more attention when optimizing agents.
+
+## How we ran the benchmarks
+
+We analyzed roughly 94,000 trials across 8 benchmarks (ALFWorld, ContextBench, GAIA, LoCoMo, SWE-bench Pro, τ³-bench, Terminal-Bench 2.1, and WebShop), 12 models spanning Anthropic, OpenAI, and open-weight families, and 6 harnesses (Strands harness, OpenCode, Claude Code, oh-my-pi (OMP), Codex, and DeepSeek Harness). The tests ran on the distributed benchmarking platform Harbor, with Strands harness running through Harbor's [Strands adapter](https://github.com/harbor-framework/harbor/blob/main/src/harbor/agents/installed/strands.py). The results reflect a snapshot taken on September 17, 2026. Of course, benchmark posts become quickly stale with newly launched models like Opus 5.5, GPT-6.1 Sol, and Muse Wonder, which may offer breakthroughs in intelligence served at reduced cost. However, our data strongly shows that a model-provider neutral, adjustable, and lightweight harness can further save on cost while achieving similar accuracy.
+
+The full dataset spans roughly 94,000 trials and 12 models; the matched subset plotted in the charts covers 82,400 trials across 9 models. For each model provider, we compared harnesses only on the model-and-dataset combinations that every harness in that comparison ran. We used high reasoning effort to reflect real-world workloads rather than to optimize for benchmark scores. This gave us 32 shared combinations for Anthropic (8,240 trials per harness across five harnesses), 24 for OpenAI (6,180 trials per harness across four harnesses), and 16 for open-weight models (4,120 trials per harness across four harnesses). No harness received credit for a combination its competitors didn't also run. For each harness, chart accuracy is the mean of the combination-level scores, each excluding errored trials. Estimated cost per trial is total estimated cost divided by total trials in the matched subset.
+
+### Measuring tokens and estimating costs
+
+Token usage was recorded for every trial and serves as our primary metric. Billed cost data, however, was not consistently available. Several harnesses, including Strands harness and DeepSeek Harness, had no reported billed costs, while others reported costs for only a portion of their trials. For trials without billed costs, we estimated the dollar amount using the actual token usage and the per-model rate derived from trials that did report costs. This preserves the model-specific pricing reflected in the available data, but means the dollar figures throughout this post are estimates rather than directly measured costs.
+
+### Excluded results
+
+We excluded a model whose full run was still in progress when the snapshot was taken, a small number of scoring anomalies that recorded 0.0 without reporting errors, and a model wave that was scheduled to run last. The open-weight chart also excludes Kimi 2.5 because every OMP run on that model failed, leaving no combination that all four harnesses completed. Most errors in the dataset were agent timeouts and non-zero exit codes. Safety refusals and other error types accounted for a much smaller share.
+
+## Why some harnesses cost twice as much
+
+Let's start with the Anthropic models, where five harnesses were evaluated on Claude Fable 5, Claude Opus 5, Claude Opus 4.8, and Claude Sonnet 5.
+
+<iframe
+  src={`${import.meta.env.BASE_URL}embeds/anthropic-comparison.html`}
+  title="Cost against accuracy by harness on Anthropic models"
+  loading="lazy"
+  scrolling="no"
+  style="width: 100%; aspect-ratio: 1320 / 1074; height: auto; border: 0; border-radius: 14px;"
+></iframe>
+
+The chart plots estimated cost per trial on the horizontal axis and accuracy on the vertical axis. Lower costs are to the left, and higher accuracy is toward the top. The ideal harness sits in the top-left corner.
+
+The spread along the horizontal axis demonstrates the difference in cost per trial for each harness. From the most cost-efficient harness to the priciest, cost per trial runs from about $0.74 to $1.57. That's roughly 2.1x the cost for the same models doing the same work, depending on the harness.
+
+It's tempting to assume that paying more buys more accurate results, but our results show that isn't always the case. The harnesses that cost the most often aren't the ones that score the highest accuracy. The most expensive harness on this chart (Claude Code, \~$1.57/trial) lands slightly below the most cost-efficient one on accuracy. Cache reuse, context management, and tool-loop efficiency can all contribute to cost differences; these aggregate comparisons do not isolate each factor's contribution.
+
+At scale, the difference between the most and least cost-efficient harness works out to roughly $830 per 1,000 tasks, with comparable accuracy.
+
+## Higher token spend does not mean better accuracy
+
+We observed this decoupling of cost from accuracy beyond a single model family. The two charts below show this result across both OpenAI and open-weight model families.
+
+<iframe
+  src={`${import.meta.env.BASE_URL}embeds/openai-comparison.html`}
+  title="Cost against accuracy by harness on OpenAI models"
+  loading="lazy"
+  scrolling="no"
+  style="width: 100%; aspect-ratio: 1320 / 1047; height: auto; border: 0; border-radius: 14px;"
+></iframe>
+
+<iframe
+  src={`${import.meta.env.BASE_URL}embeds/open-weight-models-comparison.html`}
+  title="Cost against accuracy by harness on open-weight models"
+  loading="lazy"
+  scrolling="no"
+  style="width: 100%; aspect-ratio: 1320 / 1047; height: auto; border: 0; border-radius: 14px;"
+></iframe>
+
+If spending more reliably improved accuracy, we'd expect the points to follow a pattern from the bottom-left to the top-right of each chart. Instead, the results are mixed.
+
+On OpenAI models, Strands harness has both the lowest estimated cost (\~$0.20 per trial) and the highest accuracy (71.02%). The priciest harness, OMP (\~$0.49), scores 69.73%. Strands harness costs about 59% less than OMP while scoring 1.29 percentage points higher. OpenCode uses slightly fewer tokens than Strands harness, but has a higher estimated cost (\~$0.26) and the lowest accuracy (66.18%), showing why token usage and estimated cost should be evaluated separately.
+
+On open-weight models, the most expensive harness (OpenCode, \~$1.96) does post the top accuracy (42.93%), but it costs just over 3x the cheapest option, DeepSeek Harness (\~$0.62). Against Strands harness (\~$1.23, 41.82% accuracy), it costs about 59% more per trial for a 1.11-percentage-point increase in accuracy. Whether that improvement justifies the higher cost depends on the workload.
+
+The accuracy spread is 2.75 percentage points on Anthropic, 4.84 on OpenAI, and 5.00 on open-weight models. Meanwhile, estimated costs vary by about 2.1x, 2.4x, and 3.1x, respectively. For real-world workloads, this means harness selection is worth considering when looking for ways to reduce costs while maintaining the accuracy the workload requires.
+
+## The leaderboard trap
+
+One way to compare harnesses is to average each harness's accuracy across every benchmark it ran and rank them. By that measure, Claude Code comes out on top. But that ranking doesn't account for the fact that not every harness was evaluated against the same models.
+
+In our evaluation, Claude Code ran only on Anthropic models, while Codex ran only on OpenAI models. Claude Code can also work with non-Anthropic models through translation layers such as OpenRouter or LiteLLM, which introduce their own latency and serviceability costs. Neither Claude Code nor Codex was included in our open-weight comparisons.
+
+Strands harness, OpenCode, and OMP, on the other hand, were evaluated across all three model families. So, an overall average doesn't necessarily provide a fair comparison between harnesses. A harness that only supports high-performing models may appear more accurate than one tested across a broader range of models, where accuracy falls into the single digits. A higher overall ranking doesn't necessarily mean a better harness. It may simply reflect which models were included in the evaluation.
+
+That's why we compare harnesses using the same models and tasks, evaluating each model provider separately. We also consider how broadly each harness supports different model families, something a single accuracy score can't capture. Model support also affects the choices developers can make when building and maintaining their agents.
+
+A harness locked to a single model family locks developers in with it. So, when a stronger model arrives in another family, developers either miss out on it or rewrite their agents onto a new harness to use it. Models are improving fast, and no single family leads on every task. And maintaining separate agents per family can be an expensive and time-consuming headache. A harness that consistently delivers high accuracy at lower cost across Anthropic, OpenAI, and open-weight models gives developers much more flexibility to choose the right model they need without being stuck to a single provider.
+
+## Why the harness moves the needle
+
+Because we're comparing harnesses running the same models on the same tasks, differences in token usage point to engineering choices within the harness itself. Several of those choices can have a significant impact on cost:
+
+- **Context management and offloading.** A long agent run accumulates tool outputs like file dumps, search results, and command logs. A harness that keeps all of it in the prompt re-sends it on every turn, whereas one that offloads bulky results to disk and keeps a lean working context sends fewer tokens for the same work.
+- **Cache reuse.** Prompt caching only pays off if the harness structures requests so the stable parts stay byte-identical across turns. Harnesses that cache well pay a fraction of the input-token price on everything they reuse.
+- **Tool-loop efficiency.** Fewer, better-targeted tool calls mean fewer round-trips through the model. A tight loop reaches the same answer with less back-and-forth.
+- **Portability by design.** Model support comes down to how a harness is built. Supporting one provider is simpler, but supporting many gives developers the freedom to switch models without changing harnesses. A harness that performs well across model families gives developers more flexibility to optimize for cost and accuracy, regardless of provider.
+
+Model choice still matters. The model sets the upper limit on accuracy, but the harness a developer chooses influences how close their agent gets to that limit.
+
+## What this means for developers building or choosing an agent
+
+When evaluating an agent harness, don't just look at accuracy leaderboards. Test it against real workloads using the models planned for production. Measure token usage alongside accuracy and consider whether the harness gives developers the flexibility to adopt new models as they become available. As our results show, harness selection can have a significant impact on operating costs without requiring a tradeoff in accuracy. 
+
+Developers should try this out themselves: [Get started with Strands harness](/docs/user-guide/harness/quickstart/) and benchmark it. We'd love to hear how much of a difference a harness makes, so connect with us on [Discord](https://discord.gg/strands)!
