@@ -259,7 +259,10 @@ describe('LocalFileStorage', () => {
       )
 
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy.mock.calls[0]![0]).toContain('QmdSearchStrategy requires host filesystem access')
+      expect(warnSpy).toHaveBeenCalledWith(
+        'strategy=<QmdSearchStrategy> | search strategy requires host filesystem access and is not compatible ' +
+          'with sandboxed storage | falling back to keyword search'
+      )
       await bound.write('auth.md', new TextEncoder().encode('OAuth2 authentication flow'))
       expect((await bound.search('authentication')).map((result) => result.key)).toEqual(['auth.md'])
       warnSpy.mockRestore()

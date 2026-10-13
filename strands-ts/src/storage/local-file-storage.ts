@@ -124,8 +124,8 @@ export class LocalFileStorage implements Storage {
     let strategy = this._searchStrategy
     if (strategy?.requiresHostFs) {
       logger.warn(
-        `${strategy.constructor.name} requires host filesystem access and is not compatible with sandboxed ` +
-          'storage — dropping search strategy, falling back to keyword search'
+        `strategy=<${strategy.constructor.name}> | search strategy requires host filesystem access and is not ` +
+          'compatible with sandboxed storage | falling back to keyword search'
       )
       strategy = undefined
     }
