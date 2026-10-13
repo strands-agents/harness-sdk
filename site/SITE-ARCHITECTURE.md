@@ -301,7 +301,9 @@ These override default Starlight components:
 - **`Head.astro`**: Adds Mermaid diagram support and loads `SiteScripts` (Shortbread + WebSDK). Mermaid is a
   pinned local dependency that loads lazily only on pages with diagrams. The renderer applies the shared
   light/dark palette, re-renders after live theme changes, defers diagrams in hidden tabs, compacts dense
-  flowcharts, and keeps oversized diagrams readable with bounded cards and keyboard-accessible scrolling.
+  flowcharts, and keeps oversized diagrams readable with compact, keyboard-scrollable cards. Every rendered
+  diagram also has a **View larger** control that moves it into a shared, accessible full-screen dialog and
+  restores it to the page on close or before printing.
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
 - **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, community, languages) at the top of page content.

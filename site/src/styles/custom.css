@@ -95,9 +95,63 @@
 	background: var(--diagram-canvas);
 }
 
-.sl-markdown-content .mermaid-scroll {
+.sl-markdown-content .mermaid-frame > * {
+	margin: 0;
+}
+
+.mermaid-caption {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.sl-markdown-content .mermaid-actions {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0.4rem 0.5rem;
+	border-block-end: 1px solid var(--diagram-frame-border);
+	background: color-mix(in srgb, var(--diagram-canvas) 92%, var(--diagram-node-bg));
+}
+
+.sl-markdown-content .mermaid-actions[hidden],
+.sl-markdown-content .mermaid-expand[hidden] {
+	display: none;
+}
+
+.mermaid-expand,
+.mermaid-dialog__close {
+	min-block-size: 2.25rem;
+	padding: 0.35rem 0.7rem;
+	border: 1px solid var(--diagram-frame-border);
+	border-radius: 0.5rem;
+	background: var(--diagram-node-bg);
+	color: var(--diagram-text);
+	font-family: 'JetBrains Mono', ui-monospace, monospace;
+	font-size: 0.75rem;
+	font-weight: 600;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.mermaid-expand:hover,
+.mermaid-dialog__close:hover {
+	border-color: var(--diagram-accent-border);
+	background: var(--diagram-accent-bg);
+}
+
+.mermaid-expand:focus-visible,
+.mermaid-dialog__close:focus-visible {
+	outline: 3px solid var(--diagram-focus);
+	outline-offset: 2px;
+}
+
+:is(.sl-markdown-content .mermaid-scroll, .mermaid-dialog__viewport) {
 	--diagram-pad: clamp(0.75rem, 2vw, 1rem);
-	max-block-size: min(42rem, 80vh);
 	overflow: auto;
 	overscroll-behavior-inline: contain;
 	padding: var(--diagram-pad);
@@ -105,45 +159,62 @@
 	background-image:
 		linear-gradient(to right, var(--diagram-canvas) 30%, transparent),
 		linear-gradient(to left, var(--diagram-canvas) 30%, transparent),
+		linear-gradient(to bottom, var(--diagram-canvas) 30%, transparent),
+		linear-gradient(to top, var(--diagram-canvas) 30%, transparent),
 		linear-gradient(to right, var(--diagram-scroll-shadow), transparent),
-		linear-gradient(to left, var(--diagram-scroll-shadow), transparent);
+		linear-gradient(to left, var(--diagram-scroll-shadow), transparent),
+		linear-gradient(to bottom, var(--diagram-scroll-shadow), transparent),
+		linear-gradient(to top, var(--diagram-scroll-shadow), transparent);
 	background-position:
 		left,
 		right,
+		top,
+		bottom,
 		left,
-		right;
+		right,
+		top,
+		bottom;
 	background-size:
 		2.5rem 100%,
 		2.5rem 100%,
+		100% 2.5rem,
+		100% 2.5rem,
 		0.75rem 100%,
-		0.75rem 100%;
+		0.75rem 100%,
+		100% 0.75rem,
+		100% 0.75rem;
 	background-repeat: no-repeat;
-	background-attachment: local, local, scroll, scroll;
+	background-attachment: local, local, local, local, scroll, scroll, scroll, scroll;
 	scrollbar-width: thin;
 	scrollbar-color: var(--diagram-scroll-thumb) transparent;
 }
 
-.sl-markdown-content .mermaid-scroll:focus-visible {
+.sl-markdown-content .mermaid-scroll {
+	max-block-size: min(24rem, 50vh);
+	max-block-size: min(24rem, 50svh);
+}
+
+:is(.sl-markdown-content .mermaid-scroll, .mermaid-dialog__viewport):focus-visible {
 	outline: 3px solid var(--diagram-focus);
 	outline-offset: -3px;
 }
 
-.sl-markdown-content .mermaid-scroll::-webkit-scrollbar {
+:is(.sl-markdown-content .mermaid-scroll, .mermaid-dialog__viewport)::-webkit-scrollbar {
 	width: 0.75rem;
 	height: 0.75rem;
 }
 
-.sl-markdown-content .mermaid-scroll::-webkit-scrollbar-track {
+:is(.sl-markdown-content .mermaid-scroll, .mermaid-dialog__viewport)::-webkit-scrollbar-track {
 	background: transparent;
 }
 
-.sl-markdown-content .mermaid-scroll::-webkit-scrollbar-thumb {
+:is(.sl-markdown-content .mermaid-scroll, .mermaid-dialog__viewport)::-webkit-scrollbar-thumb {
 	border: 3px solid var(--diagram-canvas);
 	border-radius: 999px;
 	background: var(--diagram-scroll-thumb);
 }
 
-.sl-markdown-content .mermaid {
+:is(.sl-markdown-content, .mermaid-dialog) .mermaid {
 	display: flex;
 	justify-content: center;
 	width: max-content;
@@ -159,7 +230,7 @@
 	line-height: normal;
 }
 
-.sl-markdown-content .mermaid > svg {
+:is(.sl-markdown-content, .mermaid-dialog) .mermaid > svg {
 	display: block;
 	flex: none;
 	max-width: none;
@@ -175,6 +246,86 @@
 	line-height: 1.5;
 }
 
+:root[data-mermaid-dialog-open],
+:root[data-mermaid-dialog-open] body {
+	overflow: hidden;
+}
+
+.mermaid-dialog {
+	width: min(96vw, 100rem);
+	height: 92vh;
+	height: 92dvh;
+	max-width: none;
+	max-height: none;
+	margin: auto;
+	padding: 0;
+	overflow: hidden;
+	border: 1px solid var(--diagram-frame-border);
+	border-radius: 1rem;
+	background: var(--diagram-canvas);
+	color: var(--diagram-text);
+	box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 45%);
+}
+
+.mermaid-dialog[open] {
+	display: block;
+}
+
+.mermaid-dialog::backdrop {
+	background: rgb(0 0 0 / 68%);
+	backdrop-filter: blur(3px);
+}
+
+.mermaid-dialog__surface {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+}
+
+.mermaid-dialog__header {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 1rem;
+	min-height: 3.5rem;
+	padding: 0.55rem 0.75rem 0.55rem 1rem;
+	border-block-end: 1px solid var(--diagram-frame-border);
+	background: color-mix(in srgb, var(--diagram-canvas) 92%, var(--diagram-node-bg));
+}
+
+.mermaid-dialog__title {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	color: var(--diagram-text);
+	font-family: 'JetBrains Mono', ui-monospace, monospace;
+	font-size: 0.95rem;
+	font-weight: 600;
+	line-height: 1.3;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mermaid-dialog__viewport {
+	flex: 1;
+	min-height: 0;
+	overscroll-behavior: contain;
+}
+
+:root[data-embed] .mermaid-actions {
+	display: none;
+}
+
+@media (pointer: coarse) {
+	.mermaid-expand,
+	.mermaid-dialog__close {
+		min-block-size: 2.75rem;
+	}
+}
+
 @media (max-width: 50rem) {
 	.sl-markdown-content .mermaid-frame {
 		margin-block: 1.25rem;
@@ -182,10 +333,38 @@
 
 	.sl-markdown-content .mermaid-scroll {
 		--diagram-pad: 0.75rem;
+		max-block-size: min(20rem, 48vh);
+		max-block-size: min(20rem, 48svh);
+	}
+
+	.mermaid-dialog {
+		inset: 0;
+		width: 100%;
+		height: 100vh;
+		height: 100dvh;
+		margin: 0;
+		border: 0;
+		border-radius: 0;
+	}
+
+	.mermaid-dialog__header {
+		padding-block-start: max(0.55rem, env(safe-area-inset-top));
+		padding-inline-end: max(0.75rem, env(safe-area-inset-right));
+		padding-inline-start: max(1rem, env(safe-area-inset-left));
+	}
+
+	.mermaid-dialog__viewport {
+		padding-block-end: max(var(--diagram-pad), env(safe-area-inset-bottom));
 	}
 }
 
 @media print {
+	.sl-markdown-content .mermaid-actions,
+	.mermaid-dialog,
+	.mermaid-dialog[open] {
+		display: none;
+	}
+
 	.sl-markdown-content .mermaid-frame,
 	.sl-markdown-content .mermaid-scroll {
 		overflow: visible;

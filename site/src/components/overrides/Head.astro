@@ -181,13 +181,47 @@ const structuredData = {
     const root = document.documentElement
     const sources = new WeakMap<HTMLElement, string>()
     const labels = new WeakMap<HTMLElement, string>()
+    const frames = new WeakMap<HTMLElement, HTMLElement>()
+    const scrollers = new WeakMap<HTMLElement, HTMLElement>()
+    const expandButtons = new WeakMap<HTMLElement, HTMLButtonElement>()
     const renderedThemes = new WeakMap<HTMLElement, DiagramTheme>()
     const pending = new Set<HTMLElement>()
     // Preserve at least a 12px visual label size from the 15px diagram type scale.
     const minimumScale = 0.8
-    const targetHeight = 39 * Number.parseFloat(getComputedStyle(root).fontSize)
+    const expandedMaximumScale = 1.25
     let renderTask: Promise<void> | undefined
     let renderId = 0
+
+    const dialog = document.createElement('dialog')
+    const dialogSurface = document.createElement('div')
+    const dialogHeader = document.createElement('header')
+    const dialogTitle = document.createElement('h2')
+    const dialogClose = document.createElement('button')
+    const dialogViewport = document.createElement('div')
+
+    dialog.id = 'mermaid-dialog'
+    dialog.className = 'mermaid-dialog'
+    dialog.setAttribute('aria-labelledby', 'mermaid-dialog-title')
+    dialogSurface.className = 'mermaid-dialog__surface'
+    dialogHeader.className = 'mermaid-dialog__header'
+    dialogTitle.id = 'mermaid-dialog-title'
+    dialogTitle.className = 'mermaid-dialog__title'
+    dialogTitle.textContent = 'Diagram'
+    dialogClose.className = 'mermaid-dialog__close'
+    dialogClose.type = 'button'
+    dialogClose.textContent = 'Close'
+    dialogViewport.className = 'mermaid-dialog__viewport'
+    dialogHeader.append(dialogTitle, dialogClose)
+    dialogSurface.append(dialogHeader, dialogViewport)
+    dialog.append(dialogSurface)
+    document.body.append(dialog)
+
+    let expandedDiagram: HTMLElement | undefined
+    let expandedOpener: HTMLButtonElement | undefined
+    let originalBlockSize = ''
+    let originalScrollLeft = 0
+    let originalScrollTop = 0
+    let restoreFocusOnClose = true
 
     const diagramLabel = (block: HTMLElement) => {
       let heading = 'Documentation'
@@ -202,25 +236,45 @@ const structuredData = {
       return tab ? `${heading} diagram (${tab})` : `${heading} diagram`
     }
 
-    const diagrams = mermaidBlocks.map((block) => {
+    const diagrams = mermaidBlocks.map((block, index) => {
       const lines = [...block.querySelectorAll<HTMLElement>('code > .ec-line')]
       const source = lines.length > 0 ? lines.map((line) => line.textContent ?? '').join('\n') : block.textContent ?? ''
       const label = diagramLabel(block)
       const frame = document.createElement('figure')
+      const caption = document.createElement('figcaption')
+      const actions = document.createElement('div')
+      const expandButton = document.createElement('button')
       const scroller = document.createElement('div')
       const diagram = document.createElement('div')
 
       frame.className = 'mermaid-frame'
+      caption.id = `mermaid-caption-${index + 1}`
+      caption.className = 'mermaid-caption'
+      caption.textContent = label
+      actions.className = 'mermaid-actions'
+      actions.hidden = true
+      expandButton.className = 'mermaid-expand'
+      expandButton.type = 'button'
+      expandButton.textContent = 'View larger'
+      expandButton.hidden = true
+      expandButton.setAttribute('aria-haspopup', 'dialog')
+      expandButton.setAttribute('aria-controls', dialog.id)
+      expandButton.setAttribute('aria-label', `View ${label} in a larger dialog`)
       scroller.className = 'mermaid-scroll'
       diagram.className = 'mermaid'
       diagram.dataset.mermaidDiagram = ''
       diagram.textContent = source
+      frame.setAttribute('aria-labelledby', caption.id)
+      actions.append(expandButton)
       scroller.append(diagram)
-      frame.append(scroller)
+      frame.append(caption, actions, scroller)
       const renderedBlock = block.closest<HTMLElement>('.expressive-code') ?? block
       renderedBlock.replaceWith(frame)
       sources.set(diagram, source)
       labels.set(diagram, label)
+      frames.set(diagram, frame)
+      scrollers.set(diagram, scroller)
+      expandButtons.set(diagram, expandButton)
 
       return diagram
     })
@@ -365,7 +419,8 @@ const structuredData = {
         const diagram = scroller.querySelector<HTMLElement>('[data-mermaid-diagram]')
         scroller.tabIndex = 0
         scroller.setAttribute('role', 'region')
-        scroller.setAttribute('aria-label', (diagram && labels.get(diagram)) || 'Scrollable diagram')
+        const label = (diagram && labels.get(diagram)) || 'Diagram'
+        scroller.setAttribute('aria-label', scroller === dialogViewport ? `Expanded ${label}` : label)
       } else {
         scroller.removeAttribute('tabindex')
         scroller.removeAttribute('role')
@@ -373,27 +428,130 @@ const structuredData = {
       }
     }
 
+    const svgDimensions = (svg: SVGSVGElement) => {
+      const positiveNumber = (value: string | null) => {
+        if (!value || value.trim().endsWith('%')) return undefined
+        const parsed = Number.parseFloat(value)
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+      }
+      const viewBox = svg
+        .getAttribute('viewBox')
+        ?.trim()
+        .split(/[\s,]+/)
+        .map(Number)
+      const viewBoxWidth = viewBox?.length === 4 && viewBox[2] > 0 ? viewBox[2] : undefined
+      const viewBoxHeight = viewBox?.length === 4 && viewBox[3] > 0 ? viewBox[3] : undefined
+      const width = positiveNumber(svg.getAttribute('width')) ?? viewBoxWidth
+      const height = positiveNumber(svg.getAttribute('height')) ?? viewBoxHeight
+      return width && height ? { width, height } : undefined
+    }
+
     const fitDiagram = (diagram: HTMLElement) => {
       const scroller = diagram.parentElement
       const svg = diagram.querySelector<SVGSVGElement>('svg')
       if (!scroller || !svg) return
 
-      const naturalWidth = Number.parseFloat(svg.getAttribute('width') ?? '')
-      const naturalHeight = Number.parseFloat(svg.getAttribute('height') ?? '')
-      if (!Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) {
+      const dimensions = svgDimensions(svg)
+      if (!dimensions) {
         updateScrollable(scroller)
         return
       }
 
       const css = getComputedStyle(scroller)
       const horizontalPadding = Number.parseFloat(css.paddingLeft) + Number.parseFloat(css.paddingRight)
+      const verticalPadding = Number.parseFloat(css.paddingTop) + Number.parseFloat(css.paddingBottom)
       const availableWidth = Math.max(scroller.clientWidth - horizontalPadding, 0)
-      const availableScale = Math.min(availableWidth / naturalWidth, targetHeight / naturalHeight)
-      const scale = Math.min(1, Math.max(minimumScale, availableScale))
-      svg.style.width = `${Math.round(naturalWidth * scale * 100) / 100}px`
+      if (availableWidth === 0) return
+
+      const widthScale = availableWidth / dimensions.width
+      const maximumHeight = Number.parseFloat(css.maxBlockSize)
+      const heightScale = Number.isFinite(maximumHeight)
+        ? Math.max(maximumHeight - verticalPadding, 0) / dimensions.height
+        : 1
+      const availableScale =
+        scroller === dialogViewport ? widthScale : Math.min(widthScale, heightScale)
+      const maximumScale = scroller === dialogViewport ? expandedMaximumScale : 1
+      const scale = Math.min(maximumScale, Math.max(minimumScale, availableScale))
+      svg.style.width = `${Math.round(dimensions.width * scale * 100) / 100}px`
       svg.style.height = 'auto'
       updateScrollable(scroller)
     }
+
+    const restoreExpandedDiagram = () => {
+      const diagram = expandedDiagram
+      const opener = expandedOpener
+      const scrollLeft = originalScrollLeft
+      const scrollTop = originalScrollTop
+      if (!diagram) return
+
+      const scroller = scrollers.get(diagram)
+      if (scroller) {
+        scroller.append(diagram)
+        scroller.style.blockSize = originalBlockSize
+        requestAnimationFrame(() => {
+          if (isVisible(diagram) && scroller.clientWidth > 0) {
+            fitDiagram(diagram)
+            scroller.scrollLeft = scrollLeft
+            scroller.scrollTop = scrollTop
+          }
+        })
+      }
+
+      delete root.dataset.mermaidDialogOpen
+      expandedDiagram = undefined
+      expandedOpener = undefined
+      originalBlockSize = ''
+      originalScrollLeft = 0
+      originalScrollTop = 0
+      dialogTitle.textContent = 'Diagram'
+      updateScrollable(dialogViewport)
+
+      if (restoreFocusOnClose && opener?.isConnected) opener.focus()
+      restoreFocusOnClose = true
+    }
+
+    const closeExpandedDiagram = (restoreFocus = true) => {
+      restoreFocusOnClose = restoreFocus
+      if (dialog.open) dialog.close()
+      restoreExpandedDiagram()
+    }
+
+    const openExpandedDiagram = (diagram: HTMLElement, opener: HTMLButtonElement) => {
+      const scroller = scrollers.get(diagram)
+      if (!scroller || dialog.open) return
+
+      expandedDiagram = diagram
+      expandedOpener = opener
+      restoreFocusOnClose = true
+      originalBlockSize = scroller.style.blockSize
+      originalScrollLeft = scroller.scrollLeft
+      originalScrollTop = scroller.scrollTop
+      scroller.style.blockSize = `${scroller.getBoundingClientRect().height}px`
+      dialogTitle.textContent = labels.get(diagram) || 'Diagram'
+      dialogViewport.append(diagram)
+      try {
+        dialog.showModal()
+      } catch (error) {
+        restoreExpandedDiagram()
+        console.error('Failed to open Mermaid diagram dialog', error)
+        return
+      }
+      root.dataset.mermaidDialogOpen = ''
+      dialogClose.focus()
+      requestAnimationFrame(() => fitDiagram(diagram))
+    }
+
+    diagrams.forEach((diagram) => {
+      expandButtons.get(diagram)?.addEventListener('click', (event) => {
+        openExpandedDiagram(diagram, event.currentTarget as HTMLButtonElement)
+      })
+    })
+    dialogClose.addEventListener('click', () => closeExpandedDiagram())
+    dialog.addEventListener('close', restoreExpandedDiagram)
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) closeExpandedDiagram()
+    })
+    addEventListener('beforeprint', () => closeExpandedDiagram(false))
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -403,6 +561,7 @@ const structuredData = {
       }
     })
     diagrams.forEach((diagram) => resizeObserver.observe(diagram.parentElement as HTMLElement))
+    resizeObserver.observe(dialogViewport)
 
     const fontReady = document.fonts.load('500 15px "Space Grotesk"').catch(() => [])
 
@@ -429,16 +588,29 @@ const structuredData = {
           diagram.innerHTML = svg
           bindFunctions?.(diagram)
           renderedThemes.set(diagram, theme)
-          diagram.closest('.mermaid-frame')?.classList.remove('has-error')
+          frames.get(diagram)?.classList.remove('has-error')
+          const expandButton = expandButtons.get(diagram)
+          if (expandButton) {
+            expandButton.hidden = false
+            expandButton.parentElement?.removeAttribute('hidden')
+          }
           const renderedSvg = diagram.querySelector('svg')
           const label = labels.get(diagram)
           if (renderedSvg && label) {
+            renderedSvg.setAttribute('role', 'img')
             renderedSvg.setAttribute('aria-label', label)
           }
           fitDiagram(diagram)
         } catch (error) {
-          if (!diagram.querySelector('svg')) diagram.textContent = source
-          diagram.closest('.mermaid-frame')?.classList.add('has-error')
+          if (!diagram.querySelector('svg')) {
+            diagram.textContent = source
+            frames.get(diagram)?.classList.add('has-error')
+            const expandButton = expandButtons.get(diagram)
+            if (expandButton) {
+              expandButton.hidden = true
+              expandButton.parentElement?.setAttribute('hidden', '')
+            }
+          }
           console.error('Failed to render Mermaid diagram', error)
         }
       }
