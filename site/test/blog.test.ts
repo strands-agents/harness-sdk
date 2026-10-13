@@ -1,12 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  BLOG_PUBLISH_TIME_ZONE,
-  formatDate,
-  includesFutureBlogPosts,
-  isBlogPostPublished,
-  slugToTag,
-  tagToSlug,
-} from '../src/util/blog'
+import { tagToSlug, slugToTag, formatDate } from '../src/util/blog'
 
 describe('tagToSlug', () => {
   it('converts tags to URL-safe slugs', () => {
@@ -56,33 +49,5 @@ describe('formatDate', () => {
     const result = formatDate(date)
     expect(result).toContain('December')
     expect(result).toContain('2025')
-  })
-})
-
-describe('isBlogPostPublished', () => {
-  const post = { date: new Date('2026-10-15T00:00:00Z'), draft: false }
-
-  it('uses the New York editorial calendar date', () => {
-    expect(BLOG_PUBLISH_TIME_ZONE).toBe('America/New_York')
-    expect(isBlogPostPublished(post, new Date('2026-10-15T03:59:59Z'))).toBe(false)
-    expect(isBlogPostPublished(post, new Date('2026-10-15T04:00:00Z'))).toBe(true)
-  })
-
-  it('keeps drafts unpublished after their date', () => {
-    expect(isBlogPostPublished({ ...post, draft: true }, new Date('2026-10-16T12:00:00Z'))).toBe(false)
-  })
-})
-
-describe('includesFutureBlogPosts', () => {
-  it('includes future posts when explicitly requested', () => {
-    expect(includesFutureBlogPosts({ INCLUDE_FUTURE_BLOG_POSTS: 'true' })).toBe(true)
-  })
-
-  it('recognizes pull request preview deployments', () => {
-    expect(includesFutureBlogPosts({ S3_PATH: 'pr-cms-5080' })).toBe(true)
-  })
-
-  it('keeps future posts out of production by default', () => {
-    expect(includesFutureBlogPosts({})).toBe(false)
   })
 })

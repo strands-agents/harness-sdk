@@ -10,11 +10,13 @@
  * Used by LLMs and tooling that need blog content in a machine-readable format.
  */
 import type { APIRoute, GetStaticPaths } from 'astro'
+import { getCollection } from 'astro:content'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
-import { getPublishedPosts } from '@util/blog'
 
 export const getStaticPaths: GetStaticPaths = async () => {
-  const posts = await getPublishedPosts()
+  const posts = await getCollection('blog', ({ data }) => {
+    return import.meta.env.PROD ? !data.draft : true
+  })
   return posts.map((entry) => ({
     params: { slug: entry.id },
     props: { entry },

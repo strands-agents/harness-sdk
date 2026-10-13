@@ -2,19 +2,11 @@
 import { getCollection } from 'astro:content';
 import frog from '../assets/nav/frog-hop.svg?raw';
 import arrow from '../assets/banner/arrow.svg?raw';
-import { homepageBanner } from '../util/announcements';
-import { getPublishedPosts } from '../util/blog';
+import { activeAnnouncement, announcementExpires } from '../util/announcements';
 import { pathWithBase } from '../util/links';
 
-const [announcementEntries, posts] = await Promise.all([
-  getCollection('announcements'),
-  getPublishedPosts(),
-]);
-const announcement = homepageBanner(
-  announcementEntries.map((entry) => entry.data),
-  posts,
-  new Date(),
-);
+const announcements = (await getCollection('announcements')).map((a) => a.data);
+const announcement = activeAnnouncement(announcements, new Date());
 const isExternal = announcement && /^https?:\/\//.test(announcement.href);
 const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
 ---
@@ -22,7 +14,7 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
 {
   announcement && (
     <>
-      <aside class="announcement" aria-label="Announcement" data-expires={announcement.expires}>
+      <aside class="announcement" aria-label="Announcement" data-expires={announcementExpires(announcement)}>
         <a class="announcement__link" href={href} {...(isExternal && {
             target: '_blank',
             rel: 'noopener',
@@ -36,11 +28,11 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
           </span>
         </a>
       </aside>
-      {/* Manual overrides can expire between deploys. Blog fallbacks do not expire. */}
+      {/* The site is only rebuilt on deploy, so drop the banner client-side once it expires. */}
       <script is:inline>
         (function () {
           var el = document.querySelector('.announcement');
-          if (el && el.dataset.expires && el.dataset.expires < new Date().toISOString().slice(0, 10)) el.remove();
+          if (el && el.dataset.expires < new Date().toISOString().slice(0, 10)) el.remove();
         })();
       </script>
     </>

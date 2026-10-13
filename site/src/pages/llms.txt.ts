@@ -1,7 +1,6 @@
 import type { APIRoute } from 'astro'
 import type { CollectionEntry } from 'astro:content'
 import { getCollection } from 'astro:content'
-import { getPublishedPosts } from '@util/blog'
 import { getBase, getSiteOrigin } from '@util/links'
 import { getReleases, releaseSlug, type ChangelogRelease } from '@util/changelog'
 import { streamLabel } from '../config/changelog'
@@ -155,7 +154,7 @@ export const GET: APIRoute = async () => {
   const docs = await getCollection('docs', ({ data }) => !data.draft)
   const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
-  const blogPosts = await getPublishedPosts()
+  const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
   const releases = await getReleases()
   const content = buildLlmsTxt(docs, sidebar, blogPosts, releases)
 

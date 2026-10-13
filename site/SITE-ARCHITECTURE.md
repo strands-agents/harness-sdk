@@ -831,18 +831,12 @@ date: 2026-02-20T00:00:00.000Z
 description: "Short description for cards and meta tags."
 authors: ["strands-team"]     # References author file IDs
 tags: ["Open Source"]
-draft: false                  # Drafts and future dates are excluded from production
+draft: false                  # Excluded from production builds
 coverImage: "/path/to/image"  # Optional
 ---
 ```
 
 The `readingTime` field is injected automatically by the remark plugin (see below).
-Blog dates use the `America/New_York` editorial calendar. Pull request previews set
-`INCLUDE_FUTURE_BLOG_POSTS=true` and use a `pr-cms-*` deployment path, so reviewers
-can open scheduled posts. Production deployments omit future posts from HTML routes,
-feeds, OG images, and `llms` outputs. Production deployment remains manually
-triggered, so a scheduled post appears on the first deployment on or after its
-publication date.
 
 Both collections are registered in `src/content.config.ts` using glob loaders, following the same pattern as testimonials.
 
@@ -858,21 +852,13 @@ Helper functions used across all blog pages:
 
 | Function | Purpose |
 |----------|---------|
-| `getPublishedPosts()` | Posts sorted by date desc; production excludes drafts and future dates |
-| `isBlogPostPublished(data, now)` | Checks a post date against the New York editorial day |
+| `getPublishedPosts()` | All posts sorted by date desc, excludes drafts in prod |
 | `getAllTags()` | Unique tags across all published posts |
 | `getPostsByTag(tag)` | Posts filtered by tag |
 | `getPostsByAuthor(authorId)` | Posts filtered by author ID |
 | `resolveAuthors(ids)` | Looks up author collection entries by ID |
 | `tagToSlug(tag)` / `slugToTag(slug)` | Bidirectional tag↔URL conversion |
 | `formatDate(date)` | Human-readable date (e.g., "February 20, 2026") |
-
-### Homepage Banner
-
-`AnnouncementBanner.astro` compares the newest published blog post with the newest
-active entry in `src/content/announcements/`. The newer item appears in the banner.
-A same-day manual announcement wins as an explicit override. Manual announcements
-expire after 14 days by default, then the banner returns to the newest blog post.
 
 ### Layouts
 
