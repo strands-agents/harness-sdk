@@ -88,7 +88,7 @@
 }
 
 .sl-markdown-content .mermaid-frame {
-	margin-block: 1.75rem;
+	margin-block: 1.5rem;
 	overflow: hidden;
 	border: 1px solid var(--diagram-frame-border);
 	border-radius: 0.75rem;
@@ -96,9 +96,9 @@
 }
 
 .sl-markdown-content .mermaid-scroll {
-	--diagram-pad: clamp(1rem, 2.5vw, 1.5rem);
-	overflow-x: auto;
-	overflow-y: hidden;
+	--diagram-pad: clamp(0.75rem, 2vw, 1rem);
+	max-block-size: min(42rem, 80vh);
+	overflow: auto;
 	overscroll-behavior-inline: contain;
 	padding: var(--diagram-pad);
 	background-color: var(--diagram-canvas);
@@ -129,6 +129,7 @@
 }
 
 .sl-markdown-content .mermaid-scroll::-webkit-scrollbar {
+	width: 0.75rem;
 	height: 0.75rem;
 }
 
@@ -176,11 +177,11 @@
 
 @media (max-width: 50rem) {
 	.sl-markdown-content .mermaid-frame {
-		margin-block: 1.5rem;
+		margin-block: 1.25rem;
 	}
 
 	.sl-markdown-content .mermaid-scroll {
-		--diagram-pad: 1rem;
+		--diagram-pad: 0.75rem;
 	}
 }
 
@@ -191,6 +192,7 @@
 	}
 
 	.sl-markdown-content .mermaid-scroll {
+		max-block-size: none;
 		padding: 0.75rem;
 		background-image: none;
 	}

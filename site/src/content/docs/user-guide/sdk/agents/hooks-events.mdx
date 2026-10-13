@@ -127,7 +127,7 @@ subgraph Init["Initialization"]
     MultiAgentInitializedEvent["MultiAgentInitializedEvent"]
 end
 subgraph Invocation["Invocation Lifecycle"]
-    direction TB
+    direction LR
     BeforeMultiAgentInvocationEvent["BeforeMultiAgentInvocationEvent"]
     AfterMultiAgentInvocationEvent["AfterMultiAgentInvocationEvent"]
     BeforeMultiAgentInvocationEvent --> NodeExecution
@@ -151,7 +151,7 @@ subgraph Init["Initialization"]
     MultiAgentInitializedEvent["MultiAgentInitializedEvent"]
 end
 subgraph Invocation["Invocation Lifecycle"]
-    direction TB
+    direction LR
     BeforeMultiAgentInvocationEvent["BeforeMultiAgentInvocationEvent"]
     AfterMultiAgentInvocationEvent["AfterMultiAgentInvocationEvent"]
     MultiAgentResultEvent["MultiAgentResultEvent"]
