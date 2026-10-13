@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { LocalFileStorage } from '../local-file-storage.js'
 import { QmdSearchStrategy } from '../search/qmd.js'
-import type { SandboxSafeSearchStrategy } from '../search/types.js'
+import type { SearchStrategy } from '../search/types.js'
 import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
 import { logger } from '../../logging/logger.js'
 import { rm, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
+
+type SandboxSafe = SearchStrategy<LocalFileStorage> & { readonly requiresHostFs?: false }
 
 describe('LocalFileStorage', () => {
   let baseDir: string
@@ -174,7 +176,7 @@ describe('LocalFileStorage', () => {
   })
 
   describe('constructor config', () => {
-    const fakeStrategy = (): SandboxSafeSearchStrategy<LocalFileStorage> & { index: Mock; search: Mock } => ({
+    const fakeStrategy = (): SandboxSafe & { index: Mock; search: Mock } => ({
       index: vi.fn().mockResolvedValue(undefined),
       search: vi.fn().mockResolvedValue([{ key: 'hit.txt', score: 1 }]),
     })
@@ -221,7 +223,7 @@ describe('LocalFileStorage', () => {
   })
 
   describe('host filesystem strategies with a sandbox', () => {
-    const sandboxSafeStrategy = (): SandboxSafeSearchStrategy<LocalFileStorage> & { search: Mock } => ({
+    const sandboxSafeStrategy = (): SandboxSafe & { search: Mock } => ({
       search: vi.fn().mockResolvedValue([]),
     })
 

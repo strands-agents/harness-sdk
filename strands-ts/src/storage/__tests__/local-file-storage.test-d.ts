@@ -2,8 +2,10 @@ import { describe, it, expectTypeOf } from 'vitest'
 import { LocalFileStorage, type LocalFileStorageConfig } from '../local-file-storage.js'
 import { QmdSearchStrategy } from '../search/qmd.js'
 import { KeywordSearchStrategy } from '../search/keyword.js'
-import type { SandboxSafeSearchStrategy, SearchStrategy } from '../search/types.js'
+import type { SearchStrategy } from '../search/types.js'
 import type { Sandbox } from '../../sandbox/base.js'
+
+type SandboxSafe = SearchStrategy<LocalFileStorage> & { readonly requiresHostFs?: false }
 
 declare const sandbox: Sandbox
 declare const maybeSandbox: Sandbox | undefined
@@ -38,8 +40,8 @@ describe('LocalFileStorage sandbox and search strategy types', () => {
 
   it('types QmdSearchStrategy as host filesystem and keyword search as sandbox-safe', () => {
     expectTypeOf<QmdSearchStrategy['requiresHostFs']>().toEqualTypeOf<true>()
-    expectTypeOf(KeywordSearchStrategy).toMatchTypeOf<SandboxSafeSearchStrategy>()
-    expectTypeOf(new QmdSearchStrategy()).not.toMatchTypeOf<SandboxSafeSearchStrategy<LocalFileStorage>>()
+    expectTypeOf(KeywordSearchStrategy).toMatchTypeOf<SandboxSafe>()
+    expectTypeOf(new QmdSearchStrategy()).not.toMatchTypeOf<SandboxSafe>()
     expectTypeOf({ sandbox, searchStrategy: new QmdSearchStrategy() }).not.toMatchTypeOf<LocalFileStorageConfig>()
   })
 })

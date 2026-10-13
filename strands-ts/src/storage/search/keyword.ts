@@ -1,5 +1,5 @@
 import type { Storage, StorageSearchResult } from '../storage.js'
-import type { SandboxSafeSearchStrategy } from './types.js'
+import type { SearchStrategy } from './types.js'
 
 /** Split text into a set of lowercased word tokens for keyword matching. */
 export function tokenize(text: string): Set<string> {
@@ -161,7 +161,8 @@ export const STOP_WORDS = new Set([
  * const results = await KeywordSearchStrategy.search(storage, 'dark mode toggle')
  * ```
  */
-export const KeywordSearchStrategy: SandboxSafeSearchStrategy = {
+// `requiresHostFs?: false` lets LocalFileStorage accept it alongside a sandbox.
+export const KeywordSearchStrategy: SearchStrategy & { readonly requiresHostFs?: false } = {
   async search(storage: Storage, query: string): Promise<StorageSearchResult[]> {
     const queryTokens = tokenize(query)
     if (queryTokens.size === 0) return []

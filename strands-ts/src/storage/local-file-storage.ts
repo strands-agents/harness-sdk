@@ -1,5 +1,5 @@
 import type { Sandbox } from '../sandbox/base.js'
-import type { SandboxSafeSearchStrategy, SearchStrategy } from './search/types.js'
+import type { SearchStrategy } from './search/types.js'
 import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
@@ -8,11 +8,16 @@ import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
+ * A search strategy that only uses the storage's own methods (`requiresHostFs` omitted or `false`),
+ * so it works when the storage is bound to a sandbox.
+ */
+type SandboxSafeSearchStrategy = SearchStrategy<LocalFileStorage> & { readonly requiresHostFs?: false }
+
+/**
  * Configuration for {@link LocalFileStorage}.
  *
- * A sandbox can only be combined with a {@link SandboxSafeSearchStrategy}, so passing a strategy
- * that requires host filesystem access (such as `QmdSearchStrategy`) together with a sandbox is a
- * type error.
+ * A sandbox can only be combined with a strategy that does not require host filesystem access, so
+ * passing `QmdSearchStrategy` together with a sandbox is a type error.
  */
 export type LocalFileStorageConfig =
   | {
@@ -22,7 +27,7 @@ export type LocalFileStorageConfig =
        * Search strategy. When set, `write()` automatically indexes entries and `search()` delegates
        * to the strategy instead of the default keyword scan.
        */
-      searchStrategy?: SandboxSafeSearchStrategy<LocalFileStorage>
+      searchStrategy?: SandboxSafeSearchStrategy
     }
   | {
       sandbox?: undefined
@@ -50,9 +55,7 @@ function isSandbox(value: Sandbox | LocalFileStorageConfig): value is Sandbox {
  * @param strategy - The search strategy to check
  * @returns Whether the strategy is sandbox-safe
  */
-function isSandboxSafe(
-  strategy: SearchStrategy<LocalFileStorage>
-): strategy is SandboxSafeSearchStrategy<LocalFileStorage> {
+function isSandboxSafe(strategy: SearchStrategy<LocalFileStorage>): strategy is SandboxSafeSearchStrategy {
   return !strategy.requiresHostFs
 }
 
@@ -109,10 +112,10 @@ export class LocalFileStorage implements Storage {
    * @param sandbox - Optional sandbox to route I/O through. Usually set via {@link forSandbox}.
    * @param searchStrategy - Optional search strategy. When set, `write()` automatically indexes
    *   entries and `search()` delegates to the strategy instead of the default keyword scan. Must be
-   *   a {@link SandboxSafeSearchStrategy} when `sandbox` is set.
+   *   a strategy that does not require host filesystem access when `sandbox` is set.
    * @throws Error if `sandbox` is set and `searchStrategy.requiresHostFs` is true
    */
-  constructor(baseDir?: string, sandbox?: Sandbox, searchStrategy?: SandboxSafeSearchStrategy<LocalFileStorage>)
+  constructor(baseDir?: string, sandbox?: Sandbox, searchStrategy?: SandboxSafeSearchStrategy)
   /**
    * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
    * @param sandbox - Must be omitted or `undefined` to use a strategy that requires host filesystem access.
@@ -364,7 +367,7 @@ export class LocalFileStorage implements Storage {
     const subDir = normalized ? `${this._baseDir.replace(/\/$/, '')}/${normalized}` : this._baseDir
     const scoped = this._sandbox
       ? // The constructor only accepts a sandbox together with a sandbox-safe strategy.
-        new LocalFileStorage(subDir, this._sandbox, this._searchStrategy as SandboxSafeSearchStrategy<LocalFileStorage>)
+        new LocalFileStorage(subDir, this._sandbox, this._searchStrategy as SandboxSafeSearchStrategy)
       : new LocalFileStorage(subDir, undefined, this._searchStrategy)
     Object.defineProperty(scoped, NAMESPACED, { value: true })
     return scoped
