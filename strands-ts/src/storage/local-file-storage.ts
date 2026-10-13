@@ -8,8 +8,9 @@ import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
- * A search strategy that only uses the storage's own methods (`requiresHostFs` omitted or `false`),
- * so it works when the storage is bound to a sandbox.
+ * A search strategy that works when the storage is bound to a sandbox. Strategies that read or write
+ * the host filesystem directly (an index file next to the storage directory, a folder scan) declare
+ * `readonly requiresHostFs = true`, as `QmdSearchStrategy` does, so they do not match this type.
  */
 type SandboxSafeSearchStrategy = SearchStrategy<LocalFileStorage> & { readonly requiresHostFs?: false }
 
@@ -56,7 +57,7 @@ function isSandbox(value: Sandbox | LocalFileStorageConfig): value is Sandbox {
  * @returns Whether the strategy is sandbox-safe
  */
 function isSandboxSafe(strategy: SearchStrategy<LocalFileStorage>): strategy is SandboxSafeSearchStrategy {
-  return !strategy.requiresHostFs
+  return !('requiresHostFs' in strategy && strategy.requiresHostFs === true)
 }
 
 /**

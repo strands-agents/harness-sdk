@@ -9,8 +9,6 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 
-type SandboxSafe = SearchStrategy<LocalFileStorage> & { readonly requiresHostFs?: false }
-
 describe('LocalFileStorage', () => {
   let baseDir: string
   let storage: LocalFileStorage
@@ -176,7 +174,7 @@ describe('LocalFileStorage', () => {
   })
 
   describe('constructor config', () => {
-    const fakeStrategy = (): SandboxSafe & { index: Mock; search: Mock } => ({
+    const fakeStrategy = (): SearchStrategy<LocalFileStorage> & { index: Mock; search: Mock } => ({
       index: vi.fn().mockResolvedValue(undefined),
       search: vi.fn().mockResolvedValue([{ key: 'hit.txt', score: 1 }]),
     })
@@ -223,7 +221,7 @@ describe('LocalFileStorage', () => {
   })
 
   describe('host filesystem strategies with a sandbox', () => {
-    const sandboxSafeStrategy = (): SandboxSafe & { search: Mock } => ({
+    const sandboxSafeStrategy = (): SearchStrategy<LocalFileStorage> & { search: Mock } => ({
       search: vi.fn().mockResolvedValue([]),
     })
 
@@ -252,6 +250,19 @@ describe('LocalFileStorage', () => {
       const sandboxed = new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), strategy)
       await sandboxed.search('query')
       expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects at runtime a strategy typed as SearchStrategy that declares requiresHostFs', () => {
+      class HostIndexStrategy {
+        readonly requiresHostFs = true
+        async search(): Promise<[]> {
+          return []
+        }
+      }
+      const strategy: SearchStrategy<LocalFileStorage> = new HostIndexStrategy()
+      expect(() => new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), strategy)).toThrow(
+        'HostIndexStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
     })
 
     it('drops a host filesystem strategy in forSandbox and falls back to keyword search', async () => {

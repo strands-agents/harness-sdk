@@ -20,8 +20,6 @@ describe('LocalFileStorage sandbox and search strategy types', () => {
     new LocalFileStorage('./dir', { sandbox, searchStrategy: new QmdSearchStrategy() })
     // @ts-expect-error a possibly-set sandbox cannot be combined with a host filesystem strategy
     new LocalFileStorage('./dir', maybeSandbox, new QmdSearchStrategy())
-    // @ts-expect-error an arbitrary SearchStrategy may require host filesystem access
-    new LocalFileStorage('./dir', sandbox, anyStrategy)
   })
 
   it('accepts a host filesystem strategy without a sandbox', () => {
@@ -36,6 +34,8 @@ describe('LocalFileStorage sandbox and search strategy types', () => {
     new LocalFileStorage('./dir', { sandbox, searchStrategy: customStrategy })
     new LocalFileStorage('./dir', maybeSandbox)
     new LocalFileStorage('./dir', { sandbox })
+    // Only caught at runtime if it declares requiresHostFs = true
+    new LocalFileStorage('./dir', sandbox, anyStrategy)
   })
 
   it('types QmdSearchStrategy as host filesystem and keyword search as sandbox-safe', () => {

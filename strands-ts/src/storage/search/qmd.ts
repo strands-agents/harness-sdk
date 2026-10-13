@@ -40,7 +40,10 @@ export interface QmdSearchStrategyConfig {
  * ```
  */
 export class QmdSearchStrategy implements SearchStrategy<LocalFileStorage> {
-  /** QMD scans `baseDir` and keeps its index on the host filesystem, so it cannot be sandboxed. */
+  /**
+   * QMD scans `baseDir` and keeps its index on the host filesystem, so `LocalFileStorage` rejects it
+   * alongside a sandbox (a type error, plus a runtime check) and `forSandbox()` drops it.
+   */
   readonly requiresHostFs = true
   private _store: QmdStore | undefined
   private _storagePath: string | undefined

@@ -161,8 +161,7 @@ export const STOP_WORDS = new Set([
  * const results = await KeywordSearchStrategy.search(storage, 'dark mode toggle')
  * ```
  */
-// `requiresHostFs?: false` lets LocalFileStorage accept it alongside a sandbox.
-export const KeywordSearchStrategy: SearchStrategy & { readonly requiresHostFs?: false } = {
+export const KeywordSearchStrategy: SearchStrategy = {
   async search(storage: Storage, query: string): Promise<StorageSearchResult[]> {
     const queryTokens = tokenize(query)
     if (queryTokens.size === 0) return []
