@@ -244,6 +244,8 @@ const structuredData = {
       const caption = document.createElement('figcaption')
       const actions = document.createElement('div')
       const expandButton = document.createElement('button')
+      const expandIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      const expandIconPath = document.createElementNS('http://www.w3.org/2000/svg', 'path')
       const scroller = document.createElement('div')
       const diagram = document.createElement('div')
 
@@ -255,19 +257,34 @@ const structuredData = {
       actions.hidden = true
       expandButton.className = 'mermaid-expand'
       expandButton.type = 'button'
-      expandButton.textContent = 'View larger'
+      expandButton.title = 'View larger'
       expandButton.hidden = true
       expandButton.setAttribute('aria-haspopup', 'dialog')
       expandButton.setAttribute('aria-controls', dialog.id)
       expandButton.setAttribute('aria-label', `View ${label} in a larger dialog`)
+      expandIcon.classList.add('mermaid-expand__icon')
+      expandIcon.setAttribute('viewBox', '0 0 24 24')
+      expandIcon.setAttribute('aria-hidden', 'true')
+      expandIcon.setAttribute('focusable', 'false')
+      expandIconPath.setAttribute(
+        'd',
+        'M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4m0 8v4a1 1 0 0 1-1 1h-4M8 21H4a1 1 0 0 1-1-1v-4',
+      )
+      expandIconPath.setAttribute('fill', 'none')
+      expandIconPath.setAttribute('stroke', 'currentColor')
+      expandIconPath.setAttribute('stroke-linecap', 'round')
+      expandIconPath.setAttribute('stroke-linejoin', 'round')
+      expandIconPath.setAttribute('stroke-width', '1.75')
       scroller.className = 'mermaid-scroll'
       diagram.className = 'mermaid'
       diagram.dataset.mermaidDiagram = ''
       diagram.textContent = source
       frame.setAttribute('aria-labelledby', caption.id)
+      expandIcon.append(expandIconPath)
+      expandButton.append(expandIcon)
       actions.append(expandButton)
       scroller.append(diagram)
-      frame.append(caption, actions, scroller)
+      frame.append(caption, scroller, actions)
       const renderedBlock = block.closest<HTMLElement>('.expressive-code') ?? block
       renderedBlock.replaceWith(frame)
       sources.set(diagram, source)

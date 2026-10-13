@@ -88,6 +88,7 @@
 }
 
 .sl-markdown-content .mermaid-frame {
+	position: relative;
 	margin-block: 1.5rem;
 	overflow: hidden;
 	border: 1px solid var(--diagram-frame-border);
@@ -111,11 +112,11 @@
 }
 
 .sl-markdown-content .mermaid-actions {
-	display: flex;
-	justify-content: flex-end;
-	padding: 0.4rem 0.5rem;
-	border-block-end: 1px solid var(--diagram-frame-border);
-	background: color-mix(in srgb, var(--diagram-canvas) 92%, var(--diagram-node-bg));
+	position: absolute;
+	z-index: 2;
+	inset-block-end: 1.125rem;
+	inset-inline-end: 1.125rem;
+	pointer-events: none;
 }
 
 .sl-markdown-content .mermaid-actions[hidden],
@@ -125,17 +126,39 @@
 
 .mermaid-expand,
 .mermaid-dialog__close {
-	min-block-size: 2.25rem;
-	padding: 0.35rem 0.7rem;
 	border: 1px solid var(--diagram-frame-border);
 	border-radius: 0.5rem;
 	background: var(--diagram-node-bg);
 	color: var(--diagram-text);
+	cursor: pointer;
+}
+
+.mermaid-expand {
+	display: grid;
+	place-items: center;
+	box-sizing: border-box;
+	inline-size: 2.5rem;
+	block-size: 2.5rem;
+	padding: 0;
+	border-color: var(--diagram-node-border);
+	box-shadow:
+		0 0 0 2px var(--diagram-canvas),
+		0 0.35rem 1rem rgb(0 0 0 / 25%);
+	pointer-events: auto;
+}
+
+.mermaid-expand__icon {
+	inline-size: 1.125rem;
+	block-size: 1.125rem;
+}
+
+.mermaid-dialog__close {
+	min-block-size: 2.25rem;
+	padding: 0.35rem 0.7rem;
 	font-family: 'JetBrains Mono', ui-monospace, monospace;
 	font-size: 0.75rem;
 	font-weight: 600;
 	line-height: 1;
-	cursor: pointer;
 }
 
 .mermaid-expand:hover,
@@ -320,7 +343,11 @@
 }
 
 @media (pointer: coarse) {
-	.mermaid-expand,
+	.mermaid-expand {
+		inline-size: 2.75rem;
+		block-size: 2.75rem;
+	}
+
 	.mermaid-dialog__close {
 		min-block-size: 2.75rem;
 	}
