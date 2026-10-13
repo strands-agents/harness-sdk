@@ -9,6 +9,48 @@
    src/components/SiteScripts.astro (included by Head.astro) rather than an
    @import here, which would chain a render-blocking fetch. */
 
+/* Mermaid uses literal colors because its theme engine parses these values
+   before it generates each SVG. */
+:root {
+	--diagram-canvas: #fbfcfb;
+	--diagram-frame-border: #d9d9d9;
+	--diagram-node-bg: #f4f4f4;
+	--diagram-node-border: #767373;
+	--diagram-text: #28292a;
+	--diagram-cluster-bg: #f2faf3;
+	--diagram-cluster-border: #62856a;
+	--diagram-edge: #666464;
+	--diagram-label-bg: #fbfcfb;
+	--diagram-accent-bg: #e6f6e7;
+	--diagram-accent-border: #007a3d;
+	--diagram-note-bg: #fff7d6;
+	--diagram-note-border: #946e00;
+	--diagram-note-text: #3d2f00;
+	--diagram-focus: #007a3d;
+	--diagram-scroll-thumb: #767373;
+	--diagram-scroll-shadow: rgb(40 41 42 / 14%);
+}
+
+:root[data-theme='dark'] {
+	--diagram-canvas: #111212;
+	--diagram-frame-border: #3d3c3c;
+	--diagram-node-bg: #28292a;
+	--diagram-node-border: #999696;
+	--diagram-text: #f4f4f4;
+	--diagram-cluster-bg: #07180d;
+	--diagram-cluster-border: #487651;
+	--diagram-edge: #b6b6b6;
+	--diagram-label-bg: #111212;
+	--diagram-accent-bg: #0d3010;
+	--diagram-accent-border: #00cc60;
+	--diagram-note-bg: #342600;
+	--diagram-note-border: #f6bc00;
+	--diagram-note-text: #fff3c4;
+	--diagram-focus: #00cc60;
+	--diagram-scroll-thumb: #999696;
+	--diagram-scroll-shadow: rgb(0 0 0 / 55%);
+}
+
 /* Skip-to-content link. Starlight's SkipLink ships hide-until-focus styles in
    a component-scoped @layer; the custom PageFrame override drops that scoped
    style from the build, leaving the link permanently visible in the top-left.
@@ -45,8 +87,125 @@
 	font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
-.interrupt-flow .mermaid {
+.sl-markdown-content .mermaid-frame {
+	margin-block: 1.75rem;
+	overflow: hidden;
+	border: 1px solid var(--diagram-frame-border);
+	border-radius: 0.75rem;
+	background: var(--diagram-canvas);
+}
+
+.sl-markdown-content .mermaid-scroll {
+	--diagram-pad: clamp(1rem, 2.5vw, 1.5rem);
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior-inline: contain;
+	padding: var(--diagram-pad);
+	background-color: var(--diagram-canvas);
+	background-image:
+		linear-gradient(to right, var(--diagram-canvas) 30%, transparent),
+		linear-gradient(to left, var(--diagram-canvas) 30%, transparent),
+		linear-gradient(to right, var(--diagram-scroll-shadow), transparent),
+		linear-gradient(to left, var(--diagram-scroll-shadow), transparent);
+	background-position:
+		left,
+		right,
+		left,
+		right;
+	background-size:
+		2.5rem 100%,
+		2.5rem 100%,
+		0.75rem 100%,
+		0.75rem 100%;
+	background-repeat: no-repeat;
+	background-attachment: local, local, scroll, scroll;
+	scrollbar-width: thin;
+	scrollbar-color: var(--diagram-scroll-thumb) transparent;
+}
+
+.sl-markdown-content .mermaid-scroll:focus-visible {
+	outline: 3px solid var(--diagram-focus);
+	outline-offset: -3px;
+}
+
+.sl-markdown-content .mermaid-scroll::-webkit-scrollbar {
+	height: 0.75rem;
+}
+
+.sl-markdown-content .mermaid-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.sl-markdown-content .mermaid-scroll::-webkit-scrollbar-thumb {
+	border: 3px solid var(--diagram-canvas);
+	border-radius: 999px;
+	background: var(--diagram-scroll-thumb);
+}
+
+.sl-markdown-content .mermaid {
+	display: flex;
 	justify-content: center;
+	width: max-content;
+	min-width: 100%;
+	margin: 0;
+	padding: 0;
+	overflow: visible;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+	color: var(--diagram-text);
+	line-height: normal;
+}
+
+.sl-markdown-content .mermaid > svg {
+	display: block;
+	flex: none;
+	max-width: none;
+	height: auto;
+}
+
+.sl-markdown-content .mermaid-frame.has-error .mermaid {
+	display: block;
+	width: 100%;
+	white-space: pre-wrap;
+	font-family: var(--sl-font-mono);
+	font-size: 0.875rem;
+	line-height: 1.5;
+}
+
+@media (max-width: 50rem) {
+	.sl-markdown-content .mermaid-frame {
+		margin-block: 1.5rem;
+	}
+
+	.sl-markdown-content .mermaid-scroll {
+		--diagram-pad: 1rem;
+	}
+}
+
+@media print {
+	.sl-markdown-content .mermaid-frame,
+	.sl-markdown-content .mermaid-scroll {
+		overflow: visible;
+	}
+
+	.sl-markdown-content .mermaid-scroll {
+		padding: 0.75rem;
+		background-image: none;
+	}
+
+	.sl-markdown-content .mermaid {
+		display: block;
+		width: 100%;
+		min-width: 0;
+	}
+
+	.sl-markdown-content .mermaid > svg {
+		width: auto !important;
+		max-width: 100%;
+		margin-inline: auto;
+	}
 }
 
 /* Brand palette and shared Starlight tokens live in fonts.css (loaded on every

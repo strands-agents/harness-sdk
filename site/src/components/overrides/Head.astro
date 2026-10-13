@@ -170,108 +170,282 @@ const structuredData = {
 </script>
 
 <script>
-  // Mermaid is ~2MB from the CDN, so only load it on pages that actually have a diagram
-  if (document.querySelector('pre[data-language="mermaid"]')) {
-    const { default: mermaid } = await import(
-      /* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'
-    )
+  const mermaidBlocks = [...document.querySelectorAll<HTMLElement>('pre[data-language="mermaid"]')]
 
-    // Transform Expressive Code mermaid blocks into mermaid.js format
-    document.querySelectorAll('pre[data-language="mermaid"]').forEach((pre) => {
-      const diagram = [...pre.querySelectorAll('code > .ec-line')].map((it) => it.textContent).join('\n')
-      const div = document.createElement('pre')
-      div.className = 'mermaid'
-      div.textContent = diagram
-      pre.replaceWith(div)
+  // Keep Mermaid in a lazy chunk so pages without diagrams do not download it.
+  // The source blocks stay intact if the import fails.
+  if (mermaidBlocks.length > 0) {
+    const { default: mermaid } = await import('mermaid')
+    type DiagramTheme = 'light' | 'dark'
+
+    const root = document.documentElement
+    const sources = new WeakMap<HTMLElement, string>()
+    const renderedThemes = new WeakMap<HTMLElement, DiagramTheme>()
+    const pending = new Set<HTMLElement>()
+    // Preserve at least a 12px visual label size from Mermaid's 15px base.
+    const minimumScale = 0.8
+    let renderTask: Promise<void> | undefined
+    let renderId = 0
+
+    const diagrams = mermaidBlocks.map((block) => {
+      const lines = [...block.querySelectorAll<HTMLElement>('code > .ec-line')]
+      const source = lines.length > 0 ? lines.map((line) => line.textContent ?? '').join('\n') : block.textContent ?? ''
+      const frame = document.createElement('figure')
+      const scroller = document.createElement('div')
+      const diagram = document.createElement('div')
+
+      frame.className = 'mermaid-frame'
+      scroller.className = 'mermaid-scroll'
+      diagram.className = 'mermaid'
+      diagram.dataset.mermaidDiagram = ''
+      diagram.textContent = source
+      scroller.append(diagram)
+      frame.append(scroller)
+      const renderedBlock = block.closest<HTMLElement>('.expressive-code') ?? block
+      renderedBlock.replaceWith(frame)
+      sources.set(diagram, source)
+
+      return diagram
     })
 
-    const isDark = document.documentElement.dataset.theme === 'dark'
+    const currentTheme = (): DiagramTheme => (root.dataset.theme === 'dark' ? 'dark' : 'light')
+    const isVisible = (diagram: HTMLElement) => diagram.isConnected && diagram.closest('[hidden]') === null
+    const visibleDiagrams = () => diagrams.filter(isVisible)
 
-    const css = getComputedStyle(document.documentElement)
-    const token = (name: string, fallback: string) =>
-      css.getPropertyValue(name).trim() || fallback
+    const buildMermaidConfig = (theme: DiagramTheme): import('mermaid').MermaidConfig => {
+      const css = getComputedStyle(root)
+      const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback
+      const fontFamily = '"Space Grotesk", system-ui, sans-serif'
 
-    if (isDark) {
-      // Dark mode keeps mermaid's built-in dark theme, which already reads well
-      // against the docs' dark surfaces. Its stock lineColor is too dim on our
-      // near-black background though, so lift just the edges.
-      mermaid.initialize({
+      const canvas = token('--diagram-canvas', theme === 'dark' ? '#111212' : '#fbfcfb')
+      const frameBorder = token('--diagram-frame-border', theme === 'dark' ? '#3d3c3c' : '#d9d9d9')
+      const nodeBackground = token('--diagram-node-bg', theme === 'dark' ? '#28292a' : '#f4f4f4')
+      const nodeBorder = token('--diagram-node-border', theme === 'dark' ? '#999696' : '#767373')
+      const text = token('--diagram-text', theme === 'dark' ? '#f4f4f4' : '#28292a')
+      const clusterBackground = token('--diagram-cluster-bg', theme === 'dark' ? '#07180d' : '#f2faf3')
+      const clusterBorder = token('--diagram-cluster-border', theme === 'dark' ? '#487651' : '#62856a')
+      const edge = token('--diagram-edge', theme === 'dark' ? '#b6b6b6' : '#666464')
+      const labelBackground = token('--diagram-label-bg', canvas)
+      const accentBackground = token('--diagram-accent-bg', theme === 'dark' ? '#0d3010' : '#e6f6e7')
+      const accentBorder = token('--diagram-accent-border', theme === 'dark' ? '#00cc60' : '#007a3d')
+      const noteBackground = token('--diagram-note-bg', theme === 'dark' ? '#342600' : '#fff7d6')
+      const noteBorder = token('--diagram-note-border', theme === 'dark' ? '#f6bc00' : '#946e00')
+      const noteText = token('--diagram-note-text', theme === 'dark' ? '#fff3c4' : '#3d2f00')
+
+      return {
         startOnLoad: false,
-        theme: 'dark',
-        themeVariables: {
-          lineColor: token('--strands-grey-400', '#b6b6b6'),
-        },
-      })
-    } else {
-      // Light mode: mermaid's stock `neutral` theme ignores the brand palette,
-      // so drive the `base` theme from the same custom properties custom.css
-      // defines. Read them at runtime so the palette stays single-sourced.
-      const surface = token('--sl-color-gray-6', '#f4f4f4')
-      const border = token('--strands-grey-200', '#d9d9d9')
-      const ink = token('--strands-charcoal-1', '#28292a')
-      const line = token('--sl-color-gray-3', '#666464')
-      const accent = token('--strands-green-3', '#02a435')
-      const accentLow = token('--strands-seafoam-green', '#e6f6e7')
-      const page = token('--strands-white', '#ffffff')
-
-      mermaid.initialize({
-        startOnLoad: false,
+        securityLevel: 'strict',
         theme: 'base',
+        look: 'classic',
+        htmlLabels: true,
+        fontFamily,
         themeVariables: {
-          background: 'transparent',
-          // No fontFamily override here: mermaid measures label text to size each
-          // node, and a non-resolvable value like `inherit` makes it size boxes
-          // with default metrics while CSS applies a wider font, clipping labels.
-          // Node surfaces
-          primaryColor: surface,
-          primaryTextColor: ink,
-          primaryBorderColor: border,
-          mainBkg: surface,
-          nodeBorder: border,
-          secondaryColor: accentLow,
-          tertiaryColor: page,
-          // Subgraph / cluster surfaces pick up the seafoam accent
-          clusterBkg: accentLow,
-          clusterBorder: accent,
-          // Text, edges, and edge labels
-          textColor: ink,
-          titleColor: ink,
-          lineColor: line,
-          edgeLabelBackground: page,
+          background: canvas,
+          fontFamily,
+          fontSize: '15px',
+          primaryColor: nodeBackground,
+          primaryTextColor: text,
+          primaryBorderColor: nodeBorder,
+          secondaryColor: clusterBackground,
+          secondaryTextColor: text,
+          secondaryBorderColor: clusterBorder,
+          tertiaryColor: canvas,
+          tertiaryTextColor: text,
+          tertiaryBorderColor: frameBorder,
+          textColor: text,
+          titleColor: text,
+          lineColor: edge,
+          arrowheadColor: edge,
+          mainBkg: nodeBackground,
+          nodeBkg: nodeBackground,
+          nodeBorder,
+          nodeTextColor: text,
+          defaultLinkColor: edge,
+          clusterBkg: clusterBackground,
+          clusterBorder,
+          edgeLabelBackground: labelBackground,
+          actorBkg: nodeBackground,
+          actorBorder: nodeBorder,
+          actorTextColor: text,
+          actorLineColor: edge,
+          signalColor: edge,
+          signalTextColor: text,
+          labelBoxBkgColor: clusterBackground,
+          labelBoxBorderColor: clusterBorder,
+          labelTextColor: text,
+          loopTextColor: text,
+          noteBkgColor: noteBackground,
+          noteBorderColor: noteBorder,
+          noteTextColor: noteText,
+          activationBkgColor: accentBackground,
+          activationBorderColor: accentBorder,
+          sequenceNumberColor: text,
+          strokeWidth: 1.25,
+          useGradient: false,
+          dropShadow: 'none',
         },
-      })
+        themeCSS: `
+          .node .label, .nodeLabel { font-weight: 500; line-height: 1.25; }
+          .node rect[rx='0'] { rx: 6px; ry: 6px; }
+          .cluster rect { rx: 10px; ry: 10px; stroke-width: 1.25px; }
+          .cluster-label { font-size: 13px; font-weight: 600; }
+          .flowchart-link { stroke-width: 1.5px; }
+          .edgeLabel { font-size: 13px; }
+          .edgeLabel p { margin: 0; padding: 1px 4px; border-radius: 4px; line-height: 1.2; }
+          .flowchartTitleText { font-size: 15px; font-weight: 600; }
+          .actor { rx: 6px; ry: 6px; }
+          .actor-line { stroke-width: 1px; stroke-dasharray: 4 4; }
+          .messageText { font-size: 14px; }
+          .note { rx: 6px; ry: 6px; stroke-width: 1px; }
+        `,
+        flowchart: {
+          useMaxWidth: false,
+          diagramPadding: 12,
+          nodeSpacing: 36,
+          rankSpacing: 44,
+          curve: 'linear',
+          padding: 14,
+          wrappingWidth: 140,
+        },
+        sequence: {
+          useMaxWidth: false,
+          diagramMarginX: 24,
+          diagramMarginY: 16,
+          actorMargin: 40,
+          width: 140,
+          height: 52,
+          boxMargin: 10,
+          boxTextMargin: 6,
+          noteMargin: 12,
+          messageMargin: 32,
+          mirrorActors: false,
+          actorFontSize: 15,
+          actorFontFamily: fontFamily,
+          actorFontWeight: 500,
+          noteFontSize: 14,
+          noteFontFamily: fontFamily,
+          messageFontSize: 14,
+          messageFontFamily: fontFamily,
+          wrap: true,
+          wrapPadding: 10,
+        },
+      }
     }
 
-    // Only render diagrams in visible panels; defer hidden ones until shown
-    const hiddenDiagrams = new Set(
-      document.querySelectorAll('[role="tabpanel"][hidden] .mermaid')
-    )
-    const visibleDiagrams = [...document.querySelectorAll('.mermaid')].filter(
-      (el) => !hiddenDiagrams.has(el)
-    )
-    if (visibleDiagrams.length > 0) {
-      await mermaid.run({ nodes: visibleDiagrams })
+    const updateScrollable = (scroller: HTMLElement) => {
+      const overflows = scroller.scrollWidth > scroller.clientWidth + 1
+      scroller.classList.toggle('is-scrollable', overflows)
+
+      if (overflows) {
+        scroller.tabIndex = 0
+        scroller.setAttribute('role', 'region')
+        scroller.setAttribute('aria-label', 'Scrollable diagram')
+      } else {
+        scroller.removeAttribute('tabindex')
+        scroller.removeAttribute('role')
+        scroller.removeAttribute('aria-label')
+      }
     }
 
-    // Render deferred diagrams once when their panel becomes visible
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'hidden') {
-          const panel = mutation.target as Element
-          if (panel.hasAttribute('hidden')) continue
-          const pending = [...panel.querySelectorAll('.mermaid')].filter(
-            (el) => hiddenDiagrams.has(el)
-          )
-          if (pending.length === 0) continue
-          pending.forEach((el) => hiddenDiagrams.delete(el))
-          mermaid.run({ nodes: pending })
-        }
+    const fitDiagram = (diagram: HTMLElement) => {
+      const scroller = diagram.parentElement
+      const svg = diagram.querySelector<SVGSVGElement>('svg')
+      if (!scroller || !svg) return
+
+      const naturalWidth = Number.parseFloat(svg.getAttribute('width') ?? '')
+      if (!Number.isFinite(naturalWidth)) {
+        updateScrollable(scroller)
+        return
+      }
+
+      const css = getComputedStyle(scroller)
+      const horizontalPadding = Number.parseFloat(css.paddingLeft) + Number.parseFloat(css.paddingRight)
+      const availableWidth = Math.max(scroller.clientWidth - horizontalPadding, 0)
+      const scale = Math.min(1, Math.max(minimumScale, availableWidth / naturalWidth))
+      svg.style.width = `${Math.round(naturalWidth * scale * 100) / 100}px`
+      svg.style.height = 'auto'
+      updateScrollable(scroller)
+    }
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const scroller = entry.target as HTMLElement
+        const diagram = scroller.querySelector<HTMLElement>('[data-mermaid-diagram]')
+        if (diagram) fitDiagram(diagram)
       }
     })
+    diagrams.forEach((diagram) => resizeObserver.observe(diagram.parentElement as HTMLElement))
 
-    document.querySelectorAll('[role="tabpanel"]').forEach((panel) => {
-      observer.observe(panel, { attributes: true, attributeFilter: ['hidden'] })
+    const fontReady = document.fonts.load('500 15px "Space Grotesk"').catch(() => [])
+
+    const flush = async () => {
+      await fontReady
+      const batch = [...pending]
+      pending.clear()
+      const theme = currentTheme()
+      const renderable = batch.filter(
+        (diagram) => isVisible(diagram) && renderedThemes.get(diagram) !== theme
+      )
+      if (renderable.length === 0) return
+
+      mermaid.initialize(buildMermaidConfig(theme))
+
+      for (const diagram of renderable) {
+        if (!isVisible(diagram) || currentTheme() !== theme) continue
+        const source = sources.get(diagram)
+        if (source === undefined) continue
+
+        try {
+          const { svg, bindFunctions } = await mermaid.render(`mermaid-diagram-${++renderId}`, source)
+          if (!isVisible(diagram) || currentTheme() !== theme) continue
+
+          diagram.innerHTML = svg
+          bindFunctions?.(diagram)
+          renderedThemes.set(diagram, theme)
+          diagram.closest('.mermaid-frame')?.classList.remove('has-error')
+          fitDiagram(diagram)
+        } catch (error) {
+          if (!diagram.querySelector('svg')) diagram.textContent = source
+          diagram.closest('.mermaid-frame')?.classList.add('has-error')
+          console.error('Failed to render Mermaid diagram', error)
+        }
+      }
+
+      if (currentTheme() !== theme) {
+        visibleDiagrams().forEach((diagram) => pending.add(diagram))
+      }
+    }
+
+    const startRender = () => {
+      if (renderTask || pending.size === 0) return
+      renderTask = flush()
+        .catch((error) => console.error('Failed to update Mermaid diagrams', error))
+        .finally(() => {
+          renderTask = undefined
+          startRender()
+        })
+    }
+
+    const schedule = (items: Iterable<HTMLElement>) => {
+      for (const diagram of items) pending.add(diagram)
+      startRender()
+    }
+
+    const tabObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        const panel = mutation.target as HTMLElement
+        if (panel.hidden) continue
+        schedule(panel.querySelectorAll<HTMLElement>('[data-mermaid-diagram]'))
+      }
     })
+    document.querySelectorAll<HTMLElement>('[role="tabpanel"]').forEach((panel) => {
+      tabObserver.observe(panel, { attributes: true, attributeFilter: ['hidden'] })
+    })
+
+    const themeObserver = new MutationObserver(() => schedule(visibleDiagrams()))
+    themeObserver.observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+
+    schedule(visibleDiagrams())
   }
 </script>
 
