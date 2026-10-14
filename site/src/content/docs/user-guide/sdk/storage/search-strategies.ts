@@ -1,6 +1,11 @@
 import { KeywordSearchStrategy } from '@strands-agents/sdk/storage/search'
 import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
-import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { InMemoryStorage, LocalFileStorage } from '@strands-agents/sdk/storage'
+import type { Storage } from '@strands-agents/sdk/storage'
+import type {
+  SearchStrategy,
+  StorageSearchResult,
+} from '@strands-agents/sdk/storage/search'
 
 async function keywordSearch() {
   // --8<-- [start:keyword_search]
@@ -39,4 +44,32 @@ async function storageWithStrategy() {
     searchStrategy: new QmdSearchStrategy(),
   })
   // --8<-- [end:storage_with_strategy]
+}
+
+async function customStrategy() {
+  // --8<-- [start:custom_strategy]
+  // Rank entries by how often the exact query phrase appears.
+  const phraseSearch: SearchStrategy = {
+    async search(
+      storage: Storage,
+      query: string,
+    ): Promise<StorageSearchResult[]> {
+      const phrase = query.trim().toLowerCase()
+      if (!phrase) return []
+      const results: StorageSearchResult[] = []
+      for (const key of await storage.list('')) {
+        const data = await storage.read(key)
+        if (!data) continue
+        const text = new TextDecoder().decode(data)
+        const count = text.toLowerCase().split(phrase).length - 1
+        if (count > 0) results.push({ key, score: count, data })
+      }
+      return results.sort((a, b) => b.score - a.score)
+    },
+  }
+
+  const storage = new InMemoryStorage({
+    searchStrategy: phraseSearch,
+  })
+  // --8<-- [end:custom_strategy]
 }
