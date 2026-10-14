@@ -167,8 +167,17 @@ best match first. Read entries through the storage
 passed in, using
 <Syntax py="list()" ts="list()" /> and
 <Syntax py="read()" ts="read()" />, so the strategy
-works with every backend. The example below ranks
-entries by how often the exact query phrase appears.
+works with every backend. When the search already read
+an entry's bytes, include them in the result as `data`
+so callers don't have to read the entry again.
+
+If your strategy keeps its own index, such as a vector
+store or a full-text index, update it in
+<Syntax py="index()" ts="index()" />. The backend calls
+it on every write with the key and the stored bytes.
+
+The example below ranks entries by how often the exact
+query phrase appears.
 
 <Tabs>
 <Tab label="Python">
@@ -182,33 +191,6 @@ searches on the fly implements it as a no-op.
 --8<-- "user-guide/sdk/storage/search-strategies.py:custom_strategy"
 ```
 
-</Tab>
-<Tab label="TypeScript">
-
-Any object or class with a `search()` method works.
-`index()` is optional; a strategy that searches on the
-fly omits it.
-
-```typescript
---8<-- "user-guide/sdk/storage/search-strategies_imports.ts:custom_strategy_imports"
-
---8<-- "user-guide/sdk/storage/search-strategies.ts:custom_strategy"
-```
-
-</Tab>
-</Tabs>
-
-If your strategy keeps its own index, such as a vector
-store or a full-text index, update it in
-<Syntax py="index()" ts="index()" />. The backend calls
-it on every write with the key and the stored bytes.
-When a search already read an entry's bytes, include
-them in the result as `data` so callers don't have to
-read the entry again.
-
-<Tabs>
-<Tab label="Python">
-
 To pass a strategy to a sandboxed `LocalFileStorage`,
 declare `requires_host_fs: Literal[False] = False` on
 the class, as `KeywordSearchStrategy` does. The type
@@ -221,6 +203,16 @@ raises `ValueError` when a sandbox is set.
 
 </Tab>
 <Tab label="TypeScript">
+
+Any object or class with a `search()` method works.
+`index()` is optional; a strategy that searches on the
+fly omits it.
+
+```typescript
+--8<-- "user-guide/sdk/storage/search-strategies_imports.ts:custom_strategy_imports"
+
+--8<-- "user-guide/sdk/storage/search-strategies.ts:custom_strategy"
+```
 
 If your strategy reads or writes the host filesystem
 directly instead of going through the storage, declare
