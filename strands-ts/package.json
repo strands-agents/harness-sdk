@@ -80,6 +80,10 @@
       "types": "./dist/src/vended-tools/bash/index.d.ts",
       "default": "./dist/src/vended-tools/bash/index.js"
     },
+    "./vended-tools/python-repl": {
+      "types": "./dist/src/vended-tools/python-repl/index.d.ts",
+      "default": "./dist/src/vended-tools/python-repl/index.js"
+    },
     "./vended-tools/sleep": {
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
       "default": "./dist/src/vended-tools/sleep/index.js"
@@ -99,6 +103,10 @@
     "./vended-tools/mcp-router": {
       "types": "./dist/src/vended-tools/mcp-router/index.d.ts",
       "default": "./dist/src/vended-tools/mcp-router/index.js"
+    },
+    "./vended-tools/subagent": {
+      "types": "./dist/src/vended-tools/subagent/index.d.ts",
+      "default": "./dist/src/vended-tools/subagent/index.js"
     },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
@@ -251,6 +259,7 @@
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
+    "@modelcontextprotocol/node": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
@@ -291,8 +300,9 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@smithy/fetch-http-handler": "^5.8.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1132.0",
+    "@modelcontextprotocol/ext-tasks": "^0.2.2",
+    "@smithy/fetch-http-handler": "^5.8.0",
     "@types/json-schema": "^7.0.15",
     "uuid": "^14.0.2",
     "yaml": "^2.9.1"
@@ -321,7 +331,7 @@
     "express": "^5.1.0",
     "openai": "^6.45.0",
     "turndown": "^7.2.4",
-    "zod": "^4.1.12"
+    "zod": "^4.5.4"
   },
   "peerDependenciesMeta": {
     "@a2a-js/sdk": {

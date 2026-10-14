@@ -24,7 +24,7 @@
     <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="NPM Version" src="https://img.shields.io/npm/v/@strands-agents/sdk"/></a>
     <a href="https://discord.gg/strands"><img alt="Strands Discord" src="https://img.shields.io/badge/Discord-Strands-5865F2?logo=discord&logoColor=white"/></a>
   </div>
-  
+
   <p>
     <a href="https://strandsagents.com/">Documentation</a>
     ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
@@ -94,6 +94,7 @@ const agent = new Agent({
   systemPrompt: 'You are a helpful assistant.',
 })
 ```
+
 ### Model Providers
 
 Switch between model providers easily:
@@ -107,7 +108,7 @@ const model = new BedrockModel({
   region: 'us-east-1',
   modelId: 'global.anthropic.claude-sonnet-4-6',
   maxTokens: 4096,
-  temperature: 0.7
+  temperature: 0.7,
 })
 
 const agent = new Agent({ model })
@@ -166,10 +167,10 @@ await agent.invoke('What is the weather in San Francisco?')
 ```
 
 **Vended Tools**: The SDK includes optional pre-built tools:
+
 - **Notebook Tool**: Manage text-based notebooks for persistent note-taking
 - **File Editor Tool**: Perform file system operations (read, write, edit files)
 - **HTTP Request Tool**: Make HTTP requests to external APIs
-
 
 ### Structured Output
 
@@ -182,19 +183,19 @@ import { z } from 'zod'
 const PersonSchema = z.object({
   name: z.string().describe('Name of the person'),
   age: z.number().describe('Age of the person'),
-  occupation: z.string().describe('Occupation of the person')
+  occupation: z.string().describe('Occupation of the person'),
 })
 
 // Configure structured output at the agent level
-const agent = new Agent({ 
-  structuredOutputSchema: PersonSchema 
+const agent = new Agent({
+  structuredOutputSchema: PersonSchema,
 })
 
 const result = await agent.invoke('John Smith is a 30 year-old software engineer')
 
 // result.structuredOutput is fully typed based on the schema
 console.log(result.structuredOutput.name) // "John Smith"
-console.log(result.structuredOutput.age)  // 30
+console.log(result.structuredOutput.age) // 30
 ```
 
 **Error handling**: The agent automatically retries with validation feedback when the LLM provides invalid output. If validation ultimately fails, a `StructuredOutputError` is thrown:
@@ -212,54 +213,72 @@ try {
 }
 ```
 
-
 ### MCP Integration
 
 Seamlessly integrate Model Context Protocol (MCP) servers:
 
 ```typescript
-import { Agent, McpClient } from "@strands-agents/sdk";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Agent, McpClient } from '@strands-agents/sdk'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 // Create a client for a local MCP server
 const documentationTools = new McpClient({
   transport: new StdioClientTransport({
-    command: "uvx",
-    args: ["awslabs.aws-documentation-mcp-server@latest"],
+    command: 'uvx',
+    args: ['awslabs.aws-documentation-mcp-server@latest'],
   }),
-});
+})
 
 const agent = new Agent({
-  systemPrompt: "You are a helpful assistant using MCP tools.",
+  systemPrompt: 'You are a helpful assistant using MCP tools.',
   tools: [documentationTools], // Pass the MCP client directly as a tool source
-});
+})
 
-await agent.invoke("Use a random tool from the MCP server.");
+await agent.invoke('Use a random tool from the MCP server.')
 
-await documentationTools.disconnect();
+await documentationTools.disconnect()
 ```
 
-Enable automatic task execution on the same `McpClient` for legacy task servers:
+Enable automatic task execution on the same `McpClient` for modern SEP-2663 and legacy task servers:
 
 ```typescript
 await using taskTools = new McpClient({
-  url: "https://example.com/mcp",
+  url: 'https://example.com/mcp',
   tasksConfig: { pollTimeout: 300_000 },
-});
-const agent = new Agent({ tools: [taskTools] });
-await agent.invoke("Run the server's task tool.");
+})
+const agent = new Agent({ tools: [taskTools] })
+await agent.invoke("Run the server's task tool.")
 ```
 
-`callTool()` returns the final tool result. To bound total wall-clock time, set
-`tasksConfig.pollTimeout`; a call's `options.timeoutMs` overrides that value. The field
-names and defaults match the Python SDK's `TasksConfig`
+`callTool()` returns the final tool result. For explicit SEP-2663 task control on a server
+that advertises the tasks extension, submit once with `submitTool()` and manage the
+handle yourself:
+
+```typescript
+const [tool] = await taskTools.listTools()
+const submitted = await taskTools.submitTool(tool!, { value: 'input' })
+if (submitted.resultType === 'task') {
+  let state = await taskTools.getTask(submitted.taskId)
+  if (state.status === 'input_required') {
+    const [key] = Object.keys(state.inputRequests)
+    await taskTools.updateTask(submitted.taskId, {
+      [key!]: { action: 'accept', content: { value: 'approved' } },
+    })
+    state = await taskTools.getTask(submitted.taskId)
+  }
+  if (state.status === 'working') await taskTools.cancelTask(submitted.taskId)
+}
+```
+
+To bound total wall-clock time, set `tasksConfig.pollTimeout`; a call's `options.timeoutMs`
+overrides that value. The field names and defaults match the Python SDK's `TasksConfig`
 (`ttl` remains as a deprecated alias of `requestTimeout`):
 
-| Setting | Scope | Default |
-| --- | --- | --- |
-| `pollTimeout` | Entire automatic operation, including polling | 300,000 ms |
-| `requestTimeout` | Each task lifecycle request | 60,000 ms |
-| `pollInterval` | Polling delay when the server omits its interval | 1,000 ms |
+| Setting          | Scope                                                                                                   | Default    |
+| ---------------- | ------------------------------------------------------------------------------------------------------- | ---------- |
+| `pollTimeout`    | Entire automatic operation, including polling and input callbacks                                       | 300,000 ms |
+| `requestTimeout` | Each task lifecycle request                                                                             | 60,000 ms  |
+| `pollInterval`   | Polling delay when a legacy (2025-11-25) server omits its interval; SEP-2663 servers supply the cadence | 1,000 ms   |
 
 The first limit reached ends the wait. Matching progress resets the request timer
 only; the overall deadline never moves. For example, with `requestTimeout: 10_000`
@@ -359,6 +378,7 @@ We welcome contributions! See our [Contributing Guide](https://github.com/strand
 ---
 
 ## Stay in touch with the team
+
 Come meet the Strands team and other users on [**Discord**](https://discord.com/invite/strands)
 
 ---
@@ -372,4 +392,3 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 ## Security
 
 See [CONTRIBUTING](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md#security-issue-notifications) for more information on reporting security issues.
-

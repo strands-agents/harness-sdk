@@ -5,6 +5,29 @@ import { EPHEMERAL, namespace, normalizeKey, normalizePrefix } from './storage.j
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
+ * Configuration for {@link InMemoryStorage}.
+ */
+export interface InMemoryStorageConfig {
+  /**
+   * Search strategy. When set, `write()` indexes entries and `search()` delegates to the strategy
+   * instead of the default keyword scan.
+   */
+  searchStrategy?: SearchStrategy<InMemoryStorage>
+}
+
+/**
+ * Tells a search strategy passed positionally apart from an {@link InMemoryStorageConfig}.
+ *
+ * @param value - The constructor's argument
+ * @returns True if `value` is a search strategy
+ */
+function isSearchStrategy(
+  value: SearchStrategy<InMemoryStorage> | InMemoryStorageConfig | undefined
+): value is SearchStrategy<InMemoryStorage> {
+  return typeof (value as SearchStrategy<InMemoryStorage> | undefined)?.search === 'function'
+}
+
+/**
  * In-memory {@link Storage} backend backed by a `Map`.
  *
  * Useful for testing and for serverless environments where disk access is unavailable.
@@ -31,11 +54,16 @@ export class InMemoryStorage implements Storage {
   private readonly _searchStrategy: SearchStrategy<InMemoryStorage> | undefined
 
   /**
+   * @param config - Optional search strategy. See {@link InMemoryStorageConfig}.
+   */
+  constructor(config?: InMemoryStorageConfig)
+  /**
    * @param searchStrategy - Optional search strategy. When set, `write()` indexes entries
    *   and `search()` delegates to the strategy instead of the default keyword scan.
    */
-  constructor(searchStrategy?: SearchStrategy<InMemoryStorage>) {
-    this._searchStrategy = searchStrategy
+  constructor(searchStrategy?: SearchStrategy<InMemoryStorage>)
+  constructor(strategyOrConfig?: SearchStrategy<InMemoryStorage> | InMemoryStorageConfig) {
+    this._searchStrategy = isSearchStrategy(strategyOrConfig) ? strategyOrConfig : strategyOrConfig?.searchStrategy
   }
 
   /**

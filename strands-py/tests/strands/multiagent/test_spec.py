@@ -17,6 +17,7 @@ from strands.multiagent.spec import (
 )
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.tools.decorator import tool
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 _AXES = dict(
     presets={},
@@ -134,6 +135,18 @@ def test_default_builder_inherits_all_tools_when_spec_tools_is_none():
     child = _default_builder(parent)(AgentSpec())
     assert "read_tool" in child.tool_registry.registry
     assert "write_tool" in child.tool_registry.registry
+
+
+def test_default_builder_skips_parent_context_manager_tools():
+    class StatefulModel(MockedModelProvider):
+        stateful = True
+
+    parent = Agent(model=MockedModelProvider([]), context_manager="auto")
+    assert "retrieve_context" in parent.tool_registry.registry
+
+    # A stateful child has no context manager, so it must not inherit the parent's retrieve_context.
+    child = _default_builder(parent)(AgentSpec(model=StatefulModel([])))
+    assert "retrieve_context" not in child.tool_registry.registry
 
 
 def test_default_builder_resolves_tools_and_inherits_model():

@@ -1012,6 +1012,11 @@ def test_format_request_with_tool_choice_tool(model, messages, tool_specs, syste
             {"chunk_type": "message_stop", "data": "length"},
             {"messageStop": {"stopReason": "max_tokens"}},
         ),
+        # Message Stop - Content Filtered
+        (
+            {"chunk_type": "message_stop", "data": "content_filter"},
+            {"messageStop": {"stopReason": "content_filtered"}},
+        ),
         # Message Stop - End Turn
         (
             {"chunk_type": "message_stop", "data": "stop"},
@@ -1469,6 +1474,30 @@ def test_format_request_messages_excludes_reasoning_content():
         },
     ]
     assert tru_result == exp_result
+
+
+def test_format_request_warns_once_for_reasoning_content_across_history(model, caplog):
+    """Warns once per request regardless of how many messages carry reasoning (#4990)."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    reasoning_turn = {
+        "role": "assistant",
+        "content": [{"reasoningContent": {"reasoningText": {"text": "thinking"}}}, {"text": "step"}],
+    }
+    messages = [{"role": "user", "content": [{"text": "go"}]}, reasoning_turn, reasoning_turn, reasoning_turn]
+
+    model.format_request(messages)
+
+    tru_count = sum("reasoningContent is not supported" in record.getMessage() for record in caplog.records)
+    exp_count = 1
+    assert tru_count == exp_count
+
+
+def test_format_request_does_not_warn_without_reasoning_content(model, messages, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    model.format_request(messages)
+
+    assert "reasoningContent is not supported" not in caplog.text
 
 
 @pytest.mark.asyncio

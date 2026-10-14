@@ -419,9 +419,9 @@ def test_resolve_web_fetch_model_keeps_haiku_for_anthropic_on_bedrock():
 
 def test_resolve_web_fetch_model_reuses_main_model_for_unknown_bedrock_family(caplog):
     with caplog.at_level("WARNING"):
-        model = resolve_web_fetch_model("bedrock/amazon.nova-pro-v1:0", None)
+        model = resolve_web_fetch_model("bedrock/cohere.command-r-plus-v1:0", None)
     assert isinstance(model, BedrockModel)
-    assert model.get_config()["model_id"] == "amazon.nova-pro-v1:0"
+    assert model.get_config()["model_id"] == "cohere.command-r-plus-v1:0"
     assert "could not identify the Bedrock model family" in caplog.text
 
 

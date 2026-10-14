@@ -44,7 +44,7 @@ export interface FileMemoryStoreConfig extends MemoryStoreConfig {
  * supplied — a custom extractor brings its own model and prompt.
  */
 export interface FileMemoryExtractionConfig extends ExtractionConfig {
-  /** Model the built-in extractor uses to distill facts. Defaults to the agent's own model; set a cheaper one to cut cost. */
+  /** Model the built-in extractor uses to distill facts. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
   /**
    * Framing that steers what counts as a durable fact, replacing the default guidance. The store always
@@ -105,7 +105,7 @@ function slugify(text: string): string {
  * Headings are read via `storage.list`, so this must be the store's own namespaced storage.
  *
  * @param storage - Storage the entries live under, listed to derive existing headings
- * @param model - Model used to extract facts. Defaults to the agent's own model; set a cheaper one to cut cost.
+ * @param model - Model used to extract facts. Resolution order: `this model > agent.auxModel > agent.model`.
  * @param systemPrompt - Framing for what to extract, replacing {@link DEFAULT_EXTRACTION_GUIDANCE}. The
  *   {@link EXTRACTION_CONTRACT} is always appended after it.
  * @returns An extractor that reuses existing topic headings.

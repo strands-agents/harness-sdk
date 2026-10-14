@@ -82,7 +82,7 @@ export interface MemoryStoreConfig {
    * The defaults run every 5 turns, and the extraction method depends on the store's write methods. A
    * store implementing `addMessages` uses server-side extraction: the manager hands it the raw messages
    * and the backend extracts them, with no model call. A store implementing only `add` uses a
-   * {@link ModelExtractor} for client-side extraction: it calls the agent's model to distill facts and
+   * {@link ModelExtractor} for client-side extraction: it calls `agent.auxModel` to distill facts and
    * stores each one via `add`.
    *
    * @defaultValue false

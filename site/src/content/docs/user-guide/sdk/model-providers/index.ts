@@ -26,3 +26,16 @@ async function basicUsage() {
   response = await agent.invoke('What can you help me with?')
   // --8<-- [end:basic_usage]
 }
+
+async function auxModel() {
+  // --8<-- [start:aux_model]
+  const agent = new Agent({
+    model: new BedrockModel({ modelId: 'global.anthropic.claude-opus-5-20260301-v1:0' }),
+    auxModel: new BedrockModel({ modelId: 'global.anthropic.claude-haiku-4-5-20251001-v1:0' }),
+    contextManager: 'auto',
+  })
+
+  // A string is a Bedrock model id, like `model`; assign later to change it.
+  agent.auxModel = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+  // --8<-- [end:aux_model]
+}

@@ -10,7 +10,6 @@ import type { ContentBlock, SystemPrompt } from '../../../types/messages.js'
 import { CachePointBlock, TextBlock } from '../../../types/messages.js'
 import type { ToolUse } from '../../../tools/types.js'
 import type { BeforeToolCallEvent } from '../../../hooks/events.js'
-import type { LocalAgent } from '../../../types/agent.js'
 import type { SteeringContextData, SteeringContextProvider } from '../providers/context-provider.js'
 import { ToolLedgerProvider } from '../providers/tool-ledger.js'
 import { SteeringHandler } from './handler.js'
@@ -130,7 +129,7 @@ export interface LLMSteeringHandlerConfig {
   /** System prompt defining the steering guidance rules. */
   systemPrompt: SystemPrompt
 
-  /** Model for steering evaluation. Defaults to the parent agent's model. */
+  /** Model for steering evaluation. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
 
   /** Custom prompt builder for evaluation prompts. Defaults to defaultPromptBuilder. */
@@ -189,7 +188,6 @@ export class LLMSteeringHandler extends SteeringHandler {
 
   private readonly _promptBuilder: PromptBuilder
   private readonly _configuredModel: Model | undefined
-  private _agentModel: Model | undefined
   private readonly _systemPrompt: SystemPrompt
 
   constructor(config: LLMSteeringHandlerConfig) {
@@ -203,15 +201,10 @@ export class LLMSteeringHandler extends SteeringHandler {
     this._systemPrompt = config.systemPrompt
   }
 
-  override async observeAgent(agent: LocalAgent): Promise<void> {
-    this._agentModel = agent.model
-    await super.observeAgent(agent)
-  }
-
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<Proceed | Guide | Confirm> {
     const context = this.getSteeringContext()
     const prompt = this._promptBuilder(context, event.toolUse)
-    const decision = await this._invoke(prompt)
+    const decision = await this._invoke(prompt, this._configuredModel ?? event.agent.auxModel)
 
     switch (decision.type) {
       case 'proceed':
@@ -226,13 +219,7 @@ export class LLMSteeringHandler extends SteeringHandler {
   // Constructs a fresh inner agent per call so the handler has no shared
   // mutable state between invocations — this keeps it safe to attach to
   // multiple parent agents (whose tool calls may evaluate concurrently).
-  private async _invoke(prompt: string | ContentBlock[]): Promise<SteeringDecision> {
-    const model = this._configuredModel ?? this._agentModel
-    if (!model) {
-      throw new Error(
-        'LLMSteeringHandler has no model — pass `model` in config, or attach the handler to an agent before invoking it.'
-      )
-    }
+  private async _invoke(prompt: string | ContentBlock[], model: Model): Promise<SteeringDecision> {
     const inner = new Agent({
       model,
       systemPrompt: this._systemPrompt,

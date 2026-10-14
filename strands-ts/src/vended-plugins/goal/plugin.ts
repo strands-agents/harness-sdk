@@ -10,7 +10,7 @@
  * import { Agent } from '@strands-agents/sdk'
  * import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
  *
- * // Natural-language goal — judged by an internal Agent built from the host's model.
+ * // Natural-language goal — judged by an internal Agent built from the host's auxModel.
  * const concise = new GoalLoop({
  *   goal: 'At most 3 sentences, accessible to a 10-year-old, no jargon.',
  *   maxAttempts: 3,
@@ -117,8 +117,9 @@ export interface GoalResult {
  */
 export interface JudgeConfig {
   /**
-   * Model the judge agent uses. Defaults to the host agent's model. Consider
-   * passing a cheaper or faster model (e.g. Haiku) to keep judging cheap.
+   * Model the judge agent uses. Resolution order: `this model > agent.auxModel > agent.model`
+   * of the host agent. Consider passing a cheaper or faster model (e.g. Haiku) to keep
+   * judging cheap.
    */
   model?: Model
   /**
@@ -406,7 +407,7 @@ export class GoalLoop implements Plugin {
     // can evaluate against context, not just the last assistant turn.
     return async () => {
       const judge = new Agent({
-        model: this._judgeModel ?? hostAgent.model,
+        model: this._judgeModel ?? hostAgent.auxModel,
         printer: false,
         systemPrompt: this._judgeSystemPrompt,
       })

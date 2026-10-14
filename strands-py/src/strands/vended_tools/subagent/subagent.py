@@ -375,6 +375,7 @@ def make_subagent(
     context: Fixed | Choice | None = None,
     max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH,
     name: str = "subagent",
+    description: str = DEFAULT_SUBAGENT_DESCRIPTION,
 ) -> AgentTool:
     """Build a ``subagent`` tool whose schema is derived from the axis modes and presets.
 
@@ -382,11 +383,13 @@ def make_subagent(
     the model sees and can supply. Omitted axes use sensible defaults.
 
     Raises:
-        ValueError: If *max_depth* < 1, *name* is empty, or a ``Choice`` axis violates
+        ValueError: If *max_depth* < 1, *name* or *description* is empty, or a ``Choice`` axis violates
             its constraints (empty options, ``multiple=False`` for tools).
     """
     if not name:
         raise ValueError("name must be a non-empty string.")
+    if not description:
+        raise ValueError("description must be a non-empty string.")
     if not isinstance(max_depth, int) or isinstance(max_depth, bool) or max_depth < 1:
         raise ValueError("max_depth must be a positive integer (>= 1).")
 
@@ -425,7 +428,7 @@ def make_subagent(
     )
     tool_spec = {
         "name": name,
-        "description": _description(DEFAULT_SUBAGENT_DESCRIPTION, presets),
+        "description": _description(description, presets),
         "inputSchema": {"json": schema},
     }
 

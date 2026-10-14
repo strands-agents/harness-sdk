@@ -842,6 +842,37 @@ describe('OpenAIModel', () => {
       })
     })
 
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4847: OpenAI-compatible
+    // providers such as OpenRouter send usage on the finish_reason chunk instead of a choice-less chunk.
+    it('emits usage that arrives on the finish_reason chunk', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ delta: { content: 'Hi' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: { content: '' }, index: 0 }],
+          usage: { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hi' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMetadataEvent', usage: { inputTokens: 8, outputTokens: 6, totalTokens: 14 } },
+        { type: 'modelMessageStopEvent', stopReason: 'endTurn' },
+      ])
+    })
+
     it('filters out empty string content deltas', async () => {
       const mockClient = createMockClient(async function* () {
         yield {
