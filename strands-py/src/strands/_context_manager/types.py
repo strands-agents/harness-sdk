@@ -56,6 +56,13 @@ class ContextStrategy(Protocol):
 
     Strategies are applied in order during the pipeline. Each decides whether
     to act based on the current context state.
+
+    Two optional lifecycle methods are honored when present:
+
+    - ``init(agent, stash=None)``: called once when the ContextManager is attached to an agent,
+      for example to register hooks.
+    - ``flush(agent) -> bool``: called when an invocation ends, before session persistence,
+      so work the strategy deferred during the invocation is applied to ``agent.messages``.
     """
 
     @property

@@ -51,7 +51,7 @@ class _OffloadNamespace:
 
         Args:
             target: What content to target for summarization.
-            config: Method-specific config (model, system_prompt).
+            config: Method-specific config (model, system_prompt, background).
 
         Returns:
             A SummarizeStrategy builder (usable directly or with .when()).

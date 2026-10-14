@@ -8,7 +8,7 @@ from strands._context_manager.context_manager import ContextManager
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
-from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.hooks.events import AfterInvocationEvent, AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
@@ -538,3 +538,35 @@ class TestStashRoot:
         await context_manager.stash.store("tool-1", 0, b"{}")
 
         assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]
+
+
+class TestContextManagerFlush:
+    """Tests for the end-of-invocation flush of strategies that defer work."""
+
+    @pytest.mark.asyncio
+    async def test_flushes_strategies_before_default_order_hooks(self, mock_agent):
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "mock-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.flush = unittest.mock.AsyncMock(return_value=True)
+        order: list[str] = []
+        strategy.flush.side_effect = lambda agent: order.append("flush") or True
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+        mock_agent.hooks.add_callback(AfterInvocationEvent, lambda event: order.append("default"))
+
+        await mock_agent.hooks.invoke_callbacks_async(AfterInvocationEvent(agent=mock_agent))
+
+        strategy.flush.assert_awaited_once_with(mock_agent)
+        tru_order = order
+        exp_order = ["flush", "default"]
+        assert tru_order == exp_order
+
+    def test_strategies_without_flush_register_no_hook(self, mock_agent):
+        strategy = unittest.mock.MagicMock(spec=["name", "apply"])
+        strategy.name = "mock-strategy"
+        cm = ContextManager(strategies=[strategy])
+        cm._strategies = [strategy]
+        cm.init_agent(mock_agent)
+
+        assert AfterInvocationEvent not in mock_agent.hooks._registered_callbacks

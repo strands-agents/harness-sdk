@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ....models._validation import validate_config_keys
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
+    BackgroundSummarizeConfig,
     SummarizeConfig,
     _flatten_messages_to_content,
     _format_summarized,
@@ -25,12 +27,28 @@ from .base import (
     _repair_alternation,
     _splice_with_pairs,
 )
+from .deferred import DeferredOptions
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_background(config: bool | BackgroundSummarizeConfig) -> DeferredOptions | None:
+    """Resolve public background summarization config into internal deferred-work options."""
+    if config is False:
+        return None
+    if config is True:
+        return DeferredOptions()
+    validate_config_keys(config, BackgroundSummarizeConfig)
+    defaults = DeferredOptions()
+    return DeferredOptions(
+        max_concurrency=config.get("max_concurrency", defaults.max_concurrency),
+        task_timeout=config.get("task_timeout", defaults.task_timeout),
+        flush_timeout=config.get("flush_timeout", defaults.flush_timeout),
+    )
 
 
 class SummarizeStrategy(BaseOffloadStrategy):
@@ -47,8 +65,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         config: SummarizeConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
-        super().__init__(target, conditions)
+        """Initialize the strategy.
+
+        Raises:
+            ValueError: If ``background`` is combined with a ``utilization`` condition.
+        """
         self._config: SummarizeConfig = config or {}
+        super().__init__(target, conditions, background=_resolve_background(self._config.get("background", False)))
 
     def when(
         self,

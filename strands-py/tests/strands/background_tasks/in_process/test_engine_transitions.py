@@ -184,3 +184,28 @@ def test_init_rejects_invalid_execution_configuration() -> None:
     with pytest.raises(TypeError, match="timeout must be a positive"):
         create_engine(complete, timeout=0)
     create_engine(complete, timeout=2**31)
+
+
+@pytest.mark.asyncio
+async def test_remove_and_resume_report_background_task_errors() -> None:
+    finish, resolve = deferred()
+
+    async def execute(_: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
+        return await finish
+
+    engine = create_engine(execute)
+    task = engine.submit(**create_admission("work"))
+
+    with pytest.raises(
+        RuntimeError, match=r"^Background task '.+' cannot be removed before reaching a terminal status$"
+    ):
+        engine.remove(task["task_id"])
+    with pytest.raises(RuntimeError, match=r"^Background task '.+' cannot be resumed: status is 'queued'"):
+        engine.resume(task["task_id"], lambda state: (state, True))
+    with pytest.raises(BackgroundTaskNotFoundError, match="was not found"):
+        engine.remove("missing")
+    with pytest.raises(BackgroundTaskNotFoundError, match="was not found"):
+        engine.resume("missing", lambda state: (state, True))
+
+    resolve({"status": "completed", "result": create_result("done")})
+    await engine.wait_for_idle()

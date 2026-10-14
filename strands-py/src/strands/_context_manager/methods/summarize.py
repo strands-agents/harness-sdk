@@ -45,6 +45,21 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 
+class BackgroundSummarizeConfig(TypedDict, total=False):
+    """Configuration for background summarization.
+
+    Attributes:
+        max_concurrency: Summaries computed concurrently per batch. Defaults to 10.
+        task_timeout: Seconds one summary may take before it is abandoned. Defaults to 60.
+        flush_timeout: Seconds an invocation may wait for its final batch before dropping
+            the batch and returning with the original blocks. Defaults to 30.
+    """
+
+    max_concurrency: int
+    task_timeout: float
+    flush_timeout: float
+
+
 class SummarizeConfig(TypedDict, total=False):
     """Configuration for the summarize method.
 
@@ -52,10 +67,17 @@ class SummarizeConfig(TypedDict, total=False):
         model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
             > ``agent.model``.
         system_prompt: Custom system prompt for the summarization model.
+        background: True or a :class:`BackgroundSummarizeConfig` to compute eligible
+            blocks concurrently while the agent loop continues. A later strategy pass
+            applies the batch before its model call; the invocation waits up to
+            ``flush_timeout`` for any remaining batch before returning. Errors and
+            timeouts leave original blocks untouched. Applies to per-block strategies
+            only. Defaults to False.
     """
 
     model: Model
     system_prompt: str
+    background: bool | BackgroundSummarizeConfig
 
 
 async def _summarize_content(
