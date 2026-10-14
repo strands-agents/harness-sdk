@@ -29,19 +29,17 @@ function createAgent(): Agent {
   })
 }
 
-function disconnectSignal(req: Request, res: Response) {
+function disconnectSignal(res: Response) {
   const controller = new AbortController()
   const abort = () => {
     if (!res.writableEnded) controller.abort()
   }
 
-  req.once('aborted', abort)
   res.once('close', abort)
 
   return {
     signal: controller.signal,
     cleanup() {
-      req.off('aborted', abort)
       res.off('close', abort)
     },
   }
@@ -54,7 +52,7 @@ app.post('/ask', async (req, res) => {
     return
   }
 
-  const connection = disconnectSignal(req, res)
+  const connection = disconnectSignal(res)
 
   try {
     const agent = createAgent()
@@ -100,19 +98,17 @@ function createAgent(): Agent {
   })
 }
 
-function disconnectSignal(req: Request, res: Response) {
+function disconnectSignal(res: Response) {
   const controller = new AbortController()
   const abort = () => {
     if (!res.writableEnded) controller.abort()
   }
 
-  req.once('aborted', abort)
   res.once('close', abort)
 
   return {
     signal: controller.signal,
     cleanup() {
-      req.off('aborted', abort)
       res.off('close', abort)
     },
   }
@@ -125,7 +121,7 @@ app.post('/ask/stream', async (req, res) => {
     return
   }
 
-  const connection = disconnectSignal(req, res)
+  const connection = disconnectSignal(res)
   const agent = createAgent()
 
   res.status(200)
