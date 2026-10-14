@@ -3,13 +3,14 @@ import { z } from 'zod'
 
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../agent/agent.js'
-import { AfterToolCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
+import type { Invocation } from '../../agent/invocation.js'
+import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import { ImageBlock } from '../../types/media.js'
-import { TextBlock } from '../../types/messages.js'
+import { JsonBlock, TextBlock } from '../../types/messages.js'
 import type { ToolUseBlock } from '../../types/messages.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { BackgroundTask } from '../types.js'
@@ -202,6 +203,58 @@ describe('BackgroundTasks', () => {
     ).toThrow("Tool 'work' cannot be configured as both 'always' and 'never'")
   })
 
+  it('runs queued work under the request that submitted it, even after that request returned', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const blocker = tool({
+      name: 'blocker',
+      description: 'Hold the only execution slot.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'unblocked'
+      },
+    })
+    let probeRan = false
+    let probeInvocation: Invocation | undefined
+    const probe = tool({
+      name: 'probe',
+      description: 'Record the request it runs under.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        probeRan = true
+        probeInvocation = context?.invocation
+        return 'probed'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'blocker', toolUseId: 'blocker-use', input: { _background_execution: true } },
+        { type: 'toolUseBlock', name: 'probe', toolUseId: 'probe-use', input: { _background_execution: true } },
+      ])
+      .addTurn({ type: 'textBlock', text: 'Tasks admitted.' })
+    const agent = new Agent({
+      model,
+      tools: [blocker, probe],
+      backgroundTasks: { waitForCompletion: false, maxConcurrency: 1 },
+      printer: false,
+    })
+    let submittingInvocation: Invocation | undefined
+    agent.addHook(BeforeModelCallEvent, (event) => {
+      submittingInvocation ??= event?.invocation
+    })
+
+    await agent.invoke('Run both.')
+    expect(probeRan).toBe(false)
+
+    release()
+    await expect.poll(() => probeRan).toBe(true)
+    expect(submittingInvocation).toBeDefined()
+    expect(probeInvocation).toBe(submittingInvocation)
+  })
+
   it('delivers work that finishes between invocations', async () => {
     const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
     let release!: () => void
@@ -269,11 +322,22 @@ describe('BackgroundTasks', () => {
     await restored.invoke('Continue.')
 
     expect(deliveries(restored)).toHaveLength(1)
+    // Recovered from a snapshot: the delivering invocation is not the one that
+    // dispatched the task, so the metadata carries provenance.
+    const [inspectedMetadata, ...inspectedResult] = inspected.content
     expect(restored.messages.flatMap((message) => message.content)).toContainEqual({
       type: 'toolResultBlock',
       toolUseId: taskId,
       status: 'success',
-      content: inspected.content,
+      content: [
+        new JsonBlock({
+          json: {
+            ...((inspectedMetadata as JsonBlock).json as object),
+            startedBy: 'an earlier request in this conversation',
+          },
+        }),
+        ...inspectedResult,
+      ],
     })
     expect(persistedTasks(restored)).toBeUndefined()
   })

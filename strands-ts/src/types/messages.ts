@@ -704,6 +704,7 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  * - `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue
  * - `refusal` - A streaming classifier intervened to handle a potential policy violation
  * - `stopSequence` - A stop sequence was encountered
+ * - `superseded` - Agent loop stopped at a cycle boundary because another invocation took the turn (`concurrentInvocationMode: 'stopPrevious'`)
  * - `toolUse` - Model wants to use a tool
  * - `modelContextWindowExceeded` - Input exceeded the model's context window
  */
@@ -721,9 +722,29 @@ export type StopReason =
   | 'pauseTurn'
   | 'refusal'
   | 'stopSequence'
+  | 'superseded'
   | 'toolUse'
   | 'modelContextWindowExceeded'
   | (string & {}) // Allow any string while preserving autocomplete for known values
+
+/**
+ * Stop reasons signalling a request hit one of its {@link InvokeOptions.limits}.
+ *
+ * @internal
+ */
+export const LIMIT_STOP_REASONS = new Set<StopReason>(['limitTurns', 'limitTotalTokens', 'limitOutputTokens'])
+
+/**
+ * Explains that a nested agent stopped on a limit (its own or the request's), so its answer is incomplete.
+ *
+ * @param agentName - Name of the agent that stopped
+ * @param stopReason - The limit stop reason it returned
+ * @returns The message to surface in place of the agent's answer
+ * @internal
+ */
+export function limitStopMessage(agentName: string, stopReason: StopReason): string {
+  return `Agent '${agentName}' stopped early (${stopReason}): a limit on this call was reached, so its answer is incomplete`
+}
 
 /**
  * System prompt for guiding model behavior.

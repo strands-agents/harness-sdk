@@ -3,10 +3,11 @@ import { context, trace } from '@opentelemetry/api'
 import type { MemoryStore } from '../types.js'
 import type { MessageData, ContentBlockData } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
+import { createAuxiliaryInvocation, type Invocation } from '../../agent/invocation.js'
 import { logger } from '../../logging/logger.js'
 import { normalizeError } from '../../errors.js'
 import type { Tracer } from '../../telemetry/tracer.js'
-import type { MemoryMessageFilter } from './types.js'
+import type { ExtractorContext, MemoryMessageFilter } from './types.js'
 import type { ResolvedExtractionConfig } from './resolve-extraction-config.js'
 
 /**
@@ -141,20 +142,20 @@ export class ExtractionCoordinator {
    * two never run at once. Failures are logged and swallowed - saving must never break the agent loop.
    * The returned promise is for {@link flush}; callers (triggers) ignore it so they don't block.
    */
-  process(store: MemoryStore): Promise<void> {
+  process(store: MemoryStore, invocation?: Invocation): Promise<void> {
     if (!this._shouldAttempt(store)) {
       return Promise.resolve()
     }
     // Capture the agent span synchronously: this runs inside the live agent span (via the trigger
     // hook), but the save itself runs detached after that span may have ended.
     const linkContext = this._tracer.currentSpanContext()
-    return this._enqueue(store, linkContext)
+    return this._enqueue(store, linkContext, invocation)
   }
 
   /** Queues a save for the store behind its previous one, so saves never overlap or reorder. */
-  private _enqueue(store: MemoryStore, linkContext?: SpanContext): Promise<void> {
+  private _enqueue(store: MemoryStore, linkContext?: SpanContext, invocation?: Invocation): Promise<void> {
     const previous = this._chains.get(store) ?? Promise.resolve()
-    const next = previous.then(() => this._extract(store, linkContext))
+    const next = previous.then(() => this._extract(store, linkContext, invocation))
     this._chains.set(store, next)
     return next
   }
@@ -196,7 +197,7 @@ export class ExtractionCoordinator {
     }
   }
 
-  private async _extract(store: MemoryStore, linkContext?: SpanContext): Promise<void> {
+  private async _extract(store: MemoryStore, linkContext?: SpanContext, invocation?: Invocation): Promise<void> {
     const mark = this._marks.get(store) ?? -1
     const fresh = this._pending.filter((buffered) => buffered.seq > mark)
     if (fresh.length === 0) {
@@ -224,7 +225,7 @@ export class ExtractionCoordinator {
     try {
       if (filtered.length > 0) {
         // Set the extract span active so the model-extractor's invoke span parents under it.
-        const write = (): Promise<number> => this._write(store, filtered)
+        const write = (): Promise<number> => this._write(store, filtered, invocation)
         entryCount = span ? await context.with(trace.setSpan(context.active(), span), write) : await write()
         // A successful write clears the failure streak and ends any backoff. Only a real write counts
         // as recovery - a fully-filtered (empty) turn never touched the backend, so it leaves backoff
@@ -283,15 +284,18 @@ export class ExtractionCoordinator {
    *
    * @returns The number of entries written (extracted facts, or raw messages).
    */
-  private async _write(store: MemoryStore, buffered: BufferedMessage[]): Promise<number> {
+  private async _write(store: MemoryStore, buffered: BufferedMessage[], invocation?: Invocation): Promise<number> {
     const extractor = this._storeToExtractionConfig.get(store)!.extractor
     const messages = buffered.map((buffer) => buffer.message)
 
     if (extractor) {
-      const entries = await extractor.extract(messages, {
+      const auxiliaryInvocation = createAuxiliaryInvocation(invocation)
+      const extractorContext: ExtractorContext = {
         defaultModel: this._defaultModel,
         tracer: this._tracer,
-      })
+        ...(auxiliaryInvocation && { invocation: auxiliaryInvocation }),
+      }
+      const entries = await extractor.extract(messages, extractorContext)
       const settled = await Promise.allSettled(entries.map((entry) => store.add!(entry.content, entry.metadata)))
       const failures = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
       if (failures.length > 0) {

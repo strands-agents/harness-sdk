@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
+import { createInvocation } from '../../../agent/invocation.js'
 import { logger } from '../../../logging/logger.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../../tools/structured-output-tool.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
@@ -541,6 +542,30 @@ describe('ClassifierStrategy', () => {
 
       expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'nested' })
       expect(classifier.calls).toBe(1)
+    })
+  })
+
+  describe('request limits', () => {
+    it('adds the classifier usage to the request total even when the request limit is used up', async () => {
+      const classifier = new ClassifierModel().addTurn(
+        {
+          type: 'toolUseBlock',
+          name: STRUCTURED_OUTPUT_TOOL_NAME,
+          toolUseId: 'classification',
+          input: { selectedCandidateIndex: 1 },
+        },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      ) as ClassifierModel
+      const strategy = new ClassifierStrategy(classifier)
+      const router = new ModelRouter([candidate('first'), candidate('second')], { strategy })
+      const invocation = createInvocation({ turns: 1 })
+      invocation.turns = 5
+
+      const selected = await strategy.select({ ...routingContext(router), invocation })
+
+      expect(selected).toBe(router.candidates[1])
+      expect(invocation.usage).toEqual({ inputTokens: 4, outputTokens: 5, totalTokens: 9 })
+      expect(invocation.turns).toBe(5)
     })
   })
 

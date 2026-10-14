@@ -10,6 +10,8 @@ import type { ContentBlock, SystemPrompt } from '../../../types/messages.js'
 import { CachePointBlock, TextBlock } from '../../../types/messages.js'
 import type { ToolUse } from '../../../tools/types.js'
 import type { BeforeToolCallEvent } from '../../../hooks/events.js'
+import { createAuxiliaryInvocation, type Invocation } from '../../../agent/invocation.js'
+import type { InvokeOptions } from '../../../types/agent.js'
 import type { SteeringContextData, SteeringContextProvider } from '../providers/context-provider.js'
 import { ToolLedgerProvider } from '../providers/tool-ledger.js'
 import { SteeringHandler } from './handler.js'
@@ -204,7 +206,7 @@ export class LLMSteeringHandler extends SteeringHandler {
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<Proceed | Guide | Confirm> {
     const context = this.getSteeringContext()
     const prompt = this._promptBuilder(context, event.toolUse)
-    const decision = await this._invoke(prompt, this._configuredModel ?? event.agent.auxModel)
+    const decision = await this._invoke(prompt, this._configuredModel ?? event.agent.auxModel, event.invocation)
 
     switch (decision.type) {
       case 'proceed':
@@ -219,14 +221,24 @@ export class LLMSteeringHandler extends SteeringHandler {
   // Constructs a fresh inner agent per call so the handler has no shared
   // mutable state between invocations — this keeps it safe to attach to
   // multiple parent agents (whose tool calls may evaluate concurrently).
-  private async _invoke(prompt: string | ContentBlock[], model: Model): Promise<SteeringDecision> {
+  private async _invoke(
+    prompt: string | ContentBlock[],
+    model: Model,
+    invocation?: Invocation
+  ): Promise<SteeringDecision> {
     const inner = new Agent({
       model,
       systemPrompt: this._systemPrompt,
       structuredOutputSchema: STEERING_DECISION,
       printer: false,
     })
-    const result = await inner.invoke(prompt)
+    // Fold the steering call's tokens into the request total without limiting this
+    // auxiliary call by the request's limits.
+    const auxiliaryInvocation = createAuxiliaryInvocation(invocation)
+    const invokeOptions: InvokeOptions = {
+      ...(auxiliaryInvocation && { invocation: auxiliaryInvocation }),
+    }
+    const result = await inner.invoke(prompt, invokeOptions)
     return STEERING_DECISION.parse(result.structuredOutput)
   }
 }

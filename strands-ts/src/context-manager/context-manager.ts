@@ -6,6 +6,7 @@
 
 import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
+import { createAuxiliaryInvocation, type Invocation } from '../agent/invocation.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
@@ -153,7 +154,7 @@ export class ContextManager implements Plugin {
     }
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
-      await this._runStrategies(event.agent, event.projectedInputTokens)
+      await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocation)
     })
 
     // Assumes sequential invocations on this agent (no concurrent calls)
@@ -170,7 +171,7 @@ export class ContextManager implements Plugin {
         return
       }
 
-      const acted = await this._runStrategies(event.agent, undefined, true)
+      const acted = await this._runStrategies(event.agent, undefined, true, event.invocation)
       if (!acted) {
         logger.warn(`agentId=<${event.agent.id}> | no strategy made progress, skipping retry`)
         return
@@ -203,10 +204,12 @@ export class ContextManager implements Plugin {
   private async _runStrategies(
     agent: LocalAgent,
     precomputedInputTokens?: number,
-    overflow?: boolean
+    overflow?: boolean,
+    invocation?: Invocation
   ): Promise<boolean> {
     const messages = agent.messages
     const inputTokens = precomputedInputTokens ?? (await agent.model.countTokens(messages))
+    const auxiliaryInvocation = createAuxiliaryInvocation(invocation)
 
     const strategyContext: ContextState = {
       messages,
@@ -214,6 +217,7 @@ export class ContextManager implements Plugin {
       utilization: agent.model.estimateUtilization(inputTokens),
       ...(overflow ? { overflow: true } : {}),
       ...(this._stash ? { stash: this._stash } : {}),
+      ...(auxiliaryInvocation && { invocation: auxiliaryInvocation }),
     }
 
     let anyActed = false

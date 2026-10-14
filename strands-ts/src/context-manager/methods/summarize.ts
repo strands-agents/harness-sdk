@@ -7,6 +7,8 @@
  */
 
 import type { Model } from '../../models/model.js'
+import { ModelProxy } from '../../models/model-proxy.js'
+import type { Invocation } from '../../agent/invocation.js'
 import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
@@ -59,15 +61,16 @@ export interface SummarizeConfig {
 export async function summarizeContent(
   content: ContentBlock[],
   model: Model,
-  config?: SummarizeConfig
+  config?: SummarizeConfig,
+  invocation?: Invocation
 ): Promise<string | null> {
-  const result = await callSummarizer(content, model, config)
+  const result = await callSummarizer(content, model, config, invocation)
   if (result !== undefined) return result
 
   const textOnly = content.filter((block) => block instanceof TextBlock)
   if (textOnly.length === 0 || textOnly.length === content.length) return null
 
-  const textResult = await callSummarizer(textOnly, model, config)
+  const textResult = await callSummarizer(textOnly, model, config, invocation)
   return textResult ?? null
 }
 
@@ -106,7 +109,8 @@ export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
 async function callSummarizer(
   content: ContentBlock[],
   model: Model,
-  config?: SummarizeConfig
+  config?: SummarizeConfig,
+  invocation?: Invocation
 ): Promise<string | null | undefined> {
   const messages = [
     new Message({
@@ -116,9 +120,11 @@ async function callSummarizer(
   ]
 
   try {
-    const stream = model.streamAggregated(messages, {
-      systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    })
+    const stream = new ModelProxy(model).streamAggregated(
+      messages,
+      { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+      invocation
+    )
 
     let result: Awaited<ReturnType<typeof stream.next>> | undefined
     for (;;) {

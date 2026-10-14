@@ -3,7 +3,7 @@
  * Validates the agent's response after each invocation; if it doesn't
  * satisfy the goal, feeds validator feedback back as a user message and re-enters the
  * agent loop via `AfterInvocationEvent.resume`. Loops until validation passes,
- * `maxAttempts` is reached, or `timeout` elapses.
+ * `maxAttempts` is reached, `timeout` elapses, or the request hits one of its `limits`.
  *
  * @example
  * ```ts
@@ -61,12 +61,13 @@
  */
 
 import { Agent } from '../../agent/agent.js'
+import { createAuxiliaryInvocation, reachedLimit, toInternal, type Invocation } from '../../agent/invocation.js'
 import { AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import type { Model } from '../../models/model.js'
 import type { Plugin } from '../../plugins/plugin.js'
-import type { LocalAgent } from '../../types/agent.js'
+import type { InvokeOptions, LocalAgent } from '../../types/agent.js'
 import type { ContentBlock, Message } from '../../types/messages.js'
 import type { Snapshot } from '../../types/snapshot.js'
 import { JUDGE_OUTCOME_SCHEMA, JUDGE_SYSTEM_PROMPT, buildJudgePrompt } from './judge.js'
@@ -92,8 +93,8 @@ export type Validator = (
   agent: LocalAgent
 ) => boolean | ValidationOutcome | Promise<boolean | ValidationOutcome>
 
-/** Why a goal run ended. */
-export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout'
+/** Why a goal run ended. `'limit'` means the request hit one of its `limits`, so no further attempt could run. */
+export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit'
 
 /** Single attempt summary preserved on `GoalResult`. */
 export interface GoalAttempt {
@@ -205,6 +206,8 @@ interface RunState {
   attempts: GoalAttempt[]
   result?: GoalResult
   resumed?: boolean
+  /** The latest assistant message when the current pass started, to tell whether the pass produced a new answer. */
+  answerBeforePass: Message | undefined
   /**
    * Set on attempt 1 when `preserveContext` is `false`. Captures the full
    * model-visible session (messages, systemPrompt, modelState, interrupts) and
@@ -303,9 +306,14 @@ export class GoalLoop implements Plugin {
       const existing = this._runs.get(agent)
       if (existing?.resumed) {
         existing.resumed = false
+        existing.answerBeforePass = lastAssistantMessage(agent.messages)
         return
       }
-      this._runs.set(agent, { startTime: Date.now(), attempts: [] })
+      this._runs.set(agent, {
+        startTime: Date.now(),
+        attempts: [],
+        answerBeforePass: lastAssistantMessage(agent.messages),
+      })
     })
 
     // On attempt 1 only, snapshot the model-visible session while
@@ -344,15 +352,21 @@ export class GoalLoop implements Plugin {
         return
       }
 
-      // Cancelled or model-threw before emitting an assistant message.
       const response = lastAssistantMessage(agent.messages)
+      const invocation = toInternal(event.invocation)
+      // The request's limit stopped this pass before it produced a new answer, so there is nothing to grade.
+      if (response === run.answerBeforePass && invocation && reachedLimit(invocation)) {
+        finishRun(run, 'limit')
+        return
+      }
+      // Cancelled or model-threw before emitting an assistant message.
       if (!response) return
 
       const attemptNumber = run.attempts.length + 1
 
       let outcome: ValidationOutcome
       try {
-        outcome = await validator(response)
+        outcome = await validator(response, event.invocation)
       } catch (validatorError) {
         // Surface validator throws so a buggy validator (e.g. a TypeError that
         // fails identically on every attempt) is visible in logs rather than
@@ -375,6 +389,11 @@ export class GoalLoop implements Plugin {
         finishRun(run, 'maxAttempts')
         return
       }
+      // A retry would stop at once on the request's limit, so keep this attempt instead of rolling it back.
+      if (invocation && reachedLimit(invocation)) {
+        finishRun(run, 'limit')
+        return
+      }
 
       if (run.initialSnapshot) {
         agent.loadSnapshot(run.initialSnapshot)
@@ -391,7 +410,9 @@ export class GoalLoop implements Plugin {
    * per call so prior judgements' prompts don't leak into the next judgement's
    * context.
    */
-  private _buildValidator(hostAgent: LocalAgent): (response: Message) => Promise<ValidationOutcome> {
+  private _buildValidator(
+    hostAgent: LocalAgent
+  ): (response: Message, invocation?: Invocation) => Promise<ValidationOutcome> {
     const validator = this._validator
     if (validator) {
       return async (response) => {
@@ -405,15 +426,20 @@ export class GoalLoop implements Plugin {
     // The NL judge intentionally ignores the `response` argument — its prompt
     // includes the full host transcript (via `buildJudgePrompt`) so the judge
     // can evaluate against context, not just the last assistant turn.
-    return async () => {
+    return async (_response, invocation) => {
       const judge = new Agent({
         model: this._judgeModel ?? hostAgent.auxModel,
         printer: false,
         systemPrompt: this._judgeSystemPrompt,
       })
-      const judgeResult = await judge.invoke(buildJudgePrompt(goalDescription, hostAgent.messages), {
+      // Fold the judge's tokens into the request total without limiting this
+      // auxiliary call by the request's limits.
+      const auxiliaryInvocation = createAuxiliaryInvocation(invocation)
+      const invokeOptions: InvokeOptions = {
         structuredOutputSchema: JUDGE_OUTCOME_SCHEMA,
-      })
+        ...(auxiliaryInvocation && { invocation: auxiliaryInvocation }),
+      }
+      const judgeResult = await judge.invoke(buildJudgePrompt(goalDescription, hostAgent.messages), invokeOptions)
       return (
         (judgeResult.structuredOutput as ValidationOutcome | undefined) ?? {
           passed: false,
