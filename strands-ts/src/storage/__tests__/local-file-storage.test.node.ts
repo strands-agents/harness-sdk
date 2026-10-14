@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
 import { LocalFileStorage } from '../local-file-storage.js'
+import { QmdSearchStrategy } from '../search/qmd.js'
 import type { SearchStrategy } from '../search/types.js'
 import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
+import { logger } from '../../logging/logger.js'
 import { rm, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -215,6 +217,75 @@ describe('LocalFileStorage', () => {
       await configured.forSandbox(new NotASandboxLocalEnvironment()).search('one')
       await configured.namespace('sub').search('two')
       expect(strategy.search.mock.calls.map((call) => call[1])).toEqual(['one', 'two'])
+    })
+  })
+
+  describe('host filesystem strategies with a sandbox', () => {
+    const sandboxSafeStrategy = (): SearchStrategy<LocalFileStorage> & { search: Mock } => ({
+      search: vi.fn().mockResolvedValue([]),
+    })
+
+    it('marks QmdSearchStrategy as requiring host filesystem access', () => {
+      expect(new QmdSearchStrategy().requiresHostFs).toBe(true)
+    })
+
+    it('rejects a host filesystem strategy passed with a sandbox', () => {
+      const sandbox = new NotASandboxLocalEnvironment()
+      // @ts-expect-error the overloads reject this at compile time; the runtime check covers JS callers
+      expect(() => new LocalFileStorage(baseDir, sandbox, new QmdSearchStrategy())).toThrow(
+        'QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
+    })
+
+    it('rejects a host filesystem strategy passed with a sandbox in config', () => {
+      const config = { sandbox: new NotASandboxLocalEnvironment(), searchStrategy: new QmdSearchStrategy() }
+      // @ts-expect-error the overloads reject this at compile time; the runtime check covers JS callers
+      expect(() => new LocalFileStorage(baseDir, config)).toThrow(
+        'QmdSearchStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
+    })
+
+    it('accepts a sandbox-safe strategy passed with a sandbox', async () => {
+      const strategy = sandboxSafeStrategy()
+      const sandboxed = new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), strategy)
+      await sandboxed.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects at runtime a strategy typed as SearchStrategy that declares requiresHostFs', () => {
+      class HostIndexStrategy {
+        readonly requiresHostFs = true
+        async search(): Promise<[]> {
+          return []
+        }
+      }
+      const strategy: SearchStrategy<LocalFileStorage> = new HostIndexStrategy()
+      expect(() => new LocalFileStorage(baseDir, new NotASandboxLocalEnvironment(), strategy)).toThrow(
+        'HostIndexStrategy requires host filesystem access and cannot be used with a sandbox'
+      )
+    })
+
+    it('drops a host filesystem strategy in forSandbox and falls back to keyword search', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const bound = new LocalFileStorage(baseDir, undefined, new QmdSearchStrategy()).forSandbox(
+        new NotASandboxLocalEnvironment()
+      )
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'strategy=<QmdSearchStrategy> | search strategy requires host filesystem access and is not compatible ' +
+          'with sandboxed storage | falling back to keyword search'
+      )
+      await bound.write('auth.md', new TextEncoder().encode('OAuth2 authentication flow'))
+      expect((await bound.search('authentication')).map((result) => result.key)).toEqual(['auth.md'])
+      warnSpy.mockRestore()
+    })
+
+    it('keeps a sandbox-safe strategy in forSandbox', async () => {
+      const strategy = sandboxSafeStrategy()
+      const bound = new LocalFileStorage(baseDir, undefined, strategy).forSandbox(new NotASandboxLocalEnvironment())
+      await bound.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
     })
   })
 })
