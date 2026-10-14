@@ -582,16 +582,14 @@ export class McpClient {
 
     if (this._state !== 'disconnected' && !reconnect) return
 
-    const connectionPromise = this._connect(reconnect)
-    this._connectionPromise = connectionPromise
-    try {
-      await (signal ? raceWithAbort(connectionPromise, signal) : connectionPromise)
-      this._assertConnectionCurrent(generation)
-    } finally {
+    const connectionPromise = this._connect(reconnect).finally(() => {
       if (this._connectionPromise === connectionPromise) {
         this._connectionPromise = undefined
       }
-    }
+    })
+    this._connectionPromise = connectionPromise
+    await (signal ? raceWithAbort(connectionPromise, signal) : connectionPromise)
+    this._assertConnectionCurrent(generation)
   }
 
   private async _connect(reconnect: boolean): Promise<void> {
