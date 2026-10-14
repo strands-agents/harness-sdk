@@ -1,9 +1,8 @@
 """Search strategies documentation code examples."""
 
-from strands.storage import LocalFileStorage
-
 
 # --8<-- [start:keyword_search]
+from strands.storage import LocalFileStorage
 from strands.storage.search import KeywordSearchStrategy
 
 strategy = KeywordSearchStrategy()
@@ -15,6 +14,7 @@ results = await strategy.search(
 
 
 # --8<-- [start:bm25_search]
+from strands.storage import LocalFileStorage
 from strands.storage.search import Bm25SearchStrategy
 
 strategy = Bm25SearchStrategy()
@@ -33,6 +33,7 @@ await strategy.close()
 
 
 # --8<-- [start:storage_with_strategy]
+from strands.storage import LocalFileStorage
 from strands.storage.search import Bm25SearchStrategy
 
 storage = LocalFileStorage(
