@@ -468,7 +468,7 @@ class SageMakerAIModel(OpenAIModel):
                         )
 
                     # Handle tool calls
-                    generated_tool_calls = choice["delta"].get("tool_calls", [])
+                    generated_tool_calls = choice["delta"].get("tool_calls") or []
                     if not isinstance(generated_tool_calls, list):
                         generated_tool_calls = [generated_tool_calls]
                     for tool_call in generated_tool_calls:
