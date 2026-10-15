@@ -58,7 +58,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 
 ```python
 create_harness(
-    model="bedrock/global.anthropic.claude-opus-5",  # "provider/name", a bare Bedrock id, or a Model instance
+    model="bedrock/global.anthropic.claude-opus-5-5",  # "provider/name", a bare Bedrock id, or a Model instance
     effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
@@ -104,7 +104,7 @@ pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `goog
 Out of the box, `create_harness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -125,10 +125,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```python
-create_harness(model="anthropic/claude-opus-5")  # Anthropic's API directly
+create_harness(model="anthropic/claude-opus-5-5")  # Anthropic's API directly
 create_harness(model="openai/gpt-5.6-sol")         # OpenAI
 create_harness(model="google/gemini-3.5-flash")    # Google
-create_harness(model="bedrock/global.anthropic.claude-opus-5")  # the default, spelled out
+create_harness(model="bedrock/global.anthropic.claude-opus-5-5")  # the default, spelled out
 create_harness(model="bedrock-mantle/openai.gpt-5.6-sol")  # Bedrock's OpenAI-compatible endpoint
 
 from strands.models.openai import OpenAIModel

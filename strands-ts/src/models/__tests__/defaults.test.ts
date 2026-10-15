@@ -6,6 +6,7 @@ describe('getContextWindowLimit', () => {
     // Anthropic direct API
     expect(getContextWindowLimit('claude-sonnet-4-6')).toBe(1_000_000)
     expect(getContextWindowLimit('claude-opus-4-6')).toBe(1_000_000)
+    expect(getContextWindowLimit('claude-opus-5-5')).toBe(1_000_000)
     expect(getContextWindowLimit('claude-opus-4-5')).toBe(200_000)
     expect(getContextWindowLimit('claude-haiku-4-5')).toBe(200_000)
     // Bedrock Anthropic
@@ -45,6 +46,7 @@ describe('getContextWindowLimit', () => {
   it('strips Bedrock cross-region prefix before lookup', () => {
     expect(getContextWindowLimit('us.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
+    expect(getContextWindowLimit('global.anthropic.claude-opus-5-5')).toBe(1_000_000)
   })
 
   it('does not strip unknown prefixes', () => {
