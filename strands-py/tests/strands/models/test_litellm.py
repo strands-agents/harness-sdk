@@ -923,6 +923,24 @@ def test_format_request_messages_with_tool_calls_no_content():
     assert tru_result == exp_result
 
 
+def test_format_request_messages_tool_results_precede_user_content_in_same_turn():
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5150."""
+    messages = [
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "c1", "name": "weather", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "sunny"}]}},
+                {"text": "<memory>prefers celsius</memory>"},
+            ],
+        },
+    ]
+
+    tru_roles = [msg["role"] for msg in LiteLLMModel.format_request_messages(messages)]
+    exp_roles = ["assistant", "tool", "user"]
+    assert tru_roles == exp_roles
+
+
 # --- Thought Signature Tests ---
 
 

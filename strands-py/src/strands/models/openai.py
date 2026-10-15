@@ -440,17 +440,18 @@ class OpenAIModel(Model):
                 **({"content": formatted_contents} if formatted_contents else {}),
                 **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
             }
-            formatted_messages.append(formatted_message)
-
-            # Process tool messages to extract images into separate user messages
-            # OpenAI API requires images to be in user role messages only
-            # All tool messages must be grouped together before any user messages with images
+            # OpenAI API requires images to be in user role messages only, so they are split out of tool messages
+            tool_messages = []
             user_messages_with_images = []
             for tool_msg in formatted_tool_messages:
                 tool_msg_clean, user_msg_with_images = cls._split_tool_message_images(tool_msg)
-                formatted_messages.append(tool_msg_clean)
+                tool_messages.append(tool_msg_clean)
                 if user_msg_with_images:
                     user_messages_with_images.append(user_msg_with_images)
+
+            # Tool messages must directly follow the assistant tool_calls they answer, ahead of any user content
+            formatted_messages.extend(tool_messages)
+            formatted_messages.append(formatted_message)
             formatted_messages.extend(user_messages_with_images)
 
         return formatted_messages
