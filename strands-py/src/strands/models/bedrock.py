@@ -166,6 +166,9 @@ class BedrockModel(Model):
                 (e.g. "default") to cache the tools with no explicit TTL, or a CacheToolsConfig instance to set
                 both type and TTL (e.g. "1h"). Inherits cache_config.ttl if specified, otherwise it takes the
                 Bedrock default. Superseded by an explicitly set cache_config.tools_ttl.
+            drop_reasoning: Flag to remove reasoningContent blocks from messages before sending them to the model.
+                Set to True when the conversation may contain reasoning produced by a different model, which some
+                models reject. Defaults to True for DeepSeek models and False otherwise.
             guardrail_id: ID of the guardrail to apply
             guardrail_trace: Guardrail trace mode. Defaults to enabled.
             guardrail_version: Version of the guardrail to apply
@@ -208,6 +211,7 @@ class BedrockModel(Model):
         cache_prompt: str | None
         cache_config: CacheConfig | None
         cache_tools: str | CacheToolsConfig | None
+        drop_reasoning: bool | None
         guardrail_id: str | None
         guardrail_trace: Literal["enabled", "disabled", "enabled_full"] | None
         guardrail_stream_processing_mode: Literal["sync", "async"] | None
@@ -833,7 +837,8 @@ class BedrockModel(Model):
         cleaned_messages: list[dict[str, Any]] = []
 
         filtered_unknown_members = False
-        dropped_deepseek_reasoning_content = False
+        drop_reasoning = self._should_drop_reasoning()
+        dropped_reasoning_content = False
 
         # Pre-compute the index of the last user message containing text or image content.
         # This ensures guardContent wrapping is maintained across tool execution cycles, where
@@ -851,10 +856,8 @@ class BedrockModel(Model):
                     filtered_unknown_members = True
                     continue
 
-                # DeepSeek models have issues with reasoningContent
-                # TODO: Replace with systematic model configuration registry (https://github.com/strands-agents/harness-sdk/issues/780)
-                if "deepseek" in self.config["model_id"].lower() and "reasoningContent" in content_block:
-                    dropped_deepseek_reasoning_content = True
+                if drop_reasoning and "reasoningContent" in content_block:
+                    dropped_reasoning_content = True
                     continue
 
                 # Format content blocks for Bedrock API compatibility
@@ -898,10 +901,8 @@ class BedrockModel(Model):
             logger.warning(
                 "Filtered out SDK_UNKNOWN_MEMBER content blocks from messages, consider upgrading boto3 version"
             )
-        if dropped_deepseek_reasoning_content:
-            logger.debug(
-                "Filtered DeepSeek reasoningContent content blocks from messages - https://api-docs.deepseek.com/guides/reasoning_model#multi-round-conversation"
-            )
+        if dropped_reasoning_content:
+            logger.debug("model_id=<%s> | filtered reasoningContent blocks from messages", self.config["model_id"])
 
         # Inject cache point into cleaned_messages (not original messages) if cache_config is set
         cache_config = self.config.get("cache_config")
@@ -954,6 +955,16 @@ class BedrockModel(Model):
             return False
         else:  # "auto"
             return any(model in self.config["model_id"] for model in _MODELS_INCLUDE_STATUS)
+
+    def _should_drop_reasoning(self) -> bool:
+        """Determine whether reasoningContent blocks should be removed from request messages."""
+        drop_reasoning = self.config.get("drop_reasoning")
+        if drop_reasoning is not None:
+            return drop_reasoning
+
+        # DeepSeek rejects reasoning content in multi-turn requests:
+        # https://api-docs.deepseek.com/guides/reasoning_model#multi-round-conversation
+        return "deepseek" in self.config["model_id"].lower()
 
     def _should_convert_json_to_text(self) -> bool:
         """Determine whether JSON content blocks in tool results should be converted to text.

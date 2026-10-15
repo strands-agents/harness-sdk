@@ -2631,6 +2631,37 @@ async def test_stream_deepseek_skips_empty_messages(bedrock_client, alist):
     assert sent_messages[1]["content"] == [{"text": "Follow up"}]
 
 
+@pytest.mark.parametrize(
+    ("model_id", "config", "exp_content"),
+    [
+        ("m1", {}, [{"reasoningContent": {"reasoningText": {"text": "Thinking..."}}}, {"text": "Response"}]),
+        ("m1", {"drop_reasoning": True}, [{"text": "Response"}]),
+        ("us.deepseek.r1-v1:0", {}, [{"text": "Response"}]),
+        (
+            "us.deepseek.r1-v1:0",
+            {"drop_reasoning": False},
+            [{"reasoningContent": {"reasoningText": {"text": "Thinking..."}}}, {"text": "Response"}],
+        ),
+    ],
+)
+def test_format_request_drop_reasoning(bedrock_client, model_id, config, exp_content):
+    model = BedrockModel(model_id=model_id, **config)
+    messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "Thinking..."}}},
+                {"text": "Response"},
+            ],
+        },
+    ]
+
+    tru_content = model.format_request(messages)["messages"][1]["content"]
+
+    assert tru_content == exp_content
+
+
 def test_format_request_filters_image_content_blocks(model, model_id):
     """Test that format_request filters extra fields from image content blocks."""
     messages = [
