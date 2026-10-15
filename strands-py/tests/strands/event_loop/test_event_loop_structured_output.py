@@ -187,8 +187,8 @@ async def test_event_loop_forces_structured_output_on_end_turn(
         )
     )
 
-    # Mock recurse_event_loop to return final result
-    with patch("strands.event_loop.event_loop.recurse_event_loop") as mock_recurse:
+    # Mock the follow-up cycle to return final result
+    with patch("strands.event_loop.event_loop._execute_follow_up_cycle") as mock_recurse:
         # Create a mock EventLoopStopEvent with the expected structure
         mock_stop_event = Mock()
         mock_stop_event.stop = (
@@ -215,10 +215,9 @@ async def test_event_loop_forces_structured_output_on_end_turn(
         expected_force_prompt = {"role": "user", "content": [{"text": DEFAULT_STRUCTURED_OUTPUT_PROMPT}]}
         assert appended_messages.count(expected_force_prompt) == 1
 
-        # Should have called recurse_event_loop with the context
+        # Should have run the follow-up cycle with the context
         mock_recurse.assert_called_once()
-        call_kwargs = mock_recurse.call_args[1]
-        assert call_kwargs["structured_output_context"] == structured_output_context
+        assert mock_recurse.call_args.args[2] == structured_output_context
 
 
 @pytest.mark.asyncio
@@ -241,8 +240,8 @@ async def test_event_loop_forces_structured_output_with_custom_prompt(mock_agent
         ),
     ]
 
-    # Mock recurse_event_loop to return final result
-    with patch("strands.event_loop.event_loop.recurse_event_loop") as mock_recurse:
+    # Mock the follow-up cycle to return final result
+    with patch("strands.event_loop.event_loop._execute_follow_up_cycle") as mock_recurse:
         mock_stop_event = Mock()
         mock_stop_event.stop = (
             "end_turn",
