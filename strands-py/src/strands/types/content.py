@@ -87,6 +87,8 @@ class ContentBlock(TypedDict, total=False):
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
+        signature: Provider signature over a ``text`` summary returned by ``Model.compact()``. Providers that
+            issued it send the block back as their native compaction block; all others send the text.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.
         toolUse: Information about a tool use request from a model.
@@ -100,6 +102,7 @@ class ContentBlock(TypedDict, total=False):
     guardContent: GuardContent
     image: ImageContent
     reasoningContent: ReasoningContentBlock
+    signature: str
     text: str
     toolResult: ToolResult
     toolUse: ToolUse

@@ -1,6 +1,6 @@
 """Tests for shared context-compression helpers."""
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -8,9 +8,11 @@ from strands.agent.conversation_manager.compression.context_compression import (
     DEFAULT_SUMMARIZATION_PROMPT,
     adjust_split_point_for_tool_pairs,
     as_user_summary,
+    compact_messages,
     find_valid_trim_point,
     generate_summary,
     matches_message_type,
+    strip_reasoning,
 )
 from strands.agent.conversation_manager.compression.pin_message import partition_pinned, pin_message
 from strands.types.content import Message
@@ -274,3 +276,73 @@ class TestAsUserSummary:
 
         with pytest.raises(RuntimeError, match="no text"):
             as_user_summary(message)
+
+
+def reasoning_msg(text: str) -> Message:
+    return {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "s"}}},
+            {"text": text},
+        ],
+    }
+
+
+def test_strip_reasoning_removes_reasoning_blocks_in_place():
+    messages = [text_msg("user", "q"), reasoning_msg("a")]
+
+    strip_reasoning(messages)
+
+    tru_messages = messages
+    exp_messages = [text_msg("user", "q"), {"role": "assistant", "content": [{"text": "a"}]}]
+    assert tru_messages == exp_messages
+
+
+def test_strip_reasoning_leaves_messages_without_reasoning_untouched():
+    original = [text_msg("user", "q"), text_msg("assistant", "a")]
+    messages = [dict(msg) for msg in original]
+
+    strip_reasoning(messages)
+
+    assert messages == original
+    assert all(msg["content"] is orig["content"] for msg, orig in zip(messages, original, strict=True))
+
+
+def _compaction_agent(supports_compaction=True, summary=None):
+    agent = Mock()
+    agent.model.supports_compaction = supports_compaction
+    agent.model.compact = AsyncMock(return_value=summary)
+    agent.system_prompt_content = [{"text": "sys"}]
+    agent.tool_registry.get_all_tool_specs.return_value = [{"name": "t"}]
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_compact_messages_returns_none_when_model_cannot_compact():
+    agent = _compaction_agent(supports_compaction=False)
+
+    assert await compact_messages(agent, [text_msg("user", "q")]) is None
+    agent.model.compact.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_compact_messages_sends_agent_system_prompt_and_tools():
+    summary = {"role": "assistant", "content": [{"text": "sum", "signature": "sig"}]}
+    agent = _compaction_agent(summary=summary)
+    messages = [text_msg("user", "q"), text_msg("assistant", "a")]
+
+    tru_summary = await compact_messages(agent, messages, "keep paths")
+
+    assert tru_summary == summary
+    agent.model.compact.assert_awaited_once_with(
+        messages, tool_specs=[{"name": "t"}], system_prompt_content=[{"text": "sys"}], instructions="keep paths"
+    )
+
+
+@pytest.mark.asyncio
+async def test_compact_messages_returns_none_when_compact_raises(caplog):
+    agent = _compaction_agent()
+    agent.model.compact = AsyncMock(side_effect=RuntimeError("gateway rejected beta"))
+
+    assert await compact_messages(agent, [text_msg("user", "q")]) is None
+    assert "provider compaction failed" in caplog.text
