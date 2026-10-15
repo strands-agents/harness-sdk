@@ -9,31 +9,15 @@ sourceLinks:
   - path: strands-ts/src/tools/structured-output-tool.ts
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 Use structured output when your application needs an object with specific fields.
 Define a schema, pass it to the agent, and read the validated object from the result.
 
-<Tabs>
-<Tab label="Python">
-
-```mermaid
-flowchart LR
-    A[Schema Definition] --> B[Agent Invocation]
-    B --> C[LLM] --> D[Validated Object]
-    D --> E["result.structured_output"]
-```
-
-</Tab>
-<Tab label="TypeScript">
-
-```mermaid
-flowchart LR
-    A[Schema Definition] --> B[Agent Invocation]
-    B --> C[LLM] --> D[Validated Object]
-    D --> E["result.structuredOutput"]
-```
-
-</Tab>
-</Tabs>
+<Diagram
+  name="structured-output-flow"
+  alt="How structured output works. Your schema is given to the model as a tool, inside the agent loop. The model calls the structured output tool, which validates the call's arguments against the schema. If validation fails, the errors go back to the model so it can retry. When the arguments are valid, the validated object is placed on the agent result."
+/>
 
 ## Basic Usage
 

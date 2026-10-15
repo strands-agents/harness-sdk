@@ -7,7 +7,7 @@ import pytest
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.types import ContextState
 from strands.types.content import ContentBlock, Message, Messages
-from strands.types.tools import ToolResult
+from strands.types.tools import ToolResult, ToolUse
 
 
 def _make_stream_events(text: str):
@@ -259,3 +259,25 @@ class TestSummarizeStrategyMessageLevel:
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is False
+
+
+class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/4685."""
+
+    @pytest.mark.asyncio
+    async def test_summaries_stay_out_of_pinned_message_zero(self, mock_agent):
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}})
+        ]
+        for index in range(30):
+            tool_use = ToolUse(toolUseId=f"t{index}", name="read", input={})
+            tool_result = ToolResult(toolUseId=f"t{index}", status="success", content=[{"text": "x"}])
+            messages.append(Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]))
+            messages.append(Message(role="user", content=[ContentBlock(toolResult=tool_result)]))
+            await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9))
+        assert messages[0] == Message(
+            role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}}
+        )
+        summaries = [b for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Summarized:")]
+        assert len(summaries) == 1

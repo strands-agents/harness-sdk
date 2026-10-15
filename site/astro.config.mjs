@@ -95,6 +95,7 @@ export default defineConfig({
       customCss: [
         './src/styles/custom.css',
         './src/styles/fonts.css',
+        './src/styles/diagrams.css',
       ],
       logo: {
         light: './src/assets/logo-light.svg',

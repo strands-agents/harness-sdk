@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 384" width="720" height="384">
+  <!-- Type: sequence. Story: the task starts at the entry point, agents hand off to whichever agent they choose, and the run ends when an agent responds without handing off. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Lifelines -->
+  <line class="dg-lifeline" x1="72" y1="72" x2="72" y2="292"/>
+  <line class="dg-lifeline" x1="216" y1="72" x2="216" y2="292"/>
+  <line class="dg-lifeline" x1="360" y1="72" x2="360" y2="292"/>
+  <line class="dg-lifeline" x1="504" y1="72" x2="504" y2="292"/>
+  <line class="dg-lifeline" x1="648" y1="72" x2="648" y2="292"/>
+
+  <!-- Messages: time flows down -->
+  <path class="dg-edge" d="M72,112 H214" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="144" y="101" text-anchor="middle">task</text>
+
+  <path class="dg-edge" d="M216,152 H358" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="288" y="141" text-anchor="middle">hand off</text>
+
+  <path class="dg-edge" d="M360,192 H502" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="432" y="181" text-anchor="middle">hand off</text>
+
+  <path class="dg-edge" d="M504,232 H646" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="576" y="221" text-anchor="middle">hand off</text>
+
+  <path class="dg-edge is-dashed" d="M648,272 H74" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="144" y="261" text-anchor="middle">final response</text>
+
+  <!-- Notes -->
+  <text class="dg-note" x="704" y="328" text-anchor="end">One possible run. Any agent can hand off to any other.</text>
+  <text class="dg-note" x="704" y="348" text-anchor="end">Each handoff carries a message and optional context.</text>
+  <text class="dg-note" x="704" y="368" text-anchor="end">The swarm ends when an agent replies without handing off.</text>
+
+  <!-- Actors -->
+  <rect class="dg-node is-input" x="16" y="16" width="112" height="56" rx="6"/>
+  <text class="dg-name" x="72" y="49" text-anchor="middle">User</text>
+
+  <rect class="dg-node" x="160" y="16" width="112" height="56" rx="6"/>
+  <text class="dg-name" x="216" y="41" text-anchor="middle">Researcher</text>
+  <text class="dg-sub" x="216" y="59" text-anchor="middle">entry point</text>
+
+  <rect class="dg-node" x="304" y="16" width="112" height="56" rx="6"/>
+  <text class="dg-name" x="360" y="49" text-anchor="middle">Architect</text>
+
+  <rect class="dg-node" x="448" y="16" width="112" height="56" rx="6"/>
+  <text class="dg-name" x="504" y="49" text-anchor="middle">Coder</text>
+
+  <rect class="dg-node" x="592" y="16" width="112" height="56" rx="6"/>
+  <text class="dg-name" x="648" y="49" text-anchor="middle">Reviewer</text>
+</svg>

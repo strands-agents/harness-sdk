@@ -538,6 +538,10 @@ ADAPTIVE_CLAUDE = [
     "global.anthropic.claude-opus-4-8",
     "global.anthropic.claude-opus-5",
     "global.anthropic.claude-sonnet-5",
+    "global.anthropic.claude-haiku-5-5",
+    "au.anthropic.claude-haiku-5-5",
+    "anthropic.claude-haiku-5-5",
+    "global.anthropic.claude-haiku-6",
     "global.anthropic.claude-fable-5",
     "global.anthropic.claude-fable-5-1",
     "anthropic.claude-mythos-preview",
@@ -608,7 +612,9 @@ def test_a_dot_separated_version_parses_like_a_dashed_one(model_id, expected):
     assert config.get("additional_request_fields") == expected
 
 
-@pytest.mark.parametrize("model_id", ["claude-opus-latest", "claude-sonnet-latest", "claude-opus-100"])
+@pytest.mark.parametrize(
+    "model_id", ["claude-opus-latest", "claude-sonnet-latest", "claude-haiku-latest", "claude-haiku", "claude-opus-100"]
+)
 def test_an_id_with_no_parsable_version_fails_open_to_adaptive(model_id):
     assert resolve(f"bedrock/global.anthropic.{model_id}").config["additional_request_fields"] == ADAPTIVE
 
@@ -635,16 +641,13 @@ def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
         ("claude-opus-4.5", 64_000),
         ("claude-opus-4-8", 128_000),
         ("claude-opus-5", 128_000),
+        ("claude-haiku-4-5-20251001-v1:0", 64_000),
+        ("claude-haiku-4.5", 64_000),
+        ("claude-haiku-5-5", 128_000),
     ],
 )
 def test_a_split_family_carries_its_version_max_tokens_ceiling(model_id, max_tokens):
     assert resolve(f"bedrock/global.anthropic.{model_id}").config["max_tokens"] == max_tokens
-
-
-@pytest.mark.parametrize("model_id", ["claude-haiku-latest", "claude-haiku"])
-def test_a_versionless_haiku_falls_open_to_extended_not_adaptive(model_id):
-    config = resolve(f"bedrock/global.anthropic.{model_id}").config
-    assert config["additional_request_fields"] == EXTENDED
 
 
 def test_the_budget_is_clamped_below_a_small_max_tokens():
@@ -652,9 +655,9 @@ def test_the_budget_is_clamped_below_a_small_max_tokens():
     assert _claude_extended_thinking("low", 64_000) == {"thinking": {"type": "enabled", "budget_tokens": 2_048}}
 
 
-def test_a_bare_family_name_clamps_against_the_anthropic_direct_fallback(monkeypatch):
+def test_a_version_led_id_clamps_against_the_anthropic_direct_fallback(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    config = resolve("anthropic/claude-haiku", effort="max").config
+    config = resolve("anthropic/claude-4-5-haiku", effort="max").config
     assert config["max_tokens"] == 32_000
     assert config["params"] == {"thinking": {"type": "enabled", "budget_tokens": 31_999}}
 

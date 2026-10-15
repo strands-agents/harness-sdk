@@ -22,6 +22,7 @@ from .base import (
     OffloadTarget,
     _build_conditions,
     _collect_removable_with_pair,
+    _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
 )
@@ -108,12 +109,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if removed == 0:
             return False
 
-        summary_message = Message(
-            role="user",
-            content=[ContentBlock(text=_format_summarized(f"{removed} messages", total_tokens, summary))],
-        )
-        insert_index = max(1, min(lowest_index, len(messages)))
-        messages.insert(insert_index, summary_message)
+        _insert_marker(messages, lowest_index, _format_summarized(f"{removed} messages", total_tokens, summary))
 
         _repair_alternation(messages)
         logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)

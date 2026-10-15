@@ -241,9 +241,8 @@ sidebar:
         items:
           - label: "Choosing an agent foundation"
             slug: docs/user-guide/migrate/choosing-an-agent-foundation
-          # Draft — hidden until the LangGraph migration guide is ready to publish.
-          # - label: "Migrate from LangGraph"
-          #   slug: docs/user-guide/migrate/langgraph
+          - label: "Migrate from LangGraph"
+            slug: docs/user-guide/migrate/langgraph
           - label: "Migrate from OpenAI"
             slug: docs/user-guide/migrate/openai
       - label: Build guides

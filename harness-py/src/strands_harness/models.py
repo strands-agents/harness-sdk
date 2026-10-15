@@ -40,7 +40,7 @@ _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "a
 _CLAUDE_MAX_TOKENS = {
     "claude-opus-": 128_000,
     "claude-sonnet-": 128_000,
-    "claude-haiku-": 64_000,
+    "claude-haiku-": 128_000,
     "claude-fable-": 128_000,
 }
 _CLAUDE_MAX_TOKENS_BY_VERSION = (
@@ -48,6 +48,8 @@ _CLAUDE_MAX_TOKENS_BY_VERSION = (
     ("claude-opus-4.5", 64_000),
     ("claude-sonnet-4-5", 64_000),
     ("claude-sonnet-4.5", 64_000),
+    ("claude-haiku-4-5", 64_000),
+    ("claude-haiku-4.5", 64_000),
 )
 
 
@@ -97,7 +99,7 @@ _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
 _BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
 _GOOGLE_LEVELS = ("minimal", "low", "medium", "high")
 
-_ADAPTIVE_THINKING_SINCE = {"opus": (4, 6), "sonnet": (4, 6)}
+_ADAPTIVE_THINKING_SINCE = {"opus": (4, 6), "sonnet": (4, 6), "haiku": (5, 5)}
 _EXTENDED_THINKING_SINCE = {"opus": (4, 5), "sonnet": (4, 5), "haiku": (4, 5)}
 _CLAUDE_ID = re.compile(
     r"claude-(?:(\d{1,2})(?:[-.](\d{1,2}))?-)?(opus|sonnet|haiku|fable|mythos)"

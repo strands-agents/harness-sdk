@@ -35,13 +35,63 @@ describe('FileStorage', () => {
     expect(result.contentType).toBe('image/png')
   })
 
-  it('returns file path as reference preserving configured directory', async () => {
+  it('returns a portable filename as reference', async () => {
     const storage = new FileStorage(tmpDir)
     const content = new TextEncoder().encode('test')
     const ref = await storage.store('k1', content, 'text/plain')
 
-    expect(ref.startsWith(tmpDir)).toBe(true)
+    expect(ref).toBe(path.basename(ref))
+    expect(ref).not.toContain(tmpDir)
     expect(ref).toMatch(/\.txt$/)
+  })
+
+  it('retrieves older full paths and bare filename stems', async () => {
+    const storage = new FileStorage(tmpDir)
+    const ref = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
+    for (const reference of [path.join(tmpDir, ref), path.parse(ref).name]) {
+      const result = await storage.retrieve(reference)
+      expect(new TextDecoder().decode(result.content)).toBe('saved')
+      expect(result.contentType).toBe('text/plain')
+    }
+  })
+
+  it('retrieves legacy paths when the artifact directory is relative', async () => {
+    const cwdTmpDir = await fs.mkdtemp(path.join(process.cwd(), 'context-offloader-relative-'))
+    try {
+      const relativeDir = path.relative(process.cwd(), path.join(cwdTmpDir, 'artifacts'))
+      const storage = new FileStorage(`./${relativeDir}`)
+      const ref = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
+
+      for (const reference of [`./${relativeDir}/${ref}`, `${relativeDir}/${ref}`]) {
+        const result = await storage.retrieve(reference)
+        expect(new TextDecoder().decode(result.content)).toBe('saved')
+      }
+      await expect(storage.retrieve(`${relativeDir}/../${path.basename(relativeDir)}/${ref}`)).rejects.toThrow(
+        'Reference not found'
+      )
+    } finally {
+      await fs.rm(cwdTmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retrieves a stored key ending in a dot without allowing traversal', async () => {
+    const storage = new FileStorage(tmpDir)
+    const ref = await storage.store('Summary of results.', new TextEncoder().encode('saved'), 'text/plain')
+    expect(ref).toContain('..txt')
+    const result = await storage.retrieve(ref)
+    expect(new TextDecoder().decode(result.content)).toBe('saved')
+    await expect(storage.retrieve(`${tmpDir}/../${path.basename(tmpDir)}/${ref}`)).rejects.toThrow(
+      'Reference not found'
+    )
+  })
+
+  it('retrieves full paths without metadata and refuses unknown stems', async () => {
+    const storage = new FileStorage(tmpDir)
+    const ref = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
+    await fs.rm(path.join(tmpDir, '.metadata.json'))
+    const reopened = new FileStorage(tmpDir)
+    expect(new TextDecoder().decode((await reopened.retrieve(path.join(tmpDir, ref))).content)).toBe('saved')
+    await expect(reopened.retrieve(path.parse(ref).name)).rejects.toThrow('Reference not found')
   })
 
   it('uses correct file extensions', async () => {
