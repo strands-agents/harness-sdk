@@ -577,6 +577,46 @@ def test_format_request_messages_with_multiple_images_in_tool_result():
     assert len(image_contents) == 2
 
 
+def test_format_request_messages_tool_results_precede_user_content_in_same_turn():
+    """Tool messages directly follow the assistant tool_calls they answer, ahead of user content in the same turn.
+
+    Regression test for https://github.com/strands-agents/harness-sdk/issues/5150.
+    """
+    messages = [
+        {"role": "user", "content": [{"text": "weather?"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": "c1", "name": "weather", "input": {}}},
+                {"toolUse": {"toolUseId": "c2", "name": "camera", "input": {}}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "sunny"}]}},
+                {
+                    "toolResult": {
+                        "toolUseId": "c2",
+                        "status": "success",
+                        "content": [{"image": {"format": "png", "source": {"bytes": b"img"}}}],
+                    }
+                },
+                {"text": "<memory>prefers celsius</memory>"},
+            ],
+        },
+    ]
+
+    formatted = OpenAIModel.format_request_messages(messages)
+
+    tru_roles = [msg["role"] for msg in formatted]
+    exp_roles = ["user", "assistant", "tool", "tool", "user", "user"]
+    assert tru_roles == exp_roles
+    assert [msg["tool_call_id"] for msg in formatted[2:4]] == ["c1", "c2"]
+    assert formatted[4]["content"] == [{"text": "<memory>prefers celsius</memory>", "type": "text"}]
+    assert any(c.get("type") == "image_url" for c in formatted[5]["content"])
+
+
 def test_format_request_tool_choice_auto():
     tool_choice = {"auto": {}}
 
