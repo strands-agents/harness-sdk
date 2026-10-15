@@ -1,5 +1,6 @@
 """Tests for the Amazon SageMaker model provider."""
 
+import io
 import json
 import logging
 import unittest.mock
@@ -1079,3 +1080,48 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(
 
     assert "cache_config" not in request
     assert "cache_config" not in json.loads(request["Body"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_stream,additional_args",
+    [(None, None), (True, None), (False, None), (False, {"stream": True})],
+)
+async def test_structured_output_requests_non_streaming_json(
+    boto_session, sagemaker_client, endpoint_config, messages, configured_stream, additional_args
+):
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    config = {"max_tokens": 1024}
+    if configured_stream is not None:
+        config["stream"] = configured_stream
+    if additional_args is not None:
+        config["additional_args"] = additional_args
+    model = SageMakerAIModel(endpoint_config=endpoint_config, payload_config=config, boto_session=boto_session)
+    before = dict(model.payload_config)
+    for name in (
+        "InternalFailure",
+        "ServiceUnavailable",
+        "ValidationError",
+        "ModelError",
+        "InternalDependencyException",
+        "ModelNotReadyException",
+    ):
+        setattr(sagemaker_client.exceptions, name, type(name, (Exception,), {}))
+
+    def invoke(**request):
+        payload = json.loads(request["Body"])
+        assert payload["stream"] is False
+        assert payload["response_format"]["type"] == "json_schema"
+        assert payload["max_tokens"] == 1024
+        return {"Body": io.BytesIO(json.dumps({"choices": [{"message": {"content": '{"answer":"yes"}'}}]}).encode())}
+
+    sagemaker_client.invoke_endpoint.side_effect = invoke
+    result = [event async for event in model.structured_output(Answer, messages)]
+    assert result == [{"output": Answer(answer="yes")}]
+    assert model.payload_config == before
+    request = json.loads(model.format_request(messages)["Body"])
+    assert request["stream"] is (True if additional_args is not None else before["stream"])
