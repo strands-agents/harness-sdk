@@ -1,17 +1,37 @@
 ---
 import { LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+import PageLink from './PageLink.astro'
 
 interface Props {
   py: string;
   ts: string;
   plain?: boolean;
+  /** Link target for the Python variant; accepts `@api/...` shorthand. */
+  pyHref?: string;
+  /** Link target for the TypeScript variant; accepts `@api/...` shorthand. */
+  tsHref?: string;
 }
 
-const { py, ts, plain = false } = Astro.props;
+const { py, ts, plain = false, pyHref, tsHref } = Astro.props;
+const linked = Boolean(pyHref || tsHref);
+const variants = [
+  { lang: 'Python', text: py, href: pyHref },
+  { lang: 'TypeScript', text: ts, href: tsHref },
+];
 ---
 
 <syntax-switch>
-  {plain ? (
+  {linked ? (
+    // Each variant links to its own language's page, or renders unlinked when that
+    // language has no target.
+    variants.map(({ lang, text, href }) => (
+      <span data-lang={lang}>
+        {href ? (
+          <PageLink href={href}>{plain ? text : <code>{text}</code>}</PageLink>
+        ) : plain ? text : <code>{text}</code>}
+      </span>
+    ))
+  ) : plain ? (
     <>
       <span data-lang="Python">{py}</span>
       <span data-lang="TypeScript">{ts}</span>

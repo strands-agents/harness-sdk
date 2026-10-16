@@ -283,6 +283,13 @@ Props:
 - `py` (required): Python syntax variant
 - `ts` (required): TypeScript syntax variant
 - `plain` (default: `false`): Renders as plain text instead of `<code>`.
+- `pyHref`, `tsHref` (optional): Link each variant to its own target, such as an `@api/python/...` or `@api/typescript/...` reference page. A variant without an href renders unlinked, so omit `tsHref` when the TypeScript symbol has no reference page.
+
+```mdx
+<Syntax py="Agent" ts="Agent" pyHref="@api/python/strands.agent.agent#strands.agent.agent.Agent" tsHref="@api/typescript/Agent" />
+```
+
+Use this instead of a plain Markdown link when shared prose references an API symbol, so the link follows the reader's language selection.
 
 The component reads the same `localStorage` key as the language toggle and swaps live without page reload.
 
