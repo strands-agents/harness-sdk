@@ -54,9 +54,16 @@ One row per attack (case × strategy), sorted worst-first so the most successful
 
 ### Errored attacks
 
-An attack **errors** when it fails for a reason unrelated to the agent's defenses: the
-target crashed, or no evaluator could score the conversation. An errored attack is neither
-a breach nor a defense, so the report leaves it out of the attack success rate and says so:
+An attack **errors** when it can't tell you whether the agent's defenses held:
+
+- The target crashed, or no evaluator could score the conversation.
+- The attacker model declined its role (see
+  [Choosing an attacker model](strategies.md#choosing-an-attacker-model)) and the turns it
+  sent didn't breach. The target was never fully tested, so the result is inconclusive. If
+  those turns did breach, the attack counts as a breach.
+
+An errored attack is neither a breach nor a defense, so the report leaves it out of the
+attack success rate and says so:
 
 ```text
 Result: FAIL -- 3 of 5 attacks breached (60.0%, 1 errored excluded) | 3 cases x 2 strategies
@@ -73,8 +80,9 @@ All attacks (worst first)
 ```
 
 A case is `ERROR` in the matrix only if every strategy errored on it, and the run's result
-is `ERROR` if every attack did. An errored attack's `reason` holds the error message. Fix
-the cause (a crashed target, expired credentials) and re-run.
+is `ERROR` if every attack did. An errored attack's `reason` says why: the error message,
+or a note that the attacker declined its role. Fix the cause (a crashed target, expired
+credentials, an attacker model that refuses) and re-run.
 
 ## Working with results in code
 
@@ -109,9 +117,14 @@ for result in report.attack_results():
 - **`turns_used`**: how many attacker/target turn pairs the attack kept (after any backtracking).
 - **`backtracks`**: number of refused turns Crescendo rolled back. Crescendo is the only strategy that records backtracks; on every other strategy this is `0` or `None`.
 - **`pruned_branches`**: list of `{role, content}` entries for the (attacker, target) pairs Crescendo discarded; same data the matrix's `blocked` column counts (`len(pruned_branches) // 2`).
-- **`conversation`**: the full attacker/target transcript as a list of `{role, content}` entries.
+- **`attacker_refused`**: `True` when the attacker model declined its role and the attack
+  stopped early. Unless an evaluator found a breach, the attack is errored.
+- **`conversation`**: the full attacker/target transcript as a list of `{role, content}`
+  entries. If the attacker declined its role, the last entry has the role
+  `attacker_refused`: the declined message, which was never sent to the target.
 
-`turns_used`, `backtracks`, and `pruned_branches` come from the strategy's run stats,
+`turns_used`, `backtracks`, `pruned_branches`, and `attacker_refused` come from the
+strategy's run stats,
 which the task returns in its `environment_state` as an entry named `redteam_run_results`
 (the `RUN_RESULTS` constant). A [custom task](custom_task.md) that returns
 `result.to_environment_state()` keeps them in the report, and so do cached reruns.

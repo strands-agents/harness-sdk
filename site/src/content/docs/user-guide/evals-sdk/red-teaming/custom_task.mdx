@@ -93,10 +93,12 @@ report.display()
 |-----|---------------|---------|
 | `output` | `result.conversation`, the attacker/target turns | Evaluators |
 | `trajectory` | `list(session.trace)`, the target's tool calls | Evaluators |
-| `environment_state` | `[result.to_environment_state()]`, the strategy's run stats | The report's turns and blocked columns, plus any evaluator with `uses_environment_state=True` |
+| `environment_state` | `[result.to_environment_state()]`, the strategy's run stats | The report's turns and blocked columns, attacker-refusal handling, and any evaluator with `uses_environment_state=True` |
 
-If you leave out `environment_state`, the attacks are still scored, but the report shows no turn or
-blocked counts. See [Reading the Report](reading_the_report.md).
+Always return `environment_state`. Without it, the attacks are still scored, but the
+report shows no turn or blocked counts, and nothing can tell that the attacker model
+declined its role. An attack cut short that way is scored on the turns that were sent, so
+it can be reported as defended. See [Reading the Report](reading_the_report.md).
 
 ## Add a check between turns
 

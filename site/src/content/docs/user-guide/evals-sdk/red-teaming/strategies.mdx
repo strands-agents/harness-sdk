@@ -55,7 +55,11 @@ The target refused nothing: it restated its hidden configuration, leaking the pl
 The differences that *are* structural, and worth using to choose:
 
 - **Turn structure.** Crescendo, GOAT, and PAIR drive a multi-turn, adaptive conversation (an attacker model rewrites its approach each turn); Bad Likert Judge and SequentialBreak send a fixed scripted sequence. Multi-turn strategies have more room to maneuver a stateful or tool-using agent; scripted ones are simpler and deterministic.
-- **Cost.** Bad Likert Judge and SequentialBreak use no attacker model, so they avoid the per-turn attacker-generation calls: typically the cheapest per attempt (they still call the judge). The attacker-LLM strategies cost more but adapt to the target.
+- **Cost.** Bad Likert Judge and SequentialBreak use no attacker model, so they avoid the
+  per-turn attacker-generation calls: typically the cheapest per attempt (they still call
+  the judge). The attacker-LLM strategies cost more but adapt to the target, and every
+  attacker message they write gets one small extra call that checks whether the attacker
+  declined its role (see [Choosing an attacker model](#choosing-an-attacker-model)).
 - **Rewinding.** Crescendo rewinds on a refusal, and PAIR and SequentialBreak rewind between attempts; GOAT and Bad Likert Judge are append-only. On an agentic target this doesn't change whether a tool-call breach is caught: the authoritative `AttackSuccessEvaluator` re-scores the full trace for every strategy regardless.
 
 When you're not sure, start with one multi-turn strategy (e.g. Crescendo or GOAT) and one scripted one (e.g. SequentialBreak), then add more based on what `by_strategy()` shows.
@@ -76,6 +80,39 @@ that cap.
 [custom task](custom_task.md) doesn't need to pass it. If you subclass `AttackStrategy`,
 declare the same default (`max_turns: int = MAX_ALLOWED_TURNS`) so your strategy works in
 custom tasks too.
+
+## Choosing an attacker model
+
+Crescendo, GOAT, PAIR, and `PromptStrategy` use an LLM to write the attack. A strongly
+safety-tuned model can decline that role ("I can't help with that"). If that refusal
+reached the target, the target would answer it harmlessly and the attack would look
+defended.
+
+So before each attacker message is sent, a small LLM check (run on the strategy's own
+model) decides whether the attacker declined its role. If it did, the attack stops without
+sending that message. Unless the turns already sent breached, the report marks the attack
+**errored**, not defended (see [Errored attacks](reading_the_report.md#errored-attacks)). If
+the check itself fails, the message is sent as normal. Bad Likert Judge and SequentialBreak
+send fixed templates, so they can't refuse.
+
+Many errored attacks for this reason mean the attacker model needs replacing, not that
+the target is robust. Choose an attacker model that plays the role reliably: less
+safety-tuned or open-weight models refuse less often than frontier assistant models. Set
+it per strategy, so the judge can stay a strong model:
+
+```python
+experiment = RedTeamExperiment(
+    cases=cases,
+    attack_strategies=[
+        CrescendoStrategy(model=attacker_model),
+        GoatStrategy(model=attacker_model),
+    ],
+    model=judge_model,
+)
+```
+
+The experiment's `model` is the model for the default `AttackSuccessEvaluator` and the
+attacker model for any strategy without its own `model`, including `PromptStrategy`.
 
 ## Crescendo
 
@@ -170,7 +207,11 @@ SequentialBreakStrategy(
 
 ## Template-driven strategies
 
-Beyond the five research-backed strategies above, the SDK ships a `PromptStrategy` extension point for **no-attacker-LLM** strategies driven by a system-prompt template. The user simulator runs the template, sends each generated message to the target, and feeds the target's reply back as the next turn: useful when you want a deterministic, template-based attack without subclassing `AttackStrategy`.
+Beyond the five research-backed strategies above, the SDK ships `PromptStrategy`, an
+extension point for strategies driven by a system-prompt template. An `ActorSimulator`
+plays the attacker from your template: the case `input` is the opening message, and each
+target reply feeds the next attacker message. Use it to try a new attack as a prompt,
+without subclassing `AttackStrategy`.
 
 A registry of ready-made instances lives at `strands_evals.redteaming.strategies.BUILTIN_STRATEGIES`:
 
@@ -187,7 +228,10 @@ experiment = RedTeamExperiment(
 )
 ```
 
-The current registry ships `gradual_escalation`. To author your own template-driven strategy, instantiate `PromptStrategy` directly with a `strategy_name`, `system_prompt_template`, and `max_turns`:
+The current registry ships `gradual_escalation`. To author your own template-driven
+strategy, instantiate `PromptStrategy` directly with a `strategy_name` and a
+`system_prompt_template`, plus an optional `max_turns`. `PromptStrategy` has
+no `model` parameter: its attacker uses the experiment's `model`.
 
 ```python
 from strands_evals.redteaming import PromptStrategy
