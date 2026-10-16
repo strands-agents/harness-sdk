@@ -16,6 +16,7 @@ import * as mcp from '../src/tui/mcp.js'
 import * as mcpConfig from '../src/tui/mcp/config.js'
 import { resolveMcpConfig } from '../src/tui/workspace/trust.js'
 import { applyProviderEnvironmentValues, CliConfigStore } from '../src/tui/config.js'
+import { stringify } from 'smol-toml'
 
 describe('agentConfig', () => {
   it('preserves defaults when no flags are supplied', () => {
@@ -216,10 +217,6 @@ describe('agentConfig', () => {
     expect(() => agentConfig(parseArgs(['--set', 'modle=openai/gpt-5-mini']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
       'unknown agent config field'
     )
-    // A retired profile key is just another unknown field.
-    expect(() => agentConfig(parseArgs(['--set', 'thinking=high']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
-      '--set contains an unknown agent config field "thinking".'
-    )
   })
 })
 
@@ -266,12 +263,6 @@ describe('parseArgs', () => {
   })
 })
 
-describe('retired flag spellings', () => {
-  it('rejects a retired flag as an unknown option', () => {
-    expect(() => parseArgs(['--thinking', 'low'])).toThrow(/unknown option '--thinking'/u)
-  })
-})
-
 describe('profile model persistence', () => {
   it.each([
     ['--model', ['--model', 'openai/gpt-5']],
@@ -315,7 +306,7 @@ describe('project invocation', () => {
       vi.stubEnv('ANTHROPIC_API_KEY', undefined)
       vi.stubEnv('GEMINI_API_KEY', undefined)
       vi.stubEnv('STRANDS_CLI_PROJECT_TOKEN', undefined)
-      const path = join(directory, 'config.json')
+      const path = join(directory, 'cli.toml')
       const config = await CliConfigStore.load(path)
       await config.saveSetup({
         providers: ['bedrock'],
@@ -552,13 +543,10 @@ describe('TUI startup', () => {
     'avoids React timing retention while preserving NODE_ENV=%s',
     async (environment) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-cli-production-'))
-      const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+      const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
       const fixture = fileURLToPath(new URL('./fixtures/strands-cli-production-probe.mjs', import.meta.url))
-      await mkdir(join(directory, '.strands', 'cli'), { recursive: true })
-      await writeFile(
-        join(directory, '.strands', 'cli', 'config.json'),
-        JSON.stringify({ settings: { animations: false } })
-      )
+      await mkdir(join(directory, '.strands'), { recursive: true })
+      await writeFile(join(directory, '.strands', 'cli.toml'), stringify({ settings: { animations: false } }))
       const child = spawn(
         process.execPath,
         ['--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
@@ -612,7 +600,7 @@ describe('ACP mode routing', () => {
   })
 
   it('answers initialize while the ACP stdin protocol stream remains open', async () => {
-    const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+    const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
     const entrypoint = fileURLToPath(new URL('../src/main.ts', import.meta.url))
     const cwd = fileURLToPath(new URL('..', import.meta.url))
     const child = spawn(

@@ -7,6 +7,7 @@ import type { HarnessAgentOptions } from '@strands-agents/harness'
 
 import { sessionSettings } from './options.js'
 import { DEFAULT_SESSION_DIR } from './sessions.js'
+import { isRecord } from '../values.js'
 
 export const AGENT_DEFINITION_META_KEY = 'strands/agent-definition'
 
@@ -105,10 +106,6 @@ function agentDefinitionPath(sessionDirectory: string, sessionId: string): strin
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, '-') || 'default'
   return join(sessionDirectory, normalized, 'agent.json')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export async function initializeAgentDefinition(agent: Agent): Promise<void> {

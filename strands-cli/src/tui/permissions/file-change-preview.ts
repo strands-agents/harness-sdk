@@ -2,6 +2,7 @@ import { SandboxPathNotFoundError, type BeforeToolCallEvent } from '@strands-age
 
 import type { ChatDiffLine, ChatDiffPreview } from '../chat/controller.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { isRecord } from '../values.js'
 
 const CONTEXT_LINES = 3
 const MAX_DIFF_LINES = 320
@@ -13,7 +14,7 @@ interface DiffOperation extends ChatDiffLine {
 
 export async function buildFileChangePreview(event: BeforeToolCallEvent): Promise<ChatDiffPreview | undefined> {
   const input = event.toolUse.input
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return undefined
   }
   const path = input.path
@@ -46,9 +47,15 @@ export async function buildFileChangePreview(event: BeforeToolCallEvent): Promis
   return undefined
 }
 
-export function createDiffPreview(path: string, before: string, after: string): ChatDiffPreview {
+/** `contextLines` of unchanged lines surround each change; pass `Infinity` to keep the whole file. */
+export function createDiffPreview(
+  path: string,
+  before: string,
+  after: string,
+  contextLines = CONTEXT_LINES
+): ChatDiffPreview {
   const operations = lineOperations(splitLines(before), splitLines(after))
-  const lines = diffHunks(operations)
+  const lines = diffHunks(operations, contextLines)
   const truncated = lines.length > MAX_DIFF_LINES
   return {
     path: sanitizeTerminalText(path),
@@ -165,7 +172,7 @@ function contiguousOperations(before: readonly string[], after: readonly string[
   return operations
 }
 
-function diffHunks(operations: readonly DiffOperation[]): ChatDiffLine[] {
+function diffHunks(operations: readonly DiffOperation[], contextLines: number): ChatDiffLine[] {
   const changes = operations.flatMap((operation, index) => (operation.kind === 'context' ? [] : [index]))
   if (changes.length === 0) {
     return [{ kind: 'header', text: 'No changes' }]
@@ -173,8 +180,8 @@ function diffHunks(operations: readonly DiffOperation[]): ChatDiffLine[] {
 
   const ranges: { start: number; end: number }[] = []
   for (const index of changes) {
-    const start = Math.max(0, index - CONTEXT_LINES)
-    const end = index + CONTEXT_LINES + 1
+    const start = Math.max(0, index - contextLines)
+    const end = Math.min(operations.length, index + contextLines + 1)
     const previous = ranges.at(-1)
     if (previous && start <= previous.end) {
       previous.end = end

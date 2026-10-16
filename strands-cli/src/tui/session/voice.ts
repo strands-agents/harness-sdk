@@ -1,9 +1,21 @@
 import type { ChatController } from '../chat/controller.js'
-import type { ChatControllerApi, ChatPanelRow, ChatVoiceStore } from '../chat/types.js'
+import type { ChatPanelRow, ChatVoiceStore, ChatTurn } from '../chat/types.js'
 import { errorMessage } from '../terminal/sanitize.js'
-import { VOICE_IDS, type VoiceInput, type VoiceEndpointingSensitivity, type VoiceId } from '../voice/session.js'
+import {
+  BEDROCK_VOICE_IDS,
+  OPENAI_VOICE_IDS,
+  VOICE_MODEL_IDS,
+  VOICE_MODEL_OPTIONS,
+  VOICE_PROVIDERS,
+  VOICE_IDS,
+  type VoiceEndpointingSensitivity,
+  type VoiceId,
+  type VoiceInput,
+  type VoiceProvider,
+  type VoiceSupervisorRequest,
+} from '../voice/session.js'
+import { conversationStatus } from './conversation-helpers.js'
 
-const STREAMING_SPEECH_MAX_CHARS = 180
 const ENDPOINTING_OPTIONS = [
   { label: 'Fast', value: 'HIGH' },
   { label: 'Balanced', value: 'MEDIUM' },
@@ -15,7 +27,7 @@ export class ConversationVoice {
   snapshot: ReturnType<VoiceInput['getSnapshot']> | undefined
   private readonly _listeners = new Set<() => void>()
   private readonly _voiceUnsubscribers: (() => void)[] = []
-  private _pendingVoiceInput: string[] | undefined
+  private _inputPaused = false
 
   constructor(
     private readonly _voice: VoiceInput | undefined,
@@ -53,30 +65,17 @@ export class ConversationVoice {
           }
           onChange()
         }),
-        this._voice.onSpeechStart(() => {
-          if (!this._pendingVoiceInput && this._active().controller.busy) {
-            this._active().controller.cancel()
-          }
-        }),
-        this._voice.onTranscript((transcript) => {
-          if (this._pendingVoiceInput) {
-            this._pendingVoiceInput.push(transcript)
-          } else {
-            void this._active().controller.steer(transcript)
-          }
+        this._voice.onSupervisorRequest((request) => {
+          this._handleSupervisorRequest(request)
         })
       )
     }
   }
 
-  pauseInput(): (target: ChatControllerApi) => void {
-    const pending: string[] = []
-    this._pendingVoiceInput = pending
-    return (target): void => {
-      this._pendingVoiceInput = undefined
-      for (const transcript of pending) {
-        void target.submit(transcript)
-      }
+  pauseInput(): () => void {
+    this._inputPaused = true
+    return (): void => {
+      this._inputPaused = false
     }
   }
 
@@ -121,14 +120,16 @@ export class ConversationVoice {
     const [action, selected] = value.split('=')
     try {
       switch (action) {
-        case 'voice:start':
-          await this._voice.start()
+        case 'voice:enabled': {
+          if (selected !== undefined && selected !== 'on' && selected !== 'off') return false
+          const { status } = this._voice.getSnapshot()
+          const active = status !== 'off' && status !== 'error'
+          const enabled = selected === undefined ? !active : selected === 'on'
+          if (enabled !== active) {
+            await (enabled ? this._voice.start() : this._voice.stop())
+          }
           return true
-        case 'voice:stop':
-          await this._voice.stop()
-          return true
-        case 'voice:microphone':
-          return this._voice.toggleMuted()
+        }
         case 'voice:spokenReplies':
           return this._voice.setSpokenReplies(!this._voice.getSnapshot().spokenReplies)
         case 'voice:endpointing': {
@@ -137,10 +138,20 @@ export class ConversationVoice {
             : nextEndpointingSensitivity(this._voice.getSnapshot().endpointingSensitivity)
           return sensitivity ? this._voice.setEndpointingSensitivity(sensitivity) : false
         }
+        case 'voice:provider': {
+          const provider = selected
+            ? VOICE_PROVIDERS.find((provider) => provider === selected)
+            : nextProvider(this._voice.getSnapshot().provider)
+          return provider ? this._voice.setProvider(provider) : false
+        }
+        case 'voice:model': {
+          const model = selected ? VOICE_MODEL_IDS.find((model) => model === selected) : undefined
+          return model ? this._voice.setModel(model) : false
+        }
         case 'voice:voice': {
           const voice = selected
             ? VOICE_IDS.find((voice) => voice === selected)
-            : nextVoiceId(this._voice.getSnapshot().voice)
+            : nextVoiceId(this._voice.getSnapshot().voice, this._voice.getSnapshot().provider)
           return voice ? this._voice.setVoice(voice) : false
         }
         default:
@@ -160,20 +171,17 @@ export class ConversationVoice {
     const active = voice.status !== 'off' && voice.status !== 'error'
     return [
       {
-        label: active ? 'Stop Voice' : 'Start Voice',
+        label: 'Voice',
         description: voice.status,
-        value: active ? 'voice:stop' : 'voice:start',
-        ...(active ? { tone: 'danger' } : {}),
+        value: 'voice:enabled',
+        control: {
+          kind: 'segmented',
+          options: [
+            { label: 'Off', value: 'off', active: !active },
+            { label: 'On', value: 'on', active },
+          ],
+        },
       },
-      ...(voice.model
-        ? [
-            {
-              label: 'model',
-              description: voice.model,
-              section: 'Session',
-            },
-          ]
-        : []),
       ...(voice.message
         ? [
             {
@@ -185,20 +193,27 @@ export class ConversationVoice {
           ]
         : []),
       {
-        label: 'microphone',
-        description: voice.muted ? 'muted' : 'live',
-        value: 'voice:microphone',
-        section: 'Audio',
-        control: { kind: 'toggle', checked: active && !voice.muted },
-      },
-      {
         label: 'spoken replies',
         description: voice.spokenReplies ? 'on' : 'off',
         value: 'voice:spokenReplies',
         section: 'Audio',
         control: { kind: 'toggle', checked: voice.spokenReplies },
       },
-      ...voiceRows(voice.voice),
+      {
+        label: 'provider',
+        description: voice.provider === 'bedrock' ? 'Nova' : 'OpenAI',
+        value: 'voice:provider',
+        section: 'Voice',
+        control: {
+          kind: 'segmented',
+          options: [
+            { label: 'Nova', value: 'bedrock', ...(voice.provider === 'bedrock' ? { active: true } : {}) },
+            { label: 'OpenAI', value: 'openai', ...(voice.provider === 'openai' ? { active: true } : {}) },
+          ],
+        },
+      },
+      ...modelRows(voice.provider, voice.model),
+      ...voiceRows(voice.provider, voice.voice),
       {
         label: 'end of turn',
         description: {
@@ -220,29 +235,14 @@ export class ConversationVoice {
   }
 
   followConversation(controller: ChatController, isActive: () => boolean): () => void {
-    let speechTurnId: string | undefined
-    let speechText = ''
-    let spokenOffset = 0
+    let narratedTurnId: string | undefined
     return (): void => {
       const snapshot = controller.getSnapshot()
       const turn = snapshot.activeTurn ?? snapshot.completedTurns.at(-1)
-      if (!turn) {
+      if (!turn || turn.status === 'running' || narratedTurnId === turn.id) {
         return
       }
-      const text = turn.entries
-        .filter((entry) => entry.type === 'assistant')
-        .map((entry) => entry.text)
-        .join('\n\n')
-      if (speechTurnId !== turn.id) {
-        speechTurnId = turn.id
-        speechText = ''
-        spokenOffset = 0
-      } else if (!text.startsWith(speechText)) {
-        speechText = text
-        spokenOffset = text.length
-        return
-      }
-      speechText = text
+      narratedTurnId = turn.id
 
       const voice = this._voice?.getSnapshot()
       if (
@@ -252,18 +252,13 @@ export class ConversationVoice {
         !voice?.spokenReplies ||
         voice.status === 'off' ||
         voice.status === 'error' ||
-        turn.status === 'cancelled' ||
-        turn.status === 'error'
+        turn.status === 'cancelled'
       ) {
-        spokenOffset = text.length
         return
       }
-      for (const chunk of streamingSpeechChunks(text, spokenOffset, turn.status === 'complete')) {
-        if (!this._voice.speak(chunk.text)) {
-          spokenOffset = text.length
-          return
-        }
-        spokenOffset = chunk.end
+      const narration = harnessNarration(turn)
+      if (narration) {
+        this._voice.narrate(narration)
       }
     }
   }
@@ -290,6 +285,77 @@ export class ConversationVoice {
   clearListeners(): void {
     this._listeners.clear()
   }
+
+  private _handleSupervisorRequest(request: VoiceSupervisorRequest): void {
+    if (!this._voice) {
+      return
+    }
+    try {
+      if (this._inputPaused) {
+        throw new Error('The harness agent is reloading. Try again after the reload finishes.')
+      }
+      const result =
+        request.action === 'get_current_work'
+          ? this._currentWork()
+          : request.action === 'cancel_current_work'
+            ? this._cancelCurrentWork()
+            : this._delegate(request.instruction)
+      this._voice.resolveSupervisorRequest(request.requestId, { ok: true, result })
+    } catch (error) {
+      this._voice.resolveSupervisorRequest(request.requestId, { ok: false, error: errorMessage(error) })
+    }
+  }
+
+  private _currentWork(): Record<string, unknown> {
+    const { controller } = this._active()
+    const snapshot = controller.getSnapshot()
+    const turn = snapshot.activeTurn
+    const lastTurn = snapshot.completedTurns.at(-1)
+    return {
+      conversation: controller.backend.name,
+      status: conversationStatus(snapshot).label,
+      ...(turn ? { active_request: spokenExcerpt(turn.prompt) } : {}),
+      active_tools:
+        turn?.entries.flatMap((entry) => (entry.type === 'tool' && entry.status === 'running' ? [entry.name] : [])) ??
+        [],
+      queued_requests: snapshot.queuedPrompts.length,
+      pending_steering: snapshot.pendingSteering.length,
+      background_tasks: snapshot.tasks
+        .filter((task) => !['completed', 'failed', 'cancelled'].includes(task.status))
+        .map((task) => ({ label: task.label, status: task.status })),
+      ...(lastTurn ? { latest_result: spokenExcerpt(harnessNarration(lastTurn), 800) } : {}),
+    }
+  }
+
+  private _delegate(instruction: string | undefined): Record<string, unknown> {
+    const request = instruction?.trim()
+    if (!request) {
+      throw new Error('The voice delegation did not include an instruction.')
+    }
+    const { controller } = this._active()
+    if (controller.getSnapshot().status === 'closed') {
+      throw new Error('The active harness conversation is closed.')
+    }
+    const queued = controller.busy
+    void controller.submit(request).catch((error: unknown) => {
+      this._voice?.narrate(`The delegated harness request failed: ${errorMessage(error)}`)
+    })
+    return {
+      accepted: true,
+      state: queued ? 'queued' : 'started',
+      conversation: controller.backend.name,
+    }
+  }
+
+  private _cancelCurrentWork(): Record<string, unknown> {
+    const { controller } = this._active()
+    const cancelled = controller.cancel()
+    return {
+      cancelled,
+      state: cancelled ? 'cancelled' : 'idle',
+      conversation: controller.backend.name,
+    }
+  }
 }
 
 function sameVoiceState(
@@ -301,57 +367,43 @@ function sameVoiceState(
     left.muted === right.muted &&
     left.spokenReplies === right.spokenReplies &&
     left.endpointingSensitivity === right.endpointingSensitivity &&
+    left.provider === right.provider &&
     left.voice === right.voice &&
     left.model === right.model &&
     left.message === right.message
   )
 }
 
-function streamingSpeechChunks(text: string, start: number, final: boolean): { text: string; end: number }[] {
-  const chunks: { text: string; end: number }[] = []
-  let cursor = start
-
-  while (cursor < text.length) {
-    while (cursor < text.length && /\s/.test(text[cursor]!)) {
-      cursor += 1
-    }
-    if (cursor >= text.length) {
-      break
-    }
-
-    const remaining = text.slice(cursor)
-    const sentenceEnd = speechSentenceEnd(remaining)
-    let length: number | undefined
-    if (sentenceEnd !== undefined && sentenceEnd <= STREAMING_SPEECH_MAX_CHARS) {
-      length = sentenceEnd
-    } else if (remaining.length >= STREAMING_SPEECH_MAX_CHARS) {
-      const space = remaining.lastIndexOf(' ', STREAMING_SPEECH_MAX_CHARS)
-      length = space > 0 ? space : STREAMING_SPEECH_MAX_CHARS
-    } else if (final) {
-      length = remaining.length
-    }
-    if (length === undefined) {
-      break
-    }
-
-    const end = cursor + length
-    const chunk = text.slice(cursor, end).trim()
-    cursor = end
-    chunks.push({ text: chunk, end })
-  }
-
-  return chunks
+function modelRows(provider: VoiceProvider, activeModel: string): ChatPanelRow[] {
+  return VOICE_MODEL_OPTIONS[provider].map((model) => ({
+    label: model.label,
+    description: model.value,
+    value: `voice:model=${model.value}`,
+    section: 'Model',
+    ...(model.value === activeModel
+      ? {
+          current: true,
+          badge: { text: 'current', tone: 'success' as const },
+        }
+      : {}),
+  }))
 }
 
-function speechSentenceEnd(text: string): number | undefined {
-  const sentence = /[.!?](?:["')\]]*)(?=\s|$)/.exec(text)
-  const lineBreak = text.indexOf('\n')
-  const sentenceEnd = sentence ? sentence.index + sentence[0].length : undefined
-  if (lineBreak < 0) {
-    return sentenceEnd
+function harnessNarration(turn: ChatTurn): string {
+  const text = turn.entries
+    .filter((entry) => entry.type === 'assistant')
+    .map((entry) => entry.text)
+    .join('\n\n')
+    .trim()
+  if (text) {
+    return text
   }
-  const lineEnd = lineBreak + 1
-  return sentenceEnd === undefined ? lineEnd : Math.min(sentenceEnd, lineEnd)
+  return turn.status === 'error' ? `The harness request failed: ${turn.error ?? 'Unknown error'}` : ''
+}
+
+function spokenExcerpt(text: string, limit = 400): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim()
+  return oneLine.length <= limit ? oneLine : `${oneLine.slice(0, limit - 3)}...`
 }
 
 function nextEndpointingSensitivity(sensitivity: VoiceEndpointingSensitivity): VoiceEndpointingSensitivity {
@@ -359,15 +411,21 @@ function nextEndpointingSensitivity(sensitivity: VoiceEndpointingSensitivity): V
   return ENDPOINTING_OPTIONS[(index + 1) % ENDPOINTING_OPTIONS.length]!.value
 }
 
-function voiceRows(activeVoice: VoiceId): ChatPanelRow[] {
-  const rows: readonly [label: string, voices: readonly VoiceId[]][] = [
-    ['English (US)', ['tiffany', 'matthew']],
-    ['English (GB)', ['amy']],
-    ['French', ['ambre', 'florian']],
-    ['Italian', ['beatrice', 'lorenzo']],
-    ['German', ['greta', 'lennart']],
-    ['Spanish', ['lupe', 'carlos']],
-  ]
+function voiceRows(provider: VoiceProvider, activeVoice: VoiceId): ChatPanelRow[] {
+  const rows: readonly [label: string, voices: readonly VoiceId[]][] =
+    provider === 'bedrock'
+      ? [
+          ['English (US)', ['tiffany', 'matthew']],
+          ['English (GB)', ['amy']],
+          ['French', ['ambre', 'florian']],
+          ['Italian', ['beatrice', 'lorenzo']],
+          ['German', ['greta', 'lennart']],
+          ['Spanish', ['lupe', 'carlos']],
+        ]
+      : [
+          ['OpenAI', ['alloy', 'coral']],
+          ['More', ['sage', 'verse']],
+        ]
   return rows.map(([label, voices]) => ({
     label,
     description: voices.join(' / '),
@@ -384,7 +442,13 @@ function voiceRows(activeVoice: VoiceId): ChatPanelRow[] {
   }))
 }
 
-function nextVoiceId(current: VoiceId): VoiceId {
-  const index = VOICE_IDS.indexOf(current)
-  return VOICE_IDS[(index + 1) % VOICE_IDS.length]!
+function nextProvider(current: VoiceProvider): VoiceProvider {
+  const index = VOICE_PROVIDERS.indexOf(current)
+  return VOICE_PROVIDERS[(index + 1) % VOICE_PROVIDERS.length]!
+}
+
+function nextVoiceId(current: VoiceId, provider: VoiceProvider): VoiceId {
+  const choices: readonly VoiceId[] = provider === 'bedrock' ? BEDROCK_VOICE_IDS : OPENAI_VOICE_IDS
+  const index = choices.indexOf(current)
+  return choices[(index + 1) % choices.length]!
 }

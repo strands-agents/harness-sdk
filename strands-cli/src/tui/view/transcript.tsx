@@ -39,6 +39,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   header,
   turns,
   activeTurn,
+  approvalToolName,
   notices,
   settings,
   scrollOffset,
@@ -50,6 +51,8 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   header?: ReactElement
   turns: readonly ChatTurn[]
   activeTurn?: ChatTurn
+  /** The tool whose call is paused on an open approval prompt. */
+  approvalToolName?: string
   notices: readonly ChatNotice[]
   settings: ChatSnapshot['settings']
   scrollOffset: number
@@ -172,20 +175,11 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   }
   useLayoutEffect(measureLayout)
 
+  // Flexbox keeps short content at the top and overflowing content on the bottom edge, so a frame
+  // rendered before measurement (a just-completed turn, a fresh mount) stays anchored.
   return (
-    <Box
-      ref={viewportRef}
-      flexDirection="column"
-      flexGrow={1}
-      overflowY="hidden"
-      justifyContent={plan.anchorBottom ? 'flex-end' : 'flex-start'}
-    >
-      <Box
-        ref={contentRef}
-        flexDirection="column"
-        flexShrink={0}
-        marginBottom={plan.anchorBottom ? -plan.scrollOffset : 0}
-      >
+    <Box ref={viewportRef} flexDirection="column" flexGrow={1} overflowY="hidden" justifyContent="flex-end">
+      <Box ref={contentRef} flexDirection="column" flexShrink={0} minHeight="100%" marginBottom={-plan.scrollOffset}>
         <Box ref={rootNoticesRef} flexDirection="column">
           {header}
           {rootNotices.map((notice) => (
@@ -218,6 +212,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
             <TurnView
               turn={activeTurn}
               settings={settings}
+              {...(approvalToolName !== undefined ? { approvalToolName } : {})}
               active
               expandedToolGroups={expandedToolGroups}
               {...(onToolGroupElement ? { onToolGroupElement } : {})}

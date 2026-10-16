@@ -1,13 +1,19 @@
 import { lstatSync, realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, relative, resolve, sep } from 'node:path'
+
+import { containsPath, expandHome } from '../paths.js'
 
 export type PackagedSource =
   { source: string; destination: string; directoryOnly?: boolean } | { contents: string; destination: string }
 
+export const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(['.git', 'node_modules', '.venv', '__pycache__'])
+
+export function hasIgnoredDirectory(path: string, ignored = IGNORED_DIRECTORIES): boolean {
+  return path.split(/[\\/]/u).some((part) => ignored.has(part))
+}
+
 export function realSource(path: string, fileOnly = false, baseDir = process.cwd()): string {
-  const expanded = path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : path
-  const candidate = resolve(baseDir, expanded)
+  const candidate = resolve(baseDir, expandHome(path))
   const details = lstatSync(candidate)
   if (!details.isFile() && (!details.isDirectory() || fileOnly)) {
     throw new Error(
@@ -50,10 +56,22 @@ export function packageName(value: string, used: Set<string>): string {
   return result
 }
 
-export function containsPath(root: string, path: string): boolean {
-  const result = relative(root, path)
-  return !result.startsWith(`..${sep}`) && result !== '..' && !isAbsolute(result)
+export function assertPortablePathComponent(value: string): void {
+  if (
+    !value ||
+    value === '.' ||
+    value === '..' ||
+    /[/\\<>:"|?*]/u.test(value) ||
+    [...value].some((character) => (character.codePointAt(0) ?? 0) < 32) ||
+    /[ .]$/u.test(value) ||
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(value)
+  ) {
+    throw new Error(`Path component ${JSON.stringify(value)} is not portable to Windows.`)
+  }
 }
+
+// Shared by export and import so any project the CLI exports can be imported again.
+export const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 
 export function sourceBase(roots: readonly string[], cwd?: string): string {
   const first = roots[0]

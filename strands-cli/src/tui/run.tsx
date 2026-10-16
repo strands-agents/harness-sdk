@@ -7,7 +7,9 @@ import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
-import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
+import { createInkOutputs, enterAlternateScreen, saveTerminalTitle, setTerminalTitle } from './terminal/terminal.js'
+import { observeTerminalColorMode } from './view/theme-detection.js'
+import { sessionResumeCommand } from './session/resume.js'
 
 interface RunInkChatOptions {
   firstRequest?: string
@@ -19,6 +21,8 @@ interface RunInkChatOptions {
   setup?: boolean
   config?: CliConfigStore
   renderApp?: typeof render
+  checkForUpdate?: () => Promise<string | undefined>
+  onUpdateRequested?: () => void
 }
 
 type ChatControllerFactory = (
@@ -31,6 +35,33 @@ type ChatControllerFactory = (
 
 type ChatControllerSource = ChatControllerApi | ChatControllerFactory
 
+/** Keeps the previous chat on screen, read-only, while its replacement starts. */
+function reloadingController(previous: ChatControllerApi, close: (exitCode: number) => void): ChatControllerApi {
+  const snapshot = { ...previous.getSnapshot(), composerStatus: 'Reloading agent...' }
+  return {
+    subscribe: () => () => {},
+    getSnapshot: () => snapshot,
+    busy: false,
+    hardExitCode: undefined,
+    actionableCommandToken: () => undefined,
+    start: async (): Promise<void> => {},
+    submit: async () => undefined,
+    steer: async () => undefined,
+    updateQueuedPrompt: () => false,
+    moveQueuedPrompt: () => false,
+    cancel: () => false,
+    close,
+    dispose: async (): Promise<void> => {},
+    dismissPanel: () => false,
+    activatePanelRow: async () => false,
+    openSkillDetail: () => false,
+    openMcpDetail: () => false,
+    retryMcpServer: async () => false,
+    openModelPanel: async (): Promise<void> => {},
+    openContextPanel: (): void => {},
+  }
+}
+
 function ChatSession({
   onCancelStartup,
   ...props
@@ -39,7 +70,7 @@ function ChatSession({
     (input, key) => {
       if (key.ctrl && input === 'c') onCancelStartup()
     },
-    { isActive: props.trustRequest !== undefined }
+    { isActive: props.trustRequest !== undefined || (!props.controller && !props.setup) }
   )
   return createElement(ChatRoot, props)
 }
@@ -48,15 +79,35 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   const errorOutput = options.errorOutput ?? process.stderr
+  const terminalTheme = observeTerminalColorMode(input, output)
+  await terminalTheme.ready
   const alternateScreen = options.alternateScreen !== false
   const inkOutputs = createInkOutputs(output, errorOutput, alternateScreen)
   let leaveTerminalMode = (): void => {}
+  let restoreTerminalTitle = (): void => {}
+  let stopWatchingTitle = (): void => {}
+  let terminalTitle: string | undefined
+  const watchTerminalTitle = (active: ChatControllerApi): void => {
+    stopWatchingTitle()
+    const update = (): void => {
+      const title = active.getSnapshot().runtime.sessionName ?? 'Strands'
+      if (title === terminalTitle) return
+      terminalTitle = title
+      setTerminalTitle(title, output)
+    }
+    stopWatchingTitle = active.subscribe(update)
+    update()
+  }
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
+    stopWatchingTitle()
     leaveTerminalMode()
+    restoreTerminalTitle()
+    terminalTheme.dispose()
     return hardExitProcessTree(exitCode)
   }
   let controller: ChatControllerApi | undefined
+  let reloading: ChatControllerApi | undefined
   let controllerFactory: ChatControllerFactory | undefined
   let instance: Instance | undefined
   const startTasks: Promise<void>[] = []
@@ -80,6 +131,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       }),
   }
   let resolveSetup: (exitCode: 0 | 130) => void = () => {}
+  let exitAfterSetup = false
   const setupTask = options.setup
     ? new Promise<0 | 130>((resolve) => {
         resolveSetup = resolve
@@ -92,6 +144,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       const previousController = controller
       const resumeVoiceInput = previousController.pauseVoiceInput?.()
       controller = undefined
+      reloading = reloadingController(previousController, closeForExit)
       instance.rerender(chatRoot())
       replacementTask = (async (): Promise<void> => {
         const conversation = await previousController.captureConversation?.(launch?.conversationId)
@@ -120,12 +173,14 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         })
         .finally(() => {
           replacementTask = undefined
+          reloading = undefined
+          resumeVoiceInput?.()
           if (pendingExitCode === undefined && controller) {
+            watchTerminalTitle(controller)
             instance!.rerender(chatRoot())
             if (controller !== previousController) {
               startTasks.push(controller.start())
             }
-            resumeVoiceInput?.(controller)
           }
         })
     }
@@ -183,17 +238,30 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     controller?.close(pendingExitCode)
     instance?.unmount()
   }
-  const chatRoot = (): ReactElement =>
-    createElement(ChatSession, {
-      ...(controller ? { controller } : {}),
+  const chatRoot = (): ReactElement => {
+    const shown = controller ?? reloading
+    return createElement(ChatSession, {
+      ...(shown ? { controller: shown } : {}),
       intro: options.intro !== false,
       setup: options.setup === true,
       ...(options.config ? { config: options.config } : {}),
       ...(trustRequest ? { trustRequest } : {}),
       setupBridge,
       onSetupComplete: completeSetup,
+      ...(options.checkForUpdate ? { checkForUpdate: options.checkForUpdate } : {}),
+      promptForUpdate: options.firstRequest === undefined,
+      onExitSetup: () => {
+        exitAfterSetup = true
+        resolveSetup(0)
+      },
+      onUpdateRequested: () => {
+        options.onUpdateRequested?.()
+        resolveSetup(130)
+        closeForExit(0)
+      },
       onCancelStartup: () => closeForExit(130),
     })
+  }
   const renderChat = (): void => {
     if (instance) {
       instance.rerender(chatRoot())
@@ -201,7 +269,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     }
     if (alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
     instance = renderApp(chatRoot(), {
-      stdin: input,
+      stdin: terminalTheme.input,
       ...inkOutputs,
       exitOnCtrlC: false,
       patchConsole: true,
@@ -219,14 +287,16 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   process.on('SIGHUP', onSighup)
 
   try {
+    restoreTerminalTitle = saveTerminalTitle(output)
     if (typeof source === 'function') {
       controllerFactory = source
     } else {
       controller = source
+      watchTerminalTitle(controller)
     }
-    if (controller || options.setup) renderChat()
+    if (controller || controllerFactory || options.setup) renderChat()
     const setupExit = await setupTask
-    if (setupExit !== 0) {
+    if (setupExit !== 0 || exitAfterSetup) {
       instance?.unmount()
       return setupExit
     }
@@ -251,6 +321,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         controller.close(pendingExitCode)
         return pendingExitCode
       }
+      watchTerminalTitle(controller)
       renderChat()
     }
     if (!controller) {
@@ -258,14 +329,24 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     }
     startTasks.push(controller.start(options.firstRequest))
     await instance!.waitUntilExit()
-    return controller.getSnapshot().exitCode ?? 0
+    return pendingExitCode ?? controller?.getSnapshot().exitCode ?? 0
   } finally {
     process.off('SIGINT', onSigint)
     process.off('SIGTERM', onSigterm)
     process.off('SIGHUP', onSighup)
     instance?.unmount()
     instance?.cleanup()
+    stopWatchingTitle()
     leaveTerminalMode()
+    restoreTerminalTitle()
+    terminalTheme.dispose()
+
+    const resumeSession = controller?.resumeSession
+    if (resumeSession && controller?.getSnapshot().status === 'closed') {
+      await new Promise<void>((resolve) => {
+        output.write(`\nResume with: ${sessionResumeCommand(resumeSession)}\n`, () => resolve())
+      })
+    }
 
     const hardExitCode = controller?.hardExitCode
     if (hardExitCode !== undefined) {

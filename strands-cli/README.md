@@ -65,6 +65,12 @@ Update a global installation with:
 strands update
 ```
 
+### Windows
+
+Windows uses its built-in Windows PowerShell for the shell tool and `!` commands; Git Bash is not
+required. File tools accept drive-letter and UNC paths, and exported agents use the same native
+PowerShell behavior.
+
 On the first interactive launch, the intro animation plays before the setup panel opens. Quickstart
 lets you choose providers and a model, then select tools, skills, MCP, and other capabilities before
 launching. Select or deselect all, or toggle individual capabilities. Customize setup also
@@ -116,8 +122,8 @@ The CLI chooses a mode from its flags and terminal streams:
 | -------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | **Ink**        | stdin and stdout are terminals               | Full-screen interactive UI with panels, slash commands, mouse support, and streaming updates |
 | **Plain**      | stdin is a terminal but stdout is redirected | Readline chat with unstyled output; an initial request is answered before the prompt         |
-| **Print**      | `--print` is set, or stdin is piped          | One request, then exit; styling follows whether stdout is a terminal                          |
-| **ACP server** | `--acp-server` is set                        | Serve the agent over newline-delimited ACP on stdin/stdout                                        |
+| **Print**      | `--print` is set, or stdin is piped          | One request, then exit; styling follows whether stdout is a terminal                         |
+| **ACP server** | `--acp-server` is set                        | Serve the agent over newline-delimited ACP on stdin/stdout                                   |
 
 Examples:
 
@@ -140,37 +146,37 @@ Prefix an Ink input with `!` to run a shell command directly in the active works
 invoking the model, for example `!git status`. Each command runs once through the agent's shell
 sandbox while the full-screen UI remains open, and its output is rendered inline without compact
 summarization. Ctrl-C cancels the active command without exiting the CLI. Output past the inline safety
-limit is written to a file under `~/.strands/cli/tool-results/`. Interactive shell sessions and prompts are not
+limit is saved to a file whose path is shown inline. Interactive shell sessions and prompts are not
 supported.
 
 ## Options
 
 Run `strands --help` for the parser's current list.
 
-| Flag                              | Applies to   | Description                                                                                |
-| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------ |
-| `-p`, `--print`                   | Print        | Answer once and exit                                                                       |
-| `--prompt <text>`                 | All          | Initial request; equivalent to the positional request                                      |
-| `--acp-server`                    | ACP server   | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`             |
-| `--setup`                         | Ink          | Open the provider and default-agent setup wizard                                           |
-| `--agent <path>`                  | All          | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                              |
-| `--env-file <path>`               | All          | Load an explicitly trusted env file; repeat for several files, later files win           |
-| `--set <field=value>`             | Harness backend | Override any portable config field; repeatable and JSON-aware                              |
-| `--name <name>`                   | Harness backend | Override the agent name for this invocation                                                |
-| `--description <text>`            | Harness backend | Override the agent description for this invocation                                         |
-| `--model <model>`                 | Harness backend | A `provider/model` string or bare Amazon Bedrock model id                                         |
-| `--effort <level>`                | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
-| `--instructions <text>`           | Harness backend | Append domain instructions to the system prompt                                            |
-| `--builtin-tools <tools>`         | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
-| `--builtin-plugins <plugins>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`               |
-| `--caching <mode>`                | Harness backend | Prompt caching: `auto` (default) or `off`                                                  |
-| `--context-manager <mode>`        | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                     |
-| `--session <mode>`                | Harness backend | Conversation persistence: `on` (default) or `off`                                          |
-| `--session-id <id>`               | Harness backend | Resume a conversation by id (defaults to a fresh one); writes `session.id`                  |
-| `--skills <dirs>`                 | Harness backend | Comma-separated Agent Skills directories or URLs, or `off`; defaults to `./.agent/skills`  |
-| `--memory <mode>`                 | Harness backend | Long-term memory: `on` (default) or `off`                                                  |
-| `--interventions <policy>`        | Harness backend | Gate tool calls with `ask`, `smart`, a `.cedar` policy file, or a natural-language rule    |
-| `--mcp-config <path>`             | All modes    | Add an MCP configuration file; repeat for multiple files                                   |
+| Flag                          | Applies to      | Description                                                                                                                             |
+| ----------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `-p`, `--print`               | Print           | Answer once and exit                                                                                                                    |
+| `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
+| `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
+| `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
+| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                                                                             |
+| `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
+| `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
+| `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |
+| `--description <text>`        | Harness backend | Override the agent description for this invocation                                                                                      |
+| `--model <model>`             | Harness backend | A `provider/model` string or bare Amazon Bedrock model id                                                                               |
+| `--effort <level>`            | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`                                        |
+| `--instructions <text>`       | Harness backend | Append domain instructions to the system prompt                                                                                         |
+| `--builtin-tools <tools>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
+| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`                                                            |
+| `--caching <mode>`            | Harness backend | Prompt caching: `auto` (default) or `off`                                                                                               |
+| `--context-manager <mode>`    | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                                                                  |
+| `--session <mode>`            | Harness backend | Conversation persistence: `on` (default) or `off`                                                                                       |
+| `--session-id <id>`           | Harness backend | Resume a conversation by id (defaults to a fresh one); writes `session.id`                                                              |
+| `--skills <dirs>`             | Harness backend | Comma-separated Agent Skills directories or URLs, or `off`; defaults to `./.agent/skills`                                               |
+| `--memory <mode>`             | Harness backend | Long-term memory: `on` (default) or `off`                                                                                               |
+| `--interventions <policy>`    | Harness backend | Gate tool calls with `ask`, `smart`, a `.cedar` policy file, or a natural-language rule                                                 |
+| `--mcp-config <path>`         | All modes       | Add an MCP configuration file; repeat for multiple files                                                                                |
 
 Explicit CLI values apply only to the current invocation. Dedicated flags override `--set`, which
 overrides the saved profile; imported agents take their configuration from their code:
@@ -191,9 +197,8 @@ Run `strands` or `/setup` to configure:
 - skills directories, context management, caching, and long-term memory,
 - the default tool-approval mode.
 
-Configuration is stored in `~/.strands/cli/config.json`. Explicit CLI flags override the saved
-profile. `/setup` saves changes for the next launch so the active conversation keeps a stable
-runtime.
+Configuration is stored in `~/.strands/cli.toml`. Explicit CLI flags override the saved
+profile. Applying `/setup` changes reloads the agent while preserving the conversation.
 
 ### Web search and Exa
 
@@ -210,12 +215,10 @@ models on `bedrock-mantle`, Anthropic). On a model without native search the Too
 
 ## Appearance
 
-`/settings` offers **Auto**, **Light**, and **Dark** color modes. Auto uses the terminal's
-`COLORFGBG` background hint when available and otherwise defaults to dark.
-Choose **Theme** to preview Classic, Minimal, Homeland, Merlin, Kikker, Cyborg, Spectre,
-or Custom. Arrow keys and clicks preview; Enter applies; Esc cancels.
-Custom supports separate light and dark colors, a base theme, and per-variant reset.
-Saved Magma selections migrate to Classic.
+The CLI observes the terminal's reported background color and automatically uses a matching
+high-contrast palette, defaulting to a dark background when unavailable.
+Choose **Theme** to switch between Classic, Minimal, Homeland, Merlin, Kikker, Oak, Spectre,
+or Scarlet; arrow keys and clicks apply the theme immediately.
 The welcome banner shrinks with the terminal, keeping the composer visible.
 `/settings` also links to `/setup` for providers and the default agent.
 
@@ -227,8 +230,8 @@ The file exports `agent`, ready to import into another application, and each new
 reads the latest edits. No separate JSON snapshot or chat runner is included. TypeScript
 projects include `npm run build` for compiling code to import into another application.
 
-Run `strands --agent ./agent.zip` directly: the CLI extracts the project into
-`~/.strands/cli/cache/agents/` and installs its declared dependencies on first launch.
+Run `strands --agent ./agent.zip` directly: the CLI extracts the project into its cache and
+installs its declared dependencies on first launch.
 For an existing source folder, install its dependencies (`npm install`, or create `.venv`
 and install `requirements.txt` for Python), then launch with any of:
 
@@ -262,15 +265,15 @@ cross-language, lacks packageable source, or would embed an MCP secret. Credenti
 sessions, memory contents, and running processes are runtime state and are intentionally not exported.
 Machine-discovered MCP servers and skills are not part of the portable definition.
 
-| Provider       | Model prefix      | Credential source                                                                |
-| -------------- | ----------------- | -------------------------------------------------------------------------------- |
-| Amazon Bedrock | `bedrock/`        | Standard AWS SDK credential chain                                                |
-| Bedrock Mantle | `bedrock-mantle/` | Standard AWS SDK credential chain                                                |
-| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`                                                              |
-| OpenAI         | `openai/`         | `OPENAI_API_KEY`                                                                 |
-| Google Gemini  | `google/`         | `GEMINI_API_KEY`                                                                 |
-| Ollama         | `ollama/`         | Auto-detected locally; `OLLAMA_HOST` only for a custom server                   |
-| LiteLLM proxy  | `litellm/`        | Auto-detected locally; `LITELLM_BASE_URL` for a custom proxy, optional key       |
+| Provider       | Model prefix      | Credential source                                                          |
+| -------------- | ----------------- | -------------------------------------------------------------------------- |
+| Amazon Bedrock | `bedrock/`        | Standard AWS SDK credential chain                                          |
+| Bedrock Mantle | `bedrock-mantle/` | Standard AWS SDK credential chain                                          |
+| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`                                                        |
+| OpenAI         | `openai/`         | `OPENAI_API_KEY`                                                           |
+| Google Gemini  | `google/`         | `GEMINI_API_KEY`                                                           |
+| Ollama         | `ollama/`         | Auto-detected locally; `OLLAMA_HOST` only for a custom server              |
+| LiteLLM proxy  | `litellm/`        | Auto-detected locally; `LITELLM_BASE_URL` for a custom proxy, optional key |
 
 The CLI does not store provider secrets. Setup detects credentials from the process environment,
 explicitly selected env files, AWS profiles, and other credential sources supported by the
@@ -315,6 +318,16 @@ unavailable without blocking startup. Malformed configuration in the CLI's own f
 problem in another tool's file skips that server or file and is listed under `/mcp`. Stdio servers
 run with their stderr discarded, so server diagnostics never print over the terminal UI.
 
+In `/mcp`, select a server and press **→** for its full error, configuration source, and recovery
+steps. **Enter** enables or disables it; the switch shows whether the server is enabled, while
+the status shows whether it connected. Press **R** to retry a failed connection with the loaded
+settings. Use **/** to search.
+
+Retry does not reread configuration or environment files. After editing those files, open
+`/setup` and save to rebuild the agent, or restart Strands. New environment variables exported
+in another shell require a restart. Remote servers need credentials configured for Strands;
+sign-in saved by another app is not shared, and the CLI has no MCP browser sign-in flow.
+
 Configuration is merged by server name. Later files replace earlier definitions; a later
 `"disabled": true` removes an earlier server.
 
@@ -329,7 +342,7 @@ When MCP discovery is enabled, user configuration is discovered in this order:
 2. `~/.kiro/settings/mcp.json`
 3. `~/.gemini/settings.json` (comments allowed; `httpUrl` is streamable HTTP, `url` is SSE)
 4. `~/.codex/config.toml`
-5. `~/.strands/cli/mcp.json`
+5. `~/.strands/mcp.json`
 
 The CLI then applies trusted project configuration from `.mcp.json`, `.kiro/settings/mcp.json`,
 `.gemini/settings.json`, `.codex/config.toml`, and `.strands/mcp.json`. Repeated `--mcp-config`
@@ -340,7 +353,7 @@ Project MCP files can run local commands, so the CLI asks before loading them in
 plain mode. Print and ACP-server mode never prompt; they load project files only when their current
 fingerprint was approved previously.
 Approval is bound to the canonical workspace and a fingerprint of the exact project file paths and
-contents, stored in `~/.strands/cli/trusted-workspaces.json`. Changing a project file requires
+contents, which the CLI remembers. Changing a project file requires
 approval again, and a change between approval and loading aborts startup. Passing a project file
 explicitly with `--mcp-config` is treated as an intentional opt-in and does not prompt.
 
@@ -350,7 +363,7 @@ supplied by the ACP client.
 ## Agent Skills
 
 When skill discovery is enabled, the CLI discovers Agent Skills in `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, and
-`~/.strands/cli/skills`. It also scans each directory from the repository root down to the current
+`~/.strands/skills`. It also scans each directory from the repository root down to the current
 working directory for `.agents/skills`, `.claude/skills`, `.codex/skills`, `.agent/skills`, and
 `.strands/skills`.
 
@@ -372,26 +385,23 @@ directories (`./.agent/skills` by default); `--skills off` disables skills entir
 The Ink backend installs the Strands Harness SDK's Cedar intervention before constructing the agent
 through `createHarness()`. Cedar automatically permits workspace-local `read` calls (after
 canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
-or MCP tool call opens a permission panel with **Allow once**, **Always allow tool**, and **Deny**.
-Always-allowed tools are written to `~/.strands/cli/config.json` and apply by exact tool name across
-launches. A denial is returned
-to the agent as a denied tool call.
+or MCP tool call opens a permission panel with **Allow once**, **Allow forever**, **Deny once**,
+and **Deny forever**. Forever choices let you select a specific action or the whole tool.
+Saved allow and deny rules are written to `~/.strands/cli.toml` and apply across launches.
+A denial is returned to the agent as a denied tool call.
 
-The CLI reads user-level permission settings from `~/.strands/cli/config.json`:
+The CLI reads user-level permission settings from `~/.strands/cli.toml`:
 
-```json
-{
-  "permissions": {
-    "mode": "default",
-    "allow": ["shell", "edit"]
-  }
-}
+```toml
+[permissions]
+mode = "default"
+allow = ["shell", "edit"]
 ```
 
-`permissions.mode` accepts `"default"` or `"bypassPermissions"`. Bypass mode allows every built-in
-and MCP tool call without opening the Cedar approval panel. It does not disable additional
+`permissions.mode` accepts `"default"` or `"bypassPermissions"`. Bypass mode skips approval
+prompts; saved deny rules still apply. It does not disable additional
 interventions supplied by the caller or an operating-system sandbox. Permission configuration is
-user-owned; the CLI does not load a project `config.json` that could silently enable bypass mode.
+user-owned; the CLI does not load a project config file that could silently enable bypass mode.
 Use `/permissions` to inspect or change the mode and remove saved tool grants.
 Use `/settings` to persist presentation preferences in the same file. Disabling animations also
 skips the startup intro on later launches.
@@ -411,31 +421,38 @@ than an operating-system sandbox.
 
 These commands are local to the full-screen Ink UI:
 
-| Command                      | Action                                                             |
-| ---------------------------- | ------------------------------------------------------------------ |
-| `/help`                    | Browse controls, commands, and the current agent's available tools |
-| `/context`                   | Show context usage and prompt-cache activity                       |
-| `/compact`                   | Summarize older conversation context                               |
-| `/clear`                     | Rebuild the agent with a fresh conversation                             |
-| `/tasks`                     | Show tasks and configure background completion behavior            |
-| `/model [model-id]`          | Browse or change the active model                                  |
-| `/effort [level]`            | Open the effort slider or set the reasoning effort directly        |
-| `/fork [request]`            | Fork the current conversation into an independent agent            |
-| `/agents`                    | View conversations and live subagents                              |
-| `/rename <name>`             | Rename the currently viewed agent                                  |
-| `/sessions`                  | Browse and resume saved sessions                              |
-| `/skills`                    | Browse available and active Agent Skills                           |
-| `/mcp`                       | Connect to configured MCP servers and show their tools and state   |
-| `/permissions`               | Configure persistent tool approvals                           |
-| `/voice [on\|off\|status]`   | Open bidirectional voice controls                                  |
-| `/settings`                  | Configure presentation and inspect the active runtime              |
-| `/setup`                     | Configure providers and the default agent                     |
-| `/export`                    | Write the agent as a runnable TypeScript or Python project         |
-| `!<command>`                 | Run a shell command in the active agent's sandbox             |
-| `/exit`                      | Exit the CLI                                                          |
+| Command                        | Action                                                             |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `/help`                        | Browse controls, commands, and the current agent's available tools |
+| `/context`                     | Show context usage and prompt-cache activity                       |
+| `/compact`                     | Summarize older conversation context                               |
+| `/clear`                       | Rebuild the agent with a fresh conversation                        |
+| `/tasks`                       | Show tasks and configure background completion behavior            |
+| `/model [model-id]`            | Browse or change the active model                                  |
+| `/effort [level]`              | Open the effort slider or set the reasoning effort directly        |
+| `/fork [request]`              | Fork the current conversation into an independent agent            |
+| `/agents`                      | View conversations and live subagents                              |
+| `/rename [name]`               | Rename the current saved session (same as `/sessions rename`)      |
+| `/sessions`                    | Browse and resume saved sessions                                   |
+| `/skills`                      | Browse available and active Agent Skills                           |
+| `/file [clear\|<paths>...]`    | Attach files to the next message                                   |
+| `/mcp`                         | Inspect MCP servers, read failure details, and retry connections   |
+| `/permissions`                 | Configure persistent tool approvals                                |
+| `/voice [on\|off\|status]`     | Open the bidirectional voice supervisor                            |
+| `/settings`                    | Configure presentation and inspect the active runtime              |
+| `/config [typescript\|python]` | Preview generated code or view the active agent's source           |
+| `/setup`                       | Configure providers and the default agent                          |
+| `/export`                      | Write the agent as a runnable TypeScript or Python project         |
+| `!<command>`                   | Run a shell command in the active agent's sandbox                  |
+| `/exit`                        | Exit the CLI                                                       |
 
 Slash commands provide inline signatures and argument completion. Press Tab or Enter
 on a completion to replace the current argument token.
+
+Use `/file` to open the native macOS or Windows file picker, or pass one or more quoted paths
+directly. Dragging or pasting file paths into the composer attaches them too. Images, supported
+documents, and UTF-8 text files are sent with the next message; `/file clear` removes the draft
+attachments.
 
 `/help` groups **Controls**, **Commands**, and **Available tools** in a searchable panel.
 Select a control or tool for its full text, drag to copy, and press Esc to return.
@@ -447,21 +464,25 @@ An available Agent Skill can also be invoked directly with `/skill-name [prompt]
 `$skill-name [prompt]`. The CLI activates it through the SDK's `skills` tool, then runs the trailing
 prompt with that skill's instructions active.
 
-`/voice` opens the experimental Nova Sonic control panel without starting audio. Use `/voice on` to
-start listening without opening the panel, or use the panel's start action. Nova Sonic handles live
-audio, endpointing, transcription, and spoken playback; finalized utterances steer the active agent
-conversation. The selected coding model still owns reasoning, tools, and the response itself.
+`/voice` opens the experimental bidirectional voice control panel without starting audio. Use
+`/voice on` to start listening without opening the panel, or press **Start Voice**. Choose Amazon
+Nova Sonic or OpenAI Realtime as the conversational supervisor. It handles live audio, endpointing,
+and spoken responses, answers ordinary conversation directly, and routes status, delegation, and
+cancellation through the active harness conversation. The selected coding model still owns files,
+tools, approvals, and execution.
 
-The panel controls microphone mute, spoken replies, Nova Sonic's supported voice IDs, and
-fast/balanced/patient end-of-turn detection. Spoken replies are off by default. When enabled,
-sentence-sized pieces of the coding response are queued for speech as its text streams instead of
-waiting for the entire response. With an empty composer, one Space tap toggles microphone mute,
-including while the voice panel is open. Voice changes restart an active sidecar; selections made
-while voice is off apply on the next start. `/voice off` releases the audio devices. The sidecar
-enables the Harness SDK's WebRTC-based echo cancellation so speaker playback is removed from
-microphone input while real user barge-in remains available. This currently requires `uv`, Python
-3.13, PortAudio, AWS credentials, and Nova Sonic access. The published npm package includes the
-Python sidecar; `uv` installs its Python dependencies on first use.
+The panel controls the provider, spoken replies, supported voices, and fast/balanced/patient
+end-of-turn detection. Spoken replies are off by default. When enabled, the voice model speaks
+directly and turns completed harness responses into short grounded updates. A themed frog hops into
+the bottom-right corner while voice is active and moves its mouth during speech. Voice conversation
+continues while delegated work runs; only an explicit cancel request stops that work.
+
+With an empty composer, one Space tap toggles microphone mute, including while the voice panel is
+open. Provider, voice, and endpointing changes restart an active sidecar; selections made while
+voice is off apply on the next start. `/voice off` releases the audio devices. Missing credentials
+appear as an error in the voice panel. Nova requires AWS credentials and model access; OpenAI
+requires `OPENAI_API_KEY`. Both require `uv`, Python 3.13, and PortAudio. The published npm package
+includes the Python sidecar; `uv` installs its Python dependencies on first use.
 
 ## ACP server
 
@@ -490,7 +511,7 @@ the next model call, while rebuilds wait for the active turn to finish.
 
 ### Remembering a conversation
 
-Every run persists by default under `./.agent/sessions`, minting a fresh session id when you don't
+Every run persists by default, minting a fresh session id when you don't
 supply one, for interactive chats and one-shot `-p` runs alike. Use `/sessions` to browse and resume
 them. Pass `--session-id` to choose a memorable id or pick up that exact conversation directly:
 
@@ -502,9 +523,16 @@ strands --session-id my-project "where did we leave off?"
 
 Pass `--session off` for a throwaway run that persists nothing.
 
-In Ink, `/sessions` combines saved sessions from workspaces previously seen on the machine and
-can resume any of them, including from another worktree. Session data stays in each workspace's
-configured `session.dir`; the user-level catalog stores only those roots.
+The built-in agent saves sessions under `~/.strands/sessions/`, grouped by workspace, so nothing is
+written into your project. Sessions written by earlier versions under `~/.strands/cli/sessions/`
+remain available. Set `session.dir` to keep them somewhere else; authored agents (`--agent`) keep
+their own `session.dir`, which defaults to `./.agent/sessions`. In Ink, `/sessions` lists saved
+sessions from every workspace and can resume any of them, including from another worktree.
+
+`/rename <name>` (or `/sessions rename <name>`) names the current saved session and updates the terminal
+title. Saved names return when you reopen the session. Leave out the name to have the agent's
+auxiliary model—or its active model when no auxiliary model is available—suggest a three-word name
+in the background from a copy of the conversation; if that fails, the existing name stays.
 
 ### Background Tasks
 
@@ -542,7 +570,13 @@ Each time the interactive TUI starts with the built-in profile, `strands` sends 
 and plugins are actually in use. The whole payload is:
 
 ```json
-{ "v": 1, "cli_version": "0.1.0", "provider": "bedrock", "builtin_tools": ["shell", "read"], "builtin_plugins": ["todos"] }
+{
+  "v": 1,
+  "cli_version": "0.1.0",
+  "provider": "bedrock",
+  "builtin_tools": ["shell", "read"],
+  "builtin_plugins": ["todos"]
+}
 ```
 
 `provider` is one of the shipped provider names and is omitted for a custom model module. The payload
@@ -552,7 +586,7 @@ ping is fire-and-forget: startup never waits on it and failures are silent. Noth
 projects).
 
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
-(takes effect at the next launch), or `"settings": { "telemetry": false }` in `~/.strands/cli/config.json`.
+(takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
 
 ## Beyond the CLI
 

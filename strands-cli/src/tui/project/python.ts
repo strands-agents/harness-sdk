@@ -31,11 +31,18 @@ import {
   type EffortInput,
 } from '../model/selection.js'
 import { discoverProviderModels } from '../provider/discovery.js'
-import { DEFAULT_CEDAR_POLICIES, pathIsWithinWorkspace, ToolPermissionBroker } from '../permissions/policy.js'
+import {
+  DEFAULT_CEDAR_POLICIES,
+  pathIsWithinWorkspace,
+  requestToolPermission,
+  savePermissionDecision,
+  ToolPermissionBroker,
+} from '../permissions/policy.js'
 import { createDiffPreview } from '../permissions/file-change-preview.js'
+import { canonicalPath, permissionRuleDecision } from '../permissions/rules.js'
 import { terminateProcessTree } from '../terminal/process-tree.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
-import type { SkillInfo } from '../skills.js'
+import type { SkillActivation, SkillInfo } from '../skills.js'
 
 function decodeBytes(_key: string, value: unknown): unknown {
   if (value && typeof value === 'object' && '$bytes' in value && typeof value.$bytes === 'string') {
@@ -322,9 +329,10 @@ export class PythonBackend implements ChatBackend {
     return result.stopReason === 'compacted' ? { ...result.context } : undefined
   }
 
-  async activateSkill(name: string): Promise<SkillInfo | undefined> {
-    await this._request({ type: 'skill', name })
-    return this.skills.find((skill) => skill.name === name)
+  async activateSkill(name: string): Promise<SkillActivation | undefined> {
+    const result = await this._request({ type: 'skill', name })
+    const skill = this.skills.find((candidate) => candidate.name === name)
+    return skill ? { skill, content: result.finalText ?? skill.instructions } : undefined
   }
 
   async fork(options: PythonOptions, signal?: AbortSignal): Promise<PythonBackend> {
@@ -377,8 +385,8 @@ export class PythonBackend implements ChatBackend {
   }
 
   permissionStatus(): ReturnType<NonNullable<ChatBackend['permissionStatus']>> {
-    const { mode, allow } = this._config.snapshot().permissions
-    return { mode, allowedTools: allow, configPath: this._config.snapshot().path }
+    const { mode, allow, deny } = this._config.snapshot().permissions
+    return { mode, allowedTools: allow, deniedTools: deny, configPath: this._config.snapshot().path }
   }
 
   async setPermissionMode(mode: ChatPermissionMode): Promise<void> {
@@ -392,9 +400,12 @@ export class PythonBackend implements ChatBackend {
   removeAllowedPermission(name: string): Promise<void> {
     return this._config.removeAllowedTool(name)
   }
+  removeDeniedPermission(rule: string): Promise<void> {
+    return this._config.removeDeniedTool(rule)
+  }
 
-  respondPermission(requestId: string, optionId?: string): boolean {
-    if (this._permissions.respond(requestId, optionId)) return true
+  respondPermission(requestId: string, optionId?: string, rule?: string): boolean {
+    if (this._permissions.respond(requestId, optionId, rule)) return true
     this._send({ type: 'permission', requestId, approved: optionId === 'allow' })
     return true
   }
@@ -435,7 +446,10 @@ export class PythonBackend implements ChatBackend {
 
   private async _authorize(message: Extract<WorkerMessage, { type: 'authorize' }>): Promise<boolean> {
     const configured = this._config.snapshot().permissions
-    if (configured.mode === 'bypassPermissions' || configured.allow.includes(message.name)) return true
+    const workspace = canonicalPath(this.cwd)
+    const saved = permissionRuleDecision(message.name, message.input, configured, workspace)
+    if (saved === 'deny') return false
+    if (configured.mode === 'bypassPermissions' || saved === 'allow') return true
     const authorization = isAuthorized({
       principal: { type: 'User', id: 'anonymous' },
       action: { type: 'Action', id: message.name },
@@ -465,9 +479,9 @@ export class PythonBackend implements ChatBackend {
       typeof path === 'string' && typeof after === 'string' && message.before !== undefined
         ? createDiffPreview(path, message.before, after)
         : undefined
-    const decision = await this._permissions.request(message.name, message.input, diff)
-    if (decision === 'allow-tool-always') await this._config.allowTool(message.name)
-    return decision !== 'deny'
+    const decision = await requestToolPermission(this._permissions, message.name, message.input, workspace, diff)
+    await savePermissionDecision(this._config, decision)
+    return decision.type === 'allow-once' || decision.type === 'allow-always'
   }
 
   private async _request(command: object): Promise<ChatRunResult> {

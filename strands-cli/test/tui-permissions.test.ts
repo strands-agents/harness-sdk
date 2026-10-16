@@ -31,26 +31,35 @@ describe('CedarPermissions', () => {
       expect(body).toContain('\\u009dHIDDEN_C1\\u009c')
       broker.respond(request.id, 'deny')
     })
-    await expect(broker.request('shell', { command })).resolves.toBe('deny')
+    await expect(broker.request('shell', { command })).resolves.toEqual({ type: 'deny' })
   })
 
-  it('allows configuration inspection and drafting while keeping apply behind tool approval', async () => {
+  it.each(['deny', 'deny-always'])('allows configuration drafting and reports an apply %s', async (denial) => {
     const broker = new ToolPermissionBroker()
     const preview = createDiffPreview('config.json', 'default', 'bypassPermissions')
+    const configurationDenied = vi.fn()
     const permissions = new CedarPermissions({
       broker,
-      config: CliConfigStore.memory({ allow: ['strands_config'] }),
+      config: CliConfigStore.memory(),
       cwd: process.cwd(),
       configurationPreview: () => preview,
+      configurationDenied,
     })
     const requests: string[] = []
     broker.subscribe((request) => {
       if (request) {
         requests.push(request.toolName)
         expect(request.diff).toEqual(preview)
-        expect(request.options.map((option) => option.id)).toEqual(['allow-once', 'deny'])
-        expect(broker.respond(request.id, 'allow-tool-always')).toBe(false)
-        broker.respond(request.id, requests.length === 1 ? 'allow-once' : 'deny')
+        expect(request.action).toBe('apply')
+        expect(request.options.map((option) => option.id)).toEqual([
+          'allow-once',
+          'allow-always',
+          'deny',
+          'deny-always',
+        ])
+        expect(request.scopes?.map((scope) => scope.rule)).toEqual(['strands_config(apply)', 'strands_config'])
+        expect(broker.respond(request.id, 'allow-always', 'shell')).toBe(false)
+        broker.respond(request.id, requests.length === 1 ? 'allow-once' : denial)
       }
     })
     for (const action of ['inspect', 'models', 'update']) {
@@ -58,13 +67,127 @@ describe('CedarPermissions', () => {
         type: 'proceed',
       })
     }
+    await expect(
+      permissions.beforeToolCall(toolEvent('strands_config', { action: 'apply', revision: 1 }))
+    ).resolves.toMatchObject({ type: 'proceed' })
+    expect(configurationDenied).not.toHaveBeenCalled()
+    await expect(
+      permissions.beforeToolCall(toolEvent('strands_config', { action: 'apply', revision: 2 }))
+    ).resolves.toMatchObject({ type: 'deny' })
+    expect(requests).toEqual(['strands_config', 'strands_config'])
+    expect(configurationDenied).toHaveBeenCalledExactlyOnceWith(2)
+  })
+
+  it('reports configuration applies denied by saved rules before bypass mode', async () => {
+    const broker = new ToolPermissionBroker()
+    const prompted = vi.fn()
+    const configurationDenied = vi.fn()
+    broker.subscribe(prompted)
+    const permissions = new CedarPermissions({
+      broker,
+      config: CliConfigStore.memory({ mode: 'bypassPermissions', deny: ['strands_config(apply)'] }),
+      cwd: process.cwd(),
+      configurationDenied,
+    })
+
+    await expect(
+      permissions.beforeToolCall(toolEvent('strands_config', { action: 'apply', revision: 3 }))
+    ).resolves.toMatchObject({ type: 'deny' })
+    expect(configurationDenied).toHaveBeenCalledExactlyOnceWith(3)
+    expect(prompted).not.toHaveBeenCalled()
+  })
+
+  it('does not report other denied actions or invalid configuration revisions as denied drafts', async () => {
+    const configurationDenied = vi.fn()
+    const permissions = new CedarPermissions({
+      broker: new ToolPermissionBroker(),
+      config: CliConfigStore.memory({ deny: ['strands_config', 'shell'] }),
+      cwd: process.cwd(),
+      configurationDenied,
+    })
+    const calls = [
+      toolEvent('strands_config', { action: 'update', revision: 1 }),
+      toolEvent('strands_config', { action: 'apply' }),
+      toolEvent('strands_config', { action: 'apply', revision: null }),
+      toolEvent('strands_config', { action: 'apply', revision: '1' }),
+      toolEvent('strands_config', { action: 'apply', revision: 1.5 }),
+      toolEvent('shell', { action: 'apply', revision: 1 }),
+    ]
+    for (const call of calls) {
+      await expect(permissions.beforeToolCall(call)).resolves.toMatchObject({ type: 'deny' })
+    }
+    expect(configurationDenied).not.toHaveBeenCalled()
+  })
+
+  it('lets the user trust configuration writes so the agent can apply its own changes', async () => {
+    const broker = new ToolPermissionBroker()
+    const prompted = vi.fn()
+    broker.subscribe(prompted)
+    const permissions = new CedarPermissions({
+      broker,
+      config: CliConfigStore.memory({ allow: ['strands_config(apply)'] }),
+      cwd: process.cwd(),
+    })
+
     await expect(permissions.beforeToolCall(toolEvent('strands_config', { action: 'apply' }))).resolves.toMatchObject({
       type: 'proceed',
+      reason: expect.stringContaining('always allowed'),
     })
-    await expect(permissions.beforeToolCall(toolEvent('strands_config', { action: 'apply' }))).resolves.toMatchObject({
-      type: 'deny',
+    expect(prompted).not.toHaveBeenCalled()
+  })
+
+  it('saves the chosen scope of a forever choice and applies it to later calls', async () => {
+    const workspace = await temporaryWorkspace()
+    const config = CliConfigStore.memory()
+    const broker = new ToolPermissionBroker()
+    const permissions = new CedarPermissions({ broker, config, cwd: workspace })
+    const requests: string[] = []
+    broker.subscribe((request) => {
+      if (!request) return
+      requests.push(request.action ?? '')
+      expect(request.scopes?.map((scope) => scope.rule)).toContain('shell(git push *)')
+      broker.respond(request.id, 'allow-always', 'shell(git push *)')
     })
-    expect(requests).toEqual(['strands_config', 'strands_config'])
+
+    await expect(
+      permissions.beforeToolCall(toolEvent('shell', { command: 'git push origin main' }))
+    ).resolves.toMatchObject({ type: 'proceed', reason: expect.stringContaining('shell(git push *)') })
+    expect(config.snapshot().permissions.allow).toEqual(['shell(git push *)'])
+    await expect(
+      permissions.beforeToolCall(toolEvent('shell', { command: 'git push --force origin dev' }))
+    ).resolves.toMatchObject({ type: 'proceed', reason: expect.stringContaining('user configuration') })
+    expect(requests).toEqual(['git push origin main'])
+  })
+
+  it('applies deny-forever rules before allow rules and bypass mode', async () => {
+    const workspace = await temporaryWorkspace()
+    const config = CliConfigStore.memory({ allow: ['shell'] })
+    const broker = new ToolPermissionBroker()
+    const permissions = new CedarPermissions({ broker, config, cwd: workspace })
+    await config.denyTool('shell(rm *)')
+    await config.setPermissionMode('bypassPermissions')
+
+    await expect(
+      permissions.beforeToolCall(toolEvent('shell', { command: 'ls && rm -rf build' }))
+    ).resolves.toMatchObject({ type: 'deny', reason: expect.stringContaining('user configuration') })
+    await expect(permissions.beforeToolCall(toolEvent('shell', { command: 'ls' }))).resolves.toMatchObject({
+      type: 'proceed',
+    })
+  })
+
+  it('saves a deny-forever choice and denies the call being decided', async () => {
+    const workspace = await temporaryWorkspace()
+    const config = CliConfigStore.memory()
+    const broker = new ToolPermissionBroker()
+    const permissions = new CedarPermissions({ broker, config, cwd: workspace })
+    broker.subscribe((request) => {
+      if (request) broker.respond(request.id, 'deny-always', 'write')
+    })
+
+    await expect(
+      permissions.beforeToolCall(toolEvent('write', { path: join(workspace, 'notes.txt'), content: 'x' }))
+    ).resolves.toMatchObject({ type: 'deny', reason: expect.stringContaining('user configuration') })
+    expect(config.snapshot().permissions.deny).toEqual(['write'])
   })
   it('permits workspace reads and sends writes through interactive approval', async () => {
     const workspace = await temporaryWorkspace()
@@ -174,13 +297,13 @@ describe('CedarPermissions', () => {
 
   it('persists always-allowed tools across permission runtimes', async () => {
     const workspace = await temporaryWorkspace()
-    const configPath = join(workspace, 'config.json')
+    const configPath = join(workspace, 'cli.toml')
     const firstConfig = await CliConfigStore.load(configPath)
     const firstBroker = new ToolPermissionBroker()
     const firstPermissions = new CedarPermissions({ broker: firstBroker, config: firstConfig, cwd: workspace })
     firstBroker.subscribe((request) => {
       if (request) {
-        firstBroker.respond(request.id, 'allow-tool-always')
+        firstBroker.respond(request.id, 'allow-always')
       }
     })
 

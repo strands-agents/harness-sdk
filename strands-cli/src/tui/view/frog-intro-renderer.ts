@@ -10,6 +10,8 @@ import {
   hopState,
   drawArrivalRipple,
   drawFrog,
+  drawFrogMouth,
+  oakGrainColor,
   interpolatePose,
   fillEllipse,
   fillCircle,
@@ -25,13 +27,14 @@ import {
 export type { FrogAnimationRun, FrogRenderOptions } from './frog-canvas.js'
 
 export const FROG_INTRO_DURATION_MS = 4_200
+// Quadrant blocks keep the reference's stepped edges within the eight-column glyph width.
 const GLYPHS = {
-  A: [' █████╗ ', '██╔══██╗', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
-  D: ['██████╗ ', '██╔══██╗', '██║  ██║', '██║  ██║', '██████╔╝', '╚═════╝ '],
-  N: ['███╗   ██╗', '████╗  ██║', '██╔██╗ ██║', '██║╚██╗██║', '██║ ╚████║', '╚═╝  ╚═══╝'],
-  R: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔══██╗', '██║  ██║', '╚═╝  ╚═╝'],
-  S: ['███████╗', '██╔════╝', '███████╗', '╚════██║', '███████║', '╚══════╝'],
-  T: ['████████╗', '╚══██╔══╝', '   ██║   ', '   ██║   ', '   ██║   ', '   ╚═╝   '],
+  A: [' ▗▟█▙▖  ', '█▛▀╔▀▜█╗', '█▌   ▐█║', '███████║', '█▌╔══▐█║', '╚═╝  ╚═╝'],
+  D: ['████▙▖  ', '█▌╔═▀▜█╗', '█▌║  ▐█║', '█▌║ ▄▟█║', '████▛▘═╝', '╚═══╝   '],
+  N: ['█▙▄  ▐█ ', '█▛▜▄╗▐█║', '█▌▐█║▐█║', '█▌▐█▄▟█║', '█▌║╚▀▜█║', '╚═╝  ╚═╝'],
+  R: ['▄▟███▙▄ ', '█▌╔══▐█║', '█▌   ▐█║', '█████▌═╝', '█▌║▝▀█▌ ', '╚═╝ ╚═╝ '],
+  S: ['▄▟███▙▄ ', '█▌╔══▝▀║', '▀▜███▙▄╗', '▄▖╚══▐█║', '▀▜███▛▀╝', ' ╚════╝ '],
+  T: ['▄▟███▙▄ ', '▀▘▐█╔▝▀║', '╚═▐█║╚═╝', '  ▐█║   ', '  ▐█║   ', '  ╚═╝   '],
 } as const
 
 const SMALL_GLYPHS = {
@@ -150,14 +153,22 @@ export function renderFrogBrandEasterEggFrame(
   party = false,
   partyElapsedMs = elapsedMs,
   options: FrogRenderOptions = {},
-  height = lockupLayout(width).height
+  height = lockupLayout(width).height,
+  origin: Point = { x: 0, y: 0 }
 ): string {
-  const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, party, partyElapsedMs, options)
-  if (canvas.width < FROG_FULL_LOCKUP_MIN_WIDTH || canvas.height < lockupLayout(canvas.width).height) {
-    drawCompactLockup(canvas)
+  const canvas = new Canvas(
+    Math.max(1, width) + origin.x,
+    Math.max(1, height) + origin.y,
+    theme,
+    party,
+    partyElapsedMs,
+    options
+  )
+  if (width < FROG_FULL_LOCKUP_MIN_WIDTH || height < lockupLayout(width).height) {
+    drawCompactLockup(canvas, origin)
     return canvas.rows(color).join('\n')
   }
-  drawFrogBrandEasterEgg(canvas, clamp(progress), elapsedMs)
+  drawFrogBrandEasterEgg(canvas, clamp(progress), elapsedMs, origin)
   return canvas.rows(color).join('\n')
 }
 
@@ -238,6 +249,32 @@ export function renderFrogAnimationRuns(
     drawFrogPeek(canvas, value, elapsedMs)
   } else {
     drawFrogFireflies(canvas, value, elapsedMs)
+  }
+  return canvas.runs(color)
+}
+
+export function renderVoiceFrogRuns(
+  width: number,
+  height: number,
+  entryProgress: number,
+  elapsedMs: number,
+  speaking: boolean,
+  color = false,
+  theme: FrogTheme = 'green',
+  options: FrogRenderOptions = {}
+): FrogAnimationRun[] {
+  const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, false, 0, options)
+  const destination = { x: canvas.width - 7.5, y: canvas.height * 2 - 7, scale: 0.68 }
+  const progress = clamp(entryProgress)
+  const state =
+    progress < 1
+      ? hopState({ x: canvas.width + 8, y: destination.y }, destination, progress)
+      : { transform: destination, pose: FROG_POSES.settled }
+  state.transform.scale = destination.scale
+  drawFrog(canvas, state.transform, state.pose, elapsedMs)
+  if (speaking) {
+    const mouthCycle = (Math.sin(elapsedMs / 85) + 1) / 2
+    drawFrogMouth(canvas, state.transform, state.pose, 0.18 + mouthCycle * 0.82)
   }
   return canvas.runs(color)
 }
@@ -479,7 +516,10 @@ function drawDanglingLetterAct(canvas: Canvas, scene: Scene, time: number, elaps
     drawPushingTongue(
       canvas,
       state,
-      { x: letterCenter(scene, hangingLetter) + titleX - scene.sourceX - 2.5 + sway, y: (titleY + 6 + drop) * 2 },
+      {
+        x: letterCenter(scene, hangingLetter) + titleX - scene.sourceX - 2.5 + sway,
+        y: (titleY + BRAND_WORD_HEIGHT + drop) * 2,
+      },
       reach
     )
   }
@@ -490,43 +530,53 @@ function letterCenter(scene: Scene, letterIndex: number): number {
   return scene.sourceX + (Math.min(...points.map((point) => point.x)) + Math.max(...points.map((point) => point.x))) / 2
 }
 
-function drawFinalLockup(canvas: Canvas, elapsedMs: number): void {
-  const layout = lockupLayout(canvas.width)
-  drawSolidWord(canvas, BRAND_WORD, layout.wordX, layout.wordY, 68)
-  drawFrog(canvas, { x: layout.frogX, y: layout.frogY, scale: 1 }, FROG_POSES.settled, elapsedMs)
+function drawFinalLockup(canvas: Canvas, elapsedMs: number, origin: Point = { x: 0, y: 0 }): void {
+  const layout = lockupLayout(canvas.width - origin.x)
+  drawSolidWord(canvas, BRAND_WORD, layout.wordX + origin.x, layout.wordY + origin.y, 68)
+  drawFrog(
+    canvas,
+    { x: layout.frogX + origin.x, y: layout.frogY + origin.y * 2, scale: 1 },
+    FROG_POSES.settled,
+    elapsedMs
+  )
 }
 
-function drawCompactLockup(canvas: Canvas): void {
-  if (canvas.width >= BRAND_WORD.width && canvas.height >= wordOnlyHeight(canvas.width)) {
-    drawSolidWord(canvas, BRAND_WORD, 0, lockupLayout(canvas.width).wordY, 68)
+function drawCompactLockup(canvas: Canvas, origin: Point = { x: 0, y: 0 }): void {
+  const width = canvas.width - origin.x
+  const height = canvas.height - origin.y
+  if (width >= BRAND_WORD.width && height >= wordOnlyHeight(width)) {
+    drawSolidWord(canvas, BRAND_WORD, origin.x, lockupLayout(width).wordY + origin.y, 68)
     return
   }
-  if (canvas.width < SMALL_BRAND_WORD.width || canvas.height < 2) {
-    for (const [index, character] of [...'STRANDS'.slice(0, canvas.width)].entries()) {
-      canvas.set(index, 0, character, 'green', 68)
+  if (width < SMALL_BRAND_WORD.width || height < 2) {
+    for (const [index, character] of [...'STRANDS'.slice(0, width)].entries()) {
+      canvas.set(index + origin.x, origin.y, character, 'green', 68)
     }
     return
   }
-  drawSolidWord(canvas, SMALL_BRAND_WORD, 0, 0, 68)
+  drawSolidWord(canvas, SMALL_BRAND_WORD, origin.x, origin.y, 68)
 }
 
-function drawFrogBrandEasterEgg(canvas: Canvas, progress: number, elapsedMs: number): void {
+function drawFrogBrandEasterEgg(canvas: Canvas, progress: number, elapsedMs: number, origin: Point): void {
   if (progress <= 0 || progress >= 1) {
-    drawFinalLockup(canvas, elapsedMs)
+    drawFinalLockup(canvas, elapsedMs, origin)
     return
   }
-  const layout = lockupLayout(canvas.width)
+  const width = canvas.width - origin.x
+  const layout = lockupLayout(width)
+  const wordX = layout.wordX + origin.x
+  const wordY = layout.wordY + origin.y
   const dissolve = easeInOutCubic((progress - 0.16) / 0.3)
   const reform = easeInOutCubic((progress - 0.62) / 0.22)
   const vortex = dissolve * (1 - reform)
   if (vortex <= 0) {
-    drawSolidWord(canvas, BRAND_WORD, layout.wordX, layout.wordY, 68)
+    drawSolidWord(canvas, BRAND_WORD, wordX, wordY, 68)
   } else {
-    const scene = createScene(canvas.width, canvas.height, layout.wordY)
-    scene.centerX = layout.wordX + (BRAND_WORD.width - 1) / 2
-    scene.centerY = layout.wordY + 2.5
+    const scene = createScene(width, canvas.height - origin.y, wordY)
+    scene.centerX = wordX + (BRAND_WORD.width - 1) / 2
+    scene.centerY = wordY + 2.5
     const radiusX = Math.min(31, BRAND_WORD.width / 2)
-    const radiusY = Math.min(3, scene.centerY, canvas.height - 1 - scene.centerY)
+    const radiusY = Math.min(3, scene.centerY - origin.y, canvas.height - 1 - scene.centerY)
     const seconds = elapsedMs / 1_000
     const wipeX = scene.centerX - radiusX - 8
     drawHelix(canvas, scene, vortex, seconds, radiusX, radiusY, wipeX)
@@ -535,15 +585,15 @@ function drawFrogBrandEasterEgg(canvas: Canvas, progress: number, elapsedMs: num
       const angle = hash01(point.index * 71 + 13) * Math.PI * 2 + elapsedMs / 180
       const radius = 3 + hash01(point.index * 97 + 29) * 12
       canvas.set(
-        lerp(layout.wordX + point.x, scene.centerX + Math.cos(angle) * radius, vortex),
-        lerp(layout.wordY + point.y, scene.centerY + Math.sin(angle) * Math.min(radius * 0.32, radiusY), vortex),
+        lerp(wordX + point.x, scene.centerX + Math.cos(angle) * radius, vortex),
+        lerp(wordY + point.y, scene.centerY + Math.sin(angle) * Math.min(radius * 0.32, radiusY), vortex),
         vortex < 0.3 ? point.character : vortex < 0.68 ? '▒' : '·',
         wordColor(canvas, point),
         68
       )
     }
   }
-  drawBrandFrogJump(canvas, layout.frogX, layout.frogY, progress, elapsedMs)
+  drawBrandFrogJump(canvas, layout.frogX + origin.x, layout.frogY + origin.y * 2, progress, elapsedMs)
 }
 
 function drawBrandFrogJump(canvas: Canvas, frogX: number, baseY: number, progress: number, elapsedMs: number): void {
@@ -587,27 +637,24 @@ function drawBrandFrogJump(canvas: Canvas, frogX: number, baseY: number, progres
 }
 
 function drawSolidWord(canvas: Canvas, word: WordShape, originX: number, originY: number, priority: number): void {
-  const accent = canvas.theme === 'circuit' ? 'blue' : canvas.theme === 'spectre' ? 'red' : undefined
-  if (accent) {
-    for (const point of word.points) {
-      canvas.set(originX + point.x + 1, originY + point.y + 1, '░', accent, priority - 1)
-    }
-  }
   for (const point of word.points) {
     canvas.set(originX + point.x, originY + point.y, point.character, wordColor(canvas, point), priority)
   }
 }
 
 function wordColor(canvas: Canvas, point: WordPoint): Color {
+  if ('╔╗╚╝║═╠╣╦'.includes(point.character)) {
+    return canvas.colorMode === 'light' ? 'ink' : 'white'
+  }
   if (canvas.theme === 'homeland') {
     const region = (Math.floor(point.localX / 3) + Math.floor(point.localY / 2) + point.letterIndex * 2) % 5
     return region < 2 ? (region === 0 ? 'lime' : 'green') : region === 2 ? 'cyan' : 'blue'
   }
-  if (canvas.theme === 'circuit') {
-    return point.index % 19 === 0 ? 'tongue' : 'lime'
+  if (canvas.theme === 'oak') {
+    return oakGrainColor(point.localX + point.letterIndex * 3, point.localY * 2)
   }
   if (canvas.theme === 'spectre') {
-    return point.localY === 5 ? 'red' : 'mint'
+    return 'mint'
   }
   if (canvas.theme === 'merlin') {
     return point.index % 23 === 0 ? 'white' : 'lime'

@@ -9,7 +9,8 @@ import { CliConfigStore } from '../src/tui/config.js'
 import { importPathCompletions } from '../src/tui/view/setup-wizard/path-completion.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
-import { ttyInput, ttyOutput } from './fixtures/terminal.js'
+import { chooseAgentProject } from '../src/tui/terminal/directory-picker.js'
+import { mouseInputSequence, ttyInput, ttyOutput } from './fixtures/terminal.js'
 
 vi.mock('../src/tui/provider/discovery.js', async (original) => ({
   ...(await original<typeof import('../src/tui/provider/discovery.js')>()),
@@ -17,6 +18,12 @@ vi.mock('../src/tui/provider/discovery.js', async (original) => ({
   discoverAwsCredentials: async () => 'valid',
   discoverOllama: async () => ({ installed: false, running: false, models: [] }),
   discoverProviderModels: async () => ({ available: true, models: [] }),
+}))
+
+vi.mock('../src/tui/terminal/directory-picker.js', async (original) => ({
+  ...(await original<typeof import('../src/tui/terminal/directory-picker.js')>()),
+  canUseNativePicker: () => true,
+  chooseAgentProject: vi.fn(async () => undefined),
 }))
 
 const directories: string[] = []
@@ -81,6 +88,7 @@ describe('setup import path completion', () => {
     try {
       await instance.waitUntilRenderFlush()
       await press('\u001b[B')
+      await press('\u001b[C')
       await press('\r')
 
       const placeholderFrame = sanitizeTerminalText(frame)
@@ -106,6 +114,56 @@ describe('setup import path completion', () => {
       await press('\u001b[B')
       await press('\t')
       expect(sanitizeTerminalText(frame)).toContain(`${sep}agent-project`)
+      await press('\u001b[Z')
+      expect(sanitizeTerminalText(frame)).not.toContain('Suggestions ·')
+      await press('\r')
+      expect(sanitizeTerminalText(frame)).toContain('Quickstart')
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+    }
+  })
+
+  it('tabs between the import section and actions while arrows and clicks reach Browse', async () => {
+    vi.mocked(chooseAgentProject).mockClear()
+    const input = ttyInput()
+    const output = ttyOutput(120, 32)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+    })
+    const instance = render(
+      createElement(SetupWizard, { config: CliConfigStore.memory({}, { animations: false }), onComplete: () => {} }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (...keys: string[]): Promise<void> => {
+      for (const key of keys) {
+        input.push(key)
+        await instance.waitUntilRenderFlush()
+      }
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      await press('\u001b[B', '\u001b[C', '\r', '\t', '\r')
+      expect(frame).toContain('Quickstart')
+      expect(chooseAgentProject).not.toHaveBeenCalled()
+      await press('\u001b[B', '\u001b[C', '\r', '\u001b[B', '\r')
+      await vi.waitFor(() => expect(chooseAgentProject).toHaveBeenCalledOnce())
+      await instance.waitUntilRenderFlush()
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes('Browse'))
+      const column = lines[row]!.indexOf('Browse')
+      await press(mouseInputSequence(0, column, row, 'M'), mouseInputSequence(3, column, row, 'm'))
+      await vi.waitFor(() => expect(chooseAgentProject).toHaveBeenCalledTimes(2))
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
@@ -117,8 +175,4 @@ async function temporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'strands-path-completion-'))
   directories.push(directory)
   return directory
-}
-
-function mouseInputSequence(button: number, column: number, row: number, suffix: 'M' | 'm'): string {
-  return `\u001b[<${button};${column + 1};${row + 1}${suffix}`
 }

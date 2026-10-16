@@ -1,10 +1,20 @@
 import { createHash } from 'node:crypto'
 import type { AgentResult, Message } from '@strands-agents/sdk'
 
-import type { ChatContextUsage } from '../chat/types.js'
+import type { ChatContextBreakdown, ChatContextUsage } from '../chat/types.js'
 import type { AgentModelRuntime } from '../model/runtime.js'
+import { isRecord } from '../values.js'
 
 const CONTEXT_METADATA_KEY = 'strands.context.v1'
+const CONTEXT_CATEGORY_KINDS = new Set<ChatContextBreakdown['categories'][number]['kind']>([
+  'systemPrompt',
+  'tools',
+  'userMessages',
+  'assistantMessages',
+  'toolResults',
+  'injectedContext',
+  'other',
+])
 
 export function restoreContext(runtime: AgentModelRuntime, scope: string | undefined): ChatContextUsage | undefined {
   const message = runtime.agent.messages?.at(-1)
@@ -61,13 +71,19 @@ export function storeContext(
       break
     }
   }
+  const { breakdown, ...usage } = context
   message.metadata = {
     ...message.metadata,
     custom: {
       ...message.metadata?.custom,
       [CONTEXT_METADATA_KEY]: {
         fingerprint,
-        context: { ...context },
+        context: {
+          ...usage,
+          ...(breakdown
+            ? { breakdown: { categories: breakdown.categories.map((category) => ({ ...category })) } }
+            : {}),
+        },
       },
     },
   }
@@ -89,7 +105,7 @@ function contextFingerprint(runtime: AgentModelRuntime, scope: string | undefine
       if (typeof candidate === 'bigint' || typeof candidate === 'function' || typeof candidate === 'symbol') {
         throw new TypeError('Context compatibility values must be JSON-serializable.')
       }
-      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      if (isRecord(candidate)) {
         return Object.fromEntries(
           Object.entries(candidate).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         )
@@ -142,9 +158,35 @@ function parseContextUsage(value: unknown): ChatContextUsage | undefined {
     }
     parsed[field] = candidate
   }
-  return Object.keys(parsed).length > 0 ? parsed : undefined
+  if (Object.keys(parsed).length === 0) {
+    return undefined
+  }
+  const breakdown = parseContextBreakdown(value.breakdown, parsed.projectedTokens ?? parsed.currentTokens)
+  return { ...parsed, ...(breakdown ? { breakdown } : {}) }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+function parseContextBreakdown(value: unknown, occupiedTokens: number | undefined): ChatContextBreakdown | undefined {
+  if (!isRecord(value) || !Array.isArray(value.categories) || occupiedTokens === undefined) {
+    return undefined
+  }
+  const categories: ChatContextBreakdown['categories'][number][] = []
+  const seen = new Set<string>()
+  let total = 0
+  for (const category of value.categories) {
+    if (
+      !isRecord(category) ||
+      !CONTEXT_CATEGORY_KINDS.has(category.kind as ChatContextBreakdown['categories'][number]['kind']) ||
+      seen.has(category.kind as string) ||
+      typeof category.tokens !== 'number' ||
+      !Number.isSafeInteger(category.tokens) ||
+      category.tokens < 0
+    ) {
+      return undefined
+    }
+    const kind = category.kind as ChatContextBreakdown['categories'][number]['kind']
+    categories.push({ kind, tokens: category.tokens })
+    seen.add(kind)
+    total += category.tokens
+  }
+  return Number.isSafeInteger(total) && total === occupiedTokens ? { categories } : undefined
 }

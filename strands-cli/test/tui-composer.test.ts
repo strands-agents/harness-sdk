@@ -1,35 +1,69 @@
 import chalk from 'chalk'
 import { createElement } from 'react'
-import { renderToString } from 'ink'
+import { renderToString, type Key } from 'ink'
+import stringWidth from 'string-width'
 import { describe, expect, it } from 'vitest'
 
 import { commandAssistance } from '../src/tui/chat/commands.js'
 import {
   composerMaxRows,
   emptyEditor,
+  graphemes,
   promptEditorHeight,
   promptViewport,
   reduceInput,
   reduceInputSequence,
   submitEditor,
+  type EditorState,
 } from '../src/tui/terminal/composer.js'
 import { PromptEditor } from '../src/tui/view/prompt-editor.js'
+import { EditableText } from '../src/tui/view/text-input.js'
+import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
+
+describe('editable text', () => {
+  it('keeps a useful one-line path around the caret without splitting wide graphemes or leaking masked text', () => {
+    const value = 'prefix/界/👩‍💻/agent.ts'
+    const render = (cursor: number, masked = false): string =>
+      sanitizeTerminalText(
+        renderToString(createElement(EditableText, { value, cursor, width: 13, active: true, masked }), { columns: 13 })
+      )
+    const atEnd = render(graphemes(value).length)
+    expect(atEnd).toBe('/👩‍💻/agent.ts▌')
+    expect(stringWidth(atEnd)).toBe(13)
+    expect(render(0)).toBe('prefix/界/👩‍💻/')
+    expect(render(graphemes(value).length, true)).toBe(`${'•'.repeat(12)}▌`)
+  })
+})
 
 describe('prompt editor input', () => {
-  it('scales the composer row cap with terminal height', () => {
+  it('scales the composer row cap with terminal height up to eight rows', () => {
     expect(composerMaxRows(12)).toBe(2)
-    expect(composerMaxRows(20)).toBe(10)
-    expect(composerMaxRows(30)).toBe(12)
-    expect(composerMaxRows(20, 2)).toBe(8)
+    expect(composerMaxRows(16)).toBe(6)
+    expect(composerMaxRows(30)).toBe(8)
+    expect(composerMaxRows(16, 2)).toBe(4)
   })
 
   it('reports the rendered editor height for command-deck layout', () => {
-    expect(promptEditorHeight('', 0, 80, 8)).toBe(7)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8)).toBe(7)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 3)).toBe(7)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8, true)).toBe(7)
-    expect(promptEditorHeight('', 0, 80, 8, false, true)).toBe(9)
-    expect(promptEditorHeight('', 0, 80, 8, true, true)).toBe(9)
+    expect(promptEditorHeight('', 0, 80, 8)).toBe(4)
+    expect(promptEditorHeight('one\ntwo', 8, 80, 8)).toBe(4)
+    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8)).toBe(6)
+    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 3)).toBe(5)
+    expect(promptEditorHeight(Array.from({ length: 12 }, (_, i) => `line ${i}`).join('\n'), 0, 80, 8)).toBe(10)
+    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8, true)).toBe(4)
+    expect(promptEditorHeight('', 0, 80, 8, false, true)).toBe(6)
+    expect(promptEditorHeight('', 0, 80, 8, true, true)).toBe(6)
+  })
+
+  it('names the wrapped rows scrolled out of the prompt', () => {
+    const input = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n')
+    const frame = (cursor: number): string[] =>
+      renderToString(createElement(PromptEditor, { input, cursor, width: 40, maxRows: 8 }), { columns: 40 }).split('\n')
+
+    const atEnd = frame(input.length)
+    expect(atEnd).toHaveLength(10)
+    expect(atEnd[0]).toBe(`┌${'─'.repeat(14)} ↑ 4 more ${'─'.repeat(14)}┐`)
+    expect(atEnd.at(-1)).toBe(`└${'─'.repeat(38)}┘`)
+    expect(frame(0).at(-1)).toContain(' ↓ 4 more ')
   })
 
   it('handles the DEL byte that Ink reports for Backspace', () => {
@@ -49,7 +83,18 @@ describe('prompt editor input', () => {
       expect.objectContaining({ usage: 'on', replacement: '/voice on ' }),
       expect.objectContaining({ usage: 'off', replacement: '/voice off ' }),
     ])
-    expect(commandAssistance('/permissions ')).toMatchObject({ signature: '/permissions [default|bypass]' })
+    expect(commandAssistance('/permissions ')).toMatchObject({
+      signature: '/permissions [default|bypass]',
+      completions: [],
+    })
+    expect(commandAssistance('/voice ')?.completions).toEqual([])
+    expect(commandAssistance('/sessions ')?.completions).toEqual([])
+    expect(
+      reduceInput({ ...emptyEditor(), input: '/sessions ', cursor: 10 }, '', { tab: true }, 'idle').state
+    ).toMatchObject({
+      input: '/sessions ',
+      cursor: 10,
+    })
 
     const state = { ...emptyEditor(), input: '/permissions b', cursor: 14 }
     expect(reduceInput(state, '', { tab: true }, 'idle').state).toMatchObject({
@@ -64,27 +109,30 @@ describe('prompt editor input', () => {
     [40, 'Enter send • / commands'],
     [22, 'Enter send'],
   ])('fits placeholder guidance on one row at %i columns', (width, hint) => {
-    const empty = renderToString(createElement(PromptEditor, { input: '', cursor: 0, width, animateCursor: false }), {
+    const empty = renderToString(createElement(PromptEditor, { input: '', cursor: 0, width }), {
       columns: width,
     })
     expect(empty).toContain(`▌${hint}`)
-    const typing = renderToString(
-      createElement(PromptEditor, { input: 'draft', cursor: 5, width, animateCursor: false }),
-      { columns: width }
-    )
+    const typing = renderToString(createElement(PromptEditor, { input: 'draft', cursor: 5, width }), { columns: width })
     expect(typing).not.toContain('Enter')
     expect(empty.split('\n')).toHaveLength(typing.split('\n').length)
   })
 
-  it('marks bang commands as shell execution', () => {
-    const output = renderToString(
-      createElement(PromptEditor, {
-        input: '!pwd',
-        cursor: 4,
-      })
-    )
+  it('marks bang commands with a bold red bang and a shell placeholder', () => {
+    const level = chalk.level
+    chalk.level = 1
+    try {
+      const empty = renderToString(createElement(PromptEditor, { input: '!', cursor: 1 }))
+      const command = renderToString(createElement(PromptEditor, { input: '!pwd', cursor: 4 }))
 
-    expect(output).toContain('◆ shell !pwd')
+      expect(empty).toContain('Execute a direct shell command')
+      // eslint-disable-next-line no-control-regex -- asserts the ANSI bold styling around the bang
+      expect(command).toMatch(/\u001b\[1m\u001b\[9?1m!\u001b\[22m/u)
+      expect(command).not.toContain('Execute a direct shell command')
+      expect(command).not.toContain('shell')
+    } finally {
+      chalk.level = level
+    }
   })
 
   it('does not insert command-modified text', () => {
@@ -114,7 +162,7 @@ describe('prompt editor input', () => {
       })
     )
 
-    expect(output).toContain(' 123456\n 789')
+    expect(output).toContain('│ 1234 │\n│ 5678 │\n│ 9▌')
   })
 
   it('follows the cursor after reaching the configured row cap', () => {
@@ -127,7 +175,9 @@ describe('prompt editor input', () => {
     )
 
     expect(output).not.toContain('one')
-    expect(output).toContain(' two\n three\n four')
+    expect(output).toContain('│ two')
+    expect(output).toContain('│ three')
+    expect(output).toContain('│ four▌')
   })
 
   it('reveals earlier multiline input when the cursor moves back', () => {
@@ -150,7 +200,7 @@ describe('prompt editor input', () => {
         })
       )
       expect(output).toContain(
-        '\u001b[38;2;104;245;138m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
+        '\u001b[38;2;0;204;96m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
       )
     } finally {
       chalk.level = level
@@ -177,7 +227,38 @@ describe('prompt editor input', () => {
     expect(reduceInput(submitted.state, '', { upArrow: true }, 'idle').state.input).toBe('hello')
   })
 
-  it('queues with Enter, steers with Ctrl+G or modified Enter, and preserves drafts when interrupted', () => {
+  it('returns to the unsent draft after browsing and editing history', () => {
+    const press = (state: EditorState, key: Partial<Key>, character = ''): EditorState =>
+      reduceInput(state, character, key, 'idle').state
+    let state = submitEditor(reduceInput(emptyEditor(), 'first', {}, 'idle').state, 'first').state
+    state = submitEditor(reduceInput(state, 'second', {}, 'idle').state, 'second').state
+    state = reduceInput(state, 'live draft', {}, 'idle').state
+
+    state = press(state, { upArrow: true })
+    state = press(state, { upArrow: true })
+    expect(state.input).toBe('first')
+    state = press(state, {}, '!')
+    expect(state.input).toBe('first!')
+    state = press(state, { downArrow: true })
+    expect(state.input).toBe('second')
+    state = press(state, { downArrow: true })
+    expect(state).toMatchObject({ input: 'live draft', cursor: 10 })
+    expect(press(state, { downArrow: true }).input).toBe('live draft')
+  })
+
+  it('moves between lines of a multi-line draft before reaching history', () => {
+    let state = submitEditor(reduceInput(emptyEditor(), 'older', {}, 'idle').state, 'older').state
+    state = reduceInput(state, 'one\nlonger two', {}, 'idle').state
+
+    state = reduceInput(state, '', { upArrow: true }, 'idle').state
+    expect(state).toMatchObject({ input: 'one\nlonger two', cursor: 3 })
+    state = reduceInput(state, '', { downArrow: true }, 'idle').state
+    expect(state).toMatchObject({ input: 'one\nlonger two', cursor: 7 })
+    state = reduceInput(state, '', { upArrow: true }, 'idle').state
+    expect(reduceInput(state, '', { upArrow: true }, 'idle').state.input).toBe('older')
+  })
+
+  it('queues with Enter and preserves drafts when interrupted', () => {
     const typed = reduceInput(emptyEditor(), 'change direction', {}, 'running').state
 
     expect(reduceInput(typed, '', { return: true }, 'running')).toMatchObject({
@@ -190,14 +271,13 @@ describe('prompt editor input', () => {
       state: { input: 'change direction' },
     })
     expect(reduceInput(typed, '', { return: true, ctrl: true }, 'running')).toMatchObject({
-      action: 'steer',
+      action: 'submit',
       prompt: 'change direction',
       state: { input: '' },
     })
     expect(reduceInput(typed, 'g', { ctrl: true }, 'running')).toMatchObject({
-      action: 'steer',
-      prompt: 'change direction',
-      state: { input: '' },
+      action: 'none',
+      state: { input: 'change direction' },
     })
   })
 })

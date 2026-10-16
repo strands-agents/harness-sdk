@@ -21,16 +21,20 @@
     "prepack": "npm run clean:dist && npm run build",
     "clean": "rm -rf dist node_modules",
     "start": "node bin/strands.js",
+    "fresh": "node scripts/fresh.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --exclude test/tui-pty-lifecycle.test.ts && vitest run test/tui-pty-lifecycle.test.ts",
+    "test:coverage": "vitest run --coverage",
+    "test:package-install": "node scripts/test-package-install.mjs",
+    "test:platform-integration": "vitest run --config vitest.platform-integration.config.ts",
+    "test:tui-integration": "vitest run --config vitest.tui-integration.config.ts",
     "lint": "eslint bin scripts src test",
     "lint:fix": "eslint bin scripts src test --fix",
     "format": "prettier --write bin scripts src test",
     "format:check": "prettier --check bin scripts src test",
     "type-check": "tsc --noEmit --project src/tsconfig.json",
     "type-check:test": "tsc --noEmit --project tsconfig.json",
-    "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage",
+    "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage && npm run test:tui-integration",
     "test:integ": "vitest run --config vitest.integration.config.ts"
   },
   "keywords": [
@@ -44,7 +48,7 @@
   "author": "AWS",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "repository": {
     "type": "git",
@@ -64,9 +68,9 @@
     "@cedar-policy/cedar-wasm": "4.11.2",
     "@cedar-policy/mcp-schema-generator-wasm": "0.6.0",
     "@google/genai": "^2.6.0",
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/client": "^2.3.1",
     "@strands-agents/harness": "~0.1.1",
-    "@strands-agents/sdk": ">=1.19.0 <2.0.0",
+    "@strands-agents/sdk": "^1.20.0",
     "commander": "^15",
     "fflate": "^0.8.3",
     "ink": "7.1.1",
@@ -74,7 +78,7 @@
     "openai": "^6.45.0",
     "react": "19.2.8",
     "semver": "^7.8.5",
-    "smol-toml": "1.7.1",
+    "smol-toml": "1.9.1",
     "string-width": "^8.2.2",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
@@ -82,6 +86,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "^25.9.4",
     "@types/react": "19.2.18",
     "@types/semver": "^7.8.0",
@@ -91,6 +96,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "@xterm/headless": "6.0.0",
     "eslint": "^10.6.0",
+    "node-pty": "^1.1.0",
     "prettier": "^3.9.4",
     "vitest": "^4.1.10"
   }

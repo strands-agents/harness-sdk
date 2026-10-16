@@ -4,6 +4,7 @@ import { Box } from 'ink'
 import { marked, type Token, type Tokens } from 'marked'
 
 import { Text, useTheme, type Theme } from './theme.js'
+import { hyperlinkEscapes } from '../terminal/terminal.js'
 
 export const Markdown = memo(function Markdown({ children }: { children: string }): ReactElement {
   const theme = useTheme()
@@ -139,12 +140,13 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
         )
       case 'link': {
         const link = token as Tokens.Link
-        const target = process.env.TERM_PROGRAM === 'Apple_Terminal' ? undefined : hyperlinkTarget(link.href)
+        const target = hyperlinkTarget(link.href)
+        const escapes = target ? hyperlinkEscapes(target) : undefined
         return (
           <Text key={key} color={theme.accent} underline>
-            {target ? `\u001b]8;;${target}\u0007` : ''}
+            {escapes?.open ?? ''}
             {renderInline(link.tokens, key, theme)}
-            {target ? '\u001b]8;;\u0007' : link.text === link.href ? '' : ` (${link.href})`}
+            {escapes ? escapes.close : link.text === link.href ? '' : ` (${link.href})`}
           </Text>
         )
       }

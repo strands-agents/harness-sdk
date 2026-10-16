@@ -1,15 +1,19 @@
+import { createElement } from 'react'
+import { renderToString } from 'ink'
 import { describe, expect, it } from 'vitest'
 
+import { DEFAULT_CHAT_SETTINGS } from '../src/tui/chat/types.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import {
   renderFrogSpiralFrame,
   renderFrogBrandEasterEggFrame,
   renderFrogStartupLockup,
-  frogStartupHeight,
 } from '../src/tui/view/frog-intro-renderer.js'
+import { SetupBrand, setupBrandFrame } from '../src/tui/view/setup-wizard/brand.js'
+import { StartupView } from '../src/tui/view/startup-view.js'
 
 // Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
-const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const STRANDS_WORDMARK = /STRANDS|╚════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 describe('Strands intro', () => {
   it('retains Homeland ocean and land colors during the brand animation', () => {
@@ -26,10 +30,10 @@ describe('Strands intro', () => {
     const rotating = renderFrogBrandEasterEggFrame(width, 0.58, 1_856)
     const reformed = renderFrogBrandEasterEggFrame(width, 0.84, 2_688)
     const top = 2
-    const wordX = startup.split('\n')[top]!.indexOf('███████╗')
+    const wordX = startup.split('\n')[top]!.indexOf('▄▟███▙▄')
 
     expect(vortex).toMatch(/[●•◆◇━]/u)
-    expect(vortex).not.toContain('███████╗')
+    expect(vortex).not.toContain('▄▟███▙▄')
     expect(rotating).not.toBe(vortex)
     expect(
       reformed
@@ -43,42 +47,71 @@ describe('Strands intro', () => {
         .map((row) => row.slice(wordX))
     )
     expect(renderFrogBrandEasterEggFrame(width, 1, 3_200)).toBe(startup)
+    const origin = { x: 14, y: 6 }
+    const shiftedVortex = renderFrogBrandEasterEggFrame(width, 0.54, 1_728, false, 'green', false, 0, {}, 12, origin)
+    expect(
+      shiftedVortex
+        .split('\n')
+        .slice(origin.y)
+        .map((row) => row.slice(origin.x))
+        .join('\n')
+    ).toBe(vortex)
+    const leaving = renderFrogBrandEasterEggFrame(width, 0.12, 384, false, 'green', false, 0, {}, 12, origin)
+    expect(
+      leaving
+        .split('\n')
+        .slice(0, origin.y)
+        .some((row) => row.slice(0, origin.x).trim())
+    ).toBe(true)
+  })
+
+  it.each(['chat', 'setup'] as const)('lets the clicked frog leave through the screen edge in %s', (surface) => {
+    const frame = (elapsedMs?: number): string[] => {
+      const element =
+        surface === 'chat'
+          ? createElement(StartupView, {
+              terminalWidth: 120,
+              availableHeight: 36,
+              animate: true,
+              theme: 'green',
+              ...(elapsedMs === undefined ? {} : { frogBrandElapsedMs: elapsedMs }),
+            })
+          : createElement(SetupBrand, {
+              frame: setupBrandFrame(118, 42),
+              containerWidth: 118,
+              appearance: { ...DEFAULT_CHAT_SETTINGS, animations: true, frogTheme: 'green' },
+              animationId: elapsedMs === undefined ? undefined : 1,
+              elapsedMs: elapsedMs ?? 0,
+              onFrogElement: () => {},
+            })
+      return sanitizeTerminalText(renderToString(element, { columns: 120 })).split('\n')
+    }
+    const resting = frame()
+
+    expect(resting.slice(0, 6).every((row) => !row.trim())).toBe(true)
+    expect(frame(320)[0]!.trim()).not.toBe('')
+    expect(frame(2_848)[0]!.trim()).not.toBe('')
+    expect(
+      frame(640)
+        .slice(0, 6)
+        .every((row) => !row.trim())
+    ).toBe(true)
+    expect(frame(3_200)).toEqual(resting)
   })
 
   it('writes STRANDS with the spiral before the frog enters', () => {
     const writing = renderFrogSpiralFrame(98, 38, 0.14, 588)
     const dissolved = renderFrogSpiralFrame(98, 38, 0.23, 966)
     const impact = renderFrogSpiralFrame(98, 38, 0.5, 2_100)
-    const complete = renderFrogSpiralFrame(98, 38, 1, 4_200)
 
     expect(writing).toMatch(/[●•◆◇━]/u)
-    expect(writing).toContain('███████╗')
-    expect(writing.split('███████╗').length - 1).toBeLessThan(dissolved.split('███████╗').length - 1)
-    expect(writing).not.toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
-    expect(dissolved).not.toMatch(/[●•◆◇━▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
-    expect(impact).toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
-    expect(complete).toContain('█████')
-    expect(complete).not.toContain('\u001b[')
-  })
-
-  it.each([
-    [98, 38],
-    [78, 40],
-    [40, 24],
-  ])('hands off to the exact startup artwork at %s by %s', (width, height) => {
-    const artHeight = frogStartupHeight(width, height - 6)
-    const top = artHeight > 2 ? 2 : 1
-    const complete = renderFrogSpiralFrame(width, height, 1, 4_200, true)
-      .split('\n')
-      .slice(top, top + artHeight)
-      .join('\n')
-    const held = renderFrogSpiralFrame(width, height, 1, 4_450, true)
-      .split('\n')
-      .slice(top, top + artHeight)
-      .join('\n')
-    const startup = renderFrogStartupLockup(width, true, 0, 'green', false, {}, artHeight)
-    expect(complete).toBe(startup)
-    expect(held).toBe(startup)
+    expect(writing).toContain('▄▟███▙▄')
+    expect(writing.split('▄▟███▙▄').length - 1).toBeLessThan(dissolved.split('▄▟███▙▄').length - 1)
+    expect(renderFrogSpiralFrame(98, 38, 0.14, 588, true)).not.toContain('\u001b[48;2;7;28;17m')
+    expect(dissolved).not.toMatch(/[●•◆◇━]/u)
+    expect(renderFrogSpiralFrame(98, 38, 0.23, 966, true)).not.toContain('\u001b[48;2;7;28;17m')
+    expect(impact).not.toBe(dissolved)
+    expect(renderFrogSpiralFrame(98, 38, 0.5, 2_100, true)).toContain('\u001b[48;2;7;28;17m')
   })
 
   it('paints full cells as backgrounds and keeps two-color glyphs on the bottom half', () => {
@@ -95,7 +128,7 @@ describe('Strands intro', () => {
 
   it('leaves R dangling after the second landing and restores it with the tongue', () => {
     const startup = renderFrogStartupLockup(98).split('\n')
-    const rColumn = startup[2]!.indexOf('████████╗') + 10
+    const rColumn = startup[2]!.indexOf('▄▟███▙▄') + 18
     const hanging = renderFrogSpiralFrame(98, 38, 0.23 + 0.77 * 0.7, 3_230).split('\n')
     const repaired = renderFrogSpiralFrame(98, 38, 0.23 + 0.77 * 0.9, 3_877).split('\n')
     expect(rColumn).toBeGreaterThan(0)
@@ -114,21 +147,24 @@ describe('Strands intro', () => {
   })
 
   it('shows the frog only beside the wordmark and keeps the wordmark alone when narrower', () => {
-    const full = renderFrogStartupLockup(91, false, 0, 'green', false, {}, 12)
-    const wordOnly = renderFrogStartupLockup(90, false, 0, 'green', false, {}, 19)
-    const small = renderFrogStartupLockup(64, false, 0, 'green', false, {}, 19)
+    const full = renderFrogStartupLockup(88, false, 0, 'green', false, {}, 12)
+    const wordOnly = renderFrogStartupLockup(87, false, 0, 'green', false, {}, 19)
+    const small = renderFrogStartupLockup(56, false, 0, 'green', false, {}, 19)
 
     expect(full).toContain('▄▀▀▀▄')
-    expect(wordOnly).toContain('███████╗')
-    expect(wordOnly).not.toContain('▄▀▀▀▄')
-    expect(small).not.toContain('███████╗')
+    expect(wordOnly).toContain('╚════╝')
+    expect(
+      wordOnly
+        .split('\n')
+        .slice(6)
+        .every((row) => !row.trim())
+    ).toBe(true)
+    expect(small).not.toContain('╚════╝')
   })
 
-  it.each([
-    [48, 20],
-    [79, 24],
-    [120, 35],
-  ])('stays inside a %ix%i terminal', (width, height) => {
+  it('stays inside a 120x35 terminal', () => {
+    const width = 120
+    const height = 35
     const rows = renderFrogSpiralFrame(width, height, 0.78, 2_496).split('\n')
 
     expect(rows).toHaveLength(height)

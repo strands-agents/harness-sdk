@@ -27,7 +27,7 @@ import {
   profileSkillPaths,
   profileSkillsEnabled,
 } from './profile-fields.js'
-import { canChooseDirectory } from '../../terminal/directory-picker.js'
+import { canUseNativePicker } from '../../terminal/directory-picker.js'
 import type { ChatSettings } from '../../chat/types.js'
 import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS } from '../../settings.js'
 import { PERMISSION_CHOICES, permissionToolDescription, permissionToolNames } from '../../permissions/settings.js'
@@ -53,7 +53,6 @@ export const OPENING_CHOICES = [
     description: 'Customize your harness from scratch. Model, prompt, tools, and beyond.',
   },
   { id: 'import', title: 'Import', description: 'Load in your custom harness from a file or zip.' },
-  { id: 'resume', title: 'Resume', description: 'Return to your harness and continue working.' },
 ] as const
 const SETUP_STEP_INSTRUCTIONS = {
   quickstart: ['Pick a model for your agent'],
@@ -85,17 +84,12 @@ export function setupStepProgress(
   return step > total ? { current: total, total, instruction, label: 'Review' } : { current: step, total, instruction }
 }
 
-// Fits beside the widest capability label in an 80-column terminal.
-export const CAPABILITY_DESCRIPTION_MAX_LENGTH = 44
-
 const noop = (): void => {}
 
 export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
-  const { frogTheme, colorMode, customTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
+  const { frogTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
   return {
     frogTheme,
-    colorMode,
-    customTheme: globalThis.structuredClone(customTheme),
     transcriptSpacing,
     animations,
     showReasoning,
@@ -106,7 +100,6 @@ export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
 export function wizardSettingsRows(
   settings: ChatSettings,
   update: (settings: ChatSettings) => void,
-  openThemePicker: () => void,
   scope: 'visual' | 'all' = 'visual'
 ): WizardRow[] {
   return (scope === 'all' ? SETTING_DEFINITIONS : VISUAL_SETTING_DEFINITIONS).map(
@@ -120,11 +113,7 @@ export function wizardSettingsRows(
         value,
         active: settings[key] === value,
         activate: (): void => {
-          if (key === 'frogTheme' && value === 'custom') {
-            openThemePicker()
-          } else {
-            update({ ...settings, [key]: value } as ChatSettings)
-          }
+          update({ ...settings, [key]: value } as ChatSettings)
         },
       })),
       activate: noop,
@@ -180,7 +169,7 @@ export function rowsForStep(
         field: 'importPath',
         activate: edit('importPath', importPath),
       },
-      ...(canChooseDirectory()
+      ...(canUseNativePicker()
         ? [
             {
               id: 'import-browse',
@@ -318,7 +307,7 @@ export function rowsForStep(
           label: 'Name',
           description: draft.profile.name,
           field: 'name',
-          activate: edit('name', draft.profile.name),
+          activate: edit('name', draft.profile.name === DEFAULT_HARNESS_AGENT_CONFIG.name ? '' : draft.profile.name),
         },
         {
           id: 'instructions',
@@ -453,7 +442,13 @@ export function rowsForStep(
           : []),
       ]
     }
-    default:
+    default: {
+      const context =
+        draft.profile.contextManager === false
+          ? 'Context off'
+          : draft.profile.contextManager === 'auto'
+            ? 'Automatic context'
+            : 'Agentic context'
       return [
         {
           id: 'provider',
@@ -466,32 +461,33 @@ export function rowsForStep(
         {
           id: 'tools',
           label: 'Tools',
-          description: `${enabledProfileTools(compatibleProfile(draft.profile).builtinTools).length} tools`,
+          description: `${enabledProfileTools(compatibleProfile(draft.profile).builtinTools).length} enabled`,
           activate: noop,
         },
         {
           id: 'plugins',
           label: 'Plugins & features',
-          description: `${draft.profile.builtinPlugins.length} plugins`,
+          description: `${draft.profile.builtinPlugins.length} plugins · MCP ${draft.settings.mcpDiscovery ? 'on' : 'off'}`,
           activate: noop,
         },
         {
           id: 'data',
           label: 'Data',
-          description: `${contextManagerLabel(draft.profile.contextManager)} context · memory ${profileMemoryEnabled(draft.profile) ? 'on' : 'off'} · skills ${profileSkillsEnabled(draft.profile) ? 'on' : 'off'}`,
+          description: `${context} · Memory ${profileMemoryEnabled(draft.profile) ? 'on' : 'off'} · Skills ${profileSkillsEnabled(draft.profile) ? 'on' : 'off'}`,
           activate: noop,
         },
         {
           id: 'safety',
           label: 'Approvals',
           description: draft.customPermissions
-            ? `custom · ${draft.allowedTools.length} always allowed`
+            ? `Custom · ${draft.allowedTools.length} ${draft.allowedTools.length === 1 ? 'tool' : 'tools'} allowed without asking`
             : draft.permissionMode === 'default'
-              ? 'default HITL'
-              : 'bypass',
+              ? 'Ask before sensitive actions'
+              : PERMISSION_CHOICES.bypassPermissions.label,
           activate: noop,
         },
       ]
+    }
   }
 }
 

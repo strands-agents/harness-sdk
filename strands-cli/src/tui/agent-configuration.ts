@@ -26,6 +26,7 @@ import { discoverProviderModels } from './provider/discovery.js'
 import type { ChatBuiltinToolsRuntime, ChatDiffPreview } from './chat/types.js'
 import { createDiffPreview } from './permissions/file-change-preview.js'
 import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS, parseSettings } from './settings.js'
+import { isRecord } from './values.js'
 
 const CONFIGURATION_SETTING_KEYS = new Set([
   ...VISUAL_SETTING_DEFINITIONS.map(({ key }) => key),
@@ -104,6 +105,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
   tool: Tool
   profile(): HarnessAgentConfig
   preview(): ChatDiffPreview
+  discard(expectedRevision: number): boolean
   takePending(): SetupChange | undefined
 } {
   let draft: SetupConfiguration | undefined
@@ -122,7 +124,8 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
       'Inspect, recommend, and change the persistent CLI configuration. inspect shows all supported profile fields and current values. ' +
       'Credential-bearing values are shown as [redacted]; omit them from patches to preserve their existing values. ' +
       'Use environment placeholders such as ${env:API_KEY} for new credentials. ' +
-      'models lists provider models. update stages a patch; arrays replace existing arrays and object fields merge one level. ' +
+      'models lists provider models. update stages a patch in memory; draft profile changes appear in /config and /export. ' +
+      'Arrays replace existing arrays and object fields merge one level. ' +
       'apply requires the latest revision returned by inspect or update. ' +
       'apply saves the draft and reloads the agent after this turn, keeping the conversation. ' +
       'Use this for model, effort, prompt, tools, skills, plugins, memory, context management, appearance, and discovery settings. ' +
@@ -147,7 +150,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         settings: {
           type: 'object',
           description:
-            'CLI presentation and discovery settings. Appearance options include colorMode, frogTheme, transcriptSpacing, animations, showReasoning, and toolOutput.',
+            'CLI presentation and discovery settings. Appearance options include frogTheme, transcriptSpacing, animations, showReasoning, and toolOutput.',
           properties: CONFIGURATION_SETTING_PROPERTIES,
           additionalProperties: false,
         },
@@ -255,7 +258,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         revision++
         pending = undefined
         return JSON.stringify({
-          status: 'draft updated; use apply when the user is ready',
+          status: 'Draft updated; not saved or applied. Use apply when ready.',
           revision,
           profile: redactedProfile(draft.profile),
           settings: draft.settings,
@@ -269,7 +272,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         }
         let exaNotice = ''
         if (options.source) {
-          pending = {}
+          pending = { agentProject: options.source }
         } else {
           const configuration = current()
           const validatingRevision = revision
@@ -329,7 +332,11 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           )
           await agent.sessionManager?.saveSnapshot({ target: agent, isLatest: true })
         }
-        return 'Configuration validated. It will be applied after this turn, preserving the conversation.' + exaNotice
+        return (
+          (options.source ? 'Source reload requested.' : 'Configuration validated.') +
+          ' Reload pending until this turn finishes; the conversation will be preserved.' +
+          exaNotice
+        )
       }
       throw new Error('Unknown strands_config action.')
     },
@@ -362,6 +369,13 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         serialize(configurationFromStore(options.config)),
         serialize(current())
       )
+    },
+    discard(expectedRevision: number): boolean {
+      if (!draft || expectedRevision !== revision) return false
+      draft = undefined
+      pending = undefined
+      revision++
+      return true
     },
     takePending(): SetupChange | undefined {
       const change = pending
@@ -400,7 +414,7 @@ function redactConfigValue(value: unknown, validate: (value: unknown) => void): 
     return value
   } catch {
     // Keep argument arrays together so credentials following flags cannot lose their context.
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       return '[redacted]'
     }
     return Object.fromEntries(
@@ -413,6 +427,6 @@ function redactConfigValue(value: unknown, validate: (value: unknown) => void): 
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Expected an object for ${label}.`)
-  return value as Record<string, unknown>
+  if (!isRecord(value)) throw new Error(`Expected an object for ${label}.`)
+  return value
 }

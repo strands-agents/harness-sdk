@@ -209,19 +209,35 @@ export function drawFrog(
         }
       }
       if (FROG_BITMAP[row]![column] === '#') {
+        const eye = (row === 2 || row === 3) && (column === 3 || column === 4 || column === 12 || column === 13)
         const spectreFace =
           canvas.theme === 'spectre' &&
-          (((row === 2 || row === 3) && (column === 3 || column === 4 || column === 12 || column === 13)) ||
-            (row === 6 && column === 7) ||
-            (row === 7 && column >= 4 && column <= 6))
+          (eye || (row === 6 && column === 7) || (row === 7 && column >= 4 && column <= 6))
+        const color = canvas.theme === 'scarlet' && eye ? 'white' : 'ink'
         for (const point of points) {
-          sink.setPixel(point.x, point.y, spectreFace ? frogFillColor(canvas, row, column) : 'ink', priority + 20)
+          sink.setPixel(point.x, point.y, spectreFace ? frogFillColor(canvas, row, column) : color, priority + 20)
         }
       }
     }
   }
   if (reveal > 0.68) {
     drawThemeFace(canvas, transform, deformation, priority)
+  }
+}
+
+export function drawFrogMouth(canvas: Canvas, transform: FrogTransform, pose: FrogPose, openness: number): void {
+  const open = clamp(openness)
+  if (open <= 0) {
+    return
+  }
+  const deformation = frogDeformation(pose)
+  const mouth = brandPoint({ x: -5.1, y: -3 + open * 0.8 }, transform, deformation)
+  const cover = brandPoint({ x: -5.1, y: -3.3 }, transform, deformation)
+  const scale = transform.scale
+  fillEllipse(canvas, cover.x, cover.y, 1.7 * scale, 0.75 * scale, frogFillColor(canvas, 7, 5), 111)
+  fillEllipse(canvas, mouth.x, mouth.y, (0.75 + open * 0.85) * scale, (0.08 + open * 1.8) * scale, 'ink', 112)
+  if (open > 0.45) {
+    fillEllipse(canvas, mouth.x - 0.12 * scale, mouth.y + 0.7 * scale, 0.95 * scale, 0.48 * scale, 'tongue', 113)
   }
 }
 
@@ -239,11 +255,9 @@ function frogFillColor(canvas: Canvas, row: number, column: number): Color {
     }
     return (row * 3 + column) % 7 === 0 ? 'cyan' : 'blue'
   }
-  if (canvas.theme === 'circuit') {
-    if ((column >= 12 && row >= 5 && row <= 13) || (column <= 8 && row >= 13)) {
-      return (row + column) % 5 === 0 ? 'white' : 'green'
-    }
-    return (row * 7 + column * 3) % 23 === 0 ? 'white' : 'lime'
+  if (canvas.theme === 'oak') {
+    const color = oakGrainColor(column, row)
+    return column > 16 && color === 'lime' ? 'green' : color
   }
   if (canvas.theme === 'merlin') {
     return column > 12 ? 'green' : 'lime'
@@ -257,8 +271,19 @@ function frogFillColor(canvas: Canvas, row: number, column: number): Color {
   return 'lime'
 }
 
+export function oakGrainColor(column: number, row: number): Color {
+  const grain = (Math.round(column + 1.5 * Math.sin(row / 3)) + 6) % 6
+  if (grain === 0) {
+    return 'emerald'
+  }
+  if (grain === 1) {
+    return 'mint'
+  }
+  return grain === 5 ? 'green' : 'lime'
+}
+
 function drawThemeFace(canvas: Canvas, transform: FrogTransform, deformation: Point, priority: number): void {
-  if (['green', 'minimal', 'kikker', 'spectre'].includes(canvas.theme)) {
+  if (['green', 'minimal', 'kikker', 'oak', 'spectre', 'scarlet'].includes(canvas.theme)) {
     return
   }
   if (canvas.theme === 'merlin') {
@@ -283,39 +308,17 @@ function drawThemeFace(canvas: Canvas, transform: FrogTransform, deformation: Po
     fillCircle(canvas, orb.x - 0.8 * scale, orb.y - 1.1 * scale, 0.6 * scale, 'white', priority + 35)
   }
   for (const x of [-5.5, 3.5]) {
-    const color = canvas.theme === 'circuit' ? (x < 0 ? 'cyan' : 'red') : 'white'
     const eye = brandPoint({ x, y: -7.5 }, transform, deformation)
-    fillCircle(canvas, eye.x, eye.y, 0.58 * transform.scale, color, priority + 31)
+    fillCircle(canvas, eye.x, eye.y, 0.58 * transform.scale, 'white', priority + 31)
   }
 }
 
 function drawFrogAura(canvas: Canvas, transform: FrogTransform, elapsedMs: number, priority: number): void {
-  if (canvas.theme === 'green' || canvas.theme === 'minimal' || canvas.theme === 'kikker') {
+  if (['green', 'minimal', 'kikker', 'oak'].includes(canvas.theme)) {
     return
   }
   const center = { x: transform.x, y: transform.y / 2 }
   const tick = Math.floor(elapsedMs / 90)
-  if (canvas.theme === 'circuit') {
-    const bolts = [
-      { from: { x: -8, y: -2 }, to: { x: -5, y: -0.6 } },
-      { from: { x: 8, y: -3 }, to: { x: 5, y: -1 } },
-      { from: { x: -7, y: 3 }, to: { x: -4.5, y: 1.4 } },
-      { from: { x: 7, y: 3 }, to: { x: 4.5, y: 1.6 } },
-    ]
-    for (const [index, bolt] of bolts.entries()) {
-      if ((tick + index * 2) % 5 === 0) {
-        continue
-      }
-      canvas.line(
-        { x: center.x + bolt.from.x, y: center.y + bolt.from.y },
-        { x: center.x + bolt.to.x, y: center.y + bolt.to.y },
-        index % 2 === 0 ? '╱' : '╲',
-        index % 2 === 0 ? 'cyan' : 'red',
-        priority + 4
-      )
-    }
-    return
-  }
   if (canvas.theme === 'merlin') {
     const stars = [
       { x: -10, y: -3 },
@@ -335,7 +338,7 @@ function drawFrogAura(canvas: Canvas, transform: FrogTransform, elapsedMs: numbe
   }
   if (canvas.theme === 'spectre') {
     for (const side of [-1, 1]) {
-      canvas.set(center.x + side * 10, center.y + Math.sin(tick * 0.2 + side), '·', 'red', priority + 4)
+      canvas.set(center.x + side * 10, center.y + Math.sin(tick * 0.2 + side), '·', 'dim', priority + 4)
       canvas.set(center.x + side * 8, center.y + 3, '╴', 'forest', priority + 4)
     }
     return

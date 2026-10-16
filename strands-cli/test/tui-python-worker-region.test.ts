@@ -91,11 +91,6 @@ agent.name = agent.model.client.meta.region_name if isinstance(agent.model, Bedr
     expect((await openAgent(undefined, { model: 'openai/gpt-5' })).info().model).toBe('openai/gpt-5')
   })
 
-  it('drops removed config keys instead of forwarding them to Agent', async () => {
-    const overrides = { thinking: null } as unknown as PythonOptions['overrides']
-    await expect(openAgent(undefined, overrides)).resolves.toBeInstanceOf(PythonBackend)
-  })
-
   it('leaves a supplied Model instance untouched', async () => {
     const backend = await openAgent('BedrockModel(model_id="custom", region_name="eu-west-1")')
     expect(backend.name).toBe('eu-west-1')

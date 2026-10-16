@@ -12,14 +12,17 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { access, readFile, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import { unzipSync } from 'fflate'
 
 import { userDirectory } from '../config.js'
+import { npmInvocation } from '../npm.js'
+import { containsPath } from '../paths.js'
+import type { AgentProjectLanguage } from './import.js'
+import { assertPortablePathComponent, MAX_PROJECT_BYTES } from './packaging.js'
 
-const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 export const AGENT_ENTRYPOINTS = ['ts', 'mts', 'js', 'mjs', 'py'].flatMap((extension) => [
   `agent.${extension}`,
@@ -53,16 +56,26 @@ export function extractAgentArchive(path: string): string {
 
   let bytes = 0
   let count = 0
+  const names = new Set<string>()
   const files = unzipSync(archive, {
     filter: (entry) => {
       const name = entry.name.replace(/\/$/u, '')
+      const parts = name.split('/')
       if (
         name.includes('\\') ||
         /^[a-z]:/iu.test(name) ||
-        name.split('/').some((part) => part === '..' || part === '.' || !part)
+        parts.some((part) => part === '..' || part === '.' || !part)
       ) {
         throw new Error(`Unsafe path in agent ZIP: ${JSON.stringify(entry.name)}`)
       }
+      for (const part of parts) {
+        assertPortablePathComponent(part)
+      }
+      const key = name.toLowerCase()
+      if (names.has(key)) {
+        throw new Error(`Duplicate path in agent ZIP: ${JSON.stringify(entry.name)}`)
+      }
+      names.add(key)
       bytes += entry.originalSize
       if (bytes > MAX_PROJECT_BYTES || ++count > 10_000) {
         throw new Error('The agent ZIP exceeds 50 MB of extracted files or 10,000 entries.')
@@ -93,7 +106,7 @@ export function extractAgentArchive(path: string): string {
 }
 
 // fflate does not expose the central directory's file permissions.
-function archiveExecutableModes(archive: Buffer): Map<string, number> {
+export function archiveExecutableModes(archive: Buffer): Map<string, number> {
   let end = archive.length - 22
   while (end >= 0 && archive.readUInt32LE(end) !== 0x06054b50) {
     end -= 1
@@ -122,7 +135,7 @@ function archiveExecutableModes(archive: Buffer): Map<string, number> {
   return modes
 }
 
-export async function prepareArchiveDependencies(root: string, language: 'typescript' | 'python'): Promise<void> {
+export async function prepareArchiveDependencies(root: string, language: AgentProjectLanguage): Promise<void> {
   let cache: string
   try {
     cache = realpathSync(archiveCache())
@@ -131,8 +144,7 @@ export async function prepareArchiveDependencies(root: string, language: 'typesc
     throw error
   }
   root = realpathSync(root)
-  const path = relative(cache, root)
-  if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return
+  if (root === cache || !containsPath(cache, root)) return
   let preparation = preparations.get(root)
   if (!preparation) {
     preparation = installDependencies(root, language).finally(() => {
@@ -143,7 +155,7 @@ export async function prepareArchiveDependencies(root: string, language: 'typesc
   await preparation
 }
 
-async function installDependencies(root: string, language: 'typescript' | 'python'): Promise<void> {
+async function installDependencies(root: string, language: AgentProjectLanguage): Promise<void> {
   const manifests =
     language === 'typescript'
       ? ['package.json', 'package-lock.json', 'npm-shrinkwrap.json']
@@ -180,7 +192,8 @@ async function installDependencies(root: string, language: 'typescript' | 'pytho
   const options = { cwd: root, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 }
   try {
     if (nodeDependencies) {
-      await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [npmCommand, '--no-audit', '--no-fund'], options)
+      const npm = npmInvocation([npmCommand, '--no-audit', '--no-fund'])
+      await run(npm.command, npm.args, options)
     }
     if (pythonDependencies) {
       try {
@@ -247,8 +260,7 @@ export function resolveProjectEntrypoint(root: string, selected: string): string
     return undefined
   }
   const entrypoint = realpathSync(target)
-  const local = relative(root, entrypoint)
-  return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? entrypoint : undefined
+  return containsPath(root, entrypoint) ? entrypoint : undefined
 }
 
 export function regularFile(path: string): boolean {

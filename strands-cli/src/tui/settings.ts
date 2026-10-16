@@ -1,47 +1,51 @@
-export const FROG_THEMES = [
-  'green',
-  'minimal',
-  'homeland',
-  'merlin',
-  'kikker',
-  'circuit',
-  'spectre',
-  'solar',
-  'custom',
-] as const
+import { isRecord } from './values.js'
+export const FROG_THEMES = ['green', 'minimal', 'homeland', 'merlin', 'kikker', 'oak', 'spectre', 'scarlet'] as const
 
 export type FrogTheme = (typeof FROG_THEMES)[number]
 
 export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
   green: 'Classic',
   minimal: 'Minimal',
-  circuit: 'Cyborg',
+  oak: 'Oak',
   homeland: 'Homeland',
   merlin: 'Merlin',
   kikker: 'Kikker',
   spectre: 'Spectre',
-  solar: 'Solar',
-  custom: 'Custom',
+  scarlet: 'Scarlet',
 }
 
-export type ColorMode = 'auto' | 'light' | 'dark'
-export type ResolvedColorMode = Exclude<ColorMode, 'auto'>
+export type ResolvedColorMode = 'light' | 'dark'
+
+export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
+  { label: 'Default', value: 'default' },
+  { label: '1.5K', value: 1_500 },
+  { label: '2.5K', value: 2_500 },
+  { label: '5K', value: 5_000 },
+  { label: '10K', value: 10_000 },
+] as const
+
+export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
 
 export const SETTINGS_CATEGORIES = [
   {
     id: 'Appearance',
     label: 'Appearance',
-    description: 'Theme, transcript, reasoning, tool output, and animations',
+  },
+  {
+    id: 'Agent',
+    label: 'Agent',
   },
   {
     id: 'Auto-Discovery',
     label: 'Auto-Discovery',
-    description: 'MCP servers, agent skills, and peer-to-peer messaging',
   },
   {
-    id: 'General',
-    label: 'General',
-    description: 'Launch behavior and telemetry',
+    id: 'Updates',
+    label: 'Updates',
+  },
+  {
+    id: 'Telemetry',
+    label: 'Telemetry',
   },
 ] as const
 
@@ -64,14 +68,9 @@ export const THEME_COLOR_KEYS = [
   'success',
   'warning',
   'error',
-  'frog',
+  'diffAdd',
+  'diffRemove',
 ] as const
-
-export interface CustomTheme {
-  base: Exclude<FrogTheme, 'custom'>
-  light: Partial<ThemeColors>
-  dark: Partial<ThemeColors>
-}
 
 export interface ChatSettings {
   transcriptSpacing: 'compact' | 'comfortable'
@@ -79,17 +78,23 @@ export interface ChatSettings {
   showReasoning: boolean
   toolOutput: 'hidden' | 'compact' | 'full'
   frogTheme: FrogTheme
-  colorMode: ColorMode
-  customTheme: CustomTheme
   /** Load MCP servers configured for other tools (Claude Code, Kiro, Gemini CLI, Codex). */
   mcpDiscovery: boolean
+  /** Configured MCP servers the user turned off in /mcp. */
+  disabledMcpServers: readonly string[]
   /** Load Agent Skills from other tools' and the workspace's conventional directories. */
   skillDiscovery: boolean
   /** Allow agents to discover and message other live conversations. */
   agentMessaging: boolean
   /** Send one anonymous usage ping per interactive start (see README → Telemetry). */
   telemetry: boolean
+  /** Ask at interactive startup before installing an available CLI update. */
+  updatePrompts: boolean
+  /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
+  contextOffloadThreshold: ContextOffloadThreshold
 }
+
+export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   transcriptSpacing: 'comfortable',
@@ -97,16 +102,16 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   showReasoning: true,
   toolOutput: 'compact',
   frogTheme: 'green',
-  colorMode: 'auto',
-  customTheme: { base: 'green', light: {}, dark: {} },
   mcpDiscovery: false,
+  disabledMcpServers: [],
   skillDiscovery: false,
   agentMessaging: true,
   telemetry: true,
+  updatePrompts: true,
+  contextOffloadThreshold: 'default',
 }
 
 export type SettingKey =
-  | 'colorMode'
   | 'frogTheme'
   | 'transcriptSpacing'
   | 'animations'
@@ -116,27 +121,18 @@ export type SettingKey =
   | 'skillDiscovery'
   | 'agentMessaging'
   | 'telemetry'
+  | 'updatePrompts'
+  | 'contextOffloadThreshold'
 
 export interface SettingDefinition {
   key: SettingKey
   label: string
   section: SettingsCategory
   control: 'segmented' | 'toggle'
-  options: readonly { label: string; value: string | boolean }[]
+  options: readonly { label: string; value: string | number | boolean }[]
 }
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
-  {
-    key: 'colorMode',
-    label: 'Color mode',
-    section: 'Appearance',
-    control: 'segmented',
-    options: [
-      { label: 'Auto', value: 'auto' },
-      { label: 'Light', value: 'light' },
-      { label: 'Dark', value: 'dark' },
-    ],
-  },
   {
     key: 'frogTheme',
     label: 'Theme',
@@ -216,9 +212,26 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
+    key: 'contextOffloadThreshold',
+    label: 'Tool result offloading threshold',
+    section: 'Agent',
+    control: 'segmented',
+    options: CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
+  },
+  {
+    key: 'updatePrompts',
+    label: 'Startup update prompts',
+    section: 'Updates',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
     key: 'telemetry',
-    label: 'Usage ping (telemetry)',
-    section: 'General',
+    label: 'Send anonymous usage data',
+    section: 'Telemetry',
     control: 'toggle',
     options: [
       { label: 'On', value: true },
@@ -253,6 +266,12 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.telemetry
         ? 'on · one anonymous ping per launch: CLI version, provider, built-in tools and plugins · applies at next launch'
         : 'off · nothing is sent · applies at next launch'
+    case 'updatePrompts':
+      return settings.updatePrompts
+        ? 'on · asks before installing an available update'
+        : 'off · available updates remain visible in the footer'
+    case 'contextOffloadThreshold':
+      return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
     default:
       return settings[key]
   }
@@ -273,29 +292,26 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     return selected
   }
 
-  const transcriptSpacing = value.transcriptSpacing ?? DEFAULT_CHAT_SETTINGS.transcriptSpacing
-  if (transcriptSpacing !== 'compact' && transcriptSpacing !== 'comfortable') {
-    throw new Error(`Invalid CLI config at ${path}: settings.transcriptSpacing must be "compact" or "comfortable"`)
-  }
+  const transcriptSpacing =
+    value.transcriptSpacing === 'compact' || value.transcriptSpacing === 'comfortable'
+      ? value.transcriptSpacing
+      : DEFAULT_CHAT_SETTINGS.transcriptSpacing
   const animations = booleanSetting('animations')
   const showReasoning = booleanSetting('showReasoning')
-  const toolOutput = value.toolOutput ?? DEFAULT_CHAT_SETTINGS.toolOutput
-  if (toolOutput !== 'hidden' && toolOutput !== 'compact' && toolOutput !== 'full') {
-    throw new Error(`Invalid CLI config at ${path}: settings.toolOutput must be "hidden", "compact", or "full"`)
+  const toolOutput =
+    value.toolOutput === 'hidden' || value.toolOutput === 'compact' || value.toolOutput === 'full'
+      ? value.toolOutput
+      : DEFAULT_CHAT_SETTINGS.toolOutput
+  const savedFrogTheme = value.frogTheme === 'solar' || value.frogTheme === 'crimson' ? 'scarlet' : value.frogTheme
+  const frogTheme = FROG_THEMES.find((theme) => theme === savedFrogTheme) ?? DEFAULT_CHAT_SETTINGS.frogTheme
+  const contextOffloadThreshold =
+    CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value: option }) => option === value.contextOffloadThreshold)?.value ??
+    DEFAULT_CHAT_SETTINGS.contextOffloadThreshold
+
+  const disabledMcpServers = value.disabledMcpServers ?? DEFAULT_CHAT_SETTINGS.disabledMcpServers
+  if (!Array.isArray(disabledMcpServers) || disabledMcpServers.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`Invalid CLI config at ${path}: settings.disabledMcpServers must be an array of strings`)
   }
-  const selectedFrogTheme =
-    value.frogTheme === 'aurora' || value.frogTheme === 'moonlight' || value.frogTheme === 'magma'
-      ? DEFAULT_CHAT_SETTINGS.frogTheme
-      : (value.frogTheme ?? DEFAULT_CHAT_SETTINGS.frogTheme)
-  const frogTheme = FROG_THEMES.find((theme) => theme === selectedFrogTheme)
-  if (frogTheme === undefined) {
-    throw new Error(`Invalid CLI config at ${path}: settings.frogTheme must be one of ${FROG_THEMES.join(', ')}`)
-  }
-  const colorMode = value.colorMode ?? DEFAULT_CHAT_SETTINGS.colorMode
-  if (colorMode !== 'auto' && colorMode !== 'light' && colorMode !== 'dark') {
-    throw new Error(`Invalid CLI config at ${path}: settings.colorMode must be "auto", "light", or "dark"`)
-  }
-  const customTheme = parseCustomTheme(value.customTheme, path)
 
   return {
     transcriptSpacing,
@@ -303,44 +319,14 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     showReasoning,
     toolOutput,
     frogTheme,
-    colorMode,
-    customTheme,
     mcpDiscovery: booleanSetting('mcpDiscovery'),
+    disabledMcpServers: disabledMcpServers as readonly string[],
     skillDiscovery: booleanSetting('skillDiscovery'),
     agentMessaging: booleanSetting('agentMessaging'),
     telemetry: booleanSetting('telemetry'),
+    updatePrompts: booleanSetting('updatePrompts'),
+    contextOffloadThreshold,
   }
-}
-
-function parseCustomTheme(value: unknown, path: string): CustomTheme {
-  if (value === undefined) {
-    return globalThis.structuredClone(DEFAULT_CHAT_SETTINGS.customTheme)
-  }
-  if (
-    !isRecord(value) ||
-    typeof value.base !== 'string' ||
-    value.base === 'custom' ||
-    !FROG_THEMES.includes(value.base as FrogTheme)
-  ) {
-    throw new Error(`Invalid CLI config at ${path}: customTheme.base must name a preset theme`)
-  }
-  const colors = (mode: 'light' | 'dark'): Partial<ThemeColors> => {
-    const candidate = value[mode] ?? {}
-    if (!isRecord(candidate)) {
-      throw new Error(`Invalid CLI config at ${path}: customTheme.${mode} must be an object`)
-    }
-    const result: Partial<ThemeColors> = {}
-    for (const key of THEME_COLOR_KEYS) {
-      const color = candidate[key]
-      if (color === undefined) continue
-      if (typeof color !== 'string' || !/^#[\da-f]{6}$/iu.test(color)) {
-        throw new Error(`Invalid CLI config at ${path}: customTheme.${mode}.${key} must be a #RRGGBB color`)
-      }
-      result[key] = color.toLowerCase()
-    }
-    return result
-  }
-  return { base: value.base as CustomTheme['base'], light: colors('light'), dark: colors('dark') }
 }
 
 export function parseSettingUpdate(setting: string, current: ChatSettings): Partial<ChatSettings> | undefined {
@@ -349,42 +335,6 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     return undefined
   }
   switch (name) {
-    case 'colorMode':
-      if (selected !== 'auto' && selected !== 'light' && selected !== 'dark') {
-        return undefined
-      }
-      return { colorMode: selected }
-    case 'customTheme': {
-      let theme: unknown
-      try {
-        theme = JSON.parse(decodeURIComponent(selected ?? ''))
-      } catch {
-        return undefined
-      }
-      if (
-        !isRecord(theme) ||
-        Object.keys(theme).some((key) => !['base', 'light', 'dark'].includes(key)) ||
-        theme.base === 'custom' ||
-        !FROG_THEMES.includes(theme.base as FrogTheme)
-      ) {
-        return undefined
-      }
-      for (const mode of ['light', 'dark'] as const) {
-        const colors = theme[mode]
-        if (
-          !isRecord(colors) ||
-          Object.entries(colors).some(
-            ([key, color]) =>
-              !THEME_COLOR_KEYS.includes(key as (typeof THEME_COLOR_KEYS)[number]) ||
-              typeof color !== 'string' ||
-              !/^#[\da-f]{6}$/iu.test(color)
-          )
-        ) {
-          return undefined
-        }
-      }
-      return { frogTheme: 'custom', customTheme: theme as unknown as CustomTheme }
-    }
     case 'transcriptSpacing':
       if (selected !== undefined && selected !== 'compact' && selected !== 'comfortable') {
         return undefined
@@ -398,6 +348,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'skillDiscovery':
     case 'agentMessaging':
     case 'telemetry':
+    case 'updatePrompts':
       return { [name]: !current[name] }
     case 'toolOutput':
       if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {
@@ -412,11 +363,14 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
       const frogTheme = FROG_THEMES.find((theme) => theme === selected)
       return frogTheme === undefined ? undefined : { frogTheme }
     }
+    case 'contextOffloadThreshold': {
+      const threshold =
+        selected === 'default'
+          ? 'default'
+          : CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      return threshold === undefined ? undefined : { contextOffloadThreshold: threshold }
+    }
     default:
       return undefined
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

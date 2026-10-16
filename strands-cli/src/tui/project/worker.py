@@ -22,7 +22,8 @@ from uuid import uuid4
 import strands_harness
 from strands import Agent, tool
 from strands.hooks import HookOrder
-from strands.hooks.events import BeforeToolCallEvent
+from strands.hooks.events import BeforeModelCallEvent, BeforeToolCallEvent
+from strands.models import Model
 from strands.session import SnapshotSessionManager
 from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient
@@ -35,6 +36,7 @@ from strands_harness.defaults import DEFAULT_MODEL
 channel = os.fdopen(3, "w", buffering=1)
 pending_permissions = {}
 COMPACT_PRESERVE_RECENT_MESSAGES = 2
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 def encode(value):
@@ -63,6 +65,68 @@ def compacted_tokens(reported, estimated_before, estimated_after):
     if reported is None or estimated_before is None or estimated_after is None:
         return estimated_after
     return max(0, reported - max(0, estimated_before - estimated_after))
+
+
+async def estimate_context_categories(context):
+    system = context.system_prompt
+    estimates = {
+        "systemPrompt": await Model.count_tokens(
+            context.model,
+            [],
+            system_prompt=system if isinstance(system, str) else None,
+            system_prompt_content=system if isinstance(system, list) else None,
+        ),
+        "tools": await Model.count_tokens(context.model, [], tool_specs=context.tool_specs),
+    }
+    grouped = {kind: [] for kind in ("userMessages", "assistantMessages", "toolResults", "injectedContext")}
+    last_user = next(
+        (index for index in range(len(context.messages) - 1, -1, -1) if context.messages[index]["role"] == "user"),
+        -1,
+    )
+    trailing = max(0, getattr(context, "dynamic_trailing_blocks", 0))
+    for index, message in enumerate(context.messages):
+        content = message["content"]
+        for block_index, block in enumerate(content):
+            if index == last_user and block_index >= len(content) - trailing:
+                kind = "injectedContext"
+            elif "toolResult" in block:
+                kind = "toolResults"
+            else:
+                kind = "assistantMessages" if message["role"] == "assistant" else "userMessages"
+            grouped[kind].append({"role": message["role"], "content": [block]})
+    for kind, messages in grouped.items():
+        estimates[kind] = await Model.count_tokens(context.model, messages)
+    return estimates
+
+
+def context_breakdown(estimates, current_tokens, projected_tokens):
+    if estimates is None or any(
+        type(value) is not int or value < 0 or value > MAX_SAFE_INTEGER
+        for value in (current_tokens, projected_tokens, *estimates.values())
+    ):
+        return None
+    if projected_tokens < current_tokens:
+        return None
+    total = sum(estimates.values())
+    tokens = {
+        kind: value * current_tokens // total if total > current_tokens else value
+        for kind, value in estimates.items()
+    }
+    tokens["other"] = current_tokens - sum(tokens.values())
+    tokens["assistantMessages"] += projected_tokens - current_tokens
+    return {"categories": [{"kind": kind, "tokens": value} for kind, value in tokens.items() if value > 0]}
+
+
+def context_model_usage(usage):
+    if not isinstance(usage, dict) or any(key not in usage for key in ("inputTokens", "outputTokens", "totalTokens")):
+        return None
+    numeric = {
+        key: usage.get(key, 0)
+        for key in ("inputTokens", "outputTokens", "totalTokens", "cacheReadInputTokens", "cacheWriteInputTokens")
+    }
+    if any(type(value) is not int or value < 0 or value > MAX_SAFE_INTEGER for value in numeric.values()):
+        return None
+    return numeric if any(numeric.values()) else None
 
 
 async def authorize_tool(event):
@@ -268,6 +332,8 @@ class Runtime:
         self.skill_paths = command.get("skillPaths", [])
         self.cancel_signal = threading.Event()
         self.reload_requested = False
+        self.context_estimates = None
+        self.context_usage = None
 
     async def build(self, options, snapshot=None):
         previous = getattr(self, "agent", self.initial_agent)
@@ -327,6 +393,56 @@ class Runtime:
                 await skills.init_agent(agent)
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=self.skill_paths))
+        self.attach_context_capture(agent)
+
+    def attach_context_capture(self, agent):
+        # Python exposes effective model requests only through the optional middleware registry.
+        try:
+            from strands._middleware import InvokeModelStage
+        except ImportError:
+            return
+        registry = getattr(agent, "_middleware_registry", None)
+        add_middleware = getattr(registry, "add_middleware", None)
+        handlers_by_stage = getattr(registry, "_handlers", None)
+        if not callable(add_middleware) or not isinstance(handlers_by_stage, dict):
+            return
+        capture_ready = False
+
+        def prepare(event):
+            nonlocal capture_ready
+            if event.agent is not agent:
+                return
+            self.context_estimates = None
+            self.context_usage = None
+            capture_ready = False
+            handlers = handlers_by_stage.get(InvokeModelStage)
+            if not isinstance(handlers, list):
+                return
+            # Hooks can register request transforms, so observe after every other Wrap handler.
+            for index, handler in enumerate(handlers):
+                if getattr(handler, "handler", None) is capture:
+                    handlers.append(handlers.pop(index))
+                    capture_ready = True
+                    break
+
+        async def capture(context, next_handler):
+            estimates = None
+            if context.agent is agent:
+                self.context_estimates = None
+                self.context_usage = None
+                if capture_ready:
+                    with contextlib.suppress(Exception):
+                        handlers = handlers_by_stage.get(InvokeModelStage)
+                        if isinstance(handlers, list) and getattr(handlers[-1], "handler", None) is capture:
+                            estimates = await estimate_context_categories(context)
+            async for event in next_handler(context):
+                if context.agent is agent and "stop" in event:
+                    self.context_usage = context_model_usage(event["stop"][2])
+                    self.context_estimates = estimates if self.context_usage is not None else None
+                yield event
+
+        add_middleware(InvokeModelStage, capture)
+        agent.hooks.add_callback(BeforeModelCallEvent, prepare, order=HookOrder.SDK_LAST)
 
     def configuration_tool(self):
         runtime = self
@@ -354,7 +470,9 @@ class Runtime:
             if revision != 0:
                 raise ValueError("Inspect the source before applying it, then pass revision 0.")
             runtime.reload_requested = True
-            return "Source reload validated. It will be applied after this turn, preserving the conversation."
+            return (
+                "Source reload requested. Reload pending until this turn finishes; the conversation will be preserved."
+            )
 
         return strands_config
 
@@ -493,6 +611,8 @@ class Runtime:
     async def turn(self, prompt):
         self.cancel_signal.clear()
         self.reload_requested = False
+        self.context_estimates = None
+        self.context_usage = None
         snapshot = self.agent.take_snapshot(preset="session")
         emitted_tool_results = set()
         try:
@@ -538,6 +658,16 @@ class Runtime:
                         "projectedTokens": result.projected_context_size,
                         "contextWindow": self.agent.model.context_window_limit,
                     }
+                    invocations = getattr(result.metrics, "agent_invocations", [])
+                    cycles = getattr(invocations[-1], "cycles", []) if invocations else []
+                    latest_usage = context_model_usage(getattr(cycles[-1], "usage", None)) if cycles else None
+                    breakdown = context_breakdown(
+                        self.context_estimates if self.context_usage == latest_usage else None,
+                        result.context_size,
+                        result.projected_context_size,
+                    )
+                    if breakdown is not None:
+                        context["breakdown"] = breakdown
                     self.result(
                         {
                             "stopReason": result.stop_reason,
@@ -682,7 +812,7 @@ class Runtime:
             skills = self.skills()
             if not skills:
                 raise ValueError("This agent has no skills")
-            await skills.skills(
+            content = await skills.skills(
                 skill_name=command["name"],
                 tool_context=ToolContext(
                     tool_use={"toolUseId": str(uuid4()), "name": "skills", "input": {}},
@@ -691,7 +821,7 @@ class Runtime:
                 ),
             )
             await self.save()
-            self.result({"stopReason": "activated"})
+            self.result({"stopReason": "activated", "finalText": content})
         else:
             raise ValueError(f"Unknown terminal command: {kind}")
 

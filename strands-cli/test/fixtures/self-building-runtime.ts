@@ -63,11 +63,15 @@ async function create(): ReturnType<typeof createInteractiveChat> {
     agentOptions: await harnessAgentOptionsFromConfig(profile, root),
     cwd: workspace,
     mcpPaths: [],
-    sessionCatalogPath: join(root, 'catalog.json'),
+    sessionRoot: join(root, 'sessions'),
   })
 }
 
 async function invokeText(agent: Agent, name: string, input: Record<string, JSONValue> = {}): Promise<string> {
+  // MCP connections can finish registering tools after agent construction.
+  for (let attempt = 0; !agent.toolRegistry.get(name) && attempt < 200; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
   const result = await agent.tool[name]!.invoke(input, { recordDirectToolCall: false })
   if (result.status !== 'success') throw new Error(JSON.stringify(result.content))
   return result.content.flatMap((block) => (block.type === 'textBlock' ? [block.text] : [])).join('\n')

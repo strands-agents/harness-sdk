@@ -25,7 +25,7 @@ export async function availableCliUpdate(options: UpdateCheckOptions = {}): Prom
   }
 }
 
-export async function resolveLatestCliVersion(): Promise<string> {
+async function resolveLatestCliVersion(): Promise<string> {
   return publishedVersion(await captureNpm(['view', `${CLI_PACKAGE}@latest`, 'version', '--json'], { timeout: 3_000 }))
 }
 
@@ -35,10 +35,6 @@ export function publishedVersion(output: string): string {
     throw new Error('npm returned an invalid package version')
   }
   return parsed.trim()
-}
-
-export function isNewerVersion(candidate: string, current: string): boolean {
-  return compareVersions(candidate, current) === 1
 }
 
 /** Orders two versions by semver precedence, or undefined when either is not a valid version. */

@@ -15,34 +15,52 @@ import {
   toolAction,
 } from './presentation.js'
 import { useSpinner } from './use-spinner.js'
+import {
+  TOOL_ACTIVITY,
+  toolActivity,
+  toolActivityMarker,
+  toolGroupActivity,
+  turnActivity,
+  turnActivityText,
+} from './activity-status.js'
 import { Text, useTheme } from './theme.js'
+import { AttachmentPreview } from './attachment-preview.js'
 
 export function TurnView({
   turn,
   settings,
   active = false,
+  approvalToolName,
   expandedToolGroups,
   onToolGroupElement,
 }: {
   turn: ChatTurn
   settings: ChatSnapshot['settings']
   active?: boolean
+  /** The tool whose call is paused on an open approval prompt; stills the spinners. */
+  approvalToolName?: string
   expandedToolGroups: ReadonlySet<string>
   onToolGroupElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
   const theme = useTheme()
-  const silentOpening = turn.prompt === '' && turn.source === undefined
-  const spinner = useSpinner(active && turn.status === 'running' && !silentOpening, settings.animations)
+  const silentOpening = turn.prompt === '' && turn.source === undefined && !turn.attachments?.length
+  const awaitingApproval = active && approvalToolName !== undefined
+  const activity = turnActivity(turn, awaitingApproval)
+  const spinner = useSpinner(
+    active && turn.status === 'running' && !silentOpening && !awaitingApproval,
+    settings.animations
+  )
   const directShell = turn.prompt.trimStart().startsWith('!')
   const visibleEntries = silentOpening
     ? turn.entries.filter((entry) => entry.type === 'assistant' || entry.type === 'media')
     : turn.entries
-  const entries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
-  const firstEntry = entries.find((entry) => entry.type !== 'reasoning' || settings.showReasoning)
+  const groupedEntries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
+  const entries = settings.showReasoning ? groupedEntries : groupedEntries.filter((entry) => entry.type !== 'reasoning')
+  const firstEntry = entries[0]
   const startsWithTool = firstEntry?.type === 'tool' || firstEntry?.type === 'toolGroup'
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {turn.prompt && turn.source !== 'background' ? (
+      {(turn.prompt || turn.attachments?.length) && turn.source !== 'background' ? (
         <Box
           width="100%"
           flexDirection="column"
@@ -55,19 +73,23 @@ export function TurnView({
               <Text color={theme.accent}>◆</Text> Message from {turn.peer?.name ?? 'agent'}
             </Text>
           ) : null}
-          <Text>{turn.prompt}</Text>
+          {turn.attachments?.length ? <AttachmentPreview attachments={turn.attachments} maxRows={3} /> : null}
+          {turn.prompt ? <Text>{turn.prompt}</Text> : null}
         </Box>
       ) : null}
-      {entries.map((entry) =>
-        entry.type === 'toolGroup' ? (
+      {entries.map((entry, index) => {
+        const followsReasoning = entries[index - 1]?.type === 'reasoning'
+        return entry.type === 'toolGroup' ? (
           <ToolActivityGroup
             key={entry.id}
             entries={entry.entries}
             spinner={spinner}
+            {...(awaitingApproval ? { approvalToolName } : {})}
             settings={settings}
             agentName={turn.agentName}
             forceFullResult={directShell}
             expanded={expandedToolGroups.has(entry.id)}
+            followsReasoning={followsReasoning}
             {...(onToolGroupElement ? { onElement: onToolGroupElement } : {})}
           />
         ) : (
@@ -75,28 +97,31 @@ export function TurnView({
             key={entry.id}
             entry={entry}
             spinner={spinner}
+            {...(awaitingApproval ? { approvalToolName } : {})}
             settings={settings}
             agentName={turn.agentName}
             forceFullResult={directShell}
             expanded={expandedToolGroups.has(`${entry.id}:output`)}
+            followsReasoning={followsReasoning}
             {...(onToolGroupElement ? { onElement: onToolGroupElement } : {})}
           />
         )
-      )}
+      })}
       {active && turn.status === 'running' && !silentOpening ? (
-        <Box marginTop={1}>
-          <Text color={theme.warning}>
-            {spinner}{' '}
-            {turn.source === 'background'
-              ? 'Reviewing background result (esc to interrupt)'
-              : turn.source === 'peer'
-                ? `Responding to ${turn.peer?.name ?? 'agent'} (esc to interrupt)`
-                : 'Working (esc to interrupt)'}
-          </Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.warning}>{turnActivityText(activity, turn, spinner)}</Text>
+          {activity === 'waitingForResponse' ? (
+            <Text dimColor>No response for 30s. /exit to close, then resume.</Text>
+          ) : null}
         </Box>
       ) : null}
       {turn.status === 'cancelled' ? <Text color="yellow">Cancelled</Text> : null}
-      {turn.status === 'error' ? <Text color="red">Error: {turn.error}</Text> : null}
+      {turn.status === 'error' ? (
+        <Box flexDirection="column">
+          <Text color="red">Error: {turn.error}</Text>
+          {turn.recoveryHint ? <Text dimColor>{turn.recoveryHint}</Text> : null}
+        </Box>
+      ) : null}
       {turn.stopReason === 'maxTokens' ? (
         <Text color="yellow">Response reached its output limit.</Text>
       ) : turn.stopReason && !['endTurn', 'end_turn', 'cancelled'].includes(turn.stopReason) ? (
@@ -160,7 +185,9 @@ function ToolActivityGroup({
   settings,
   agentName,
   forceFullResult,
+  approvalToolName,
   expanded,
+  followsReasoning,
   onElement,
 }: Omit<Parameters<typeof EntryView>[0], 'entry'> & {
   entries: readonly ToolEntry[]
@@ -169,10 +196,15 @@ function ToolActivityGroup({
   const theme = useTheme()
   const id = entries[0]!.id
   const running = entries.filter((entry) => entry.status === 'running')
+  const paused = approvalToolName !== undefined && running.some((entry) => entry.name === approvalToolName)
   const failed = entries.filter((entry) => entry.status === 'error').length
   const cancelled = entries.filter((entry) => entry.status === 'cancelled').length
-  const marker = running.length > 0 ? spinner : failed > 0 ? '×' : cancelled > 0 ? '○' : '✓'
-  const color = running.length > 0 ? theme.warning : failed > 0 ? 'red' : cancelled > 0 ? 'yellow' : 'green'
+  const activity = toolGroupActivity(
+    entries.map((entry) => entry.status),
+    paused
+  )
+  const marker = toolActivityMarker(activity, spinner)
+  const { color } = TOOL_ACTIVITY[activity]
   const counts = new Map<string, number>()
   for (const entry of entries) {
     const action = toolAction(entry.name)
@@ -185,7 +217,7 @@ function ToolActivityGroup({
     ...(cancelled > 0 ? [`${cancelled} cancelled`] : []),
   ]
   return (
-    <Box flexDirection="column" marginTop={settings.transcriptSpacing === 'comfortable' ? 1 : 0}>
+    <Box flexDirection="column" marginTop={!followsReasoning && settings.transcriptSpacing === 'comfortable' ? 1 : 0}>
       <Box ref={(element) => onElement?.(id, element)} width="100%" paddingX={1} backgroundColor={theme.surface}>
         <Text wrap="wrap">
           <Text dimColor>{expanded ? '▾' : '▸'} </Text>
@@ -200,6 +232,7 @@ function ToolActivityGroup({
           <EntryView
             entry={entry}
             spinner={spinner}
+            {...(approvalToolName !== undefined ? { approvalToolName } : {})}
             settings={{ ...settings, transcriptSpacing: 'compact' }}
             agentName={agentName}
             forceFullResult={forceFullResult}
@@ -216,7 +249,9 @@ function EntryView({
   settings,
   agentName,
   forceFullResult,
+  approvalToolName,
   expanded = false,
+  followsReasoning = false,
   onElement,
 }: {
   entry: ChatEntry
@@ -224,17 +259,30 @@ function EntryView({
   settings: ChatSnapshot['settings']
   agentName: string
   forceFullResult: boolean
+  approvalToolName?: string
   expanded?: boolean
+  followsReasoning?: boolean
   onElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
   const theme = useTheme()
-  const marginTop = settings.transcriptSpacing === 'comfortable' ? 1 : 0
-  if (entry.type === 'reasoning') {
-    if (!settings.showReasoning) {
-      return <></>
-    }
+  const marginTop = !followsReasoning && settings.transcriptSpacing === 'comfortable' ? 1 : 0
+  if (entry.type === 'user') {
     return (
-      <Box flexDirection="column" marginTop={1}>
+      <Box
+        width="100%"
+        flexDirection="column"
+        paddingX={1}
+        marginTop={1}
+        marginBottom={settings.transcriptSpacing === 'compact' ? 1 : 0}
+        backgroundColor={theme.surface}
+      >
+        <Text>{entry.text}</Text>
+      </Box>
+    )
+  }
+  if (entry.type === 'reasoning') {
+    return (
+      <Box flexDirection="column" marginTop={1} marginBottom={1}>
         <Text dimColor bold>
           Reasoning
         </Text>
@@ -284,12 +332,10 @@ function EntryView({
   }
 
   const backgroundAgent = isBackgroundAgent(entry)
-  const { marker, color } = {
-    running: { marker: spinner, color: theme.warning },
-    success: { marker: backgroundAgent ? '↗' : '✓', color: backgroundAgent ? theme.accent : 'green' },
-    cancelled: { marker: '○', color: 'yellow' },
-    error: { marker: '×', color: 'red' },
-  }[entry.status] ?? { marker: '×', color: 'red' }
+  const activity = toolActivity(entry.status, entry.name === approvalToolName)
+  const dispatched = backgroundAgent && activity === 'succeeded'
+  const marker = dispatched ? '↗' : toolActivityMarker(activity, spinner)
+  const color = dispatched ? theme.accent : TOOL_ACTIVITY[activity].color
   if (backgroundAgent) {
     const dispatch = backgroundTaskDispatch(entry)
     const state =
@@ -316,16 +362,13 @@ function EntryView({
     )
   }
 
-  const statusLabel =
-    entry.status === 'error'
-      ? 'failed'
-      : entry.status === 'cancelled' || entry.status === 'running'
-        ? entry.status
-        : undefined
+  const statusLabel = TOOL_ACTIVITY[activity].label
   const hiddenOutput = settings.toolOutput === 'hidden'
-  const showDetails = !hiddenOutput || expanded
+  // Direct shell output starts open even when tool output is hidden; clicking its row still collapses it.
+  const open = forceFullResult ? !expanded : expanded
+  const showDetails = !hiddenOutput || open
   const showResult = showDetails ? entry.result : undefined
-  const fullResult = !hiddenOutput && (forceFullResult || settings.toolOutput === 'full')
+  const fullResult = forceFullResult || settings.toolOutput === 'full'
   const resultPreview = showResult
     ? summarizeToolResult(showResult.filter((item) => item.type === 'text' || item.type === 'json'))
     : undefined
@@ -339,7 +382,7 @@ function EntryView({
         backgroundColor={theme.surface}
       >
         <Text wrap="wrap">
-          {hiddenOutput ? <Text dimColor>{expanded ? '▾' : '▸'} </Text> : null}
+          {hiddenOutput ? <Text dimColor>{open ? '▾' : '▸'} </Text> : null}
           <Text color={color} bold>
             {marker} {toolAction(entry.name)}
           </Text>

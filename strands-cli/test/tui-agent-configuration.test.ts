@@ -1,9 +1,10 @@
-import { Agent, type JSONValue, type ToolContext } from '@strands-agents/sdk'
+import { Agent, Model, type JSONValue, type ModelStreamEvent, type ToolContext } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createConfigurationTool, configurationFromStore } from '../src/tui/agent-configuration.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { discoverProviderModels } from '../src/tui/provider/discovery.js'
+import { CedarPermissions, ToolPermissionBroker } from '../src/tui/permissions/policy.js'
 
 vi.mock('../src/tui/provider/discovery.js', async (original) => ({
   ...(await original<typeof import('../src/tui/provider/discovery.js')>()),
@@ -37,12 +38,123 @@ function configurationTool(config: CliConfigStore, source?: string) {
   }
 }
 
+class ConfigurationModel extends Model {
+  private _nextRequest = 0
+
+  constructor(private readonly _requests: readonly JSONValue[]) {
+    super()
+  }
+
+  getConfig() {
+    return { modelId: 'configuration-test', contextWindowLimit: 10_000 }
+  }
+
+  updateConfig() {}
+
+  async *stream(): AsyncIterable<ModelStreamEvent> {
+    const request = this._requests[this._nextRequest++]
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    if (request) {
+      yield {
+        type: 'modelContentBlockStartEvent',
+        start: { type: 'toolUseStart', name: 'strands_config', toolUseId: `config-${this._nextRequest}` },
+      }
+      yield {
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'toolUseInputDelta', input: JSON.stringify(request) },
+      }
+    } else {
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Done' } }
+    }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: request ? 'toolUse' : 'endTurn' }
+  }
+}
+
 describe('strands_config tool', () => {
+  it('discards a denied configuration draft through the SDK tool loop', async () => {
+    const config = CliConfigStore.memory()
+    const broker = new ToolPermissionBroker()
+    let agent: Agent
+    const control = createConfigurationTool({
+      config,
+      profile: () => config.snapshot().profile,
+      agent: () => agent,
+    })
+    const permissions = new CedarPermissions({
+      config,
+      broker,
+      cwd: process.cwd(),
+      configurationPreview: () => control.preview(),
+      configurationDenied: (revision) => control.discard(revision),
+    })
+    const requests: string[] = []
+    broker.subscribe((request) => {
+      if (!request) return
+      requests.push(request.action ?? '')
+      broker.respond(request.id, 'deny')
+    })
+    agent = new Agent({
+      model: new ConfigurationModel([
+        { action: 'update', profile: { name: 'John' } },
+        { action: 'apply', revision: 1 },
+        { action: 'inspect' },
+      ]),
+      tools: [control.tool],
+      interventions: [permissions],
+      printer: false,
+      contextManager: false,
+    })
+    try {
+      for await (const _event of agent.stream('Change your name to John')) {
+        // Drain the real SDK tool loop.
+      }
+      const results = agent.messages.flatMap((message) =>
+        message.content.filter((block) => block.type === 'toolResultBlock')
+      )
+      const inspected = JSON.parse(
+        results
+          .at(-1)!
+          .content.flatMap((block) => (block.type === 'textBlock' ? [block.text] : []))
+          .join('\n')
+      )
+      expect(requests).toEqual(['apply'])
+      expect(results[1]?.status).toBe('error')
+      expect(control.takePending()).toBeUndefined()
+      expect(config.snapshot().profile.name).toBe('Strands harness')
+      expect(inspected).toMatchObject({ revision: 2, profile: { name: 'Strands harness' } })
+      expect(JSON.stringify(control.preview())).not.toContain('John')
+      expect(control.discard(2)).toBe(false)
+    } finally {
+      broker.dispose()
+    }
+  })
+
+  it('discards only the matching draft and pending apply', async () => {
+    const config = CliConfigStore.memory()
+    const control = configurationTool(config)
+    expect(control.discard(0)).toBe(false)
+    await control.invoke({ action: 'update', profile: { name: 'John' } })
+    await control.invoke({ action: 'update', profile: { name: 'Jimmy' } })
+    await control.invoke({ action: 'apply', revision: 2 })
+    expect(control.discard(1)).toBe(false)
+    expect(control.profile().name).toBe('Jimmy')
+    expect(control.takePending()?.configuration?.profile.name).toBe('Jimmy')
+    await control.invoke({ action: 'apply', revision: 2 })
+    expect(control.discard(2)).toBe(true)
+    expect(control.takePending()).toBeUndefined()
+    expect(control.profile()).toEqual(config.snapshot().profile)
+    expect(JSON.stringify(control.preview())).not.toContain('Jimmy')
+    expect(JSON.parse(await control.invoke({ action: 'inspect' })).revision).toBe(3)
+    expect(control.discard(3)).toBe(false)
+  })
+
   it('captures every setting for rollback without sharing mutable settings with the store', () => {
     const config = CliConfigStore.memory(
       {},
       {
-        frogTheme: 'circuit',
+        frogTheme: 'oak',
         transcriptSpacing: 'compact',
         animations: false,
         showReasoning: false,
@@ -125,6 +237,8 @@ describe('strands_config tool', () => {
     await control.invoke({ action: 'update', profile: { builtinTools: ['read', 'web_search'] } })
     await expect(control.invoke({ action: 'apply', revision: 2 })).rejects.toThrow('has no native web search')
     expect(control.takePending()).toBeUndefined()
+    expect(control.profile().builtinTools).toEqual(['read', 'web_search'])
+    expect(JSON.parse(await control.invoke({ action: 'inspect' })).revision).toBe(2)
   })
 
   it('rejects new literal credentials without changing the draft and accepts environment references', async () => {
@@ -315,7 +429,10 @@ describe('strands_config tool', () => {
     expect(inspected.profile).toBeUndefined()
     await expect(control.invoke({ action: 'update', profile: { name: 'Changed' } })).rejects.toThrow('Edit that source')
     await control.invoke({ action: 'apply', revision: inspected.revision })
-    expect(control.takePending()).toEqual({ onFailure: expect.any(Function) })
+    expect(control.takePending()).toEqual({
+      agentProject: '/tmp/custom-agent/agent.ts',
+      onFailure: expect.any(Function),
+    })
     expect(config.snapshot().profile.name).toBe('Strands harness')
   })
 })

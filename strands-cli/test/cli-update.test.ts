@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { updateCli, type UpdateRunner } from '../src/cli/update.js'
-import { availableCliUpdate, compareVersions, isNewerVersion } from '../src/tui/update-check.js'
+import { availableCliUpdate, compareVersions } from '../src/tui/update-check.js'
 
 function memoryOutput(): { stream: Pick<NodeJS.WriteStream, 'write'>; text: () => string } {
   let value = ''
@@ -32,14 +32,18 @@ describe('updateCli', () => {
       1
     )
     expect(commands.capture).not.toHaveBeenCalled()
-    expect(errors.text()).toContain('development checkout')
+    expect(errors.text()).toBe(
+      'error: This is a development checkout, so npm cannot update it. Update it with Git; `npm run setup` only rebuilds the local CLI afterward.\n'
+    )
   })
 
   it('reports an already-current global installation', async () => {
     const commands = runner()
     const output = memoryOutput()
 
-    expect(await updateCli({ currentVersion: '1.2.0', runner: commands, output: output.stream })).toBe(0)
+    expect(
+      await updateCli({ currentVersion: '1.2.0', runner: commands, output: output.stream, platform: 'linux' })
+    ).toBe(0)
     expect(commands.capture).toHaveBeenCalledWith('npm', ['view', '@strands-agents/cli@latest', 'version', '--json'])
     expect(commands.inherit).not.toHaveBeenCalled()
     expect(output.text()).toBe('Strands CLI 1.2.0 is already up to date.\n')
@@ -49,7 +53,9 @@ describe('updateCli', () => {
     const commands = runner()
     const output = memoryOutput()
 
-    expect(await updateCli({ currentVersion: '1.1.0', runner: commands, output: output.stream })).toBe(0)
+    expect(
+      await updateCli({ currentVersion: '1.1.0', runner: commands, output: output.stream, platform: 'linux' })
+    ).toBe(0)
     expect(commands.inherit).toHaveBeenCalledWith('npm', ['install', '--global', '@strands-agents/cli@1.2.0'])
     expect(output.text()).toContain('Updating Strands CLI from 1.1.0 to 1.2.0')
     expect(output.text()).toContain('Updated Strands CLI to 1.2.0')
@@ -67,6 +73,7 @@ describe('updateCli', () => {
         output: output.stream,
         errorOutput: errors.stream,
         platform: 'win32',
+        commandShell: 'cmd.exe',
       })
     ).toBe(7)
     expect(commands.capture).toHaveBeenCalledWith('cmd.exe', [
@@ -138,7 +145,7 @@ describe('availableCliUpdate', () => {
   })
 })
 
-describe('isNewerVersion', () => {
+describe('compareVersions', () => {
   it.each([
     ['1.2.0', '1.1.9', true],
     ['2.0.0', '1.99.99', true],
@@ -146,9 +153,8 @@ describe('isNewerVersion', () => {
     ['1.2.0-beta.10', '1.2.0-beta.2', true],
     ['1.2.0-beta.2', '1.2.0', false],
     ['1.2.0', '2.0.0-beta.1', false],
-    ['invalid', '1.2.0', false],
   ])('compares %s against %s', (candidate, current, expected) => {
-    expect(isNewerVersion(candidate, current)).toBe(expected)
+    expect(compareVersions(candidate, current) === 1).toBe(expected)
   })
 
   it('ignores build metadata and rejects malformed versions', () => {

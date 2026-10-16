@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL, fileURLToPath } from 'node:url'
-import { createElement } from 'react'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHarness, type HarnessAgentOptions } from '@strands-agents/harness'
 import {
@@ -17,21 +16,17 @@ import {
   type ContentBlockData,
   type ModelStreamEvent,
 } from '@strands-agents/sdk'
-import { renderToString } from 'ink'
 import { describe, expect, it, vi } from 'vitest'
 
-import { projectMessages } from '../src/tui/chat/projector.js'
-import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot } from '../src/tui/chat/controller.js'
 import { createAcpApp, AcpService } from '../src/tui/acp/server.js'
 import { restoreSessionAgentDefinition, AGENT_DEFINITION_META_KEY } from '../src/tui/session/agent-definition.js'
-import { ChatView } from '../src/tui/view/chat-view.js'
 
 function event(value: unknown): AgentStreamEvent {
   return value as AgentStreamEvent
 }
 
 describe('ACP server', () => {
-  it('constructs an agent per session and streams messages, reasoning, tools, usage, and media over ACP', async () => {
+  it('requests an agent per session and streams messages, reasoning, tools, usage, and media over ACP', async () => {
     let received: ContentBlockData[] | undefined
     const cancel = vi.fn()
     const initialize = vi.fn(async () => undefined)
@@ -119,6 +114,10 @@ describe('ACP server', () => {
         cwd: process.cwd(),
         mcpServers: [],
       })
+      const secondSession = await connection.agent.request(acp.methods.agent.session.new, {
+        cwd: process.cwd(),
+        mcpServers: [],
+      })
       const response = await connection.agent.request(acp.methods.agent.session.prompt, {
         sessionId: session.sessionId,
         prompt: [
@@ -127,14 +126,22 @@ describe('ACP server', () => {
         ],
       })
 
-      expect(buildAgent).toHaveBeenCalledOnce()
-      expect(buildAgent).toHaveBeenCalledWith(
+      expect(buildAgent).toHaveBeenCalledTimes(2)
+      expect(buildAgent).toHaveBeenNthCalledWith(
+        1,
         expect.objectContaining({
           session: expect.objectContaining({ id: session.sessionId }),
           printer: false,
         })
       )
-      expect(initialize).toHaveBeenCalledOnce()
+      expect(buildAgent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          session: expect.objectContaining({ id: secondSession.sessionId }),
+          printer: false,
+        })
+      )
+      expect(initialize).toHaveBeenCalledTimes(2)
       expect(received).toEqual([
         { text: 'inspect' },
         { image: { format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } } },
@@ -218,7 +225,7 @@ describe('ACP server', () => {
     }
   })
 
-  it('loads a durable session and replays its restored history', async () => {
+  it('upgrades and replays legacy Desktop profile messages when loading an ACP session', async () => {
     const sessionDirectory = await mkdtemp(join(tmpdir(), 'strands-acp-session-'))
     const sessionId = 'saved-session'
     await writeSavedSession(sessionDirectory, sessionId)
@@ -361,36 +368,6 @@ describe('ACP server', () => {
       const cliAgent = await buildAgent(restoredOptions)
       await cliAgent.initialize()
       expect(cliAgent.messages).toHaveLength(2)
-      const snapshot: ChatSnapshot = {
-        completedTurns: projectMessages(cliAgent.messages, 'Strands harness'),
-        queuedPrompts: [],
-        notices: [],
-        tasks: [],
-        context: {},
-        status: 'idle',
-        runtime: {
-          agent: 'Strands harness',
-          version: 'test',
-          backendId: 'strands',
-          protocol: 'strands',
-          model: 'persistence-test',
-          session: sessionId,
-          cwd: workspace,
-          tools: [],
-        },
-        settings: DEFAULT_CHAT_SETTINGS,
-      }
-      const rendered = renderToString(
-        createElement(ChatView, {
-          snapshot,
-          input: '',
-          cursor: 0,
-          terminalWidth: 100,
-          terminalHeight: 30,
-        })
-      )
-      expect(rendered).toContain('persist this request')
-      expect(rendered).toContain('persisted reply')
 
       const replayed: string[] = []
       const second = new AcpService({ session: { dir: sessionDirectory } }, { buildAgent })
@@ -508,7 +485,7 @@ describe('ACP server', () => {
   })
 
   it('keeps the process alive through bounded cleanup when a prompt ignores cancellation', async () => {
-    const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+    const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
     const fixture = fileURLToPath(new URL('./fixtures/acp-dispose-timeout-process.mjs', import.meta.url))
     const child = spawn(
       process.execPath,

@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
-import { StringDecoder } from 'node:string_decoder'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import {
-  PosixShellSandbox,
+  Sandbox,
   SandboxAbortError,
   SandboxPathNotFoundError,
   SandboxTimeoutError,
@@ -12,8 +13,10 @@ import {
   type FileInfo,
   type StreamChunk,
 } from '@strands-agents/sdk'
+import { LANGUAGE_PATTERN } from '@strands-agents/sdk/sandbox'
 
 import { terminateProcessTree } from '../terminal/process-tree.js'
+import { isMissingPathError } from '../paths.js'
 
 const SIGNAL_CODES: Partial<Record<NodeJS.Signals, number>> = {
   SIGHUP: 1,
@@ -26,16 +29,55 @@ const SIGNAL_CODES: Partial<Record<NodeJS.Signals, number>> = {
   SIGTERM: 15,
 }
 
-export class WorkspaceSandbox extends PosixShellSandbox {
-  readonly cwd: string
+const PLATFORM_LABELS: Partial<Record<NodeJS.Platform, string>> = {
+  win32: 'Windows',
+  darwin: 'Darwin',
+  linux: 'Linux',
+}
 
-  constructor(cwd: string) {
+export interface WorkspaceEnvironment {
+  readonly platform: string
+  readonly cwd: string
+  readonly shell: 'sh' | 'PowerShell'
+  readonly tempDir: string
+}
+
+interface Invocation {
+  command: string
+  args: string[]
+  input?: string
+  script?: string
+}
+
+export class WorkspaceSandbox extends Sandbox {
+  readonly cwd: string
+  readonly environment: WorkspaceEnvironment
+  private readonly platform: NodeJS.Platform
+
+  constructor(cwd: string, options: { platform?: NodeJS.Platform } = {}) {
     super()
     this.cwd = resolve(cwd)
+    this.platform = options.platform ?? process.platform
+    this.environment = {
+      platform: PLATFORM_LABELS[this.platform] ?? this.platform,
+      cwd: this.cwd,
+      shell: this.platform === 'win32' ? 'PowerShell' : 'sh',
+      tempDir: tmpdir(),
+    }
   }
 
   override readFile(path: string): Promise<Uint8Array> {
     return readFile(resolve(this.cwd, path))
+  }
+
+  override async writeFile(path: string, content: Uint8Array): Promise<void> {
+    const fullPath = resolve(this.cwd, path)
+    await mkdir(dirname(fullPath), { recursive: true })
+    await writeFile(fullPath, content)
+  }
+
+  override async removeFile(path: string): Promise<void> {
+    await unlink(resolve(this.cwd, path))
   }
 
   override async listFiles(path: string): Promise<FileInfo[]> {
@@ -44,12 +86,7 @@ export class WorkspaceSandbox extends PosixShellSandbox {
     try {
       entries = await readdir(fullPath, { withFileTypes: true })
     } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-      ) {
+      if (isMissingPathError(error)) {
         throw new SandboxPathNotFoundError(path)
       }
       throw error
@@ -72,14 +109,69 @@ export class WorkspaceSandbox extends PosixShellSandbox {
     command: string,
     options: ExecuteOptions = {}
   ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
-    const child = spawn('sh', ['-c', command], {
+    yield* this.run(this.shellInvocation(command), options)
+  }
+
+  async *executeCodeStreaming(
+    code: string,
+    language: string,
+    options: ExecuteOptions = {}
+  ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
+    if (!LANGUAGE_PATTERN.test(language)) {
+      throw new Error(`language parameter contains invalid characters: ${language}`)
+    }
+    yield* this.run({ command: language, args: [], input: code }, options)
+  }
+
+  shellInvocation(command: string): Invocation {
+    if (this.platform !== 'win32') {
+      return { command: 'sh', args: ['-c', command] }
+    }
+    return {
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'],
+      script: [
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+        '$OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+        command,
+        '$ok = $?',
+        'if (-not $ok) { if ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 } }',
+      ].join('\n'),
+    }
+  }
+
+  private async *run(
+    invocation: Invocation,
+    options: ExecuteOptions
+  ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
+    let scriptPath: string | undefined
+    if (invocation.script !== undefined) {
+      scriptPath = join(tmpdir(), `strands-shell-${randomUUID()}.ps1`)
+      await writeFile(scriptPath, `\uFEFF${invocation.script}`)
+    }
+    try {
+      yield* this.spawn(invocation, scriptPath ? [...invocation.args, scriptPath] : invocation.args, options)
+    } finally {
+      if (scriptPath) {
+        await unlink(scriptPath).catch(() => undefined)
+      }
+    }
+  }
+
+  private async *spawn(
+    invocation: Invocation,
+    args: string[],
+    options: ExecuteOptions
+  ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
+    const child = spawn(invocation.command, args, {
       cwd: options.cwd ? resolve(this.cwd, options.cwd) : this.cwd,
       env: { ...process.env, ...options.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [invocation.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
+      windowsHide: true,
     })
-    const stdoutDecoder = new StringDecoder('utf8')
-    const stderrDecoder = new StringDecoder('utf8')
+    child.stdout!.setEncoding('utf8')
+    child.stderr!.setEncoding('utf8')
     const chunks: StreamChunk[] = []
     let stdout = ''
     let stderr = ''
@@ -115,14 +207,8 @@ export class WorkspaceSandbox extends PosixShellSandbox {
       notify()
     }
 
-    child.stdout.on('data', (data: Buffer) => {
-      appendOutput(stdoutDecoder.write(data), 'stdout')
-    })
-    child.stderr.on('data', (data: Buffer) => {
-      appendOutput(stderrDecoder.write(data), 'stderr')
-    })
-    child.stdout.on('end', () => appendOutput(stdoutDecoder.end(), 'stdout'))
-    child.stderr.on('end', () => appendOutput(stderrDecoder.end(), 'stderr'))
+    child.stdout!.on('data', (data: string) => appendOutput(data, 'stdout'))
+    child.stderr!.on('data', (data: string) => appendOutput(data, 'stderr'))
     child.on('error', (error) => {
       failure = error
       done = true
@@ -133,6 +219,10 @@ export class WorkspaceSandbox extends PosixShellSandbox {
       done = true
       notify()
     })
+    if (invocation.input !== undefined) {
+      child.stdin!.on('error', () => {})
+      child.stdin!.end(invocation.input)
+    }
 
     const onAbort = (): void => terminate(new SandboxAbortError())
     if (options.signal?.aborted) {

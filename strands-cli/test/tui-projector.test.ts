@@ -1,4 +1,4 @@
-import { Message, TextBlock } from '@strands-agents/sdk'
+import { DocumentBlock, ImageBlock, Message, TextBlock } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { TurnProjector, projectMessages } from '../src/tui/chat/projector.js'
@@ -7,6 +7,68 @@ import { upgradeDesktopAgentProfileMessages } from '../src/tui/session/desktop-p
 import { SHELL_OUTPUT_LIMIT_BYTES, SHELL_OUTPUT_LIMIT_NOTICE } from '../src/tui/terminal/shell-output.js'
 
 describe('TurnProjector', () => {
+  it('projects a delayed response only while it is set', () => {
+    const projector = new TurnProjector('turn-1', 'hello')
+    expect(projector.snapshot()).not.toHaveProperty('responseDelayed')
+
+    projector.setResponseDelayed(true)
+    expect(projector.snapshot().responseDelayed).toBe(true)
+
+    projector.setResponseDelayed(false)
+    expect(projector.snapshot()).not.toHaveProperty('responseDelayed')
+  })
+
+  it.each(['complete', 'cancelled', 'error'] as const)('clears a delayed response when the turn is %s', (status) => {
+    const projector = new TurnProjector('turn-1', 'hello')
+    projector.setResponseDelayed(true)
+    if (status === 'complete') {
+      projector.finish({ stopReason: 'endTurn' })
+    } else if (status === 'cancelled') {
+      projector.markCancelled()
+    } else {
+      projector.fail(new Error('Request failed.'))
+    }
+    projector.setResponseDelayed(true)
+
+    expect(projector.snapshot().status).toBe(status)
+    expect(projector.snapshot()).not.toHaveProperty('responseDelayed')
+  })
+
+  it('preserves the provider error separately from a sanitized recovery hint', () => {
+    const projector = new TurnProjector('turn-1', 'hello')
+    projector.fail(new Error('The security token included in the request is expired.'), 'Refresh credentials.\u001b[2J')
+
+    expect(projector.snapshot()).toMatchObject({
+      status: 'error',
+      error: 'The security token included in the request is expired.',
+      recoveryHint: 'Refresh credentials.',
+    })
+  })
+
+  it('restores attachment-only user turns from saved SDK messages', () => {
+    const turns = projectMessages([
+      new Message({
+        role: 'user',
+        content: [
+          new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+          new DocumentBlock({ name: 'notes md', format: 'md', source: { text: '# Notes' } }),
+        ],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('Reviewed.')] }),
+    ])
+
+    expect(turns).toMatchObject([
+      {
+        prompt: '',
+        attachments: [
+          { name: 'image.png', size: 3, kind: 'image' },
+          { name: 'notes.md', size: 7, kind: 'document' },
+        ],
+        entries: [{ type: 'assistant', text: 'Reviewed.' }],
+      },
+    ])
+  })
+
   it('preserves reasoning, assistant text, media, and tool activity in order', () => {
     const bytes = new Uint8Array([1, 2, 3])
     const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(1_000).mockReturnValue(13_400)
@@ -361,5 +423,32 @@ describe('TurnProjector', () => {
     expect(text).toContain("Never infer or address the user by the assistant's name.")
     expect(projectMessages(messages)[0]?.prompt).toBe('What changed?')
     expect(original.content[0]?.type === 'textBlock' ? original.content[0].text : '').toContain('Name: John')
+  })
+
+  it('restores the visible skill command instead of its activation instructions', () => {
+    const turns = projectMessages([
+      new Message({
+        role: 'user',
+        content: [
+          new TextBlock(
+            [
+              '<strands_skill_activation>',
+              'Internal activation instructions.',
+              '</strands_skill_activation>',
+              '',
+              '/review this change',
+            ].join('\n')
+          ),
+        ],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
+    ])
+
+    expect(turns).toMatchObject([
+      {
+        prompt: '/review this change',
+        entries: [{ type: 'assistant', text: 'Done.' }],
+      },
+    ])
   })
 })

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
@@ -11,9 +10,11 @@ import {
   type HarnessConfigContextManager,
 } from '@strands-agents/harness'
 import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
-import { errorMessage } from './terminal/sanitize.js'
+import { canonicalPermissionRule } from './permissions/rules.js'
+import { errorMessage, isControlCharacter } from './terminal/sanitize.js'
 import {
   applyProviderEnvironmentValues,
   detectEnvironment,
@@ -23,6 +24,8 @@ import {
   type ProviderEnvironment,
   type ProviderEnvironmentKey,
 } from './provider/environment.js'
+import { isRecord } from './values.js'
+import { isMissingPathError, strandsUserPath } from './paths.js'
 
 export {
   applyProviderEnvironmentValues,
@@ -58,6 +61,7 @@ export const PROVIDER_IDS: readonly ProviderId[] = Object.keys(PROVIDER_LABELS) 
 interface PermissionConfig {
   mode: PermissionMode
   allow: readonly string[]
+  deny: readonly string[]
 }
 
 export interface CliConfigSnapshot {
@@ -82,10 +86,17 @@ export interface SetupConfiguration {
 }
 
 type ConfigDocument = Record<string, unknown>
+type ConfigNullPath = (string | number)[]
+const NULL_PATHS_KEY = '__strands_null_paths'
 
-/** Resolves a path under `~/.strands/cli`, the CLI's user-level config, state, and cache directory. */
+/** Resolves a path under `~/.strands/cli`, the CLI's internal state and cache directory. */
 export function userDirectory(...segments: string[]): string {
-  return join(homedir(), '.strands', 'cli', ...segments)
+  return strandsUserPath('cli', ...segments)
+}
+
+/** The user-editable CLI config file, `~/.strands/cli.toml`. */
+export function userConfigPath(): string {
+  return strandsUserPath('cli.toml')
 }
 
 export class CliConfigStore {
@@ -111,8 +122,8 @@ export class CliConfigStore {
         : requiredText(_document.profileBaseDir, `Invalid CLI config at ${_path}: profileBaseDir`)
   }
 
-  static async load(path = userDirectory('config.json')): Promise<CliConfigStore> {
-    const loadedDocument = await readConfigDocument(path)
+  static async load(path = userConfigPath()): Promise<CliConfigStore> {
+    const { document: loadedDocument, legacyPath } = await readConfigDocument(path)
     const document = withoutProviderCredentials(loadedDocument)
     const store = new CliConfigStore(
       path,
@@ -124,7 +135,7 @@ export class CliConfigStore {
       parsePermissions(document.permissions, path),
       parseSettings(document.settings, path)
     )
-    if (document !== loadedDocument) {
+    if (document !== loadedDocument || legacyPath) {
       await writeConfigDocument(path, document)
     }
     return store
@@ -148,6 +159,7 @@ export class CliConfigStore {
     const resolvedPermissions = {
       mode: permissions.mode ?? 'default',
       allow: uniqueSorted((permissions.allow ?? []).map(normalizeToolName)),
+      deny: uniqueSorted((permissions.deny ?? []).map(normalizeToolName)),
     }
     const resolvedSettings = { ...DEFAULT_CHAT_SETTINGS, ...settings }
     return new CliConfigStore(
@@ -181,6 +193,7 @@ export class CliConfigStore {
       permissions: {
         mode: this._permissions.mode,
         allow: [...this._permissions.allow],
+        deny: [...this._permissions.deny],
       },
       settings: globalThis.structuredClone(this._settings),
     }
@@ -298,7 +311,7 @@ export class CliConfigStore {
       this._providerEnvironment = providerEnvironment
       this._profile = profile
       this._profileBaseDir = document.profileBaseDir
-      this._permissions = { mode: configuration.permissionMode, allow: allowedTools }
+      this._permissions = { ...this._permissions, mode: configuration.permissionMode, allow: allowedTools }
       this._settings = settings
     })
   }
@@ -320,6 +333,22 @@ export class CliConfigStore {
     return this._updatePermissions((permissions) => ({
       ...permissions,
       allow: permissions.allow.filter((candidate) => candidate !== normalized),
+    }))
+  }
+
+  denyTool(rule: string): Promise<void> {
+    const normalized = normalizeToolName(rule)
+    return this._updatePermissions((permissions) => ({
+      ...permissions,
+      deny: uniqueSorted([...permissions.deny, normalized]),
+    }))
+  }
+
+  removeDeniedTool(rule: string): Promise<void> {
+    const normalized = normalizeToolName(rule)
+    return this._updatePermissions((permissions) => ({
+      ...permissions,
+      deny: permissions.deny.filter((candidate) => candidate !== normalized),
     }))
   }
 
@@ -375,6 +404,7 @@ export class CliConfigStore {
           ...priorPermissions,
           mode: next.mode,
           allow: [...next.allow],
+          deny: [...next.deny],
         },
       }
       if (this._persistent) {
@@ -386,21 +416,43 @@ export class CliConfigStore {
   }
 }
 
-async function readConfigDocument(path: string): Promise<ConfigDocument> {
-  let text: string
+/** Imports a readable JSON config when TOML is absent, retaining the original file. */
+async function readConfigDocument(path: string): Promise<{ document: ConfigDocument; legacyPath?: string }> {
+  const text = await readOptionalFile(path)
+  if (text !== undefined) {
+    return { document: parseConfigText(path, () => restoreConfigNulls(parseToml(text))) }
+  }
+  if (basename(path) !== 'cli.toml') {
+    return { document: {} }
+  }
+  const legacyPath = join(dirname(path), 'cli', 'config.json')
+  const legacyText = await readOptionalFile(legacyPath)
+  if (legacyText === undefined) {
+    return { document: {} }
+  }
   try {
-    text = await readFile(path, 'utf8')
+    return { document: parseConfigText(legacyPath, () => JSON.parse(legacyText) as unknown), legacyPath }
+  } catch {
+    return { document: {} }
+  }
+}
+
+async function readOptionalFile(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, 'utf8')
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return {}
+    if (isMissingPathError(error)) {
+      return undefined
     }
     throw error
   }
+}
 
+function parseConfigText(path: string, parse: () => unknown): ConfigDocument {
   try {
-    const value = JSON.parse(text) as unknown
+    const value = parse()
     if (!isRecord(value)) {
-      throw new Error('expected a JSON object')
+      throw new Error('expected a table of settings')
     }
     return value
   } catch (error) {
@@ -462,7 +514,7 @@ function parseProfile(value: unknown, path: string): HarnessAgentConfig {
 
 function parsePermissions(value: unknown, path: string): PermissionConfig {
   if (value === undefined) {
-    return { mode: 'default', allow: [] }
+    return { mode: 'default', allow: [], deny: [] }
   }
   if (!isRecord(value)) {
     throw new Error(`Invalid CLI config at ${path}: permissions must be an object`)
@@ -473,12 +525,17 @@ function parsePermissions(value: unknown, path: string): PermissionConfig {
     throw new Error(`Invalid CLI config at ${path}: permissions.mode must be "default" or "bypassPermissions"`)
   }
 
-  const allow = value.allow ?? []
-  if (!Array.isArray(allow) || allow.some((toolName) => typeof toolName !== 'string')) {
-    throw new Error(`Invalid CLI config at ${path}: permissions.allow must be an array of tool names`)
+  const rules = (field: 'allow' | 'deny'): string[] => {
+    const entries = value[field] ?? []
+    if (!Array.isArray(entries) || entries.some((rule) => typeof rule !== 'string')) {
+      throw new Error(`Invalid CLI config at ${path}: permissions.${field} must be an array of permission rules`)
+    }
+    return entries as string[]
   }
+  const allow = rules('allow')
+  const deny = rules('deny')
   try {
-    return { mode, allow: uniqueSorted(allow.map(normalizeToolName)) }
+    return { mode, allow: uniqueSorted(allow.map(normalizeToolName)), deny: uniqueSorted(deny.map(normalizeToolName)) }
   } catch (error) {
     throw new Error(`Invalid CLI config at ${path}: ${errorMessage(error)}`, { cause: error })
   }
@@ -488,19 +545,77 @@ async function writeConfigDocument(path: string, document: ConfigDocument): Prom
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
-    await writeFile(temporary, `${JSON.stringify(withoutProviderCredentials(document), null, 2)}\n`, { mode: 0o600 })
+    await writeFile(temporary, stringifyToml(encodeConfigNulls(withoutProviderCredentials(document))), { mode: 0o600 })
     await rename(temporary, path)
   } finally {
     await rm(temporary, { force: true })
   }
 }
 
+/** TOML nulls use explicit paths; array slots keep an empty table so their indices remain stable. */
+function encodeConfigNulls(document: ConfigDocument): ConfigDocument {
+  if (Object.hasOwn(document, NULL_PATHS_KEY)) {
+    throw new Error(`${NULL_PATHS_KEY} is reserved for CLI null-value metadata.`)
+  }
+  const paths: ConfigNullPath[] = []
+  const encode = (value: unknown, path: ConfigNullPath): unknown => {
+    if (value === null) {
+      paths.push(path)
+      return {}
+    }
+    if (Array.isArray(value)) return value.map((entry, index) => encode(entry, [...path, index]))
+    if (!isRecord(value)) return value
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, entry]) => {
+        const encoded = encode(entry, [...path, key])
+        return entry === null || entry === undefined ? [] : [[key, encoded]]
+      })
+    )
+  }
+  const encoded = encode(document, []) as ConfigDocument
+  return paths.length ? { [NULL_PATHS_KEY]: paths, ...encoded } : encoded
+}
+
+function restoreConfigNulls(document: ConfigDocument): ConfigDocument {
+  if (!Object.hasOwn(document, NULL_PATHS_KEY)) return document
+  const { [NULL_PATHS_KEY]: paths, ...restored } = document
+  if (!Array.isArray(paths)) throw new Error(`${NULL_PATHS_KEY} must be an array of null paths.`)
+  for (const path of paths) {
+    if (!Array.isArray(path) || path.length === 0 || path[0] === NULL_PATHS_KEY) {
+      throw new Error(`Invalid ${NULL_PATHS_KEY} path.`)
+    }
+    let parent: unknown = restored
+    for (const [index, key] of path.entries()) {
+      const array = Array.isArray(parent)
+      if (
+        !(Array.isArray(parent)
+          ? typeof key === 'number' && Number.isSafeInteger(key) && key >= 0 && key < parent.length
+          : isRecord(parent) && typeof key === 'string')
+      ) {
+        throw new Error(`Invalid ${NULL_PATHS_KEY} path: ${JSON.stringify(path)}.`)
+      }
+      const container = parent as object
+      const value: unknown = Object.hasOwn(container, key) ? Reflect.get(container, key) : undefined
+      if (index < path.length - 1) {
+        parent = value
+        continue
+      }
+      // A value edited directly in TOML takes precedence over its saved null metadata.
+      if (value === undefined || (array && isRecord(value) && Object.keys(value).length === 0)) {
+        Object.defineProperty(container, key, { value: null, enumerable: true, configurable: true, writable: true })
+      }
+    }
+  }
+  return restored
+}
+
+/** Validates a permission rule: a tool name, optionally scoped as `tool(pattern)`. */
 export function normalizeToolName(toolName: string): string {
   const normalized = toolName.trim()
   if (!normalized || normalized !== toolName || [...normalized].some(isControlCharacter)) {
-    throw new Error('permissions.allow entries must be non-empty tool names without surrounding whitespace')
+    throw new Error('permission rules must be non-empty tool names or tool(pattern) without surrounding whitespace')
   }
-  return normalized
+  return canonicalPermissionRule(normalized)
 }
 
 function uniqueProviders(values: readonly unknown[]): ProviderId[] {
@@ -561,15 +676,6 @@ function requiredText(value: unknown, field: string): string {
   return normalized
 }
 
-function isControlCharacter(character: string): boolean {
-  const codePoint = character.codePointAt(0) ?? 0
-  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
-}
-
 function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right))
-}
-
-function isRecord(value: unknown): value is ConfigDocument {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

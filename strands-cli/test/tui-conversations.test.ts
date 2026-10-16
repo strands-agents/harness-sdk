@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -9,7 +13,9 @@ import {
 } from '../src/tui/chat/controller.js'
 import { ConversationManager } from '../src/tui/session/conversations.js'
 import { AgentMessaging } from '../src/tui/messaging.js'
-import type { VoiceSessionSnapshot } from '../src/tui/voice/session.js'
+import type { McpServerInfo } from '../src/tui/mcp.js'
+import * as projectWatch from '../src/tui/project/watch.js'
+import type { VoiceInput, VoiceSessionSnapshot, VoiceSupervisorRequest } from '../src/tui/voice/session.js'
 
 function backend(
   id: string,
@@ -27,6 +33,137 @@ function backend(
 }
 
 describe('ConversationManager', () => {
+  it('opens MCP failure details and retries through the active conversation', async () => {
+    let server: McpServerInfo = {
+      name: 'docs',
+      state: 'failed',
+      transport: 'streamable-http',
+      target: 'https://example.test/mcp',
+      source: '/workspace/.strands/mcp.json',
+      canRetry: true,
+      error: 'connect ECONNREFUSED',
+    }
+    const setEnabled = vi.fn(async () => {
+      server = { ...server, state: 'connected', toolCount: 2 }
+      delete server.error
+      return undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun), {
+      mcp: {
+        clients: [],
+        paths: [],
+        warnings: [],
+        list: async () => [server],
+        setEnabled,
+        dispose: async () => undefined,
+      },
+    })
+    const manager = new ConversationManager(primary, { fork: async () => primary })
+    try {
+      await manager.submit('/mcp')
+      const listId = manager.getSnapshot().panel?.id
+      expect(manager.openMcpDetail('docs')).toBe(true)
+      expect(manager.getSnapshot().panel).toMatchObject({
+        kind: 'detail',
+        title: 'MCP: docs',
+        body: 'Full error\nconnect ECONNREFUSED',
+        rows: expect.arrayContaining([{ label: 'Source', description: '/workspace/.strands/mcp.json' }]),
+      })
+      expect(manager.dismissPanel()).toBe(true)
+      expect(manager.getSnapshot().panel?.id).toBe(listId)
+      expect(await manager.retryMcpServer('docs')).toBe(true)
+      expect(setEnabled).toHaveBeenCalledExactlyOnceWith('docs', true)
+      expect(manager.getSnapshot().panel).toMatchObject({
+        id: listId,
+        kind: 'mcp',
+        rows: [{ label: 'docs', badge: { text: 'connected' } }],
+      })
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('does not dispatch MCP actions behind a manager panel or after closing', async () => {
+    const primary = new ChatController(backend('primary', emptyRun))
+    const details = vi.spyOn(primary, 'openMcpDetail').mockReturnValue(true)
+    const retry = vi.spyOn(primary, 'retryMcpServer').mockResolvedValue(true)
+    const manager = new ConversationManager(primary, { fork: async () => primary })
+    try {
+      await manager.submit('/agents')
+      expect(manager.openMcpDetail('docs')).toBe(false)
+      expect(await manager.retryMcpServer('docs')).toBe(false)
+      manager.dismissPanel()
+      manager.close()
+      expect(manager.openMcpDetail('docs')).toBe(false)
+      expect(await manager.retryMcpServer('docs')).toBe(false)
+      expect(details).not.toHaveBeenCalled()
+      expect(retry).not.toHaveBeenCalled()
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('refreshes project source immediately and reloads after active work finishes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'strands-live-reload-'))
+    const entrypoint = join(root, 'agent.ts')
+    const helper = join(root, 'helper.ts')
+    await writeFile(entrypoint, "createHarness({ name: 'Before' })\n")
+    await writeFile(helper, "export const name = 'Before'\n")
+    let finish!: () => void
+    const active = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const primary = new ChatController(
+      backend('primary', async function* () {
+        yield { type: 'textDelta', text: 'Working' }
+        await active
+        return { stopReason: 'endTurn' }
+      }),
+      {
+        configurationSource: () => ({
+          preferredLanguage: 'typescript',
+          documents: {
+            typescript: {
+              source: readFileSync(entrypoint, 'utf8'),
+              generated: false,
+              path: entrypoint,
+            },
+            python: { source: 'agent = create_harness()', generated: true },
+          },
+          project: { root, entrypoint },
+        }),
+      }
+    )
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      project: { root, entrypoint, language: 'typescript' },
+      reloadProject,
+    })
+    try {
+      const running = manager.submit('Keep working')
+      await vi.waitFor(() => expect(manager.busy).toBe(true))
+      await writeFile(entrypoint, "createHarness({ name: 'After' })\n")
+      await vi.waitFor(
+        () => expect(manager.getSnapshot().configuration?.documents.typescript.source).toContain('After'),
+        { timeout: 5_000 }
+      )
+      expect(reloadProject).not.toHaveBeenCalled()
+
+      finish()
+      await running
+      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1'), { timeout: 5_000 })
+
+      reloadProject.mockClear()
+      await writeFile(helper, "export const name = 'After'\n")
+      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1'), { timeout: 5_000 })
+    } finally {
+      finish()
+      await manager.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses a setup capture while another conversation is running', async () => {
     const snapshot = {
       scope: 'agent' as const,
@@ -65,7 +202,82 @@ describe('ConversationManager', () => {
     }
   })
 
-  it('routes repository voice input into the active coding conversation', async () => {
+  it('reloads a changed project after fork startup settles', async () => {
+    const root = process.cwd()
+    const entrypoint = join(root, 'agent.ts')
+    const primary = new ChatController(backend('primary', emptyRun))
+    const fork = new ChatController(backend('fork', emptyRun))
+    let notifyChange!: () => void
+    const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockImplementation((_project, onChange) => {
+      notifyChange = onChange
+      return () => {}
+    })
+    let finish!: (controller: ChatController) => void
+    const pendingFork = new Promise<ChatController>((resolve) => {
+      finish = resolve
+    })
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: () => pendingFork,
+      project: { root, entrypoint, language: 'typescript' },
+      reloadProject,
+    })
+    const forking = manager.submit('/fork')
+    try {
+      notifyChange()
+      expect(reloadProject).not.toHaveBeenCalled()
+      finish(fork)
+      await forking
+      expect(reloadProject).toHaveBeenCalledExactlyOnceWith('agent-2')
+    } finally {
+      finish(fork)
+      await forking
+      await manager.dispose()
+      watch.mockRestore()
+    }
+  })
+
+  it.each(['off', 'error'] as const)('applies voice On/Off choices idempotently from %s', async (status) => {
+    const primary = new ChatController(backend('primary', emptyRun))
+    const voice = fakeVoiceInput(status)
+    const manager = new ConversationManager(primary, { fork: async () => primary, voice })
+    const choose = (choice?: string) =>
+      manager.activatePanelRow({
+        label: 'Voice',
+        description: '',
+        value: choice === undefined ? 'voice:enabled' : `voice:enabled=${choice}`,
+      })
+    try {
+      await manager.submit('/voice')
+      await choose('off')
+      expect(voice.stop).not.toHaveBeenCalled()
+      await choose('on')
+      await choose('on')
+      expect(voice.start).toHaveBeenCalledOnce()
+      expect(manager.getSnapshot().panel?.rows[0]?.control).toMatchObject({
+        options: [{ value: 'off' }, { value: 'on', active: true }],
+      })
+
+      manager.toggleVoiceMute()
+      await choose('on')
+      expect(voice.start).toHaveBeenCalledOnce()
+      expect(manager.getSnapshot().voice?.status).toBe('muted')
+      await choose('off')
+      await choose('off')
+      expect(voice.stop).toHaveBeenCalledOnce()
+
+      await choose()
+      expect(voice.start).toHaveBeenCalledTimes(2)
+      await choose()
+      expect(voice.stop).toHaveBeenCalledTimes(2)
+      expect(manager.getSnapshot().voice?.status).toBe('off')
+      expect(await choose('invalid')).toBe(false)
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('routes only delegated voice turns into the active harness conversation', async () => {
     const prompts: string[] = []
     const target = backend('primary', async function* (prompt) {
       prompts.push(prompt)
@@ -82,39 +294,94 @@ describe('ConversationManager', () => {
     expect(manager.getSnapshot().panel).toMatchObject({
       kind: 'voice',
       rows: expect.arrayContaining([
-        expect.objectContaining({ label: 'Start Voice', description: 'off', value: 'voice:start' }),
+        expect.objectContaining({
+          label: 'Voice',
+          description: 'off',
+          value: 'voice:enabled',
+          control: {
+            kind: 'segmented',
+            options: [
+              { label: 'Off', value: 'off', active: true },
+              { label: 'On', value: 'on' },
+            ],
+          },
+        }),
       ]),
     })
-
     await manager.submit('/voice on')
     expect(voice.start).toHaveBeenCalledOnce()
     expect(manager.getSnapshot().voice).toMatchObject({
       status: 'listening',
-      model: 'test-sonic',
+      model: 'amazon.nova-2-5-sonic',
     })
     expect(manager.getSnapshot().panel).toBeUndefined()
 
-    voice.emitTranscript('inspect the parser')
+    expect(prompts).toEqual([])
+
+    voice.emitSupervisorRequest({
+      requestId: 'supervisor-1',
+      action: 'send_instruction',
+      instruction: 'inspect the parser',
+    })
     await vi.waitFor(() => expect(manager.getSnapshot().completedTurns).toHaveLength(1))
     expect(prompts).toEqual(['inspect the parser'])
     expect(manager.getSnapshot().completedTurns.at(-1)).toMatchObject({
       prompt: 'inspect the parser',
       entries: [{ type: 'assistant', text: 'coding:inspect the parser' }],
     })
-    expect(voice.speak).not.toHaveBeenCalled()
+    expect(voice.narrate).not.toHaveBeenCalled()
+    expect(voice.resolveSupervisorRequest).toHaveBeenCalledWith('supervisor-1', {
+      ok: true,
+      result: {
+        accepted: true,
+        state: 'started',
+        conversation: 'Strands harness',
+      },
+    })
+    voice.emitSupervisorRequest({
+      requestId: 'supervisor-2',
+      action: 'get_current_work',
+    })
+    expect(voice.resolveSupervisorRequest).toHaveBeenLastCalledWith('supervisor-2', {
+      ok: true,
+      result: expect.objectContaining({
+        conversation: 'Strands harness',
+        status: 'idle',
+        latest_result: 'coding:inspect the parser',
+      }),
+    })
 
     expect(manager.toggleVoiceMute()).toBe(true)
     expect(manager.getSnapshot().voice?.status).toBe('muted')
     await manager.submit('/voice status')
     expect(manager.getSnapshot().panel).toMatchObject({
       kind: 'voice',
-      title: 'voice',
+      title: 'Voice',
       rows: expect.arrayContaining([
-        expect.objectContaining({ label: 'Stop Voice', description: 'muted', value: 'voice:stop' }),
-        expect.objectContaining({ label: 'model', description: 'test-sonic' }),
+        expect.objectContaining({
+          label: 'Voice',
+          description: 'muted',
+          value: 'voice:enabled',
+          control: {
+            kind: 'segmented',
+            options: [
+              { label: 'Off', value: 'off' },
+              { label: 'On', value: 'on', active: true },
+            ],
+          },
+        }),
+        expect.objectContaining({
+          label: 'Nova 2.5 Sonic',
+          description: 'amazon.nova-2-5-sonic',
+          value: 'voice:model=amazon.nova-2-5-sonic',
+        }),
         expect.objectContaining({
           label: 'spoken replies',
           control: expect.objectContaining({ kind: 'toggle', checked: false }),
+        }),
+        expect.objectContaining({
+          label: 'provider',
+          control: expect.objectContaining({ kind: 'segmented' }),
         }),
         expect.objectContaining({
           label: 'end of turn',
@@ -133,6 +400,29 @@ describe('ConversationManager', () => {
       value: 'voice:endpointing=MEDIUM',
     })
     expect(voice.setEndpointingSensitivity).toHaveBeenCalledWith('MEDIUM')
+
+    await manager.activatePanelRow({
+      label: 'provider',
+      description: 'OpenAI',
+      value: 'voice:provider=openai',
+    })
+    expect(voice.setProvider).toHaveBeenCalledWith('openai')
+    expect(manager.getSnapshot().panel?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'GPT Realtime 2.1',
+          description: 'gpt-realtime-2.1',
+          value: 'voice:model=gpt-realtime-2.1',
+        }),
+      ])
+    )
+
+    await manager.activatePanelRow({
+      label: 'GPT Realtime 2.1',
+      description: 'gpt-realtime-2.1',
+      value: 'voice:model=gpt-realtime-2.1',
+    })
+    expect(voice.setModel).toHaveBeenCalledWith('gpt-realtime-2.1')
 
     await manager.activatePanelRow({
       label: 'English (US)',
@@ -178,7 +468,41 @@ describe('ConversationManager', () => {
     await manager.dispose()
   })
 
-  it('queues spoken replies while the coding response is still streaming', async () => {
+  it('rejects voice actions during a reload and accepts them again after rollback', async () => {
+    const stream = vi.fn(emptyRun)
+    const primary = new ChatController(backend('primary', stream))
+    const voice = fakeVoiceInput()
+    const manager = new ConversationManager(primary, { fork: async () => primary, voice })
+    try {
+      const resume = manager.pauseVoiceInput()
+      voice.emitSupervisorRequest({
+        requestId: 'during-reload',
+        action: 'send_instruction',
+        instruction: 'Inspect the parser',
+      })
+      expect(stream).not.toHaveBeenCalled()
+      expect(voice.resolveSupervisorRequest).toHaveBeenLastCalledWith('during-reload', {
+        ok: false,
+        error: 'The harness agent is reloading. Try again after the reload finishes.',
+      })
+
+      resume()
+      voice.emitSupervisorRequest({
+        requestId: 'after-rollback',
+        action: 'send_instruction',
+        instruction: 'Inspect the parser',
+      })
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledOnce())
+      expect(voice.resolveSupervisorRequest).toHaveBeenLastCalledWith('after-rollback', {
+        ok: true,
+        result: { accepted: true, state: 'started', conversation: 'Strands harness' },
+      })
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('returns one completed harness response to the voice agent as grounded narration', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -202,20 +526,18 @@ describe('ConversationManager', () => {
     voice.setSpokenReplies(true)
     const running = manager.submit('explain the change')
     await firstChunk
-    await vi.waitFor(() => expect(voice.speak).toHaveBeenCalledWith('First sentence.'))
+    expect(voice.narrate).not.toHaveBeenCalled()
     expect(manager.getSnapshot().status).toBe('running')
 
     release()
     await running
-    expect(voice.speak.mock.calls.map(([text]) => text)).toEqual([
-      'First sentence.',
-      'Second sentence without punctuation',
-    ])
+    expect(voice.narrate).toHaveBeenCalledOnce()
+    expect(voice.narrate).toHaveBeenCalledWith('First sentence. Second sentence without punctuation')
 
     await manager.dispose()
   })
 
-  it('interrupts an active coding turn as soon as voice speech begins', async () => {
+  it('keeps harness work running during voice conversation and cancels only through the supervisor', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -231,8 +553,21 @@ describe('ConversationManager', () => {
 
     const running = manager.submit('long task')
     await vi.waitFor(() => expect(manager.getSnapshot().status).toBe('running'))
-    voice.emitSpeechStart()
+    expect(target.cancel).not.toHaveBeenCalled()
+
+    voice.emitSupervisorRequest({
+      requestId: 'supervisor-1',
+      action: 'cancel_current_work',
+    })
     expect(target.cancel).toHaveBeenCalledOnce()
+    expect(voice.resolveSupervisorRequest).toHaveBeenCalledWith('supervisor-1', {
+      ok: true,
+      result: {
+        cancelled: true,
+        state: 'cancelled',
+        conversation: 'Strands harness',
+      },
+    })
 
     release()
     await running
@@ -274,7 +609,6 @@ describe('ConversationManager', () => {
       title: 'Agents',
     })
     const main = manager.getSnapshot().panel?.rows.find((row) => row.label === 'Research Strands harness')
-    expect(main).toBeDefined()
     await manager.activatePanelRow(main!)
     expect(manager.getSnapshot().completedTurns.at(-1)).toMatchObject({
       prompt: 'baseline',
@@ -336,28 +670,52 @@ describe('ConversationManager', () => {
     expect(manager.getSnapshot().panel?.rows.every((row) => row.section === undefined)).toBe(true)
   })
 
-  it.each(['/goal Keep it concise', '/loop Finish the tests', '/loop --background --for 30m Finish the tests'])(
-    'rejects %s without starting or forking an agent',
-    async (command) => {
-      const stream = vi.fn(emptyRun)
-      const primary = new ChatController(backend('primary', stream))
-      const fork = vi.fn(async () => primary)
-      const manager = new ConversationManager(primary, { fork })
+  it.each(['success', 'failure'])('keeps fork progress in the conversation until %s', async (result) => {
+    const primary = new ChatController(backend('primary', emptyRun))
+    const fork = new ChatController(backend('fork', emptyRun))
+    let finishFork!: () => void
+    const ready = new Promise<ChatController>((resolve, reject) => {
+      finishFork = () => (result === 'success' ? resolve(fork) : reject(new Error('Fork startup failed')))
+    })
+    const factory = vi.fn(() => ready)
+    const manager = new ConversationManager(primary, { fork: factory })
 
-      try {
-        await manager.submit(command)
+    await manager.submit('Keep this conversation visible')
+    const lastTurn = manager.getSnapshot().completedTurns.at(-1)!
+    await manager.submit('/agents')
+    const pending = manager.submit('/fork')
+    expect(manager.getSnapshot()).toMatchObject({
+      completedTurns: [lastTurn],
+      notices: [
+        {
+          id: 'manager-fork-progress',
+          text: 'Forking agent…',
+          status: 'running',
+          afterTurnId: lastTurn.id,
+        },
+      ],
+    })
+    expect(manager.getSnapshot().panel).toBeUndefined()
+    expect(manager.getSnapshot().composerStatus).toBeUndefined()
+    await manager.submit('/fork')
+    expect(factory).toHaveBeenCalledOnce()
 
-        expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'unknown command' })
-        expect(manager.getSnapshot().completedTurns).toEqual([])
-        expect(stream).not.toHaveBeenCalled()
-        expect(fork).not.toHaveBeenCalled()
-      } finally {
-        await manager.dispose()
-      }
+    finishFork()
+    await pending
+    expect(manager.getSnapshot().notices).toEqual([])
+    expect(manager.backend.id).toBe(result === 'success' ? 'fork' : 'primary')
+    if (result === 'failure') {
+      expect(manager.getSnapshot().panel).toMatchObject({
+        kind: 'error',
+        title: 'fork failed',
+        rows: [{ description: 'Fork startup failed' }],
+      })
+      await fork.dispose()
     }
-  )
+    await manager.dispose()
+  })
 
-  it('renames the currently viewed agent and updates peer discovery', async () => {
+  it('routes /rename to saved sessions without changing peer names', async () => {
     const agentMessaging = new AgentMessaging()
     const rename = vi.spyOn(agentMessaging, 'rename')
     const primary = new ChatController(backend('primary', emptyRun))
@@ -366,39 +724,21 @@ describe('ConversationManager', () => {
       agentMessaging,
     })
 
-    await manager.submit('/rename "Lead Reviewer"')
+    await manager.submit('/rename Lead Reviewer')
+    expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'session rename unavailable' })
     await manager.submit('/agents')
 
-    expect(rename).toHaveBeenLastCalledWith('agent-1', 'Lead Reviewer')
+    expect(rename).toHaveBeenCalledExactlyOnceWith('agent-1', 'Strands harness')
     expect(manager.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Lead Reviewer',
+      label: 'Strands harness',
       current: true,
       badge: { text: 'idle' },
     })
     expect(manager.getSnapshot().runtime.configuration).toContainEqual({
       label: 'agent',
-      value: 'Lead Reviewer (1 total)',
+      value: 'Strands harness (1 total)',
     })
-  })
-
-  it('opens a rename panel when no name is provided', async () => {
-    const primary = new ChatController(backend('primary', emptyRun))
-    const manager = new ConversationManager(primary, { fork: async () => primary })
-
-    try {
-      await manager.submit('/rename')
-      expect(manager.getSnapshot().panel).toMatchObject({
-        kind: 'rename',
-        title: 'Rename agent',
-        rows: [{ label: 'Current name', description: 'Strands harness' }],
-      })
-
-      await manager.activatePanelRow({ label: 'Rename', description: '', value: 'rename:Lead Reviewer' })
-      await manager.submit('/agents')
-      expect(manager.getSnapshot().panel?.rows[0]?.label).toBe('Lead Reviewer')
-    } finally {
-      await manager.dispose()
-    }
+    await manager.dispose()
   })
 
   it('retries failed session lookup and startup before opening a separate workspace conversation', async () => {
@@ -539,7 +879,7 @@ describe('ConversationManager', () => {
     expect(disposeShared).toHaveBeenCalledOnce()
   })
 
-  it('disposes a fork that finishes after the manager shuts down', async () => {
+  it('accepts exit while forking and disposes a fork that finishes after shutdown', async () => {
     let finishFork!: (controller: ChatController) => void
     const forkReady = new Promise<ChatController>((resolve) => {
       finishFork = resolve
@@ -550,13 +890,20 @@ describe('ConversationManager', () => {
     const manager = new ConversationManager(primary, { fork: () => forkReady })
 
     const pending = manager.submit('/fork')
-    manager.close()
+    expect(manager.getSnapshot().panel).toBeUndefined()
+    expect(manager.getSnapshot().notices).toEqual([
+      { id: 'manager-fork-progress', text: 'Forking agent…', status: 'running' },
+    ])
+    await manager.submit('/exit')
+    expect(manager.getSnapshot().status).toBe('closed')
+    expect(manager.getSnapshot().notices).toEqual([])
     await manager.dispose()
     finishFork(fork)
     await pending
 
     expect(fork.getSnapshot().status).toBe('closed')
     expect(forkDispose).toHaveBeenCalledOnce()
+    expect(manager.getSnapshot().notices).toEqual([])
   })
 })
 
@@ -565,19 +912,20 @@ async function* emptyRun(): AsyncGenerator<ChatEvent, ChatRunResult, undefined> 
   return { stopReason: 'endTurn' }
 }
 
-function fakeVoiceInput() {
+function fakeVoiceInput(status: VoiceSessionSnapshot['status'] = 'off') {
   let snapshot: VoiceSessionSnapshot = {
-    status: 'off',
+    status,
     muted: false,
     inputLevel: 0,
     inputLevelDb: -60,
     spokenReplies: false,
     endpointingSensitivity: 'LOW',
+    provider: 'bedrock',
     voice: 'tiffany',
+    model: 'amazon.nova-2-5-sonic',
   }
   const listeners = new Set<() => void>()
-  const transcriptListeners = new Set<(transcript: string) => void>()
-  const speechListeners = new Set<() => void>()
+  const supervisorListeners = new Set<Parameters<VoiceInput['onSupervisorRequest']>[0]>()
   const emit = (): void => {
     for (const listener of listeners) {
       listener()
@@ -591,7 +939,9 @@ function fakeVoiceInput() {
       inputLevelDb: -60,
       spokenReplies: snapshot.spokenReplies,
       endpointingSensitivity: snapshot.endpointingSensitivity,
+      provider: snapshot.provider,
       voice: snapshot.voice,
+      model: snapshot.model,
     }
     emit()
   }
@@ -600,21 +950,18 @@ function fakeVoiceInput() {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    onTranscript: (listener: (transcript: string) => void) => {
-      transcriptListeners.add(listener)
-      return () => transcriptListeners.delete(listener)
-    },
-    onSpeechStart: (listener: () => void) => {
-      speechListeners.add(listener)
-      return () => speechListeners.delete(listener)
+    onSupervisorRequest: (listener: Parameters<VoiceInput['onSupervisorRequest']>[0]) => {
+      supervisorListeners.add(listener)
+      return () => supervisorListeners.delete(listener)
     },
     getSnapshot: () => ({ ...snapshot }),
     start: vi.fn(async () => {
-      snapshot = { ...snapshot, status: 'listening', muted: false, model: 'test-sonic' }
+      snapshot = { ...snapshot, status: 'listening', muted: false }
       emit()
     }),
     stop: vi.fn(reset),
-    speak: vi.fn((_text: string) => snapshot.status !== 'off' && snapshot.spokenReplies),
+    narrate: vi.fn((_text: string) => snapshot.status !== 'off' && snapshot.spokenReplies),
+    resolveSupervisorRequest: vi.fn(() => snapshot.status !== 'off'),
     toggleMuted: () => {
       if (snapshot.status === 'off') {
         return false
@@ -639,6 +986,21 @@ function fakeVoiceInput() {
       emit()
       return true
     }),
+    setProvider: vi.fn(async (provider: VoiceSessionSnapshot['provider']) => {
+      snapshot = {
+        ...snapshot,
+        provider,
+        voice: provider === 'bedrock' ? 'tiffany' : 'coral',
+        model: provider === 'bedrock' ? 'amazon.nova-2-5-sonic' : 'gpt-realtime-2.1',
+      }
+      emit()
+      return true
+    }),
+    setModel: vi.fn(async (model: VoiceSessionSnapshot['model']) => {
+      snapshot = { ...snapshot, model }
+      emit()
+      return true
+    }),
     setVoice: vi.fn(async (voice: VoiceSessionSnapshot['voice']) => {
       snapshot = { ...snapshot, voice }
       emit()
@@ -649,14 +1011,9 @@ function fakeVoiceInput() {
       snapshot = { ...snapshot, inputLevel, inputLevelDb }
       emit()
     },
-    emitTranscript: (transcript: string) => {
-      for (const listener of transcriptListeners) {
-        listener(transcript)
-      }
-    },
-    emitSpeechStart: () => {
-      for (const listener of speechListeners) {
-        listener()
+    emitSupervisorRequest: (request: VoiceSupervisorRequest) => {
+      for (const listener of supervisorListeners) {
+        listener(request)
       }
     },
   }

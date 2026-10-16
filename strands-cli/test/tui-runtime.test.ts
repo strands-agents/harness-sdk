@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { unzipSync } from 'fflate'
 import {
   Message,
   TextBlock,
@@ -45,12 +46,14 @@ import {
 } from '../src/tui/runtime.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { sessionId } from '../src/tui/session/options.js'
+import { workspaceSessionDirectory } from '../src/tui/session/sessions.js'
 import { StrandsChatBackend } from '../src/tui/strands-backend.js'
 import { LiveSteering } from '../src/tui/steering.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../src/tui/provider/discovery.js'
+import { parse, stringify } from 'smol-toml'
 
-let testSessionCatalogPath = ''
+let testSessionRoot = ''
 
 function createInteractiveChat(
   options: Parameters<typeof createInteractiveChatRuntime>[0] = {}
@@ -58,12 +61,12 @@ function createInteractiveChat(
   return createInteractiveChatRuntime({
     ...options,
     ...(!options.config && !options.configPath ? { config: CliConfigStore.memory() } : {}),
-    sessionCatalogPath: options.sessionCatalogPath ?? testSessionCatalogPath,
+    sessionRoot: options.sessionRoot ?? testSessionRoot,
   })
 }
 
 beforeEach(() => {
-  testSessionCatalogPath = join(tmpdir(), `strands-runtime-test-${process.pid}-${randomUUID()}.json`)
+  testSessionRoot = join(tmpdir(), `strands-runtime-test-${process.pid}-${randomUUID()}`, 'sessions')
   mocks.createHarness.mockReset()
   mocks.resolveInterventions.mockReset()
   mocks.resolveInterventions.mockImplementation(async (value) =>
@@ -80,7 +83,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await rm(testSessionCatalogPath, { force: true })
+  await rm(dirname(testSessionRoot), { recursive: true, force: true })
 })
 
 describe('interactiveBackgroundTasks', () => {
@@ -104,6 +107,43 @@ describe('interactiveBackgroundTasks', () => {
 })
 
 describe('interactive runtime lifecycle', () => {
+  it('loads the saved name when starting with an explicit session ID', async () => {
+    const sessionDirectory = join(dirname(testSessionRoot), 'named-sessions')
+    await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
+    await writeFile(
+      join(sessionDirectory, 'saved-one', 'cli-session.json'),
+      JSON.stringify({ version: 1, name: 'Release planning' })
+    )
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const controller = await createInteractiveChat({
+      agentOptions: { session: { id: 'saved-one', dir: sessionDirectory } },
+    })
+    try {
+      expect(controller.getSnapshot().runtime).toMatchObject({
+        session: 'Release planning',
+        sessionName: 'Release planning',
+      })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('applies an explicit context offload threshold to preset context management', async () => {
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const controller = await createInteractiveChat({
+      config: CliConfigStore.memory({}, { contextOffloadThreshold: 2_500 }),
+    })
+
+    try {
+      const contextManager = mocks.createHarness.mock.calls[0]?.[0].contextManager as {
+        strategies: readonly { _threshold?: number; _utilizationThreshold?: number }[]
+      }
+      expect(contextManager.strategies).toMatchObject([{ _threshold: 2_500 }, { _utilizationThreshold: 0.85 }])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('loads authored MCP servers through the CLI runtime', async () => {
     const servers = { authored: { command: 'node', args: ['./server.mjs'] } }
     mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
@@ -114,6 +154,63 @@ describe('interactive runtime lifecycle', () => {
     try {
       expect(mocks.loadMcp).toHaveBeenCalledWith(expect.objectContaining({ servers }))
       expect(mocks.createHarness).toHaveBeenCalledWith(expect.not.objectContaining({ mcpServers: expect.anything() }))
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('exports the displayed draft and its skills without applying it to the running agent', async () => {
+    const projectExport =
+      await vi.importActual<typeof import('../src/tui/project/export.js')>('../src/tui/project/export.js')
+    mocks.exportAgentProject.mockImplementation(projectExport.exportAgentProject)
+    const root = dirname(testSessionRoot)
+    await mkdir(join(root, 'skills', 'review'), { recursive: true })
+    await writeFile(join(root, 'skills', 'review', 'SKILL.md'), '# Review')
+    const profile = defineHarnessAgentConfig({
+      instructions: 'Original instructions.',
+      skills: false,
+      model: 'bedrock/anthropic.claude-old',
+    })
+    const config = CliConfigStore.memory({}, {}, { profile, profileBaseDir: root })
+    const agent = fakeAgent('old')
+    mocks.createHarness.mockResolvedValueOnce(agent)
+    const requestSetup = vi.fn()
+    const controller = await createInteractiveChat({
+      config,
+      agentProfile: profile,
+      agentOptions: { model: profile.model, skills: false, backgroundTasks: false },
+      requestSetup,
+    })
+    try {
+      const configuration = mocks.createHarness.mock.calls[0]?.[0].tools.find(
+        (candidate: Tool) => candidate.name === 'strands_config'
+      )
+      agent.stream = async function* () {
+        yield* []
+        await configuration.invoke(
+          { action: 'update', profile: { instructions: 'Draft instructions.', skills: ['./skills'] } },
+          { agent }
+        )
+        return { stopReason: 'endTurn' } as AgentResult
+      }
+      await controller.submit('Draft new instructions and add the review skill.')
+      await controller.submit('/config')
+
+      for (const language of ['typescript', 'python'] as const) {
+        const preview = controller.getSnapshot().configuration!.documents[language]
+        expect(preview.error).toBeUndefined()
+        expect(preview.source).toContain('Draft instructions.')
+        const destination = join(root, `${language}.zip`)
+        await controller.submit(`/export ${language} "${destination}"`)
+        const entries = unzipSync(await readFile(destination))
+        const entrypoint = language === 'python' ? 'agent/agent.py' : 'agent/agent.ts'
+
+        expect(Buffer.from(entries[entrypoint]!).toString()).toBe(preview.source)
+        expect(entries).toHaveProperty('agent/skills/review/SKILL.md')
+      }
+      expect(config.snapshot().profile.instructions).toBe('Original instructions.')
+      expect(requestSetup).not.toHaveBeenCalled()
+      expect(mocks.createHarness).toHaveBeenCalledOnce()
     } finally {
       await controller.dispose()
     }
@@ -138,26 +235,44 @@ describe('interactive runtime lifecycle', () => {
       await controller.backend.restartModel?.('bedrock/anthropic.claude-new')
       await controller.backend.setEffort?.('high')
       await controller.submit('/export')
-      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      await controller.activatePanelRow(controller.getSnapshot().panel!.rows.find((row) => row.label === 'TypeScript')!)
+      await controller.activatePanelRow({
+        label: 'Continue',
+        description: 'portable',
+        value: 'export:name:typescript:portable',
+      })
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.label === 'Default folder')!
+      )
 
       expect(mocks.exportAgentProject).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Portable', model: 'bedrock/anthropic.claude-new', effort: 'high' }),
         'typescript',
         expect.any(Array),
         process.cwd(),
-        undefined
+        expect.stringMatching(/[/\\]\.strands[/\\]harnesses[/\\]portable$/u),
+        'directory'
       )
       expect(controller.getSnapshot().panel?.title).toBe('Export complete')
       controller.dismissPanel()
       await controller.submit('/fork')
       await controller.submit('/export')
-      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      await controller.activatePanelRow(controller.getSnapshot().panel!.rows.find((row) => row.label === 'TypeScript')!)
+      await controller.activatePanelRow({
+        label: 'Continue',
+        description: 'portable',
+        value: 'export:name:typescript:portable',
+      })
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.label === 'Default folder')!
+      )
       expect(mocks.exportAgentProject).toHaveBeenLastCalledWith(
         expect.objectContaining({ name: 'Portable', model: 'bedrock/anthropic.claude-new', effort: 'high' }),
         'typescript',
         expect.any(Array),
         process.cwd(),
-        undefined
+        expect.stringMatching(/[/\\]\.strands[/\\]harnesses[/\\]portable$/u),
+        'directory'
       )
     } finally {
       modelDiscovery.mockRestore()
@@ -167,8 +282,8 @@ describe('interactive runtime lifecycle', () => {
 
   it('loads and persists presentation settings', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-runtime-settings-'))
-    const configPath = join(directory, 'config.json')
-    await writeFile(configPath, JSON.stringify({ settings: { showReasoning: false } }))
+    const configPath = join(directory, 'cli.toml')
+    await writeFile(configPath, stringify({ settings: { showReasoning: false } }))
     mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
     const controller = await createInteractiveChat({ configPath })
 
@@ -182,7 +297,7 @@ describe('interactive runtime lifecycle', () => {
       expect(animations).toBeDefined()
       await controller.activatePanelRow(animations!)
 
-      expect(JSON.parse(await readFile(configPath, 'utf8')).settings).toMatchObject({
+      expect(parse(await readFile(configPath, 'utf8')).settings).toMatchObject({
         animations: false,
         showReasoning: false,
       })
@@ -194,8 +309,8 @@ describe('interactive runtime lifecycle', () => {
 
   it('loads persistent permission settings into the Strands backend', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-runtime-config-'))
-    const configPath = join(directory, 'config.json')
-    await writeFile(configPath, JSON.stringify({ permissions: { mode: 'bypassPermissions', allow: ['bash'] } }))
+    const configPath = join(directory, 'cli.toml')
+    await writeFile(configPath, stringify({ permissions: { mode: 'bypassPermissions', allow: ['bash'] } }))
     const agent = fakeAgent('old')
     Object.assign(agent, {
       tools: [
@@ -211,24 +326,34 @@ describe('interactive runtime lifecycle', () => {
       expect(controller.getSnapshot()).toMatchObject({
         panel: {
           kind: 'permissions',
-          body: expect.stringContaining('WARNING'),
+          searchable: true,
+          slider: {
+            options: [
+              { id: 'ask', label: 'Ask' },
+              { id: 'bypass', label: 'Bypass', active: true },
+              { id: 'custom', label: 'Custom' },
+            ],
+          },
           rows: [
-            { label: 'Ask when needed (HITL)' },
-            { label: 'Allow all tools', badge: { text: 'Active' } },
             { label: 'bash', control: { kind: 'toggle', checked: true } },
             { label: 'write', control: { kind: 'toggle', checked: true } },
-            { label: 'config', description: configPath },
           ],
         },
       })
       const writePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
       expect(writePermission).toBeDefined()
       expect(writePermission?.value).toBeUndefined()
-      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      await controller.activatePanelRow({
+        label: 'Permission mode',
+        description: 'Custom',
+        value: 'permissions:preset:custom',
+      })
       const configurableWritePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
       expect(configurableWritePermission?.value).toBeDefined()
       await controller.activatePanelRow(configurableWritePermission!)
-      expect(JSON.parse(await readFile(configPath, 'utf8')).permissions.allow).toEqual(['bash', 'write'])
+      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+        permissions: { allow: ['bash', 'write'] },
+      })
     } finally {
       await controller.dispose()
       await rm(directory, { recursive: true, force: true })
@@ -254,7 +379,6 @@ describe('interactive runtime lifecycle', () => {
     const controller = await createInteractiveChat({ agentOptions: { session: false } })
 
     try {
-      expect(mocks.createHarness).toHaveBeenCalledWith(expect.objectContaining({ session: false }))
       expect(mocks.createHarness.mock.calls[0]?.[0].session).toBe(false)
       expect(controller.getSnapshot().runtime).toMatchObject({ session: 'in-memory' })
     } finally {
@@ -416,13 +540,13 @@ describe('interactive runtime lifecycle', () => {
   })
 
   it.each([true, false])(
-    'honors peer messaging and discovery settings in new and forked agents (%s)',
+    'honors peer messaging in new and forked agents while MCP discovery is off (%s)',
     async (enabled) => {
       const firstAgent = fakeAgent('old', 'first')
       const forkAgent = fakeAgent('old', 'fork')
       mocks.createHarness.mockResolvedValueOnce(firstAgent).mockResolvedValueOnce(forkAgent)
       const controller = await createInteractiveChat({
-        config: CliConfigStore.memory({}, { agentMessaging: enabled, mcpDiscovery: enabled, skillDiscovery: enabled }),
+        config: CliConfigStore.memory({}, { agentMessaging: enabled, mcpDiscovery: false }),
         agentOptions: { skills: false },
       })
 
@@ -434,10 +558,10 @@ describe('interactive runtime lifecycle', () => {
         const forkPlugin = mocks.createHarness.mock.calls[1]?.[0].plugins?.find(
           (candidate: { name?: string }) => candidate.name === 'strands:agent-messaging'
         )
+        expect(mocks.loadMcp).toHaveBeenCalledWith(expect.objectContaining({ paths: [] }))
         if (!enabled) {
           expect(mainPlugin).toBeUndefined()
           expect(forkPlugin).toBeUndefined()
-          expect(mocks.loadMcp).toHaveBeenCalledWith(expect.objectContaining({ paths: [] }))
           return
         }
         expect(mainPlugin).toBeDefined()
@@ -786,8 +910,12 @@ describe('interactive runtime lifecycle', () => {
     const workspace = await mkdtemp(join(tmpdir(), 'strands-runtime-session-'))
     const relativeSessionDirectory = join('state', 'sessions')
     const sessionDirectory = resolve(workspace, relativeSessionDirectory)
-    const sessionCatalogPath = join(workspace, 'config', 'session-roots.json')
+    const sessionRoot = join(workspace, 'config', 'sessions')
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
+    await writeFile(
+      join(sessionDirectory, 'saved-one', 'cli-session.json'),
+      JSON.stringify({ version: 1, name: 'Release planning' })
+    )
     const firstAgent = fakeAgent('old')
     const resumedAgent = fakeAgent('old')
     const saveResumedSnapshot = vi.fn(async () => {})
@@ -804,7 +932,7 @@ describe('interactive runtime lifecycle', () => {
         session: { dir: relativeSessionDirectory },
         sessionManager: configuredSessionManager,
       },
-      sessionCatalogPath,
+      sessionRoot,
     })
 
     try {
@@ -822,7 +950,7 @@ describe('interactive runtime lifecycle', () => {
       await controller.submit('/sessions')
       expect(controller.getSnapshot().panel).toMatchObject({
         kind: 'sessions',
-        rows: [{ label: 'saved-one', value: 'saved-one' }],
+        rows: [{ label: 'Release planning', value: 'saved-one' }],
       })
       await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
 
@@ -837,7 +965,8 @@ describe('interactive runtime lifecycle', () => {
       expect(saveResumedSnapshot).not.toHaveBeenCalled()
       expect(controller.getSnapshot().runtime).toMatchObject({
         cwd: workspace,
-        session: 'saved-one',
+        session: 'Release planning',
+        sessionName: 'Release planning',
       })
       expect(controller.getSnapshot().context).toEqual({})
     } finally {
@@ -849,7 +978,7 @@ describe('interactive runtime lifecycle', () => {
   it('restores context stored with a compatible saved-session transcript', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'strands-runtime-session-context-'))
     const sessionDirectory = resolve(workspace, 'state', 'sessions')
-    const sessionCatalogPath = join(workspace, 'config', 'session-roots.json')
+    const sessionRoot = join(workspace, 'config', 'sessions')
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
     const firstAgent = fakeAgent('old')
     const resumedAgent = fakeAgent('old')
@@ -863,7 +992,7 @@ describe('interactive runtime lifecycle', () => {
         session: { dir: join('state', 'sessions') },
         sessionManager: {} as NonNullable<Agent['sessionManager']>,
       },
-      sessionCatalogPath,
+      sessionRoot,
     })
 
     try {
@@ -894,23 +1023,14 @@ describe('interactive runtime lifecycle', () => {
     const firstWorkspace = join(directory, 'first')
     const secondWorkspace = join(directory, 'second')
     const explicitMcp = join(directory, '.claude.json')
-    const firstSessions = join(firstWorkspace, '.agent', 'sessions')
-    const secondSessions = join(secondWorkspace, '.agent', 'sessions')
-    const catalogPath = join(directory, 'config', 'session-roots.json')
+    const sessionRoot = join(directory, 'config', 'sessions')
+    const firstSessions = workspaceSessionDirectory(firstWorkspace, sessionRoot)
+    const secondSessions = workspaceSessionDirectory(secondWorkspace, sessionRoot)
+    await mkdir(secondWorkspace, { recursive: true })
     await mkdir(join(secondSessions, 'saved-two'), { recursive: true })
-    await mkdir(join(directory, 'config'), { recursive: true })
     await writeFile(
-      catalogPath,
-      JSON.stringify({
-        version: 1,
-        roots: [
-          {
-            directory: secondSessions,
-            workspace: secondWorkspace,
-            lastSeenAt: '2026-08-15T00:00:00.000Z',
-          },
-        ],
-      })
+      join(secondSessions, 'workspace.json'),
+      JSON.stringify({ version: 1, workspace: secondWorkspace, lastSeenAt: '2026-08-15T00:00:00.000Z' })
     )
     mocks.createHarness
       .mockResolvedValueOnce(fakeAgent('old', 'first-agent'))
@@ -932,10 +1052,10 @@ describe('interactive runtime lifecycle', () => {
     mocks.loadMcp.mockResolvedValueOnce(firstMcp).mockResolvedValueOnce(secondMcp)
     const controller = await createInteractiveChat({
       cwd: firstWorkspace,
-      agentOptions: { model: 'bedrock/anthropic.claude-old' },
+      agentOptions: { model: 'bedrock/anthropic.claude-old', session: { dir: firstSessions } },
       mcpPaths: [explicitMcp],
       mcpStrictPaths: [explicitMcp],
-      sessionCatalogPath: catalogPath,
+      sessionRoot,
     })
     let disposed = false
 
@@ -957,14 +1077,18 @@ describe('interactive runtime lifecycle', () => {
       const sandbox = secondOptions.sandbox
       expect(sandbox && sandbox !== false).toBe(true)
       const realSecondWorkspace = await realpath(secondWorkspace)
-      await expect(sandbox && sandbox !== false ? sandbox.execute('pwd') : undefined).resolves.toMatchObject({
-        exitCode: 0,
-        stdout: `${realSecondWorkspace}\n`,
-      })
+      const pwd =
+        sandbox && sandbox !== false
+          ? await sandbox.execute(process.platform === 'win32' ? '(Get-Location).Path' : 'pwd')
+          : undefined
+      expect(pwd).toMatchObject({ exitCode: 0 })
+      expect(await realpath(pwd!.stdout.trim())).toBe(realSecondWorkspace)
       expect(mocks.loadMcp).toHaveBeenNthCalledWith(2, {
         cwd: secondWorkspace,
         paths: [explicitMcp],
         strictPaths: [explicitMcp],
+        backgroundConnect: true,
+        disabledServers: [],
       })
       expect(controller.getSnapshot().runtime).toMatchObject({
         cwd: secondWorkspace,
@@ -978,15 +1102,9 @@ describe('interactive runtime lifecycle', () => {
         completedTurns: [{ prompt: 'keep the first workspace alive' }],
       })
 
-      const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as {
-        roots: Array<{ directory: string; workspace: string }>
-      }
-      expect(catalog.roots).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ directory: firstSessions, workspace: firstWorkspace }),
-          expect.objectContaining({ directory: secondSessions, workspace: secondWorkspace }),
-        ])
-      )
+      await expect(readFile(join(firstSessions, 'workspace.json'), 'utf8').then(JSON.parse)).resolves.toMatchObject({
+        workspace: firstWorkspace,
+      })
 
       await controller.dispose()
       disposed = true

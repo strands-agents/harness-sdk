@@ -4,12 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
 import { commandAssistance } from '../src/tui/chat/commands.js'
-import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
-import { externalUrlCommand } from '../src/tui/terminal/open-url.js'
+import { ChatController } from '../src/tui/chat/controller.js'
+import { systemOpenCommand } from '../src/tui/terminal/open-url.js'
 import { ChatApp } from '../src/tui/view/app.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
 import { FROG_ANIMATION_HEIGHT, parseFrogCommand } from '../src/tui/view/frog-easter-egg.js'
-import { renderFrogAnimationRuns, type FrogAnimationRun } from '../src/tui/view/frog-intro-renderer.js'
+import {
+  renderFrogAnimationRuns,
+  renderVoiceFrogRuns,
+  type FrogAnimationRun,
+} from '../src/tui/view/frog-intro-renderer.js'
+import { idleBackend } from './fixtures/chat-backend.js'
 
 const instances: { unmount(): void }[] = []
 
@@ -67,8 +72,19 @@ describe('/frog', () => {
     expect(visibleCenter(fireflyArrival)).toBeGreaterThan(visibleCenter(fireflyExit))
   })
 
+  it('hops the voice frog in and moves its mouth while speaking', () => {
+    const entering = renderVoiceFrogRuns(18, 8, 0.5, 360, false)
+    const resting = renderVoiceFrogRuns(18, 8, 1, 720, false)
+    const speakingClosed = renderVoiceFrogRuns(18, 8, 1, 400, true, true)
+    const speakingOpen = renderVoiceFrogRuns(18, 8, 1, 133, true, true)
+
+    expect(visibleCenter(entering)).toBeGreaterThan(visibleCenter(resting))
+    expect(visibleCharacters(resting)).toBeGreaterThan(0)
+    expect(speakingClosed).not.toEqual(speakingOpen)
+  })
+
   it('renders the frog over the existing conversation instead of replacing it', async () => {
-    const target = backend()
+    const target = idleBackend({ stream: vi.fn() })
     target.stream = async function* () {
       yield { type: 'textDelta', text: 'Conversation stays visible' }
       return { stopReason: 'endTurn' }
@@ -98,7 +114,7 @@ describe('/frog', () => {
   it('handles the command in the TUI without creating a conversation turn', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 20)
-    const target = backend()
+    const target = idleBackend({ stream: vi.fn() })
     const controller = new ChatController(target, {
       settings: { animations: false },
     })
@@ -117,6 +133,7 @@ describe('/frog', () => {
 
     await instance.waitUntilRenderFlush()
     expect(controller.getSnapshot().completedTurns).toEqual([])
+    expect(controller.getSnapshot().panel).toBeUndefined()
     expect(target.stream).not.toHaveBeenCalled()
   })
 })
@@ -125,14 +142,14 @@ describe('/strands', () => {
   it('uses the platform browser command without shell interpolation', () => {
     const url = 'https://strandsagents.com'
 
-    expect(externalUrlCommand('darwin', url)).toEqual({ command: 'open', args: [url] })
-    expect(externalUrlCommand('linux', url)).toEqual({ command: 'xdg-open', args: [url] })
-    expect(externalUrlCommand('win32', url)).toEqual({ command: 'cmd', args: ['/c', 'start', '', url] })
+    expect(systemOpenCommand('darwin', url)).toEqual({ command: 'open', args: [url] })
+    expect(systemOpenCommand('linux', url)).toEqual({ command: 'xdg-open', args: [url] })
+    expect(systemOpenCommand('win32', url)).toEqual({ command: 'cmd', args: ['/c', 'start', '', url] })
   })
 
   it('opens the website without appearing in suggestions or creating a turn', async () => {
     const input = ttyInput()
-    const target = backend()
+    const target = idleBackend({ stream: vi.fn() })
     const controller = new ChatController(target)
     const openUrl = vi.fn()
     const instance = render(createElement(ChatApp, { controller, openUrl }), {
@@ -154,16 +171,6 @@ describe('/strands', () => {
     expect(target.stream).not.toHaveBeenCalled()
   })
 })
-
-function backend(): ChatBackend {
-  return {
-    id: 'frog-test',
-    name: 'Strands harness',
-    protocol: 'strands',
-    stream: vi.fn(),
-    cancel() {},
-  }
-}
 
 function visibleCenter(runs: FrogAnimationRun[]): number {
   const columns = runs.flatMap((run) => [run.column, run.column + [...run.text].length - 1])
