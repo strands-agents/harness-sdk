@@ -107,10 +107,21 @@ class OllamaModel(Model):
     def get_config(self) -> OllamaConfig:
         """Get the Ollama model configuration.
 
+        When ``context_window_limit`` is not set explicitly, it resolves to ``options["num_ctx"]``: the
+        context size the Ollama server allocates for each request, which depends on deployment config
+        rather than the model ID.
+
         Returns:
             The Ollama model configuration.
         """
-        return self.config
+        if "context_window_limit" in self.config:
+            return self.config
+
+        num_ctx = (self.config.get("options") or {}).get("num_ctx")
+        if not isinstance(num_ctx, int) or isinstance(num_ctx, bool) or num_ctx <= 0:
+            return self.config
+
+        return {**self.config, "context_window_limit": num_ctx}
 
     def _format_request_message_contents(self, role: str, content: ContentBlock) -> list[dict[str, Any]]:
         """Format Ollama compatible message contents.
