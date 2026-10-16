@@ -3,8 +3,8 @@
  *
  * Fetches the URL, reduces it to text, and asks a small fast model to answer the prompt over that
  * content, returning the answer rather than the raw page so large payloads never reach the main
- * agent's context. The summarizer runs on the same provider as the main agent (see
- * `resolveWebFetchModel` in `models.ts`), so credentials always align.
+ * agent's context. The summarizer defaults to the agent's `auxModel` (see
+ * `resolveAuxModel` in `models.ts`), so credentials always align.
  *
  * By default the HTTP request runs as `curl` inside the agent's `sandbox` (the same seam `shell` and
  * the file tools use), so a sandbox with network isolation or egress rules covers `web_fetch` too.
@@ -168,14 +168,14 @@ async function fetchText(sandbox: Sandbox, url: string, transport: WebFetchTrans
 
 /** Options for {@link makeWebFetch}. */
 export interface MakeWebFetchOptions {
-  /** The summarizer that answers the prompt over the fetched page. */
-  model: Model
+  /** The summarizer that answers the prompt over the fetched page; defaults to the agent's `auxModel`. */
+  model?: Model | undefined
   /** `'curl'` runs inside the agent's sandbox (the default); `'direct'` fetches from the harness process. */
   transport?: WebFetchTransport | undefined
 }
 
-/** Build a `web_fetch` tool whose summarizer answers over the fetched page using `model`. */
-export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions): Tool {
+/** Build a `web_fetch` tool whose summarizer answers over the fetched page using `model`, or the agent's `auxModel`. */
+export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions = {}): Tool {
   if (transport !== 'curl' && transport !== 'direct') {
     throw new Error(`web_fetch transport must be 'curl' or 'direct', got ${JSON.stringify(transport)}.`)
   }
@@ -219,7 +219,11 @@ export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions)
         return text
       }
 
-      const summarizer = new Agent({ model, systemPrompt: SUMMARIZER_PROMPT, printer: false })
+      const summarizer = new Agent({
+        model: model ?? context.agent.auxModel,
+        systemPrompt: SUMMARIZER_PROMPT,
+        printer: false,
+      })
       const result = await summarizer.invoke(
         `Fetched URL: ${resolvedUrl}\n\nRequest: ${input.prompt}\n\n--- Content ---\n${text}`
       )
