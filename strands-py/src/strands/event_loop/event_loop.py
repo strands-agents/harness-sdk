@@ -24,7 +24,10 @@ from ..interrupt import InterruptException, PendingToolExecution
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
-from ..tools.structured_output._structured_output_context import StructuredOutputContext
+from ..tools.structured_output._structured_output_context import (
+    DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
+    StructuredOutputContext,
+)
 from ..types._events import (
     EventLoopStopEvent,
     ForceStopEvent,
@@ -961,11 +964,27 @@ async def _handle_tool_execution(
 
     yield ToolResultMessageEvent(message=tool_result_message)
 
+    agent.event_loop_metrics.end_cycle(cycle_start_time, cycle_trace)
+
+    should_continue = (
+        not after_tools_event.end_turn
+        and not invocation_state["request_state"].get("stop_event_loop", False)
+        and not structured_output_context.stop_loop
+        and not agent._observe_cancellation()
+        and not agent._checkpointing
+    )
+    if should_continue and structured_output_context.validation_failure_count >= DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS:
+        logger.warning(
+            "attempts=<%d> | structured output validation failed repeatedly",
+            structured_output_context.validation_failure_count,
+        )
+        raise StructuredOutputException(
+            f"Structured output validation failed after {structured_output_context.validation_failure_count} attempts."
+        )
+
     # End the cycle span before yielding the recursive cycle.
     if cycle_span:
         tracer.end_event_loop_cycle_span(span=cycle_span, message=message, tool_result_message=tool_result_message)
-
-    agent.event_loop_metrics.end_cycle(cycle_start_time, cycle_trace)
 
     # Hook requested halt: exit without calling the model again.
     if after_tools_event.end_turn:
