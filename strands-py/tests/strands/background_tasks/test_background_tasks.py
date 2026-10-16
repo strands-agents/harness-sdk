@@ -536,6 +536,82 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
         assert "_background_execution" not in _schema_properties(tool_spec)
 
 
+# Regression: https://github.com/strands-agents/harness-sdk/issues/5210
+@pytest.mark.asyncio
+async def test_cancelled_execution_settles_default_invocation() -> None:
+    @tool(name="work")
+    async def work() -> str:
+        """Await a cancelled asynchronous operation."""
+        operation = asyncio.create_task(asyncio.sleep(60))
+        operation.cancel()
+        return await operation
+
+    agent = _background_agent(work, responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")])
+
+    result = await asyncio.wait_for(agent.invoke_async("Run work."), timeout=1)
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "end_turn"
+    assert tru_stop_reason == exp_stop_reason
+    tru_result = _delivered_result(agent)
+    exp_result = {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [
+            {
+                "json": {
+                    "task_id": ANY,
+                    "tool_use_id": "work-use",
+                    "tool_name": "work",
+                    "status": "cancelled",
+                    "created_at": ANY,
+                    "last_updated_at": ANY,
+                }
+            }
+        ],
+    }
+    assert tru_result == exp_result
+    assert _persisted_tasks(agent) is None
+
+
+def test_origin_loop_shutdown_settles_background_execution() -> None:
+    started = asyncio.Event()
+    cancelled = threading.Event()
+
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until the originating event loop shuts down."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+        finally:
+            cancelled.set()
+
+    agent = _background_agent(
+        work,
+        responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")],
+        wait_for_completion=False,
+    )
+
+    async def first_invocation() -> None:
+        await agent.invoke_async("Run work.")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+    asyncio.run(first_invocation())
+    assert cancelled.is_set()
+
+    async def next_invocation() -> None:
+        await asyncio.wait_for(_wait_for_task_status(agent, "cancelled"), timeout=1)
+        await agent.invoke_async("Continue.")
+
+    asyncio.run(next_invocation())
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+    assert _persisted_tasks(agent) is None
+
+
 @pytest.mark.asyncio
 async def test_delivers_work_that_finishes_between_invocations() -> None:
     released = asyncio.Event()
