@@ -1,5 +1,6 @@
 """Tests for shared context-compression helpers."""
 
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -223,6 +224,19 @@ class TestGenerateSummary:
 
         exp_result = {"role": "user", "content": [{"text": "Summary"}]}
         assert tru_result == exp_result
+
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_forwards_cancel_signal_to_model_stream(self, cancelled: bool):
+        # The parent cancellation event reaches the summarizer model (#4301).
+        model = mock_model("Summary")
+        cancel_signal = threading.Event()
+        if cancelled:
+            cancel_signal.set()
+
+        await generate_summary([text_msg("user", "hello")], model, cancel_signal=cancel_signal)
+
+        tru_cancel_signal = model.stream.call_args.kwargs["cancel_signal"]
+        assert tru_cancel_signal is cancel_signal
 
 
 class TestAsUserSummary:

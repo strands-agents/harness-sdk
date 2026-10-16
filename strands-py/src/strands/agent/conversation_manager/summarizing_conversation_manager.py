@@ -290,7 +290,14 @@ class SummarizingConversationManager(ConversationManager):
         Returns:
             A message containing the conversation summary.
         """
-        return run_async(lambda: generate_summary(messages, agent.aux_model, self.summarization_system_prompt))
+        return run_async(
+            lambda: generate_summary(
+                messages,
+                agent.aux_model,
+                self.summarization_system_prompt,
+                cancel_signal=agent.cancel_signal,
+            )
+        )
 
     def _adjust_split_point_for_tool_pairs(self, messages: list[Message], split_point: int) -> int:
         """Adjust the split point to avoid breaking ToolUse/ToolResult pairs.
