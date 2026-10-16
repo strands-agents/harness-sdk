@@ -33,6 +33,12 @@ def session_manager(mock_repository):
     return RepositorySessionManager(session_id="test-session", session_repository=mock_repository)
 
 
+def test__init__emits_deprecation_warning(mock_repository):
+    """RepositorySessionManager is deprecated in favor of SnapshotSessionManager."""
+    with pytest.warns(DeprecationWarning, match="RepositorySessionManager is deprecated"):
+        RepositorySessionManager(session_id="test-session", session_repository=mock_repository)
+
+
 @pytest.fixture
 def existing_session_manager(mock_repository):
     """Create a session manager with a pre-existing session in the repository."""

@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from typing_extensions import deprecated
+
 from .. import _identifier
 from ..types.exceptions import SessionException
 from ..types.session import Session, SessionAgent, SessionMessage
@@ -25,8 +27,19 @@ MESSAGE_PREFIX = "message_"
 MULTI_AGENT_PREFIX = "multi_agent_"
 
 
+@deprecated(
+    "FileSessionManager is deprecated and will be removed in v2.0.0. "
+    "Use SnapshotSessionManager with a LocalFileStorage backend instead. See the migration guide: "
+    "https://strandsagents.com/docs/user-guide/sdk/agents/session-management/#migrating-from-the-message-log-session-managers"
+)
 class FileSessionManager(RepositorySessionManager, SessionRepository):
     """File-based session manager for local filesystem storage.
+
+    .. deprecated:: 1.x
+        Deprecated and will be removed in v2.0.0. Use
+        :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` with a
+        ``LocalFileStorage`` backend instead. See the migration guide linked in the
+        deprecation warning above.
 
     Creates the following filesystem structure for the session storage:
     ```bash
