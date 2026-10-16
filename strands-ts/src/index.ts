@@ -18,7 +18,7 @@ export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
-export type { InvocationState, InvokeArgs, InvokeOptions, LocalAgent } from './types/agent.js'
+export type { InvocationState, InvokeArgs, InvokeOptions, LocalAgent, CancelOptions } from './types/agent.js'
 export type { LifecycleObserver } from './types/lifecycle-observer.js'
 
 // Snapshot types

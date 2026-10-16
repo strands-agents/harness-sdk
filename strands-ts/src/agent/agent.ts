@@ -1,6 +1,7 @@
 import {
   AgentResult,
   type AgentStreamEvent,
+  type CancelOptions,
   type InvocationState,
   type InvokableAgent,
   type InvokeArgs,
@@ -525,6 +526,8 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _isInvoking: boolean = false
   private _abortController = new AbortController()
   private _abortSignal: AbortSignal = this._abortController.signal
+  private _deferredCancel: boolean = false
+  private _cancelMessage?: string | undefined
   private _printer?: Printer
   private _structuredOutputSchema?: z.ZodSchema | undefined
   /** Tracer instance for creating and managing OpenTelemetry spans. */
@@ -1071,6 +1074,14 @@ export class Agent implements LocalAgent, InvokableAgent {
    * The stream/invoke call will return an AgentResult with `stopReason: 'cancelled'`.
    * If the agent is not currently invoking, this is a no-op.
    *
+   * Pass `afterCurrentTools` to defer cancellation until the running tool batch
+   * finishes, so sibling tools complete normally instead of receiving
+   * cancellation errors. Pass `message` to set the final assistant message of
+   * the cancelled invocation. When several callers cancel the same invocation,
+   * the last message written wins.
+   *
+   * @param options - Final message and deferral behavior
+   *
    * @example
    * ```typescript
    * const agent = new Agent({ model, tools })
@@ -1080,9 +1091,21 @@ export class Agent implements LocalAgent, InvokableAgent {
    * const result = await agent.invoke('Do something')
    * console.log(result.stopReason) // 'cancelled'
    * ```
+   *
+   * @example
+   * ```typescript
+   * // From inside a tool: let the rest of the batch finish, then stop.
+   * context.agent.cancel({ message: 'Task complete', afterCurrentTools: true })
+   * ```
    */
-  public cancel(): void {
-    if (this._isInvoking) {
+  public cancel(options?: CancelOptions): void {
+    if (!this._isInvoking) {
+      return
+    }
+    this._cancelMessage = options?.message
+    if (options?.afterCurrentTools) {
+      this._deferredCancel = true
+    } else {
       this._abortController.abort()
     }
   }
@@ -1093,6 +1116,27 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private get isCancelled(): boolean {
     return this._abortSignal.aborted
+  }
+
+  /**
+   * Assistant message carrying the message passed to {@link Agent.cancel},
+   * or undefined when the cancellation carried none.
+   */
+  private get cancelResultMessage(): Message | undefined {
+    if (this._cancelMessage === undefined || this._cancelMessage.length === 0) {
+      return undefined
+    }
+    return new Message({ role: 'assistant', content: [new TextBlock(this._cancelMessage)] })
+  }
+
+  /**
+   * Clears cancellation state so it cannot leak into the next invocation.
+   */
+  private resetCancelState(): void {
+    this._abortController = new AbortController()
+    this._abortSignal = this._abortController.signal
+    this._deferredCancel = false
+    this._cancelMessage = undefined
   }
 
   /**
@@ -1195,10 +1239,10 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       while (true) {
         // Fresh AbortController per iteration, composed with any external signal.
-        this._abortController = new AbortController()
-        this._abortSignal = resolvedOptions?.cancelSignal
-          ? AbortSignal.any([this._abortController.signal, resolvedOptions.cancelSignal])
-          : this._abortController.signal
+        this.resetCancelState()
+        if (resolvedOptions?.cancelSignal) {
+          this._abortSignal = AbortSignal.any([this._abortController.signal, resolvedOptions.cancelSignal])
+        }
 
         // Process interrupt responses before middleware runs so context.interrupt() can find them
         const interruptResponses = this._extractInterruptResponses(currentArgs)
@@ -1425,9 +1469,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         drainResult = await streamGenerator.next()
       }
 
-      // Reset controller and signal for next iteration / invocation
-      this._abortController = new AbortController()
-      this._abortSignal = this._abortController.signal
+      // Reset cancellation state for next iteration / invocation
+      this.resetCancelState()
     }
 
     return iterationResult.value
@@ -1742,9 +1785,14 @@ export class Agent implements LocalAgent, InvokableAgent {
 
               closeCycle()
 
+              const cancelResultMessage = this.cancelResultMessage
+              if (cancelResultMessage) {
+                yield this._appendMessage(cancelResultMessage, invocationState)
+              }
+
               result = new AgentResult({
                 stopReason: 'cancelled',
-                lastMessage: modelResult.message,
+                lastMessage: cancelResultMessage ?? modelResult.message,
                 traces: this._tracer.localTraces,
                 metrics: this._meter.metrics,
                 invocationState,
@@ -1857,11 +1905,28 @@ export class Agent implements LocalAgent, InvokableAgent {
             return result
           }
 
+          // Cancel observed after the batch: siblings have finished, so stop here
+          // instead of calling the model again.
+          if (this._deferredCancel || this.isCancelled) {
+            const cancelResultMessage = this.cancelResultMessage
+            if (cancelResultMessage) {
+              yield this._appendMessage(cancelResultMessage, invocationState)
+            }
+
+            result = new AgentResult({
+              stopReason: 'cancelled',
+              lastMessage: cancelResultMessage ?? assistantMessage,
+              traces: this._tracer.localTraces,
+              metrics: this._meter.metrics,
+              invocationState,
+            })
+            return result
+          }
+
           // afterTools checkpoint: tools finished, next model call pending. Placed
           // after the endTurn / structured-output returns so it only fires when the
-          // loop would continue. Cancel wins: skip when cancelled and let the next
-          // iteration's cancellation check return `cancelled`.
-          if (this._checkpointing && !this.isCancelled) {
+          // loop would continue.
+          if (this._checkpointing) {
             result = new AgentResult({
               stopReason: 'checkpoint',
               lastMessage: assistantMessage,
@@ -1883,10 +1948,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       if (error instanceof CancelledError) {
         // Cancelled during model streaming or at the top of a cycle.
         // No partial messages have been appended (deferred append pattern).
-        const cancelMessage = new Message({
-          role: 'assistant',
-          content: [new TextBlock('Cancelled by user')],
-        })
+        const cancelMessage =
+          this.cancelResultMessage ?? new Message({ role: 'assistant', content: [new TextBlock('Cancelled by user')] })
         if (this._hasOpenUserTurn()) {
           yield this._appendMessage(cancelMessage, invocationState)
         }
@@ -1922,10 +1985,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       // via .return() when the consumer breaks out of for-await), close an
       // existing user turn so the agent can be reinvoked.
       if (!caughtError && !result && this.isCancelled) {
-        const cancelMessage = new Message({
-          role: 'assistant',
-          content: [new TextBlock('Cancelled by user')],
-        })
+        const cancelMessage =
+          this.cancelResultMessage ?? new Message({ role: 'assistant', content: [new TextBlock('Cancelled by user')] })
         if (this._hasOpenUserTurn()) {
           yield this._appendMessage(cancelMessage, invocationState)
         }
