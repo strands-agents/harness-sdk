@@ -6,6 +6,7 @@ import pytest
 import strands
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
+from strands.middleware.stages import ExecuteToolStage
 from strands.telemetry.metrics import Trace
 from strands.tools.executors._executor import ToolExecutor
 from strands.types._events import ToolCancelEvent, ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
@@ -264,10 +265,10 @@ async def test_executor_stream_with_trace(
 
 
 @pytest.mark.asyncio
-async def test_executor_stream_with_trace_marks_backgrounded_without_metrics_or_trace(
+async def test_executor_stream_with_trace_records_no_telemetry_for_backgrounded_dispatch(
     executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist, agenerator
 ):
-    """A background dispatch acknowledgement marks its span but records no metrics and no cycle trace node."""
+    """A background dispatch acknowledgement is not the tool running: no span, no metrics, no trace node."""
     tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
     result = {"toolUseId": "1", "status": "success", "content": [{"text": "queued"}]}
     with unittest.mock.patch.object(
@@ -276,10 +277,74 @@ async def test_executor_stream_with_trace_marks_backgrounded_without_metrics_or_
         stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
         await alist(stream)
 
+    tracer.start_tool_call_span.assert_not_called()
     agent.event_loop_metrics.add_tool_usage.assert_not_called()
     cycle_trace.add_child.assert_not_called()
-    tracer.start_tool_call_span.return_value.set_attribute.assert_called_once_with("strands.tool.backgrounded", True)
-    tracer.end_tool_call_span.assert_called_once_with(tracer.start_tool_call_span.return_value, result, error=None)
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_records_no_telemetry_when_middleware_short_circuits(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist
+):
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+    cached = {"toolUseId": "1", "status": "success", "content": [{"text": "cached"}]}
+
+    async def short_circuit(context, next_fn):
+        yield ToolResultEvent(cached)
+
+    agent._middleware_registry.add_middleware(ExecuteToolStage, short_circuit)
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+
+    tru_events = await alist(stream)
+
+    assert tru_events == [ToolResultEvent(cached)]
+    tracer.start_tool_call_span.assert_not_called()
+    agent.event_loop_metrics.add_tool_usage.assert_not_called()
+    cycle_trace.add_child.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_span_records_post_middleware_tool_use(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist
+):
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+    rewritten: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {"city": "Seattle"}}
+
+    agent._middleware_registry.add_middleware(
+        ExecuteToolStage.Input, lambda context: context.replace(tool_use=rewritten)
+    )
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+
+    await alist(stream)
+
+    tracer.start_tool_call_span.assert_called_once_with(
+        rewritten, cycle_span, custom_trace_attributes=agent.trace_attributes
+    )
+    tru_metrics_tool_use = agent.event_loop_metrics.add_tool_usage.call_args.args[0]
+    assert tru_metrics_tool_use == rewritten
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_records_one_span_per_retry(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist
+):
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+    attempts = 0
+
+    def retry_once(event: AfterToolCallEvent):
+        nonlocal attempts
+        attempts += 1
+        event.retry = attempts == 1
+
+    agent.hooks.add_callback(AfterToolCallEvent, retry_once)
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+
+    await alist(stream)
+
+    assert attempts == 2
+    assert tracer.start_tool_call_span.call_count == 2
+    assert tracer.end_tool_call_span.call_count == 2
+    assert agent.event_loop_metrics.add_tool_usage.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -338,90 +403,57 @@ async def test_executor_stream_cancel(
 
 
 @pytest.mark.asyncio
-async def test_executor_stream_sets_span_attributes(
-    executor, agent, tool_results, invocation_state, weather_tool, alist
+async def test_executor_stream_with_trace_sets_span_attributes(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, weather_tool, alist
 ):
-    """Test that span attributes are set correctly when tool_spec is available."""
-    with unittest.mock.patch("strands.tools.executors._executor.trace_api") as mock_trace_api:
-        mock_span = unittest.mock.MagicMock()
-        mock_trace_api.get_current_span.return_value = mock_span
-
-        # Mock tool_spec with inputSchema containing json field
-        with unittest.mock.patch.object(
-            type(weather_tool), "tool_spec", new_callable=unittest.mock.PropertyMock
-        ) as mock_tool_spec:
-            mock_tool_spec.return_value = {
-                "name": "weather_tool",
-                "description": "Get weather information",
-                "inputSchema": {"json": {"type": "object", "properties": {}}, "type": "object"},
-            }
-
-            tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
-            stream = executor._stream(agent, tool_use, tool_results, invocation_state)
-
-            await alist(stream)
-
-            # Verify set_attribute was called with correct values
-            calls = mock_span.set_attribute.call_args_list
-            assert len(calls) == 2
-
-            # Check description attribute
-            assert calls[0][0][0] == "gen_ai.tool.description"
-            assert calls[0][0][1] == "Get weather information"
-
-            # Check json_schema attribute
-            assert calls[1][0][0] == "gen_ai.tool.json_schema"
-            # The serialize function should have been called on the json field
-
-
-@pytest.mark.asyncio
-async def test_executor_stream_handles_missing_json_in_input_schema(
-    executor, agent, tool_results, invocation_state, weather_tool, alist
-):
-    """Test that span attributes handle inputSchema without json field gracefully."""
-    with unittest.mock.patch("strands.tools.executors._executor.trace_api") as mock_trace_api:
-        mock_span = unittest.mock.MagicMock()
-        mock_trace_api.get_current_span.return_value = mock_span
-
-        # Mock tool_spec with inputSchema but no json field
-        with unittest.mock.patch.object(
-            type(weather_tool), "tool_spec", new_callable=unittest.mock.PropertyMock
-        ) as mock_tool_spec:
-            mock_tool_spec.return_value = {
-                "name": "weather_tool",
-                "description": "Get weather information",
-                "inputSchema": {"type": "object", "properties": {}},
-            }
-
-            tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
-            stream = executor._stream(agent, tool_use, tool_results, invocation_state)
-
-            # Should not raise an error - json_schema attribute just won't be set
-            await alist(stream)
-
-            # Verify only description attribute was set (not json_schema)
-            calls = mock_span.set_attribute.call_args_list
-            assert len(calls) == 1
-            assert calls[0][0][0] == "gen_ai.tool.description"
-
-
-@pytest.mark.asyncio
-async def test_executor_stream_no_span_attributes_when_no_tool_spec(
-    executor, agent, tool_results, invocation_state, alist
-):
-    """Test that no span attributes are set when tool_spec is None."""
-    with unittest.mock.patch("strands.tools.executors._executor.trace_api") as mock_trace_api:
-        mock_span = unittest.mock.MagicMock()
-        mock_trace_api.get_current_span.return_value = mock_span
-
-        # Use unknown tool which will have no tool_spec
-        tool_use: ToolUse = {"name": "unknown_tool", "toolUseId": "1", "input": {}}
-        stream = executor._stream(agent, tool_use, tool_results, invocation_state)
-
+    """The tool span carries the executed tool's description and JSON schema."""
+    with unittest.mock.patch.object(type(weather_tool), "tool_spec", new_callable=unittest.mock.PropertyMock) as spec:
+        spec.return_value = {
+            "name": "weather_tool",
+            "description": "Get weather information",
+            "inputSchema": {"json": {"type": "object", "properties": {}}, "type": "object"},
+        }
+        tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+        stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
         await alist(stream)
 
-        # Verify set_attribute was not called since tool_spec is None
-        mock_span.set_attribute.assert_not_called()
+    tru_attributes = [call.args[0] for call in tracer.start_tool_call_span.return_value.set_attribute.call_args_list]
+    exp_attributes = ["gen_ai.tool.description", "gen_ai.tool.json_schema"]
+    assert tru_attributes == exp_attributes
+    assert tracer.start_tool_call_span.return_value.set_attribute.call_args_list[0].args[1] == "Get weather information"
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_handles_missing_json_in_input_schema(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, weather_tool, alist
+):
+    with unittest.mock.patch.object(type(weather_tool), "tool_spec", new_callable=unittest.mock.PropertyMock) as spec:
+        spec.return_value = {
+            "name": "weather_tool",
+            "description": "Get weather information",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+        tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+        stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+        await alist(stream)
+
+    tracer.start_tool_call_span.return_value.set_attribute.assert_called_once_with(
+        "gen_ai.tool.description", "Get weather information"
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_no_span_attributes_for_unknown_tool(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist
+):
+    """An unknown tool still gets a span (the terminal runs for it) but has no spec to describe."""
+    tool_use: ToolUse = {"name": "unknown_tool", "toolUseId": "1", "input": {}}
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+
+    await alist(stream)
+
+    tracer.start_tool_call_span.assert_called_once()
+    tracer.start_tool_call_span.return_value.set_attribute.assert_not_called()
 
 
 @pytest.mark.asyncio

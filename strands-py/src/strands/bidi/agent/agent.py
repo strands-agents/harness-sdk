@@ -22,7 +22,6 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from ... import _identifier
-from ..._middleware import MiddlewareRegistry
 from ...agent.state import AgentState
 from ...hooks import (
     AgentInitializedEvent,
@@ -35,6 +34,7 @@ from ...hooks import (
 )
 from ...hooks.registry import TEvent
 from ...interrupt import _InterruptState
+from ...middleware._registry import MiddlewareRegistry
 from ...sandbox import Sandbox
 from ...sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from ...storage import Storage
