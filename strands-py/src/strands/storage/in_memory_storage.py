@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from ..types.exceptions import StorageError
 from .search.keyword import KeywordSearchStrategy
-from .storage import _EPHEMERAL, _NamespacedStorage, _normalize_key, _normalize_prefix
+from .storage import _EPHEMERAL, _NAMESPACED, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
     from .search.types import SearchStrategy
@@ -41,8 +41,10 @@ class InMemoryStorage:
                 automatically indexes entries and ``search()`` delegates to the
                 strategy instead of the default keyword scan.
         """
+        # Shared with every instance returned by namespace(); each instance only sees keys under _prefix.
         self._store: dict[str, bytes] = {}
         self._lock = threading.Lock()
+        self._prefix = ""
         self._search_strategy = search_strategy
 
     async def write(self, key: str, data: bytes) -> None:
@@ -57,7 +59,7 @@ class InMemoryStorage:
         """
         normalized = _normalize_key(key)
         with self._lock:
-            self._store[normalized] = bytes(data)
+            self._store[f"{self._prefix}{normalized}"] = bytes(data)
 
         if self._search_strategy is not None:
             try:
@@ -79,7 +81,7 @@ class InMemoryStorage:
         """
         normalized = _normalize_key(key)
         with self._lock:
-            value = self._store.get(normalized)
+            value = self._store.get(f"{self._prefix}{normalized}")
         return value
 
     async def delete(self, key: str) -> None:
@@ -93,7 +95,7 @@ class InMemoryStorage:
         """
         normalized = _normalize_key(key)
         with self._lock:
-            self._store.pop(normalized, None)
+            self._store.pop(f"{self._prefix}{normalized}", None)
 
     async def list(self, query: str = "") -> builtins.list[str]:
         """List keys matching the given prefix.
@@ -107,9 +109,9 @@ class InMemoryStorage:
         Raises:
             StorageError: If the prefix is invalid.
         """
-        prefix = _normalize_prefix(query)
+        full_prefix = f"{self._prefix}{_normalize_prefix(query)}"
         with self._lock:
-            keys = sorted(k for k in self._store if k.startswith(prefix))
+            keys = sorted(k[len(self._prefix) :] for k in self._store if k.startswith(full_prefix))
         return keys
 
     async def search(self, query: str) -> builtins.list[StorageSearchResult]:
@@ -128,18 +130,40 @@ class InMemoryStorage:
             return await self._search_strategy.search(self, query)
         return await KeywordSearchStrategy().search(self, query)
 
-    def namespace(self, prefix: str) -> _NamespacedStorage:
-        """Return a view of this storage with all keys prefixed.
+    def namespace(self, prefix: str) -> InMemoryStorage:
+        """Return an ``InMemoryStorage`` scoped to ``prefix``.
+
+        The scoped instance shares this instance's entries and search strategy.
+        Unlike a generic ``_NamespacedStorage`` wrapper, its ``search()`` only
+        sees entries under the prefix and scores keys without it, so a query
+        never matches every entry just because it contains a word from the prefix.
+
+        The shared search strategy receives the scoped instance and keys relative
+        to the prefix. A strategy that keeps its own index must keep each
+        instance's entries apart; see ``SearchStrategy.index``.
 
         Args:
             prefix: Prefix to prepend to all keys.
 
         Returns:
-            A namespaced storage view.
+            An ``InMemoryStorage`` scoped to the prefix.
         """
-        return _NamespacedStorage(self, prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
+        scoped = InMemoryStorage(search_strategy=self._search_strategy)
+        scoped._store = self._store
+        scoped._lock = self._lock
+        scoped._prefix = f"{self._prefix}{normalized}/" if normalized else self._prefix
+        scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return scoped
 
     def clear(self) -> None:
-        """Remove all stored entries."""
+        """Remove all entries visible to this instance.
+
+        That is every entry under its namespace, or every entry when not namespaced.
+        """
         with self._lock:
-            self._store.clear()
+            if not self._prefix:
+                self._store.clear()
+                return
+            for key in [k for k in self._store if k.startswith(self._prefix)]:
+                del self._store[key]

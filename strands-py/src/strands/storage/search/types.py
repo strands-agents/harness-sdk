@@ -32,9 +32,16 @@ class SearchStrategy(Protocol[S]):
         an index (FTS5, vector, etc.) can update incrementally. Strategies
         that search on the fly (keyword) may no-op.
 
+        ``key`` is relative to ``storage``. A storage's ``namespace()`` instances
+        share its strategy and pass keys relative to their own prefix, so the same
+        key can arrive from several storage instances. A strategy that keeps its
+        own index must keep entries from different storage instances apart (for
+        example, keyed by the storage instance or its prefix), or entries with the
+        same relative key in two namespaces overwrite each other.
+
         Args:
             storage: The storage backend the entry belongs to.
-            key: The storage key being written.
+            key: The storage key being written, relative to ``storage``.
             data: The raw bytes being stored.
             **kwargs: Strategy-specific options for forward compatibility.
         """

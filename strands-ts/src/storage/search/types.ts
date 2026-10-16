@@ -20,8 +20,14 @@ export interface SearchStrategy<S extends Storage = Storage, SearchQuery = strin
    * etc.) can update incrementally. Strategies that search on the fly
    * (keyword) or manage their own indexing (QMD) can omit this.
    *
+   * `key` is relative to `storage`. A storage's `namespace()` instances share its strategy
+   * and pass keys relative to their own prefix, so the same key can arrive from several
+   * storage instances. A strategy that keeps its own index must keep entries from different
+   * storage instances apart (for example, keyed by the storage instance or its prefix),
+   * or entries with the same relative key in two namespaces overwrite each other.
+   *
    * @param storage - The storage backend the entry belongs to
-   * @param key - The storage key being written
+   * @param key - The storage key being written, relative to `storage`
    * @param data - The raw bytes being stored
    */
   index?: (storage: S, key: string, data: Uint8Array) => Promise<void>
