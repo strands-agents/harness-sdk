@@ -22,14 +22,33 @@ console.log(JSON.stringify(person, null, 2))
 
 async function errorHandling() {
   // --8<-- [start:error_handling]
+  const PlanSchema = z.object({ steps: z.array(z.string()) })
+  const agent = new Agent({ structuredOutputSchema: PlanSchema })
+
   try {
-    const result = await agent.invoke('some prompt')
+    const result = await agent.invoke('Plan a code review')
+    console.log(result.structuredOutput)
   } catch (error) {
-    if (error instanceof StructuredOutputError) {
-      console.log(`Structured output failed: ${error.message}`)
-    }
+    if (!(error instanceof StructuredOutputError)) throw error
+    console.log(`Structured output failed: ${error.message}`)
   }
   // --8<-- [end:error_handling]
+}
+
+async function attemptLimit() {
+  // --8<-- [start:attempt_limit]
+  const PlanSchema = z.object({ steps: z.array(z.string()) })
+  const agent = new Agent({ structuredOutputSchema: PlanSchema })
+
+  const result = await agent.invoke('Plan a code review', {
+    limits: { structuredOutputAttempts: 3 },
+  })
+  if (result.stopReason === 'limitStructuredOutputAttempts') {
+    console.log('Could not produce a valid plan within the attempt limit')
+  } else {
+    console.log(result.structuredOutput)
+  }
+  // --8<-- [end:attempt_limit]
 }
 
 async function autoRetries() {

@@ -701,6 +701,7 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  * - `limitOutputTokens` - Agent loop stopped because `InvokeOptions.limits.outputTokens` was reached
  * - `limitTotalTokens` - Agent loop stopped because `InvokeOptions.limits.totalTokens` was reached
  * - `limitTurns` - Agent loop stopped because `InvokeOptions.limits.turns` was reached
+ * - `limitStructuredOutputAttempts` - Agent loop stopped because `InvokeOptions.limits.structuredOutputAttempts` was reached
  * - `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue
  * - `refusal` - A streaming classifier intervened to handle a potential policy violation
  * - `stopSequence` - A stop sequence was encountered
@@ -718,6 +719,7 @@ export type StopReason =
   | 'limitOutputTokens'
   | 'limitTotalTokens'
   | 'limitTurns'
+  | 'limitStructuredOutputAttempts'
   | 'pauseTurn'
   | 'refusal'
   | 'stopSequence'

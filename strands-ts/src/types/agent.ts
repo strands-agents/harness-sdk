@@ -149,8 +149,8 @@ export interface InvokeOptions {
    * (or `limits` itself) for no limit on that dimension.
    *
    * Priority on simultaneous trip (highest first): `turns`, `totalTokens`,
-   * `outputTokens`. The corresponding `stopReason` is `'limitTurns'`,
-   * `'limitTotalTokens'`, or `'limitOutputTokens'`.
+   * `outputTokens`, `structuredOutputAttempts`. The corresponding `stopReason` is
+   * `'limitTurns'`, `'limitTotalTokens'`, `'limitOutputTokens'`, or `'limitStructuredOutputAttempts'`.
    */
   limits?: {
     /**
@@ -188,6 +188,14 @@ export interface InvokeOptions {
      * reached; it does not bound any individual model call.
      */
     totalTokens?: number
+
+    /**
+     * Maximum number of structured-output attempts. Counts one failed attempt per
+     * model response if the model calls the output tool with invalid input or does
+     * not call it when forced. When omitted, validation retries are unbounded;
+     * ending a forced turn without a tool call throws StructuredOutputError.
+     */
+    structuredOutputAttempts?: number
   }
 }
 
@@ -196,7 +204,7 @@ export interface InvokeOptions {
  *
  * @internal
  */
-export const LIMITS_KEYS = ['turns', 'outputTokens', 'totalTokens'] as const
+export const LIMITS_KEYS = ['turns', 'outputTokens', 'totalTokens', 'structuredOutputAttempts'] as const
 
 /**
  * Interface for agents that support request-response invocation.

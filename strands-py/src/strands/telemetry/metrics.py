@@ -167,6 +167,17 @@ class EventLoopCycleMetric:
 
 
 @dataclass
+class _StructuredOutputMetrics:
+    """Per-invocation structured-output metrics.
+
+    Attributes:
+        failed_attempts: Failed attempts handled by the structured-output retry loop, counted once per response.
+    """
+
+    failed_attempts: int = 0
+
+
+@dataclass
 class AgentInvocation:
     """Metrics for a single agent invocation.
 
@@ -224,6 +235,9 @@ class EventLoopMetrics:
     traces: list[Trace] = field(default_factory=list)
     accumulated_usage: Usage = field(default_factory=lambda: Usage(inputTokens=0, outputTokens=0, totalTokens=0))
     accumulated_metrics: Metrics = field(default_factory=lambda: Metrics(latencyMs=0))
+    _structured_output: _StructuredOutputMetrics = field(
+        default_factory=_StructuredOutputMetrics, init=False, repr=False
+    )
 
     @property
     def latest_context_size(self) -> int | None:
@@ -400,13 +414,21 @@ class EventLoopMetrics:
             current_cycle = self.agent_invocations[-1].cycles[-1]
             self._accumulate_usage(current_cycle.usage, usage)
 
-    def reset_usage_metrics(self) -> None:
-        """Start a new agent invocation by creating a new AgentInvocation.
+    def _update_structured_output(self, *, failed_attempts: int) -> None:
+        """Accumulate structured-output metrics for the current invocation.
 
-        This should be called at the start of a new request to begin tracking
-        a new agent invocation with fresh usage and cycle data.
+        Args:
+            failed_attempts: Number of failed attempts to add.
+        """
+        self._structured_output.failed_attempts += failed_attempts
+
+    def reset_usage_metrics(self) -> None:
+        """Start tracking a new invocation with fresh usage, cycles, and internal counters.
+
+        Preserves previous invocation records and accumulated totals.
         """
         self.agent_invocations.append(AgentInvocation())
+        self._structured_output = _StructuredOutputMetrics()
 
     def update_metrics(self, metrics: Metrics) -> None:
         """Update the accumulated performance metrics with new metrics data.

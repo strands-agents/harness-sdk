@@ -76,7 +76,8 @@ function classify(stopReason: string): Outcome {
   if (
     stopReason === 'limitTurns' ||
     stopReason === 'limitTotalTokens' ||
-    stopReason === 'limitOutputTokens'
+    stopReason === 'limitOutputTokens' ||
+    stopReason === 'limitStructuredOutputAttempts'
   ) {
     return 'budgetExceeded'
   }
