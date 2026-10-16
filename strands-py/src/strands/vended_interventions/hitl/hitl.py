@@ -181,7 +181,7 @@ class HumanInTheLoop(InterventionHandler):
         self._classifier = self._resolve_classifier(classifier)
         if self._classifier and "*" in self._allowed_tools:
             logger.warning("classifier has no effect when allowed_tools contains '*' — all tools are already allowed")
-        self._classified_tool_use_ids: set[str] = set()
+        self._classified_verdicts: dict[str, bool] = {}
         self._enable_trust = enable_trust
         self._evaluate_trust = evaluate_trust if evaluate_trust is not None else self._is_trust_response
         self._evaluate = evaluate if evaluate is not None else default_evaluate
@@ -282,9 +282,8 @@ class HumanInTheLoop(InterventionHandler):
 
         if self._classifier:
             tool_use_id = event.tool_use["toolUseId"]
-            if tool_use_id in self._classified_tool_use_ids:
-                return ClassifierResult(requires_human_in_the_loop=True)
-            self._classified_tool_use_ids.add(tool_use_id)
+            if tool_use_id in self._classified_verdicts:
+                return ClassifierResult(requires_human_in_the_loop=self._classified_verdicts[tool_use_id])
 
             try:
                 raw_result: Any = self._classifier(event)
@@ -295,6 +294,7 @@ class HumanInTheLoop(InterventionHandler):
                         "tool=<%s> | classifier returned malformed result, defaulting to approval required",
                         tool_name,
                     )
+                    self._classified_verdicts[tool_use_id] = True
                     return ClassifierResult(requires_human_in_the_loop=True)
                 decision: Any = raw_result.requires_human_in_the_loop
                 if not isinstance(decision, bool):
@@ -303,7 +303,9 @@ class HumanInTheLoop(InterventionHandler):
                         tool_name,
                         decision,
                     )
+                    self._classified_verdicts[tool_use_id] = True
                     return ClassifierResult(requires_human_in_the_loop=True)
+                self._classified_verdicts[tool_use_id] = decision
                 return raw_result
             except Exception as error:
                 logger.warning(
@@ -311,6 +313,7 @@ class HumanInTheLoop(InterventionHandler):
                     tool_name,
                     exc_info=error,
                 )
+                self._classified_verdicts[tool_use_id] = True
                 return ClassifierResult(requires_human_in_the_loop=True)
 
         return ClassifierResult(requires_human_in_the_loop=True)

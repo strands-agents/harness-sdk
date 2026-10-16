@@ -3,6 +3,7 @@ import { HumanInTheLoop } from '../hitl.js'
 import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
+import { InterruptResponseContent } from '../../../types/interrupt.js'
 import type { BeforeToolCallEvent } from '../../../hooks/events.js'
 
 describe('HumanInTheLoop', () => {
@@ -618,6 +619,58 @@ describe('HumanInTheLoop', () => {
 
       expect(prompts[0]).toContain('external communication')
       expect(prompts[0]).toContain('sendEmail')
+    })
+
+    it('remembers a false classifier verdict when the same tool use resumes', async () => {
+      const agentModel = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'askAccount', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+
+      const executed: unknown[] = []
+      let callCount = 0
+      const askPrompts: string[] = []
+      const tool = createMockTool('askAccount', (context) => {
+        const account = context.interrupt({ name: 'account', reason: 'Which account?' })
+        executed.push(account)
+        return String(account)
+      })
+
+      const agent = new Agent({
+        model: agentModel,
+        tools: [tool],
+        interventions: [
+          new HumanInTheLoop({
+            classifier: () => {
+              callCount += 1
+              return { requiresHumanInTheLoop: false }
+            },
+            ask: async (prompt) => {
+              askPrompts.push(prompt)
+              return 'no'
+            },
+          }),
+        ],
+        printer: false,
+      })
+
+      const interrupted = await agent.invoke('Go')
+      expect(interrupted.stopReason).toBe('interrupt')
+      expect(interrupted.interrupts?.[0]).toMatchObject({ name: 'account', reason: 'Which account?' })
+      expect(callCount).toBe(1)
+      expect(askPrompts).toEqual([])
+      expect(executed).toEqual([])
+
+      const result = await agent.invoke([
+        new InterruptResponseContent({
+          interruptId: interrupted.interrupts![0]!.id,
+          response: 'checking',
+        }),
+      ])
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(executed).toEqual(['checking'])
+      expect(callCount).toBe(1)
+      expect(askPrompts).toEqual([])
     })
   })
 })

@@ -161,7 +161,7 @@ export class HumanInTheLoop extends InterventionHandler {
   private readonly _evaluateTrust: (response: JSONValue) => boolean
   private readonly _evaluate: ((response: JSONValue) => boolean) | undefined
   private readonly _ask: ((prompt: string) => Promise<JSONValue>) | undefined
-  private readonly _classifiedToolUseIds: Set<string> = new Set()
+  private readonly _classifiedVerdicts: Map<string, boolean> = new Map()
 
   constructor(config?: HumanInTheLoopConfig) {
     super()
@@ -241,20 +241,23 @@ export class HumanInTheLoop extends InterventionHandler {
 
     if (this._classifier) {
       const toolUseId = event.toolUse.toolUseId
-      if (this._classifiedToolUseIds.has(toolUseId)) {
-        return { requiresHumanInTheLoop: true }
+      const cachedVerdict = this._classifiedVerdicts.get(toolUseId)
+      if (cachedVerdict !== undefined) {
+        return { requiresHumanInTheLoop: cachedVerdict }
       }
-      this._classifiedToolUseIds.add(toolUseId)
 
       try {
         const result = await this._classifier(event)
         if (typeof result?.requiresHumanInTheLoop !== 'boolean') {
           logger.warn(`tool=<${toolName}> | classifier returned malformed result, defaulting to approval required`)
+          this._classifiedVerdicts.set(toolUseId, true)
           return { requiresHumanInTheLoop: true }
         }
+        this._classifiedVerdicts.set(toolUseId, result.requiresHumanInTheLoop)
         return result
       } catch (error) {
         logger.warn(`tool=<${toolName}> | classifier failed, defaulting to approval required`, error)
+        this._classifiedVerdicts.set(toolUseId, true)
         return { requiresHumanInTheLoop: true }
       }
     }
