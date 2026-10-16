@@ -80,7 +80,7 @@ const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
   openai: 'OPENAI_BASE_URL',
 }
 
-const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
+const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'us-gov.', 'eu.', 'au.', 'jp.'] as const
 
 // Reasoning levels each provider's API accepts. `'off'` is the harness's spelling of a provider's
 // "none" where it has one (OpenAI, Bedrock GPT and Qwen) and omits the reasoning field elsewhere.

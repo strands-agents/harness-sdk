@@ -243,7 +243,10 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
     assert model.config["additional_request_fields"] == {"reasoning": {"effort": "max"}}
 
 
-@pytest.mark.parametrize("model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra"])
+@pytest.mark.parametrize(
+    "model_id",
+    ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us-gov.openai.gpt-6-astra"],
+)
 def test_astra_on_bedrock_resolves_effort(model_id):
     for effort, level in [("auto", "high"), ("low", "low"), ("max", "max"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
@@ -688,7 +691,7 @@ def test_a_bedrock_family_without_thinking_reports_none(model_id):
         resolve(f"bedrock/{model_id}", effort="high")
 
 
-@pytest.mark.parametrize("prefix", ["", "global.", "apac.", "us.", "eu.", "au.", "jp."])
+@pytest.mark.parametrize("prefix", ["", "global.", "apac.", "us.", "us-gov.", "eu.", "au.", "jp."])
 def test_every_cross_region_prefix_resolves_the_claude_family(prefix):
     model_id = f"bedrock/{prefix}anthropic.claude-opus-4-8"
     assert supports_thinking(model_id) is True

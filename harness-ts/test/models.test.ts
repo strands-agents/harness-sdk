@@ -145,7 +145,7 @@ describe('resolveModel', () => {
     )
   })
 
-  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
+  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra', 'us-gov.openai.gpt-6-astra'])(
     'resolves Astra effort for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
@@ -611,7 +611,7 @@ describe('supportsThinking', () => {
     'deepseek.r1-v1:0',
     'mistral.mistral-large-2407-v1:0',
   ]
-  const CROSS_REGION_PREFIXES = ['', 'global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.']
+  const CROSS_REGION_PREFIXES = ['', 'global.', 'apac.', 'us.', 'us-gov.', 'eu.', 'au.', 'jp.']
 
   it('answers for consumers', () => {
     expect(supportsThinking('bedrock/global.anthropic.claude-opus-4-8')).toBe(true)
