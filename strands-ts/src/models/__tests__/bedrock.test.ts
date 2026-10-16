@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   BedrockRuntimeClient,
+  ConverseCommand,
   ConverseStreamCommand,
   CountTokensCommand,
   ValidationException,
@@ -18,6 +19,7 @@ import type { StreamOptions } from '../model.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
+import { logger } from '../../logging/logger.js'
 
 /**
  * Helper function to mock BedrockRuntimeClient implementation with customizable config.
@@ -1434,6 +1436,133 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    describe('stale thinking recovery', () => {
+      const bindingError = new ValidationException({
+        message:
+          'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.',
+        $metadata: {},
+      })
+      const thinking = { type: 'adaptive' }
+      const dropBlockFields = {
+        thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+        anthropic_beta: ['other-beta', 'thinking-binding-controls-2026-08-01'],
+      }
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const sentFields = (command: typeof ConverseStreamCommand | typeof ConverseCommand): unknown[] =>
+        vi.mocked(command).mock.calls.map((call) => call[0].additionalModelRequestFields)
+
+      it.each([
+        { mode: 'streaming', stream: true, command: ConverseStreamCommand },
+        { mode: 'non-streaming', stream: false, command: ConverseCommand },
+      ])('retries a $mode request once with drop_block and keeps it on', async ({ stream, command }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const response = stream
+          ? { stream: (async function* (): AsyncGenerator<unknown> {})() }
+          : {
+              output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+              stopReason: 'end_turn',
+              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+              metrics: { latencyMs: 100 },
+            }
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockResolvedValue(response)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          stream,
+          additionalRequestFields: { thinking, anthropic_beta: ['other-beta'] },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(sentFields(command)).toStrictEqual([{ thinking, anthropic_beta: ['other-beta'] }, dropBlockFields])
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('retrying with drop_block'))
+
+        await collectIterator(provider.stream(messages))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        expect(sentFields(command).at(-1)).toStrictEqual(dropBlockFields)
+        warnSpy.mockRestore()
+      })
+
+      it.each([
+        {
+          name: 'a caller-set block_binding',
+          fields: { thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'error' } } },
+        },
+        { name: 'no thinking config', fields: { reasoning_config: { type: 'enabled' } } },
+        { name: 'no additional request fields', fields: undefined },
+      ])('re-throws the binding error with $name', async ({ fields }) => {
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', ...(fields && { additionalRequestFields: fields }) })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('re-throws the binding message on a non-validation error', async () => {
+        const mockSend = vi.fn().mockRejectedValue(new Error(bindingError.message))
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it.each([
+        {
+          name: 'a throttle',
+          retry: async () => ({
+            stream: (async function* (): AsyncGenerator<unknown> {
+              yield { throttlingException: { message: 'Rate exceeded' } }
+            })(),
+          }),
+          expected: ModelThrottledError,
+        },
+        {
+          name: 'a context window overflow',
+          retry: async () => {
+            throw new Error('Input is too long for requested model')
+          },
+          expected: ContextWindowOverflowError,
+        },
+      ])('maps $name on the retry to its SDK error', async ({ retry, expected }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockImplementationOnce(retry)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('re-throws a second binding error without retrying again', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('keeps thinking off when a forced tool choice follows the retry', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+        await collectIterator(provider.stream(messages))
+
+        await collectIterator(provider.stream(messages, { toolChoice: { any: {} } }))
+
+        expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
+      })
+    })
+
     it.each([
       { mode: 'streaming', stream: true },
       { mode: 'non-streaming', stream: false },

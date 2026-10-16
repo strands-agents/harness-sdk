@@ -9,6 +9,7 @@ import {
   type CacheConfig,
   type ResolvedCacheSection,
 } from '../models/model.js'
+import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -84,6 +85,21 @@ function mergeUsage(target: Record<string, number>, source: object): void {
   }
 }
 
+/**
+ * Reads the `anthropic-beta` values from client default headers, skipping the `undefined` and `null` values
+ * the SDK leaves out of the request.
+ */
+function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+  if (!headers) return []
+  const rows: Iterable<readonly unknown[]> =
+    headers instanceof Headers || Array.isArray(headers) ? headers : Object.entries(headers)
+  return [...rows]
+    .filter(([name]) => typeof name === 'string' && name.toLowerCase() === 'anthropic-beta')
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
+}
+
 export interface AnthropicModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens the model can generate in a response.
@@ -142,10 +158,13 @@ export interface AnthropicModelOptions extends AnthropicModelConfig {
 export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
   private _client: Anthropic
+  private _dropStaleThinkingModelId: string | undefined
+  private _clientBetas: string[]
 
   constructor(options?: AnthropicModelOptions) {
     super()
     const { apiKey, client, clientConfig, ...modelConfig } = options || {}
+    this._clientBetas = headerBetas(clientConfig?.defaultHeaders)
 
     this._config = {
       modelId: MODEL_DEFAULTS.anthropic.modelId,
@@ -239,11 +258,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @returns Async iterable of streaming events
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    let thinking: Anthropic.ThinkingConfigParam | undefined
+    let continuations = 0
     try {
       let request = this._formatRequest(messages, options)
+      thinking = request.thinking
       const requestOptions = this._buildRequestOptions()
       const usage = createEmptyUsage()
-      let continuations = 0
 
       while (true) {
         const stream = requestOptions
@@ -417,6 +438,21 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
     } catch (unknownError) {
+      if (
+        continuations === 0 &&
+        (unknownError as { status?: number }).status === 400 &&
+        isThinkingBindingError(unknownError) &&
+        thinkingWithDropBlock(thinking)
+      ) {
+        // Stale blocks stay in history, so drop_block stays on for every later request to this model.
+        logger.warn(
+          `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
+        )
+        this._dropStaleThinkingModelId = this._config.modelId
+        yield* this.stream(messages, options)
+        return
+      }
+
       const error = normalizeError(unknownError)
 
       const lowered = error.message.toLowerCase()
@@ -436,9 +472,19 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
-    const betas = this._config.betas
-    if (!betas || betas.length === 0) return undefined
+    let betas = this._config.betas ?? []
+    if (this._dropsStaleThinking()) {
+      // Request headers replace client headers of the same name, so betas set on the client are carried over.
+      if (betas.length === 0) betas = this._clientBetas
+      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
+    }
+    if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
+  }
+
+  /** Whether a binding error already turned drop_block on for the configured model. */
+  private _dropsStaleThinking(): boolean {
+    return this._dropStaleThinkingModelId === this._config.modelId
   }
 
   /** Resolves a cache section, disabled when `cacheConfig` is unset or its strategy is unknown. */
@@ -601,6 +647,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.topP !== undefined) request.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     if (this._config.params) Object.assign(request, this._config.params)
+    const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
+    if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
     if (tools.length > 0) request.tools = tools
     else delete request.tools

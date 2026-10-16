@@ -7,7 +7,7 @@
  */
 
 import type { Model } from '../../models/model.js'
-import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
@@ -85,20 +85,32 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
 }
 
 /**
+ * Converts a message's content to ContentBlocks for the summarizer, leaving out reasoning.
+ */
+function messageToContentBlocks(message: Message): ContentBlock[] {
+  const blocks: ContentBlock[] = []
+  for (const block of message.content) {
+    if (block instanceof ToolResultBlock) {
+      blocks.push(...toolResultToContentBlocks(block.content))
+    } else if (!(block instanceof ReasoningBlock)) {
+      blocks.push(block)
+    }
+  }
+  return blocks
+}
+
+/**
  * Flattens a range of messages into a single ContentBlock array for multimodal summarization.
  * Inserts role markers and separators so the summarizer understands message boundaries.
+ * Reasoning blocks are left out: they are assistant-only content, and their signatures are bound to the
+ * conversation that produced them. Messages with nothing left get no role marker.
  */
 export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
   const blocks: ContentBlock[] = []
   for (const message of messages) {
-    blocks.push(new TextBlock(`\n---\n[${message.role}]`))
-    for (const block of message.content) {
-      if (block instanceof ToolResultBlock) {
-        blocks.push(...toolResultToContentBlocks(block.content))
-      } else {
-        blocks.push(block)
-      }
-    }
+    const content = messageToContentBlocks(message)
+    if (content.length === 0) continue
+    blocks.push(new TextBlock(`\n---\n[${message.role}]`), ...content)
   }
   return blocks
 }
