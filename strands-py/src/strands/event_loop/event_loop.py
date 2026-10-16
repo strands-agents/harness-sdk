@@ -365,12 +365,22 @@ async def event_loop_cycle(
             # End the cycle and return results
             agent.event_loop_metrics.end_cycle(cycle_start_time, cycle_trace, attributes)
 
+            # The forced retry may end in JSON text when the provider could not force the tool
+            if structured_output_context.force_attempted and stop_reason == "end_turn":
+                structured_output = structured_output_context.result_from_text(message)
+                yield StructuredOutputEvent(structured_output=structured_output)
+                tracer.end_event_loop_cycle_span(cycle_span, message)
+                yield EventLoopStopEvent(
+                    stop_reason,
+                    message,
+                    agent.event_loop_metrics,
+                    invocation_state["request_state"],
+                    structured_output=structured_output,
+                )
+                return
+
             # Force structured output tool call if LLM didn't use it automatically
             if structured_output_context.is_enabled and stop_reason == "end_turn":
-                if structured_output_context.force_attempted:
-                    raise StructuredOutputException(
-                        "The model failed to invoke the structured output tool even after it was forced."
-                    )
                 tool_spec = structured_output_context.get_tool_spec()
                 structured_output_context.set_forced_mode({"tool": {"name": tool_spec["name"]}} if tool_spec else None)
                 logger.debug("Forcing structured output tool")
@@ -572,11 +582,7 @@ async def _handle_model_execution(
                         error,
                     )
 
-            if structured_output_context.forced_mode:
-                tool_spec = structured_output_context.get_tool_spec()
-                tool_specs = [tool_spec] if tool_spec else []
-            else:
-                tool_specs = agent.tool_registry.get_all_tool_specs()
+            tool_specs = agent.tool_registry.get_all_tool_specs()
 
             # Build middleware context with defensive copies to prevent accidental mutation.
             # invocation_state is intentionally shared by reference (hooks/tools write to it).
@@ -595,6 +601,9 @@ async def _handle_model_execution(
                 invocation_state=invocation_state,
                 model=agent.model,
                 projected_input_tokens=projected_input_tokens,
+                structured_output_model=(
+                    structured_output_context.structured_output_model if structured_output_context.forced_mode else None
+                ),
             )
 
             # Snapshot model state before the chain so middleware mutations to
@@ -749,6 +758,7 @@ def _make_invoke_model_terminal(
                     dynamic_trailing_blocks=ctx.dynamic_trailing_blocks,
                     cancel_signal=agent._cancel_signal,
                     agent_metadata=agent._metadata,
+                    structured_output_model=ctx.structured_output_model,
                 ):
                     yield event
 

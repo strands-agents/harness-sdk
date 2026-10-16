@@ -4,12 +4,12 @@ import dataclasses
 import re
 import warnings
 from collections.abc import Collection, Mapping
-from typing import Any
+from typing import Any, cast
 
 from typing_extensions import get_type_hints
 
 from ..types.content import ContentBlock
-from ..types.tools import ToolChoice
+from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from .model import CacheConfig
 
 # Matches AWS region identifiers such as us-east-1, ap-southeast-1, and us-gov-east-1.
@@ -73,6 +73,24 @@ def warn_on_tool_choice_not_supported(tool_choice: ToolChoice | None) -> None:
             "A ToolChoice was provided to this provider but is not supported and will be ignored",
             stacklevel=4,
         )
+
+
+def narrow_tool_specs_to_tool_choice(
+    tool_specs: list[ToolSpec] | None, tool_choice: ToolChoice | None
+) -> list[ToolSpec] | None:
+    """Keep only the tool a forced tool choice names, for providers that cannot apply tool_choice.
+
+    Args:
+        tool_specs: The tool specs for the request.
+        tool_choice: The tool choice for the request.
+
+    Returns:
+        Only the named tool's spec when tool_choice forces a specific tool, otherwise tool_specs unchanged.
+    """
+    if not tool_specs or not tool_choice or "tool" not in tool_choice:
+        return tool_specs
+    tool_name = cast(ToolChoiceToolDict, tool_choice)["tool"]["name"]
+    return [tool_spec for tool_spec in tool_specs if tool_spec["name"] == tool_name]
 
 
 def _cache_config_fields_set(cache_config: CacheConfig) -> set[str]:

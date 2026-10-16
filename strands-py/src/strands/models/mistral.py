@@ -22,6 +22,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_cache import _resolve_cache_key
 from ._validation import (
     _has_location_source,
+    narrow_tool_specs_to_tool_choice,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -489,6 +490,7 @@ class MistralModel(Model):
             ModelThrottledException: When the model service is throttling requests.
         """
         warn_on_tool_choice_not_supported(tool_choice)
+        tool_specs = narrow_tool_specs_to_tool_choice(tool_specs, tool_choice)
 
         logger.debug("formatting request")
         request = self.format_request(messages, tool_specs, system_prompt, agent_metadata)

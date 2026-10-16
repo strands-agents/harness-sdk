@@ -12,6 +12,8 @@ from ..interrupt import _AGENT_STREAM_INTERRUPT_ID_PREFIX, Interrupt, InterruptE
 from .types import MiddlewareStage
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ..agent.agent import Agent
     from ..bidi.agent import BidiAgent
     from ..interrupt import _InterruptState
@@ -41,6 +43,7 @@ class InvokeModelContext:
     model: Model
     projected_input_tokens: int | None = None
     dynamic_trailing_blocks: int = 0
+    structured_output_model: type[BaseModel] | None = None
 
 
 InvokeModelStage: MiddlewareStage[InvokeModelContext, ModelStopReason, TypedEvent] = MiddlewareStage(name="invokeModel")

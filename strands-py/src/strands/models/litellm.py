@@ -21,7 +21,7 @@ from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
-from ._validation import validate_config_keys
+from ._validation import narrow_tool_specs_to_tool_choice, validate_config_keys
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
@@ -327,6 +327,9 @@ class LiteLLMModel(OpenAIModel):
         Yields:
             Formatted message chunks from the model.
         """
+        # Some LiteLLM backends ignore tool_choice, so a forced tool is also enforced by narrowing.
+        tool_specs = narrow_tool_specs_to_tool_choice(tool_specs, tool_choice)
+
         logger.debug("formatting request")
         request = self.format_request(
             messages,

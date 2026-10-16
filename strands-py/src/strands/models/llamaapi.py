@@ -22,7 +22,12 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StreamEvent, Usage
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
-from ._validation import _has_location_source, validate_config_keys, warn_on_tool_choice_not_supported
+from ._validation import (
+    _has_location_source,
+    narrow_tool_specs_to_tool_choice,
+    validate_config_keys,
+    warn_on_tool_choice_not_supported,
+)
 from .model import BaseModelConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -379,6 +384,7 @@ class LlamaAPIModel(Model):
             ModelThrottledException: When the model service is throttling requests from the client.
         """
         warn_on_tool_choice_not_supported(tool_choice)
+        tool_specs = narrow_tool_specs_to_tool_choice(tool_specs, tool_choice)
 
         logger.debug("formatting request")
         request = self.format_request(messages, tool_specs, system_prompt)

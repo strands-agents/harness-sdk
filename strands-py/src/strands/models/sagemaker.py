@@ -17,7 +17,12 @@ from typing_extensions import Unpack, override
 from ..types.content import ContentBlock, Messages
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec
-from ._validation import validate_config_keys, warn_on_cache_config_not_supported, warn_on_tool_choice_not_supported
+from ._validation import (
+    narrow_tool_specs_to_tool_choice,
+    validate_config_keys,
+    warn_on_cache_config_not_supported,
+    warn_on_tool_choice_not_supported,
+)
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
@@ -425,6 +430,7 @@ class SageMakerAIModel(OpenAIModel):
             Formatted message chunks from the model.
         """
         warn_on_tool_choice_not_supported(tool_choice)
+        tool_specs = narrow_tool_specs_to_tool_choice(tool_specs, tool_choice)
 
         logger.debug("formatting request")
         request = self.format_request(messages, tool_specs, system_prompt)
