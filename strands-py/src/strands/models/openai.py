@@ -744,6 +744,8 @@ class OpenAIModel(Model):
 
                 logger.debug("got response from model")
                 yield self.format_chunk({"chunk_type": "message_start"})
+                streaming_tool_call: Any = None
+                deferred_content: list[tuple[str, str]] = []
                 tool_calls: dict[int, list[Any]] = {}
                 data_type = None
                 finish_reason = None  # Store finish_reason for later use
@@ -760,33 +762,75 @@ class OpenAIModel(Model):
                         reasoning_content = getattr(choice.delta, "reasoning", None)
 
                     if isinstance(reasoning_content, str) and reasoning_content:
-                        chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
-                        for chunk in chunks:
-                            yield chunk
-                        yield self.format_chunk(
-                            {
-                                "chunk_type": "content_delta",
-                                "data_type": data_type,
-                                "data": reasoning_content,
-                            }
-                        )
+                        if streaming_tool_call is not None:
+                            deferred_content.append(("reasoning_content", reasoning_content))
+                        else:
+                            chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
+                            for chunk in chunks:
+                                yield chunk
+                            yield self.format_chunk(
+                                {
+                                    "chunk_type": "content_delta",
+                                    "data_type": data_type,
+                                    "data": reasoning_content,
+                                }
+                            )
 
                     if choice.delta.content:
-                        chunks, data_type = self._stream_switch_content("text", data_type)
-                        for chunk in chunks:
-                            yield chunk
+                        if streaming_tool_call is not None:
+                            deferred_content.append(("text", choice.delta.content))
+                        else:
+                            chunks, data_type = self._stream_switch_content("text", data_type)
+                            for chunk in chunks:
+                                yield chunk
+                            yield self.format_chunk(
+                                {"chunk_type": "content_delta", "data_type": data_type, "data": choice.delta.content}
+                            )
+
+                    tool_call_deltas = choice.delta.tool_calls or []
+                    if (
+                        tool_call_deltas
+                        and streaming_tool_call is None
+                        and not tool_calls
+                        and not choice.delta.content
+                        and len({tool_call.index for tool_call in tool_call_deltas}) == 1
+                    ):
+                        streaming_tool_call = tool_call_deltas[0]
+                        if data_type:
+                            yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+                        data_type = "tool"
                         yield self.format_chunk(
-                            {"chunk_type": "content_delta", "data_type": data_type, "data": choice.delta.content}
+                            {"chunk_type": "content_start", "data_type": "tool", "data": streaming_tool_call}
                         )
 
-                    for tool_call in choice.delta.tool_calls or []:
-                        tool_calls.setdefault(tool_call.index, []).append(tool_call)
+                    for tool_call in tool_call_deltas:
+                        if streaming_tool_call is not None and tool_call.index == streaming_tool_call.index:
+                            yield self.format_chunk(
+                                {"chunk_type": "content_delta", "data_type": "tool", "data": tool_call}
+                            )
+                        else:
+                            tool_calls.setdefault(tool_call.index, []).append(tool_call)
 
                     if choice.finish_reason:
                         finish_reason = choice.finish_reason  # Store for use outside loop
                         if data_type:
                             yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+                            data_type = None
                         break
+
+                if data_type == "tool":
+                    yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
+
+                if deferred_content:
+                    data_type = None
+                    for deferred_type, deferred_data in deferred_content:
+                        chunks, data_type = self._stream_switch_content(deferred_type, data_type)
+                        for chunk in chunks:
+                            yield chunk
+                        yield self.format_chunk(
+                            {"chunk_type": "content_delta", "data_type": data_type, "data": deferred_data}
+                        )
+                    yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
 
                 for tool_deltas in tool_calls.values():
                     yield self.format_chunk(
