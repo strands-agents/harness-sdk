@@ -52,6 +52,31 @@
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
     },
+    "./bidi": {
+      "types": "./dist/src/bidi/index.d.ts",
+      "node": "./dist/src/bidi/index.node.js",
+      "default": "./dist/src/bidi/index.js"
+    },
+    "./bidi/io/browser-audio": {
+      "types": "./dist/src/bidi/io/browser-audio.d.ts",
+      "default": "./dist/src/bidi/io/browser-audio.js"
+    },
+    "./bidi/io/console": {
+      "types": "./dist/src/bidi/io/console.d.ts",
+      "default": "./dist/src/bidi/io/console.js"
+    },
+    "./bidi/io/audio": {
+      "types": "./dist/src/bidi/io/audio.d.ts",
+      "default": "./dist/src/bidi/io/audio.js"
+    },
+    "./bidi/hooks": {
+      "types": "./dist/src/bidi/hooks/index.d.ts",
+      "default": "./dist/src/bidi/hooks/index.js"
+    },
+    "./bidi/models/google": {
+      "types": "./dist/src/bidi/models/google.d.ts",
+      "default": "./dist/src/bidi/models/google.js"
+    },
     "./experimental": {
       "types": "./dist/src/experimental/index.d.ts",
       "default": "./dist/src/experimental/index.js"
@@ -203,13 +228,17 @@
     "./sandbox/ssh": {
       "types": "./dist/src/sandbox/ssh.d.ts",
       "default": "./dist/src/sandbox/ssh.js"
+    },
+    "./sandbox/browser": {
+      "types": "./dist/src/sandbox/browser.d.ts",
+      "default": "./dist/src/sandbox/browser.js"
     }
   },
   "scripts": {
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",
-    "check:browser-bundle": "esbuild src/index.ts --bundle --platform=browser --format=esm --packages=external --outfile=/dev/null",
+    "check:browser-bundle": "node scripts/check-browser-bundle.mjs",
     "clean": "rm -rf node_modules dist",
     "lock:refresh": "rm -rf node_modules && npm install --ignore-scripts --os=linux --os=darwin --os=win32 --cpu=x64 --cpu=arm64 --cpu=wasm32",
     "test": "vitest run --project unit-node",
@@ -241,6 +270,7 @@
   "author": "Strands Agents",
   "license": "Apache-2.0",
   "devDependencies": {
+    "audify": "^1.10.1",
     "@a2a-js/sdk": "^0.3.10",
     "@ai-sdk/amazon-bedrock": "^4.0.129",
     "@ai-sdk/openai": "^3.0.41",
@@ -308,6 +338,7 @@
     "yaml": "^2.9.1"
   },
   "peerDependencies": {
+    "audify": "^1.10.1",
     "@a2a-js/sdk": "^0.3.10",
     "@ai-sdk/provider": "^3.0.0",
     "@anthropic-ai/sdk": "^0.109.1",
@@ -334,6 +365,9 @@
     "zod": "^4.5.4"
   },
   "peerDependenciesMeta": {
+    "audify": {
+      "optional": true
+    },
     "@a2a-js/sdk": {
       "optional": true
     },

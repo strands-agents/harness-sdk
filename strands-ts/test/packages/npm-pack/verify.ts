@@ -4,9 +4,9 @@
  * that transitively pulls an optional peer fails at module load.
  *
  * Subpaths deliberately NOT imported because they require optional peers:
- *   models/{anthropic,openai,google,vercel}, a2a, a2a/express,
- *   session/s3-storage, telemetry. Those are covered by the sibling
- *   `../esm-module` and `../cjs-module` suites.
+ *   models/{anthropic,openai,google,vercel}, bidi/models/google, a2a,
+ *   a2a/express, session/s3-storage, telemetry. Those are covered by the
+ *   sibling `../esm-module` and `../cjs-module` suites.
  */
 
 import {
@@ -42,6 +42,8 @@ import {
 } from '@strands-agents/sdk/vended-plugins'
 
 import { BedrockModel as BedrockFromSubpath } from '@strands-agents/sdk/models/bedrock'
+import { BidiAgent, BedrockNovaSonicModel } from '@strands-agents/sdk/bidi'
+import { BidiBargeInEvent } from '@strands-agents/sdk/bidi/hooks'
 import { Graph, Swarm, MultiAgentState } from '@strands-agents/sdk/multiagent'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { ContextOffloader, InMemoryStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
@@ -147,5 +149,14 @@ if (
   throw new Error('Barrel vended-plugins exports do not match individual subpath exports')
 }
 console.log('[pack-test] barrel exports match individual subpath exports')
+
+// The bidi barrel must not transitively pull an optional peer: GoogleGeminiLiveModel ships on
+// the bidi/models/google subpath precisely so these imports resolve without `@google/genai`.
+for (const [name, ctor] of Object.entries({ BidiAgent, BedrockNovaSonicModel, BidiBargeInEvent })) {
+  if (typeof ctor !== 'function') {
+    throw new Error(`${name} bidi export is not a constructor`)
+  }
+}
+console.log('[pack-test] bidi barrel importable without optional peers')
 
 console.log('[pack-test] OK')

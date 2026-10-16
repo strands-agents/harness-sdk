@@ -29,6 +29,7 @@ async function main() {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
   const { GoogleModel } = await import('@strands-agents/sdk/models/google')
+  const { GoogleGeminiLiveModel } = await import('@strands-agents/sdk/bidi/models/google')
 
   const { z } = await import('zod')
 
@@ -121,6 +122,11 @@ async function main() {
   void OpenAIModel
   void AnthropicModel
   void GoogleModel
+
+  if (typeof GoogleGeminiLiveModel !== 'function') {
+    throw new Error('GoogleGeminiLiveModel from bidi/models/google is not a constructor')
+  }
+  console.log('✓ bidi/models/google subpath export verified')
 }
 
 main().catch((error) => {

@@ -14,6 +14,9 @@ export const MODEL_DEFAULTS = {
     modelId: 'global.anthropic.claude-sonnet-4-6',
     region: 'us-west-2',
   },
+  bedrockNovaSonic: {
+    modelId: 'amazon.nova-2-5-sonic',
+  },
   openai: {
     modelId: 'gpt-5.4',
   },
