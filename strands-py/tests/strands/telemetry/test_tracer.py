@@ -12,6 +12,7 @@ from opentelemetry.trace import (
     StatusCode,  # type: ignore
 )
 
+from strands.interrupt import Interrupt
 from strands.memory.types import MemoryEntry
 from strands.telemetry.tracer import JSONEncoder, Tracer, get_tracer, serialize
 from strands.types.content import ContentBlock
@@ -790,6 +791,62 @@ def test_end_tool_call_span_error_result_no_exception(mock_span):
     mock_span.set_attributes.assert_called_once_with({"gen_ai.tool.status": "error"})
     mock_span.set_status.assert_called_once_with(StatusCode.ERROR, "tool cancelled by user")
     mock_span.record_exception.assert_not_called()
+    mock_span.end.assert_called_once()
+
+
+def test_end_interrupted_tool_call_span(mock_span):
+    """An interrupted tool call span records the interrupt as its output (#4622)."""
+    tracer = Tracer()
+    interrupt = Interrupt(id="interrupt-1", name="approval", reason={"message": "confirm delete"})
+
+    tracer.end_interrupted_tool_call_span(mock_span, "tool-1", [interrupt])
+
+    mock_span.add_event.assert_called_once_with(
+        "gen_ai.choice",
+        attributes={
+            "message": serialize(
+                [{"interrupt": {"id": "interrupt-1", "name": "approval", "reason": {"message": "confirm delete"}}}]
+            ),
+            "id": "tool-1",
+        },
+    )
+    mock_span.set_attributes.assert_called_once_with({"gen_ai.tool.status": "interrupted"})
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.record_exception.assert_not_called()
+    mock_span.end.assert_called_once()
+
+
+def test_end_interrupted_tool_call_span_latest_conventions(mock_span, monkeypatch):
+    """Under the latest conventions the interrupt is recorded in gen_ai.output.messages (#4622)."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    interrupt = Interrupt(id="interrupt-1", name="approval", reason="confirm delete")
+
+    tracer.end_interrupted_tool_call_span(mock_span, "tool-1", [interrupt])
+
+    mock_span.add_event.assert_called_once_with(
+        "gen_ai.client.inference.operation.details",
+        attributes={
+            "gen_ai.output.messages": serialize(
+                [
+                    {
+                        "role": "tool",
+                        "parts": [
+                            {
+                                "type": "tool_call_response",
+                                "id": "tool-1",
+                                "response": [
+                                    {"interrupt": {"id": "interrupt-1", "name": "approval", "reason": "confirm delete"}}
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            )
+        },
+    )
+    mock_span.set_attributes.assert_called_once_with({"gen_ai.tool.status": "interrupted"})
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
     mock_span.end.assert_called_once()
 
 

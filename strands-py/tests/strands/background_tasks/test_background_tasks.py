@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
@@ -364,6 +364,29 @@ async def test_surfaces_and_resumes_interrupts_raised_by_background_tools() -> N
     tru_result = _delivered_result(agent)
     exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}, {"text": "approved"}]}
     assert tru_result == exp_result
+
+
+@pytest.mark.asyncio
+async def test_background_tool_interrupt_is_recorded_on_its_span() -> None:
+    """A background tool call that pauses on an interrupt records the interrupt as span output (#4622)."""
+
+    @tool(name="approval", context=True)
+    def approval(tool_context: ToolContext) -> str:
+        """Ask before finishing."""
+        return str(tool_context.interrupt("approve", reason="Approve work?"))
+
+    agent = _background_agent(approval, responses=[_assistant_text("Task admitted.")])
+
+    with patch("strands.tools.executors._executor.get_tracer") as mock_get_tracer:
+        tracer = mock_get_tracer.return_value
+        interrupted = await agent.invoke_async("Run approval.")
+
+    tru_stop_reason = interrupted.stop_reason
+    exp_stop_reason = "interrupt"
+    assert tru_stop_reason == exp_stop_reason
+    tracer.end_interrupted_tool_call_span.assert_called_once()
+    _span, _tool_use_id, tru_interrupts = tracer.end_interrupted_tool_call_span.call_args.args
+    assert [interrupt.name for interrupt in tru_interrupts] == ["approve"]
 
 
 @pytest.mark.asyncio
