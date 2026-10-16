@@ -865,7 +865,7 @@ class LlamaCppModel(Model):
 
             # Parse and validate the JSON response
             data = json.loads(response_text.strip())
-            output_instance = output_model(**data)
+            output_instance = output_model.model_validate(data)
             yield {"output": output_instance}
 
         finally:
