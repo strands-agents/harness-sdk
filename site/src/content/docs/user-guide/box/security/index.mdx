@@ -5,6 +5,8 @@ sidebar:
   label: "Security model"
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 This page states what Strands Box protects, what it trusts, how it enforces your
 configuration, and the risks it leaves for you to manage. The reasoning behind the
 design is in the
@@ -51,11 +53,17 @@ access that no grant or permit covers, that is an enforcement defect:
 For multi-tenant deployments, run each session's box inside its own VM or microVM, so
 the platform keeps tenants apart and a kernel exploit stays inside one session.
 
-![In an illustrative hosted deployment, the platform separates tenant environments. Each environment contains trusted Box code outside the agent's sandbox and the sandboxes for tools and local MCP servers.](../../../../../assets/box/security-platform.svg)
+<Diagram
+  name="box-security-platform"
+  alt="An illustrative hosted deployment, in which the platform separates tenant environments. Tenant A's environment contains the trusted Box process, which runs outside every sandbox, plus the agent's sandbox, holding the agent and its native children, and the sandboxes for tools and local MCP servers, one for each. Tenant B's environment holds another box with the same layout. The platform keeps tenants apart; Box supplies no isolation between them. Verify the selected platform's guarantees."
+/>
 
 ## How Box enforces your configuration
 
-![The agent runs in its sandbox, which the operating system enforces, while Box's request handlers and policy engine run outside it. Direct file access uses OS grants. Requests through Box use policy.](../../../../../assets/box/security-enforcement.svg)
+<Diagram
+  name="box-security-enforcement"
+  alt="How Box enforces your configuration on macOS. Inside the surrounding operating system, the agent process and its native children run in the agent's sandbox, which the operating system enforces. Box's request handlers (Strands Shell, Monty, and the egress gateway) and its policy engine run outside it, in the trusted Box process. The agent reaches files in the surrounding OS directly, and the operating system checks those accesses against its grants. Everything else it sends as requests through Box: the request handlers ask the policy engine and the policy engine decides each request. The handlers then carry out only permitted file operations on the surrounding OS, and send only permitted network requests through the egress gateway to a remote service. An allowed request doesn't contain the remote service."
+/>
 
 - **Operating system enforcement.** The operating system limits each process's own
   system calls to the paths `box.toml` grants it. Box prints the agent's and each tool's

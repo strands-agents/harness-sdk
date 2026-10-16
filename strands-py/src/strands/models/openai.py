@@ -435,13 +435,6 @@ class OpenAIModel(Model):
                 if "toolResult" in content
             ]
 
-            formatted_message = {
-                "role": message["role"],
-                **({"content": formatted_contents} if formatted_contents else {}),
-                **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
-            }
-            formatted_messages.append(formatted_message)
-
             # Process tool messages to extract images into separate user messages
             # OpenAI API requires images to be in user role messages only
             # All tool messages must be grouped together before any user messages with images
@@ -452,6 +445,14 @@ class OpenAIModel(Model):
                 if user_msg_with_images:
                     user_messages_with_images.append(user_msg_with_images)
             formatted_messages.extend(user_messages_with_images)
+
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_message = {
+                "role": message["role"],
+                **({"content": formatted_contents} if formatted_contents else {}),
+                **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
+            }
+            formatted_messages.append(formatted_message)
 
         return formatted_messages
 

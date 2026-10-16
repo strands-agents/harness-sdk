@@ -36,6 +36,7 @@ navbar:
     href: /docs/user-guide/sdk/
     basePath:
       - /docs/user-guide/sdk/
+      - /docs/user-guide/build-with-ai/
       # The "choosing a foundation" decision and the migration guides live with
       # the Strands Harness SDK — they compare and migrate onto the Strands Harness SDK.
       - /docs/user-guide/migrate/
@@ -235,13 +236,13 @@ sidebar:
             slug: docs/user-guide/sdk/quickstart/python
           - label: "Quickstart"
             slug: docs/user-guide/sdk/quickstart/typescript
+          - docs/user-guide/build-with-ai
       - label: Migrate
         items:
           - label: "Choosing an agent foundation"
             slug: docs/user-guide/migrate/choosing-an-agent-foundation
-          # Draft — hidden until the LangGraph migration guide is ready to publish.
-          # - label: "Migrate from LangGraph"
-          #   slug: docs/user-guide/migrate/langgraph
+          - label: "Migrate from LangGraph"
+            slug: docs/user-guide/migrate/langgraph
           - label: "Migrate from OpenAI"
             slug: docs/user-guide/migrate/openai
       - label: Build guides
@@ -328,8 +329,11 @@ sidebar:
             slug: docs/user-guide/sdk/agents/lifecycle-controls
           - label: "State"
             slug: docs/user-guide/sdk/agents/state
-          - label: "Storage"
-            slug: docs/user-guide/sdk/storage
+          - label: Storage
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/sdk/storage
+              - docs/user-guide/sdk/storage/search-strategies
           - label: "Snapshots"
             slug: docs/user-guide/sdk/agents/snapshots
           - label: "Prompts"
@@ -597,6 +601,8 @@ sidebar:
                   - docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator
               - label: "Deterministic"
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
+              - label: "Structured output similarity"
+                slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors

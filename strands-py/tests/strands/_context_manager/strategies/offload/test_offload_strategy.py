@@ -9,6 +9,7 @@ from strands._context_manager.strategies.offload.base import (
     _build_tool_name_map,
     _collect_removable_with_pair,
     _get_oldest_matches,
+    _insert_marker,
     _message_matches_target,
     _repair_alternation,
     _resolve_tool_filter,
@@ -33,6 +34,10 @@ def mock_agent():
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.5)
     agent.messages = []
     return agent
+
+
+def _text(role, text):
+    return Message(role=role, content=[ContentBlock(text=text)])
 
 
 def _make_tool_pair(tool_name="my_tool", tool_use_id="tu-1"):
@@ -150,6 +155,7 @@ class TestCollectRemovableWithPair:
             Message(role="user", content=[ContentBlock(text="start")]),
             assistant_msg,
             user_msg,
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         tru_result = _collect_removable_with_pair(messages, 2)
         assert assistant_msg in tru_result
@@ -181,10 +187,20 @@ class TestCollectRemovableWithPair:
             Message(role="user", content=[ContentBlock(text="start")]),
             assistant_msg,
             user_msg,
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         tru_result = _collect_removable_with_pair(messages, 1)
         assert assistant_msg in tru_result
         assert user_msg in tru_result
+
+    def test_never_collects_last_message(self):
+        messages: Messages = [_text("user", "task"), _text("assistant", "a1"), _text("user", "latest")]
+        assert _collect_removable_with_pair(messages, 2) == []
+
+    def test_skips_tool_use_whose_result_is_last_message(self):
+        assistant_msg, user_msg = _make_tool_pair()
+        messages: Messages = [_text("user", "task"), assistant_msg, user_msg]
+        assert _collect_removable_with_pair(messages, 1) == []
 
     def test_returns_empty_for_out_of_bounds_index(self):
         messages: Messages = [
@@ -226,11 +242,12 @@ class TestSpliceWithPairs:
             Message(role="user", content=[ContentBlock(text="pin")]),
             assistant_msg,
             user_msg,
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         removed, lowest = _splice_with_pairs(messages, [user_msg])
         assert removed == 2
         assert lowest == 1
-        assert len(messages) == 1
+        assert len(messages) == 2
 
 
 class TestOffloadBuilder:
@@ -623,6 +640,24 @@ class TestEmergencyTruncateStrategy:
         context = ContextState(messages=messages, agent=mock_agent, utilization=1.1)
         assert await strategy.apply(context) is True
         assert len(messages) < 5
+
+    @pytest.mark.asyncio
+    async def test_leaves_marker_on_assistant_after_cut(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        assert await strategy.apply(context) is True
+        assert [(m["role"], [b["text"] for b in m["content"]]) for m in messages] == [
+            ("user", ["pin"]),
+            ("assistant", ["a2", "[... 2 messages elided ...]"]),
+            ("user", ["u3"]),
+        ]
 
     @pytest.mark.asyncio
     async def test_does_not_fire_when_under_one(self, mock_agent):
@@ -1051,3 +1086,74 @@ class TestPinnedMessageProtection:
         _repair_alternation(messages)
         assert len(messages) == 1
         assert messages[0].get("metadata", {}).get("custom", {}).get("pinned") is True
+
+
+class TestInsertMarker:
+    """Tests for placing removal markers as assistant content outside message 0."""
+
+    def test_inserts_assistant_message_between_user_messages(self):
+        messages: Messages = [_text("user", "task"), _text("user", "u1")]
+        _insert_marker(messages, 1, "marker")
+        assert messages == [_text("user", "task"), _text("assistant", "marker"), _text("user", "u1")]
+
+    def test_appends_to_assistant_message_before_gap(self):
+        original: Message = {**_text("assistant", "a1"), "tracking_id": "msg-1", "metadata": {"custom": {"k": "v"}}}
+        messages: Messages = [_text("user", "task"), original, _text("user", "u1")]
+        _insert_marker(messages, 2, "marker")
+        assert messages[1]["content"] == [ContentBlock(text="a1"), ContentBlock(text="marker")]
+        assert messages[1]["tracking_id"] == "msg-1"
+        assert messages[1]["metadata"] == {"custom": {"k": "v"}}
+        assert original["content"] == [ContentBlock(text="a1")]
+        assert len(messages) == 3
+
+    def test_appends_to_assistant_message_after_gap(self):
+        messages: Messages = [_text("user", "task"), _text("assistant", "a1"), _text("user", "u1")]
+        _insert_marker(messages, 1, "marker")
+        assert messages[1]["content"] == [ContentBlock(text="a1"), ContentBlock(text="marker")]
+        assert len(messages) == 3
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [(0, ["task", "marker", "u1"]), (5, ["task", "u1", "marker"])],
+    )
+    def test_clamps_index_into_history_after_message_zero(self, index, expected):
+        messages: Messages = [_text("user", "task"), _text("user", "u1")]
+        _insert_marker(messages, index, "marker")
+        assert [message["content"][0]["text"] for message in messages] == expected
+
+
+class TestRepeatedReductionKeepsMessageZeroVerbatim:
+    """Regression tests for https://github.com/strands-agents/harness-sdk/issues/4685."""
+
+    @staticmethod
+    def _turn(index, text_only):
+        if text_only:
+            return [_text("assistant", f"a{index}"), _text("user", f"u{index}")]
+        return list(_make_tool_pair(tool_use_id=f"tu-{index}"))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text_only", [False, True])
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            Offload.drop("*").when(utilization=0.7, preserve_recent=3),
+            Offload.drop("*").when(utilization=0.7),
+            Offload.truncate("*").when(utilization=0.7, preserve_recent=3),
+            Offload.truncate("*").when(utilization=0.7),
+            EmergencyTruncateStrategy(),
+        ],
+        ids=["drop", "drop-all", "truncate", "truncate-all", "emergency"],
+    )
+    async def test_message_zero_stays_verbatim(self, mock_agent, strategy, text_only):
+        task = Message(role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}})
+        messages: Messages = [task]
+        for index in range(30):
+            turn = self._turn(index, text_only)
+            messages.extend(turn)
+            context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+            await strategy.apply(context)
+            assert messages[-1] == turn[-1]
+        assert messages[0] == Message(
+            role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}}
+        )
+        assert len(messages) < 10

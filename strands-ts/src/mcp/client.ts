@@ -50,10 +50,15 @@ import type {
   CallToolRequestOptions,
   CallToolResult,
   CallToolRequest,
+  GetPromptResult,
   Implementation,
   JsonSchemaType,
+  ListPromptsResult,
+  ListResourcesResult,
+  ListResourceTemplatesResult,
   LoggingMessageNotificationParams,
   OAuthClientProvider,
+  ReadResourceResult,
   ServerCapabilities,
   Tool as McpSdkTool,
   Transport,
@@ -80,6 +85,21 @@ export interface RuntimeConfig {
 /** Connection state of an MCP client. */
 export type McpConnectionState = 'disconnected' | 'connected' | 'failed'
 
+/** A progress update reported by an MCP server during a tool call. */
+export interface McpProgress {
+  /** Amount of work completed so far. Increases even when the total is unknown. */
+  progress: number
+
+  /** Total amount of work, when the server reports one. */
+  total?: number | undefined
+
+  /** Human-readable description of the current progress, when the server provides one. */
+  message?: string | undefined
+}
+
+/** Callback receiving progress notifications during a tool call. May be async. A throw or rejection is logged as a warning. */
+export type McpProgressCallback = (progress: McpProgress) => void
+
 /** OAuth client credentials for machine-to-machine authentication. */
 export interface McpClientCredentials {
   clientId: string
@@ -103,6 +123,12 @@ export interface McpToolFilters {
   allowed?: McpToolMatcher[]
   /** Tools matching at least one matcher are excluded, even when also allowed. */
   rejected?: McpToolMatcher[]
+}
+
+/** Options for the paginated MCP list methods (prompts, resources, resource templates). */
+export interface McpListOptions {
+  /** Fetches a single page starting at this token. Omit it to aggregate every page. */
+  paginationToken?: string
 }
 
 /** Per-call overrides for {@link McpClient.listTools}. */
@@ -211,6 +237,9 @@ export interface McpCallToolOptions {
   signal?: AbortSignal
   /** Overall time limit in milliseconds for this call. Overrides `tasksConfig.pollTimeout` when tasks are configured. */
   timeoutMs?: number
+
+  /** Callback for progress notifications during this call. Takes precedence over the client's callback. */
+  progressCallback?: McpProgressCallback
 }
 
 /** Options for an explicit SEP-2663 lifecycle request. */
@@ -234,6 +263,17 @@ export interface McpClientOptions extends RuntimeConfig {
 
   /** Enables automatic execution for legacy task tools. Experimental: subject to change. */
   tasksConfig?: TasksConfig
+
+  /** Page cap for the no-token list methods, which aggregate every page. 0 disables the cap. Defaults to the MCP client's 64. */
+  listMaxPages?: number
+
+  /**
+   * Callback for progress notifications during tool calls, including calls an agent makes.
+   * Not delivered for calls the server runs as a task (`tasksConfig` with a task-capable
+   * server). The `total` and `message` fields may be absent when the server does not provide
+   * them. A per-call `progressCallback` takes precedence.
+   */
+  progressCallback?: McpProgressCallback
 
   /**
    * Callback to handle server-initiated elicitation requests.
@@ -333,14 +373,17 @@ export class McpClient {
   /** Set only when the transport was built from `url`, so a retry can build a fresh one. */
   private _urlConfig: McpClientConfig | undefined
   private _connectAttempted = false
+  private _taskProgressWarned = false
   private _state: McpConnectionState
   private _client: TaskClient
   private _continueOnError: boolean
   private _logHandler: (params: LoggingMessageNotificationParams) => void
   private _disableMcpInstrumentation: boolean
   private _tasksConfig: ResolvedTasksConfig | undefined
+  private _progressCallback: McpProgressCallback | undefined
   private _elicitationCallback: ElicitationCallback | undefined
   private _prefix: string | undefined
+  private readonly _listMaxPages: number | undefined
   private _toolFilters: McpToolFilters | undefined
   /** Server-side name of each listed tool, which differs from `tool.name` when a prefix is set. */
   private _serverToolNames = new WeakMap<McpTool, string>()
@@ -363,8 +406,10 @@ export class McpClient {
     this._continueOnError = args.continueOnError ?? false
     this._logHandler = args.logHandler ?? defaultLogHandler
     this._tasksConfig = resolveTasksConfig(args.tasksConfig)
+    this._progressCallback = args.progressCallback
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
+    this._listMaxPages = args.listMaxPages
     this._toolFilters = args.toolFilters
     this._taskRoutingUnavailable = args.transport instanceof StreamableHTTPClientTransport
     this._installTransport(McpClient._resolveTransport(args))
@@ -395,6 +440,7 @@ export class McpClient {
       },
       {
         capabilities,
+        ...(this._listMaxPages !== undefined && { listMaxPages: this._listMaxPages }),
         versionNegotiation: { mode: 'auto' },
         listChanged: {
           tools: {
@@ -536,16 +582,14 @@ export class McpClient {
 
     if (this._state !== 'disconnected' && !reconnect) return
 
-    const connectionPromise = this._connect(reconnect)
-    this._connectionPromise = connectionPromise
-    try {
-      await (signal ? raceWithAbort(connectionPromise, signal) : connectionPromise)
-      this._assertConnectionCurrent(generation)
-    } finally {
+    const connectionPromise = this._connect(reconnect).finally(() => {
       if (this._connectionPromise === connectionPromise) {
         this._connectionPromise = undefined
       }
-    }
+    })
+    this._connectionPromise = connectionPromise
+    await (signal ? raceWithAbort(connectionPromise, signal) : connectionPromise)
+    this._assertConnectionCurrent(generation)
   }
 
   private async _connect(reconnect: boolean): Promise<void> {
@@ -590,6 +634,12 @@ export class McpClient {
     if (generation !== this._connectionGeneration) {
       throw new SdkError(SdkErrorCode.ConnectionClosed, 'MCP client disconnected')
     }
+  }
+
+  /** Connects lazily and throws when the connection previously failed under `continueOnError`. */
+  private async _connectOrThrow(): Promise<void> {
+    await this.connect()
+    if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
   }
 
   /**
@@ -725,6 +775,82 @@ export class McpClient {
   }
 
   /**
+   * Lists the prompts available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list prompts result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listPrompts(options?: McpListOptions): Promise<ListPromptsResult> {
+    await this._connectOrThrow()
+    return await this._client.listPrompts(paginationParams(options))
+  }
+
+  /**
+   * Retrieves a prompt from the server by name.
+   *
+   * @param promptId - The name of the prompt to retrieve.
+   * @param args - Arguments for the prompt's template substitution.
+   * @returns A promise that resolves with the raw MCP prompt result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async getPrompt(promptId: string, args?: Record<string, string>): Promise<GetPromptResult> {
+    await this._connectOrThrow()
+    return await this._client.getPrompt({ name: promptId, ...(args && { arguments: args }) })
+  }
+
+  /**
+   * Lists the resources available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list resources result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listResources(options?: McpListOptions): Promise<ListResourcesResult> {
+    await this._connectOrThrow()
+    return await this._client.listResources(paginationParams(options))
+  }
+
+  /**
+   * Reads a resource from the server.
+   *
+   * @param uri - The URI of the resource to read.
+   * @returns A promise that resolves with the raw MCP resource content.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async readResource(uri: string | URL): Promise<ReadResourceResult> {
+    await this._connectOrThrow()
+    return await this._client.readResource({ uri: uri instanceof URL ? uri.toString() : uri })
+  }
+
+  /**
+   * Lists the resource templates available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list resource templates result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listResourceTemplates(options?: McpListOptions): Promise<ListResourceTemplatesResult> {
+    await this._connectOrThrow()
+    return await this._client.listResourceTemplates(paginationParams(options))
+  }
+
+  /**
    * Invoke a tool on the connected MCP server using an McpTool instance.
    *
    * When `tasksConfig` is set, task-backed execution is completed automatically on both
@@ -744,6 +870,7 @@ export class McpClient {
       const outcome = await this._invokeTool(tool, args, {
         ...(options?.signal && { signal: options.signal }),
         ...(options?.timeoutMs !== undefined && { timeoutMs: options.timeoutMs }),
+        ...(options?.progressCallback && { progressCallback: options.progressCallback }),
       })
       return outcome.result as JSONValue
     }
@@ -753,7 +880,11 @@ export class McpClient {
       const outcome = await this._invokeTool(
         tool,
         args,
-        { signal: operation.signal, timeoutMs: this._tasksConfig.requestTimeoutMs },
+        {
+          signal: operation.signal,
+          timeoutMs: this._tasksConfig.requestTimeoutMs,
+          ...(options?.progressCallback && { progressCallback: options.progressCallback }),
+        },
         operation,
         true
       )
@@ -910,6 +1041,7 @@ export class McpClient {
 
     // The upstream codec rejects extension result types before custom result schemas run.
     if (completeLegacyTask && this._supportsLegacyTask(params.name)) {
+      this._warnTaskProgressUnsupported(options)
       const outputSchema = compileToolOutputSchema(
         params.name,
         this._serverToolDefinitions.get(params.name)?.outputSchema
@@ -921,6 +1053,7 @@ export class McpClient {
 
     if (operation && this._supportsTaskExtension()) {
       if (!this._taskRoutingUnavailable) {
+        this._warnTaskProgressUnsupported(options)
         return await this._invokeTaskTool(tool, params, operation, options.timeoutMs!)
       }
       if (!this._taskRoutingWarned) {
@@ -931,6 +1064,9 @@ export class McpClient {
       }
     }
 
+    // A progress token only goes on the wire when a progress handler is registered, which is
+    // what makes resetTimeoutOnProgress take effect; a no-op stands in without a user callback.
+    const onprogress = this._buildProgressHandler(options)
     return {
       result: await this._client.callTool(params, {
         ...(options.signal && { signal: options.signal }),
@@ -940,10 +1076,8 @@ export class McpClient {
             ? remainingTime(operation.deadline, this._tasksConfig!.pollTimeoutMs)
             : options.timeoutMs,
           resetTimeoutOnProgress: true,
-          // A progress token only goes on the wire when a progress handler is registered, which is
-          // what makes resetTimeoutOnProgress take effect.
-          onprogress: (): void => {},
         }),
+        ...(onprogress ? { onprogress } : options.timeoutMs !== undefined && { onprogress: (): void => {} }),
       }),
     }
   }
@@ -1245,6 +1379,29 @@ export class McpClient {
     }
   }
 
+  /** Warns once when a progress callback is registered on a call that is routed as a task. */
+  private _warnTaskProgressUnsupported(options?: McpCallToolOptions): void {
+    if (this._taskProgressWarned || !(options?.progressCallback ?? this._progressCallback)) return
+    this._taskProgressWarned = true
+    logger.warn(
+      `client=<${this._clientName}> | progress callbacks are not delivered for tool calls the server runs as a task`
+    )
+  }
+
+  private _buildProgressHandler(options?: McpCallToolOptions): ((progress: McpProgress) => void) | undefined {
+    const progressCallback = options?.progressCallback ?? this._progressCallback
+    if (!progressCallback) return undefined
+    // The vendor client discards handler failures (a sync throw goes to the unset onerror and a
+    // rejected promise becomes an unhandled rejection), so failures are logged here instead.
+    return (progress: McpProgress): void => {
+      void Promise.resolve()
+        .then(() => progressCallback(progress))
+        .catch((error: unknown) => {
+          logger.warn(`client=<${this._clientName}>, error=<${String(error)}> | progress callback failed`)
+        })
+    }
+  }
+
   private _createTaskOperation(externalSignal: AbortSignal | undefined, timeoutMs: number): TaskOperation {
     const controller = new AbortController()
     this._taskControllers.add(controller)
@@ -1443,6 +1600,11 @@ async function validateToolOutput(
       `Failed to validate structured content: ${error instanceof Error ? error.message : String(error)}`
     )
   }
+}
+
+/** Maps the public `paginationToken` option to the MCP wire's `cursor` request parameter. */
+function paginationParams(options?: McpListOptions): { cursor: string } | undefined {
+  return options?.paginationToken !== undefined ? { cursor: options.paginationToken } : undefined
 }
 
 /**

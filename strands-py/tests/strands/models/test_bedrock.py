@@ -2631,6 +2631,58 @@ async def test_stream_deepseek_skips_empty_messages(bedrock_client, alist):
     assert sent_messages[1]["content"] == [{"text": "Follow up"}]
 
 
+SIGNED_REASONING = {"reasoningContent": {"reasoningText": {"text": "Claude thinking", "signature": "sig"}}}
+UNSIGNED_REASONING = {"reasoningContent": {"reasoningText": {"text": "gpt-oss thinking"}}}
+REDACTED_REASONING = {"reasoningContent": {"redactedContent": b"opaque"}}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "exp_reasoning"),
+    [
+        # Non-Anthropic models reject the Anthropic-only signature; models with their own reasoning keep it unsigned.
+        ("openai.gpt-oss-120b-1:0", [UNSIGNED_REASONING, REDACTED_REASONING]),
+        ("moonshot.kimi-k2-thinking", [UNSIGNED_REASONING, REDACTED_REASONING]),
+        ("minimax.minimax-m2.5", [UNSIGNED_REASONING, REDACTED_REASONING]),
+        # Anthropic models require a signature on every reasoningText block.
+        ("global.anthropic.claude-opus-5", [SIGNED_REASONING, REDACTED_REASONING]),
+        (
+            "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5",
+            [SIGNED_REASONING, REDACTED_REASONING],
+        ),
+        # Models that reject reasoningText outright; redactedContent is opaque and kept.
+        ("us.amazon.nova-pro-v1:0", [REDACTED_REASONING]),
+        ("us.meta.llama3-3-70b-instruct-v1:0", [REDACTED_REASONING]),
+        ("openai.gpt-5.5", [REDACTED_REASONING]),
+        ("qwen.qwen3-coder-480b-a35b-v1:0", [REDACTED_REASONING]),
+        # DeepSeek rejects reasoning content altogether.
+        ("us.deepseek.r1-v1:0", []),
+        # An ARN or bare inference profile ID can hide the vendor, so nothing is dropped.
+        (
+            "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123",
+            [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING],
+        ),
+        ("abc123xyz", [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING]),
+    ],
+)
+def test_format_request_drops_reasoning_the_model_rejects(bedrock_client, model_id, exp_reasoning):
+    """Replaying history across Bedrock model families keeps only the reasoning blocks the target accepts.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/4779.
+    """
+    model = BedrockModel(model_id=model_id)
+    messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {
+            "role": "assistant",
+            "content": [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING, {"text": "Response"}],
+        },
+    ]
+
+    tru_content = model.format_request(messages)["messages"][1]["content"]
+    exp_content = [*exp_reasoning, {"text": "Response"}]
+    assert tru_content == exp_content
+
+
 def test_format_request_filters_image_content_blocks(model, model_id):
     """Test that format_request filters extra fields from image content blocks."""
     messages = [

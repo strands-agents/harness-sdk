@@ -100,6 +100,12 @@ describe('MCP v2 Integration Tests', () => {
   ]
 
   describe.each(transports)('$name transport', ({ createClient }) => {
+    it('negotiates protocol revision 2026-07-28', async () => {
+      const client = createClient()
+      await client.listTools()
+      expect(client.client.getNegotiatedProtocolVersion()).toBe('2026-07-28')
+    })
+
     it('agent can use multiple MCP tools in a conversation', async () => {
       const model = new MockMessageModel()
       const agent = new Agent({ tools: [createClient()], model })

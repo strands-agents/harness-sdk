@@ -10,24 +10,18 @@ sourceLinks:
 addedDate: 2026-06-03
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 Pause the agent before it acts and let a person approve, edit, or reject a tool call. The `HumanInTheLoop` intervention handler adds this oversight without custom interrupt logic: pass it to `interventions` and choose how to collect the human's response.
 
 ## How It Works
 
 The handler uses the [`confirm` action](./index.mdx) to pause for human input. It builds on the SDK's [interrupt mechanism](../../interrupts) but abstracts away the manual interrupt/resume loop when you provide an `ask` option.
 
-```mermaid
-flowchart LR
-    A[Tool call] --> B{Allowed?}
-    B -->|Yes| C[Execute]
-    B -->|No| D{Trusted?}
-    D -->|Yes| C
-    D -->|No| G{Classifier?}
-    G -->|Safe| C
-    G -->|Risky/None| E{Human approves?}
-    E -->|Yes| C
-    E -->|No| F[Cancel]
-```
+<Diagram
+  name="human-in-the-loop-approval-flow"
+  alt="How the handler decides on a tool call. If the tool is allowed or already trusted, it executes. Otherwise, if a classifier is configured and rates the call safe, it executes. If the classifier rates it risky, or there is no classifier, a human is asked: if they approve, the tool executes; if not, the call is cancelled. Negated tools (!name) always ask a human, and, when trust is enabled, a trust response approves the tool for the rest of the session."
+/>
 
 ## Usage
 

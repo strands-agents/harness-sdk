@@ -151,7 +151,7 @@ def load_tools_from_module_path(module_tool_path: str) -> list[AgentTool]:
 def load_tools_from_module(module: ModuleType, module_name: str) -> list[AgentTool]:
     """Load tools from a module.
 
-    First checks if the passed in module has instances of DecoratedToolFunction classes as atributes to the module.
+    First checks if the passed in module has instances of DecoratedToolFunction classes as attributes to the module.
     If so, then it returns them as a list of tools. If not, then it attempts to load the module as a module based tool.
     """
     logger.debug("tool_name=<%s>, module=<%s> | loading tools from module", module_name, module_name)

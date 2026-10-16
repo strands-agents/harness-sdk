@@ -384,6 +384,18 @@ describe('McpClient legacy task execution', () => {
     }
   })
 
+  it('warns once when a progress callback is set on a legacy task call', async () => {
+    const { client, server, tool } = await legacyHarness()
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    warnSpy.mockClear()
+    server.handle('tools/call', () => ({ task: legacyTask('completed') }))
+    server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'legacy result' }] }))
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    const progressWarnings = warnSpy.mock.calls.filter(([message]) => String(message).includes('progress callbacks'))
+    expect(progressWarnings).toHaveLength(1)
+  })
+
   it('waits for queued input on tasks/result beyond the request timeout without progress', async () => {
     vi.useFakeTimers()
     const { client, server, tool } = await legacyHarness({ requestTimeout: 100, pollTimeout: 5_000 })
@@ -599,6 +611,17 @@ describe('McpClient SEP-2663 task execution', () => {
     await expect(client.callTool(tool, { value: 1 })).resolves.toEqual({
       content: [{ type: 'text', text: 'direct answer' }],
     })
+  })
+
+  it('warns once when a progress callback is set on a task-routed call', async () => {
+    const { client, server, tool } = await modernHarness()
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    warnSpy.mockClear()
+    server.handle('tools/call', () => directResult('done'))
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    await client.callTool(tool, {}, { progressCallback: () => {} })
+    const progressWarnings = warnSpy.mock.calls.filter(([message]) => String(message).includes('progress callbacks'))
+    expect(progressWarnings).toHaveLength(1)
   })
 
   it('completes a task through polling and returns the final result', async () => {

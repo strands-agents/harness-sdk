@@ -39,6 +39,11 @@ class TestGetContextWindowLimit:
 
     def test_known_openai(self):
         assert get_context_window_limit("gpt-6-astra") == 1_050_000
+        assert get_context_window_limit("gpt-6.1-sol") == 1_050_000
+        assert get_context_window_limit("gpt-6-sol") == 1_050_000
+        assert get_context_window_limit("gpt-6-luna") == 1_050_000
+        assert get_context_window_limit("global.openai.gpt-6.1-sol") == 1_050_000
+        assert get_context_window_limit("us.openai.gpt-6-luna") == 1_050_000
         assert get_context_window_limit("gpt-5.4") == 1_050_000
         assert get_context_window_limit("gpt-4o") == 128_000
         assert get_context_window_limit("o3") == 200_000

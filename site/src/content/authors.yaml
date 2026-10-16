@@ -213,6 +213,11 @@
   role: "Software Engineer, AWS Agentic AI"
   bio: Ariel is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
 
+- id: owen-kaplan
+  name: Owen Kaplan
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Owen is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
 - id: murat-kaan-meral
   name: Murat Kaan Meral
   role: "Software Engineer, AWS Agentic AI"
@@ -242,6 +247,11 @@
   name: Morgan Willis
   role: "Principal Developer Advocate, AWS"
   bio: Morgan Willis is a Principal Developer Advocate at AWS working on agents.
+
+- id: chris-smith
+  name: Chris Smith
+  role: "Senior Solutions Architect, AWS"
+  bio: Chris Smith is a Senior Solutions Architect at AWS focused on agents and helping customers run them in production.
 
 - id: rachit-mehta
   name: Rachit Mehta
