@@ -146,6 +146,19 @@ describe('agentConfig', () => {
     expect(config.skills).toEqual(['/tmp/a', '/tmp/missing', 'https://example.com/skills'])
   })
 
+  it('trims whitespace around comma-separated flag values and drops empty pieces', () => {
+    expect(
+      agentConfig(parseArgs(['--builtin-tools', 'read, write']), DEFAULT_HARNESS_AGENT_CONFIG).builtinTools
+    ).toEqual(['read', 'write'])
+    expect(
+      agentConfig(parseArgs(['--builtin-plugins', 'todos, environment']), DEFAULT_HARNESS_AGENT_CONFIG).builtinPlugins
+    ).toEqual(['todos', 'environment'])
+    expect(agentConfig(parseArgs(['--skills', ' /tmp/a , /tmp/b , ']), DEFAULT_HARNESS_AGENT_CONFIG).skills).toEqual([
+      '/tmp/a',
+      '/tmp/b',
+    ])
+  })
+
   it('accepts supported provider prefixes and rejects unknown providers', () => {
     expect(agentConfig(parseArgs(['--model', 'openai/gpt-5.6-sol']), DEFAULT_HARNESS_AGENT_CONFIG).model).toBe(
       'openai/gpt-5.6-sol'
