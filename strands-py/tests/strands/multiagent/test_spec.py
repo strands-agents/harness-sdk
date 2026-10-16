@@ -1,9 +1,10 @@
-"""Tests for multiagent spec resolution: axis types, _resolve_spec, and _default_builder."""
+"""Tests for multiagent spec resolution: axis types, _resolve_specs, and _default_builder."""
 
 import pytest
 
 from strands import Agent
 from strands.multiagent.spec import (
+    _AXIS_DESCRIPTIONS,
     _UNSET,
     AgentSpec,
     Choice,
@@ -12,12 +13,20 @@ from strands.multiagent.spec import (
     Open,
     Option,
     Preset,
+    _append_presets,
     _default_builder,
-    _resolve_spec,
+    _resolve_specs,
+    _to_schema_properties,
 )
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.tools.decorator import tool
 from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+
+def _resolve_one(model_input, **kwargs):
+    [spec] = _resolve_specs([{"name": "a", **model_input}], **kwargs)
+    return spec
+
 
 _AXES = dict(
     presets={},
@@ -41,16 +50,50 @@ def test_choice_none_value_is_not_overwritten():
     assert Choice([Option("off", None)]).normalized()[0].value is None
 
 
-def test_choice_schema_single_and_multiple():
-    assert Choice(["a", "b"]).to_schema_property() == {"type": "string", "enum": ["a", "b"]}
-    prop = Choice(["a"], multiple=True).to_schema_property("desc")
-    assert prop["type"] == "array" and prop["description"] == "desc"
+def test_append_presets():
+    assert _append_presets("Base.", {}) == "Base."
+    presets = {"w": Preset(description="Writes."), "r": Preset()}
+    assert _append_presets("Base.", presets) == ("Base.\n\nAvailable presets (agent_type):\n- w: Writes.\n- r: r")
 
 
-def test_choice_schema_folds_option_descriptions():
-    prop = Choice([Option("x", description="info"), "y"]).to_schema_property()
-    assert "- x: info" in prop["description"]
-    assert "y:" not in prop["description"]
+def test_to_schema_properties():
+    d = _AXIS_DESCRIPTIONS
+    props = _to_schema_properties(
+        presets={"g": Preset(description="general")},
+        default_preset="g",
+        instructions=Open(),
+        tools=Choice(["a"], multiple=True),
+        mcp_servers=Inherit(),
+        model=Fixed("x"),
+    )
+    assert props == {
+        "agent_type": {
+            "type": "string",
+            "enum": ["g"],
+            "description": f"{d['agent_type']} Omit to use the default ('g').\nOptions:\n- g: general",
+        },
+        "instructions": {"type": "string", "description": d["instructions"]},
+        "tools": {"type": "array", "items": {"type": "string", "enum": ["a"]}, "description": d["tools"]},
+    }
+    # No presets → no agent_type; None axes are hidden.
+    empty = {k: None for k in ("instructions", "tools", "mcp_servers", "model")}
+    assert _to_schema_properties(presets={}, default_preset=None, **empty) == {}
+
+
+@pytest.mark.parametrize(
+    "axis,match",
+    [
+        ({"tools": Choice([])}, "offers no options"),
+        ({"tools": Choice(["read", "shell"])}, "must be multiple"),
+        ({"mcp_servers": Choice([])}, "offers no options"),
+        ({"mcp_servers": Choice(["fs"])}, "must be multiple"),
+        ({"instructions": Choice([])}, "offers no options"),
+        ({"model": Choice([])}, "offers no options"),
+    ],
+)
+def test_invalid_choice_raises(axis, match):
+    with pytest.raises(ValueError, match=match):
+        _to_schema_properties(**{**_AXES, **axis})
 
 
 def test_choice_value_for_known_and_unknown():
@@ -60,56 +103,51 @@ def test_choice_value_for_known_and_unknown():
 
 
 def test_resolve_spec_preset_applied_by_default():
-    axes = {
-        **_AXES,
-        "presets": {"g": Preset(instructions="help")},
-        "default_preset": "g",
-    }
-    spec = _resolve_spec({"task": "x"}, **axes)
-    assert spec == AgentSpec(
-        agent_type="g",
-        instructions="help",
-        tools=["read", "shell"],
-    )
+    axes = {**_AXES, "presets": {"g": Preset(instructions="help")}, "default_preset": "g"}
+    spec = _resolve_one({"task": "x"}, **axes)
+    assert spec == AgentSpec(name="a", agent_type="g", instructions="help", tools=["read", "shell"])
 
 
 def test_resolve_spec_unknown_agent_type_raises():
     axes = {**_AXES, "presets": {"g": Preset()}, "default_preset": "g"}
     with pytest.raises(ValueError, match="Unknown agent_type"):
-        _resolve_spec({"task": "x", "agent_type": "nope"}, **axes)
+        _resolve_one({"task": "x", "agent_type": "nope"}, **axes)
 
 
 def test_resolve_spec_agent_type_rejects_prototype_keys_null_and_non_strings():
     axes = {**_AXES, "presets": {"g": Preset()}, "default_preset": "g"}
     for bad in ["constructor", "toString", "__proto__", ["g"]]:
         with pytest.raises(ValueError, match="Unknown agent_type"):
-            _resolve_spec({"task": "x", "agent_type": bad}, **axes)
+            _resolve_one({"task": "x", "agent_type": bad}, **axes)
     # null (None) falls back to default preset instead of throwing
-    spec = _resolve_spec({"task": "x", "agent_type": None}, **axes)
+    spec = _resolve_one({"task": "x", "agent_type": None}, **axes)
     assert spec == AgentSpec(
+        name="a",
         agent_type="g",
         tools=["read", "shell"],
     )
 
 
 def test_resolve_spec_ad_hoc_instructions_suppress_default_preset():
-    axes = {**_AXES, "presets": {"g": Preset(instructions="default")}, "default_preset": "g"}
-    spec = _resolve_spec({"task": "x", "instructions": "ad-hoc"}, **axes)
+    axes = {**_AXES, "presets": {"g": Preset()}, "default_preset": "g"}
+    spec = _resolve_one({"task": "x", "instructions": "ad-hoc"}, **axes)
     assert spec == AgentSpec(
+        name="a",
         instructions="ad-hoc",
         tools=["read", "shell"],
     )
 
 
 def test_resolve_spec_tools_clamped_to_choice():
-    spec = _resolve_spec({"task": "x", "tools": ["read", "write"]}, **_AXES)
-    assert spec == AgentSpec(tools=["read"])
+    spec = _resolve_one({"task": "x", "tools": ["read", "write"]}, **_AXES)
+    assert spec == AgentSpec(name="a", tools=["read"])
 
 
 def test_resolve_spec_fixed_ignores_model_value():
     axes = {**_AXES, "instructions": Fixed("pinned")}
-    spec = _resolve_spec({"task": "x", "instructions": "override"}, **axes)
+    spec = _resolve_one({"task": "x", "instructions": "override"}, **axes)
     assert spec == AgentSpec(
+        name="a",
         instructions="pinned",
         tools=["read", "shell"],
     )
@@ -118,8 +156,31 @@ def test_resolve_spec_fixed_ignores_model_value():
 def test_resolve_spec_choice_maps_option_value():
     sentinel = object()
     axes = {**_AXES, "model": Choice([Option("smart", sentinel)])}
-    spec = _resolve_spec({"task": "x", "model": "smart"}, **axes)
+    spec = _resolve_one({"task": "x", "model": "smart"}, **axes)
     assert spec.model is sentinel
+
+
+@pytest.mark.parametrize(
+    "inputs,match",
+    [
+        ("abc", "must be a list"),
+        (["not a dict"], "must be a dict"),
+        ([{}], "non-empty 'name'"),
+        ([{"name": "  "}], "non-empty 'name'"),
+        ([{"name": "a"}, {"name": " a "}], "Duplicate"),
+    ],
+)
+def test_resolve_specs_rejects_invalid_entries(inputs, match):
+    with pytest.raises(ValueError, match=match):
+        _resolve_specs(inputs, **_AXES)
+
+
+def test_resolve_specs_preset_reusable_and_clamped_to_choice():
+    axes = {**_AXES, "presets": {"w": Preset(tools=["read", "write"])}, "default_preset": "w"}
+    specs = _resolve_specs([{"name": "a", "agent_type": "w"}, {"name": " b "}], **axes)
+    assert [(s.name, s.agent_type, s.tools) for s in specs] == [("a", "w", ["read"]), ("b", "w", ["read"])]
+    # Without a Choice to clamp to, preset tools pass through unchanged.
+    assert _resolve_one({}, **{**axes, "tools": Inherit()}).tools == ["read", "write"]
 
 
 def test_default_builder_inherits_all_tools_when_spec_tools_is_none():
@@ -170,26 +231,12 @@ def test_fixed_is_frozen():
         Fixed("x").value = "y"
 
 
-def test_resolve_spec_preset_tools_clamped_to_choice():
-    """Covers _resolve_list preset-with-allowed-values branch."""
-    axes = {
-        **_AXES,
-        "presets": {"worker": Preset(tools=["read", "write"])},
-        "default_preset": "worker",
-        "tools": Choice(["read", "shell"], multiple=True),
-    }
-    spec = _resolve_spec({"task": "x"}, **axes)
-    assert spec == AgentSpec(
-        agent_type="worker",
-        tools=["read"],
-    )
-
-
 def test_resolve_spec_fixed_tools_list():
     """Covers _resolve_list Fixed-list branch."""
     axes = {**_AXES, "tools": Fixed(["a", "b"])}
-    spec = _resolve_spec({"task": "x"}, **axes)
+    spec = _resolve_one({"task": "x"}, **axes)
     assert spec == AgentSpec(
+        name="a",
         tools=["a", "b"],
     )
 
@@ -197,8 +244,9 @@ def test_resolve_spec_fixed_tools_list():
 def test_resolve_spec_fixed_empty_list_is_not_none():
     """Fixed([]) must resolve to [] (no tools), not None (inherit all)."""
     axes = {**_AXES, "mcp_servers": Fixed([])}
-    spec = _resolve_spec({"task": "x"}, **axes)
+    spec = _resolve_one({"task": "x"}, **axes)
     assert spec == AgentSpec(
+        name="a",
         mcp_servers=[],
         tools=["read", "shell"],
     )

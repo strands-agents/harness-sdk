@@ -56,7 +56,7 @@ def test_axes_derive_expected_parameters():
         presets={},
         instructions=Choice(["concise", "verbose"]),
         model=Choice(["fast", "deep"]),
-        context=Choice(["none", "all"]),
+        context=Choice([Option("none", description="fresh"), "all"]),
         tools=Choice(["read", "shell"], multiple=True),
         mcp_servers=Choice(["fs", "api"], multiple=True),
     )
@@ -75,6 +75,8 @@ def test_axes_derive_expected_parameters():
     assert props["instructions"]["enum"] == ["concise", "verbose"]
     assert props["mcp_servers"]["items"]["enum"] == ["fs", "api"]
     assert props["last_messages"]["type"] == "integer"
+    assert props["context"]["enum"] == ["none", "all"]
+    assert props["context"]["description"].endswith("more tokens.\nOptions:\n- none: fresh")
 
 
 def test_fixed_and_inherit_hide_parameters():
@@ -107,20 +109,6 @@ def test_presets_add_agent_type_parameter():
     assert "generalist" in props["agent_type"]["description"]
 
 
-@pytest.mark.parametrize(
-    "axis,match",
-    [
-        ({"tools": Choice([])}, "offers no options"),
-        ({"tools": Choice(["read", "shell"])}, "must be multiple"),
-        ({"mcp_servers": Choice([])}, "offers no options"),
-        ({"mcp_servers": Choice(["fs"])}, "must be multiple"),
-    ],
-)
-def test_invalid_choice_raises(axis, match):
-    with pytest.raises(ValueError, match=match):
-        make_subagent(builder=lambda spec: None, **axis)
-
-
 @pytest.mark.parametrize("kwargs", [{"name": ""}, {"description": ""}, {"max_depth": 0}, {"max_depth": -1}])
 def test_make_subagent_rejects_invalid_args(kwargs):
     with pytest.raises(ValueError):
@@ -142,7 +130,23 @@ async def test_run_builds_child_and_returns_output():
     result = _result(await _events(tool, {"task": "do it"}))
     assert result["status"] == "success"
     assert result["content"][0]["text"] == "the answer"
+    assert captured["spec"].name == "subagent"
     assert captured["spec"].instructions == GENERALIST.instructions
+
+
+@pytest.mark.asyncio
+async def test_preset_resolves_through_builder():
+    specs = []
+
+    def builder(spec):
+        specs.append(spec)
+        return _FakeChild(_FakeResult("built"))
+
+    tool = make_subagent(builder=builder, presets={"expert": Preset(instructions="be expert")})
+    for _ in range(2):
+        result = _result(await _events(tool, {"task": "do it", "agent_type": "expert"}))
+        assert result["content"][0]["text"] == "built"
+    assert [(s.agent_type, s.instructions) for s in specs] == [("expert", "be expert")] * 2
 
 
 @pytest.mark.asyncio
