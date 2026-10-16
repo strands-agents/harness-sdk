@@ -2,10 +2,13 @@
 
 import json
 import logging
+import threading
 import unittest.mock
+from collections.abc import Iterator
 from typing import Any
 
 import boto3
+import pydantic
 import pytest
 from botocore.config import Config as BotocoreConfig
 
@@ -1079,3 +1082,89 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(
 
     assert "cache_config" not in request
     assert "cache_config" not in json.loads(request["Body"])
+
+
+@pytest.mark.asyncio
+async def test_stream_runs_blocking_sagemaker_calls_off_the_event_loop(sagemaker_client, model, messages, alist):
+    """The synchronous runtime client is driven from a worker thread, so a model call cannot stall the loop."""
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+    body_threads: list[int] = []
+
+    def recording_body() -> Iterator[dict[str, dict[str, bytes]]]:
+        body_threads.append(threading.get_ident())
+        yield from _payload_parts('data: {"choices": []}\n\n')
+
+    def invoke_endpoint_with_response_stream(**_kwargs: Any) -> dict[str, Any]:
+        call_threads.append(threading.get_ident())
+        return {"Body": recording_body()}
+
+    sagemaker_client.invoke_endpoint_with_response_stream.side_effect = invoke_endpoint_with_response_stream
+
+    await alist(model.stream(messages))
+
+    tru_threads = call_threads + body_threads
+    exp_threads = [unittest.mock.ANY, unittest.mock.ANY]
+    assert tru_threads == exp_threads
+    assert loop_thread not in tru_threads
+
+
+@pytest.mark.asyncio
+async def test_stream_non_streaming_runs_blocking_sagemaker_calls_off_the_event_loop(
+    sagemaker_client, model, messages, alist
+):
+    """The non-streaming invocation and its body read also stay off the event loop."""
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+    read_threads: list[int] = []
+
+    def read_body() -> bytes:
+        read_threads.append(threading.get_ident())
+        return json.dumps({"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}).encode("utf-8")
+
+    def invoke_endpoint(**_kwargs: Any) -> dict[str, Any]:
+        call_threads.append(threading.get_ident())
+        body = unittest.mock.MagicMock()
+        body.read.side_effect = read_body
+        return {"Body": body}
+
+    model.payload_config["stream"] = False
+    sagemaker_client.invoke_endpoint.side_effect = invoke_endpoint
+
+    await alist(model.stream(messages))
+
+    tru_threads = call_threads + read_threads
+    exp_threads = [unittest.mock.ANY, unittest.mock.ANY]
+    assert tru_threads == exp_threads
+    assert loop_thread not in tru_threads
+
+
+@pytest.mark.asyncio
+async def test_structured_output_runs_blocking_sagemaker_calls_off_the_event_loop(
+    sagemaker_client, model, messages, alist
+):
+    """Structured output invokes the endpoint from a worker thread as well."""
+
+    class TestOutputModel(pydantic.BaseModel):
+        name: str
+        age: int
+
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+
+    def invoke_endpoint(**_kwargs: Any) -> dict[str, Any]:
+        call_threads.append(threading.get_ident())
+        body = unittest.mock.MagicMock()
+        body.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": '{"name": "John", "age": 30}'}, "finish_reason": "stop"}]}
+        ).encode("utf-8")
+        return {"Body": body}
+
+    sagemaker_client.invoke_endpoint.side_effect = invoke_endpoint
+
+    await alist(model.structured_output(TestOutputModel, messages))
+
+    tru_call_threads = call_threads
+    exp_call_threads = [unittest.mock.ANY]
+    assert tru_call_threads == exp_call_threads
+    assert loop_thread not in tru_call_threads

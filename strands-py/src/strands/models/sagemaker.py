@@ -1,5 +1,6 @@
 """Amazon SageMaker model provider."""
 
+import asyncio
 import json
 import logging
 import os
@@ -23,6 +24,9 @@ from .openai import OpenAIModel
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+
+# ``None`` is a valid decoded event, so it cannot mark the end of the stream.
+_END_OF_STREAM: Any = object()
 
 
 @dataclass
@@ -381,6 +385,22 @@ class SageMakerAIModel(OpenAIModel):
         )
         return request
 
+    def _invoke_endpoint(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Invoke the endpoint and decode its response body.
+
+        The SageMaker runtime client is synchronous, so callers run this on a worker
+        thread to keep the event loop free.
+
+        Args:
+            request: Formatted request to send to the endpoint.
+
+        Returns:
+            The decoded JSON response body.
+        """
+        response = self.client.invoke_endpoint(**request)
+        body: dict[str, Any] = json.loads(response["Body"].read().decode("utf-8"))
+        return body
+
     @override
     async def stream(
         self,
@@ -414,7 +434,9 @@ class SageMakerAIModel(OpenAIModel):
 
         try:
             if self.payload_config.get("stream", True):
-                response = self.client.invoke_endpoint_with_response_stream(**request)
+                # The SageMaker runtime client is synchronous, so the invocation and each
+                # read of the response body run off the event loop.
+                response = await asyncio.to_thread(self.client.invoke_endpoint_with_response_stream, **request)
 
                 # Message start
                 yield self.format_chunk({"chunk_type": "message_start"})
@@ -426,7 +448,9 @@ class SageMakerAIModel(OpenAIModel):
                 text_content_started = False
                 reasoning_content_started = False
 
-                for content in _parse_event_stream(response["Body"]):
+                # Pulling one event at a time keeps the read on a worker thread.
+                events = _parse_event_stream(response["Body"])
+                while (content := await asyncio.to_thread(next, events, _END_OF_STREAM)) is not _END_OF_STREAM:
                     choices = content.get("choices")
                     if not choices:
                         if usage := content.get("usage"):
@@ -513,8 +537,7 @@ class SageMakerAIModel(OpenAIModel):
 
             else:
                 # Not all SageMaker AI models support streaming!
-                response = self.client.invoke_endpoint(**request)  # type: ignore[assignment]
-                final_response_json = json.loads(response["Body"].read().decode("utf-8"))  # type: ignore[attr-defined]
+                final_response_json = await asyncio.to_thread(self._invoke_endpoint, request)
                 logger.info("response=<%s>", json.dumps(final_response_json, indent=2))
 
                 # Obtain the key elements from the response
@@ -566,10 +589,8 @@ class SageMakerAIModel(OpenAIModel):
                 # Message close
                 yield self.format_chunk({"chunk_type": "message_stop", "data": message_stop_reason})
                 # Handle usage metadata
-                if final_response_json.get("usage"):
-                    yield self.format_chunk(
-                        {"chunk_type": "metadata", "data": UsageMetadata(**final_response_json.get("usage"))}
-                    )
+                if usage := final_response_json.get("usage"):
+                    yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
         except (
             self.client.exceptions.InternalFailure,
             self.client.exceptions.ServiceUnavailable,
@@ -680,8 +701,7 @@ class SageMakerAIModel(OpenAIModel):
 
         try:
             # Use non-streaming mode for structured output
-            response = self.client.invoke_endpoint(**request)
-            final_response_json = json.loads(response["Body"].read().decode("utf-8"))
+            final_response_json = await asyncio.to_thread(self._invoke_endpoint, request)
 
             # Extract the structured content
             message = final_response_json["choices"][0]["message"]
