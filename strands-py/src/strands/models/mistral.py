@@ -206,11 +206,15 @@ class MistralModel(Model):
             "type": "function",
         }
 
-    def _format_request_tool_message(self, tool_result: ToolResult) -> dict[str, Any]:
+    def _format_request_tool_message(
+        self, tool_result: ToolResult, tool_use_id_to_name: dict[str, str]
+    ) -> dict[str, Any]:
         """Format a Mistral tool message.
 
         Args:
             tool_result: Tool result collected from a tool execution.
+            tool_use_id_to_name: Mapping of tool use id to tool name. An id missing from the map falls back to
+                the id itself.
 
         Returns:
             Mistral formatted tool message.
@@ -222,13 +226,12 @@ class MistralModel(Model):
             elif "text" in content:
                 content_parts.append(content["text"])
 
+        tool_use_id = tool_result["toolUseId"]
         return {
             "role": "tool",
-            "name": tool_result["toolUseId"].split("_")[0]
-            if "_" in tool_result["toolUseId"]
-            else tool_result["toolUseId"],
+            "name": tool_use_id_to_name.get(tool_use_id, tool_use_id),
             "content": "\n".join(content_parts),
-            "tool_call_id": tool_result["toolUseId"],
+            "tool_call_id": tool_use_id,
         }
 
     def _format_request_messages(self, messages: Messages, system_prompt: str | None = None) -> list[dict[str, Any]]:
@@ -242,6 +245,8 @@ class MistralModel(Model):
             A Mistral compatible messages array.
         """
         formatted_messages: list[dict[str, Any]] = []
+        # Tool results omit the function name; Mistral tool messages require it.
+        tool_use_id_to_name: dict[str, str] = {}
 
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
@@ -267,9 +272,11 @@ class MistralModel(Model):
                 if "text" in content or "image" in content:
                     message_contents.append(self._format_request_message_content(content))
                 elif "toolUse" in content:
-                    tool_calls.append(self._format_request_message_tool_call(content["toolUse"]))
+                    tool_use = content["toolUse"]
+                    tool_use_id_to_name[tool_use["toolUseId"]] = tool_use["name"]
+                    tool_calls.append(self._format_request_message_tool_call(tool_use))
                 elif "toolResult" in content:
-                    tool_messages.append(self._format_request_tool_message(content["toolResult"]))
+                    tool_messages.append(self._format_request_tool_message(content["toolResult"], tool_use_id_to_name))
 
             if message_contents or tool_calls:
                 message_content: str | list[dict[str, Any]]
