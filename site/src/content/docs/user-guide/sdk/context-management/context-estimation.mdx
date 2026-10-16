@@ -6,6 +6,8 @@ tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
   - path: strands-ts/src/models/model.ts
+  - path: strands-py/src/strands/models/_defaults.py
+  - path: strands-ts/src/models/defaults.ts
 addedDate: 2026-09-14
 ---
 
@@ -17,12 +19,14 @@ The SDK estimates how much of the model's context window is in use so it can tri
 
 ## Context window limit
 
-The threshold check requires the model's context window size. The SDK auto-populates <Syntax py="context_window_limit" ts="contextWindowLimit" /> from built-in lookup tables for known models.
+The threshold check requires the model's context window size. The SDK auto-populates <Syntax py="context_window_limit" ts="contextWindowLimit" /> from built-in lookup tables for known models. The SDK matches the base model ID, and strips region and provider prefixes such as `global.` and `openai.` before the lookup.
+
+**The lookup tables are best effort.** They can lag a provider release, and they do not cover private or fine-tuned models. Set <Syntax py="context_window_limit" ts="contextWindowLimit" /> explicitly for any production workload. An explicit value always takes precedence over the tables, and it pins the behavior across SDK upgrades.
 
 <Tabs>
 <Tab label="Python">
 
-Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_defaults.py):
+Set it explicitly, or override the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_defaults.py):
 
 ```python
 model = BedrockModel(
@@ -33,7 +37,7 @@ model = BedrockModel(
 </Tab>
 <Tab label="TypeScript">
 
-Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/defaults.ts):
+Set it explicitly, or override the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/defaults.ts):
 
 ```typescript
 --8<-- "user-guide/sdk/context-management/context-estimation_imports.ts:context_window_limit_imports"
@@ -44,7 +48,9 @@ Override it manually for models not in the [lookup table](https://github.com/str
 </Tabs>
 
 :::caution[Inaccurate compression with default fallback]
-If <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the model ID is not in the built-in lookup table, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
+The SDK can use a default limit of 200,000 tokens. This occurs when <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the SDK cannot match the model ID to the lookup table. The SDK then emits a warning that names the model ID.
+
+A wrong limit makes every utilization figure wrong. Compression can then start far earlier than you expect, on a fraction of the real context window. Repeated compression changes the start of the prompt, which also prevents prompt-cache reuse and raises cost. Set the limit explicitly to prevent this.
 :::
 
 ## Token estimation
