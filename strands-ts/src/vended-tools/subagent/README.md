@@ -59,7 +59,7 @@ The default tool, produced by `makeSubagent()`: the `generalist` preset, free-fo
 
 Throws if `name` or `description` is empty, `maxDepth` is not a positive integer, `defaultPreset` is not one of `presets`, a `context` mode is not `'none'`, `'all'`, or `'no_tools'`, or a `tools` / `mcpServers` `Choice` has no options or is not `multiple`.
 
-The default builder gives each child the parent's model, tools, and MCP servers (narrowed by the resolved spec), sandbox, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the child's model is stateful. The parent's context-manager tools (such as `retrieve_context`) are not inherited; the child's own context manager provides them.
+The default builder gives each child the parent's model, tools, and MCP servers (narrowed by the resolved spec), sandbox, interventions, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the child's model is stateful. The parent's context-manager tools (such as `retrieve_context`) are not inherited; the child's own context manager provides them.
 
 ### Input
 

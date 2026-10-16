@@ -3,6 +3,8 @@
 import pytest
 
 from strands import Agent
+from strands.interventions.actions import Deny
+from strands.interventions.handler import InterventionHandler
 from strands.multiagent.spec import (
     _UNSET,
     AgentSpec,
@@ -270,3 +272,45 @@ def test_default_builder_propagates_callback_handler(handler):
     parent = Agent(callback_handler=handler)
     child = _default_builder(parent)(AgentSpec())
     assert child.callback_handler is parent.callback_handler
+
+
+class _DenyToolCalls(InterventionHandler):
+    name = "deny-tool-calls"
+
+    def before_tool_call(self, event):
+        return Deny(reason="not authorized")
+
+
+def test_default_builder_propagates_interventions():
+    """The child shares the parent's intervention handler instances."""
+    handler = _DenyToolCalls()
+    parent = Agent(interventions=[handler])
+    child = _default_builder(parent)(AgentSpec())
+    assert child._intervention_registry.handlers == [handler]
+
+
+def test_default_builder_child_tool_calls_go_through_parent_interventions():
+    """A tool the child inherits is gated by the parent's interventions when the child's model calls it."""
+    calls = []
+
+    @tool
+    def danger_tool() -> str:
+        """Do something that requires authorization."""
+        calls.append("called")
+        return "done"
+
+    child_model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": "danger_tool", "input": {}}}],
+            },
+            {"role": "assistant", "content": [{"text": "finished"}]},
+        ]
+    )
+    parent = Agent(tools=[danger_tool], interventions=[_DenyToolCalls()])
+    child = _default_builder(parent)(AgentSpec(model=child_model))
+
+    child("run danger_tool")
+
+    assert calls == []

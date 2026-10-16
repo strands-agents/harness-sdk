@@ -259,12 +259,14 @@ def _resolve_spec(
 
 
 def _default_builder(parent: Agent) -> AgentBuilder:
-    """A builder that creates an Agent inheriting the parent's model, tools, and MCP servers.
+    """A builder that creates an Agent inheriting the parent's model, tools, MCP servers, and interventions.
 
     Used by the vended multi-agent tools when no custom builder is supplied.
     Resolves ``spec.tools`` against the parent's tool registry and ``spec.mcp_servers``
     against the parent's MCP clients (by ``client_name``). Memory tools are also
-    inherited through the tools axis.
+    inherited through the tools axis. The child shares the parent's intervention handler
+    instances, so tool calls made by the child are subject to the same approval and
+    authorization checks as the parent's.
     """
 
     def build(spec: AgentSpec) -> Agent:
@@ -315,6 +317,7 @@ def _default_builder(parent: Agent) -> AgentBuilder:
             sandbox=parent.sandbox if parent else None,
             callback_handler=parent.callback_handler if parent else None,
             trace_attributes=parent.trace_attributes if parent else None,
+            interventions=parent._intervention_registry.handlers if parent else None,
         )
 
     return build

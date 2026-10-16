@@ -26,6 +26,7 @@ import type { Sandbox } from '../sandbox/base.js'
 import type { Printer } from '../agent/printer.js'
 import type { Tracer } from '../telemetry/tracer.js'
 import type { AttributeValue } from '@opentelemetry/api'
+import type { InterventionRegistry } from '../interventions/registry.js'
 
 /** Turns a resolved spec into a child agent, built the way the parent was. */
 export type AgentBuilder = (spec: AgentSpec) => Agent
@@ -363,14 +364,16 @@ export function _resolveSpec(modelInput: Record<string, unknown>, axes: ResolveS
 }
 
 /**
- * Creates a builder that produces child agents inheriting the parent's model, tools, and
- * MCP servers.
+ * Creates a builder that produces child agents inheriting the parent's model, tools, MCP
+ * servers, and interventions.
  *
  * Used by the vended multi-agent tools when no custom builder is supplied.
  * Resolves `spec.tools` against the parent's tool registry and `spec.mcpServers`
  * against the parent's MCP clients (by `clientName`), skipping (with a warning) names the
  * parent does not own. Children also inherit the parent's sandbox, printer setting, and trace
- * attributes, and get `contextManager: 'auto'` unless their model is stateful.
+ * attributes, and get `contextManager: 'auto'` unless their model is stateful. Children share
+ * the parent's intervention handler instances, so tool calls made by a child are subject to
+ * the same approval and authorization checks as the parent's.
  *
  * @param parent - The parent agent whose resources child agents inherit.
  * @returns An {@link AgentBuilder} that creates configured child agents from a spec.
@@ -431,6 +434,8 @@ export function _defaultBuilder(parent: Agent): AgentBuilder {
     const printer = (parent as unknown as { _printer?: Printer })._printer
     const tracer = (parent as unknown as { _tracer: Tracer })._tracer
     const traceAttributes = (tracer as unknown as { _traceAttributes: Record<string, AttributeValue> })._traceAttributes
+    const interventionRegistry = (parent as unknown as { _interventionRegistry: InterventionRegistry })
+      ._interventionRegistry
     return new Agent({
       systemPrompt: spec.instructions ?? '',
       tools: childTools,
@@ -440,6 +445,7 @@ export function _defaultBuilder(parent: Agent): AgentBuilder {
       ...(sandbox !== undefined && { sandbox }),
       printer: printer !== undefined,
       traceAttributes: { ...traceAttributes },
+      interventions: [...interventionRegistry.handlers],
     })
   }
 }

@@ -902,9 +902,9 @@ Some vended tools let the model configure child agents at runtime. Axis policies
 
 Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`.
 
-Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent's tools, model, and MCP servers. Each child gets <Syntax py='context_manager="auto"' ts="contextManager: 'auto'" /> (unless its model is stateful) in place of the parent's context-management tools, and accesses the parent's long-term memory through inherited memory tools.
+Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent's tools, model, MCP servers, and interventions, so a child's tool calls go through the same approval and authorization checks as the parent's. Each child gets <Syntax py='context_manager="auto"' ts="contextManager: 'auto'" /> (unless its model is stateful) in place of the parent's context-management tools, and accesses the parent's long-term memory through inherited memory tools.
 
-To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`.
+To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`. A custom builder decides everything the child inherits, including interventions.
 
 ---
 

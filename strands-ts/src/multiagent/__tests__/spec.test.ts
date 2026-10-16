@@ -19,6 +19,8 @@ import { logger } from '../../logging/logger.js'
 import type { Sandbox } from '../../sandbox/base.js'
 import { McpClient } from '../../mcp/client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
+import { InterventionHandler } from '../../interventions/handler.js'
+import type { InterventionAction } from '../../interventions/actions.js'
 
 const AXES: ResolveSpecAxes = {
   presets: {},
@@ -269,4 +271,40 @@ describe('_defaultBuilder', () => {
       expect(internals._printer !== undefined).toBe(printer)
     }
   )
+
+  class DenyToolCalls extends InterventionHandler {
+    readonly name = 'deny-tool-calls'
+
+    override beforeToolCall(): InterventionAction {
+      return { type: 'deny', reason: 'not authorized' }
+    }
+  }
+
+  it("shares the parent's intervention handler instances", () => {
+    const handler = new DenyToolCalls()
+    const parent = new Agent({ model, printer: false, interventions: [handler] })
+
+    const child = _defaultBuilder(parent)(new AgentSpec({}))
+
+    const internals = child as unknown as { _interventionRegistry: { handlers: readonly InterventionHandler[] } }
+    expect(internals._interventionRegistry.handlers).toEqual([handler])
+  })
+
+  it("gates an inherited tool with the parent's interventions when the child's model calls it", async () => {
+    const dangerTool = vi.fn(() => 'done')
+    const childModel = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'dangerTool', toolUseId: 't1', input: {} })
+      .addTurn({ type: 'textBlock', text: 'finished' })
+    const parent = new Agent({
+      model,
+      printer: false,
+      tools: [createMockTool('dangerTool', dangerTool)],
+      interventions: [new DenyToolCalls()],
+    })
+
+    const child = _defaultBuilder(parent)(new AgentSpec({ model: childModel }))
+    await child.invoke('run dangerTool')
+
+    expect(dangerTool).not.toHaveBeenCalled()
+  })
 })
