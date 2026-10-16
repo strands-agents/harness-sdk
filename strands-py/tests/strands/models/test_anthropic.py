@@ -1176,6 +1176,35 @@ def test_format_request_filters_s3_source_image(model, model_id, max_tokens, cap
     assert "Location sources are not supported by Anthropic" in caplog.text
 
 
+def test_format_request_formats_url_source_image(model, model_id, max_tokens):
+    """Test that images with a url location source are passed through as Anthropic url sources."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {  # type: ignore[typeddict-item]
+                    "image": {
+                        "format": "png",
+                        "source": {"location": {"type": "url", "uri": "https://example.com/image.png"}},
+                    },
+                },
+            ],
+        },
+    ]
+
+    tru_request = model.format_request(messages)
+
+    exp_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "url", "url": "https://example.com/image.png"}},
+            ],
+        },
+    ]
+    assert tru_request["messages"] == exp_messages
+
+
 def test_format_request_filters_location_source_document(model, model_id, max_tokens, caplog):
     """Test that documents with Location sources are filtered out with warning."""
     caplog.set_level(logging.WARNING, logger="strands.models.anthropic")

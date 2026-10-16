@@ -45,7 +45,24 @@ class S3Location(Location, total=False):
     bucketOwner: str
 
 
-SourceLocation: TypeAlias = Location | S3Location
+class UrlLocation(Location, total=False):
+    """A location for media hosted at an HTTP(S) URL.
+
+    Used by providers that accept media URLs (e.g. Anthropic, OpenAI) instead of raw bytes.
+    Providers that only accept bytes (e.g. Bedrock) skip content blocks with this location.
+
+    Attributes:
+        type: url
+        uri: An http(s) URL pointing to the media. Required.
+    """
+
+    # mypy doesn't like overriding this field since its a subclass, but since its just a literal string, this is fine.
+
+    type: Literal["url"]  # type: ignore[misc]
+    uri: Required[str]
+
+
+SourceLocation: TypeAlias = Location | S3Location | UrlLocation
 
 
 AudioFormat = Literal[

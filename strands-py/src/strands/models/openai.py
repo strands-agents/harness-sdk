@@ -26,7 +26,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
-from ._validation import _has_location_source, validate_config_keys
+from ._validation import _get_image_url, _has_location_source, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -187,6 +187,17 @@ class OpenAIModel(Model):
 
         if "image" in content:
             mime_type = mimetypes.types_map.get(f".{content['image']['format']}", "application/octet-stream")
+
+            if image_url := _get_image_url(content):
+                return {
+                    "image_url": {
+                        "detail": "auto",
+                        "format": mime_type,
+                        "url": image_url,
+                    },
+                    "type": "image_url",
+                }
+
             image_data = base64.b64encode(content["image"]["source"]["bytes"]).decode("utf-8")
 
             return {
@@ -417,7 +428,7 @@ class OpenAIModel(Model):
             for content in contents:
                 if any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"]):
                     continue
-                if _has_location_source(content):
+                if _has_location_source(content) and _get_image_url(content) is None:
                     logger.warning("Location sources are not supported by OpenAI | skipping content block")
                     continue
                 if "cachePoint" in content:

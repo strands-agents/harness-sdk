@@ -145,3 +145,24 @@ def _has_location_source(content: ContentBlock) -> bool:
     if "video" in content:
         return "location" in content["video"].get("source", {})
     return False
+
+
+def _get_image_url(content: ContentBlock) -> str | None:
+    """Return the URL of an image location source, if the block carries one.
+
+    Providers that accept image URLs (e.g. Anthropic, OpenAI) can use this to format a
+    URL-based image block instead of dropping it.
+
+    Args:
+        content: Content block to check.
+
+    Returns:
+        The URL of the image location source, or None if the block does not contain one.
+    """
+    if "image" in content:
+        location = content["image"].get("source", {}).get("location")
+        if isinstance(location, dict) and location.get("type") == "url":
+            uri = location.get("uri")
+            if isinstance(uri, str):
+                return uri
+    return None
