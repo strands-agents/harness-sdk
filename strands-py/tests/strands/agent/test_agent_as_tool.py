@@ -13,7 +13,15 @@ from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.interrupt import Interrupt, _InterruptState
 from strands.session.file_session_manager import FileSessionManager
 from strands.telemetry.metrics import EventLoopMetrics
-from strands.types._events import AgentAsToolStreamEvent, ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
+from strands.types._events import (
+    AgentAsToolStreamEvent,
+    TextStreamEvent,
+    ToolInterruptEvent,
+    ToolResultEvent,
+    ToolStreamEvent,
+    ToolUseStreamEvent,
+)
+from strands.types.tools import ToolContext
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -235,6 +243,145 @@ async def test_stream_forwards_intermediate_events(tool, mock_agent, tool_use, a
     assert stream_events[1]["tool_stream_event"]["data"]["data"] == "more"
     assert stream_events[0].agent_as_tool is tool
     assert stream_events[0].tool_use_id == "tool-123"
+
+
+@pytest.mark.asyncio
+async def test_background_child_accepts_messages_while_streaming(tool, mock_agent, tool_use, agent_result):
+    mock_agent.stream_async.return_value = _mock_stream_async(agent_result, [{"data": "working"}])
+    tool_context = MagicMock()
+    unregister = MagicMock()
+    tool_context.on_message.return_value = unregister
+
+    stream = tool.stream(tool_use, {}, _tool_context=tool_context)
+    await anext(stream)
+    handler = tool_context.on_message.call_args.args[0]
+    handler("Please check the new constraint")
+    mock_agent.send.assert_called_once_with("Please check the new constraint")
+
+    async for _ in stream:
+        pass
+    unregister.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_background_child_reports_tool_and_text_progress(tool, mock_agent, tool_use, agent_result):
+    intermediate = [
+        ToolUseStreamEvent({"toolUse": {"input": ""}}, {"name": "lookup"}).as_dict(),
+        TextStreamEvent({"text": "found "}, "found ").as_dict(),
+        TextStreamEvent({"text": "answer"}, "answer").as_dict(),
+    ]
+    mock_agent.stream_async.return_value = _mock_stream_async(agent_result, intermediate)
+    report_progress = MagicMock()
+    report_activity = MagicMock()
+    tool_context = ToolContext(
+        tool_use=tool_use,
+        agent=mock_agent,
+        invocation_state={},
+        _progress_reporter=report_progress,
+        _activity_reporter=report_activity,
+    )
+
+    events = [event async for event in tool.stream(tool_use, {}, _tool_context=tool_context)]
+
+    assert len([event for event in events if isinstance(event, AgentAsToolStreamEvent)]) == 3
+    assert [call.args for call in report_activity.call_args_list] == [("lookup: requested", "tool_request")]
+    assert [call.args[0] for call in report_progress.call_args_list] == [
+        "lookup: found ",
+        "lookup: found answer",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_background_child_attributes_parallel_tool_results_by_id(tool, mock_agent, tool_use, agent_result):
+    intermediate = [
+        ToolUseStreamEvent({"toolUse": {"input": ""}}, {"name": "first", "toolUseId": "a"}).as_dict(),
+        ToolUseStreamEvent({"toolUse": {"input": ""}}, {"name": "second", "toolUseId": "b"}).as_dict(),
+        ToolResultEvent({"toolUseId": "a", "status": "success", "content": []}).as_dict(),
+        ToolResultEvent({"toolUseId": "b", "status": "error", "content": []}).as_dict(),
+    ]
+    mock_agent.stream_async.return_value = _mock_stream_async(agent_result, intermediate)
+    report_progress = MagicMock()
+    report_activity = MagicMock()
+    tool_context = ToolContext(
+        tool_use=tool_use,
+        agent=mock_agent,
+        invocation_state={},
+        _progress_reporter=report_progress,
+        _activity_reporter=report_activity,
+    )
+
+    async for _ in tool.stream(tool_use, {}, _tool_context=tool_context):
+        pass
+
+    assert [call.args for call in report_activity.call_args_list] == [
+        ("first: requested", "tool_request"),
+        ("second: requested", "tool_request"),
+        ("first: result (success)", "tool_result"),
+        ("second: result (error)", "tool_result"),
+    ]
+    report_progress.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_background_child_reports_tool_activity_as_progress_without_typed_callback(
+    tool, mock_agent, tool_use, agent_result
+):
+    intermediate = [
+        ToolUseStreamEvent({"toolUse": {"input": ""}}, {"name": "lookup", "toolUseId": "lookup-use"}).as_dict(),
+        ToolResultEvent({"toolUseId": "lookup-use", "status": "success", "content": []}).as_dict(),
+    ]
+    mock_agent.stream_async.return_value = _mock_stream_async(agent_result, intermediate)
+    report_progress = MagicMock()
+    tool_context = ToolContext(
+        tool_use=tool_use,
+        agent=mock_agent,
+        invocation_state={},
+        _progress_reporter=report_progress,
+    )
+
+    async for _ in tool.stream(tool_use, {}, _tool_context=tool_context):
+        pass
+
+    assert [call.args[0] for call in report_progress.call_args_list] == [
+        "lookup: requested",
+        "lookup: result (success)",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_child_discards_message_arriving_during_final_response():
+    sent = False
+
+    def on_event(**event):
+        nonlocal sent
+        if event.get("data") == "first" and not sent:
+            child.send("stale instruction")
+            sent = True
+
+    child = Agent(
+        model=MockedModelProvider(
+            [
+                {"role": "assistant", "content": [{"text": "first"}]},
+                {"role": "assistant", "content": [{"text": "second"}]},
+            ]
+        ),
+        callback_handler=on_event,
+    )
+    child_tool = child.as_tool(name="child")
+    tool_use = {"toolUseId": "first-use", "name": "child", "input": {"input": "first request"}}
+
+    async for _ in child_tool.stream(tool_use, {}):
+        pass
+    assert child._inbox.has_messages()
+
+    tool_use["toolUseId"] = "second-use"
+    tool_use["input"] = {"input": "second request"}
+    async for _ in child_tool.stream(tool_use, {}):
+        pass
+
+    assert not child._inbox.has_messages()
+    assert child.messages[0]["content"] == [{"text": "second request"}]
+    assert all("stale instruction" not in str(message) for message in child.messages)
 
 
 @pytest.mark.asyncio

@@ -104,6 +104,7 @@ from ..types.traces import AttributeValue
 from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
+from ._inbox import _AgentInbox
 from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
@@ -521,6 +522,8 @@ class Agent(AgentBase, LocalAgent):
         self._model_state: dict[str, Any] = {}
 
         self._concurrency = _ConcurrencyController(concurrent_invocation_mode)
+        self._inbox = _AgentInbox()
+        self.hooks.add_callback(BeforeModelCallEvent, self._queue_inbox_for_model, order=HookOrder.SDK_LAST)
 
         if (
             retry_strategy is not None
@@ -625,6 +628,40 @@ class Agent(AgentBase, LocalAgent):
         if isinstance(memory_manager, dict):
             return MemoryManager(**memory_manager)
         raise ValueError("memory_manager must be a MemoryManager or MemoryManagerConfig")
+
+    def send(self, message: str | list[ContentBlock]) -> None:
+        """Queue a user message for the next model call.
+
+        This method can be called from any thread or event loop, including while the
+        agent is invoking. Queued messages enter conversation history in FIFO order
+        immediately before a model call and emit ``MessageAddedEvent`` at that point.
+        Ready background task results enter history before queued messages at that boundary.
+        An idle agent receives them on its next invocation. Sending does not start an
+        invocation, and messages not yet delivered are not saved in snapshots or sessions.
+
+        Args:
+            message: Text or a nonempty list of content blocks to send.
+
+        Raises:
+            TypeError: If the value is neither text nor a list of content blocks.
+            ValueError: If the content block list is empty or contains tool protocol blocks.
+        """
+        if isinstance(message, str):
+            content: list[ContentBlock] = [{"text": message}]
+        elif isinstance(message, list):
+            if not message:
+                raise ValueError("message content blocks must not be empty")
+            if not all(
+                isinstance(block, dict) and any(key in ContentBlock.__annotations__ for key in block)
+                for block in message
+            ):
+                raise TypeError("message must contain content blocks")
+            if any("toolUse" in block or "toolResult" in block for block in message):
+                raise ValueError("send accepts user content, not tool-use or tool-result blocks")
+            content = copy.deepcopy(message)
+        else:
+            raise TypeError("message must be a string or list of content blocks")
+        self._inbox.put({"role": "user", "content": content})
 
     def cancel(self) -> None:
         """Cancel the currently running agent invocation.
@@ -1983,6 +2020,21 @@ class Agent(AgentBase, LocalAgent):
             self.messages.append(message)
             await self.hooks.invoke_callbacks_async(MessageAddedEvent(agent=self, message=message))
 
+    def _queue_inbox_for_model(self, event: BeforeModelCallEvent) -> None:
+        """Contribute queued messages after other before-model continuations."""
+        if event.cancel or self._observe_cancellation():
+            return
+        messages = self._inbox.snapshot()
+        if messages:
+            _continuation.add_input(
+                event,
+                _continuation._ContinuationInput(
+                    args=list(messages),
+                    on_appended=lambda: self._inbox.remove_snapshot(messages),
+                    merge_adjacent=False,
+                ),
+            )
+
     async def _append_continuation_messages(
         self,
         messages: Messages,
@@ -1991,7 +2043,11 @@ class Agent(AgentBase, LocalAgent):
         added_messages: Messages = []
         for message in messages:
             last_message = self.messages[-1] if self.messages else None
-            if last_message is None or last_message["role"] != message["role"]:
+            if (
+                last_message is None
+                or last_message["role"] != message["role"]
+                or not _continuation.should_merge(continuation_event, message)
+            ):
                 _ensure_tracking_id(message)
                 self.messages.append(message)
                 added_messages.append(message)
@@ -2093,6 +2149,7 @@ class Agent(AgentBase, LocalAgent):
             self._model_state = copy.deepcopy(data["model_state"])
         if self._background_tasks is not None and "state" in data:
             self._background_tasks.load_state()
+        self._inbox.clear()
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

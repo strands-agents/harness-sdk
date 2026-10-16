@@ -19,12 +19,21 @@ from .media import DocumentContent, ImageContent
 
 if TYPE_CHECKING:
     from .agent import LocalAgent
+    from .content import ContentBlock
 
 JSONSchema = dict
 """Type alias for JSON Schema dictionaries."""
 
 _LocalAgentT = TypeVar("_LocalAgentT", bound="LocalAgent", default=Any)
 """Local agent type exposed through ToolContext."""
+
+
+class _ToolMessageHandler(Protocol):
+    """Handler for messages sent to a running background tool."""
+
+    def __call__(self, message: "str | list[ContentBlock]", **kwargs: Any) -> None | Awaitable[None]:
+        """Accept a message from the parent agent."""
+        ...
 
 
 class ToolSpec(TypedDict):
@@ -205,6 +214,65 @@ class ToolContext(_Interruptible, Generic[_LocalAgentT]):
     # invoking agent's signal. Kept out of repr and equality: an Event carries no useful text
     # and compares by identity.
     cancel_signal: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
+    _progress_reporter: Callable[[str], None] | None = field(default=None, repr=False, compare=False)
+    _activity_reporter: Callable[[str, Literal["tool_request", "tool_result"]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _message_registrar: Callable[[_ToolMessageHandler], Callable[[], None]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _message_drain_waiter: Callable[[], Awaitable[None]] | None = field(default=None, repr=False, compare=False)
+
+    def report_progress(self, text: str) -> None:
+        """Report a short progress update for a background tool.
+
+        Foreground calls have no task snapshot and ignore progress.
+
+        Args:
+            text: Progress text. The task snapshot retains only a bounded excerpt of the latest update.
+
+        Raises:
+            TypeError: If text is not a string.
+        """
+        if not isinstance(text, str):
+            raise TypeError("Progress text must be a string")
+        if self._progress_reporter is not None:
+            self._progress_reporter(text)
+
+    def _report_tool_activity(self, text: str, activity_type: Literal["tool_request", "tool_result"]) -> None:
+        if self._activity_reporter is not None:
+            self._activity_reporter(text, activity_type)
+        else:
+            self.report_progress(text)
+
+    def on_message(self, handler: _ToolMessageHandler) -> Callable[[], None]:
+        """Accept messages while this background tool is running.
+
+        Messages queued while the task waits to start are replayed in order when a handler registers.
+        Synchronous handlers receive that backlog before this method returns. Asynchronous handlers
+        start replay on the next event loop turn, and the task waits for an active replay before it
+        finishes. A later registration replaces the previous handler. Call the returned function when
+        the handler is no longer available. Foreground calls return an inert unregister function.
+
+        Args:
+            handler: Synchronous or asynchronous message handler.
+
+        Returns:
+            An idempotent function that unregisters this handler.
+
+        Raises:
+            TypeError: If handler is not callable.
+        """
+        if not callable(handler):
+            raise TypeError("Message handler must be callable")
+        if self._message_registrar is not None:
+            return self._message_registrar(handler)
+        return lambda: None
+
+    async def _wait_for_message_drain(self) -> None:
+        """Wait until messages accepted before handler registration have been delivered."""
+        if self._message_drain_waiter is not None:
+            await self._message_drain_waiter()
 
     def _interrupt_id(self, name: str) -> str:
         """Unique id for the interrupt.

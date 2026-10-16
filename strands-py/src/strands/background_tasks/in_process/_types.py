@@ -9,7 +9,12 @@ from typing import Any, Literal, TypeAlias
 
 from typing_extensions import NotRequired, TypedDict
 
-from strands.background_tasks._types import BackgroundTaskError, BackgroundTaskStatus
+from strands.background_tasks._types import (
+    BackgroundTaskError,
+    BackgroundTaskProgress,
+    BackgroundTaskStatus,
+    UndeliveredBackgroundMessages,
+)
 from strands.types.tools import ToolResult
 
 InterruptStateData: TypeAlias = dict[str, Any]
@@ -28,6 +33,8 @@ class InProcessTaskRecord(TypedDict):
     state: NotRequired[InterruptStateData]
     result: NotRequired[ToolResult]
     failure: NotRequired[BackgroundTaskError]
+    progress: NotRequired[BackgroundTaskProgress]
+    undelivered_messages: NotRequired[UndeliveredBackgroundMessages]
 
 
 class CancelSignal(threading.Event):

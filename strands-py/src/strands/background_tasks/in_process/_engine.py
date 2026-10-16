@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import copy
 import math
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
+from typing import Literal
 from uuid import uuid4
 
 from strands.background_tasks._errors import BackgroundTaskNotFoundError
 from strands.background_tasks._types import is_task_status_terminal
 
+from ._activity import BackgroundTaskActivityEvent, BackgroundTaskActivityHistory, BackgroundTaskActivityType
 from ._types import (
     CancelSignal,
     CompletedTaskExecutionOutcome,
@@ -25,6 +28,8 @@ from ._types import (
 )
 
 _DEFAULT_EXECUTION_FAILURE_MESSAGE = "Background task execution failed"
+_MAX_PROGRESS_LENGTH = 512
+_MAX_ACTIVITY_EVENTS = 100
 
 
 @dataclass
@@ -64,6 +69,7 @@ class InProcessTaskEngine:
         self._execute_callback = execute
         self._on_task_updated = on_task_updated
         self._tasks: dict[str, InProcessTaskRecord] = {}
+        self._activity: dict[str, deque[BackgroundTaskActivityEvent]] = {}
         self._queue: dict[str, None] = {}
         self._active_executions: dict[str, _ActiveExecution] = {}
         self._idle_waiters: set[asyncio.Future[None]] = set()
@@ -82,6 +88,8 @@ class InProcessTaskEngine:
             last_updated_at=now,
         )
         self._tasks[stored["task_id"]] = stored
+        self._activity[stored["task_id"]] = deque(maxlen=_MAX_ACTIVITY_EVENTS)
+        self._append_activity(stored["task_id"], "lifecycle", "queued", timestamp=now)
         self._notify_task_updated(stored)
         self._schedule_task(stored["task_id"])
         return copy.deepcopy(stored)
@@ -95,12 +103,68 @@ class InProcessTaskEngine:
         """Return all task snapshots."""
         return [copy.deepcopy(task) for task in self._tasks.values()]
 
+    def get_activity(self, task_id: str, *, after_sequence: int = 0) -> BackgroundTaskActivityHistory:
+        """Return retained events newer than a sequence cursor."""
+        self._require_task(task_id)
+        if isinstance(after_sequence, bool) or not isinstance(after_sequence, int) or after_sequence < 0:
+            raise ValueError("after_sequence must be a nonnegative integer")
+        events = self._activity[task_id]
+        first_sequence = events[0]["sequence"]
+        last_sequence = events[-1]["sequence"]
+        if after_sequence > last_sequence:
+            raise ValueError("after_sequence cannot exceed the last activity sequence")
+        return {
+            "events": copy.deepcopy([event for event in events if event["sequence"] > after_sequence]),
+            "first_available_sequence": first_sequence,
+            "last_sequence": last_sequence,
+            "truncated": after_sequence < first_sequence - 1,
+        }
+
+    def report_progress(
+        self, task_id: str, text: str, *, activity_type: BackgroundTaskActivityType = "progress"
+    ) -> None:
+        """Store the latest bounded progress update while a task is working."""
+        if activity_type not in ("progress", "tool_request", "tool_result"):
+            raise ValueError("activity_type must be progress, tool_request, or tool_result")
+        if task_id not in self._tasks:
+            return
+
+        def update(record: InProcessTaskRecord) -> bool:
+            if record["status"] != "working":
+                return False
+            previous = record.get("progress")
+            record["progress"] = {
+                "message": text[-_MAX_PROGRESS_LENGTH:],
+                "update_count": previous["update_count"] + 1 if previous is not None else 1,
+                "updated_at": _timestamp(),
+            }
+            return True
+
+        task = self._update_task(task_id, update)
+        if task is not None:
+            progress = task["progress"]
+            self._append_activity(task_id, activity_type, progress["message"], timestamp=progress["updated_at"])
+
+    def record_undelivered_messages(
+        self, task_id: str, count: int, reason: Literal["completed", "failed", "cancelled"]
+    ) -> None:
+        """Record the number of queued messages discarded at task settlement."""
+        if count <= 0:
+            return
+
+        def update(record: InProcessTaskRecord) -> bool:
+            record["undelivered_messages"] = {"count": count, "reason": reason}
+            return True
+
+        self._update_task(task_id, update)
+
     def remove(self, task_id: str) -> None:
         """Remove a terminal task."""
         task = self._require_task(task_id)
         if not is_task_status_terminal(task["status"]):
             raise RuntimeError(f"Background task '{task_id}' cannot be removed before reaching a terminal status")
         del self._tasks[task_id]
+        del self._activity[task_id]
 
     def cancel(self, task_id: str, *, reason: str) -> InProcessTaskRecord:
         """Cancel a non-terminal task."""
@@ -288,8 +352,24 @@ class InProcessTaskEngine:
         next_task["last_updated_at"] = _timestamp()
         stored = copy.deepcopy(next_task)
         self._tasks[task_id] = stored
+        if stored["status"] != current["status"]:
+            self._append_activity(task_id, "lifecycle", stored["status"], timestamp=stored["last_updated_at"])
         self._notify_task_updated(stored)
         return copy.deepcopy(stored)
+
+    def _append_activity(
+        self, task_id: str, activity_type: BackgroundTaskActivityType, message: str, *, timestamp: str
+    ) -> None:
+        events = self._activity[task_id]
+        sequence = events[-1]["sequence"] + 1 if events else 1
+        events.append(
+            {
+                "sequence": sequence,
+                "timestamp": timestamp,
+                "type": activity_type,
+                "message": message[-_MAX_PROGRESS_LENGTH:],
+            }
+        )
 
     def _require_task(self, task_id: str) -> InProcessTaskRecord:
         task = self._tasks.get(task_id)

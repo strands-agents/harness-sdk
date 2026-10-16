@@ -46,6 +46,20 @@ async def test_wait_for_idle_cancels_observation_without_cancelling_work() -> No
 
 
 @pytest.mark.asyncio
+async def test_report_progress_ignores_removed_task() -> None:
+    async def execute(_: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
+        return {"status": "completed", "result": create_result("done")}
+
+    engine = create_engine(execute)
+    task = engine.submit(**create_admission("work"))
+    await engine.wait_for_idle()
+    engine.remove(task["task_id"])
+
+    engine.report_progress(task["task_id"], "late update")
+    assert engine.get(task["task_id"]) is None
+
+
+@pytest.mark.asyncio
 async def test_resume_updates_state_and_restarts_execution() -> None:
     async def execute(context: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
         if context.state is not None:

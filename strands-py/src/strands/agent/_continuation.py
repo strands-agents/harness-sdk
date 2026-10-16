@@ -32,17 +32,20 @@ class _ContinuationInput:
         args: Input that normalizes to one or more complete messages.
         on_appended: Runs after the input is incorporated into agent history.
         on_abandoned: Runs when the input cannot be incorporated into agent history.
+        merge_adjacent: Whether messages may merge with preceding messages of the same role.
     """
 
     args: AgentInput
     on_appended: Callable[[], Awaitable[None] | None] | None = None
     on_abandoned: Callable[[object], Awaitable[None] | None] | None = None
+    merge_adjacent: bool = True
 
 
 @dataclass
 class _ContinuationState:
     inputs: list[_ContinuationInput] = field(default_factory=list)
     messages: Messages | None = None
+    nonmerging_message_ids: set[int] = field(default_factory=set)
 
 
 def add_input(event: _ContinuationEvent, input_: _ContinuationInput) -> None:
@@ -92,6 +95,7 @@ async def prepare(
     inputs = [*deferred_inputs, *_consume_inputs(event)]
     accepted_inputs: list[_ContinuationInput] = []
     messages: Messages = []
+    nonmerging_message_ids: set[int] = set()
     preparing_state = _ContinuationState(inputs=inputs)
     _set_state(event, preparing_state)
 
@@ -101,6 +105,8 @@ async def prepare(
             if not _is_complete_message_input(normalized):
                 raise TypeError("Continuation input must contain a complete message sequence")
             messages.extend(normalized)
+            if not input_.merge_adjacent:
+                nonmerging_message_ids.update(id(message) for message in normalized)
             accepted_inputs.append(input_)
         except Exception as error:
             preparing_state.inputs = [*accepted_inputs, *inputs[index + 1 :]]
@@ -110,8 +116,17 @@ async def prepare(
         _clear_state(event)
         return None
 
-    _set_state(event, _ContinuationState(inputs=accepted_inputs, messages=messages))
+    _set_state(
+        event,
+        _ContinuationState(inputs=accepted_inputs, messages=messages, nonmerging_message_ids=nonmerging_message_ids),
+    )
     return messages
+
+
+def should_merge(event: _ContinuationEvent, message: object) -> bool:
+    """Whether a prepared message may merge with the preceding history message."""
+    state = _get_state(event)
+    return state is None or id(message) not in state.nonmerging_message_ids
 
 
 def combine(event: _ContinuationEvent | None, messages: Messages) -> Messages:

@@ -466,3 +466,364 @@ async def test_wait_fails_interrupts_outside_the_tool_context() -> None:
         "error": {"type": "execution_error", "message": "Interrupt raised: approve_hook"},
     }
     assert tru_failed == exp_failed
+
+
+@pytest.mark.asyncio
+async def test_report_progress_keeps_latest_bounded_update() -> None:
+    reported = asyncio.Event()
+    release = asyncio.Event()
+
+    async def callback(_: dict[str, str], context: ToolContext) -> str:
+        context.report_progress("first")
+        context.report_progress("a" * 600)
+        reported.set()
+        await release.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "progress")
+    await reported.wait()
+
+    async def latest_progress() -> dict[str, Any]:
+        while True:
+            snapshot = await fixture.manager.get(admitted["task_id"])
+            assert snapshot is not None
+            if "progress" in snapshot and snapshot["progress"]["update_count"] == 2:
+                return snapshot
+            await asyncio.sleep(0)
+
+    working = await asyncio.wait_for(latest_progress(), timeout=2)
+    assert working["progress"] == {
+        "message": "a" * 512,
+        "update_count": 2,
+        "updated_at": ANY,
+    }
+    release.set()
+    completed = await fixture.manager.wait(admitted["task_id"])
+    assert completed["progress"] == working["progress"]
+
+
+@pytest.mark.asyncio
+async def test_message_runs_registered_handler_on_tool_loop_and_unregisters() -> None:
+    registered = asyncio.Event()
+    release = asyncio.Event()
+    received: list[str] = []
+    origin_loop = asyncio.get_running_loop()
+    unregister_handler: Callable[[], None] | None = None
+
+    async def callback(_: dict[str, str], context: ToolContext) -> str:
+        nonlocal unregister_handler
+
+        async def handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            assert asyncio.get_running_loop() is origin_loop
+            assert isinstance(message, str)
+            received.append(message)
+
+        unregister_handler = context.on_message(handler)
+        registered.set()
+        await release.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "message")
+    await registered.wait()
+    await fixture.manager.message(admitted["task_id"], "hello")
+    assert received == ["hello"]
+    assert unregister_handler is not None
+    unregister_handler()
+    unregister_handler()
+    with pytest.raises(RuntimeError, match="does not accept messages"):
+        await fixture.manager.message(admitted["task_id"], "later")
+    release.set()
+    await fixture.manager.wait(admitted["task_id"])
+    with pytest.raises(RuntimeError, match="cannot accept messages in status 'completed'"):
+        await fixture.manager.message(admitted["task_id"], "too late")
+
+
+@pytest.mark.asyncio
+async def test_message_rejects_working_task_without_handler() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def callback(_: dict[str, str], __: ToolContext) -> str:
+        started.set()
+        await release.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "unsupported")
+    await started.wait()
+    with pytest.raises(RuntimeError, match="does not accept messages"):
+        await fixture.manager.message(admitted["task_id"], "hello")
+    release.set()
+    await fixture.manager.wait(admitted["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_queued_messages_drain_before_a_short_async_tool_finishes() -> None:
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    received: list[str] = []
+
+    async def callback(input_data: dict[str, str], context: ToolContext) -> str:
+        if input_data["value"] == "first":
+            first_started.set()
+            await release_first.wait()
+            return "first done"
+
+        async def handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            await asyncio.sleep(0)
+            received.append(message if isinstance(message, str) else "content")
+
+        context.on_message(handler)
+        return "second done"
+
+    fixture = _create_fixture(callback, max_concurrency=1)
+    await _submit(fixture.manager, fixture.work, "first")
+    await first_started.wait()
+    second = await _submit(fixture.manager, fixture.work, "second")
+    assert await fixture.manager.message(second["task_id"], "queued") is True
+
+    release_first.set()
+    completed = await fixture.manager.wait(second["task_id"])
+    assert completed["status"] == "completed"
+    assert received == ["queued"]
+
+
+@pytest.mark.asyncio
+async def test_working_message_waits_for_replacement_drain_after_old_handler() -> None:
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    release_tool = asyncio.Event()
+    first_handler_started = asyncio.Event()
+    release_first_handler = asyncio.Event()
+    replacement_handler_started = asyncio.Event()
+    release_replacement_handler = asyncio.Event()
+    direct_message_received = asyncio.Event()
+    received: list[tuple[str, str]] = []
+    tool_context: ToolContext | None = None
+
+    async def callback(input_data: dict[str, str], context: ToolContext) -> str:
+        nonlocal tool_context
+        if input_data["value"] == "first":
+            first_started.set()
+            await release_first.wait()
+            return "first done"
+        tool_context = context
+
+        async def first_handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            received.append(("first", str(message)))
+            if message == "A":
+                first_handler_started.set()
+                await release_first_handler.wait()
+
+        context.on_message(first_handler)
+        second_started.set()
+        await release_tool.wait()
+        return "second done"
+
+    fixture = _create_fixture(callback, max_concurrency=1)
+    await _submit(fixture.manager, fixture.work, "first")
+    await first_started.wait()
+    second = await _submit(fixture.manager, fixture.work, "second")
+    assert await fixture.manager.message(second["task_id"], "A") is True
+    assert await fixture.manager.message(second["task_id"], "B") is True
+
+    release_first.set()
+    await second_started.wait()
+    await first_handler_started.wait()
+    working_message = asyncio.create_task(fixture.manager.message(second["task_id"], "M"))
+    await asyncio.sleep(0)
+    assert not working_message.done()
+    assert tool_context is not None
+
+    async def replacement_handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+        received.append(("replacement", str(message)))
+        if message == "B":
+            replacement_handler_started.set()
+            await release_replacement_handler.wait()
+        if message == "M":
+            direct_message_received.set()
+
+    tool_context.on_message(replacement_handler)
+    release_first_handler.set()
+    await replacement_handler_started.wait()
+    assert not working_message.done()
+    assert not direct_message_received.is_set()
+
+    release_replacement_handler.set()
+    await direct_message_received.wait()
+    await working_message
+    assert received == [("first", "A"), ("replacement", "B"), ("replacement", "M")]
+
+    release_tool.set()
+    await fixture.manager.wait(second["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_message_old_unregister_keeps_replacement_handler() -> None:
+    registered = asyncio.Event()
+    release = asyncio.Event()
+    received: list[str] = []
+
+    async def callback(_: dict[str, str], context: ToolContext) -> str:
+        def old_handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            received.append("old")
+
+        def new_handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            received.append("new")
+
+        old_unregister = context.on_message(old_handler)
+        context.on_message(new_handler)
+        old_unregister()
+        registered.set()
+        await release.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "replacement")
+    await registered.wait()
+    await fixture.manager.message(admitted["task_id"], "hello")
+    assert received == ["new"]
+    release.set()
+    await fixture.manager.wait(admitted["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_message_cancellation_cancels_pending_async_handler() -> None:
+    registered = asyncio.Event()
+    handling = asyncio.Event()
+    handler_cancelled = asyncio.Event()
+    release_tool = asyncio.Event()
+
+    async def callback(_: dict[str, str], context: ToolContext) -> str:
+        async def handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            handling.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                handler_cancelled.set()
+                raise
+
+        context.on_message(handler)
+        registered.set()
+        await release_tool.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "cancel-message")
+    await registered.wait()
+    pending = asyncio.create_task(fixture.manager.message(admitted["task_id"], "hello"))
+    await handling.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    await asyncio.wait_for(handler_cancelled.wait(), timeout=2)
+    release_tool.set()
+    await fixture.manager.wait(admitted["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_message_handler_registered_from_sync_thread_runs_off_runtime_loop() -> None:
+    registered = asyncio.Event()
+    release = asyncio.Event()
+    handler_threads: list[str] = []
+
+    async def callback(_: dict[str, str], context: ToolContext) -> str:
+        def handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            handler_threads.append(threading.current_thread().name)
+
+        await asyncio.to_thread(context.on_message, handler)
+        registered.set()
+        await release.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "sync-handler")
+    await registered.wait()
+    await fixture.manager.message(admitted["task_id"], "hello")
+    assert len(handler_threads) == 1
+    assert handler_threads[0] != "strands-background-tasks"
+    release.set()
+    await fixture.manager.wait(admitted["task_id"])
+
+
+@pytest.mark.asyncio
+async def test_message_after_interrupt_resume_uses_new_handler() -> None:
+    registered = asyncio.Event()
+    release = asyncio.Event()
+    received: list[str] = []
+    old_unregister: Callable[[], None] | None = None
+
+    async def callback(_: dict[str, str], context: ToolContext) -> str:
+        nonlocal old_unregister
+
+        def old_handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            received.append("old")
+
+        def new_handler(message: str | list[dict[str, Any]], **kwargs: Any) -> None:
+            received.append("new")
+
+        if old_unregister is None:
+            old_unregister = context.on_message(old_handler)
+        context.interrupt("approve_work", reason="Approve work?")
+        context.on_message(new_handler)
+        registered.set()
+        await release.wait()
+        return "done"
+
+    fixture = _create_fixture(callback)
+    admitted = await _submit(fixture.manager, fixture.work, "interrupt-message")
+    input_required = await fixture.manager.wait(admitted["task_id"])
+    with pytest.raises(RuntimeError, match="cannot accept messages in status 'input_required'"):
+        await fixture.manager.message(admitted["task_id"], "while interrupted")
+    interrupt = input_required["interrupts"][0]
+    await fixture.manager.resume(admitted["task_id"], [{"interruptId": interrupt["id"], "response": "yes"}])
+    await registered.wait()
+    assert old_unregister is not None
+    old_unregister()
+    await fixture.manager.message(admitted["task_id"], "hello")
+    assert received == ["new"]
+    release.set()
+    await fixture.manager.wait(admitted["task_id"])
+
+
+def test_report_progress_before_immediate_runtime_completion_is_retained() -> None:
+    def callback(_: dict[str, str], context: ToolContext) -> str:
+        context.report_progress("finished quickly")
+        return "done"
+
+    fixture = _create_fixture(callback)
+
+    async def invoke() -> dict[str, Any]:
+        admitted = await _submit(fixture.manager, fixture.work, "quick-progress")
+        return await fixture.manager.wait(admitted["task_id"])
+
+    completed = run_async(invoke)
+    assert completed["progress"] == {
+        "message": "finished quickly",
+        "update_count": 1,
+        "updated_at": ANY,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delayed_update_for_removed_task_does_not_restore_snapshot() -> None:
+    fixture = _create_fixture(lambda input_data, _context: input_data["value"])
+    handle_task_updated = fixture.manager._engine._on_task_updated
+    fixture.manager._engine._on_task_updated = lambda _record: None
+    admitted = await _submit(fixture.manager, fixture.work, "removed")
+    await fixture.manager.wait_for_idle()
+    stale_record = fixture.manager._engine.get(admitted["task_id"])
+    assert stale_record is not None
+    assert stale_record["invocation_state_id"] in fixture.manager._executions
+    await fixture.manager.remove([admitted["task_id"]])
+    assert stale_record["invocation_state_id"] not in fixture.manager._executions
+
+    updates: list[dict[str, Any]] = []
+    fixture.manager._on_task_updated = updates.append
+    fixture.manager._engine._on_task_updated = handle_task_updated
+    handle_task_updated(stale_record)
+
+    assert updates == []

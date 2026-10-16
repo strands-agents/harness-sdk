@@ -9,12 +9,16 @@ from typing_extensions import NotRequired, TypedDict
 
 from strands.types.tools import AgentTool, ToolResultContent
 
+from .in_process._activity import BackgroundTaskActivityHistory
+
 
 class BackgroundTasksConfig(TypedDict, total=False):
     """Configure background tool execution.
 
     Attributes:
         wait_for_completion: Wait for background work before an invocation returns. Defaults to True.
+        wake_on_input: Continue the active invocation when Agent.send queues input during the
+            completion wait. Defaults to False. Does not start an idle agent.
         agentic: Tools or registered tool names whose execution mode is selected by the model.
             Defaults to ``["*"]``.
         always: Tools or registered tool names that always execute in the background.
@@ -24,6 +28,7 @@ class BackgroundTasksConfig(TypedDict, total=False):
     """
 
     wait_for_completion: bool
+    wake_on_input: bool
     agentic: Sequence[AgentTool | str]
     always: Sequence[AgentTool | str]
     never: Sequence[AgentTool | str]
@@ -64,6 +69,21 @@ class BackgroundTaskInterrupt(TypedDict):
     source: Literal["middleware", "tool"]
 
 
+class BackgroundTaskProgress(TypedDict):
+    """Latest bounded progress update from a running task."""
+
+    message: str
+    update_count: int
+    updated_at: str
+
+
+class UndeliveredBackgroundMessages(TypedDict):
+    """Summary of queued messages discarded when a task became terminal."""
+
+    count: int
+    reason: Literal["completed", "failed", "cancelled"]
+
+
 class BackgroundTask(TypedDict):
     """Snapshot of one background task."""
 
@@ -76,6 +96,9 @@ class BackgroundTask(TypedDict):
     result: NotRequired[BackgroundTaskResult]
     error: NotRequired[BackgroundTaskError]
     interrupts: NotRequired[list[BackgroundTaskInterrupt]]
+    progress: NotRequired[BackgroundTaskProgress]
+    undelivered_messages: NotRequired[UndeliveredBackgroundMessages]
+    activity: NotRequired[BackgroundTaskActivityHistory]
 
 
 def is_task_status_terminal(status: BackgroundTaskStatus) -> bool:
