@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { GENERALIST, makeSubagent, subagent } from '../index.js'
+import { DEFAULT_SUBAGENT_DESCRIPTION, GENERALIST, makeSubagent, subagent } from '../index.js'
 import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
@@ -7,7 +7,7 @@ import { textMessage } from '../../../__fixtures__/agent-helpers.js'
 import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
 import { Interrupt, InterruptError, InterruptState } from '../../../interrupt.js'
 import { logger } from '../../../logging/logger.js'
-import { Choice, Fixed, Inherit, Option, Preset } from '../../../multiagent/spec.js'
+import { AXIS_DESCRIPTIONS, Choice, Fixed, Inherit, Option, Preset, UNSET } from '../../../multiagent/spec.js'
 import type { AgentSpec } from '../../../multiagent/spec.js'
 import { StateStore } from '../../../state-store.js'
 import type { Tool, ToolContext } from '../../../tools/tool.js'
@@ -127,12 +127,16 @@ describe('subagent tool', () => {
 
     it('exposes the default name, description, and schema', () => {
       expect(subagent.name).toBe('subagent')
-      expect(subagent.toolSpec.description).toContain('Available subagents (agent_type):\n- generalist:')
+      expect(subagent.toolSpec.description).toBe(DEFAULT_SUBAGENT_DESCRIPTION)
       expect(subagent.toolSpec.inputSchema).toEqual({
         type: 'object',
         properties: {
           task,
-          agent_type: { type: 'string', enum: ['generalist'], description: expect.stringContaining("'generalist'") },
+          agent_type: {
+            type: 'string',
+            enum: ['generalist'],
+            description: `${AXIS_DESCRIPTIONS.agent_type} Omit to use the default ('generalist').\nOptions:\n- generalist: ${GENERALIST.description} (sets instructions)`,
+          },
           instructions: { type: 'string', description: expect.any(String) },
         },
         required: ['task'],
@@ -143,13 +147,8 @@ describe('subagent tool', () => {
       expect(makeSubagent({ name: 'delegate' }).toolSpec.name).toBe('delegate')
     })
 
-    it('uses a custom description with the presets appended', () => {
-      expect(makeSubagent({ description: 'Hand off research.' }).toolSpec.description).toBe(
-        `Hand off research.\n\nAvailable subagents (agent_type):\n- generalist: ${GENERALIST.description}`
-      )
-      expect(makeSubagent({ description: 'Hand off research.', presets: {} }).toolSpec.description).toBe(
-        'Hand off research.'
-      )
+    it('uses a custom description', () => {
+      expect(makeSubagent({ description: 'Hand off research.' }).toolSpec.description).toBe('Hand off research.')
     })
 
     it('derives parameters from Choice axes', () => {
@@ -157,9 +156,8 @@ describe('subagent tool', () => {
         presets: {},
         instructions: new Choice(['concise', 'verbose']),
         model: new Choice(['fast', 'deep']),
-        context: new Choice(['none', 'all']),
+        context: new Choice([new Option('none', UNSET, 'fresh'), 'all']),
         tools: new Choice(['read', 'shell'], true),
-        mcpServers: new Choice(['fs', 'api'], true),
       })
       const list = (values: string[]): unknown => ({
         type: 'array',
@@ -172,9 +170,12 @@ describe('subagent tool', () => {
           task,
           instructions: { type: 'string', enum: ['concise', 'verbose'], description: expect.any(String) },
           tools: list(['read', 'shell']),
-          mcp_servers: list(['fs', 'api']),
           model: { type: 'string', enum: ['fast', 'deep'], description: expect.any(String) },
-          context: { type: 'string', enum: ['none', 'all'], description: expect.any(String) },
+          context: {
+            type: 'string',
+            enum: ['none', 'all'],
+            description: expect.stringMatching(/more tokens\.\nOptions:\n- none: fresh$/),
+          },
           last_messages: { type: 'integer', description: expect.any(String) },
         },
         required: ['task'],
@@ -213,7 +214,9 @@ describe('subagent tool', () => {
           description: expect.stringContaining("'generalist'"),
         },
       })
-      expect(tool.toolSpec.description).toContain('- reviewer: reviews diffs')
+      expect(properties(tool)['agent_type']).toMatchObject({
+        description: expect.stringContaining('- reviewer: reviews diffs'),
+      })
     })
   })
 
@@ -224,10 +227,6 @@ describe('subagent tool', () => {
       [{ maxDepth: 0 }, 'maxDepth must be a positive integer (>= 1).'],
       [{ maxDepth: -1 }, 'maxDepth must be a positive integer (>= 1).'],
       [{ maxDepth: 1.5 }, 'maxDepth must be a positive integer (>= 1).'],
-      [{ tools: new Choice([], true) }, /^tools: new Choice\(\[\]\) offers no options/],
-      [{ tools: new Choice(['read', 'shell']) }, /^tools: new Choice\(\.\.\.\) must set multiple to true/],
-      [{ mcpServers: new Choice([], true) }, /^mcpServers: new Choice\(\[\]\) offers no options/],
-      [{ mcpServers: new Choice(['fs']) }, /^mcpServers: new Choice\(\.\.\.\) must set multiple to true/],
       [{ defaultPreset: 'reseacher' }, "defaultPreset 'reseacher' is not one of the presets: generalist."],
       [{ context: new Fixed('al') }, 'context mode "al" must be one of: none, all, no_tools.'],
       [
@@ -249,6 +248,7 @@ describe('subagent tool', () => {
       expect(result).toEqual(
         new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('the answer')] })
       )
+      expect(specs[0]!.name).toBe('subagent')
       expect(specs[0]!.instructions).toBe(GENERALIST.instructions)
       expect(items.map((item) => item.data)).toEqual([{ type: 'modelStreamUpdateEvent' }])
     })

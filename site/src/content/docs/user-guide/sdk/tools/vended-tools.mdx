@@ -16,6 +16,7 @@ sourceLinks:
   - path: strands-ts/src/experimental/vended-tools/stop/stop.ts
   - path: strands-ts/src/vended-tools/a2a-client/a2a-client.ts
   - path: strands-ts/src/vended-tools/subagent/subagent.ts
+  - path: strands-ts/src/vended-tools/swarm/swarm.ts
   - path: strands-ts/src/vended-tools/python-repl/python-repl.ts
   - path: strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
@@ -61,7 +62,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
 | [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
-| [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python |
+| [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
 
 ### File editor
 
@@ -897,13 +898,30 @@ Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/b
 
 Lets your agent spin up a team of specialised sub-agents that collaborate autonomously via handoffs to solve a complex task. This is a meta-agent tool where the model defines each agent's name and role; the tool resolves those specs through an authority-mode system, builds the agents, runs the swarm, and returns a consolidated result.
 
-Use `make_swarm` to control safety limits (max agents, timeouts, handoff caps), lock down instructions or tools with authority modes, or supply named presets the model can select from.
+Use the factory to control safety limits, lock down instructions or tools with [axis policies](#axis-policies), or supply named presets the model can select from.
 
-_Supported in: Python._
+_Supported in: Python, TypeScript (Node.js, browsers)._
 
 **Example:**
 
 <Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:swarm_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:swarm_example"
+```
+
+Custom configuration with `makeSwarm`. `maxAgents` caps agents per call; the other limits pass through to `Swarm`: `maxSteps` caps total agent executions, and `timeout` and `nodeTimeout` are in milliseconds.
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:swarm_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:swarm_custom_example"
+```
+
+</Tab>
 <Tab label="Python">
 
 ```python
@@ -914,7 +932,7 @@ agent = Agent(tools=[swarm])
 agent("Research the pros and cons of microservices vs monoliths and write a summary")
 ```
 
-Custom configuration with `make_swarm`:
+Custom configuration with `make_swarm`. `max_agents` caps agents per call; the other limits pass through to `Swarm`: `max_handoffs` and `max_iterations` cap handoffs and agent executions separately, and `execution_timeout` and `node_timeout` are in seconds.
 
 ```python
 from strands import Agent
@@ -952,6 +970,8 @@ agent("Write a blog post about AI agents")
 
 </Tab>
 </Tabs>
+
+Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/swarm/README.md)
 
 ---
 
