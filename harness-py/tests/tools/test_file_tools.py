@@ -65,6 +65,27 @@ async def test_path_traversal_rejected(ctx):
         await read._tool_func(path="/tmp/../etc/passwd", tool_context=ctx)
 
 
+async def test_windows_drive_letter_path_is_absolute():
+    written = []
+
+    class _Sandbox:
+        async def write_text(self, path, content):
+            written.append(path)
+
+    class _Agent:
+        sandbox = _Sandbox()
+
+    win_ctx = _Ctx(_Agent())
+    await write._tool_func(path="C:\\Users\\me\\novel.json", content="{}", tool_context=win_ctx)
+    await write._tool_func(path="C:/Users/me/novel.json", content="{}", tool_context=win_ctx)
+    await write._tool_func(path="\\\\server\\share\\novel.json", content="{}", tool_context=win_ctx)
+    assert written == ["C:\\Users\\me\\novel.json", "C:/Users/me/novel.json", "\\\\server\\share\\novel.json"]
+    with pytest.raises(ValueError, match="not absolute"):
+        await write._tool_func(path="\\Users\\me\\novel.json", content="", tool_context=win_ctx)
+    with pytest.raises(ValueError, match="path traversal"):
+        await write._tool_func(path="C:\\Users\\..\\secret", content="", tool_context=win_ctx)
+
+
 async def test_read_image_returns_image_content(ctx, tmp_path):
     path = tmp_path / "pic.png"
     path.write_bytes(b"\x89PNG\r\n\x1a\nfake")

@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
 import shlex
+import sys
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -29,6 +32,7 @@ from strands.sandbox import Sandbox
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 
+from strands_harness.sandbox_environment import described_environment, is_powershell
 from strands_harness.types.agent import WebFetchTransport
 
 _USER_AGENT = "strands-harness/1.0"
@@ -36,6 +40,10 @@ _TIMEOUT = 30
 _MAX_BYTES = 5 * 1024 * 1024
 _MAX_CHARS = 50_000
 _CACHE_TTL_SECONDS = 15 * 60
+# The sandbox shell and ``sandbox.read_file`` must resolve the scratch file to the same place: ``/tmp`` does
+# that in any POSIX sandbox, but on Windows the shell's ``/tmp`` is its own (MSYS) mount that Python resolves
+# against the current drive instead, so there the host temp dir is used, forward-slashed for ``sh``.
+_TEMP_DIR = tempfile.gettempdir().replace(os.sep, "/") if sys.platform == "win32" else "/tmp"
 # The characters RFC 3986 allows anywhere in a URL; anything else (whitespace, quotes, control
 # characters, non-ASCII) is rejected before the URL reaches a shell or a socket.
 _URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
@@ -71,18 +79,34 @@ def _validate_url(url: str) -> str:
     return url
 
 
-def _curl_command(url: str, output: str) -> str:
+def _powershell_quote(value: str) -> str:
+    """PowerShell single-quoted literal: only ``'`` needs escaping, by doubling."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _curl_command(url: str, output: str, shell: str) -> str:
     # -g keeps ``{}``/``[]`` in the URL literal; --proto/--proto-redir keep the request and any redirect on
     # http(s) (curl would otherwise follow a redirect to ftp://); --fail turns HTTP errors into a non-zero
     # exit; -sS keeps curl's own error text on stderr. The body goes to a file (stdout is decoded text,
-    # which would lose the charset and split multi-byte characters) and is truncated in the sandbox before
-    # it is read back; stdout carries only the final hop's content type and URL.
-    out, part = shlex.quote(output), shlex.quote(output + ".part")
-    return (
-        f"curl -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time {_TIMEOUT} "
-        f"-A {shlex.quote(_USER_AGENT)} -o {out} -w '%{{content_type}}\\n%{{url_effective}}' -- {shlex.quote(url)} "
-        f"&& head -c {_MAX_BYTES} {out} > {part} && mv -f {part} {out}"
+    # which would lose the charset and split multi-byte characters); stdout carries only the final hop's
+    # content type and URL. The body is truncated in the sandbox before it is read back: ``head`` in ``sh``;
+    # in PowerShell (``curl.exe``, because PowerShell aliases ``curl`` to Invoke-WebRequest) by shortening
+    # the file in place, since there is no ``head``.
+    quote = _powershell_quote if shell == "PowerShell" else shlex.quote
+    out = quote(output)
+    fetch = (
+        f"{'curl.exe' if shell == 'PowerShell' else 'curl'} -sSL -g --fail --proto '=http,https' "
+        f"--proto-redir '=http,https' --max-time {_TIMEOUT} -A {quote(_USER_AGENT)} -o {out} "
+        f"-w '%{{content_type}}\\n%{{url_effective}}' -- {quote(url)}"
     )
+    if shell == "PowerShell":
+        return (
+            f"{fetch}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; "
+            f"$f = [System.IO.File]::Open({out}, 'Open'); "
+            f"$f.SetLength([Math]::Min($f.Length, {_MAX_BYTES})); $f.Dispose()"
+        )
+    part = shlex.quote(output + ".part")
+    return f"{fetch} && head -c {_MAX_BYTES} {out} > {part} && mv -f {part} {out}"
 
 
 def _decode(data: bytes, content_type: str) -> str:
@@ -101,19 +125,22 @@ def _to_text(data: bytes, content_type: str, resolved_url: str, url: str) -> tup
 
 async def _fetch_curl(sandbox: Sandbox, url: str) -> tuple[str, str]:
     """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails."""
-    output = f"/tmp/strands-web-fetch-{uuid.uuid4().hex}"
+    output = f"{_TEMP_DIR}/strands-web-fetch-{uuid.uuid4().hex}"
+    shell = "PowerShell" if is_powershell(described_environment(sandbox)["shell"]) else "sh"
     try:
-        result = await sandbox.execute(_curl_command(url, output), timeout=_TIMEOUT + 5)
+        result = await sandbox.execute(_curl_command(url, output, shell), timeout=_TIMEOUT + 5)
         if result.exit_code != 0:
             raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")
         # The trailer is the last two lines; the content-type line is empty when the header is absent.
         lines = result.stdout.splitlines()
         content_type = lines[-2].strip() if len(lines) >= 2 else ""
         resolved_url = lines[-1].strip() if lines else ""
-        data = await sandbox.read_file(output)
+        data = (await sandbox.read_file(output))[:_MAX_BYTES]
     finally:
-        with contextlib.suppress(Exception):
-            await sandbox.execute(f"rm -f {shlex.quote(output)} {shlex.quote(output + '.part')}", timeout=10)
+        # The sandbox's own file op, not ``rm``: it works whatever shell (if any) the sandbox has.
+        for path in (output, output + ".part"):
+            with contextlib.suppress(Exception):
+                await sandbox.remove_file(path)
     return _to_text(data, content_type, resolved_url, url)
 
 

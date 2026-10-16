@@ -191,7 +191,8 @@ describe('export completion', () => {
     const launchCommand = copyText.mock.lastCall![0]
     expect(row(controller, 'Copy launch command').badge?.text).toBe('Copied')
     expect(
-      execFileSync('/bin/sh', ['-c', `${launchCommand.replace(/^strands /u, 'set -- ')}; printf '%s' "$2"`], {
+      // Resolve `sh` from PATH: Windows runners get it from Git for Windows, not /bin/sh.
+      execFileSync('sh', ['-c', `${launchCommand.replace(/^strands /u, 'set -- ')}; printf '%s' "$2"`], {
         encoding: 'utf8',
       })
     ).toBe(path)

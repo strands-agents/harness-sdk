@@ -71,8 +71,18 @@ jobs:
           allowed-roles: 'maintain,triage,write,admin'
 
   integration-test:
-    name: Run integration tests
-    runs-on: strands-agents_ubuntu-latest_4-core
+    # `name` comes from the matrix so the Linux leg keeps its historical check name.
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # The Windows leg is advisory until it has a stable history against the live model.
+    continue-on-error: ${{ matrix.advisory }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Run integration tests, advisory: false }
+          # The CLI e2e drives the shell tool, which runs in PowerShell on Windows.
+          - { os: strands-agents_windows-latest_4-core, name: Run integration tests (Windows), advisory: true }
     needs: authorization-check
     if: always() && needs.authorization-check.result == 'success'
     environment:

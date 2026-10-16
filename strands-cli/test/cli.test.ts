@@ -539,7 +539,8 @@ describe('TUI startup', () => {
     'avoids React timing retention while preserving NODE_ENV=%s',
     async (environment) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-cli-production-'))
-      const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+      // `--experimental-loader` requires a file:// URL; a bare Windows path is rejected by the ESM loader.
+      const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
       const fixture = fileURLToPath(new URL('./fixtures/strands-cli-production-probe.mjs', import.meta.url))
       await mkdir(join(directory, '.strands', 'cli'), { recursive: true })
       await writeFile(
@@ -599,7 +600,8 @@ describe('ACP mode routing', () => {
   })
 
   it('answers initialize while the ACP stdin protocol stream remains open', async () => {
-    const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+    // `--experimental-loader` requires a file:// URL; a bare Windows path is rejected by the ESM loader.
+    const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
     const entrypoint = fileURLToPath(new URL('../src/main.ts', import.meta.url))
     const cwd = fileURLToPath(new URL('..', import.meta.url))
     const child = spawn(

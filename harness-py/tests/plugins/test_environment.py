@@ -101,6 +101,25 @@ async def test_probe_failure_omits_platform_and_working_directory():
     assert "Date:" in out
 
 
+async def test_sandbox_environment_descriptor_wins_over_probes():
+    # A sandbox without a POSIX shell (plain Windows) can still say where the agent runs.
+    sandbox = _FakeSandbox({"AGENTS.md": "x"}, {".": [FileInfo("AGENTS.md", False)]}, cwd=None)
+    sandbox.environment = {"platform": "Windows", "cwd": "C:\\work\\proj", "shell": "PowerShell"}
+    out = await env._render(_FakeAgent(sandbox), {})
+    assert "Platform: Windows" in out
+    assert "Shell: PowerShell" in out
+    assert "Working directory: C:\\work\\proj" in out
+
+
+async def test_malformed_environment_descriptor_falls_back_to_probes():
+    sandbox = _FakeSandbox({"AGENTS.md": "x"}, {".": [FileInfo("AGENTS.md", False)]}, cwd="/work")
+    sandbox.environment = {"platform": 42, "cwd": ""}
+    out = await env._render(_FakeAgent(sandbox), {})
+    assert "Platform: Linux" in out
+    assert "Working directory: /work" in out
+    assert "Shell:" not in out
+
+
 async def test_discovery_is_memoized_across_turns():
     sandbox = _FakeSandbox({"AGENTS.md": "x"}, _repo_tree())
     memo: dict = {}
