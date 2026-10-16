@@ -364,6 +364,60 @@ def test_format_request_messages(system_prompt):
     assert tru_result == exp_result
 
 
+def test_format_request_messages_user_tool_result_precedes_text():
+    """A mixed user turn emits function_call_output before its text.
+
+    Assistant text still precedes the function call. The Responses API rejects a
+    request when user text sits between a function call and its output.
+    """
+    messages = [
+        {
+            "content": [
+                {"text": "call tool"},
+                {
+                    "toolUse": {
+                        "input": {"expression": "2+2"},
+                        "name": "calculator",
+                        "toolUseId": "c1",
+                    },
+                },
+            ],
+            "role": "assistant",
+        },
+        {
+            "content": [
+                {"text": "also consider this"},
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "4"}]}},
+            ],
+            "role": "user",
+        },
+    ]
+
+    tru_result = OpenAIResponsesModel._format_request_messages(messages)
+    exp_result = [
+        {
+            "role": "assistant",
+            "content": "call tool",
+        },
+        {
+            "type": "function_call",
+            "call_id": "c1",
+            "name": "calculator",
+            "arguments": '{"expression": "2+2"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "c1",
+            "output": "4",
+        },
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "also consider this"}],
+        },
+    ]
+    assert tru_result == exp_result
+
+
 def test_format_request_messages_assistant_text_uses_string_content():
     """Assistant history must use the string EasyInputMessage form.
 

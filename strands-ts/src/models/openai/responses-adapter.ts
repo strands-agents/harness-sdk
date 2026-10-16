@@ -138,6 +138,10 @@ export function formatResponsesRequest(
  * - Text/media → grouped in `{ role, content: [...] }`
  * - Tool calls → separate `{ type: 'function_call', ... }` items
  * - Tool results → separate `{ type: 'function_call_output', ... }` items
+ *
+ * User turns emit tool calls and tool results before text so a function call
+ * output stays next to its function call. Assistant turns emit text, then
+ * function calls.
  */
 function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
@@ -217,6 +221,12 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
       }
     }
 
+    // A function_call_output must follow its function_call with no user text between them.
+    if (role === 'user') {
+      input.push(...toolCallItems)
+      input.push(...toolResultItems)
+    }
+
     if (contentItems.length > 0) {
       if (role === 'assistant') {
         // Only the string EasyInputMessage form is a valid assistant *input* shape
@@ -246,8 +256,10 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
       }
     }
 
-    input.push(...toolCallItems)
-    input.push(...toolResultItems)
+    if (role !== 'user') {
+      input.push(...toolCallItems)
+      input.push(...toolResultItems)
+    }
   }
 
   return input

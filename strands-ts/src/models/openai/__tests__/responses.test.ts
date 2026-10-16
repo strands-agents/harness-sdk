@@ -404,6 +404,47 @@ describe("OpenAIModel (api: 'responses')", () => {
       })
     })
 
+    it('emits a user tool result before text in the same turn', async () => {
+      // The Responses API rejects a request when user text sits between a function call and its output.
+      // Assistant text still precedes the function call.
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [
+            new TextBlock('call tool'),
+            new ToolUseBlock({ name: 'calc', toolUseId: 'call_1', input: { expr: '2+2' } }),
+          ],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('also consider this'),
+            new ToolResultBlock({
+              toolUseId: 'call_1',
+              status: 'success',
+              content: [new TextBlock('4')],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([
+        { role: 'assistant', content: 'call tool' },
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'calc',
+          arguments: JSON.stringify({ expr: '2+2' }),
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: '4',
+        },
+        { role: 'user', content: [{ type: 'input_text', text: 'also consider this' }] },
+      ])
+    })
+
     it('prefixes errored tool results with [ERROR]', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('x')] }),
