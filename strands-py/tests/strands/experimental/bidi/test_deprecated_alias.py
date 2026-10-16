@@ -272,6 +272,9 @@ def test_repository_does_not_import_deprecated_namespace():
     excluded_files = {
         Path(__file__).resolve(),
         project_root / "tests_typing" / "bidi" / "test_deprecated_alias.py",
+        # The experimental GPT-Live provider lives in this package rather than aliasing a stable module.
+        project_root / "tests" / "strands" / "experimental" / "bidi" / "models" / "test_openai_live.py",
+        project_root / "tests_integ" / "bidi" / "test_openai_live.py",
     }
     forbidden_patterns = (
         "strands.experimental.bidi",

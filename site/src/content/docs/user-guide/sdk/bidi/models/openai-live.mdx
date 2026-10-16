@@ -1,0 +1,177 @@
+---
+title: OpenAI GPT-Live
+description: "Configure OpenAI GPT-Live for BidiAgent: set credentials, choose a backend model and voice, split the voice and backend prompts, and manage connection restarts."
+languages: [python]
+tags: [bidi-streaming]
+experimental: true
+sourceLinks:
+  - path: strands-py/src/strands/experimental/bidi/models/openai_live.py
+  - path: strands-py/src/strands/bidi/models/configs.py
+sidebar:
+  badge:
+    text: Experimental
+    variant: note
+---
+
+[OpenAI GPT-Live][gpt-live] brings full-duplex voice conversations to your agents:
+it listens while it speaks and hands reasoning and tool use to a separate backend
+model. Users can talk over a reply, add details while a task runs, and ask the agent
+to take action through tools.
+
+Follow the [quickstart](../quickstart.mdx) to build a voice agent that listens,
+speaks, and calls tools.
+
+## Installation
+
+Install the OpenAI GPT-Live extra:
+
+```bash
+pip install "strands-agents[bidi-openai]"
+```
+
+For local audio dependencies and device setup, see
+[Audio I/O](../io.mdx#audio-io).
+
+## Credentials
+
+Create an [OpenAI API key][api-keys] with access to GPT-Live and set it in your
+environment:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+```
+
+`OpenAILiveModel` reads `OPENAI_API_KEY` automatically. You can also pass the key
+directly through `api_key`. For organization and project options, see the
+[constructor reference][model-api].
+
+## Configuration
+
+Configure the GPT-Live model, the backend model and its instructions, and the output
+voice, then pass the model to `BidiAgent` with your tools and conversation prompt:
+
+```python
+from strands import tool
+from strands.bidi.agent import BidiAgent
+from strands.experimental.bidi.models.openai_live import OpenAILiveModel
+
+
+@tool
+def check_order(order_number: str) -> str:
+    """Look up the shipping status of an order.
+
+    Args:
+        order_number: The order number.
+    """
+    return f"Order {order_number} shipped today."
+
+
+model = OpenAILiveModel(
+    model_id="gpt-live-1",
+    backend_model_id="gpt-6-luna",
+    backend_instructions="Use check_order for order questions. Return the status.",
+    voice="marin",
+)
+agent = BidiAgent(
+    model=model,
+    tools=[check_order],
+    system_prompt=(
+        "You are a calm support assistant.\n"
+        "Backchannel policy: Use moderate backchannels.\n"
+        "Interruption policy: Stop speaking when the user interrupts.\n"
+        "Delegation policy: Delegate order questions to the backend."
+    ),
+)
+```
+
+GPT-Live uses two prompts. The agent's `system_prompt` shapes the conversation: the
+assistant's speaking style, how it handles interruptions, and when to delegate.
+`backend_instructions` holds the task procedures and tool rules for the backend
+model. Your tools run on the backend: when GPT-Live delegates a request, the backend
+model selects tools and `BidiAgent` runs them. OpenAI's [prompting guide][prompting]
+describes the conversation prompt structure GPT-Live expects.
+
+Choose a voice from OpenAI's [voice options][voices]. Audio uses mono PCM at the
+same rate for input and output, 24 kHz by default or 16 kHz.
+
+See the [`OpenAILiveModel` API reference][model-api] for all constructor options.
+
+### Session settings
+
+Pass OpenAI's [session settings][session-settings] through `params` to customize
+the conversation. Settings under `delegation.responses` configure the backend model.
+This example sets 16 kHz audio, lowers the backend's reasoning effort, and enables
+hosted web search:
+
+```python
+from strands.experimental.bidi.models.openai_live import OpenAILiveModel
+
+model = OpenAILiveModel(
+    model_id="gpt-live-1",
+    backend_model_id="gpt-6-luna",
+    params={
+        "audio": {"format": {"type": "audio/pcm", "rate": 16000}},
+        "delegation": {
+            "responses": {
+                "reasoning": {"effort": "low"},
+                "tools": [{"type": "web_search"}],
+            },
+        },
+    },
+)
+```
+
+Use OpenAI's field names inside `params`. Nested settings merge with the defaults,
+and `params` takes precedence over direct options such as `voice`. Web search is the
+only hosted backend tool the adapter accepts. The model IDs, prompts, and
+conversation history come from `BidiAgent` and the constructor, so `params` can't
+override them. The adapter uses [Responses delegation][delegation]; client
+delegation isn't supported.
+
+## Turns and interruptions
+
+GPT-Live decides when to speak and doesn't report where a reply or a user turn
+begins and ends. The adapter derives each response from pauses in the assistant's
+speech, so a long pause can split one spoken reply into two responses. The user's
+and the assistant's transcripts can grow at the same time while both speak.
+
+GPT-Live stops speaking when it's interrupted but doesn't report the interruption,
+so audio that has already reached your device can finish playing. The assistant
+usually waits for the user to speak first.
+
+Text and images sent to the agent go to the backend model, which needs to support
+image input to use images. GPT-Live speaks the backend's answer.
+
+## Usage
+
+GPT-Live bills the voice session by its duration. `model.usage_seconds` holds the
+voice seconds since the agent started, including sessions replaced by connection
+restarts. Token usage from the backend model arrives as `BidiUsageEvent` events, as
+it does for other providers. See OpenAI's [cost guide][costs] for pricing.
+
+## Connection restarts
+
+GPT-Live reports each session's expiry time when the session starts. By default,
+`BidiAgent` schedules a restart a minute before it, or 90 seconds before it when
+`store` is enabled. Each restart opens a new session and replays text from the
+conversation history, including completed transcripts, typed messages, and tool
+results. GPT-Live accepts a limited amount of startup history, so older parts of a
+long conversation can be dropped. A tool that finishes after a restart isn't run
+again; GPT-Live speaks its result once the conversation pauses.
+
+Set `connection.restart_after_s` to customize the schedule. See
+[Connection restarts](../agent.mdx#connection-restarts) for timing and events.
+
+When GPT-Live ends a session for a reason that shouldn't trigger a restart, such as
+a safety filter or a hangup from another connection, the agent raises
+`ConnectionClosedError` from `strands.experimental.bidi.models.openai_live`. Its
+`reason` attribute holds the reason GPT-Live reported.
+
+[gpt-live]: https://developers.openai.com/api/docs/guides/live
+[api-keys]: https://platform.openai.com/settings/organization/api-keys
+[prompting]: https://developers.openai.com/api/docs/guides/live-prompting
+[voices]: https://developers.openai.com/api/docs/guides/live-conversations#voice-options
+[session-settings]: https://developers.openai.com/api/docs/guides/live-conversations#configuration-fields
+[delegation]: https://developers.openai.com/api/docs/guides/live-delegation
+[costs]: https://developers.openai.com/api/docs/guides/voice-latency-cost?api=live
+[model-api]: @api/python/strands.experimental.bidi.models.openai_live#strands.experimental.bidi.models.openai_live.OpenAILiveModel.__init__

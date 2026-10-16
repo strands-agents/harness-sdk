@@ -30,6 +30,8 @@ from pydoc_markdown.contrib.source_linkers.git import GitSourceLinker
 BIDI_PACKAGE = "strands.bidi"
 BIDI_PUBLIC_MODULES = ("agent", "hooks", "io", "models", "types")
 DEPRECATED_BIDI_PACKAGE = "strands.experimental.bidi"
+# Real modules inside the deprecated package that alias nothing stable and keep their own pages.
+EXPERIMENTAL_BIDI_MODULES = frozenset({"strands.experimental.bidi.models.openai_live"})
 
 
 def _read_module_tree(source_root: Path, module_name: str) -> ast.Module:
@@ -208,7 +210,10 @@ def generate_docs():
     for module in modules:
         module_name = module.name
 
-        if module_name == DEPRECATED_BIDI_PACKAGE or module_name.startswith(f"{DEPRECATED_BIDI_PACKAGE}."):
+        is_deprecated_bidi = module_name == DEPRECATED_BIDI_PACKAGE or module_name.startswith(
+            f"{DEPRECATED_BIDI_PACKAGE}."
+        )
+        if is_deprecated_bidi and module_name not in EXPERIMENTAL_BIDI_MODULES:
             continue
 
         if module_name in bidi_public_api:

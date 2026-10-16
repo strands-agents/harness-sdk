@@ -13,7 +13,8 @@ from openai.types.responses.response_error import ResponseError
 import strands
 from strands.agent import AgentMetadata
 from strands.models import CacheConfig
-from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
+from strands.models._openai_responses_format import _MAX_MEDIA_SIZE_BYTES
+from strands.models.openai_responses import OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 

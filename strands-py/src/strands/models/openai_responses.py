@@ -18,10 +18,8 @@ metadata:
 Docs: https://platform.openai.com/docs/api-reference/responses
 """
 
-import base64
 import json
 import logging
-import mimetypes
 from collections.abc import AsyncGenerator
 from importlib.metadata import version as get_package_version
 from types import SimpleNamespace
@@ -64,6 +62,11 @@ from ._defaults import resolve_config_metadata  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
+from ._openai_responses_format import (  # noqa: E402
+    encode_media_to_data_url,
+    format_function_call_output,
+    format_function_tool,
+)
 from ._validation import _has_location_source, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
@@ -71,10 +74,6 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# Maximum file size for media content in tool results (20MB)
-_MAX_MEDIA_SIZE_BYTES = 20 * 1024 * 1024
-_MAX_MEDIA_SIZE_LABEL = "20MB"
-_DEFAULT_MIME_TYPE = "application/octet-stream"
 _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overflow error"
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
 
@@ -85,30 +84,6 @@ class _OpenAIResponsesStreamError(RuntimeError):
     def __init__(self, message: str | None, code: str | None) -> None:
         super().__init__(message or "OpenAI Responses API response failed")
         self.code = code
-
-
-def _encode_media_to_data_url(data: bytes, format_ext: str, media_type: str = "image") -> str:
-    """Encode media bytes to a base64 data URL with size validation.
-
-    Args:
-        data: Raw bytes of the media content.
-        format_ext: File format extension (e.g., "png", "pdf").
-        media_type: Type of media for error messages ("image" or "document").
-
-    Returns:
-        Base64-encoded data URL string.
-
-    Raises:
-        ValueError: If the media size exceeds the maximum allowed size.
-    """
-    if len(data) > _MAX_MEDIA_SIZE_BYTES:
-        raise ValueError(
-            f"{media_type.capitalize()} size {len(data)} bytes exceeds maximum of"
-            f" {_MAX_MEDIA_SIZE_BYTES} bytes ({_MAX_MEDIA_SIZE_LABEL})"
-        )
-    mime_type = mimetypes.types_map.get(f".{format_ext}", _DEFAULT_MIME_TYPE)
-    encoded_data = base64.b64encode(data).decode("utf-8")
-    return f"data:{mime_type};base64,{encoded_data}"
 
 
 class _ToolCallInfo(TypedDict):
@@ -595,15 +570,7 @@ class OpenAIResponsesModel(Model):
             # spec into the stored config on each call.
             request["tools"] = [
                 *request.get("tools", []),
-                *(
-                    {
-                        "type": "function",
-                        "name": tool_spec["name"],
-                        "description": tool_spec.get("description", ""),
-                        "parameters": tool_spec["inputSchema"]["json"],
-                    }
-                    for tool_spec in tool_specs
-                ),
+                *(format_function_tool(tool_spec) for tool_spec in tool_specs),
             ]
             request.update(self._format_request_tool_choice(tool_choice))
 
@@ -739,7 +706,7 @@ class OpenAIResponsesModel(Model):
         """
         if "document" in content:
             doc = content["document"]
-            data_url = _encode_media_to_data_url(doc["source"]["bytes"], doc["format"], "document")
+            data_url = encode_media_to_data_url(doc["source"]["bytes"], doc["format"], "document")
             name = doc.get("name", "document")
             suffix = f".{doc['format']}"
             filename = name if name.endswith(suffix) else f"{name}{suffix}"
@@ -747,7 +714,7 @@ class OpenAIResponsesModel(Model):
 
         if "image" in content:
             img = content["image"]
-            data_url = _encode_media_to_data_url(img["source"]["bytes"], img["format"], "image")
+            data_url = encode_media_to_data_url(img["source"]["bytes"], img["format"], "image")
             return {"type": "input_image", "image_url": data_url}
 
         if "text" in content:
@@ -796,40 +763,7 @@ class OpenAIResponsesModel(Model):
             or an array of content objects when returning images/files.
             See: https://platform.openai.com/docs/guides/function-calling
         """
-        output_parts: list[dict[str, Any]] = []
-        has_media = False
-
-        for content in tool_result["content"]:
-            if "json" in content:
-                output_parts.append({"type": "input_text", "text": json.dumps(content["json"], ensure_ascii=False)})
-            elif "text" in content:
-                output_parts.append({"type": "input_text", "text": content["text"]})
-            elif "image" in content:
-                has_media = True
-                img = content["image"]
-                data_url = _encode_media_to_data_url(img["source"]["bytes"], img["format"], "image")
-                output_parts.append({"type": "input_image", "image_url": data_url})
-            elif "document" in content:
-                has_media = True
-                doc = content["document"]
-                data_url = _encode_media_to_data_url(doc["source"]["bytes"], doc["format"], "document")
-                name = doc.get("name", "document")
-                suffix = f".{doc['format']}"
-                filename = name if name.endswith(suffix) else f"{name}{suffix}"
-                output_parts.append({"type": "input_file", "filename": filename, "file_data": data_url})
-
-        # Return array if has media content, otherwise join as string for simpler text-only cases
-        output: list[dict[str, Any]] | str
-        if has_media:
-            output = output_parts
-        else:
-            output = "\n".join(part.get("text", "") for part in output_parts) if output_parts else ""
-
-        return {
-            "type": "function_call_output",
-            "call_id": tool_result["toolUseId"],
-            "output": output,
-        }
+        return format_function_call_output(tool_result)
 
     def _stream_switch_content(self, data_type: str, prev_data_type: str | None) -> tuple[list[StreamEvent], str]:
         """Handle switching to a new content stream.
