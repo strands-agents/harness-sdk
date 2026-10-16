@@ -1,10 +1,9 @@
 ---
 title: Context management
 description: "How the ContextManager keeps your agent's context window in bounds as conversations grow and tool results accumulate."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
-  - path: strands-py/src/strands/_context_manager/context_manager.py
+  - path: strands-py/src/strands/context_manager/context_manager.py
   - path: strands-ts/src/context-manager/context-manager.ts
 addedDate: 2026-06-12
 ---
@@ -13,7 +12,7 @@ As conversations grow, your agent's context window fills with messages, tool res
 
 The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.
 
-You can continue using [conversation managers](./agents/conversation-management) and [ContextOffloader](./plugins/context-offloader) while evaluating the experimental `ContextManager` strategy API. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
+[Conversation managers](./agents/conversation-management) and [ContextOffloader](./plugins/context-offloader) remain supported. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
 
 ## Quick start
 
@@ -53,11 +52,10 @@ When <Syntax py="context_manager" ts="contextManager" /> is set, any co-provided
 | Value | Behavior |
 |-------|----------|
 | `"auto"` | Background compression with tuned defaults. No model involvement. |
-| `"agentic"` | Model-driven: the model manages its own context. |
 | Custom config | Full control over the strategy pipeline, targets, and conditions. |
 | `false` | No context management. Overflow errors propagate directly. |
 
-See [Built-in Modes](./context-management/built-in-modes) for details on `"auto"` and `"agentic"`. See [Custom Strategies](./context-management/custom-strategies) to build your own pipeline. See [Strategy Presets](./context-management/presets) for named shorthand configurations.
+See [Built-in Modes](./context-management/built-in-modes) for details on `"auto"`. See [Custom Strategies](./context-management/custom-strategies) to build your own pipeline. See [Strategy Presets](./context-management/presets) for named shorthand configurations.
 
 ## Storage backends
 
@@ -96,6 +94,8 @@ Pass one of these <Syntax py="stash" ts="stash" /> values in your context manage
 
 **Stateful models.** Stateful models manage conversation state server-side. Setting <Syntax py="context_manager" ts="contextManager" /> with a stateful model raises an error.
 
+**Repository session managers (Python).** Use `SnapshotSessionManager` with <Syntax py="context_manager" ts="contextManager" />. Repository-based session managers, such as `FileSessionManager`, `S3SessionManager`, and the AgentCore Memory session manager, do not persist context reductions. A restored agent reloads the full history and runs reduction again, so summarization re-runs on every restore. The SDK warns when you combine the two.
+
 ## Migrating to the strategy API
 
 If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `conversation_manager`, use these examples as starting points. Review the strategy conditions and preservation settings for your workload because the strategy API does not map one-to-one to every existing option.
@@ -119,6 +119,27 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 | `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ threshold: 2500 })` |
 | `new SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
 | `contextManager: "auto"` | Unchanged |
+
+</Tab>
+</Tabs>
+
+### Updating experimental imports
+
+`ContextManager`, `Offload`, and their configuration types are exported from the main package. The experimental import paths still work, but they are deprecated. In Python, they emit a `DeprecationWarning` and will be removed in v1.63.0.
+
+<Tabs>
+<Tab label="Python">
+
+| Before | After |
+|--------|-------|
+| `from strands.experimental.context_manager import ContextManager, Offload` | `from strands.context_manager import ContextManager, Offload` |
+
+</Tab>
+<Tab label="TypeScript">
+
+| Before | After |
+|--------|-------|
+| `import { ContextManager, Offload } from '@strands-agents/sdk/experimental'` | `import { ContextManager, Offload } from '@strands-agents/sdk'` |
 
 </Tab>
 </Tabs>

@@ -12,7 +12,8 @@ import pytest
 
 import strands
 from strands import Agent
-from strands.experimental.context_manager import ContextManager, ContextStrategy, Offload
+from strands.context_manager import ContextManager, Offload
+from strands.context_manager.types import ContextStrategy
 from strands.models import BedrockModel
 from strands.types.content import ContentBlock, Message
 

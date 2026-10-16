@@ -224,9 +224,8 @@ export type AgentConfig = {
    * Context management strategy that controls how messages are compressed and offloaded.
    *
    * - `"auto"`: Proactive truncation of tool results + summarization at 85% utilization.
-   * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
-   *   with a higher truncation threshold and summarization only on overflow.
-   *   This mode may change in future versions.
+   * - `"agentic"`: Internal; not part of the stable API and may change or be removed without
+   *   notice.
    * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
    * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).

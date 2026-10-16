@@ -51,7 +51,7 @@ from ..types.session import decode_bytes_values, encode_bytes_values
 from .session_manager import SessionManager
 
 if TYPE_CHECKING:
-    from .._context_manager.stash import Stash
+    from ..context_manager.stash import Stash
     from ..multiagent.base import MultiAgentBase
 
 logger = logging.getLogger(__name__)
@@ -771,7 +771,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             if self._agent_stash is not None:
                 await self._agent_stash.clear_session()
             elif self._raw_storage is not None:
-                from .._context_manager.stash import STASH_PREFIX
+                from ..context_manager.stash import STASH_PREFIX
 
                 prefix = f"{STASH_PREFIX}/{self.session_id}/"
                 keys = await self._raw_storage.list(prefix)

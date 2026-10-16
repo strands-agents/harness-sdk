@@ -1,7 +1,7 @@
 /**
  * Agentic context management: model-driven compression via injected tools.
  *
- * @experimental This module is experimental and may change in future versions.
+ * @internal Not part of the stable API; may change or be removed without notice.
  */
 
 import { z } from 'zod'

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from strands import tool
-from strands._context_manager.context_manager import ContextManager
 from strands.agent import AgentResult
 from strands.agent.agent import Agent
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
@@ -23,6 +22,7 @@ from strands.bidi.hooks import (
     BidiResponseStopEvent,
 )
 from strands.bidi.models import BidiModel, ConnectionTimeoutError
+from strands.context_manager.context_manager import ContextManager
 from strands.hooks.events import (
     AfterMultiAgentInvocationEvent,
     AfterNodeCallEvent,

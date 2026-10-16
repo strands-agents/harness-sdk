@@ -48,6 +48,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         config: SummarizeConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            config: Summarization options.
+            conditions: Conditions that determine when the strategy fires.
+        """
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
 

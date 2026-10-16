@@ -27,6 +27,12 @@ class DropStrategy(BaseOffloadStrategy):
         return "offload:drop"
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            conditions: Conditions that determine when the strategy fires.
+        """
         super().__init__(target, conditions)
 
     def when(

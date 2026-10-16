@@ -73,7 +73,7 @@ from ..types.media import AudioDelta
 from .loop import _AgentLoop
 
 if TYPE_CHECKING:
-    from ..._context_manager.context_manager import ContextManager
+    from ...context_manager.context_manager import ContextManager
     from ...session.session_manager import SessionManager
     from ...telemetry.metrics import EventLoopMetrics
 

@@ -52,6 +52,13 @@ class TruncateStrategy(BaseOffloadStrategy):
         config: TruncateConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            config: Truncation options.
+            conditions: Conditions that determine when the strategy fires.
+        """
         super().__init__(target, conditions)
         self._truncate_config: TruncateConfig = config or {}
 
@@ -130,6 +137,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         return "offload:emergency-truncate"
 
     def __init__(self) -> None:
+        """Initialize the strategy over all messages."""
         super().__init__("*", {"preview": "tail"})
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:

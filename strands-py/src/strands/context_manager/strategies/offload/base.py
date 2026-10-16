@@ -306,6 +306,15 @@ class BaseOffloadStrategy(ABC):
     _stash: Stash | None
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            conditions: Conditions that determine when the strategy fires.
+
+        Raises:
+            ValueError: If ``target`` is an empty list.
+        """
         if isinstance(target, list) and len(target) == 0:
             raise ValueError("Empty array target matches nothing — provide at least one target")
 

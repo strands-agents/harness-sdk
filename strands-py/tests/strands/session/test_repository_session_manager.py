@@ -1,6 +1,7 @@
 """Tests for AgentSessionManager."""
 
 import copy
+import warnings
 from unittest.mock import Mock
 
 import pytest
@@ -1365,3 +1366,16 @@ def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp
     assert len(restored.messages) == 2
     assert restored.messages[0]["content"] == [{"text": "[redacted]"}]
     assert restored.messages[1]["content"] == [{"text": "[redacted]"}]
+
+
+def test_initialize_warns_when_agent_has_context_manager(session_manager):
+    agent = Agent(context_manager="auto")
+
+    with pytest.warns(UserWarning, match="does not persist its context reductions"):
+        session_manager.initialize(agent)
+
+
+def test_initialize_does_not_warn_without_context_manager(session_manager, agent):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        session_manager.initialize(agent)

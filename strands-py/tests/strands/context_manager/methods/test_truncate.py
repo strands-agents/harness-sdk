@@ -2,7 +2,7 @@
 
 import pytest
 
-from strands._context_manager.methods.truncate import (
+from strands.context_manager.methods.truncate import (
     CHARS_PER_TOKEN,
     DEFAULT_PREVIEW_TOKENS,
     _build_preview,

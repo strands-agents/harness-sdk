@@ -38,8 +38,6 @@ const DEFAULT_SYSTEM_PROMPT = [
 
 /**
  * Configuration for the summarize method.
- *
- * @experimental
  */
 export interface SummarizeConfig {
   /** Model used for summarization. Resolution order: `this model > agent.auxModel > agent.model`. */

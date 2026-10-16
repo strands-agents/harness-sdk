@@ -14,8 +14,6 @@ const CHARS_PER_TOKEN = 4
 
 /**
  * Configuration for the truncate method.
- *
- * @experimental
  */
 export interface TruncateConfig {
   /** Number of tokens to keep as preview text. Defaults to 1,000. */

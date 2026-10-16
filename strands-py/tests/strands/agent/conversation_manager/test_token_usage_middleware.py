@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from strands import Agent
-from strands._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
+from strands.context_manager.modes.agentic.agentic_context import create_token_usage_middleware
 from strands.middleware.stages import InvokeModelContext
 from strands.types.content import Message
 from tests.fixtures.mocked_model_provider import MockedModelProvider

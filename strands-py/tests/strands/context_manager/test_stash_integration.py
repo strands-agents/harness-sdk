@@ -6,11 +6,11 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.retrieval_tool import _create_retrieval_tool
-from strands._context_manager.stash import Stash
-from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
-from strands._context_manager.types import ContextState
+from strands.context_manager.retrieval_tool import _create_retrieval_tool
+from strands.context_manager.stash import Stash
+from strands.context_manager.strategies.offload import Offload
+from strands.context_manager.strategies.offload.drop import DROPPED_MARKER
+from strands.context_manager.types import ContextState
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse

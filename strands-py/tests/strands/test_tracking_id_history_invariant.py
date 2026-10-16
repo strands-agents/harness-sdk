@@ -14,11 +14,11 @@ import tempfile
 import pytest
 
 from strands import Agent
-from strands._context_manager.modes.agentic.agentic_context import summarize_context
 from strands.agent.conversation_manager import (
     SlidingWindowConversationManager,
     SummarizingConversationManager,
 )
+from strands.context_manager.modes.agentic.agentic_context import summarize_context
 from strands.interventions.actions import Guide, Proceed
 from strands.interventions.handler import InterventionHandler
 from strands.session.file_session_manager import FileSessionManager

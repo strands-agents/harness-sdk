@@ -1,20 +1,15 @@
 ---
 title: Custom Strategies
 description: "Build custom context management strategies with the Offload builder API, conditions, targets, and stash configuration."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
-  - path: strands-py/src/strands/_context_manager/strategies/offload/base.py
-  - path: strands-py/src/strands/_context_manager/strategies/offload/truncate.py
-  - path: strands-py/src/strands/_context_manager/strategies/offload/summarize.py
+  - path: strands-py/src/strands/context_manager/strategies/offload/base.py
+  - path: strands-py/src/strands/context_manager/strategies/offload/truncate.py
+  - path: strands-py/src/strands/context_manager/strategies/offload/summarize.py
   - path: strands-ts/src/context-manager/strategies/offload/base.ts
   - path: strands-ts/src/context-manager/strategies/offload/index.ts
 addedDate: 2026-09-14
 ---
-
-:::caution[Experimental]
-The Context Manager strategy API is experimental and may change in future versions.
-:::
 
 When the [built-in modes](./built-in-modes) don't fit, build a custom strategy pipeline. Define which content to reduce, how to reduce it, and when each strategy fires.
 
@@ -29,7 +24,7 @@ The SDK always appends an emergency truncation strategy as the final step. It on
 
 ```python
 from strands import Agent
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 agent = Agent(
     context_manager={
@@ -72,7 +67,7 @@ Replaces oversized content with a head/tail preview. The original content is sto
 <Tab label="Python">
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.truncate(
     "tool_results",
@@ -121,7 +116,7 @@ Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model
 <Tab label="Python">
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.summarize("*").when(
     utilization=0.85,
@@ -168,7 +163,7 @@ Removes matching content entirely. No preview, no stash entry.
 <Tab label="Python">
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.drop("tool_results").when(preserve_recent=5)
 ```
@@ -204,7 +199,7 @@ Fire eagerly on individual blocks over 2,000 tokens:
 <Tab label="Python">
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.truncate("tool_results").when(threshold=2000)
 ```
@@ -227,7 +222,7 @@ Summarize oldest messages when the window reaches 85%:
 <Tab label="Python">
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.summarize("*").when(
     utilization=0.85,
@@ -253,7 +248,7 @@ Target tool results over 1,500 tokens, but only fire when the window reaches 90%
 <Tab label="Python">
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.truncate("tool_results").when(
     threshold=1500,

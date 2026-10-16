@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from strands._context_manager.retrieval_tool import (
+from strands.context_manager.retrieval_tool import (
     RETRIEVAL_TOOL_NAME,
     _create_retrieval_tool,
     _extract_text,
     _track_retrieval_tool_use_ids,
 )
-from strands._context_manager.stash import Stash
+from strands.context_manager.stash import Stash
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolUse

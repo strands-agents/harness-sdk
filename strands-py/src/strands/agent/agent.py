@@ -49,9 +49,9 @@ from ..types._snapshot import (
 )
 
 if TYPE_CHECKING:
-    from .._context_manager.context_manager import ContextManager, ContextManagerStrategy
-    from .._context_manager.types import ContextManagerConfig
     from ..background_tasks._background_tasks import _BackgroundTasks
+    from ..context_manager.context_manager import ContextManager, ContextManagerStrategy
+    from ..context_manager.types import ContextManagerConfig
     from ..tools import ToolProvider
 from ..handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from ..hooks import (
@@ -304,10 +304,10 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to an empty AgentState object.
             context_manager: Context management strategy.
                 ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
-                ``"agentic"``: Model-driven context management via injected tools.
-                A :class:`~strands._context_manager.types.ContextManagerConfig` dict for custom
+                ``"agentic"``: Internal; not part of the stable API and may change or be removed without notice.
+                A :class:`~strands.context_manager.types.ContextManagerConfig` dict for custom
                 strategy pipelines.
-                A :class:`~strands._context_manager.context_manager.ContextManager` instance
+                A :class:`~strands.context_manager.context_manager.ContextManager` instance
                 for full control.
                 ``False``: Disable all context management.
                 When set (except ``False``), any co-provided ``conversation_manager`` is ignored.
@@ -414,7 +414,7 @@ class Agent(AgentBase, LocalAgent):
                 "The model manages conversation state server-side."
             )
 
-        from .._context_manager.context_manager import ContextManager as _ContextManager
+        from ..context_manager.context_manager import ContextManager as _ContextManager
 
         self._context_manager_instance = _ContextManager.from_strategy(context_manager)
         resolved_conversation_manager = _ContextManager.resolve_conversation_manager(
@@ -468,7 +468,7 @@ class Agent(AgentBase, LocalAgent):
 
         # Inject the model-driven context-management tools when running in agentic mode.
         if context_manager == "agentic":
-            from .._context_manager.modes.agentic.agentic_context import (
+            from ..context_manager.modes.agentic.agentic_context import (
                 pin_context,
                 summarize_context,
                 truncate_context,
@@ -522,7 +522,7 @@ class Agent(AgentBase, LocalAgent):
 
         # In agentic mode, surface live token usage to the model so it can decide when to compress.
         if context_manager == "agentic":
-            from .._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
+            from ..context_manager.modes.agentic.agentic_context import create_token_usage_middleware
             from ..middleware.stages import InvokeModelStage
 
             self._middleware_registry.add_middleware(InvokeModelStage.Input, create_token_usage_middleware())

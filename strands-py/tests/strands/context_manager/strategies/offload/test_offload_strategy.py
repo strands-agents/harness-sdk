@@ -4,8 +4,8 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.base import (
+from strands.context_manager.strategies.offload import Offload
+from strands.context_manager.strategies.offload.base import (
     _build_tool_name_map,
     _collect_removable_with_pair,
     _get_oldest_matches,
@@ -17,9 +17,9 @@ from strands._context_manager.strategies.offload.base import (
     _target_matches_message,
     _tool_matches_target,
 )
-from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
-from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
-from strands._context_manager.types import ContextState
+from strands.context_manager.strategies.offload.drop import DROPPED_MARKER
+from strands.context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands.context_manager.types import ContextState
 from strands.hooks.events import MessageAddedEvent
 from strands.hooks.registry import HookRegistry
 from strands.types.content import ContentBlock, Message, Messages
@@ -615,7 +615,7 @@ class TestMessageLevelDrop:
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         with unittest.mock.patch(
-            "strands._context_manager.strategies.offload.base._splice_with_pairs",
+            "strands.context_manager.strategies.offload.base._splice_with_pairs",
             return_value=(0, 1),
         ):
             assert await strategy.apply(context) is False

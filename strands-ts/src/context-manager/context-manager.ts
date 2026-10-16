@@ -34,7 +34,7 @@ export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
  * Supported values for the `contextManager` parameter.
  *
  * - `"auto"`: Managed context with proactive compression + offloading.
- * - `"agentic"`: Model-driven context management via injected tools.
+ * - `"agentic"`: Internal; not part of the stable API and may change or be removed without notice.
  * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
  * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
  *   construct one per `Agent`.
@@ -50,11 +50,9 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * utilization and only fires if the window is still overflowing after user strategies.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
- * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
+ * string (`'auto'`), a `ContextManagerConfig`, or a `ContextManager`
  * instance; the Agent registers the manager. When present, it owns overflow
  * recovery and proactive compression — no separate ConversationManager is needed.
- *
- * @experimental
  */
 export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'

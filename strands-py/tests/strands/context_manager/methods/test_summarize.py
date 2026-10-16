@@ -4,7 +4,7 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.methods.summarize import (
+from strands.context_manager.methods.summarize import (
     _flatten_messages_to_content,
     _summarize_content,
     _tool_result_to_content_blocks,
@@ -188,7 +188,7 @@ class TestSummarizeContent:
         assert tru_result is None
 
     def test_format_summarized_uses_expected_prefix(self):
-        from strands._context_manager.methods.summarize import _format_summarized
+        from strands.context_manager.methods.summarize import _format_summarized
 
         assert _format_summarized("test", 100).startswith("[Summarized:")
 

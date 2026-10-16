@@ -5,11 +5,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands import Agent, Plugin
-from strands._context_manager.context_manager import ContextManager
 from strands.agent.conversation_manager import (
     NullConversationManager,
     SlidingWindowConversationManager,
 )
+from strands.context_manager.context_manager import ContextManager
 
 
 @pytest.fixture
@@ -98,20 +98,20 @@ class TestContextManagerProperty:
         assert agent.context_manager is None
 
     def test_returns_context_manager_instance(self, mock_model):
-        from strands._context_manager.context_manager import ContextManager
+        from strands.context_manager.context_manager import ContextManager
 
         context_manager = ContextManager()
         agent = Agent(model=mock_model, context_manager=context_manager)
         assert agent.context_manager is context_manager
 
     def test_returns_instance_for_auto_mode(self, mock_model):
-        from strands._context_manager.context_manager import ContextManager
+        from strands.context_manager.context_manager import ContextManager
 
         agent = Agent(model=mock_model, context_manager="auto")
         assert isinstance(agent.context_manager, ContextManager)
 
     def test_rejects_context_manager_passed_via_plugins(self, mock_model):
-        from strands._context_manager.context_manager import ContextManager
+        from strands.context_manager.context_manager import ContextManager
 
         context_manager = ContextManager()
         with pytest.raises(ValueError, match="passed via plugins"):

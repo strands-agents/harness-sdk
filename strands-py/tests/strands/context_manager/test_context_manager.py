@@ -4,9 +4,9 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.context_manager import ContextManager
-from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands.context_manager.context_manager import ContextManager
+from strands.context_manager.strategies.offload import Offload
+from strands.context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.storage.in_memory_storage import InMemoryStorage

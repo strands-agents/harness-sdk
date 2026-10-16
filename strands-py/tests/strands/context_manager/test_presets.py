@@ -2,12 +2,12 @@
 
 import pytest
 
-from strands._context_manager.presets import (
+from strands.context_manager.presets import (
     STRATEGY_PRESET_NAMES,
     _resolve_preset,
     _resolve_strategies,
 )
-from strands._context_manager.strategies.offload import Offload
+from strands.context_manager.strategies.offload import Offload
 
 
 class TestResolvePreset:
@@ -71,7 +71,7 @@ class TestPresetNames:
 
     def test_proactive_summarization_preserve_recent_is_ratio(self):
         """Ratio preserve_recent (0.7) keeps 70% of matches — 5 messages → 4 preserved, 1 returned."""
-        from strands._context_manager.strategies.offload.base import _get_oldest_matches
+        from strands.context_manager.strategies.offload.base import _get_oldest_matches
         from strands.types.content import ContentBlock, Message
 
         strategies = _resolve_preset("proactive_summarization")
@@ -81,7 +81,7 @@ class TestPresetNames:
 
     def test_overflow_protection_preserve_recent_is_integer(self):
         """Integer preserve_recent (4) keeps exactly 4 most-recent matches."""
-        from strands._context_manager.strategies.offload.base import _get_oldest_matches
+        from strands.context_manager.strategies.offload.base import _get_oldest_matches
         from strands.types.content import ContentBlock, Message
 
         strategies = _resolve_preset("overflow_protection")

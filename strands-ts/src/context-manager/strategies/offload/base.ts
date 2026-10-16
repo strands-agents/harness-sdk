@@ -29,8 +29,6 @@ import { isPinned } from '../../../conversation-manager/compression/pin-message.
  * - `"userText"` — text blocks in user messages (excluding tool results)
  * - `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
  * - `"*"` — all content in the context window (tool results + text blocks)
- *
- * @experimental
  */
 export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
 
@@ -45,8 +43,6 @@ export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistan
  * When multiple strategies target the same content, they don't conflict — strategies
  * run as an ordered pipeline, and once an earlier strategy shrinks a block, it falls
  * below the next strategy's threshold and gets skipped automatically.
- *
- * @experimental
  */
 export interface OffloadConditions {
   /** Token threshold above which individual blocks are offloaded. */
