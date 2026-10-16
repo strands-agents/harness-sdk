@@ -141,6 +141,25 @@ def test_normalize_messages_does_not_mutate_original():
     assert original_messages == expected_original
 
 
+def test_normalize_messages_shares_unchanged_content():
+    tool_result = {"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}}
+    tool_use = {"toolUse": {"toolUseId": "t1", "name": "a_name", "input": {}}}
+    blank_text = {"text": ""}
+    messages = [
+        {"role": "user", "content": [tool_result]},
+        {"role": "assistant", "content": [blank_text, tool_use]},
+    ]
+
+    tru_result = strands.event_loop.streaming._normalize_messages(messages)
+
+    assert tru_result is not messages
+    assert tru_result == [messages[0], {"role": "assistant", "content": [tool_use]}]
+    # Untouched messages and content blocks are passed through rather than copied
+    assert tru_result[0] is messages[0]
+    assert tru_result[1]["content"][0] is tool_use
+    assert messages[1]["content"] == [blank_text, tool_use]
+
+
 def test_handle_message_start():
     event: MessageStartEvent = {"role": "test"}
 

@@ -1,6 +1,5 @@
 """Utilities for handling streaming responses from language models."""
 
-import copy
 import json
 import logging
 import threading
@@ -58,16 +57,18 @@ def _normalize_messages(messages: Messages) -> Messages:
     replaced_blank_message_content_text = False
     replaced_tool_names = False
 
-    # Deep copy up front so downstream normalization can mutate freely without
-    # affecting the caller's message history.
-    messages = copy.deepcopy(messages)
+    # Copy on write: the caller's message history is never mutated, and only the
+    # messages and content blocks that change are copied. Deep copying the whole
+    # history here would cost time proportional to its size on every model call.
+    messages = list(messages)
 
-    for message in messages:
+    for index, message in enumerate(messages):
         # only modify assistant messages
         if "role" in message and message["role"] != "assistant":
             continue
         if "content" in message:
-            content = message["content"]
+            content: list[ContentBlock] = list(message["content"])
+            messages[index] = message = {**message, "content": content}
             if len(content) == 0:
                 content.append({"text": "[blank text]"})
                 continue
@@ -76,7 +77,7 @@ def _normalize_messages(messages: Messages) -> Messages:
 
             # Ensure the tool-uses always have valid names before sending
             # https://github.com/strands-agents/harness-sdk/issues/1069
-            for item in content:
+            for item_index, item in enumerate(content):
                 if "toolUse" in item:
                     has_tool_use = True
                     tool_use: ToolUse = item["toolUse"]
@@ -84,7 +85,7 @@ def _normalize_messages(messages: Messages) -> Messages:
                     try:
                         validate_tool_use_name(tool_use)
                     except InvalidToolUseNameException:
-                        tool_use["name"] = "INVALID_TOOL_NAME"
+                        content[item_index] = {**item, "toolUse": {**tool_use, "name": "INVALID_TOOL_NAME"}}
                         replaced_tool_names = True
 
             if has_tool_use:
@@ -99,10 +100,10 @@ def _normalize_messages(messages: Messages) -> Messages:
                     removed_blank_message_content_text = True
             else:
                 # Replace blank or None 'text' with '[blank text]' for assistant messages
-                for item in content:
+                for item_index, item in enumerate(content):
                     if "text" in item and (item["text"] is None or not item["text"].strip()):
                         replaced_blank_message_content_text = True
-                        item["text"] = "[blank text]"
+                        content[item_index] = {**item, "text": "[blank text]"}
 
     if removed_blank_message_content_text:
         logger.debug("removed blank message context text")

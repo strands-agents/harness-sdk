@@ -32,6 +32,21 @@ def _make_terminal(*events: Any, result: Any = "terminal_result"):
     return terminal
 
 
+# --- has_handlers ---
+
+
+def test_has_handlers(registry, stage):
+    assert not registry.has_handlers(stage)
+
+    async def passthrough(context, next_fn):
+        async for event in next_fn(context):
+            yield event
+
+    registry.add_middleware(stage, passthrough)
+
+    assert registry.has_handlers(stage)
+
+
 # --- compose: no handlers ---
 
 

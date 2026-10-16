@@ -579,6 +579,8 @@ async def _handle_model_execution(
                 tool_specs = agent.tool_registry.get_all_tool_specs()
 
             # Build middleware context with defensive copies to prevent accidental mutation.
+            # The copies are skipped when no middleware is registered: the terminal only reads
+            # these values, and copying the whole history on every model call is costly.
             # invocation_state is intentionally shared by reference (hooks/tools write to it).
             # Prefer the content-block form when present: it is the authoritative superset
             # (it carries the text AND structural blocks like cachePoints). Falling back to the
@@ -586,12 +588,18 @@ async def _handle_model_execution(
             system_prompt_value = (
                 agent._system_prompt_content if agent._system_prompt_content is not None else agent.system_prompt
             )
+            context_messages = agent.messages
+            tool_choice = structured_output_context.tool_choice
+            if agent._middleware_registry.has_handlers(InvokeModelStage):
+                context_messages, system_prompt_value, tool_specs, tool_choice = copy.deepcopy(
+                    (context_messages, system_prompt_value, tool_specs, tool_choice)
+                )
             middleware_context = InvokeModelContext(
                 agent=agent,
-                messages=copy.deepcopy(agent.messages),
-                system_prompt=copy.deepcopy(system_prompt_value),
-                tool_specs=copy.deepcopy(tool_specs),
-                tool_choice=copy.deepcopy(structured_output_context.tool_choice),
+                messages=context_messages,
+                system_prompt=system_prompt_value,
+                tool_specs=tool_specs,
+                tool_choice=tool_choice,
                 invocation_state=invocation_state,
                 model=agent.model,
                 projected_input_tokens=projected_input_tokens,
