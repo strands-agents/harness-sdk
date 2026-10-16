@@ -2026,6 +2026,36 @@ def test_format_request_filters_s3_source_image(model, caplog):
     assert "Location sources are not supported by OpenAI" in caplog.text
 
 
+def test_format_request_formats_url_source_image(model):
+    """Test that images with a url location source are passed through as image_url content."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {  # type: ignore[typeddict-item]
+                    "image": {
+                        "format": "png",
+                        "source": {"location": {"type": "url", "uri": "https://example.com/image.png"}},
+                    },
+                },
+            ],
+        },
+    ]
+
+    request = model.format_request(messages)
+
+    formatted_content = request["messages"][0]["content"]
+    assert len(formatted_content) == 1
+    assert formatted_content[0] == {
+        "type": "image_url",
+        "image_url": {
+            "detail": "auto",
+            "format": "image/png",
+            "url": "https://example.com/image.png",
+        },
+    }
+
+
 def test_format_request_skips_message_cache_point(model, caplog):
     caplog.set_level(logging.WARNING, logger="strands.models.openai")
 

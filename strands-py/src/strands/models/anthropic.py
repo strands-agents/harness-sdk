@@ -32,7 +32,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
+from ._validation import _get_image_url, _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -220,6 +220,15 @@ class AnthropicModel(Model):
             if image_format not in _IMAGE_MEDIA_TYPES:
                 raise TypeError(f"content_type=<image>, format=<{image_format}> | unsupported format")
 
+            if image_url := _get_image_url(content):
+                return {
+                    "source": {
+                        "type": "url",
+                        "url": image_url,
+                    },
+                    "type": "image",
+                }
+
             return {
                 "source": {
                     "data": base64.b64encode(content["image"]["source"]["bytes"]).decode("utf-8"),
@@ -310,8 +319,9 @@ class AnthropicModel(Model):
                         logger.warning("no preceding block accepts a cache point | skipped cache point")
                     continue
 
-                # Check for location sources in image, document, or video content
-                if _has_location_source(content):
+                # Check for location sources in image, document, or video content.
+                # Image blocks with a url location are handled during formatting instead.
+                if _has_location_source(content) and _get_image_url(content) is None:
                     logger.warning("Location sources are not supported by Anthropic | skipping content block")
                     continue
 

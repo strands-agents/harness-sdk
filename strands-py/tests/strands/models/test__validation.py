@@ -2,7 +2,7 @@
 
 import pytest
 
-from strands.models._validation import _has_location_source, validate_region
+from strands.models._validation import _get_image_url, _has_location_source, validate_region
 
 
 class TestValidateRegion:
@@ -46,6 +46,35 @@ class TestHasLocationSource:
         """Test detection of location source in image content."""
         content = {"image": {"source": {"location": {"type": "s3", "uri": "s3://bucket/key"}}}}
         assert _has_location_source(content)
+
+
+class TestGetImageUrl:
+    """Tests for _get_image_url helper function."""
+
+    def test_image_with_url_location(self):
+        """Test that a url location on an image returns the uri."""
+        content = {"image": {"source": {"location": {"type": "url", "uri": "https://example.com/image.png"}}}}
+        assert _get_image_url(content) == "https://example.com/image.png"
+
+    def test_image_with_s3_location(self):
+        """Test that an s3 location is not treated as a url location."""
+        content = {"image": {"source": {"location": {"type": "s3", "uri": "s3://bucket/key"}}}}
+        assert _get_image_url(content) is None
+
+    def test_image_with_bytes_source_returns_none(self):
+        """Test that a bytes source returns None."""
+        content = {"image": {"source": {"bytes": b"data"}}}
+        assert _get_image_url(content) is None
+
+    def test_document_with_url_location(self):
+        """Test that url locations on non-image blocks are ignored."""
+        content = {"document": {"source": {"location": {"type": "url", "uri": "https://example.com/doc.pdf"}}}}
+        assert _get_image_url(content) is None
+
+    def test_text_content_returns_none(self):
+        """Test that text content returns None."""
+        content = {"text": "hello"}
+        assert _get_image_url(content) is None
 
     def test_image_with_bytes_source(self):
         """Test that bytes source is not detected as location."""
