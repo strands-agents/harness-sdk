@@ -2,10 +2,13 @@
 
 import json
 import logging
+import threading
 import unittest.mock
+from collections.abc import Iterator
 from typing import Any
 
 import boto3
+import pydantic
 import pytest
 from botocore.config import Config as BotocoreConfig
 
@@ -105,6 +108,47 @@ def test_format_request_tool_message_preserves_non_ascii():
         "content": '{"city": "東京"}',
     }
     assert tru_result == exp_result
+
+
+def _assistant_payload(model: SageMakerAIModel, content: list[dict]) -> dict:
+    """Format one assistant message and return it as the provider would receive it."""
+    request = model.format_request([{"role": "assistant", "content": content}])
+    return json.loads(request["Body"])["messages"][0]
+
+
+def test_format_request_keeps_assistant_text_beside_tool_calls(model):
+    """Text next to a tool call is the model's reasoning and must survive the turn.
+
+    `format_request` dropped `content` from any assistant message that had
+    `tool_calls`, so reasoning text was never carried into the next turn. An
+    OpenAI-compatible endpoint accepts both fields together, and `OpenAIModel`
+    sends both.
+    """
+    message = _assistant_payload(
+        model,
+        [
+            {"text": "This text should be preserved."},
+            {"toolUse": {"toolUseId": "call-1", "name": "lookup", "input": {"query": "example"}}},
+        ],
+    )
+
+    assert message["content"] == [{"type": "text", "text": "This text should be preserved."}]
+    assert [call["function"]["name"] for call in message["tool_calls"]] == ["lookup"]
+
+
+def test_format_request_omits_empty_content_beside_tool_calls(model):
+    """A tool call with no text must not go out as `"content": null`.
+
+    This is what dropping the field was for, and it still holds -- the fix above
+    narrows the drop to an empty content rather than removing it.
+    """
+    message = _assistant_payload(
+        model,
+        [{"toolUse": {"toolUseId": "call-2", "name": "lookup", "input": {}}}],
+    )
+
+    assert "content" not in message
+    assert [call["function"]["name"] for call in message["tool_calls"]] == ["lookup"]
 
 
 def _payload_parts(*chunks: str) -> list[dict[str, dict[str, bytes]]]:
@@ -1079,3 +1123,89 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(
 
     assert "cache_config" not in request
     assert "cache_config" not in json.loads(request["Body"])
+
+
+@pytest.mark.asyncio
+async def test_stream_runs_blocking_sagemaker_calls_off_the_event_loop(sagemaker_client, model, messages, alist):
+    """The synchronous runtime client is driven from a worker thread, so a model call cannot stall the loop."""
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+    body_threads: list[int] = []
+
+    def recording_body() -> Iterator[dict[str, dict[str, bytes]]]:
+        body_threads.append(threading.get_ident())
+        yield from _payload_parts('data: {"choices": []}\n\n')
+
+    def invoke_endpoint_with_response_stream(**_kwargs: Any) -> dict[str, Any]:
+        call_threads.append(threading.get_ident())
+        return {"Body": recording_body()}
+
+    sagemaker_client.invoke_endpoint_with_response_stream.side_effect = invoke_endpoint_with_response_stream
+
+    await alist(model.stream(messages))
+
+    tru_threads = call_threads + body_threads
+    exp_threads = [unittest.mock.ANY, unittest.mock.ANY]
+    assert tru_threads == exp_threads
+    assert loop_thread not in tru_threads
+
+
+@pytest.mark.asyncio
+async def test_stream_non_streaming_runs_blocking_sagemaker_calls_off_the_event_loop(
+    sagemaker_client, model, messages, alist
+):
+    """The non-streaming invocation and its body read also stay off the event loop."""
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+    read_threads: list[int] = []
+
+    def read_body() -> bytes:
+        read_threads.append(threading.get_ident())
+        return json.dumps({"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}).encode("utf-8")
+
+    def invoke_endpoint(**_kwargs: Any) -> dict[str, Any]:
+        call_threads.append(threading.get_ident())
+        body = unittest.mock.MagicMock()
+        body.read.side_effect = read_body
+        return {"Body": body}
+
+    model.payload_config["stream"] = False
+    sagemaker_client.invoke_endpoint.side_effect = invoke_endpoint
+
+    await alist(model.stream(messages))
+
+    tru_threads = call_threads + read_threads
+    exp_threads = [unittest.mock.ANY, unittest.mock.ANY]
+    assert tru_threads == exp_threads
+    assert loop_thread not in tru_threads
+
+
+@pytest.mark.asyncio
+async def test_structured_output_runs_blocking_sagemaker_calls_off_the_event_loop(
+    sagemaker_client, model, messages, alist
+):
+    """Structured output invokes the endpoint from a worker thread as well."""
+
+    class TestOutputModel(pydantic.BaseModel):
+        name: str
+        age: int
+
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+
+    def invoke_endpoint(**_kwargs: Any) -> dict[str, Any]:
+        call_threads.append(threading.get_ident())
+        body = unittest.mock.MagicMock()
+        body.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": '{"name": "John", "age": 30}'}, "finish_reason": "stop"}]}
+        ).encode("utf-8")
+        return {"Body": body}
+
+    sagemaker_client.invoke_endpoint.side_effect = invoke_endpoint
+
+    await alist(model.structured_output(TestOutputModel, messages))
+
+    tru_call_threads = call_threads
+    exp_call_threads = [unittest.mock.ANY]
+    assert tru_call_threads == exp_call_threads
+    assert loop_thread not in tru_call_threads

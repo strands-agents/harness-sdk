@@ -762,7 +762,7 @@ def test_summarizing_conversation_manager_properly_records_removed_message_count
     assert manager.removed_message_count == 0
 
     manager.reduce_context(agent)
-    # Assert the oldest message is the sumamry message
+    # Assert the oldest message is the summary message
     assert manager._summary_message["content"][0]["text"] == "Summary"
     # There are 8 messages in the agent messages array, since half will be summarized,
     # 4 will remain plus 1 summary message = 5

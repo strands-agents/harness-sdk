@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SandboxAbortError, SandboxPathNotFoundError } from '@strands-agents/sdk'
@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { WorkspaceSandbox } from '../src/tui/workspace/sandbox.js'
 
 describe('WorkspaceSandbox', () => {
-  it('uses native filesystem operations for local reads and directory listings', async () => {
+  it('uses native filesystem operations for reads, listings, writes, and removes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-workspace-sandbox-'))
     const sandbox = new WorkspaceSandbox(directory)
     sandbox.executeStreaming = async function* () {
@@ -26,6 +26,15 @@ describe('WorkspaceSandbox', () => {
       ])
       await expect(sandbox.listFiles('skill.md')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
       await expect(sandbox.listFiles('missing')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+
+      // Writes and removes must not go through `sh` either: PowerShell has none, so the
+      // PosixShellSandbox default fails with `spawn sh ENOENT` on Windows.
+      await sandbox.writeText(join(directory, 'out', 'novel.json'), '{"a":1}')
+      await expect(readFile(join(directory, 'out', 'novel.json'), 'utf8')).resolves.toBe('{"a":1}')
+      await sandbox.writeText('chapter.md', '# One')
+      await expect(sandbox.readText(join(directory, 'chapter.md'))).resolves.toBe('# One')
+      await sandbox.removeFile('chapter.md')
+      await expect(stat(join(directory, 'chapter.md'))).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

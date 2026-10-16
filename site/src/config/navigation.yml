@@ -342,6 +342,8 @@ sidebar:
             slug: docs/user-guide/sdk/agents/hooks
           - label: "Hook events"
             slug: docs/user-guide/sdk/agents/hooks-events
+          - label: "Middleware"
+            slug: docs/user-guide/sdk/agents/middleware
           - label: Context management
             items:
               - label: "Overview"
@@ -352,6 +354,8 @@ sidebar:
               - docs/user-guide/sdk/context-management/context-estimation
           - label: "Retry strategies"
             slug: docs/user-guide/sdk/agents/retry-strategies
+          - label: "Structured output"
+            slug: docs/user-guide/sdk/agents/structured-output-behavior
           - label: Interrupts
             items:
               - label: "Overview"
@@ -599,6 +603,8 @@ sidebar:
                   - docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator
               - label: "Deterministic"
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
+              - label: "Structured output similarity"
+                slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors

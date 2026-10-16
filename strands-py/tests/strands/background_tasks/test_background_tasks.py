@@ -10,9 +10,9 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from strands import Agent, ToolContext, tool
-from strands._middleware.stages import ExecuteToolStage, InvokeModelStage
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
+from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
 from strands.tools.tools import PythonAgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.content import Messages
@@ -111,7 +111,7 @@ def _capture_tool_specs(agent: Agent) -> list[list[ToolSpec]]:
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, capture)
     return captured
 
 
@@ -276,7 +276,7 @@ async def test_fails_task_when_middleware_substitutes_foreground_only_tool() -> 
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, substitute)
+    agent.add_middleware(ExecuteToolStage, substitute)
 
     await agent.invoke_async("Run work.")
 
@@ -297,7 +297,7 @@ async def test_fails_task_when_middleware_drops_tool_result() -> None:
         return
         yield
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, swallow)
+    agent.add_middleware(ExecuteToolStage, swallow)
 
     await agent.invoke_async("Run work.")
 
@@ -398,7 +398,7 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
             yield event
 
     agent.add_hook(retry_once, AfterToolCallEvent)
-    agent._middleware_registry.add_middleware(ExecuteToolStage, count_execution)
+    agent.add_middleware(ExecuteToolStage, count_execution)
 
     result = await agent.invoke_async("Run work.")
 
@@ -764,7 +764,7 @@ async def test_surfaces_and_resumes_interrupts_from_background_tools() -> None:
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, interrupt_approval)
+    agent.add_middleware(ExecuteToolStage, interrupt_approval)
 
     interrupted = await agent.invoke_async("Run approval.")
     tru_stop_reason = interrupted.stop_reason

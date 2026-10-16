@@ -406,10 +406,12 @@ agent = Agent(
 
 ### Baggage Propagation
 
-Use `baggage_attributes` to propagate key-value pairs across process boundaries via the W3C `baggage` header. Unlike `trace_attributes`, baggage is not stamped onto spans by default. It travels through the OTel context and is available to downstream services.
+Baggage attributes propagate key-value pairs across process boundaries via the W3C `baggage` header. Unlike trace attributes, baggage is not stamped onto spans by default. It travels through the OTel context and is available to downstream services.
 
 <Tabs>
 <Tab label="Python">
+Pass `baggage_attributes` to the `Agent`:
+
 ```python
 agent = Agent(
     system_prompt="You are a helpful assistant.",
@@ -420,12 +422,23 @@ agent = Agent(
 )
 ```
 </Tab>
+<Tab label="TypeScript">
+Pass `baggageAttributes` to the `Agent`:
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:baggage_propagation_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:baggage_propagation"
+```
+</Tab>
 </Tabs>
 
-If you also want baggage recorded on spans, call `setup_baggage_processor()` on `StrandsTelemetry`. Pass a predicate (or a sequence of predicates) that takes a baggage key and returns `True` to record only matching entries.
+If you also want baggage recorded on spans, enable the baggage span processor. Pass a predicate (or a list of predicates) that takes a baggage key and returns true to record only matching entries.
 
 <Tabs>
 <Tab label="Python">
+Call `setup_baggage_processor()` on `StrandsTelemetry`:
+
 ```python
 from strands.telemetry import StrandsTelemetry
 
@@ -433,24 +446,25 @@ strands_telemetry = StrandsTelemetry()
 strands_telemetry.setup_otlp_exporter()
 strands_telemetry.setup_baggage_processor(lambda key: key in {"tenant.id", "env"})
 ```
+
+Requires the `strands-agents[otel]` extra.
 </Tab>
-</Tabs>
 
-If your agent runs under the AWS Distro for OpenTelemetry (ADOT), note that ADOT registers the global tracer provider before your code runs. `StrandsTelemetry()` cannot replace it, so attach the processor to the existing provider instead:
+<Tab label="TypeScript">
+Pass `baggageProcessor` to `setupTracer()`:
 
-<Tabs>
-<Tab label="Python">
-```python
-from opentelemetry import trace
-from strands.telemetry import StrandsTelemetry
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:baggage_span_processor_imports"
 
-StrandsTelemetry(tracer_provider=trace.get_tracer_provider()).setup_baggage_processor(lambda key: key in {"tenant.id", "env"})
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:baggage_span_processor"
 ```
+
+Requires `npm install @opentelemetry/baggage-span-processor`. `baggageProcessor` is ignored when you pass your own `provider`.
 </Tab>
 </Tabs>
 
 :::caution
-Without a predicate, `setup_baggage_processor()` stamps *every* baggage entry onto every span, including values extracted from inbound `baggage` request headers. It requires the `strands-agents[otel]` extra.
+Without a predicate, *every* baggage entry is stamped onto every span, including values extracted from inbound `baggage` request headers.
 :::
 
 ### Custom Spans

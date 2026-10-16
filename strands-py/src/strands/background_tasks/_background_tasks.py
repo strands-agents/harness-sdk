@@ -11,12 +11,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
-from .._middleware.stages import InvokeModelContext, InvokeModelStage
 from ..agent import _continuation
 from ..agent._agent_as_tool import _AgentAsTool
 from ..agent.agent import _CANCEL_POLL_INTERVAL
 from ..hooks import AfterInvocationEvent, AgentInitializedEvent, BeforeModelCallEvent, HookOrder
 from ..interrupt import Interrupt, InterruptException
+from ..middleware.stages import InvokeModelContext, InvokeModelStage
 from ..models._validation import validate_config_keys
 from ..plugins import Plugin
 from ..tools.decorator import tool
@@ -116,7 +116,7 @@ class _BackgroundTasks(Plugin):
             manager_options["timeout"] = self._config["timeout"]
         self._manager = InProcessTaskManager(agent, execute_tool, on_task_updated=self._store_task, **manager_options)
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, self._transform_tool_specs)
+        agent.add_middleware(InvokeModelStage.Input, self._transform_tool_specs)
         agent.add_hook(self._before_model_call, BeforeModelCallEvent)
         agent.add_hook(self._after_invocation, AfterInvocationEvent)
         agent.add_hook(lambda event: self.load_state(), AgentInitializedEvent, order=HookOrder.SDK_LAST)

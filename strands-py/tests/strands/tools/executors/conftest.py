@@ -6,9 +6,9 @@ import pytest
 
 import strands
 from strands import Agent
-from strands._middleware import MiddlewareRegistry
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookRegistry
 from strands.interrupt import _InterruptState
+from strands.middleware._registry import MiddlewareRegistry
 from strands.tools.registry import ToolRegistry
 from strands.types.tools import ToolContext
 
