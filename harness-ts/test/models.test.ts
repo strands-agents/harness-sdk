@@ -145,6 +145,20 @@ describe('resolveModel', () => {
     )
   })
 
+  it('uses the Nova 2 Bedrock reasoning config', async () => {
+    // https://github.com/strands-agents/harness-sdk/issues/4852
+    const model = await resolve('bedrock/global.amazon.nova-2-lite-v1:0', 'medium')
+    expect(model.getConfig().additionalRequestFields).toEqual({
+      reasoningConfig: { type: 'enabled', maxReasoningEffort: 'medium' },
+    })
+    expect(supportsThinking('bedrock/amazon.nova-2-lite-v1:0')).toBe(true)
+    const off = await resolve('bedrock/amazon.nova-2-lite-v1:0', 'off')
+    expect(off.getConfig().additionalRequestFields).toBeUndefined()
+    await expect(resolve('bedrock/amazon.nova-2-lite-v1:0', 'max')).rejects.toThrow(
+      'not supported by Bedrock model amazon.nova-2-lite-v1:0'
+    )
+  })
+
   it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
     'resolves Astra effort for %s',
     async (modelId) => {
