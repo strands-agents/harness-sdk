@@ -36,31 +36,30 @@ export class FileSkillsRuntime implements ChatSkillsRuntime {
 
   async list(): Promise<readonly SkillInfo[]> {
     const active = activatedSkills(this._getAgent())
-    return discoverSkills(this._paths).map((skill) => ({
-      name: sanitizeTerminalText(skill.name),
-      description: sanitizeTerminalText(skill.description),
-      instructions: sanitizeTerminalText(skill.instructions),
-      active: active.has(skill.name),
-      ...(skill.path ? { path: sanitizeTerminalText(skill.path) } : {}),
-      ...(skill.allowedTools ? { allowedTools: skill.allowedTools.map(sanitizeTerminalText) } : {}),
-      ...(skill.license ? { license: sanitizeTerminalText(skill.license) } : {}),
-      ...(skill.compatibility ? { compatibility: sanitizeTerminalText(skill.compatibility) } : {}),
-    }))
+    return discoverSkills(this._paths).map((skill) => toSkillInfo(skill, active.has(skill.name)))
   }
 
   async activate(name: string): Promise<SkillInfo | undefined> {
-    const skill = (await this.list()).find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
-    if (!skill) {
-      return undefined
-    }
-    const result = await this._getAgent().tool.skills!.invoke(
-      { skill_name: skill.name },
-      { recordDirectToolCall: false }
-    )
-    if (result.status === 'error') {
-      throw result.error ?? new Error(toolResultText(result.content) || `Failed to activate skill ${skill.name}.`)
-    }
-    return { ...skill, active: true }
+    return activateSkill(this._getAgent, await this.list(), name)
+  }
+}
+
+/** Skills panel backed by a caller-supplied `AgentSkills` instance, not directory discovery. */
+export class AgentSkillsRuntime implements ChatSkillsRuntime {
+  constructor(
+    private readonly _plugin: AgentSkills,
+    private readonly _getAgent: () => Agent
+  ) {}
+
+  async list(): Promise<readonly SkillInfo[]> {
+    const agent = this._getAgent()
+    const active = activatedSkills(agent)
+    const skills = await this._plugin.getAvailableSkills(agent)
+    return skills.map((skill) => toSkillInfo(skill, active.has(skill.name)))
+  }
+
+  async activate(name: string): Promise<SkillInfo | undefined> {
+    return activateSkill(this._getAgent, await this.list(), name)
   }
 }
 
@@ -146,6 +145,35 @@ function workspaceAncestors(cwd: string): string[] {
     }
     current = parent
   }
+}
+
+function toSkillInfo(skill: Skill, active: boolean): SkillInfo {
+  return {
+    name: sanitizeTerminalText(skill.name),
+    description: sanitizeTerminalText(skill.description),
+    instructions: sanitizeTerminalText(skill.instructions),
+    active,
+    ...(skill.path ? { path: sanitizeTerminalText(skill.path) } : {}),
+    ...(skill.allowedTools ? { allowedTools: skill.allowedTools.map(sanitizeTerminalText) } : {}),
+    ...(skill.license ? { license: sanitizeTerminalText(skill.license) } : {}),
+    ...(skill.compatibility ? { compatibility: sanitizeTerminalText(skill.compatibility) } : {}),
+  }
+}
+
+async function activateSkill(
+  getAgent: () => Agent,
+  skills: readonly SkillInfo[],
+  name: string
+): Promise<SkillInfo | undefined> {
+  const skill = skills.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
+  if (!skill) {
+    return undefined
+  }
+  const result = await getAgent().tool.skills!.invoke({ skill_name: skill.name }, { recordDirectToolCall: false })
+  if (result.status === 'error') {
+    throw result.error ?? new Error(toolResultText(result.content) || `Failed to activate skill ${skill.name}.`)
+  }
+  return { ...skill, active: true }
 }
 
 function activatedSkills(agent: Agent): Set<string> {
