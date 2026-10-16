@@ -12,9 +12,11 @@ import copy
 import logging
 import re
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from ...agent._agent_as_tool import _INTERRUPTED_TURNS_KEY
 from ...agent.conversation_manager.compression.context_compression import find_valid_trim_point
+from ...interrupt import _NestedInterruptState
 from ...multiagent.spec import (
     AgentBuilder,
     AgentSpec,
@@ -137,8 +139,7 @@ def _build_schema(
 class _SubagentTool(AgentTool):
     """Streams a fresh per-call child and propagates its interrupts to the parent for resume.
 
-    If the parent never answers the interrupt, the child ``Agent`` remains referenced here for
-    the lifetime of this tool instance.
+    An interrupted child's turn is stored on the parent, so it resumes after rehydration.
     """
 
     def __init__(
@@ -157,8 +158,6 @@ class _SubagentTool(AgentTool):
         self._context = context
         self._builder = builder
         self._max_depth = max_depth
-        # Children awaiting a resume, keyed by the tool-use id that interrupted.
-        self._pending: dict[str, Agent] = {}
 
     @property
     def tool_name(self) -> str:
@@ -250,24 +249,16 @@ class _SubagentTool(AgentTool):
     def _error_result(self, tool_use_id: str, text: str) -> ToolResultEvent:
         return ToolResultEvent({"toolUseId": tool_use_id, "status": "error", "content": [{"text": text}]})
 
-    def _prepare_child(self, tool_use_id: str, raw: Mapping[str, Any], parent: Agent | None) -> tuple[Agent, Any] | str:
+    def _prepare_child(
+        self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, state: _NestedInterruptState | None
+    ) -> tuple[Agent, Any] | str | ToolInterruptEvent | ToolResultEvent:
         """Resolve or resume the child agent and its prompt.
 
-        Returns ``(child, prompt)`` on success, or a ``str`` error message on validation failure.
+        Returns ``(child, prompt)`` on success, a ``str`` error message on validation failure, or the
+        event to yield if the child's stored turn could not be resumed.
         """
-        child = self._pending.get(tool_use_id)
-        if child is not None and child._interrupt_state.activated:
-            prompt: Any = [
-                {
-                    "interruptResponse": {
-                        "interruptId": interrupt.id,
-                        "response": interrupt.response,
-                    }
-                }
-                for interrupt in child._interrupt_state.interrupts.values()
-                if interrupt.response is not None
-            ]
-            return child, prompt
+        if state is not None and state.is_resuming():
+            return self._prepare_resume(tool_use, raw, parent, state)
 
         stored_depth = None if parent is None else parent.state.get(_DEPTH_STATE_KEY)
         depth = self._max_depth if stored_depth is None else stored_depth
@@ -286,7 +277,7 @@ class _SubagentTool(AgentTool):
         child.state.set(_DEPTH_STATE_KEY, depth - 1)
         ctx_mode, last_messages = self._resolve_context(raw)
 
-        prompt = task
+        prompt: Any = task
         if ctx_mode == "all":
             messages = self._fork_messages(parent, last_messages)
             if messages:
@@ -305,20 +296,46 @@ class _SubagentTool(AgentTool):
 
         return child, prompt
 
+    def _prepare_resume(
+        self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, state: _NestedInterruptState
+    ) -> tuple[Agent, Any] | ToolInterruptEvent | ToolResultEvent:
+        """Rebuild the interrupted child from the same tool input and restore its stored turn."""
+        spec = self._resolve(raw)
+        build = self._builder or _default_builder(parent)  # type: ignore[arg-type]
+        child: Agent | None = None
+        try:
+            child = build(spec)
+        except Exception as error:
+            logger.warning(
+                "tool_name=<%s>, tool_use_id=<%s> | failed to rebuild interrupted subagent: %s",
+                self._name,
+                tool_use["toolUseId"],
+                error,
+            )
+        resumed = state.resume(
+            child,
+            tool_use,
+            "Subagent did NOT run and the response was NOT applied: its interrupted turn is not available. "
+            "Do not report the delegated task as completed; if it is still needed, delegate it again.",
+        )
+        if not isinstance(resumed, list):
+            return resumed
+        # resume() returns an event when there is no child to resume.
+        return cast("Agent", child), resumed
+
     def _finalize_result(
-        self, tool_use_id: str, tool_use: ToolUse, child: Agent, result: Any
+        self, tool_use: ToolUse, child: Agent, result: Any, state: _NestedInterruptState | None
     ) -> ToolResultEvent | ToolInterruptEvent:
         """Map the child's result to the terminal event for the parent."""
+        tool_use_id = tool_use["toolUseId"]
+        if result is not None and result.stop_reason == "interrupt" and result.interrupts:
+            interrupts = list(result.interrupts)
+            raised = interrupts if state is None else state.store(child, interrupts)
+            return ToolInterruptEvent(tool_use, raised)
         if result is None:
-            self._pending.pop(tool_use_id, None)
             return self._error_result(tool_use_id, "Subagent produced no result.")
-        if result.stop_reason == "interrupt" and result.interrupts:
-            self._pending[tool_use_id] = child
-            return ToolInterruptEvent(tool_use, list(result.interrupts))
         if result.stop_reason == "cancelled":
-            self._pending.pop(tool_use_id, None)
             return self._error_result(tool_use_id, "Subagent was cancelled.")
-        self._pending.pop(tool_use_id, None)
         return ToolResultEvent(
             {
                 "toolUseId": tool_use_id,
@@ -331,11 +348,17 @@ class _SubagentTool(AgentTool):
         tool_use_id = tool_use["toolUseId"]
         raw = tool_use.get("input", {}) or {}
         parent = invocation_state.get("agent")
+        parent_state = getattr(parent, "_interrupt_state", None)
+        state = (
+            None
+            if parent_state is None
+            else _NestedInterruptState(parent_state, _INTERRUPTED_TURNS_KEY, "v1:subagent", tool_use_id)
+        )
 
         try:
-            prepared = self._prepare_child(tool_use_id, raw, parent)
-            if isinstance(prepared, str):
-                yield self._error_result(tool_use_id, prepared)
+            prepared = self._prepare_child(tool_use, raw, parent, state)
+            if not isinstance(prepared, tuple):
+                yield self._error_result(tool_use_id, prepared) if isinstance(prepared, str) else prepared
                 return
             child, prompt = prepared
 
@@ -351,9 +374,8 @@ class _SubagentTool(AgentTool):
                 else:
                     yield ToolStreamEvent(tool_use, event)
 
-            yield self._finalize_result(tool_use_id, tool_use, child, result)
+            yield self._finalize_result(tool_use, child, result, state)
         except Exception as exc:
-            self._pending.pop(tool_use_id, None)
             logger.warning(
                 "tool_name=<%s>, tool_use_id=<%s> | subagent failed: %s",
                 self._name,
@@ -381,6 +403,10 @@ def make_subagent(
 
     Each axis accepts a policy from :mod:`~strands.multiagent.spec` that controls what
     the model sees and can supply. Omitted axes use sensible defaults.
+
+    Child interrupts surface on the parent; answer them with the ``id`` as given. On resume *builder*
+    rebuilds the child and only its messages and state are restored, so a different agent can drop an
+    approval gate.
 
     Raises:
         ValueError: If *max_depth* < 1, *name* or *description* is empty, or a ``Choice`` axis violates

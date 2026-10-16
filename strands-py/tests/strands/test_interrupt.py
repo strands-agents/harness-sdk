@@ -1,7 +1,19 @@
+from unittest.mock import Mock
+
 import pytest
 
-from strands.interrupt import _AGENT_STREAM_INTERRUPT_ID_PREFIX, Interrupt, PendingToolExecution, _InterruptState
+from strands.interrupt import (
+    _AGENT_STREAM_INTERRUPT_ID_PREFIX,
+    Interrupt,
+    PendingToolExecution,
+    _InterruptState,
+    _NestedInterruptState,
+)
+from strands.types._events import ToolResultEvent
+from strands.types._snapshot import Snapshot
 from strands.types.exceptions import SessionException
+
+TOOL_USE = {"toolUseId": "t", "name": "tool", "input": {}}
 
 
 @pytest.fixture
@@ -431,3 +443,60 @@ def test_interrupt_state_from_dict_drops_retained_invocation_scoped_responses():
 
     data["activated"] = True
     assert set(_InterruptState.from_dict(data).interrupts) == {retained.id}
+
+
+@pytest.fixture
+def nested_agent():
+    agent = Mock()
+    agent.take_snapshot.return_value = Snapshot(scope="agent", schema_version="1.0", data={}, app_data={})
+    return agent
+
+
+def test_nested_interrupt_state_scopes_turns_and_responses_per_tool_call(nested_agent):
+    state = _InterruptState()
+    # "a:" must not prefix-match the ids of tool call "a:b"
+    call_a = _NestedInterruptState(state, "turns", "v1:ns", "a")
+    call_a_b = _NestedInterruptState(state, "turns", "v1:ns", "a:b")
+
+    raised = call_a.store(nested_agent, [Interrupt("i1", "confirm")])
+    call_a_b.store(nested_agent, [Interrupt("i1", "confirm")])
+    state.context["responses"] = [
+        {"interruptResponse": {"interruptId": "v1:ns:a:i1", "response": "yes"}},
+        {"interruptResponse": {"interruptId": "v1:ns:a%3Ab:i1", "response": "no"}},
+    ]
+
+    assert [i.id for i in raised] == ["v1:ns:a:i1"]
+    assert set(state.context["turns"]) == {"a", "a:b"}
+    assert call_a.resume(nested_agent, TOOL_USE, "unavailable") == [
+        {"interruptResponse": {"interruptId": "i1", "response": "yes"}}
+    ]
+    assert call_a_b.resume(nested_agent, TOOL_USE, "unavailable") == [
+        {"interruptResponse": {"interruptId": "i1", "response": "no"}}
+    ]
+
+
+def test_nested_interrupt_state_bumps_version_only_when_the_turn_changes(nested_agent):
+    state = _InterruptState()
+    nested = _NestedInterruptState(state, "turns", "v1:ns", "t")
+
+    nested.resume(nested_agent, TOOL_USE, "unavailable")
+    assert state._version == 0
+
+    nested.store(nested_agent, [])
+    nested.resume(nested_agent, TOOL_USE, "unavailable")
+    assert state._version == 2
+    assert state.context["turns"] == {}
+
+
+def test_nested_interrupt_state_unavailable_when_no_held_interrupt_is_awaited():
+    held = Interrupt("v1:ns:t:i1", "confirm", response="yes")
+    state = _InterruptState(interrupts={held.id: held}, activated=True)
+    awaited = _InterruptState(interrupts={"i2": Interrupt("i2", "confirm")}, activated=True)
+    state.context["turns"] = {"t": {"data": {"interrupt_state": awaited.to_dict()}}}
+    nested = _NestedInterruptState(state, "turns", "v1:ns", "t")
+
+    result = nested.resume(None, TOOL_USE, "unavailable")
+
+    assert result == ToolResultEvent({"toolUseId": "t", "status": "error", "content": [{"text": "unavailable"}]})
+    assert held.response == "yes"
+    assert "t" in state.context["turns"]

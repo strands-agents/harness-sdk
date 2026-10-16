@@ -1,16 +1,26 @@
 """Human-in-the-loop interrupt system for agent workflows."""
 
+import copy
+import logging
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
 
 if TYPE_CHECKING:
+    from .agent import Agent
+    from .types._events import ToolInterruptEvent, ToolResultEvent
     from .types.agent import AgentInput
     from .types.content import Message
     from .types.interrupt import InterruptResponseContent
-    from .types.tools import ToolResult
+    from .types.tools import ToolResult, ToolUse
+
+logger = logging.getLogger(__name__)
 
 _AGENT_STREAM_INTERRUPT_ID_PREFIX = "v1:middleware_agent_stream:"
 """Id prefix for interrupts scoped to a whole invocation pass rather than a single tool call."""
+
+_RESPONSES_KEY = "responses"
+"""Key in ``_InterruptState.context`` holding the responses supplied on the current resume."""
 
 
 @dataclass
@@ -151,7 +161,7 @@ class _InterruptState:
 
             self.interrupts[interrupt_id].response = interrupt_response
 
-        self.context["responses"] = contents
+        self.context[_RESPONSES_KEY] = contents
         self._version += 1
 
     def set_pending_tool_results(self, completed_tool_results: list["ToolResult"]) -> None:
@@ -239,3 +249,117 @@ class _InterruptState:
             activated=activated,
             pending_tool_execution=pending_tool_execution,
         )
+
+
+class _NestedInterruptState:
+    """Persist a nested agent's interrupted turn in its parent's interrupt state, scoped to one tool call."""
+
+    def __init__(self, state: _InterruptState, key: str, namespace: str, tool_use_id: str) -> None:
+        """Initialize the state.
+
+        Args:
+            state: The parent's interrupt state.
+            key: Key in ``state.context`` the interrupted turns are stored under.
+            namespace: Tool-specific id namespace, e.g. ``v1:subagent``.
+            tool_use_id: Id of the tool call that runs the nested agent.
+        """
+        self._state = state
+        self._key = key
+        self._tool_use_id = tool_use_id
+        self.prefix = f"{namespace}:{quote(tool_use_id, safe='')}:"
+
+    def is_resuming(self) -> bool:
+        """Whether the parent is holding an interrupt raised by this tool call."""
+        return self._state.activated and any(i.startswith(self.prefix) for i in self._state.interrupts)
+
+    def store(self, agent: "Agent", interrupts: list[Interrupt]) -> list[Interrupt]:
+        """Store the agent's interrupted turn.
+
+        Args:
+            agent: The interrupted nested agent.
+            interrupts: The interrupts the agent stopped on.
+
+        Returns:
+            The parent-scoped interrupts to raise.
+        """
+        turns = self._state.context.setdefault(self._key, {})
+        # The snapshot's interrupt state holds the agent's live context, so copy it to detach the stored turn.
+        turns[self._tool_use_id] = copy.deepcopy(agent.take_snapshot(preset="session").to_dict())
+        self._state._version += 1
+        return [Interrupt(f"{self.prefix}{i.id}", i.name, i.reason) for i in interrupts]
+
+    def resume(
+        self, agent: "Agent | None", tool_use: "ToolUse", unavailable_message: str
+    ) -> "list[InterruptResponseContent] | ToolInterruptEvent | ToolResultEvent":
+        """Restore the stored turn, if any, and map this call's responses back to the nested agent's ids.
+
+        Args:
+            agent: The nested agent to resume, or None if it could not be built.
+            tool_use: The tool call that runs the nested agent.
+            unavailable_message: Error text for the tool result when there is no turn to resume.
+
+        Returns:
+            The responses to resume the nested agent with; otherwise the interrupts to raise again if the turn
+            could not be loaded, or an error result if there is no turn to resume.
+        """
+        # Importing here to avoid circular import
+        from .types._events import ToolResultEvent
+        from .types._snapshot import Snapshot
+
+        unavailable = ToolResultEvent(
+            {"toolUseId": tool_use["toolUseId"], "status": "error", "content": [{"text": unavailable_message}]}
+        )
+        if agent is None:
+            return self._reraise(tool_use) or unavailable
+        turns = self._state.context.get(self._key) or {}
+        turn = turns.get(self._tool_use_id)
+        try:
+            if turn is not None:
+                agent.load_snapshot(Snapshot.from_dict(turn))
+        except Exception as error:
+            logger.error(
+                "tool_use_id=<%s>, error=<%s> | failed to restore interrupted sub-agent turn", self._tool_use_id, error
+            )
+            return self._reraise(tool_use) or unavailable
+
+        if turns.pop(self._tool_use_id, None) is not None:
+            self._state._version += 1
+        if not agent._interrupt_state.activated:
+            logger.error("tool_use_id=<%s> | cannot resume: the nested agent turn is not available", self._tool_use_id)
+            return unavailable
+        return [
+            {
+                "interruptResponse": {
+                    "interruptId": response["interruptResponse"]["interruptId"][len(self.prefix) :],
+                    "response": response["interruptResponse"]["response"],
+                }
+            }
+            for response in self._state.context.get(_RESPONSES_KEY) or []
+            if response["interruptResponse"]["interruptId"].startswith(self.prefix)
+        ]
+
+    def _reraise(self, tool_use: "ToolUse") -> "ToolInterruptEvent | None":
+        """Raise the stored turn's still-awaited interrupts again, keeping the turn for a later attempt.
+
+        Returns:
+            The interrupts to raise again, or None if the stored turn has no readable interrupt state.
+        """
+        from .types._events import ToolInterruptEvent
+
+        turn = (self._state.context.get(self._key) or {}).get(self._tool_use_id)
+        try:
+            # Read the raw dict rather than Snapshot.from_dict, since the turn may be stored but fail validation.
+            awaited = _InterruptState.from_dict(turn["data"]["interrupt_state"]).interrupts  # type: ignore[index]
+        except Exception:
+            logger.error("tool_use_id=<%s> | stored turn has no readable interrupt state", self._tool_use_id)
+            return None
+        pending = [
+            interrupt
+            for interrupt_id, interrupt in self._state.interrupts.items()
+            if interrupt_id.startswith(self.prefix) and interrupt_id[len(self.prefix) :] in awaited
+        ]
+        if not pending:
+            return None
+        for interrupt in pending:
+            interrupt.response = None
+        return ToolInterruptEvent(tool_use, pending)
