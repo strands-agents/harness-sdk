@@ -1079,3 +1079,43 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(
 
     assert "cache_config" not in request
     assert "cache_config" not in json.loads(request["Body"])
+
+
+@pytest.mark.parametrize("framing", ["sse", "bare"])
+def test_event_stream_preserves_utf8_at_every_byte_split(framing):
+    event = {"value": "café 你好 🙂"}
+    text = json.dumps(event, ensure_ascii=False)
+    payload = (("data: " + text + "\n\n") if framing == "sse" else text).encode("utf-8")
+    for split in range(1, len(payload)):
+        parts = [{"PayloadPart": {"Bytes": chunk}} for chunk in (payload[:split], payload[split:])]
+        assert list(_parse_event_stream(parts)) == [event], split
+
+
+def test_event_stream_preserves_utf8_in_single_byte_parts():
+    events = [{"value": "café"}, {"value": "你好🙂"}]
+    payload = "".join("data: " + json.dumps(event, ensure_ascii=False) + "\n\n" for event in events).encode("utf-8")
+    parts = [{"PayloadPart": {"Bytes": bytes([byte])}} for byte in payload]
+    assert list(_parse_event_stream(parts)) == events
+
+
+@pytest.mark.parametrize("payload", [b'data: {"value": "\xff"}\n\n', b'data: {"value": "\xe4\xbd'])
+def test_event_stream_rejects_invalid_or_truncated_utf8(payload):
+    with pytest.raises(UnicodeDecodeError):
+        list(_parse_event_stream([{"PayloadPart": {"Bytes": payload}}]))
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_utf8_payload_boundaries(sagemaker_client, model, messages, alist):
+    event = {"choices": [{"delta": {"content": "你好🙂 café"}, "finish_reason": "stop"}]}
+    payload = ("data: " + json.dumps(event, ensure_ascii=False) + "\n\ndata: [DONE]\n\n").encode("utf-8")
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {
+        "Body": [{"PayloadPart": {"Bytes": bytes([byte])}} for byte in payload]
+    }
+    response = await alist(model.stream(messages))
+    text = "".join(
+        chunk["contentBlockDelta"]["delta"]["text"]
+        for chunk in response
+        if "contentBlockDelta" in chunk and "text" in chunk["contentBlockDelta"]["delta"]
+    )
+    assert text == "你好🙂 café"
+    assert response[-1] == {"messageStop": {"stopReason": "end_turn"}}
