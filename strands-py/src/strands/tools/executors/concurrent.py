@@ -77,7 +77,7 @@ class ConcurrentToolExecutor(ToolExecutor):
                     task_count -= 1
                     continue
 
-                if isinstance(event, Exception):
+                if isinstance(event, BaseException):
                     raise event
 
                 yield event
@@ -127,7 +127,12 @@ class ConcurrentToolExecutor(ToolExecutor):
                 await task_event.wait()
                 task_event.clear()
 
-        except Exception as e:
+        except asyncio.CancelledError as e:
+            # A tool's own CancelledError reaches the caller; re-raised so a task cancelled by _execute ends cancelled
+            task_queue.put_nowait((task_id, e))
+            raise
+
+        except BaseException as e:
             task_queue.put_nowait((task_id, e))
 
         finally:

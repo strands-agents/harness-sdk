@@ -33,6 +33,7 @@ from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
 from strands.models.routing import ModelRouter
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.tracer import Tracer, serialize
+from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from strands.types._events import EventLoopStopEvent, ModelStreamEvent
 from strands.types.agent import ConcurrentInvocationMode
 from strands.types.content import ContentBlock, Messages
@@ -1831,6 +1832,68 @@ def test_agent_session_management():
     model = MockedModelProvider([{"role": "assistant", "content": [{"text": "hello!"}]}])
     agent = Agent(session_manager=session_manager, model=model)
     agent("Hello!")
+
+
+class _AbortRun(BaseException):
+    pass
+
+
+@pytest.mark.parametrize(
+    "tool_executor", [ConcurrentToolExecutor(), SequentialToolExecutor()], ids=["concurrent", "sequential"]
+)
+def test_agent_base_exception_from_tool_stops_the_run(tool_executor):
+    # guards against a BaseException raised by a tool being dropped by the concurrent executor (#4713):
+    # the run stops, and neither partial tool results nor a further model turn reach the session
+    @strands.tool
+    def abort_tool() -> str:
+        """Raise a BaseException."""
+        raise _AbortRun("stop")
+
+    @strands.tool
+    def ok_tool() -> str:
+        """Succeed."""
+        return "fine"
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"toolUse": {"toolUseId": "abort", "name": "abort_tool", "input": {}}},
+                    {"toolUse": {"toolUseId": "ok", "name": "ok_tool", "input": {}}},
+                ],
+            },
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+    session_repository = MockedSessionRepository()
+    agent = Agent(
+        model=model,
+        tools=[abort_tool, ok_tool],
+        tool_executor=tool_executor,
+        session_manager=RepositorySessionManager(session_id="s", session_repository=session_repository),
+        callback_handler=None,
+    )
+
+    with pytest.raises(_AbortRun):
+        agent("go")
+
+    tru_messages = [
+        {"role": m.message["role"], "content": m.message["content"]}
+        for m in session_repository.list_messages("s", agent.agent_id)
+    ]
+    exp_messages = [
+        {"role": "user", "content": [{"text": "go"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": "abort", "name": "abort_tool", "input": {}}},
+                {"toolUse": {"toolUseId": "ok", "name": "ok_tool", "input": {}}},
+            ],
+        },
+    ]
+    assert tru_messages == exp_messages
+    assert model.index == 1
 
 
 def test_agent_restored_from_session_management():
