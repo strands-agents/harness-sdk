@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import { TestSandbox } from '../../__fixtures__/test-sandbox.node.js'
 import { buildShellEnvPrefix } from '../posix-shell.js'
 import { SandboxPathNotFoundError, SandboxTimeoutError } from '../errors.js'
@@ -358,6 +360,37 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       expect(streamed).toBe('café☕')
     })
 
+    it('kills the python child of sh on timeout', async () => {
+      // Regression guard for #5044. executeCode runs `sh -c` with `base64 | python3`.
+      // Signalling only the shell leaves python3 alive; the whole process group must die.
+      // `python3 & wait` keeps python a child of sh — a lone `python3` is exec'd and
+      // would die even if only the shell pid were signalled.
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'strands-stream-process-'))
+      const pidFile = path.join(directory, 'python.pid')
+      const scriptFile = path.join(directory, 'sleep.py')
+      fs.writeFileSync(
+        scriptFile,
+        `import os, time\nopen(${JSON.stringify(pidFile)}, "w").write(str(os.getpid()))\ntime.sleep(30)\n`
+      )
+      const execute = async (): Promise<void> => {
+        for await (const chunk of streamProcess('sh', ['-c', 'python3 "$1" & wait', 'sh', scriptFile], {
+          timeout: 0.5,
+        })) {
+          if (chunk.type === 'streamChunk') continue
+        }
+      }
+
+      try {
+        await expect(execute()).rejects.toBeInstanceOf(SandboxTimeoutError)
+        const pid = await readChildPid(pidFile)
+        await waitForProcessExit(pid)
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        killRecordedPid(pidFile)
+        fs.rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
     it('returns enoentMessage when spawned binary does not exist', async () => {
       const chunks: (StreamChunk | ExecutionResult)[] = []
       for await (const chunk of streamProcess('nonexistent_binary_xyz_12345', [], {
@@ -376,3 +409,61 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
     })
   })
 })
+
+/** Poll until python has recorded its pid, or fail if it never starts. */
+async function readChildPid(pidFile: string): Promise<number> {
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'))
+      if (Number.isInteger(pid) && pid > 0) return pid
+    } catch (error) {
+      if (!isMissingFile(error)) throw error
+    }
+    await delay(20)
+  }
+  throw new Error(`python pid file was not written: ${pidFile}`)
+}
+
+/** Give a delivered signal time to be reaped before the liveness assert. */
+async function waitForProcessExit(pid: number): Promise<void> {
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return
+    await delay(20)
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Last-resort cleanup so a failed assertion cannot leave the sleeper behind. */
+function killRecordedPid(pidFile: string): void {
+  let contents: string
+  try {
+    contents = fs.readFileSync(pidFile, 'utf8')
+  } catch {
+    return
+  }
+  const pid = Number(contents)
+  if (!Number.isInteger(pid) || pid <= 0) return
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // Already exited.
+  }
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}

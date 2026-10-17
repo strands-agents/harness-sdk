@@ -2,7 +2,7 @@
  * Spawn a process and stream its stdout/stderr as an async generator.
  */
 
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { SandboxAbortError, SandboxTimeoutError } from './errors.js'
 import type { ExecutionResult, StreamChunk } from './types.js'
 
@@ -49,7 +49,9 @@ export async function* streamProcess(
   args: string[],
   options?: StreamProcessOptions
 ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
-  const proc = spawn(command, args)
+  // Own process group on POSIX so a timeout or abort signals descendants, not only
+  // the `sh -c` wrapper. executeCode's `base64 | python` child otherwise keeps running.
+  const proc = spawn(command, args, { detached: process.platform !== 'win32' })
   // Decode with a StringDecoder that holds partial multibyte bytes across chunk
   // boundaries, so a UTF-8 sequence split across two pipe reads is not decoded
   // as two invalid halves.
@@ -78,10 +80,10 @@ export async function* streamProcess(
     if (terminating || done) return
     terminating = true
     error = reason
-    proc.kill('SIGTERM')
+    signalChild(proc, 'SIGTERM')
     wake()
     killTimer = setTimeout(() => {
-      if (!done) proc.kill('SIGKILL')
+      if (!done) signalChild(proc, 'SIGKILL')
     }, 1000)
   }
 
@@ -182,6 +184,27 @@ export async function* streamProcess(
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
     if (killTimer !== undefined) clearTimeout(killTimer)
     if (options?.signal) options.signal.removeEventListener('abort', onAbort)
-    if (!done) proc.kill()
+    if (!done) signalChild(proc, 'SIGTERM')
   }
+}
+
+/** Signal the child. POSIX targets its process group; Windows signals the process alone. */
+function signalChild(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
+  const pid = proc.pid
+  if (process.platform === 'win32' || pid === undefined || pid <= 0) {
+    proc.kill(signal)
+    return
+  }
+  try {
+    process.kill(-pid, signal)
+  } catch (error) {
+    // ESRCH: the group is already gone. EPERM: macOS returns EPERM for kill(2) on a
+    // process group whose leader is a zombie (signalled, not yet reaped).
+    if (!isIgnorableSignalError(error)) throw error
+  }
+}
+
+function isIgnorableSignalError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object' || !('code' in error)) return false
+  return error.code === 'ESRCH' || error.code === 'EPERM'
 }
