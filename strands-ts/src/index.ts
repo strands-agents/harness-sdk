@@ -35,6 +35,7 @@ export {
   MaxTokensError,
   JsonValidationError,
   ConcurrentInvocationError,
+  AgentDisposedError,
   ModelThrottledError,
   ToolValidationError,
   StructuredOutputError,
@@ -150,6 +151,9 @@ export type { ZodToolConfig } from './tools/zod-tool.js'
 
 // Tool factory function
 export { tool } from './tools/tool-factory.js'
+
+// Tool provider interface for agent-managed, reference-counted tool lifecycles
+export { ToolProvider } from './tools/tool-provider.js'
 
 // Tool executors
 export { ConcurrentToolExecutor } from './tools/executors/concurrent.js'

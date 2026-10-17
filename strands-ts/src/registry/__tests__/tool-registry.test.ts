@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ToolRegistry } from '../tool-registry.js'
 import { ToolNotFoundError, ToolValidationError } from '../../errors.js'
 import type { Tool, ToolStreamGenerator } from '../../tools/tool.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
 import { ToolResultBlock } from '../../types/messages.js'
+import { ToolProvider } from '../../tools/tool-provider.js'
 
 const createMockTool = (overrides: Partial<Tool> = {}): Tool => ({
   name: 'valid-tool',
@@ -254,6 +255,128 @@ describe('ToolRegistry', () => {
       const tool = createMockTool()
       const reg = new ToolRegistry([tool])
       expect(reg.list()).toStrictEqual([tool])
+    })
+  })
+
+  describe('tool providers', () => {
+    class MockToolProvider extends ToolProvider {
+      consumers = new Set<string>()
+      removeConsumerError: Error | undefined
+
+      async loadTools(): Promise<Tool[]> {
+        return []
+      }
+
+      addConsumer(consumerId: string): void {
+        this.consumers.add(consumerId)
+      }
+
+      removeConsumer(consumerId: string): void {
+        this.consumers.delete(consumerId)
+        if (this.removeConsumerError) {
+          throw this.removeConsumerError
+        }
+      }
+    }
+
+    it('addProvider registers the registry as a consumer and tracks the provider', () => {
+      const provider = new MockToolProvider()
+      registry.addProvider(provider)
+
+      expect(registry.toolProviders).toStrictEqual([provider])
+      expect(provider.consumers.size).toBe(1)
+    })
+
+    it('uses the same registry id (consumer id) across every provider', () => {
+      const provider1 = new MockToolProvider()
+      const provider2 = new MockToolProvider()
+      registry.addProvider(provider1)
+      registry.addProvider(provider2)
+
+      const [consumerId1] = provider1.consumers
+      const [consumerId2] = provider2.consumers
+      expect(consumerId1).toBe(consumerId2)
+    })
+
+    it('cleanup removes this registry as a consumer from every provider', async () => {
+      const provider1 = new MockToolProvider()
+      const provider2 = new MockToolProvider()
+      registry.addProvider(provider1)
+      registry.addProvider(provider2)
+
+      await registry.cleanup()
+
+      expect(provider1.consumers.size).toBe(0)
+      expect(provider2.consumers.size).toBe(0)
+    })
+
+    it('cleanup is a no-op when there are no providers', async () => {
+      await expect(registry.cleanup()).resolves.toBeUndefined()
+    })
+
+    it('cleanup is idempotent — calling it twice does not throw', async () => {
+      const provider = new MockToolProvider()
+      registry.addProvider(provider)
+
+      await registry.cleanup()
+      await expect(registry.cleanup()).resolves.toBeUndefined()
+    })
+
+    it('cleanup attempts every provider even if one fails, then rethrows the first failure', async () => {
+      const failingProvider = new MockToolProvider()
+      failingProvider.removeConsumerError = new Error('boom')
+      const healthyProvider = new MockToolProvider()
+      const removeConsumerSpy = vi.spyOn(healthyProvider, 'removeConsumer')
+
+      registry.addProvider(failingProvider)
+      registry.addProvider(healthyProvider)
+
+      await expect(registry.cleanup()).rejects.toThrow('boom')
+      expect(removeConsumerSpy).toHaveBeenCalled()
+      expect(healthyProvider.consumers.size).toBe(0)
+    })
+
+    it('supports an async removeConsumer', async () => {
+      class AsyncToolProvider extends ToolProvider {
+        removed = false
+        async loadTools(): Promise<Tool[]> {
+          return []
+        }
+        addConsumer(): void {}
+        async removeConsumer(): Promise<void> {
+          await Promise.resolve()
+          this.removed = true
+        }
+      }
+      const provider = new AsyncToolProvider()
+      registry.addProvider(provider)
+
+      await registry.cleanup()
+
+      expect(provider.removed).toBe(true)
+    })
+
+    it('toolProviders returns a copy, not the live internal array', () => {
+      const provider = new MockToolProvider()
+      registry.addProvider(provider)
+
+      const snapshot = registry.toolProviders as ToolProvider[]
+      snapshot.push(new MockToolProvider())
+
+      expect(registry.toolProviders).toHaveLength(1)
+    })
+
+    it('cleanup clears tracked providers up front, so a second call only affects providers registered since', async () => {
+      const provider = new MockToolProvider()
+      registry.addProvider(provider)
+
+      await registry.cleanup()
+      expect(registry.toolProviders).toHaveLength(0)
+
+      const removeConsumerSpy = vi.spyOn(provider, 'removeConsumer')
+      await registry.cleanup()
+
+      expect(removeConsumerSpy).not.toHaveBeenCalled()
     })
   })
 })
