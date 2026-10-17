@@ -96,3 +96,26 @@ def test_on_modified_error_handling(mock_reload_tool):
 
     # Verify that reload_tool was called
     mock_reload_tool.assert_called_once_with("test_tool")
+
+
+@patch.object(ToolRegistry, "reload_tool")
+def test_master_handler_on_created_reloads_new_tool(mock_reload_tool):
+    """Regression for issue #264: the master handler is the one scheduled with the
+    Observer, so it must forward on_created events to the per-registry handlers.
+
+    Without this, a tool file moved into a watched directory - which raises on_created
+    alone, with no follow-up on_modified - is never loaded.
+    """
+    tool_registry = ToolRegistry()
+    watcher = ToolWatcher(tool_registry)
+
+    dir_path = "/path/to/empty_tools_dir"
+    ToolWatcher._registry_handlers.setdefault(dir_path, {})[id(tool_registry)] = watcher.tool_change_handler
+    master_handler = ToolWatcher.MasterChangeHandler(dir_path)
+
+    event = MagicMock()
+    event.src_path = f"{dir_path}/first_tool.py"
+
+    master_handler.on_created(event)
+
+    mock_reload_tool.assert_called_once_with("first_tool")
