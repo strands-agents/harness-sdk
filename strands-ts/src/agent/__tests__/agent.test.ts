@@ -27,11 +27,13 @@ import { MemoryManager } from '../../index.js'
 import { AgentPrinter } from '../printer.js'
 import {
   AfterInvocationEvent,
+  AfterModelCallEvent,
   AfterToolCallEvent,
   AfterToolsEvent,
   BeforeInvocationEvent,
   BeforeModelCallEvent,
   BeforeToolsEvent,
+  MessageAddedEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
 import { ModelRouter } from '../../models/routing/router.js'
@@ -412,6 +414,98 @@ describe('Agent', () => {
         const agent = new Agent({ model })
 
         await expect(agent.invoke('Test')).rejects.toThrow(MaxTokensError)
+      })
+    })
+
+    describe('max tokens recovery', () => {
+      it('adds the recovered partial message to history and continues on the next invocation', async () => {
+        const tool = createMockTool('story_tool', () => 'unexpected')
+        const toolSpy = vi.spyOn(tool, 'stream')
+        const model = new MockMessageModel()
+          .addTurn(
+            [
+              { type: 'textBlock', text: 'Here is a story' },
+              { type: 'toolUseBlock', name: 'story_tool', toolUseId: 'tool-1', input: { story: 'Once' } },
+            ],
+            { stopReason: 'maxTokens' }
+          )
+          .addTurn({ type: 'textBlock', text: '6' })
+        const agent = new Agent({ model, tools: [tool] })
+        const addedMessages: Message[] = []
+        agent.addHook(MessageAddedEvent, (event) => {
+          addedMessages.push(event.message)
+        })
+
+        await expect(agent.invoke('Tell me a story!')).rejects.toThrow(MaxTokensError)
+
+        const recovered = new Message({
+          role: 'assistant',
+          content: [
+            new TextBlock('Here is a story'),
+            new TextBlock(
+              "The selected tool story_tool's tool use was incomplete due to maximum token limits being reached."
+            ),
+          ],
+          trackingId: anyTrackingId,
+        })
+        expect(agent.messages).toStrictEqual([
+          new Message({ role: 'user', content: [new TextBlock('Tell me a story!')], trackingId: anyTrackingId }),
+          recovered,
+        ])
+        expect(addedMessages.at(-1)).toBe(agent.messages[1])
+        expect(toolSpy).not.toHaveBeenCalled()
+
+        const result = await agent.invoke('What is 3+3')
+
+        expect(result.stopReason).toBe('endTurn')
+        expect(agent.messages).toStrictEqual([
+          new Message({ role: 'user', content: [new TextBlock('Tell me a story!')], trackingId: anyTrackingId }),
+          recovered,
+          new Message({ role: 'user', content: [new TextBlock('What is 3+3')], trackingId: anyTrackingId }),
+          new Message({ role: 'assistant', content: [new TextBlock('6')], trackingId: anyTrackingId }),
+        ])
+      })
+
+      it('does not add an empty partial message to history', async () => {
+        const model = new MockMessageModel().addTurn([], { stopReason: 'maxTokens' })
+        const agent = new Agent({ model })
+
+        await expect(agent.invoke('Test')).rejects.toThrow(MaxTokensError)
+
+        expect(agent.messages).toStrictEqual([
+          new Message({ role: 'user', content: [new TextBlock('Test')], trackingId: anyTrackingId }),
+        ])
+      })
+
+      it('does not add the partial message when a hook retries the model call', async () => {
+        const model = new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'Partial' }, { stopReason: 'maxTokens' })
+          .addTurn({ type: 'textBlock', text: 'Complete' })
+        const agent = new Agent({ model })
+        agent.addHook(AfterModelCallEvent, (event) => {
+          if (event.error instanceof MaxTokensError) {
+            event.retry = true
+          }
+        })
+
+        const result = await agent.invoke('Test')
+
+        expect(result.stopReason).toBe('endTurn')
+        expect(agent.messages).toStrictEqual([
+          new Message({ role: 'user', content: [new TextBlock('Test')], trackingId: anyTrackingId }),
+          new Message({ role: 'assistant', content: [new TextBlock('Complete')], trackingId: anyTrackingId }),
+        ])
+      })
+
+      it('does not add a message for other model errors', async () => {
+        const model = new MockMessageModel().addTurn(new Error('boom'))
+        const agent = new Agent({ model })
+
+        await expect(agent.invoke('Test')).rejects.toThrow('boom')
+
+        expect(agent.messages).toStrictEqual([
+          new Message({ role: 'user', content: [new TextBlock('Test')], trackingId: anyTrackingId }),
+        ])
       })
     })
 

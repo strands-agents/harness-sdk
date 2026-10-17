@@ -560,6 +560,19 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               if (e instanceof SyntaxError) {
                 logger.error('unable to parse tool input JSON', e)
                 toolInputParseError = e
+                // Kept only so a maxTokens partial message records the truncated tool use; any
+                // other stop reason throws on toolInputParseError and discards the message.
+                contentBlocks.push(
+                  new ToolUseBlock({
+                    name: toolName,
+                    toolUseId: toolUseId,
+                    input: accumulatedToolInput,
+                    ...(toolReasoningSignature && { reasoningSignature: toolReasoningSignature }),
+                  })
+                )
+                toolUseId = ''
+                toolName = ''
+                toolReasoningSignature = ''
               }
             }
             break
@@ -568,6 +581,10 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
           case 'modelMessageStopEvent':
             // Store message and stop reason
             if (messageRole) {
+              // A tool use cut off before its block stopped still belongs in the maxTokens partial message.
+              if (toolUseId && event.stopReason === 'maxTokens') {
+                contentBlocks.push(new ToolUseBlock({ name: toolName, toolUseId, input: accumulatedToolInput }))
+              }
               const filtered = contentBlocks.filter(
                 (block) => !(block instanceof TextBlock && block.text.trim() === '')
               )
@@ -629,7 +646,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       // Handle stop reason
       if (finalStopReason === 'maxTokens') {
         throw new MaxTokensError(
-          'Model reached maximum token limit. This is an unrecoverable state that requires intervention.',
+          'Model reached maximum token limit. When raised by an agent, the partial message has been added to the ' +
+            'conversation history and you can continue by invoking the agent again.',
           stoppedMessage
         )
       }

@@ -52,14 +52,14 @@ export class ContextWindowOverflowError extends ModelError {
  * Error thrown when the model reaches its maximum token limit during generation.
  *
  * This error indicates that the model stopped generating content because it reached
- * the maximum number of tokens allowed for the response. This is an unrecoverable
- * state that requires intervention, such as reducing the input size or adjusting
- * the max tokens parameter.
+ * the maximum number of tokens allowed for the response. When an agent raises it, the
+ * partial message (with every tool use replaced by explanatory text) has already been
+ * added to the conversation history, so the agent can be invoked again to continue.
  */
 export class MaxTokensError extends ModelError {
   /**
-   * The partial assistant message that was generated before hitting the token limit.
-   * This can be useful for understanding what the model was trying to generate.
+   * The partial assistant message that was generated before hitting the token limit,
+   * as produced by the model (tool uses are not sanitized).
    */
   public readonly partialMessage: Message
 
