@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../../../agent/agent.js'
+import { createInvocationContext } from '../../../agent/invocation-context.js'
 import { BeforeToolCallEvent } from '../../../hooks/events.js'
 import { HookRegistryImplementation } from '../../../hooks/registry.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
@@ -100,5 +101,40 @@ describe('LLMSteeringHandler', () => {
 
     expect(secondSpy).toHaveBeenCalledTimes(1)
     expect(firstSpy).not.toHaveBeenCalled()
+  })
+
+  describe('request limits', () => {
+    it('adds the steering usage to the request total and runs it past a spent limit', async () => {
+      const model = new MockMessageModel().addTurn(
+        {
+          type: 'toolUseBlock',
+          name: 'strands_structured_output',
+          toolUseId: 'inner-1',
+          input: { type: 'guide', reason: 'narrow the query' },
+        },
+        { usage: { inputTokens: 30, outputTokens: 8, totalTokens: 38 } }
+      )
+      const handler = new LLMSteeringHandler({
+        systemPrompt: 'You are a steering agent.',
+        contextProviders: [],
+      })
+      const agent = new Agent({ model, interventions: [handler] })
+      await agent.initialize()
+      const parentInvocationContext = createInvocationContext({ turns: 1 })
+      parentInvocationContext.turns = 5
+
+      const event = new BeforeToolCallEvent({
+        agent,
+        toolUse,
+        tool: undefined,
+        invocationState: {},
+        invocationContext: parentInvocationContext,
+      })
+      await getHookRegistry(agent).invokeCallbacks(event)
+
+      expect(event.cancel).toBe('GUIDANCE: [strands:llm-steering-handler] narrow the query')
+      expect(parentInvocationContext.usage).toEqual({ inputTokens: 30, outputTokens: 8, totalTokens: 38 })
+      expect(parentInvocationContext.turns).toBe(5)
+    })
   })
 })
