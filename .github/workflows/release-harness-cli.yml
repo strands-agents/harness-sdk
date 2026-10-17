@@ -246,7 +246,7 @@ jobs:
           echo "${tgzs[0]} is $name@$version"
 
       - name: Upload verified tarball for publish
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: harness-cli-npm-pack-bundle
           path: dist-npm/*.tgz
@@ -319,7 +319,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release notes artifact
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release-notes
           path: release-notes.md
