@@ -9,6 +9,7 @@ import {
   getStateValue,
 } from './engine-test-helpers.js'
 import type { InProcessTaskExecutionOutcome } from '../types.js'
+import { BackgroundTaskNotFoundError } from '../../errors.js'
 
 describe('InProcessTaskEngine', () => {
   describe('waiting and transitions', () => {
@@ -105,5 +106,24 @@ describe('InProcessTaskEngine', () => {
       expect(() => createEngine(complete, { timeout: 2 ** 31 - 1 })).not.toThrow()
       expect(() => createEngine(complete, { timeout: 2 ** 31 })).toThrow('timeout must be at most')
     })
+  })
+
+  it('reports remove and resume errors with background-task wording', async () => {
+    const finish = deferred<InProcessTaskExecutionOutcome>()
+    const engine = createEngine(async () => finish.promise)
+    const task = engine.submit(createAdmission('work'))
+    const resumeReady = (state: ReturnType<typeof createState>) => ({ state, ready: true })
+
+    expect(() => engine.remove(task.taskId)).toThrow(
+      `Background task '${task.taskId}' cannot be removed before reaching a terminal status`
+    )
+    expect(() => engine.resume(task.taskId, resumeReady)).toThrow(
+      `Background task '${task.taskId}' cannot be resumed: status is`
+    )
+    expect(() => engine.remove('missing')).toThrow(BackgroundTaskNotFoundError)
+    expect(() => engine.resume('missing', resumeReady)).toThrow(BackgroundTaskNotFoundError)
+
+    finish.resolve({ status: 'completed', result: createResult('done') })
+    await engine.waitForIdle()
   })
 })
