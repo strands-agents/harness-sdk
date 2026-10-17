@@ -148,6 +148,10 @@ export type { FunctionToolConfig, FunctionToolCallback } from './tools/function-
 export { ZodTool } from './tools/zod-tool.js'
 export type { ZodToolConfig } from './tools/zod-tool.js'
 
+// StandardSchemaTool implementation
+export { StandardSchemaTool } from './tools/standard-schema-tool.js'
+export type { StandardSchemaToolConfig, StandardToolSchema } from './tools/standard-schema-tool.js'
+
 // Tool factory function
 export { tool } from './tools/tool-factory.js'
 
