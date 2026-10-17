@@ -456,6 +456,63 @@ def test_handle_content_block_delta(event: ContentBlockDeltaEvent, event_type, s
                 "redactedContent": b"",
             },
         ),
+        # Tool use with text pending at the same stop - guards against
+        # https://github.com/strands-agents/harness-sdk/issues/4004: both blocks are kept, in stream order
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "123", "name": "test", "input": "{}"},
+                "text": "Let me check that for you.",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"text": "Let me check that for you."},
+                    {"toolUse": {"toolUseId": "123", "name": "test", "input": {}}},
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
+        # Tool use with cited text pending at the same stop - citations block is kept ahead of the tool use
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "123", "name": "test", "input": "{}"},
+                "text": "This is cited text",
+                "reasoningText": "",
+                "citationsContent": [
+                    {"location": {"documentChar": {"documentIndex": 0, "start": 10, "end": 20}}, "title": "Test Doc"}
+                ],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {
+                        "citationsContent": {
+                            "citations": [
+                                {
+                                    "location": {"documentChar": {"documentIndex": 0, "start": 10, "end": 20}},
+                                    "title": "Test Doc",
+                                }
+                            ],
+                            "content": [{"text": "This is cited text"}],
+                        }
+                    },
+                    {"toolUse": {"toolUseId": "123", "name": "test", "input": {}}},
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
         # Text
         (
             {
