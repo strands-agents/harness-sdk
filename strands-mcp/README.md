@@ -260,7 +260,7 @@ SKIP_INTEG_TESTS=1 pytest tests_integ/
 
 ## Contributing ❤️
 
-We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for details on:
+We welcome contributions! See our [Contributing Guide](../CONTRIBUTING.md) for details on:
 
 - Reporting bugs & features
 - Development setup
@@ -277,4 +277,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Security
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+See [CONTRIBUTING](../CONTRIBUTING.md#security-issue-notifications) for more information.
