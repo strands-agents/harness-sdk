@@ -756,6 +756,173 @@ async def test_stream_no_usage(mistral_client, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_fragmented_tool_call_arguments(mistral_client, model, agenerator, alist):
+    """Tool call argument fragments reach the tool use block carrying their id and name.
+
+    Mistral streams a tool call's id and name only on the first delta; continuation deltas carry
+    only the index and an arguments fragment, so the SDK fills their id with its default "null".
+    """
+    mock_function_start = unittest.mock.Mock()
+    mock_function_start.name = "get_weather"
+    mock_function_start.arguments = ""
+    mock_tool_call_start = unittest.mock.Mock(index=0, function=mock_function_start, id="tc-1")
+
+    mock_function_fragment_1 = unittest.mock.Mock()
+    mock_function_fragment_1.name = ""
+    mock_function_fragment_1.arguments = '{"location"'
+    mock_tool_call_fragment_1 = unittest.mock.Mock(index=0, function=mock_function_fragment_1, id="null")
+
+    mock_function_fragment_2 = unittest.mock.Mock()
+    mock_function_fragment_2.name = ""
+    mock_function_fragment_2.arguments = ': "Paris"}'
+    mock_tool_call_fragment_2 = unittest.mock.Mock(index=0, function=mock_function_fragment_2, id="null")
+
+    mock_usage = unittest.mock.Mock()
+    mock_usage.prompt_tokens = 10
+    mock_usage.completion_tokens = 5
+    mock_usage.total_tokens = 15
+
+    mock_event_1 = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(
+                    delta=unittest.mock.Mock(content="", tool_calls=[mock_tool_call_start]),
+                    finish_reason=None,
+                )
+            ],
+        ),
+    )
+    mock_event_2 = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(
+                    delta=unittest.mock.Mock(content=None, tool_calls=[mock_tool_call_fragment_1]),
+                    finish_reason=None,
+                )
+            ],
+        ),
+    )
+    mock_event_3 = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(
+                    delta=unittest.mock.Mock(content=None, tool_calls=[mock_tool_call_fragment_2]),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=mock_usage,
+        ),
+    )
+
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "weather in Paris?"}]}]
+    response = model.stream(messages, None, None)
+    tru_events = await alist(response)
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "get_weather", "toolUseId": "tc-1"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": ""}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"location"'}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": ': "Paris"}'}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+                "metrics": {"latencyMs": 0},
+            }
+        },
+    ]
+
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_fragmented_tool_call_arguments_multiple_tools(mistral_client, model, agenerator, alist):
+    """Fragments of parallel tool calls are aggregated per tool, not merged into one bucket."""
+    mock_function_1_start = unittest.mock.Mock()
+    mock_function_1_start.name = "get_weather"
+    mock_function_1_start.arguments = ""
+    mock_tool_call_1_start = unittest.mock.Mock(index=0, function=mock_function_1_start, id="tc-1")
+
+    mock_function_2_start = unittest.mock.Mock()
+    mock_function_2_start.name = "get_time"
+    mock_function_2_start.arguments = ""
+    mock_tool_call_2_start = unittest.mock.Mock(index=1, function=mock_function_2_start, id="tc-2")
+
+    mock_function_1_fragment = unittest.mock.Mock()
+    mock_function_1_fragment.name = ""
+    mock_function_1_fragment.arguments = '{"location": "Paris"}'
+    mock_tool_call_1_fragment = unittest.mock.Mock(index=0, function=mock_function_1_fragment, id="null")
+
+    mock_function_2_fragment = unittest.mock.Mock()
+    mock_function_2_fragment.name = ""
+    mock_function_2_fragment.arguments = '{"timezone": "UTC"}'
+    mock_tool_call_2_fragment = unittest.mock.Mock(index=1, function=mock_function_2_fragment, id="null")
+
+    mock_event_1 = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(
+                    delta=unittest.mock.Mock(content=None, tool_calls=[mock_tool_call_1_start, mock_tool_call_2_start]),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        ),
+    )
+    mock_event_2 = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(
+                    delta=unittest.mock.Mock(
+                        content=None, tool_calls=[mock_tool_call_1_fragment, mock_tool_call_2_fragment]
+                    ),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        ),
+    )
+    mock_event_3 = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(
+                    delta=unittest.mock.Mock(content=None, tool_calls=None),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=None,
+        ),
+    )
+
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "weather and time in Paris?"}]}]
+    response = model.stream(messages, None, None)
+    tru_events = await alist(response)
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "get_weather", "toolUseId": "tc-1"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": ""}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"location": "Paris"}'}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "get_time", "toolUseId": "tc-2"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": ""}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"timezone": "UTC"}'}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_not_supported_warns(mistral_client, model, agenerator, alist, captured_warnings):
     tool_choice = {"auto": {}}
 
