@@ -384,7 +384,10 @@ class MistralModel(Model):
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
 
-                return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"]}}}}
+                arguments = event["data"]
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments, ensure_ascii=False)
+                return {"contentBlockDelta": {"delta": {"toolUse": {"input": arguments}}}}
 
             case "content_stop":
                 return {"contentBlockStop": {}}
