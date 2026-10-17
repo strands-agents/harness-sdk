@@ -32,7 +32,12 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
+from ._validation import (
+    _has_location_source,
+    _warn_on_deprecated_cache_tools,
+    _warn_unsupported_blocks,
+    validate_config_keys,
+)
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -288,6 +293,7 @@ class AnthropicModel(Model):
         configured_ttl = cache_config.ttl if cache_config else None
         formatted_messages = []
 
+        _warn_unsupported_blocks(messages, "Anthropic", logger)
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
             marked = False
@@ -310,9 +316,7 @@ class AnthropicModel(Model):
                         logger.warning("no preceding block accepts a cache point | skipped cache point")
                     continue
 
-                # Check for location sources in image, document, or video content
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Anthropic | skipping content block")
                     continue
 
                 formatted_contents.append(self._format_request_message_content(content))

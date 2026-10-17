@@ -22,6 +22,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_cache import _resolve_cache_key
 from ._validation import (
     _has_location_source,
+    _warn_unsupported_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -246,6 +247,7 @@ class MistralModel(Model):
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
 
+        _warn_unsupported_blocks(messages, "Mistral", logger, cache_point=True)
         for message in messages:
             role = message["role"]
             contents = message["content"]
@@ -255,13 +257,7 @@ class MistralModel(Model):
             tool_messages: list[dict[str, Any]] = []
 
             for content in contents:
-                # Check for location sources and skip with warning
-                if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Mistral | skipping content block")
-                    continue
-
-                if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by Mistral | skipping")
+                if _has_location_source(content) or "cachePoint" in content:
                     continue
 
                 if "text" in content or "image" in content:

@@ -1,6 +1,7 @@
 """Configuration validation utilities for model providers."""
 
 import dataclasses
+import logging
 import re
 import warnings
 from collections.abc import Collection, Mapping
@@ -8,7 +9,7 @@ from typing import Any
 
 from typing_extensions import get_type_hints
 
-from ..types.content import ContentBlock
+from ..types.content import ContentBlock, Messages
 from ..types.tools import ToolChoice
 from .model import CacheConfig
 
@@ -145,3 +146,24 @@ def _has_location_source(content: ContentBlock) -> bool:
     if "video" in content:
         return "location" in content["video"].get("source", {})
     return False
+
+
+def _warn_unsupported_blocks(
+    messages: Messages, provider: str, logger: logging.Logger, *, cache_point: bool = False
+) -> None:
+    """Log each unsupported content block type in the history at most once.
+
+    Providers re-format the full history on every request, so warning per block would repeat the warning for
+    every earlier message on every turn. Call this once per request and skip the blocks silently.
+
+    Args:
+        messages: The full message history being formatted.
+        provider: Provider name used in the warning text.
+        logger: The provider module's logger, so records keep the provider's logger name.
+        cache_point: Whether the provider drops ``cachePoint`` blocks and should warn about them.
+    """
+    blocks = [content for message in messages for content in message["content"]]
+    if any(_has_location_source(block) for block in blocks):
+        logger.warning("Location sources are not supported by %s | skipping content block", provider)
+    if cache_point and any("cachePoint" in block for block in blocks):
+        logger.warning("cachePoint content block is not supported by %s | skipping", provider)

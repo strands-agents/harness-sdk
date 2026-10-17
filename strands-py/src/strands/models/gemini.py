@@ -21,7 +21,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, validate_config_keys
+from ._validation import _has_location_source, _warn_unsupported_blocks, validate_config_keys
 from .model import BaseModelConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -263,15 +263,11 @@ class GeminiModel(Model):
         tool_use_id_to_name: dict[str, str] = {}
 
         contents = []
+        _warn_unsupported_blocks(messages, "Gemini", logger, cache_point=True)
         for message in messages:
             parts = []
             for content in message["content"]:
-                # Check for location sources and skip with warning
-                if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Gemini | skipping content block")
-                    continue
-                if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by Gemini | skipping")
+                if _has_location_source(content) or "cachePoint" in content:
                     continue
                 parts.append(self._format_request_content_part(content, tool_use_id_to_name))
 

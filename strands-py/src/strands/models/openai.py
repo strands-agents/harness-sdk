@@ -26,7 +26,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
-from ._validation import _has_location_source, validate_config_keys
+from ._validation import _has_location_source, _warn_unsupported_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -408,6 +408,7 @@ class OpenAIModel(Model):
             logger.warning(
                 "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
             )
+        _warn_unsupported_blocks(messages, "OpenAI", logger, cache_point=True)
 
         for message in messages:
             contents = message["content"]
@@ -415,13 +416,11 @@ class OpenAIModel(Model):
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
             for content in contents:
-                if any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"]):
+                if any(
+                    block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent", "cachePoint"]
+                ):
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by OpenAI | skipping content block")
-                    continue
-                if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by OpenAI | skipping")
                     continue
                 filtered_contents.append(content)
 

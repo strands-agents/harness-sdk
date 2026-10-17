@@ -32,6 +32,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._validation import (
     _has_location_source,
+    _warn_unsupported_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -346,6 +347,7 @@ class LlamaCppModel(Model):
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
 
+        _warn_unsupported_blocks(messages, "llama.cpp", logger)
         for message in messages:
             contents = message["content"]
 
@@ -355,7 +357,6 @@ class LlamaCppModel(Model):
                 if any(block_type in content for block_type in ["toolResult", "toolUse"]):
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by llama.cpp | skipping content block")
                     continue
                 filtered_contents.append(content)
 
