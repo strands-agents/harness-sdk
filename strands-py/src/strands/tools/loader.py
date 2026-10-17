@@ -6,7 +6,6 @@ import os
 import sys
 import warnings
 from pathlib import Path
-from posixpath import expanduser
 from types import ModuleType
 from typing import cast
 
@@ -86,7 +85,7 @@ def load_tool_from_string(tool_string: str) -> list[AgentTool]:
     """
     # Case 1: Local file path to a tool
     # Ex: ./path/to/my_cool_tool.py
-    tool_path = expanduser(tool_string)
+    tool_path = os.path.expanduser(tool_string)
     if os.path.exists(tool_path):
         return load_tools_from_file_path(tool_path)
 
