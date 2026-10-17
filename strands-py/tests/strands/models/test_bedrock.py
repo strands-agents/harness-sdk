@@ -524,6 +524,25 @@ def test_format_request_with_service_tier(model, messages, model_id):
     assert tru_request == exp_request
 
 
+def test_format_request_with_request_metadata(model, messages, model_id):
+    model.update_config(request_metadata={"team": "orchestrator", "environment": "prod"})
+    tru_request = model._format_request(messages)
+    exp_request = {
+        "inferenceConfig": {},
+        "modelId": model_id,
+        "messages": messages,
+        "requestMetadata": {"team": "orchestrator", "environment": "prod"},
+        "system": [],
+    }
+
+    assert tru_request == exp_request
+
+
+def test_format_request_without_request_metadata(model, messages, model_id):
+    tru_request = model._format_request(messages)
+    assert "requestMetadata" not in tru_request
+
+
 def test_format_request_inference_config(model, messages, model_id, inference_config):
     model.update_config(**inference_config)
     tru_request = model.format_request(messages)
