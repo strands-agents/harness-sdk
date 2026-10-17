@@ -389,9 +389,10 @@ class ModelRouter(Plugin):
             state.model = model
             state.switched_to.add(id(candidate))
             state.switches += 1
-            # ModelRetryStrategy exposes no public seam for a budget reset yet, so a rename in
-            # _retry.py breaks this.
+            # ModelRetryStrategy exposes no public seam for a budget reset yet (tracked in #5142), so a
+            # rename in strands/retry/model_retry_strategy.py breaks this.
             event.agent._retry_strategy._reset_retry_state()
+            event._restart_attempts()
             return True
 
     # ---- Per-invocation state and context ----

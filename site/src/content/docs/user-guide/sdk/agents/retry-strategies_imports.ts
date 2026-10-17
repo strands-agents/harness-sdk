@@ -8,6 +8,10 @@ import { Agent, DefaultModelRetryStrategy } from '@strands-agents/sdk'
 import { Agent, DefaultModelRetryStrategy, ExponentialBackoff } from '@strands-agents/sdk'
 // --8<-- [end:custom_backoff_imports]
 
+// --8<-- [start:custom_backoff_strategy_imports]
+import { type BackoffContext, type BackoffStrategy } from '@strands-agents/sdk'
+// --8<-- [end:custom_backoff_strategy_imports]
+
 // --8<-- [start:disable_imports]
 import { Agent } from '@strands-agents/sdk'
 // --8<-- [end:disable_imports]

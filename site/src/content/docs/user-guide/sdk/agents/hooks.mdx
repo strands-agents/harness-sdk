@@ -661,7 +661,7 @@ Useful for implementing custom retry logic for model invocations. The `AfterMode
 ```python
 import asyncio
 import logging
-from strands.hooks import HookProvider, HookRegistry, BeforeInvocationEvent, AfterModelCallEvent
+from strands.hooks import HookProvider, HookRegistry, AfterModelCallEvent
 
 logger = logging.getLogger(__name__)
 
@@ -670,27 +670,21 @@ class RetryOnServiceUnavailable(HookProvider):
 
     def __init__(self, max_retries: int = 3):
         self.max_retries = max_retries
-        self.retry_count = 0
 
     def register_hooks(self, registry: HookRegistry) -> None:
-        registry.add_callback(BeforeInvocationEvent, self.reset_counts)
         registry.add_callback(AfterModelCallEvent, self.handle_retry)
 
-    def reset_counts(self, event: BeforeInvocationEvent = None) -> None:
-        self.retry_count = 0
-
     async def handle_retry(self, event: AfterModelCallEvent) -> None:
-        if event.exception:
-            if "ServiceUnavailable" in str(event.exception):
-                logger.info("ServiceUnavailable encountered")
-                if self.retry_count < self.max_retries:
-                    logger.info("Retrying model call")
-                    self.retry_count += 1
-                    event.retry = True
-                    await asyncio.sleep(2 ** self.retry_count)  # Exponential backoff
-        else:
-            # Reset counts on successful call
-            self.reset_counts()
+        # attempt_count is 1-based and includes the attempt that just failed,
+        # so no manual counter or per-invocation reset is needed.
+        if (
+            event.exception
+            and "ServiceUnavailable" in str(event.exception)
+            and event.attempt_count <= self.max_retries
+        ):
+            logger.info("ServiceUnavailable encountered, retrying model call")
+            await asyncio.sleep(2 ** event.attempt_count)  # Exponential backoff
+            event.retry = True
 ```
 </Tab>
 <Tab label="TypeScript">
