@@ -11,7 +11,11 @@ import pydantic
 import pytest
 
 import strands
-from strands.models.anthropic import AnthropicModel
+from strands.models.anthropic import (
+    _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS,
+    AnthropicModel,
+    _clear_forced_tool_choice_unsupported_cache,
+)
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -1053,6 +1057,83 @@ async def test_stream_bad_request_error(anthropic_client, model):
     messages = [{"role": "user", "content": [{"text": "hello"}]}]
     with pytest.raises(anthropic.BadRequestError, match="bad"):
         await anext(model.stream(messages))
+
+
+class TestForcedToolChoiceFallback:
+    """AnthropicModel falls back to an "auto" tool_choice for models that reject a forced one."""
+
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        _clear_forced_tool_choice_unsupported_cache()
+        yield
+        _clear_forced_tool_choice_unsupported_cache()
+
+    @pytest.fixture
+    def forced_tool_choice_error(self):
+        return anthropic.BadRequestError(
+            'tool_choice: type "tool" and "any" are not supported for this model.',
+            response=unittest.mock.Mock(),
+            body=None,
+        )
+
+    @pytest.mark.parametrize("tool_choice", [{"any": {}}, {"tool": {"name": "name"}}])
+    @pytest.mark.asyncio
+    async def test_stream_retries_with_auto(
+        self, anthropic_client, model, messages, tool_spec, forced_tool_choice_error, alist, tool_choice
+    ):
+        message_start = unittest.mock.Mock(type="message_start", model_dump=lambda: {"type": "message_start"})
+        anthropic_client.messages.stream.side_effect = [
+            forced_tool_choice_error,
+            generate_mock_stream_context(
+                [message_start], final_message=unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {}))
+            ),
+        ]
+
+        tru_events = await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
+
+        assert tru_events == [{"messageStart": {"role": "assistant"}}]
+        tru_tool_choices = [call.kwargs["tool_choice"] for call in anthropic_client.messages.stream.call_args_list]
+        exp_tool_choices = [model._format_tool_choice(tool_choice)["tool_choice"], {"type": "auto"}]
+        assert tru_tool_choices == exp_tool_choices
+        assert _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS == {"m1"}
+
+    def test_format_request_uses_auto_for_remembered_model(self, model, messages, tool_spec):
+        _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add("m1")
+
+        request = model.format_request(messages, [tool_spec], tool_choice={"any": {}})
+
+        assert request["tool_choice"] == {"type": "auto"}
+
+    def test_format_request_keeps_forced_choice_for_other_models(self, model, messages, tool_spec):
+        _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add("other-model")
+
+        request = model.format_request(messages, [tool_spec], tool_choice={"tool": {"name": "name"}})
+
+        assert request["tool_choice"] == {"type": "tool", "name": "name"}
+
+    @pytest.mark.asyncio
+    async def test_stream_does_not_retry_unforced_request(
+        self, anthropic_client, model, messages, tool_spec, forced_tool_choice_error
+    ):
+        anthropic_client.messages.stream.side_effect = forced_tool_choice_error
+
+        with pytest.raises(anthropic.BadRequestError):
+            await anext(model.stream(messages, [tool_spec], tool_choice={"auto": {}}))
+
+        anthropic_client.messages.stream.assert_called_once()
+        assert _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS == set()
+
+    @pytest.mark.asyncio
+    async def test_stream_does_not_retry_other_bad_requests(self, anthropic_client, model, messages, tool_spec):
+        anthropic_client.messages.stream.side_effect = anthropic.BadRequestError(
+            "bad", response=unittest.mock.Mock(), body=None
+        )
+
+        with pytest.raises(anthropic.BadRequestError, match="bad"):
+            await anext(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+        anthropic_client.messages.stream.assert_called_once()
+        assert _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS == set()
 
 
 @pytest.mark.asyncio

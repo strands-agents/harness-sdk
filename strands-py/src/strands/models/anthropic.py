@@ -30,7 +30,7 @@ from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
-from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
@@ -77,6 +77,17 @@ _CACHEABLE_BLOCK_TYPES = frozenset({"document", "image", "text", "tool_result", 
 
 # ``ephemeral`` is the only cache type the Anthropic API supports
 _ANTHROPIC_CACHE_TYPE = "ephemeral"
+
+# Anthropic reports this substring for models that reject a forced tool_choice ("any" or "tool").
+_FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGE = 'tool_choice: type "tool" and "any" are not supported'
+
+# Cache of model IDs that reject a forced tool_choice, so later requests send "auto" up front.
+_FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS: set[str] = set()
+
+
+def _clear_forced_tool_choice_unsupported_cache() -> None:
+    """Clear the cache of model IDs that reject a forced tool_choice."""
+    _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.clear()
 
 
 class AnthropicModel(Model):
@@ -496,6 +507,7 @@ class AnthropicModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
         """
+        tool_choice = self._resolve_tool_choice(tool_choice)
         messages, cache_target_idx = self._manage_cache_points(messages)
 
         tools: list[dict[str, Any]] = [
@@ -1021,9 +1033,48 @@ class AnthropicModel(Model):
             if any(overflow_message in str(error).lower() for overflow_message in AnthropicModel.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error
 
-            raise error
+            if not self._record_forced_tool_choice_unsupported(error, request):
+                raise error
+
+            # Raised before any chunk is yielded, so the request can be resent with "auto" in its place.
+            logger.debug(
+                "model_id=<%s> | model rejects forced tool choice, retrying with auto", self.config["model_id"]
+            )
+            async for retry_event in self.stream(
+                messages,
+                tool_specs,
+                system_prompt,
+                tool_choice=tool_choice,
+                system_prompt_content=system_prompt_content,
+                **kwargs,
+            ):
+                yield retry_event
+            return
 
         logger.debug("finished streaming response from model")
+
+    def _resolve_tool_choice(self, tool_choice: ToolChoice | None) -> ToolChoice | None:
+        """Replace a forced tool choice with "auto" for a model known to reject forced tool choice."""
+        is_forced = tool_choice is not None and ("any" in tool_choice or "tool" in tool_choice)
+        if not is_forced or self.config["model_id"] not in _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS:
+            return tool_choice
+
+        logger.debug("model_id=<%s> | model rejects forced tool choice, using auto", self.config["model_id"])
+        return cast(ToolChoice, {"auto": ToolChoiceAuto()})
+
+    def _record_forced_tool_choice_unsupported(self, error: anthropic.BadRequestError, request: dict[str, Any]) -> bool:
+        """Cache the model ID if the error rejects the forced tool_choice this request sent.
+
+        Returns:
+            True if the model was recorded and the request should be retried with "auto".
+        """
+        if request.get("tool_choice", {}).get("type") not in ("any", "tool"):
+            return False
+        if _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGE not in str(error):
+            return False
+
+        _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add(self.config["model_id"])
+        return True
 
     @override
     async def structured_output(

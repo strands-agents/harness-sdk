@@ -32,7 +32,7 @@ from ..types.exceptions import (
     ProviderTokenCountError,
 )
 from ..types.streaming import CitationsDelta, StreamEvent
-from ..types.tools import ToolChoice, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._strict_schema import ensure_strict_json_schema
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
@@ -94,10 +94,25 @@ _MODELS_REJECT_REASONING_TEXT = [
 # Cache of model IDs for which CountTokens API calls should be skipped.
 _SKIP_COUNT_TOKENS_MODELS: set[str] = set()
 
+# Bedrock reports this substring for models that reject a forced toolChoice ("any" or "tool").
+_FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGE = 'tool_choice: type "tool" and "any" are not supported'
+
+# Cache of model IDs that reject a forced toolChoice, so later requests send "auto" up front.
+_FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS: set[str] = set()
+
 
 def _clear_skip_count_tokens_cache() -> None:
     """Clear the cache of model IDs for which CountTokens API calls should be skipped."""
     _SKIP_COUNT_TOKENS_MODELS.clear()
+
+
+def _clear_forced_tool_choice_unsupported_cache() -> None:
+    """Clear the cache of model IDs that reject a forced toolChoice."""
+    _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.clear()
+
+
+def _is_forced_tool_choice(tool_choice: ToolChoice | None) -> bool:
+    return tool_choice is not None and ("any" in tool_choice or "tool" in tool_choice)
 
 
 def _suppress_task_exception(task: "asyncio.Task[None]") -> None:
@@ -384,6 +399,8 @@ class BedrockModel(Model):
         Returns:
             A Bedrock converse stream request.
         """
+        tool_choice = self._resolve_tool_choice(tool_choice)
+
         if not tool_specs:
             has_tool_content = any(
                 any("toolUse" in block or "toolResult" in block for block in msg.get("content", [])) for msg in messages
@@ -498,10 +515,7 @@ class BedrockModel(Model):
         if not additional_fields:
             return {}
 
-        # Check if tool_choice is forcing tool use ("any" or specific "tool")
-        is_forcing_tool = tool_choice is not None and ("any" in tool_choice or "tool" in tool_choice)
-
-        if is_forcing_tool and "thinking" in additional_fields:
+        if _is_forced_tool_choice(tool_choice) and "thinking" in additional_fields:
             # Create a copy without the thinking key
             fields_without_thinking = {k: v for k, v in additional_fields.items() if k != "thinking"}
             if fields_without_thinking:
@@ -958,6 +972,38 @@ class BedrockModel(Model):
                 self._inject_cache_point(cleaned_messages, dynamic_trailing_blocks)
 
         return cleaned_messages
+
+    def _resolve_tool_choice(self, tool_choice: ToolChoice | None) -> ToolChoice | None:
+        """Replace a forced tool choice with "auto" for a model known to reject forced tool choice."""
+        if (
+            not _is_forced_tool_choice(tool_choice)
+            or self.config["model_id"] not in _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS
+        ):
+            return tool_choice
+
+        logger.debug("model_id=<%s> | model rejects forced tool choice, using auto", self.config["model_id"])
+        return cast(ToolChoice, {"auto": ToolChoiceAuto()})
+
+    def _converse_with_tool_choice_fallback(
+        self, converse_method: Callable[..., dict[str, Any]], request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Call Converse, retrying once with an "auto" toolChoice if the model rejects a forced one.
+
+        The model ID is cached so later requests send "auto" from the start.
+        """
+        try:
+            return converse_method(**request)
+        except ClientError as error:
+            tool_config = request.get("toolConfig", {})
+            if not _is_forced_tool_choice(tool_config.get("toolChoice")) or (
+                _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGE not in error.response.get("Error", {}).get("Message", "")
+            ):
+                raise
+
+            model_id = request["modelId"]
+            _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add(model_id)
+            logger.debug("model_id=<%s> | model rejects forced tool choice, retrying with auto", model_id)
+            return converse_method(**{**request, "toolConfig": {**tool_config, "toolChoice": {"auto": {}}}})
 
     @staticmethod
     def _separate_tool_result_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1498,7 +1544,7 @@ class BedrockModel(Model):
             converse_method = self.client.converse_stream if streaming else self.client.converse
 
             try:
-                response = converse_method(**request)
+                response = self._converse_with_tool_choice_fallback(converse_method, request)
             except ClientError as error:
                 error_details = error.response.get("Error", {})
                 if error_details.get(

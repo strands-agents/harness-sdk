@@ -20,9 +20,11 @@ import strands
 from strands import _exception_notes
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig
 from strands.models.bedrock import (
+    _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS,
     DEFAULT_BEDROCK_MODEL_ID,
     DEFAULT_BEDROCK_REGION,
     DEFAULT_READ_TIMEOUT,
+    _clear_forced_tool_choice_unsupported_cache,
     _clear_skip_count_tokens_cache,
     _next_stream_event,
     _suppress_task_exception,
@@ -4894,6 +4896,114 @@ def test_non_streaming_reasoning_content_with_redacted_content(bedrock_client, m
     assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
         "redactedContent": b"redacted-bytes"
     }
+
+
+class TestForcedToolChoiceFallback:
+    """BedrockModel falls back to an "auto" toolChoice for models that reject a forced one."""
+
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        _clear_forced_tool_choice_unsupported_cache()
+        yield
+        _clear_forced_tool_choice_unsupported_cache()
+
+    @pytest.fixture
+    def forced_tool_choice_error(self):
+        return ClientError(
+            {
+                "Error": {
+                    "Code": "ValidationException",
+                    "Message": (
+                        "The model returned the following errors: "
+                        'tool_choice: type "tool" and "any" are not supported for this model.'
+                    ),
+                }
+            },
+            "ConverseStream",
+        )
+
+    @pytest.mark.parametrize("streaming", [True, False])
+    @pytest.mark.parametrize("tool_choice", [{"any": {}}, {"tool": {"name": "name"}}])
+    @pytest.mark.asyncio
+    async def test_stream_retries_with_auto(
+        self, bedrock_client, alist, messages, tool_spec, forced_tool_choice_error, streaming, tool_choice
+    ):
+        response = (
+            {"stream": []}
+            if streaming
+            else {
+                "output": {"message": {"role": "assistant", "content": [{"text": "Done"}]}},
+                "stopReason": "end_turn",
+            }
+        )
+        converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+        converse_method.side_effect = [forced_tool_choice_error, response]
+        model = BedrockModel(model_id="m1", streaming=streaming)
+
+        await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
+
+        tru_tool_choices = [call.kwargs["toolConfig"]["toolChoice"] for call in converse_method.call_args_list]
+        exp_tool_choices = [tool_choice, {"auto": {}}]
+        assert tru_tool_choices == exp_tool_choices
+        assert _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS == {"m1"}
+
+    @pytest.mark.asyncio
+    async def test_stream_uses_auto_for_remembered_model(self, bedrock_client, alist, messages, tool_spec):
+        bedrock_client.converse_stream.return_value = {"stream": []}
+        _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add("m1")
+        model = BedrockModel(model_id="m1")
+
+        await alist(model.stream(messages, [tool_spec], tool_choice={"tool": {"name": "name"}}))
+
+        bedrock_client.converse_stream.assert_called_once()
+        tru_tool_choice = bedrock_client.converse_stream.call_args.kwargs["toolConfig"]["toolChoice"]
+        assert tru_tool_choice == {"auto": {}}
+
+    def test_format_request_keeps_thinking_for_remembered_model(self, bedrock_client, messages, tool_spec):
+        _ = bedrock_client
+        _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add("m1")
+        thinking = {"thinking": {"type": "adaptive"}}
+        model = BedrockModel(model_id="m1", additional_request_fields=thinking)
+
+        request = model.format_request(messages, [tool_spec], tool_choice={"any": {}})
+
+        assert request["toolConfig"]["toolChoice"] == {"auto": {}}
+        assert request["additionalModelRequestFields"] == thinking
+
+    def test_format_request_keeps_forced_choice_for_other_models(self, bedrock_client, messages, tool_spec):
+        _ = bedrock_client
+        _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS.add("other-model")
+        model = BedrockModel(model_id="m1")
+
+        request = model.format_request(messages, [tool_spec], tool_choice={"tool": {"name": "name"}})
+
+        assert request["toolConfig"]["toolChoice"] == {"tool": {"name": "name"}}
+
+    @pytest.mark.asyncio
+    async def test_stream_does_not_retry_unforced_request(
+        self, bedrock_client, alist, messages, tool_spec, forced_tool_choice_error
+    ):
+        bedrock_client.converse_stream.side_effect = forced_tool_choice_error
+        model = BedrockModel(model_id="m1")
+
+        with pytest.raises(ClientError):
+            await alist(model.stream(messages, [tool_spec], tool_choice={"auto": {}}))
+
+        bedrock_client.converse_stream.assert_called_once()
+        assert _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS == set()
+
+    @pytest.mark.asyncio
+    async def test_stream_does_not_retry_other_validation_errors(self, bedrock_client, alist, messages, tool_spec):
+        bedrock_client.converse_stream.side_effect = ClientError(
+            {"Error": {"Code": "ValidationException", "Message": "Malformed input request"}}, "ConverseStream"
+        )
+        model = BedrockModel(model_id="m1")
+
+        with pytest.raises(ClientError, match="Malformed input request"):
+            await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+        bedrock_client.converse_stream.assert_called_once()
+        assert _FORCED_TOOL_CHOICE_UNSUPPORTED_MODELS == set()
 
 
 class TestCountTokens:
