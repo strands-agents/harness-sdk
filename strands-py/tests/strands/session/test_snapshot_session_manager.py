@@ -789,6 +789,29 @@ def test_bytes_content_round_trips(storage):
     assert tru_bytes == b"\x89PNG\r\n\x1a\n"
 
 
+def test_additional_model_response_fields_round_trip(storage):
+    """Provider response fields attached on messageStop survive the JSON snapshot round-trip."""
+    fields = {"openaiResponsesOutput": [{"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "enc"}]}
+
+    class _ProviderFieldsModel(MockedModelProvider):
+        async def stream(self, *args, **kwargs):
+            async for event in super().stream(*args, **kwargs):
+                if "messageStop" in event:
+                    event["messageStop"]["additionalModelResponseFields"] = fields
+                yield event
+
+    manager = SnapshotSessionManager("s1", storage=storage)
+    model = _ProviderFieldsModel([{"role": "assistant", "content": [{"text": "ok"}]}])
+    agent = Agent(model=model, session_manager=manager, agent_id="a1")
+    agent("hi")
+    assert agent.messages[1]["additionalModelResponseFields"] == fields
+
+    manager_2 = SnapshotSessionManager("s1", storage=storage)
+    agent_2 = Agent(model=_model("x"), session_manager=manager_2, agent_id="a1")
+
+    assert agent_2.messages[1]["additionalModelResponseFields"] == fields
+
+
 @pytest.mark.asyncio
 async def test_save_latest_on_message_writes_each_message(temp_dir):
     """The ``message`` strategy persists after every message added."""

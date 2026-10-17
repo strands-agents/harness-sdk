@@ -404,6 +404,7 @@ def handle_redact_content(event: RedactContentEvent, state: dict[str, Any]) -> N
     """
     if event.get("redactAssistantContentMessage") is not None:
         state["message"]["content"] = [{"text": event["redactAssistantContentMessage"]}]
+        state["message"].pop("additionalModelResponseFields", None)
 
 
 def extract_usage_metrics(event: MetadataEvent, time_to_first_byte_ms: int | None = None) -> tuple[Usage, Metrics]:
@@ -488,6 +489,9 @@ async def process_stream(
             state = handle_content_block_stop(state)
         elif "messageStop" in chunk:
             saw_message_stop = True
+            additional_fields = chunk["messageStop"].get("additionalModelResponseFields")
+            if additional_fields is not None:
+                state["message"]["additionalModelResponseFields"] = additional_fields
             stop_reason = handle_message_stop(chunk["messageStop"], state["message"].get("content", []))
         elif "metadata" in chunk:
             time_to_first_byte_ms = (
@@ -551,9 +555,15 @@ async def stream_messages(
     logger.debug("model=<%s> | streaming messages", model)
 
     messages = _normalize_messages(messages)
-    # Whitelist only role and content before sending to the model provider.
-    # This ensures metadata (and any future non-model fields) never leak to providers.
-    messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
+    # Whitelist model-facing fields before sending to the provider. Provider-specific
+    # response fields are intentionally retained so the originating adapter can replay them.
+    model_messages: Messages = []
+    for msg in messages:
+        model_message = Message(role=msg["role"], content=msg["content"])
+        if "additionalModelResponseFields" in msg:
+            model_message["additionalModelResponseFields"] = msg["additionalModelResponseFields"]
+        model_messages.append(model_message)
+    messages = model_messages
     start_time = time.time()
 
     chunks = model.stream(

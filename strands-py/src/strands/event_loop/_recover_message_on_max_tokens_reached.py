@@ -71,4 +71,13 @@ def recover_message_on_max_tokens_reached(message: Message) -> Message:
     recovered: Message = {"content": valid_content, "role": message["role"]}
     if "metadata" in message:
         recovered["metadata"] = message["metadata"]
+    response_fields = message.get("additionalModelResponseFields")
+    if isinstance(response_fields, dict):
+        output = response_fields.get("openaiResponsesOutput")
+        if isinstance(output, list):
+            # Tool calls can be incomplete at the token boundary and are replaced above.
+            # Keep only reasoning state; recovered visible text remains the canonical answer.
+            reasoning_items = [item for item in output if isinstance(item, dict) and item.get("type") == "reasoning"]
+            if reasoning_items:
+                recovered["additionalModelResponseFields"] = {"openaiResponsesOutput": reasoning_items}
     return recovered
