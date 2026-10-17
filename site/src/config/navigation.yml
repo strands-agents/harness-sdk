@@ -392,6 +392,7 @@ sidebar:
             addedDate: 2026-06-17
             items:
               - docs/user-guide/sdk/memory/test-memory-store
+              - docs/user-guide/sdk/memory/file-memory-store
               - docs/user-guide/sdk/memory/bedrock-knowledge-base
           - label: Plugins
             items:
