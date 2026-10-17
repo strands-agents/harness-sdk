@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
 import type { ChatPanelRow } from '../chat/controller.js'
-import type { ChatSettings, FrogTheme } from '../chat/types.js'
+import type { FrogTheme, ThemeSettings } from '../chat/types.js'
 import { DEFAULT_CHAT_SETTINGS } from '../settings.js'
 import { panelControlTarget, settingsLayout, settingsThemeLayout } from './interaction.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
@@ -32,7 +32,7 @@ export function SettingsPanel({
   hoveredControl?: string
   pressedFilter?: string
   hoveredFilter?: string
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+  appearance?: ThemeSettings
   embedded?: boolean
   height?: number
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -141,7 +141,9 @@ export function SettingsPanel({
                 flexDirection="column"
                 {...(settings ? { width: contentWidth, alignSelf: 'center' } : {})}
               >
-                {!panel.settingsCategory && row.section && row.section !== rows[visibleIndex - 1]?.section ? (
+                {!(settings && panel.settingsCategory) &&
+                row.section &&
+                row.section !== rows[visibleIndex - 1]?.section ? (
                   <Box
                     paddingX={settings ? 0 : 1}
                     marginTop={settings ? (visibleIndex > 0 ? 2 : 1) : visibleIndex > 0 ? 1 : 0}
@@ -260,7 +262,7 @@ export function SettingsControl({
   control: NonNullable<ChatPanelRow['control']>
   rowIndex: number
   setting?: string
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+  appearance?: ThemeSettings
   spacious?: boolean
   columns?: number
   optionWidth?: number
@@ -385,7 +387,7 @@ function ThemeChoices({
   optionWidth: number
   optionHeight?: number
   maxRows?: number
-  appearance?: Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
+  appearance?: ThemeSettings
   pressedControl?: string
   hoveredControl?: string
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -407,7 +409,6 @@ function ThemeChoices({
         const preview = getTheme(
           {
             frogTheme: option.value as FrogTheme,
-            colorMode: current.mode,
             customTheme: appearance?.customTheme ?? DEFAULT_CHAT_SETTINGS.customTheme,
           },
           current.mode

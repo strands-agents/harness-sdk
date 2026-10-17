@@ -14,8 +14,8 @@ import {
   type ChatEffortOption,
   type ChatModelOption,
   type ChatPanel,
+  type ChatPanelBase,
   type ChatPanelFilter,
-  type ChatPanelOptions,
   type ChatPanelRow,
   type ChatPanelSlider,
   type ChatPermissionRequest,
@@ -23,6 +23,7 @@ import {
   type ChatRuntimeInfo,
   type ChatSettings,
   type ChatTask,
+  type NewChatPanel,
   type SettingsCategory,
 } from './types.js'
 import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../settings.js'
@@ -108,33 +109,6 @@ export function formatTaskActivity(task: ChatTask): string {
     lines.push('', 'No live event stream was retained for this task.')
   }
   return lines.join('\n')
-}
-
-export function clonePanel(panel: ChatPanel): ChatPanel {
-  return {
-    ...panel,
-    rows: panel.rows.map((row) => ({
-      ...row,
-      ...(row.control?.kind === 'toggle'
-        ? { control: { ...row.control } }
-        : row.control?.kind === 'segmented'
-          ? { control: { ...row.control, options: row.control.options.map((option) => ({ ...option })) } }
-          : {}),
-    })),
-    ...(panel.filters ? { filters: panel.filters.map((filter) => ({ ...filter })) } : {}),
-    ...(panel.slider
-      ? {
-          slider: {
-            ...panel.slider,
-            options: panel.slider.options.map((option) => ({ ...option })),
-          },
-        }
-      : {}),
-    ...(panel.diff ? { diff: sanitizeDiffPreview(panel.diff) } : {}),
-    ...(panel.settingsCategories
-      ? { settingsCategories: panel.settingsCategories.map((category) => ({ ...category })) }
-      : {}),
-  }
 }
 
 function formatDate(value: string): string {
@@ -245,55 +219,59 @@ export function sanitizeRows(rows: ChatPanel['rows']): ChatPanelRow[] {
   }))
 }
 
-export function makePanel(
-  id: string,
-  kind: ChatPanel['kind'],
-  title: string,
-  rows: ChatPanel['rows'],
-  options: ChatPanelOptions
-): ChatPanel {
-  return {
+export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
+  const common = {
+    ...panel,
     id,
-    kind,
-    title: sanitizeTerminalText(title),
-    rows: sanitizeRows(rows),
-    ...(options.searchable !== undefined ? { searchable: options.searchable } : {}),
-    ...(options.filters
+    title: sanitizeTerminalText(panel.title),
+    rows: sanitizeRows(panel.rows),
+    ...(panel.filters
       ? {
-          filters: options.filters.map((filter) => ({
+          filters: panel.filters.map((filter) => ({
             id: sanitizeTerminalText(filter.id),
             label: sanitizeTerminalText(filter.label),
           })),
         }
       : {}),
-    ...(options.slider
-      ? {
-          slider: {
-            label: sanitizeTerminalText(options.slider.label),
-            options: options.slider.options.map((option) => ({
-              id: sanitizeTerminalText(option.id),
-              label: sanitizeTerminalText(option.label),
-              ...(option.active ? { active: true } : {}),
-            })),
-            ...(options.slider.disabled ? { disabled: true } : {}),
-            ...(options.slider.focused ? { focused: true } : {}),
-          },
-        }
-      : {}),
-    ...(options.body !== undefined ? { body: sanitizeTerminalText(options.body) } : {}),
-    ...(options.diff ? { diff: sanitizeDiffPreview(options.diff) } : {}),
-    ...(options.followTail !== undefined ? { followTail: options.followTail } : {}),
-    ...(options.activity ? { activity: options.activity } : {}),
-    ...(options.settingsCategory ? { settingsCategory: options.settingsCategory } : {}),
-    ...(options.settingsCategories
-      ? {
-          settingsCategories: options.settingsCategories.map(({ id: categoryId, label, description }) => ({
-            id: categoryId,
-            label: sanitizeTerminalText(label),
-            description: sanitizeTerminalText(description),
+    ...(panel.body !== undefined ? { body: sanitizeTerminalText(panel.body) } : {}),
+  }
+  switch (panel.kind) {
+    case 'effort':
+      return {
+        ...common,
+        kind: panel.kind,
+        slider: {
+          label: sanitizeTerminalText(panel.slider.label),
+          options: panel.slider.options.map((option) => ({
+            id: sanitizeTerminalText(option.id),
+            label: sanitizeTerminalText(option.label),
+            ...(option.active ? { active: true } : {}),
           })),
-        }
-      : {}),
+          ...(panel.slider.disabled ? { disabled: true } : {}),
+        },
+      }
+    case 'permission':
+      return {
+        ...common,
+        kind: panel.kind,
+        ...(panel.diff ? { diff: sanitizeDiffPreview(panel.diff) } : {}),
+      }
+    case 'settings':
+      return {
+        ...common,
+        kind: panel.kind,
+        ...(panel.settingsCategories
+          ? {
+              settingsCategories: panel.settingsCategories.map(({ id: categoryId, label, description }) => ({
+                id: categoryId,
+                label: sanitizeTerminalText(label),
+                description: sanitizeTerminalText(description),
+              })),
+            }
+          : {}),
+      }
+    default:
+      return { ...common, kind: panel.kind }
   }
 }
 
@@ -457,7 +435,7 @@ export function mcpOptions(
   servers: Awaited<ReturnType<LoadedMcp['list']>>,
   paths: readonly string[],
   messages: readonly string[]
-): Pick<ChatPanel, 'body' | 'searchable'> {
+): Pick<ChatPanelBase, 'body' | 'searchable'> {
   const checkedPaths = paths.join(', ') || 'the configured paths'
   const warnings = messages.map((warning) => `Skipped: ${warning}`)
   return servers.length === 0
