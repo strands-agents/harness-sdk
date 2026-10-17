@@ -377,7 +377,7 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   edit: 'Edit',
   subagent: 'Delegate',
   read: 'Read',
-  strands_manage_background_task: 'Manage task',
+  manage_background_task: 'Manage task',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
   web_search: 'Search',

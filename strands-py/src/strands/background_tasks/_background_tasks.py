@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
 _BACKGROUND_PROPERTY = "_background_execution"
-_MANAGE_TOOL_NAME = "strands_manage_background_task"
+_MANAGE_TOOL_NAME = "manage_background_task"
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
 _FOREGROUND_TOOL_NAMES = {
     _MANAGE_TOOL_NAME,
