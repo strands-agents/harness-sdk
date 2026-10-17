@@ -52,6 +52,15 @@ describe('read/write/edit', () => {
     expect(out).toContain('     2\tTWO')
   })
 
+  // Guards #4678: replacement patterns ($$, $&, $', $`) in new_str are written verbatim, never expanded.
+  it('writes new_str verbatim when it contains replacement patterns', async () => {
+    const path = join(dir, 'Makefile')
+    await write.invoke({ path, content: 'run:\n\tkill OLD\n' }, ctx())
+    await edit.invoke({ path, old_str: 'OLD', new_str: "$$SERVER_PID $& $' end" }, ctx())
+    const out = (await read.invoke({ path }, ctx())) as string
+    expect(out).toContain("kill $$SERVER_PID $& $' end")
+  })
+
   it('rejects an edit whose old_str is missing', async () => {
     const path = join(dir, 'f.txt')
     await write.invoke({ path, content: 'hello\n' }, ctx())
