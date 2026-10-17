@@ -1179,6 +1179,268 @@ def test_separate_tool_result_turns_ignores_conversation_only_user_turns():
     assert BedrockModel._separate_tool_result_turns(messages) == messages
 
 
+CLAUDE_FORCED_TOOL_CHOICE_ERROR = (
+    'The model returned the following errors: tool_choice: type "tool" and "any" are not supported for this model.'
+)
+LLAMA_FORCED_TOOL_CHOICE_ERROR = (
+    "This model doesn't support the toolConfig.toolChoice.any field. Remove toolConfig.toolChoice.any and try again."
+)
+TOOL_FIELD_FORCED_TOOL_CHOICE_ERROR = (
+    "This model doesn’t support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and try again."
+)
+TOOL_RESULT_TURN_ERROR = (
+    "messages.3.content: Conversation blocks and tool result blocks cannot be provided in the same turn."
+)
+
+
+def _converse_response(streaming: bool = True) -> dict:
+    if streaming:
+        return {"stream": []}
+    return {"output": {"message": {"role": "assistant", "content": [{"text": "Done"}]}}, "stopReason": "end_turn"}
+
+
+def _client_error(message: str, code: str = "ValidationException") -> ClientError:
+    return ClientError({"Error": {"Code": code, "Message": message}}, "ConverseStream")
+
+
+@pytest.mark.parametrize(
+    ("tool_choice", "error_message"),
+    [
+        pytest.param({"tool": {"name": "name"}}, CLAUDE_FORCED_TOOL_CHOICE_ERROR, id="claude"),
+        pytest.param({"any": {}}, LLAMA_FORCED_TOOL_CHOICE_ERROR, id="llama"),
+        pytest.param({"tool": {"name": "name"}}, TOOL_FIELD_FORCED_TOOL_CHOICE_ERROR, id="tool_field_curly_apostrophe"),
+    ],
+)
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.asyncio
+async def test_stream_sends_auto_tool_choice_when_model_rejects_forced_tool_choice(
+    bedrock_client, alist, caplog, messages, tool_spec, model_id, streaming, tool_choice, error_message
+):
+    """A model that cannot be forced to use a tool gets auto tool choice, on the retry and afterwards (#1241)."""
+    caplog.set_level(logging.DEBUG, logger="strands.models.bedrock")
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _client_error(error_message),
+        _converse_response(streaming),
+        _converse_response(streaming),
+    ]
+    model = BedrockModel(model_id=model_id, streaming=streaming)
+
+    await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
+    await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
+
+    tru_requests = [call.kwargs for call in converse_method.call_args_list]
+    exp_requests = [
+        {
+            "modelId": model_id,
+            "messages": messages,
+            "system": [],
+            "toolConfig": {"tools": [{"toolSpec": tool_spec}], "toolChoice": sent_tool_choice},
+            "inferenceConfig": {},
+        }
+        for sent_tool_choice in [tool_choice, {"auto": {}}, {"auto": {}}]
+    ]
+    assert tru_requests == exp_requests
+
+    tru_logs = [
+        (record.levelname, record.getMessage().rsplit(" | ", 1)[-1])
+        for record in caplog.records
+        if "model does not support forced tool choice" in record.getMessage()
+    ]
+    exp_logs = [("WARNING", "retrying with auto tool choice"), ("DEBUG", "sending auto tool choice")]
+    assert tru_logs == exp_logs
+
+
+@pytest.mark.parametrize(
+    "model_config",
+    [
+        pytest.param(
+            {"additional_request_fields": {"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}},
+            id="additional_request_fields",
+        ),
+        pytest.param(
+            {
+                "additional_request_fields": {"thinking": {"type": "adaptive"}},
+                "additional_args": {"additionalModelRequestFields": {"output_config": {"effort": "high"}}},
+            },
+            id="additional_args",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_retries_forced_tool_choice_as_an_auto_request(
+    bedrock_client, alist, messages, tool_spec, model_config
+):
+    """Unless additional_args sets the tool choice, the retry is the auto request, with thinking and additional_args."""
+    bedrock_client.converse_stream.side_effect = [
+        _client_error(CLAUDE_FORCED_TOOL_CHOICE_ERROR),
+        _converse_response(),
+    ]
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-5-5", **model_config)
+
+    await alist(model.stream(messages, [tool_spec], tool_choice={"tool": {"name": "name"}}))
+
+    tru_retry_request = bedrock_client.converse_stream.call_args_list[1].kwargs
+    exp_retry_request = model.format_request(messages, [tool_spec], tool_choice={"auto": {}})
+    assert tru_retry_request == exp_retry_request
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_forced_tool_choice_from_additional_args_as_auto(
+    bedrock_client, alist, messages, tool_spec, model_id
+):
+    """A forced tool choice set through additional_args is not sent again, since the model would reject it again."""
+    forced_tool_config = {"tools": [{"toolSpec": tool_spec}], "toolChoice": {"any": {}}}
+    bedrock_client.converse_stream.side_effect = [
+        _client_error(CLAUDE_FORCED_TOOL_CHOICE_ERROR),
+        _converse_response(),
+    ]
+    model = BedrockModel(model_id=model_id, additional_args={"toolConfig": forced_tool_config})
+
+    await alist(model.stream(messages))
+
+    tru_tool_configs = [call.kwargs["toolConfig"] for call in bedrock_client.converse_stream.call_args_list]
+    exp_tool_configs = [forced_tool_config, {**forced_tool_config, "toolChoice": {"auto": {}}}]
+    assert tru_tool_configs == exp_tool_configs
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_auto_only_for_the_rejected_model_and_tool_choice(
+    bedrock_client, model, alist, messages, tool_spec
+):
+    """A model that rejects a named tool keeps its any requests, and another model id keeps its forced requests."""
+    bedrock_client.converse_stream.side_effect = [
+        _client_error(TOOL_FIELD_FORCED_TOOL_CHOICE_ERROR),
+        *(_converse_response() for _ in range(3)),
+    ]
+    named_tool_choice = {"tool": {"name": "name"}}
+
+    await alist(model.stream(messages, [tool_spec], tool_choice=named_tool_choice))
+    await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+    model.update_config(model_id="m2")
+    await alist(model.stream(messages, [tool_spec], tool_choice=named_tool_choice))
+
+    tru_sent = [
+        (call.kwargs["modelId"], call.kwargs["toolConfig"]["toolChoice"])
+        for call in bedrock_client.converse_stream.call_args_list
+    ]
+    exp_sent = [("m1", named_tool_choice), ("m1", {"auto": {}}), ("m1", {"any": {}}), ("m2", named_tool_choice)]
+    assert tru_sent == exp_sent
+
+
+@pytest.mark.parametrize(
+    ("tool_choice", "error_code", "error_message"),
+    [
+        pytest.param(None, "ValidationException", CLAUDE_FORCED_TOOL_CHOICE_ERROR, id="auto_request"),
+        pytest.param(
+            {"tool": {"name": "name"}},
+            "ValidationException",
+            "1 validation error detected: Value at 'toolConfig.toolChoice.tool.name' failed to satisfy constraint",
+            id="other_tool_choice_error",
+        ),
+        pytest.param(
+            {"any": {}},
+            "ValidationException",
+            "The model returned the following errors: Thinking may not be enabled when tool_choice forces tool use.",
+            id="thinking_with_forced_tool_choice",
+        ),
+        pytest.param({"any": {}}, "AccessDeniedException", CLAUDE_FORCED_TOOL_CHOICE_ERROR, id="other_error_code"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_other_errors_with_auto_tool_choice(
+    bedrock_client, model, alist, messages, tool_spec, tool_choice, error_code, error_message
+):
+    """Only a ValidationException rejecting a forced tool choice is retried."""
+    bedrock_client.converse_stream.side_effect = _client_error(error_message, error_code)
+
+    with pytest.raises(ClientError):
+        await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
+
+    bedrock_client.converse_stream.assert_called_once()
+    assert model._rejected_forced_tool_choices == set()
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_errors_raised_while_reading_the_stream(
+    bedrock_client, model, alist, messages, tool_spec
+):
+    """An error raised after events reached the caller is not retried, so no event is sent twice."""
+
+    def stream_events():
+        yield {"messageStart": {"role": "assistant"}}
+        raise EventStreamError(
+            {"Error": {"Code": "ValidationException", "Message": CLAUDE_FORCED_TOOL_CHOICE_ERROR}}, "ConverseStream"
+        )
+
+    bedrock_client.converse_stream.return_value = {"stream": stream_events()}
+
+    with pytest.raises(EventStreamError):
+        await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+    bedrock_client.converse_stream.assert_called_once()
+    assert model._rejected_forced_tool_choices == set()
+
+
+@pytest.mark.asyncio
+async def test_stream_remembers_rejected_tool_choice_when_retry_fails(
+    bedrock_client, model, alist, messages, tool_spec
+):
+    """A failed retry still spares later attempts the rejected forced call."""
+    bedrock_client.converse_stream.side_effect = [
+        _client_error(CLAUDE_FORCED_TOOL_CHOICE_ERROR),
+        _client_error("Rate exceeded", "ThrottlingException"),
+        _converse_response(),
+    ]
+
+    with pytest.raises(ModelThrottledException):
+        await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+    await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+    tru_tool_choices = [
+        call.kwargs["toolConfig"]["toolChoice"] for call in bedrock_client.converse_stream.call_args_list
+    ]
+    exp_tool_choices = [{"any": {}}, {"auto": {}}, {"auto": {}}]
+    assert tru_tool_choices == exp_tool_choices
+
+
+@pytest.mark.parametrize(
+    ("errors", "sent"),
+    [
+        pytest.param(
+            [LLAMA_FORCED_TOOL_CHOICE_ERROR, TOOL_RESULT_TURN_ERROR],
+            [("any", "canonical"), ("auto", "canonical"), ("auto", "separated")],
+            id="tool_choice_reported_first",
+        ),
+        pytest.param(
+            [TOOL_RESULT_TURN_ERROR, LLAMA_FORCED_TOOL_CHOICE_ERROR],
+            [("any", "canonical"), ("any", "separated"), ("auto", "separated")],
+            id="tool_result_turn_reported_first",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_retries_forced_tool_choice_and_tool_result_turns(
+    bedrock_client, alist, tool_result_turn_messages, separated_tool_result_turn_messages, tool_spec, errors, sent
+):
+    """A model with both incompatibilities gets a request it accepts, whichever Bedrock reports first."""
+    bedrock_client.converse.side_effect = [
+        *(_client_error(message) for message in errors),
+        _converse_response(streaming=False),
+    ]
+    model = BedrockModel(model_id="us.meta.llama4-maverick-17b-instruct-v1:0", streaming=False)
+
+    await alist(model.stream(tool_result_turn_messages, [tool_spec], tool_choice={"any": {}}))
+
+    sent_messages = {"canonical": tool_result_turn_messages, "separated": separated_tool_result_turn_messages}
+    tru_sent = [
+        (call.kwargs["toolConfig"]["toolChoice"], call.kwargs["messages"])
+        for call in bedrock_client.converse.call_args_list
+    ]
+    exp_sent = [({tool_choice: {}}, sent_messages[turns]) for tool_choice, turns in sent]
+    assert tru_sent == exp_sent
+
+
 @pytest.mark.asyncio
 async def test_general_exception_is_raised(bedrock_client, model, messages, alist):
     error_message = "Should be raised up"
@@ -2132,19 +2394,31 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
     bedrock_client.converse_stream.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("rejections", "exp_tool_choices"),
+    [
+        pytest.param([], [{"any": {}}], id="forced"),
+        pytest.param(
+            [_client_error(CLAUDE_FORCED_TOOL_CHOICE_ERROR)], [{"any": {}}, {"auto": {}}], id="forcing_rejected"
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_structured_output(bedrock_client, model, test_output_model_cls, alist):
+async def test_structured_output(bedrock_client, model, test_output_model_cls, alist, rejections, exp_tool_choices):
     messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
 
-    bedrock_client.converse_stream.return_value = {
-        "stream": [
-            {"messageStart": {"role": "assistant"}},
-            {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "TestOutputModel"}}}},
-            {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "John", "age": 30}'}}}},
-            {"contentBlockStop": {}},
-            {"messageStop": {"stopReason": "tool_use"}},
-        ]
-    }
+    bedrock_client.converse_stream.side_effect = [
+        *rejections,
+        {
+            "stream": [
+                {"messageStart": {"role": "assistant"}},
+                {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "TestOutputModel"}}}},
+                {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "John", "age": 30}'}}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ]
+        },
+    ]
 
     stream = model.structured_output(test_output_model_cls, messages)
     events = await alist(stream)
@@ -2152,6 +2426,11 @@ async def test_structured_output(bedrock_client, model, test_output_model_cls, a
     tru_output = events[-1]
     exp_output = {"output": test_output_model_cls(name="John", age=30)}
     assert tru_output == exp_output
+
+    tru_tool_choices = [
+        call.kwargs["toolConfig"]["toolChoice"] for call in bedrock_client.converse_stream.call_args_list
+    ]
+    assert tru_tool_choices == exp_tool_choices
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="This test requires Python 3.11 or higher (need add_note)")
