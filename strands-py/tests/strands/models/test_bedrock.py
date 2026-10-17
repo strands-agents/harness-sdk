@@ -281,6 +281,32 @@ def test__init__default_read_timeout(session_cls, bedrock_client):
     assert kwargs["config"].read_timeout == DEFAULT_READ_TIMEOUT
 
 
+def test__init__custom_boto_client_config_keeps_default_read_timeout(session_cls, bedrock_client):
+    """A custom boto_client_config without an explicit read timeout keeps the
+    library default (120s) instead of silently falling back to botocore's own
+    60s default (#4394)."""
+    custom_config = BotocoreConfig(retries={"max_attempts": 3})
+
+    _ = BedrockModel(boto_client_config=custom_config)
+
+    client = session_cls.return_value.client
+    client.assert_called_once()
+    args, kwargs = client.call_args
+    assert kwargs["config"].read_timeout == DEFAULT_READ_TIMEOUT
+
+
+def test__init__custom_boto_client_config_respects_explicit_read_timeout(session_cls, bedrock_client):
+    """An explicit read_timeout on the caller's config always wins."""
+    custom_config = BotocoreConfig(read_timeout=300)
+
+    _ = BedrockModel(boto_client_config=custom_config)
+
+    client = session_cls.return_value.client
+    client.assert_called_once()
+    args, kwargs = client.call_args
+    assert kwargs["config"].read_timeout == 300
+
+
 def test__init__with_custom_boto_client_config_no_user_agent(session_cls, bedrock_client):
     """Set user agent when boto_client_config is provided without user_agent_extra."""
     custom_config = BotocoreConfig(read_timeout=900)
