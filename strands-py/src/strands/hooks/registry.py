@@ -174,6 +174,10 @@ class HookCallback(Protocol, Generic[TEvent]):
         ...
 
 
+def _is_coroutine_callable(callback: HookCallback) -> bool:
+    return inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(callback.__call__)
+
+
 class HookRegistry:
     """Registry for managing hook callbacks associated with event types.
 
@@ -258,7 +262,7 @@ class HookRegistry:
         # Register callback for each event type
         for resolved_event_type in unique_event_types:
             # Related issue: https://github.com/strands-agents/harness-sdk/issues/330
-            if resolved_event_type.__name__ == "AgentInitializedEvent" and inspect.iscoroutinefunction(callback):
+            if resolved_event_type.__name__ == "AgentInitializedEvent" and _is_coroutine_callable(callback):
                 raise ValueError("AgentInitializedEvent can only be registered with a synchronous callback")
 
             entries = self._registered_callbacks.setdefault(resolved_event_type, [])
@@ -335,10 +339,9 @@ class HookRegistry:
 
         for callback in self.get_callbacks_for(event):
             try:
-                if inspect.iscoroutinefunction(callback):
-                    await callback(event)
-                else:
-                    callback(event)
+                result = callback(event)
+                if inspect.isawaitable(result):
+                    await result
 
             except InterruptException as exception:
                 interrupt = exception.interrupt
@@ -381,12 +384,16 @@ class HookRegistry:
         callbacks = list(self.get_callbacks_for(event))
         interrupts: dict[str, Interrupt] = {}
 
-        if any(inspect.iscoroutinefunction(callback) for callback in callbacks):
+        if any(_is_coroutine_callable(callback) for callback in callbacks):
             raise RuntimeError(f"event=<{event}> | use invoke_callbacks_async to invoke async callback")
 
         for callback in callbacks:
             try:
-                callback(event)
+                result = callback(event)
+                if inspect.isawaitable(result):
+                    if inspect.iscoroutine(result):
+                        result.close()
+                    raise RuntimeError(f"event=<{event}> | use invoke_callbacks_async to invoke async callback")
             except InterruptException as exception:
                 interrupt = exception.interrupt
                 if interrupt.name in interrupts:
