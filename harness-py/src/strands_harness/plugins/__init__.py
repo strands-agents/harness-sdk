@@ -6,5 +6,6 @@ candidate to port into the core SDK later; keep them minimal and SDK-idiomatic.
 
 from strands_harness.plugins.environment import EnvironmentContext
 from strands_harness.plugins.todos import TodoItem, Todos
+from strands_harness.plugins.verification import Verification
 
-__all__ = ["EnvironmentContext", "TodoItem", "Todos"]
+__all__ = ["EnvironmentContext", "TodoItem", "Todos", "Verification"]
