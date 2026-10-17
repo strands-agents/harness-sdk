@@ -49,3 +49,12 @@ if (forbiddenFiles.length > 0) {
 }
 
 console.log(`[package-contents] OK (${files.length} files)`)
+
+for (const module of ['index', 'mock-message-model', 'test-model-provider', 'types']) {
+  for (const extension of ['js', 'd.ts']) {
+    const path = `dist/src/testing/${module}.${extension}`
+    if (!files.includes(path)) {
+      throw new Error(`Published package is missing a public testing module: ${path}`)
+    }
+  }
+}

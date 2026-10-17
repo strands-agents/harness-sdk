@@ -356,6 +356,7 @@ For detailed guidance, tutorials, and concept overviews, please visit:
 
 - **[Official Documentation](https://strandsagents.com/)**: Comprehensive guides and tutorials
 - **[API Reference](https://strandsagents.com/docs/api/typescript/)**: Complete API documentation
+- **[Offline Testing](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/docs/OFFLINE_TESTING.md)**: Script model responses through `@strands-agents/sdk/testing`
 - **[Examples](./examples/)**: Sample applications
   - **[First Agent](./examples/first-agent/)**: Basic Node.js agent
   - **[MCP](./examples/mcp/)**: MCP integration example

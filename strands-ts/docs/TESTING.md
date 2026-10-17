@@ -8,6 +8,12 @@ This document contains comprehensive testing guidelines for the Strands TypeScri
 
 All test fixtures are located in `src/__fixtures__/`. Use these helpers to reduce boilerplate and ensure consistency.
 
+`MockMessageModel` and `TestModelProvider` are implemented in `src/testing/` and
+published through `@strands-agents/sdk/testing`. The fixture modules re-export
+them for existing repository tests. See [Offline Testing](./OFFLINE_TESTING.md)
+for the public behavior and supported input types; iterator collectors and
+other fixture helpers remain internal.
+
 | Fixture                | File                    | When to Use                                                                          | Details                                                                     |
 | ---------------------- | ----------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `MockMessageModel`     | `mock-message-model.ts` | Agent loop tests - specify content blocks, auto-generates stream events              | [Model Fixtures](#model-fixtures-mock-message-modelts-model-test-helpersts) |
