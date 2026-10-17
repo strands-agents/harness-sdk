@@ -5,9 +5,16 @@
  * @internal
  */
 
-export { normalizeHarnessAgentConfig } from './config.js'
+export { HARNESS_AGENT_CONFIG_KEYS, normalizeHarnessAgentConfig } from './config.js'
 export { EFFORT_LEVELS, resolveModel } from './models.js'
-export { DEFAULT_MEMORY_DIR, DEFAULT_SKILLS_DIR } from './defaults.js'
+export {
+  DEFAULT_BUILTIN_PLUGINS,
+  DEFAULT_CONTEXT_MANAGER,
+  DEFAULT_EFFORT,
+  DEFAULT_MEMORY_DIR,
+  DEFAULT_MODEL,
+  DEFAULT_SKILLS_DIR,
+} from './defaults.js'
 export { resolveMemory, type ResolveMemoryOptions } from './memory.js'
 export { resolveInterventions, type InterventionAsk, type InterventionValue } from './interventions.js'
 export {
