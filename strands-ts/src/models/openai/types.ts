@@ -150,6 +150,19 @@ export type OpenAIModelOptions =
   | ({ api: 'chat' } & OpenAIChatConfig & OpenAIClientOptions)
 
 /**
+ * A Chat Completions tool call buffered across `tool_calls` deltas, keyed by
+ * the delta's `index`. Parallel calls interleave their deltas, so each call is
+ * flushed as its own block once the stream finishes.
+ *
+ * @internal
+ */
+export interface ChatToolCall {
+  name: string
+  toolUseId: string
+  inputDeltas: string[]
+}
+
+/**
  * Internal stream state for the Chat Completions adapter.
  *
  * @internal
@@ -157,4 +170,5 @@ export type OpenAIModelOptions =
 export interface ChatStreamState {
   messageStarted: boolean
   textContentBlockStarted: boolean
+  toolCalls: Map<number, ChatToolCall>
 }
