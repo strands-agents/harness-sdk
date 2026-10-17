@@ -53,10 +53,14 @@ class WebFetchConfig(TypedDict, total=False):
         transport: ``"curl"`` (the default) runs the request as ``curl`` inside the agent's
             ``sandbox``, so the sandbox's network controls apply; ``"direct"`` issues it from the
             harness process with the standard library, bypassing the sandbox.
+        quiet_fallback: silence the warning logged when no small summarizer is mapped for the
+            main model's Bedrock family and the main model is reused instead. For families with
+            no small pick on Bedrock (e.g. Qwen, xAI, Cohere), where the warning is not actionable.
     """
 
     model: Model | ModelRouter | str
     transport: WebFetchTransport
+    quiet_fallback: bool
 
 
 class ReadConfig(TypedDict, total=False):
