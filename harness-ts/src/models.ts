@@ -89,6 +89,8 @@ const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.']
 const ANTHROPIC_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'none'] as const
 const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+const BEDROCK_GPT_NO_NONE_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const BEDROCK_GPT_NO_MAX_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
 const BEDROCK_GPT_OSS_LEVELS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
@@ -156,13 +158,32 @@ function bedrockFamily(modelId: string): string {
   return unprefixed ? modelId.slice(unprefixed.length) : modelId
 }
 
+// GPT-5.x / GPT-6 on Bedrock take `reasoning.effort`, matched by the same prefixes as the SDK's Mantle routing
+// so a new id in the line works without an edit; the explicit separator keeps ids like gpt-oss out. The overrides
+// list the ids whose accepted levels differ from the full set; without `none`, `off` omits the field.
+const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-6-', 'openai.gpt-6.'] as const
+const BEDROCK_GPT_LEVEL_OVERRIDES: Readonly<Record<string, readonly string[]>> = {
+  'openai.gpt-5.4': BEDROCK_GPT_NO_MAX_LEVELS,
+  'openai.gpt-5.5': BEDROCK_GPT_NO_MAX_LEVELS,
+  'openai.gpt-6-astra': BEDROCK_GPT_NO_NONE_LEVELS,
+  'openai.gpt-6.1-sol': BEDROCK_GPT_NO_NONE_LEVELS,
+}
+
+function bedrockGptLevels(family: string): readonly string[] | undefined {
+  if (!BEDROCK_GPT_PREFIXES.some((prefix) => family.startsWith(prefix))) {
+    return undefined
+  }
+  return BEDROCK_GPT_LEVEL_OVERRIDES[family] ?? BEDROCK_GPT_LEVELS
+}
+
 function bedrockLevels(modelId: string): readonly string[] {
   const family = bedrockFamily(modelId)
   if (family.startsWith('anthropic.')) {
     return claudeThinkingMode(family) !== null ? ANTHROPIC_LEVELS : NO_THINKING_LEVELS
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
-    return BEDROCK_GPT_LEVELS
+  const gptLevels = bedrockGptLevels(family)
+  if (gptLevels !== undefined) {
+    return gptLevels
   }
   if (family.startsWith('openai.gpt-oss-')) {
     return BEDROCK_GPT_OSS_LEVELS
@@ -190,7 +211,7 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   if (family.startsWith('anthropic.')) {
     return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (bedrockGptLevels(family) !== undefined) {
     return { reasoning: { effort } }
   }
   if (family.startsWith('openai.gpt-oss-')) {
