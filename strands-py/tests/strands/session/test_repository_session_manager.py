@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from strands import tool
 from strands.agent.agent import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
@@ -187,6 +188,9 @@ def test_initialize_restores_existing_agent_with_summarizing_conversation_manage
     assert agent.messages[1]["role"] == "user"
     assert agent.messages[1]["content"][0]["text"] == "Hello"
     assert agent.conversation_manager.removed_message_count == 1
+    # Exact transcript: summary at index 0, then the one remaining stored message.
+    texts = [m["content"][0].get("text", "") for m in agent.messages]
+    assert texts[0] == "summary"
 
 
 def test_append_message(session_manager):
@@ -1231,6 +1235,509 @@ def test_initialize_multi_agent_calls_read_for_existing_session(mock_repository)
     # read_multi_agent should be called for existing session
     assert len(read_multi_agent_calls) == 1
     assert read_multi_agent_calls[0] == ("existing-session", "test-multi-agent")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for https://github.com/strands-agents/harness-sdk/issues/4027
+#
+# ``SummarizingConversationManager(pin_first=N)`` must:
+#   * keep the first N messages at the head of the restored transcript, and
+#   * not skip those pinned messages via ``list_messages(offset=removed_message_count)``.
+# Both ``FileSessionManager`` and ``S3SessionManager`` go through
+# ``RepositorySessionManager.initialize`` (the file-backed path is exercised here).
+# ---------------------------------------------------------------------------
+
+
+def _populate_messages(repo, agent_id, texts):
+    """Create SessionMessages with sequential message_ids starting at 0."""
+    for i, text in enumerate(texts):
+        msg = SessionMessage(
+            message={"role": "user", "content": [ContentBlock(text=text)]},
+            message_id=i,
+        )
+        repo.create_message("test-session", agent_id, msg)
+
+
+def test_initialize_uses_persisted_pinned_head_count_not_constructor(existing_session_manager):
+    """Restore must reattach the persisted head size, not constructor pin_first.
+
+    Compaction can persist a different count than the live pin_first (constructor
+    changed between runs, or partition stopped mid tool-pair). Using constructor
+    pin_first on restore reattaches the wrong messages.
+    """
+    conversation_manager = SummarizingConversationManager(pin_first=2)
+    conversation_manager.removed_message_count = 1
+    conversation_manager._summary_message = {"role": "user", "content": [{"text": "summary"}]}
+    conversation_manager.pinned_head_count = 2
+
+    session_agent = SessionAgent(
+        agent_id="mismatch-agent",
+        state={},
+        conversation_manager_state=conversation_manager.get_state(),
+    )
+    existing_session_manager.session_repository.create_agent("test-session", session_agent)
+
+    _populate_messages(
+        existing_session_manager.session_repository,
+        "mismatch-agent",
+        ["pinned-0", "pinned-1", "summarized", "remaining"],
+    )
+
+    # Constructor pin_first disagrees with the persisted count on purpose.
+    agent = Agent(agent_id="mismatch-agent", conversation_manager=SummarizingConversationManager(pin_first=5))
+    existing_session_manager.initialize(agent)
+
+    texts = [m["content"][0]["text"] for m in agent.messages]
+    assert texts == ["pinned-0", "pinned-1", "summary", "remaining"]
+    assert agent.conversation_manager.pinned_head_count == 2
+
+
+def test_initialize_empty_tail_does_not_restart_message_ids(existing_session_manager):
+    """When restore offset lands past the last stored message, append must not restart at 0."""
+    conversation_manager = SummarizingConversationManager(pin_first=2)
+    conversation_manager.removed_message_count = 2
+    conversation_manager._summary_message = {"role": "user", "content": [{"text": "summary"}]}
+    conversation_manager.pinned_head_count = 2
+
+    session_agent = SessionAgent(
+        agent_id="empty-tail-agent",
+        state={},
+        conversation_manager_state=conversation_manager.get_state(),
+    )
+    existing_session_manager.session_repository.create_agent("test-session", session_agent)
+
+    _populate_messages(
+        existing_session_manager.session_repository,
+        "empty-tail-agent",
+        ["pinned-0", "pinned-1"],
+    )
+
+    agent = Agent(agent_id="empty-tail-agent", conversation_manager=SummarizingConversationManager(pin_first=2))
+    existing_session_manager.initialize(agent)
+
+    agent.messages.append({"role": "user", "content": [{"text": "NEW"}]})
+    existing_session_manager.append_message(agent.messages[-1], agent)
+
+    stored = existing_session_manager.session_repository.list_messages(
+        session_id="test-session",
+        agent_id="empty-tail-agent",
+    )
+    texts = [m.to_message()["content"][0]["text"] for m in stored]
+    ids = [m.message_id for m in stored]
+    assert texts == ["pinned-0", "pinned-1", "NEW"]
+    assert ids == [0, 1, 2]
+
+
+def test_initialize_restores_pinned_messages_after_summary_with_pin_first(existing_session_manager):
+    """After a compaction with pin_first, restoring the agent must reattach the pinned head.
+
+    ``list_messages(offset=pinned_head_count + removed_message_count)`` skips past the
+    still-live pinned head so the tail does not overlap with the messages reattached at
+    the front; the resumed agent must see exactly the live transcript in order.
+    """
+    conversation_manager = SummarizingConversationManager(pin_first=3)
+    conversation_manager.removed_message_count = 1
+    conversation_manager._summary_message = {"role": "user", "content": [{"text": "summary of msg-3"}]}
+    conversation_manager.pinned_head_count = 3
+
+    session_agent = SessionAgent(
+        agent_id="pinned-agent",
+        state={},
+        conversation_manager_state=conversation_manager.get_state(),
+    )
+    existing_session_manager.session_repository.create_agent("test-session", session_agent)
+
+    # 5 originally-stored messages, ids 0..4. msg-3 was the one summarized.
+    _populate_messages(
+        existing_session_manager.session_repository,
+        "pinned-agent",
+        ["pinned-0", "pinned-1", "pinned-2", "msg-3-summarized", "msg-4"],
+    )
+
+    agent = Agent(agent_id="pinned-agent", conversation_manager=SummarizingConversationManager(pin_first=3))
+    existing_session_manager.initialize(agent)
+
+    # Live transcript after compaction was: [pinned-0, pinned-1, pinned-2, summary, msg-4].
+    # Restore must reproduce exactly that, in order.
+    texts = [m["content"][0]["text"] for m in agent.messages]
+    assert texts == ["pinned-0", "pinned-1", "pinned-2", "summary of msg-3", "msg-4"]
+
+
+def test_initialize_pinned_messages_no_summary_yet(existing_session_manager):
+    """When pin_first is set but summarization hasn't run, restore must produce the full transcript
+    and must NOT invoke the pinned-head fetch path (pinned_head_count == 0).
+
+    The gate ``if pinned_head_count > 0:`` must suppress the pinned-head list_messages call so
+    that restoring a pre-compaction session never issues a spurious ``limit=0`` query.  If the
+    gate is replaced with ``if True:``, list_messages is called with ``limit=0`` which is
+    detectable via the call record.
+    """
+    conversation_manager = SummarizingConversationManager(pin_first=2)
+    # No compaction has happened, so pinned_head_count == 0 in the persisted state.
+
+    session_agent = SessionAgent(
+        agent_id="fresh-pin-agent",
+        state={},
+        conversation_manager_state=conversation_manager.get_state(),
+    )
+    existing_session_manager.session_repository.create_agent("test-session", session_agent)
+
+    _populate_messages(
+        existing_session_manager.session_repository,
+        "fresh-pin-agent",
+        ["keep-0", "keep-1", "keep-2"],
+    )
+
+    # Spy on list_messages to detect any call that passes limit=0, which would indicate the
+    # gate fired when it should not have (pinned_head_count == 0).
+    real_list = existing_session_manager.session_repository.list_messages
+    limit_zero_calls = []
+
+    def spy_list_messages(session_id, agent_id, limit=None, offset=0):
+        if limit == 0:
+            limit_zero_calls.append((session_id, agent_id, limit, offset))
+        return real_list(session_id, agent_id, limit=limit, offset=offset)
+
+    existing_session_manager.session_repository.list_messages = spy_list_messages
+
+    agent = Agent(agent_id="fresh-pin-agent", conversation_manager=SummarizingConversationManager(pin_first=2))
+    existing_session_manager.initialize(agent)
+
+    texts = [m["content"][0]["text"] for m in agent.messages]
+    assert texts == ["keep-0", "keep-1", "keep-2"]
+    # The gate must have suppressed the fetch — no limit=0 call is acceptable.
+    assert limit_zero_calls == [], "gate was bypassed: list_messages(limit=0) was called when pinned_head_count == 0"
+
+
+def test_initialize_restores_from_legacy_state_missing_pinned_head_count(existing_session_manager):
+    """Restore a session persisted before pinned_head_count existed.
+
+    Legacy state has no ``pinned_head_count`` key. The restore path must default to 0,
+    preserving existing behaviour: no pinned head is reattached, and the offset is
+    calculated from ``removed_message_count`` alone.
+    """
+    # Simulate a legacy state dict: no pinned_head_count key at all.
+    legacy_state = {
+        "__name__": "SummarizingConversationManager",
+        "removed_message_count": 1,
+        "summary_message": {"role": "user", "content": [{"text": "summary"}]},
+    }
+
+    session_agent = SessionAgent(
+        agent_id="legacy-agent",
+        state={},
+        conversation_manager_state=legacy_state,
+    )
+    existing_session_manager.session_repository.create_agent("test-session", session_agent)
+
+    _populate_messages(
+        existing_session_manager.session_repository,
+        "legacy-agent",
+        ["a", "b", "c"],
+    )
+
+    agent = Agent(agent_id="legacy-agent", conversation_manager=SummarizingConversationManager())
+    existing_session_manager.initialize(agent)
+
+    # Legacy behaviour: offset=removed_message_count (1), so we get [summary, b, c].
+    texts = [m["content"][0]["text"] for m in agent.messages]
+    assert texts == ["summary", "b", "c"]
+    assert agent.conversation_manager.pinned_head_count == 0
+
+
+def test_restored_pinned_messages_have_pin_markers(existing_session_manager):
+    """Pinned messages restored from session must have their pin markers re-applied.
+
+    Without re-applying pin markers, the next compaction would summarize away the
+    pinned messages that were supposed to be protected.
+    """
+    conversation_manager = SummarizingConversationManager(pin_first=2)
+    conversation_manager.removed_message_count = 1
+    conversation_manager._summary_message = {"role": "user", "content": [{"text": "summary"}]}
+    conversation_manager.pinned_head_count = 2
+
+    session_agent = SessionAgent(
+        agent_id="pin-marker-agent",
+        state={},
+        conversation_manager_state=conversation_manager.get_state(),
+    )
+    existing_session_manager.session_repository.create_agent("test-session", session_agent)
+
+    _populate_messages(
+        existing_session_manager.session_repository,
+        "pin-marker-agent",
+        ["pinned-0", "pinned-1", "summarized", "remaining"],
+    )
+
+    agent = Agent(agent_id="pin-marker-agent", conversation_manager=SummarizingConversationManager(pin_first=2))
+    existing_session_manager.initialize(agent)
+
+    # Verify the pinned messages have their markers
+    assert agent.messages[0].get("metadata", {}).get("custom", {}).get("pinned") is True
+    assert agent.messages[1].get("metadata", {}).get("custom", {}).get("pinned") is True
+    # The summary message (at index 2) should NOT have the pinned marker
+    assert agent.messages[2].get("metadata", {}).get("custom", {}).get("pinned") is not True
+
+
+# ---------------------------------------------------------------------------
+# End-to-end File-backed repro from issue #4027.
+# These tests verify the fix by actually running compaction and restore with
+# a FileSessionManager, simulating a process restart.
+# ---------------------------------------------------------------------------
+
+
+class StubModel:
+    """A model that reports token usage for proactive compression triggers.
+
+    Args:
+        fail_summarisation: Raise instead of answering when the summariser calls.
+    """
+
+    def __init__(self, *, fail_summarisation: bool = False, context_window: int = 200):
+        self.fail_summarisation = fail_summarisation
+        self.context_window = context_window
+        self.answers = 0
+        self.summarisation_calls = 0
+        self.stateful = False
+        self._utilization_limit_warned = False
+
+    def update_config(self, **model_config):
+        pass
+
+    def get_config(self):
+        return {"context_window_limit": self.context_window}
+
+    @property
+    def context_window_limit(self):
+        return self.context_window
+
+    def estimate_utilization(self, input_tokens):
+        if self.context_window is None:
+            return 0.0
+        return input_tokens / self.context_window
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        """Answer one turn, or one summarisation request."""
+        agent_prompt = "Agent System Prompt"
+        if system_prompt != agent_prompt:
+            self.summarisation_calls += 1
+            if self.fail_summarisation:
+                raise RuntimeError("the provider is unavailable")
+            text = "SUMMARY"
+        else:
+            self.answers += 1
+            text = f"answer {self.answers}"
+
+        input_tokens = len(str(messages)) // 4
+        output_tokens = max(1, len(text) // 4)
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockDelta": {"delta": {"text": text}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+        yield {
+            "metadata": {
+                "usage": {
+                    "inputTokens": input_tokens,
+                    "outputTokens": output_tokens,
+                    "totalTokens": input_tokens + output_tokens,
+                },
+                "metrics": {"latencyMs": 0},
+            }
+        }
+
+    async def count_tokens(self, messages, tool_specs=None, system_prompt=None):
+        return len(str(messages)) // 4
+
+
+def _build_file_agent(tmp_path, model, pin_first=2, compression_threshold=0.5):
+    """Build an agent with FileSessionManager for end-to-end testing."""
+    from strands.session.file_session_manager import FileSessionManager
+
+    return Agent(
+        model=model,
+        system_prompt="Agent System Prompt",
+        conversation_manager=SummarizingConversationManager(
+            pin_first=pin_first,
+            proactive_compression={"compression_threshold": compression_threshold},
+        ),
+        session_manager=FileSessionManager(session_id="repro", storage_dir=str(tmp_path)),
+        callback_handler=None,
+    )
+
+
+def _texts(agent):
+    """Extract the text from each message in the agent's transcript."""
+    return [message["content"][0].get("text", "") for message in agent.messages]
+
+
+def _converse_until_compaction(agent, model, max_turns=30):
+    """Hold a conversation until the SDK compacts it, return the turn count."""
+    for turn in range(1, max_turns + 1):
+        agent(f"question number {turn}")
+        if model.summarisation_calls:
+            return turn
+    raise RuntimeError(f"{max_turns} turns produced no summarisation call")
+
+
+@tool
+def echo(text: str) -> str:
+    """Return the supplied text unchanged."""
+    return text
+
+
+class ToolCallingModel:
+    """A model stub that calls ``echo`` on the first turn and answers with text on every later turn."""
+
+    def __init__(self, context_window: int = 200):
+        self.context_window = context_window
+        self.stateful = False
+        self._utilization_limit_warned = False
+        self.calls = 0
+
+    def update_config(self, **model_config):
+        pass
+
+    def get_config(self):
+        return {"context_window_limit": self.context_window}
+
+    @property
+    def context_window_limit(self):
+        return self.context_window
+
+    def estimate_utilization(self, input_tokens):
+        return input_tokens / self.context_window
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        """Emit a single ``echo`` tool call, then plain text once the call is in the transcript."""
+        self.calls += 1
+        called_tool = any("toolUse" in block for message in messages for block in message.get("content", []))
+
+        yield {"messageStart": {"role": "assistant"}}
+        if not called_tool:
+            yield {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "tu1", "name": "echo"}}}}
+            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"text": "REAL RESULT"}'}}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+        else:
+            yield {"contentBlockDelta": {"delta": {"text": f"answer {self.calls}"}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+        yield {
+            "metadata": {
+                "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+                "metrics": {"latencyMs": 0},
+            }
+        }
+
+
+def _build_sliding_file_agent(tmp_path, model, pin_first=2, window_size=4):
+    """Build a sliding-window agent backed by a FileSessionManager for end-to-end testing."""
+    return Agent(
+        model=model,
+        system_prompt="Agent System Prompt",
+        tools=[echo],
+        conversation_manager=SlidingWindowConversationManager(
+            pin_first=pin_first, window_size=window_size, should_truncate_results=False
+        ),
+        session_manager=FileSessionManager(session_id="repro", storage_dir=str(tmp_path)),
+        callback_handler=None,
+    )
+
+
+def _transcript(agent):
+    """Extract role + content blocks for each message, ignoring per-message metadata such as pin markers."""
+    return [(message["role"], copy.deepcopy(message["content"])) for message in agent.messages]
+
+
+def test_file_session_sliding_window_restore_matches_in_memory(tmp_path):
+    """End-to-end: a resumed sliding-window session matches the live transcript after a pin_first trim."""
+    agent = _build_sliding_file_agent(tmp_path, StubModel(), window_size=2)
+    agent("first question")
+    agent("second question")
+    agent("third question")
+    in_memory = _transcript(agent)
+    assert agent.conversation_manager.removed_message_count > 0, "no trimming happened, restore is not exercised"
+
+    restored_agent = _build_sliding_file_agent(tmp_path, StubModel(), window_size=2)
+    restored = _transcript(restored_agent)
+
+    assert restored == in_memory, (
+        f"a resumed sliding-window session is not the conversation the agent had.\n"
+        f"  in memory ({len(in_memory)}): {in_memory}\n"
+        f"  restored  ({len(restored)}): {restored}"
+    )
+    assert restored_agent.conversation_manager.pinned_head_count == 2
+
+
+def test_file_session_sliding_window_restore_keeps_pinned_tool_pair(tmp_path):
+    """End-to-end: the restored head covers the pinned tool pair, so the real tool result survives (#4087).
+
+    ``pin_first=2`` pins the opening user message and the assistant toolUse, and trimming also keeps the
+    toolResult partner. The persisted head count has to cover all three; otherwise a resumed session
+    reattaches a toolUse with no result and the session manager fabricates an interrupted-tool error.
+    """
+    agent = _build_sliding_file_agent(tmp_path, ToolCallingModel())
+    agent("use the tool")
+    agent("second question")
+    agent("third question")
+    in_memory = _transcript(agent)
+    assert agent.conversation_manager.pinned_head_count == 3
+    assert agent.conversation_manager.removed_message_count > 0, "no trimming happened, restore is not exercised"
+
+    restored_agent = _build_sliding_file_agent(tmp_path, ToolCallingModel())
+    restored = _transcript(restored_agent)
+
+    assert restored == in_memory, (
+        f"a resumed sliding-window session lost the protected tool pair.\n"
+        f"  in memory ({len(in_memory)}): {in_memory}\n"
+        f"  restored  ({len(restored)}): {restored}"
+    )
+    flattened = str(restored)
+    assert "REAL RESULT" in flattened
+    assert "Tool was interrupted." not in flattened
+
+
+def test_file_session_resumed_conversation_matches_in_memory(tmp_path):
+    """End-to-end: after compaction, rebuilding the agent on the same session restores exactly what it had.
+
+    This is the first half of issue #4027: the offset was short by exactly ``pin_first``,
+    so ``list_messages(offset=…)`` started ``pin_first`` messages too early.
+    """
+    model = StubModel()
+    agent = _build_file_agent(tmp_path, model)
+    _converse_until_compaction(agent, model)
+    in_memory = _texts(agent)
+
+    # Simulate a process restart: fresh FileSessionManager over the same directory
+    restored_agent = _build_file_agent(tmp_path, StubModel())
+    restored = _texts(restored_agent)
+
+    assert restored == in_memory, (
+        f"a resumed session is not the conversation the agent had.\n"
+        f"  in memory ({len(in_memory)}): {in_memory}\n"
+        f"  restored  ({len(restored)}): {restored}"
+    )
+
+
+def test_file_session_failed_summarisation_keeps_messages(tmp_path):
+    """End-to-end: if summarisation fails, the messages that would have been summarised are preserved.
+
+    This is the second half of issue #4027: mutations happened before summary generation,
+    so a failed compaction left ``removed_message_count`` incremented with nothing removed.
+    """
+    model = StubModel(fail_summarisation=True)
+    agent = _build_file_agent(tmp_path, model)
+    _converse_until_compaction(agent, model)
+    in_memory = _texts(agent)
+
+    restored_agent = _build_file_agent(tmp_path, StubModel())
+    restored = _texts(restored_agent)
+
+    assert restored == in_memory, (
+        f"a resumed session is missing messages that no summary replaced.\n"
+        f"  in memory ({len(in_memory)}): {in_memory}\n"
+        f"  restored  ({len(restored)}): {restored}"
+    )
 
 
 def test_fix_broken_tool_use_removes_orphaned_tool_result_mid_conversation(session_manager):
