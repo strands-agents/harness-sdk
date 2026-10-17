@@ -1,5 +1,6 @@
 import asyncio
 import concurrent
+import inspect
 import threading
 import unittest.mock
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
@@ -31,6 +32,7 @@ from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from strands.tools.registry import ToolRegistry
 from strands.types._events import EventLoopStopEvent
+from strands.types.content import Message
 from strands.types.exceptions import (
     ContextWindowOverflowException,
     EventLoopException,
@@ -1040,8 +1042,8 @@ async def test_prepare_next_cycle_in_tool_execution(agent, model, tool_stream, a
         ),
     ]
 
-    # Create a mock for recurse_event_loop to capture the invocation_state passed to it
-    with unittest.mock.patch.object(strands.event_loop.event_loop, "recurse_event_loop") as mock_recurse:
+    # Capture the invocation_state passed to the follow-up cycle
+    with unittest.mock.patch.object(strands.event_loop.event_loop, "_execute_follow_up_cycle") as mock_recurse:
         # Set up mock to return a valid response
         mock_recurse.return_value = agenerator(
             [
@@ -1054,7 +1056,7 @@ async def test_prepare_next_cycle_in_tool_execution(agent, model, tool_stream, a
             ]
         )
 
-        # Call event_loop_cycle which should execute a tool and then call recurse_event_loop
+        # Call event_loop_cycle which should execute a tool and then run a follow-up cycle
         stream = strands.event_loop.event_loop.event_loop_cycle(
             agent=agent,
             invocation_state={},
@@ -1064,12 +1066,48 @@ async def test_prepare_next_cycle_in_tool_execution(agent, model, tool_stream, a
         assert mock_recurse.called
 
         # Verify required properties are present
-        recursive_args = mock_recurse.call_args[1]
-        assert "event_loop_parent_cycle_id" in recursive_args["invocation_state"]
+        recursive_invocation_state = mock_recurse.call_args.args[1]
+        assert "event_loop_parent_cycle_id" in recursive_invocation_state
         assert (
-            recursive_args["invocation_state"]["event_loop_parent_cycle_id"]
-            == recursive_args["invocation_state"]["event_loop_cycle_id"]
+            recursive_invocation_state["event_loop_parent_cycle_id"]
+            == recursive_invocation_state["event_loop_cycle_id"]
         )
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_stack_depth_constant_across_tool_turns():
+    # guards against the stack growing by one nested cycle per tool turn (#4989)
+    turns = 20
+    stack_depths: list[int] = []
+
+    def record_stack_depth(event: BeforeModelCallEvent) -> None:
+        frame = inspect.currentframe()
+        depth = 0
+        while frame is not None:
+            depth += 1
+            frame = frame.f_back
+        stack_depths.append(depth)
+
+    @strands.tool
+    def noop() -> str:
+        """Do nothing."""
+        return "ok"
+
+    tool_turns: list[Message] = [
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": f"t{index}", "name": "noop", "input": {}}}]}
+        for index in range(turns)
+    ]
+    final_turn: Message = {"role": "assistant", "content": [{"text": "done"}]}
+    agent = Agent(model=MockedModelProvider([*tool_turns, final_turn]), tools=[noop], callback_handler=None)
+    agent.hooks.add_callback(BeforeModelCallEvent, record_stack_depth)
+
+    result = await agent.invoke_async("go")
+
+    assert result.stop_reason == "end_turn"
+    assert len(stack_depths) == turns + 1
+    tru_follow_up_depths = set(stack_depths[1:])
+    exp_follow_up_depths = {stack_depths[1]}
+    assert tru_follow_up_depths == exp_follow_up_depths
 
 
 @pytest.mark.asyncio
