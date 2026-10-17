@@ -186,7 +186,7 @@ describe('LiteLLM proxy discovery', () => {
 
 describe('provider model discovery errors', () => {
   it('retains the HTTP failure reason without exposing credential values', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new globalThis.Response('', { status: 401 }))
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new globalThis.Response('', { status: 401 }))
 
     await expect(
       discoverProviderModels('openai', {
@@ -198,5 +198,52 @@ describe('provider model discovery errors', () => {
       error: 'API key was rejected (HTTP 401)',
       credentialRejected: true,
     })
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://api.openai.com/v1/models')
   })
+})
+
+describe('provider model discovery endpoints', () => {
+  it.each([
+    [
+      'anthropic',
+      { ANTHROPIC_API_KEY: { value: 'test-key', source: 'process' } },
+      'ANTHROPIC_BASE_URL',
+      'https://api.anthropic.com/v1/models?limit=1000',
+      'https://proxy.example/custom/v1/models?limit=1000',
+      { 'x-api-key': 'test-key' },
+    ],
+    [
+      'openai',
+      { OPENAI_API_KEY: { value: 'test-key', source: 'process' } },
+      'OPENAI_BASE_URL',
+      'https://api.openai.com/v1/models',
+      'https://proxy.example/custom/models',
+      { authorization: 'Bearer test-key' },
+    ],
+    [
+      'google',
+      { GEMINI_API_KEY: { value: 'test-key', source: 'process' } },
+      'GOOGLE_GEMINI_BASE_URL',
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
+      'https://proxy.example/custom/v1beta/models?pageSize=1000',
+      { 'x-goog-api-key': 'test-key' },
+    ],
+  ] as const)(
+    'lists %s models from the base URL its SDK uses at runtime',
+    async (provider, credential, baseUrlKey, defaultUrl, customUrl, auth) => {
+      const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => globalThis.Response.json({}))
+
+      await discoverProviderModels(provider, credential)
+      await discoverProviderModels(provider, {
+        ...credential,
+        [baseUrlKey]: { value: 'https://proxy.example/custom/', source: 'process' },
+      })
+
+      const request = expect.objectContaining({ headers: expect.objectContaining(auth) })
+      expect(fetch.mock.calls).toEqual([
+        [defaultUrl, request],
+        [customUrl, request],
+      ])
+    }
+  )
 })
