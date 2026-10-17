@@ -313,6 +313,30 @@ def test__init__with_custom_boto_client_config_with_user_agent(session_cls, bedr
     assert kwargs["config"].read_timeout == 900
 
 
+def test__init__with_custom_boto_client_config_without_read_timeout(session_cls, bedrock_client):
+    """Apply the default read timeout when boto_client_config does not set one (#4394)."""
+    custom_config = BotocoreConfig(retries={"max_attempts": 3, "mode": "standard"})
+
+    _ = BedrockModel(boto_client_config=custom_config)
+
+    client = session_cls.return_value.client
+    _, kwargs = client.call_args
+    assert kwargs["config"].read_timeout == DEFAULT_READ_TIMEOUT
+    assert kwargs["config"].retries == {"max_attempts": 3, "mode": "standard"}
+    assert kwargs["config"].user_agent_extra == "strands-agents"
+
+
+def test__init__with_custom_boto_client_config_explicit_none_read_timeout(session_cls, bedrock_client):
+    """Keep an explicit read_timeout of None so the caller can disable the timeout."""
+    custom_config = BotocoreConfig(read_timeout=None)
+
+    _ = BedrockModel(boto_client_config=custom_config)
+
+    client = session_cls.return_value.client
+    _, kwargs = client.call_args
+    assert kwargs["config"].read_timeout is None
+
+
 def test__init__with_api_key_configures_bearer_auth(session_cls, bedrock_client):
     """Use unsigned requests and a bearer authorization hook for an API key (#1238)."""
     model = BedrockModel(
