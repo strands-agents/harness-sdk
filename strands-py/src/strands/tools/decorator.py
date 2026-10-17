@@ -68,7 +68,16 @@ from typing_extensions import override
 
 from ..interrupt import InterruptException
 from ..types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
-from ..types.tools import AgentTool, JSONSchema, ToolContext, ToolGenerator, ToolResult, ToolSpec, ToolUse
+from ..types.tools import (
+    AgentTool,
+    JSONSchema,
+    ToolContext,
+    ToolGenerator,
+    ToolResult,
+    ToolResultContent,
+    ToolSpec,
+    ToolUse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -690,30 +699,39 @@ class DecoratedFunctionTool(AgentTool, Generic[P, R]):
             # Result is already in the expected format, just add toolUseId
             result["toolUseId"] = tool_use_d
             return ToolResultEvent(cast(ToolResult, result), exception=exception)
-        else:
-            # Wrap any other return value in the standard format
-            # Serialize to JSON for consistent, parseable output (except strings)
-            if isinstance(result, str):
-                text = result
-            elif isinstance(result, BaseModel):
-                try:
-                    text = result.model_dump_json()
-                except PydanticSerializationError:
-                    text = str(result)
-            else:
-                try:
-                    text = json.dumps(result, ensure_ascii=False)
-                except (TypeError, ValueError):
-                    text = str(result)
 
-            return ToolResultEvent(
-                {
-                    "toolUseId": tool_use_d,
-                    "status": "success",
-                    "content": [{"text": text}],
-                },
-                exception=exception,
-            )
+        # Wrap any other return value in the standard format
+        # Dicts and Pydantic models become structured JSON content blocks so consumers
+        # (e.g. ContextOffloader) can inspect them structurally instead of grepping a
+        # single-line text dump. Everything else is serialized to text.
+        content: ToolResultContent
+        if isinstance(result, str):
+            content = {"text": result}
+        elif isinstance(result, BaseModel):
+            try:
+                content = {"json": result.model_dump(mode="json")}
+            except PydanticSerializationError:
+                content = {"text": str(result)}
+        elif isinstance(result, dict):
+            try:
+                json.dumps(result, ensure_ascii=False)  # validate serializability
+                content = {"json": result}
+            except (TypeError, ValueError):
+                content = {"text": str(result)}
+        else:
+            try:
+                content = {"text": json.dumps(result, ensure_ascii=False)}
+            except (TypeError, ValueError):
+                content = {"text": str(result)}
+
+        return ToolResultEvent(
+            {
+                "toolUseId": tool_use_d,
+                "status": "success",
+                "content": [content],
+            },
+            exception=exception,
+        )
 
     @property
     def supports_hot_reload(self) -> bool:
