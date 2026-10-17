@@ -95,3 +95,19 @@ export interface MemoryConfig {
  * false`) plus `null`, which like `false` disables SDK-managed context.
  */
 export type ContextManagerOption = NonNullable<AgentConfig['contextManager']> | null
+
+/** Verification settings for `verify`. */
+export interface VerifyConfig {
+  /** Shell commands run in order, or `'auto'` to detect one from the project files. */
+  commands: string[] | 'auto'
+  /** Failed verifications the agent may try to fix before it must report. Defaults to 3. */
+  maxAttempts?: number
+  /** Seconds each command may run; a command that runs longer counts as failed. Defaults to 600. */
+  timeout?: number
+}
+
+/**
+ * What `verify` accepts: one command or `'auto'`, an array of commands, a {@link VerifyConfig}, or
+ * `false`/`null` (off).
+ */
+export type VerifyOption = string | string[] | VerifyConfig | false | null
