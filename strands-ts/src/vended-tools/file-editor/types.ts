@@ -1,12 +1,8 @@
-/**
- * Configuration options for the file editor tool.
- */
-export interface FileEditorOptions {
-  /**
-   * Maximum file size in bytes that can be read (default: 1048576 / 1MB).
-   */
-  maxFileSize?: number
-}
+// The Zod schema in `file-editor.ts` (`fileEditorInputSchema`) is the single
+// source of truth for the validated input shape. These interfaces exist as a
+// discriminated union so consumers can narrow on `command` in TypeScript; when
+// you add or rename a field on the schema, update the matching interface here
+// too.
 
 /**
  * Input parameters for view operation.
@@ -34,6 +30,12 @@ export interface StrReplaceInput {
   path: string
   old_str: string
   new_str?: string
+  /**
+   * When true, replace every occurrence of `old_str`. Defaults to false; a
+   * match count \> 1 is rejected without this flag to prevent silent broad
+   * edits.
+   */
+  replace_all?: boolean
 }
 
 /**
@@ -47,20 +49,28 @@ export interface InsertInput {
 }
 
 /**
- * Union type of all valid file editor inputs.
+ * Input parameters for find_line operation.
  */
-export type FileEditorInput = ViewInput | CreateInput | StrReplaceInput | InsertInput
+export interface FindLineInput {
+  command: 'find_line'
+  path: string
+  search_text: string
+  /**
+   * When true, whitespace between tokens is collapsed and matching is
+   * case-insensitive.
+   */
+  fuzzy?: boolean
+}
 
 /**
- * Interface for pluggable file readers.
- * Allows extending the file editor to support different file types.
+ * Input parameters for undo_edit operation.
  */
-export interface IFileReader {
-  /**
-   * Reads the file content and returns it as a string.
-   *
-   * @param path - Absolute path to the file
-   * @returns File content as a string
-   */
-  read(path: string): Promise<string>
+export interface UndoEditInput {
+  command: 'undo_edit'
+  path: string
 }
+
+/**
+ * Union type of all valid file editor inputs.
+ */
+export type FileEditorInput = ViewInput | CreateInput | StrReplaceInput | InsertInput | FindLineInput | UndoEditInput
