@@ -206,7 +206,10 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
             # Delete objects in batches
             for i in range(0, len(objects_to_delete), 1000):
                 batch = objects_to_delete[i : i + 1000]
-                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
+                response = self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
+                if errors := response.get("Errors"):
+                    failed = "; ".join(f"{error['Key']}: {error['Code']}" for error in errors)
+                    raise SessionException(f"S3 failed to delete objects for session {session_id}: {failed}")
 
         except ClientError as e:
             raise SessionException(f"S3 error deleting session {session_id}: {e}") from e
