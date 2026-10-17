@@ -779,6 +779,16 @@ def test_handle_message_stop_overrides_end_turn_when_tool_use_present():
     assert tru_reason == "tool_use"
 
 
+def test_handle_message_stop_overrides_tool_use_when_no_tool_use_present():
+    # Guards https://github.com/strands-agents/harness-sdk/issues/5144: tool_use without toolUse ends the turn
+    event: MessageStopEvent = {"stopReason": "tool_use"}
+    content = [{"text": "<thinking>looking it up</parameter>"}]
+
+    tru_reason = strands.event_loop.streaming.handle_message_stop(event, content)
+
+    assert tru_reason == "end_turn"
+
+
 def test_handle_message_stop_keeps_tool_use_unchanged():
     event: MessageStopEvent = {"stopReason": "tool_use"}
     content = [{"toolUse": {"toolUseId": "t1", "name": "myTool", "input": {}}}]
@@ -1725,6 +1735,36 @@ async def test_process_stream_keeps_end_turn_when_no_tool_use(agenerator, alist)
         {"contentBlockDelta": {"delta": {"text": "Hello!"}, "contentBlockIndex": 0}},
         {"contentBlockStop": {"contentBlockIndex": 0}},
         {"messageStop": {"stopReason": "end_turn"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30},
+                "metrics": {"latencyMs": 100},
+            }
+        },
+    ]
+
+    stream = strands.event_loop.streaming.process_stream(agenerator(response))
+    last_event = cast(ModelStopReason, (await alist(stream))[-1])
+
+    assert last_event["stop"][0] == "end_turn"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_events",
+    [
+        [{"contentBlockDelta": {"delta": {"text": "<thinking>looking it up</parameter>"}, "contentBlockIndex": 0}}],
+        [{"contentBlockDelta": {"delta": {"toolUse": {"input": '{"key": "val"}'}}, "contentBlockIndex": 0}}],
+    ],
+    ids=["text_only", "incomplete_tool_use"],
+)
+async def test_process_stream_overrides_tool_use_when_no_tool_use_present(content_events, agenerator, alist):
+    # Guards https://github.com/strands-agents/harness-sdk/issues/5144: tool_use without toolUse ends the turn
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        *content_events,
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"messageStop": {"stopReason": "tool_use"}},
         {
             "metadata": {
                 "usage": {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30},
