@@ -218,6 +218,11 @@ async def test_agent_cancel_streaming():
     result_event = next((e for e in events if e.get("result")), None)
     assert result_event is not None
     assert result_event["result"].stop_reason == "cancelled"
+    assert [
+        sample
+        for cycle in agent.event_loop_metrics.latest_agent_invocation.cycles
+        for sample in cycle.model_invocations
+    ] == []
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ from ..types._events import (
     ForceStopEvent,
     ModelMessageEvent,
     ModelStopReason,
+    ModelStreamChunkEvent,
     StartEvent,
     StartEventLoopEvent,
     StructuredOutputEvent,
@@ -50,6 +51,7 @@ from ..types.exceptions import (
 )
 from ..types.streaming import StopReason
 from ..types.tools import ToolResult, ToolUse
+from ._model_metrics import _ModelInvocationMetrics
 from ._recover_message_on_max_tokens_reached import recover_message_on_max_tokens_reached
 from ._retry import ModelRetryStrategy
 from .streaming import stream_messages
@@ -752,6 +754,9 @@ def _make_invoke_model_terminal(
         )
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:
+                invocation = agent.event_loop_metrics.latest_agent_invocation
+                cycle_metric = invocation.cycles[-1] if invocation is not None and invocation.cycles else None
+                observation = _ModelInvocationMetrics()
                 async for event in stream_messages(
                     ctx.model,
                     system_prompt_str,
@@ -765,6 +770,12 @@ def _make_invoke_model_terminal(
                     cancel_signal=agent._cancel_signal,
                     agent_metadata=agent._metadata,
                 ):
+                    if isinstance(event, ModelStreamChunkEvent):
+                        observation.observe(event.chunk)
+                    elif isinstance(event, ModelStopReason):
+                        sample = observation.finish(event["stop"][0], model_id if isinstance(model_id, str) else None)
+                        if sample is not None and cycle_metric is not None:
+                            cycle_metric.model_invocations.append(sample)
                     yield event
 
                 stop_reason, message, usage, metrics = event["stop"]

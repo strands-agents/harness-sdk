@@ -1,11 +1,12 @@
 """Utilities for collecting and reporting performance metrics in the SDK."""
 
 import logging
+import math
 import threading
 import time
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 import opentelemetry.metrics as metrics_api
@@ -153,6 +154,57 @@ class ToolMetrics:
             metrics_client.tool_error_count.add(1, attributes=attributes)
 
 
+@dataclass(frozen=True)
+class ModelInvocationMetric:
+    """Client-observed metrics for one completed model adapter call.
+
+    Attributes:
+        output_tokens: Explicitly reported output count, or None when unavailable or invalid.
+        client_duration: Seconds from entering the model stream to receiving its last raw chunk.
+            Includes streaming backpressure, but not subsequent hooks or tool execution.
+        model_id: Identifier of the model used for this call, if available.
+    """
+
+    output_tokens: int | None
+    client_duration: float | None
+    model_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Treat invalid observations as unavailable without interrupting the agent."""
+        if type(self.output_tokens) is not int or self.output_tokens < 0:
+            object.__setattr__(self, "output_tokens", None)
+        if (
+            not isinstance(self.client_duration, (int, float))
+            or isinstance(self.client_duration, bool)
+            or not math.isfinite(self.client_duration)
+            or self.client_duration <= 0
+        ):
+            object.__setattr__(self, "client_duration", None)
+
+    @property
+    def output_tokens_per_second(self) -> float | None:
+        """Client-observed output tokens per second, or None without a valid pair."""
+        return _output_throughput([self])[0]
+
+
+def _output_throughput(samples: Iterable[ModelInvocationMetric]) -> tuple[float | None, int]:
+    tokens = 0
+    duration = 0.0
+    count = 0
+    for sample in samples:
+        if sample.output_tokens is not None and sample.client_duration is not None:
+            tokens += sample.output_tokens
+            duration += sample.client_duration
+            count += 1
+    if not count or not math.isfinite(duration):
+        return None, count
+    try:
+        rate = tokens / duration
+    except OverflowError:
+        return None, count
+    return (rate if math.isfinite(rate) else None), count
+
+
 @dataclass
 class EventLoopCycleMetric:
     """Aggregated metrics for a single event loop cycle.
@@ -160,10 +212,22 @@ class EventLoopCycleMetric:
     Attributes:
         event_loop_cycle_id: Current eventLoop cycle id.
         usage: Total token usage for the entire cycle (succeeded model invocation, excluding tool invocations).
+        model_invocations: Completed model calls, including responses subsequently retried by hooks.
     """
 
     event_loop_cycle_id: str
     usage: Usage
+    model_invocations: list[ModelInvocationMetric] = field(default_factory=list)
+
+    @property
+    def output_tokens_per_second(self) -> float | None:
+        """Total valid output tokens divided by their matching client durations."""
+        return _output_throughput(self.model_invocations)[0]
+
+    @property
+    def output_throughput_sample_count(self) -> int:
+        """Number of calls with a usable output count and client duration."""
+        return _output_throughput(self.model_invocations)[1]
 
 
 @dataclass
@@ -179,6 +243,16 @@ class AgentInvocation:
 
     cycles: list[EventLoopCycleMetric] = field(default_factory=list)
     usage: Usage = field(default_factory=lambda: Usage(inputTokens=0, outputTokens=0, totalTokens=0))
+
+    @property
+    def average_output_tokens_per_second(self) -> float | None:
+        """Duration-weighted output throughput for this agent invocation."""
+        return _output_throughput(sample for cycle in self.cycles for sample in cycle.model_invocations)[0]
+
+    @property
+    def output_throughput_sample_count(self) -> int:
+        """Number of valid throughput samples in this agent invocation."""
+        return _output_throughput(sample for cycle in self.cycles for sample in cycle.model_invocations)[1]
 
 
 def _total_prompt_tokens(usage: Usage) -> int:
@@ -224,6 +298,24 @@ class EventLoopMetrics:
     traces: list[Trace] = field(default_factory=list)
     accumulated_usage: Usage = field(default_factory=lambda: Usage(inputTokens=0, outputTokens=0, totalTokens=0))
     accumulated_metrics: Metrics = field(default_factory=lambda: Metrics(latencyMs=0))
+
+    @property
+    def average_output_tokens_per_second(self) -> float | None:
+        """Duration-weighted client output throughput across this agent's invocations."""
+        return _output_throughput(self._model_invocations())[0]
+
+    @property
+    def output_throughput_sample_count(self) -> int:
+        """Number of valid throughput samples across this agent's invocations."""
+        return _output_throughput(self._model_invocations())[1]
+
+    def _model_invocations(self) -> Iterable[ModelInvocationMetric]:
+        return (
+            sample
+            for invocation in self.agent_invocations
+            for cycle in invocation.cycles
+            for sample in cycle.model_invocations
+        )
 
     @property
     def latest_context_size(self) -> int | None:
@@ -451,11 +543,24 @@ class EventLoopMetrics:
             "traces": [trace.to_dict() for trace in self.traces],
             "accumulated_usage": self.accumulated_usage,
             "accumulated_metrics": self.accumulated_metrics,
+            "average_output_tokens_per_second": self.average_output_tokens_per_second,
+            "output_throughput_sample_count": self.output_throughput_sample_count,
             "agent_invocations": [
                 {
                     "usage": invocation.usage,
+                    "average_output_tokens_per_second": invocation.average_output_tokens_per_second,
+                    "output_throughput_sample_count": invocation.output_throughput_sample_count,
                     "cycles": [
-                        {"event_loop_cycle_id": cycle.event_loop_cycle_id, "usage": cycle.usage}
+                        {
+                            "event_loop_cycle_id": cycle.event_loop_cycle_id,
+                            "usage": cycle.usage,
+                            "model_invocations": [
+                                {**asdict(sample), "output_tokens_per_second": sample.output_tokens_per_second}
+                                for sample in cycle.model_invocations
+                            ],
+                            "output_tokens_per_second": cycle.output_tokens_per_second,
+                            "output_throughput_sample_count": cycle.output_throughput_sample_count,
+                        }
                         for cycle in invocation.cycles
                     ],
                 }
