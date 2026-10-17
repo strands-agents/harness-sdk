@@ -4,6 +4,14 @@ import type { ToolContext } from '../../../index.js'
 import { StateStore } from '../../../state-store.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { realpathSync } from 'fs'
+import * as childProcess from 'child_process'
+import { PassThrough } from 'stream'
+import { Buffer } from 'buffer'
+
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>()
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
 
 // Skip tests on Windows (bash not available)
 describe.skipIf(process.platform === 'win32')('bash tool', () => {
@@ -154,6 +162,49 @@ describe.skipIf(process.platform === 'win32')('bash tool', () => {
   })
 
   describe('command execution', () => {
+    // Preserve UTF-8 across pipe chunks and keep decoding state local to each command (#4461).
+    it('decodes split UTF-8 independently on stdout and stderr', async () => {
+      const { context } = createFreshContext()
+      const child = new childProcess.ChildProcess()
+      const stdin = new PassThrough()
+      const stdout = new PassThrough()
+      const stderr = new PassThrough()
+      child.stdin = stdin
+      child.stdout = stdout
+      child.stderr = stderr
+      child.kill = vi.fn().mockReturnValue(true)
+      vi.mocked(childProcess.spawn).mockReturnValueOnce(child)
+
+      const execute = async (output: Buffer, error: Buffer): Promise<unknown> => {
+        const pending = bash.invoke({ mode: 'execute', command: 'test', timeout: 1 }, context)
+        await vi.waitFor(() => expect(stdin.readableLength).toBeGreaterThan(0))
+        const input = String(stdin.read())
+        const sentinel = input.match(/echo "([^"]+)"/)![1]!
+
+        for (let index = 0; index < Math.max(output.length, error.length); index++) {
+          stdout.emit('data', output.subarray(index, index + 1))
+          stderr.emit('data', error.subarray(index, index + 1))
+        }
+        for (const byte of Buffer.from(`${sentinel}\n`)) {
+          stdout.emit('data', Buffer.from([byte]))
+        }
+        return pending
+      }
+
+      expect(await execute(Buffer.from('日本語☕😀'), Buffer.from('警告🚀'))).toEqual({
+        output: '日本語☕😀',
+        error: '警告🚀',
+      })
+      expect(await execute(Buffer.from([0xe6]), Buffer.from([0xf0, 0x9f]))).toEqual({
+        output: '\uFFFD',
+        error: '\uFFFD',
+      })
+      expect(await execute(Buffer.from('次の実行'), Buffer.from('正常'))).toEqual({
+        output: '次の実行',
+        error: '正常',
+      })
+    })
+
     it('executes command and returns output', async () => {
       const { context } = createFreshContext()
       const result = await bash.invoke({ mode: 'execute', command: 'echo "Hello World"' }, context)
