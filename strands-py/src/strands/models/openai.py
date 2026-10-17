@@ -191,7 +191,7 @@ class OpenAIModel(Model):
 
             return {
                 "image_url": {
-                    "detail": "auto",
+                    "detail": content["image"].get("detail", "auto"),
                     "format": mime_type,
                     "url": f"data:{mime_type};base64,{image_data}",
                 },
