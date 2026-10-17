@@ -941,7 +941,7 @@ def test_proactive_compression_uses_default_when_context_window_limit_not_set():
 
     # projected_input_tokens=150_000 is 75% of the 200k default, exceeding 0.7 threshold
     event = _make_threshold_event(agent, projected_input_tokens=150_000)
-    with pytest.warns(UserWarning, match="using default"):
+    with pytest.warns(UserWarning, match="falling back to default context window limit"):
         registry.invoke_callbacks(event)
 
     assert manager.reduce_context_call_count == 1

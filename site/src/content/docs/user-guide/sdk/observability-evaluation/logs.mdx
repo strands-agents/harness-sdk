@@ -98,6 +98,15 @@ Control them with `-W` or `PYTHONWARNINGS`, like any other warning:
 python -W error::UserWarning my_agent.py
 ```
 
+To send these warnings to your logs, call `logging.captureWarnings(True)`. Python then routes them to the `py.warnings` logger:
+
+```python
+import logging
+
+logging.basicConfig(format="%(levelname)s | %(name)s | %(message)s")
+logging.captureWarnings(True)
+```
+
 ## Key Logging Areas
 
 <Tabs>
