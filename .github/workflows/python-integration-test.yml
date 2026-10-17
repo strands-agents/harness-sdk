@@ -198,7 +198,7 @@ jobs:
           persist-credentials: false
 
       - name: Download test results
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: test-results
           path: ${{ runner.temp }}/test-results

@@ -213,7 +213,7 @@ jobs:
       # publish step below skips gracefully when the report is absent.
       - name: Download test artifacts
         id: download
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         continue-on-error: true
         with:
           name: test-artifacts-integ
