@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getContextWindowLimit } from '../defaults.js'
+import { getContextWindowLimit, getOutputTokenLimit } from '../defaults.js'
 
 describe('getContextWindowLimit', () => {
   it('returns the context window limit for known model IDs across all providers', () => {
@@ -57,5 +57,24 @@ describe('getContextWindowLimit', () => {
   it('returns undefined for unknown model IDs', () => {
     expect(getContextWindowLimit('unknown-model-xyz')).toBeUndefined()
     expect(getContextWindowLimit('us.unknown.model-v1:0')).toBeUndefined()
+  })
+})
+
+describe('getOutputTokenLimit', () => {
+  it('returns limits for known Bedrock Anthropic models', () => {
+    expect(getOutputTokenLimit('anthropic.claude-haiku-5-5')).toBe(128_000)
+    expect(getOutputTokenLimit('anthropic.claude-sonnet-4-6')).toBe(128_000)
+    expect(getOutputTokenLimit('anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(64_000)
+    expect(getOutputTokenLimit('anthropic.claude-opus-4-1-20250805-v1:0')).toBe(32_000)
+  })
+
+  it('strips Bedrock cross-region prefixes', () => {
+    expect(getOutputTokenLimit('global.anthropic.claude-haiku-5-5')).toBe(128_000)
+    expect(getOutputTokenLimit('us.anthropic.claude-opus-4-5-20251101-v1:0')).toBe(64_000)
+  })
+
+  it('returns undefined for unknown models', () => {
+    expect(getOutputTokenLimit('amazon.nova-pro-v1:0')).toBeUndefined()
+    expect(getOutputTokenLimit('unknown-model')).toBeUndefined()
   })
 })

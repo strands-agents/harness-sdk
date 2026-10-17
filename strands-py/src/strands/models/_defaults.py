@@ -1,6 +1,6 @@
 """Default model metadata lookup tables.
 
-Provides context window limits for known model IDs across all providers.
+Provides context window limits and max output token ceilings for known model IDs.
 Values sourced from provider documentation and
 https://github.com/BerriAI/litellm/blob/litellm_internal_staging/model_prices_and_context_window.json
 
@@ -156,6 +156,51 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
 }
 
 
+# Output token limits for known model IDs — the largest ``max_tokens`` the provider accepts.
+#
+# BedrockModel sends this when ``max_tokens`` is not configured, because Bedrock's own default is
+# per-model and can be far below the limit (Claude Haiku 5.5 defaults to 4096). Only models whose
+# limit has been confirmed against Bedrock are listed; unknown models return None.
+_OUTPUT_TOKEN_LIMITS: dict[str, int] = {
+    # Bedrock Anthropic (base model IDs — cross-region prefixes stripped by get_output_token_limit)
+    "anthropic.claude-sonnet-4-6": 128_000,
+    "anthropic.claude-sonnet-4-20250514-v1:0": 65_536,
+    "anthropic.claude-sonnet-4-5-20250929-v1:0": 64_000,
+    "anthropic.claude-opus-4-6-v1": 128_000,
+    "anthropic.claude-opus-4-7": 128_000,
+    "anthropic.claude-opus-4-8": 128_000,
+    "anthropic.claude-opus-5": 128_000,
+    "anthropic.claude-opus-5-5": 128_000,
+    "anthropic.claude-fable-5": 128_000,
+    "anthropic.claude-fable-5-1": 128_000,
+    "anthropic.claude-sonnet-5": 128_000,
+    "anthropic.claude-sonnet-5-5": 128_000,
+    "anthropic.claude-haiku-5-5": 128_000,
+    "anthropic.claude-opus-4-5-20251101-v1:0": 64_000,
+    "anthropic.claude-opus-4-1-20250805-v1:0": 32_000,
+    "anthropic.claude-haiku-4-5-20251001-v1:0": 64_000,
+}
+
+
+def _lookup(table: dict[str, int], model_id: str) -> int | None:
+    direct = table.get(model_id)
+    if direct is not None:
+        return direct
+
+    # Fallback: strip prefixes before each dot and retry (handles nested cross-region prefixes and ARNs)
+    stripped = model_id
+    while (dot_index := stripped.find(".")) != -1:
+        stripped = stripped[dot_index + 1 :]
+        result = table.get(stripped)
+        if result is not None:
+            logger.debug(
+                "model_id=<%s>, stripped_id=<%s> | resolved model metadata via prefix strip", model_id, stripped
+            )
+            return result
+
+    return None
+
+
 def get_context_window_limit(model_id: str) -> int | None:
     """Look up the context window limit for a model ID.
 
@@ -168,22 +213,21 @@ def get_context_window_limit(model_id: str) -> int | None:
     Returns:
         The context window limit in tokens, or None if not found.
     """
-    direct = _CONTEXT_WINDOW_LIMITS.get(model_id)
-    if direct is not None:
-        return direct
+    return _lookup(_CONTEXT_WINDOW_LIMITS, model_id)
 
-    # Fallback: strip prefixes before each dot and retry (handles nested cross-region prefixes and ARNs)
-    stripped = model_id
-    while (dot_index := stripped.find(".")) != -1:
-        stripped = stripped[dot_index + 1 :]
-        result = _CONTEXT_WINDOW_LIMITS.get(stripped)
-        if result is not None:
-            logger.debug(
-                "model_id=<%s>, stripped_id=<%s> | resolved context window limit via prefix strip", model_id, stripped
-            )
-            return result
 
-    return None
+def get_output_token_limit(model_id: str) -> int | None:
+    """Look up the output token limit for a model ID.
+
+    Prefixes are stripped as a fallback the same way as :func:`get_context_window_limit`.
+
+    Args:
+        model_id: The model ID to look up.
+
+    Returns:
+        The largest ``max_tokens`` the model accepts, or None if not known.
+    """
+    return _lookup(_OUTPUT_TOKEN_LIMITS, model_id)
 
 
 def resolve_config_metadata(config: _C, model_id: str) -> _C:
