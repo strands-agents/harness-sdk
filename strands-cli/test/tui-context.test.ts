@@ -16,6 +16,9 @@ describe('context window limits', () => {
     ['openai.gpt-6-astra', 1_050_000],
     ['global.openai.gpt-6-astra', 1_050_000],
     ['us.openai.gpt-6-astra', 1_050_000],
+    ['us.openai.gpt-6-sol', 1_050_000],
+    ['global.openai.gpt-6-luna', 1_050_000],
+    ['us.openai.gpt-6.1-sol', 1_050_000],
     ['zai.glm-4.7', 203_000],
   ])('uses the documented Bedrock context window for %s', (modelId, limit) => {
     expect(contextWindowLimit(new BedrockModel({ modelId }))).toBe(limit)
