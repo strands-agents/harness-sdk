@@ -39,7 +39,7 @@ const ANTHROPIC_WEB_SEARCH = {
 const CLAUDE_MAX_TOKENS: Readonly<Record<string, number>> = {
   'claude-opus-': 128_000,
   'claude-sonnet-': 128_000,
-  'claude-haiku-': 64_000,
+  'claude-haiku-': 128_000,
   'claude-fable-': 128_000,
 }
 
@@ -48,6 +48,8 @@ const CLAUDE_MAX_TOKENS_BY_VERSION: ReadonlyArray<readonly [string, number]> = [
   ['claude-opus-4.5', 64_000],
   ['claude-sonnet-4-5', 64_000],
   ['claude-sonnet-4.5', 64_000],
+  ['claude-haiku-4-5', 64_000],
+  ['claude-haiku-4.5', 64_000],
 ]
 
 function claudeMaxTokens(modelId: string): number | undefined {
@@ -93,7 +95,7 @@ const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
 const GOOGLE_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 const NO_THINKING_LEVELS: readonly string[] = []
 
-const ADAPTIVE_THINKING_SINCE: Record<string, [number, number]> = { opus: [4, 6], sonnet: [4, 6] }
+const ADAPTIVE_THINKING_SINCE: Record<string, [number, number]> = { opus: [4, 6], sonnet: [4, 6], haiku: [5, 5] }
 const EXTENDED_THINKING_SINCE: Record<string, [number, number]> = { opus: [4, 5], sonnet: [4, 5], haiku: [4, 5] }
 const CLAUDE_ID =
   /claude-(?:(\d{1,2})(?:[-.](\d{1,2}))?-)?(opus|sonnet|haiku|fable|mythos)(?:[-.](\d{1,2}))?(?:[-.](\d{1,2}))?(?!\d)/
@@ -553,7 +555,12 @@ function hasWebSearch(providerName: string, name: string): boolean {
     return false
   }
   // Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-  return providerName !== 'bedrock-mantle' || name.startsWith('openai.gpt-5.') || name.startsWith('openai.gpt-6-')
+  return (
+    providerName !== 'bedrock-mantle' ||
+    name.startsWith('openai.gpt-5.') ||
+    name.startsWith('openai.gpt-6-') ||
+    name.startsWith('openai.gpt-6.')
+  )
 }
 
 /**

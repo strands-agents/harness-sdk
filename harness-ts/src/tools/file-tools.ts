@@ -6,6 +6,8 @@
  * candidates to port into the core SDK later; keep them minimal and SDK-idiomatic.
  */
 
+import { posix, win32 } from 'node:path'
+
 import { DocumentBlock, ImageBlock, tool } from '@strands-agents/sdk'
 import type { DocumentFormat, ImageFormat, ToolContext } from '@strands-agents/sdk'
 import { z } from 'zod'
@@ -21,8 +23,13 @@ const IMAGE_FORMATS: Record<string, ImageFormat> = { png: 'png', jpg: 'jpeg', jp
 const DOCUMENT_FORMATS: readonly string[] = ['pdf', 'doc', 'docx', 'xls', 'xlsx']
 
 function validatePath(path: string): void {
-  if (!path.startsWith('/')) {
-    throw new Error(`The path ${path} is not absolute; it should start with '/'.`)
+  // The path belongs to the sandbox, not the host, so accept either platform's notion of absolute. The two
+  // libraries disagree only on backslash-rooted-without-drive (`\foo`: Node yes, Python 3.13 no); that
+  // divergence is intentional and stdlib-driven, so do not hand-roll the check to make the SDKs agree.
+  if (!posix.isAbsolute(path) && !win32.isAbsolute(path)) {
+    throw new Error(
+      `The path ${path} is not absolute; it should start with '/' (or a drive letter or UNC share on Windows).`
+    )
   }
   if (path.split(/[/\\]/).includes('..')) {
     throw new Error('Invalid path: path traversal is not allowed.')

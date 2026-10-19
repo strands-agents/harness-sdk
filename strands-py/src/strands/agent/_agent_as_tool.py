@@ -238,9 +238,12 @@ class _AgentAsTool(AgentTool):
             )
 
             result = None
+            # Captured before stream_async's finally clears it.
+            sub_cancel_signal_set = False
             async for event in self._agent.stream_async(prompt, cancel_signal=cancel_signal):
                 if "result" in event:
                     result = event["result"]
+                    sub_cancel_signal_set = self._agent.cancel_signal.is_set()
                 else:
                     yield AgentAsToolStreamEvent(tool_use, event, self)
 
@@ -263,7 +266,9 @@ class _AgentAsTool(AgentTool):
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            if result.stop_reason == "cancelled":
+            # Immediate cancel (signal set) is an abort → error; the stop tool's deferred
+            # cancel never sets the signal and falls through to the success path.
+            if result.stop_reason == "cancelled" and sub_cancel_signal_set:
                 yield ToolResultEvent(
                     {
                         "toolUseId": tool_use_id,

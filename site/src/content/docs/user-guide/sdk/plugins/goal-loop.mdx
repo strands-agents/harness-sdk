@@ -10,6 +10,8 @@ sourceLinks:
 addedDate: 2026-06-15
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 When your agent's response needs to meet a quality bar before returning, `GoalLoop` handles the retry loop. It validates the response after each invocation, feeds feedback back as a user message on failure, and re-invokes the agent. This continues until validation passes, a max attempt count is reached, or a timeout elapses.
 
 ## The Problem
@@ -20,14 +22,10 @@ GoalLoop handles all of that as a plugin. Define what "done" means, attach it to
 
 ## How It Works
 
-```mermaid
-flowchart LR
-    A[invoke] --> B[Agent responds]
-    B --> C{Validate}
-    C -->|pass| D[Done]
-    C -->|fail| E[Inject feedback]
-    E --> B
-```
+<Diagram
+  name="goal-loop-validation"
+  alt="The GoalLoop retry cycle. Your prompt goes to the agent, which produces a response. GoalLoop passes the response to the validator, either the built-in judge agent or your own function. If the validator fails the response and budget remains, its feedback goes back to the agent as a new user message and the agent responds again. The loop ends when the validator passes, or when the attempt limit or timeout runs out; either way, the last response is returned. The timeout is checked when each attempt finishes, before validation, so a late response is returned without being validated."
+/>
 
 1. The agent processes the prompt and produces a response.
 2. GoalLoop extracts the last assistant message and runs the validator.

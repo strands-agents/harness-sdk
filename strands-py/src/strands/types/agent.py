@@ -104,8 +104,14 @@ class LocalAgent(Protocol):
         """The cancellation signal for the current invocation."""
         ...
 
-    def cancel(self) -> None:
-        """Request cancellation at the agent's next supported checkpoint."""
+    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
+        """Request cancellation at the agent's next supported checkpoint.
+
+        Args:
+            message: Optional terminal assistant message appended to history on exit.
+            after_current_tools: If True, defer cancellation until the current tool
+                batch finishes; the loop exits before the next model call.
+        """
         ...
 
     def add_hook(

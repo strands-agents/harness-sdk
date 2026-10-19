@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { getOldestMatches, buildToolNameMap } from '../offload/base.js'
+import {
+  getOldestMatches,
+  buildToolNameMap,
+  collectRemovableWithPair,
+  insertMarker,
+  EmergencyTruncateStrategy,
+} from '../offload/base.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
@@ -778,5 +785,134 @@ describe('getOldestMatches with ratio preserveRecent', () => {
     // 0.99 of 10 = ceil(9.9) = 10 preserved, 0 returned
     const result = getOldestMatches(messages, '*', 0.99, toolNameMap, undefined, undefined)
     expect(result).toHaveLength(0)
+  })
+})
+
+function text(role: Role, value: string): Message {
+  return new Message({ role, content: [new TextBlock(value)] })
+}
+
+describe('collectRemovableWithPair', () => {
+  function toolPair(toolUseId: string): Message[] {
+    return [
+      new Message({ role: 'assistant', content: [new ToolUseBlock({ toolUseId, name: 'read', input: {} })] }),
+      makeToolResultMessage('x', toolUseId),
+    ]
+  }
+
+  it('collects a tool use with its following tool result', () => {
+    const messages = [text('user', 'task'), ...toolPair('tu-1'), text('assistant', 'latest')]
+    expect(collectRemovableWithPair(messages, 1)).toEqual([messages[1], messages[2]])
+  })
+
+  it('never collects the last message', () => {
+    const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'latest')]
+    expect(collectRemovableWithPair(messages, 2)).toEqual([])
+  })
+
+  it('skips a tool use whose result is the last message', () => {
+    const messages = [text('user', 'task'), ...toolPair('tu-1')]
+    expect(collectRemovableWithPair(messages, 1)).toEqual([])
+  })
+})
+
+describe('insertMarker', () => {
+  it('inserts an assistant message between user messages', () => {
+    const messages = [text('user', 'task'), text('user', 'u1')]
+    insertMarker(messages, 1, 'marker')
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+    expect(messages[1]!.content).toEqual([new TextBlock('marker')])
+  })
+
+  it('appends to the assistant message before the gap', () => {
+    const original = new Message({
+      role: 'assistant',
+      content: [new TextBlock('a1')],
+      trackingId: 'msg-1',
+      metadata: { custom: { k: 'v' } },
+    })
+    const messages = [text('user', 'task'), original, text('user', 'u1')]
+    insertMarker(messages, 2, 'marker')
+    expect(messages).toHaveLength(3)
+    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
+    expect(messages[1]!.trackingId).toBe('msg-1')
+    expect(messages[1]!.metadata).toEqual({ custom: { k: 'v' } })
+    expect(original.content).toEqual([new TextBlock('a1')])
+  })
+
+  it('appends to the assistant message after the gap', () => {
+    const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
+    insertMarker(messages, 1, 'marker')
+    expect(messages).toHaveLength(3)
+    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
+  })
+
+  it.each([
+    [0, ['task', 'marker', 'u1']],
+    [5, ['task', 'u1', 'marker']],
+  ])('clamps index %i into the history after message 0', (index, expected) => {
+    const messages = [text('user', 'task'), text('user', 'u1')]
+    insertMarker(messages, index, 'marker')
+    expect(messages.map((message) => (message.content[0] as TextBlock).text)).toEqual(expected)
+  })
+})
+
+describe('EmergencyTruncateStrategy', () => {
+  it('leaves a marker on the assistant message after the cut', async () => {
+    const messages = [
+      text('user', 'pin'),
+      text('assistant', 'a1'),
+      text('user', 'u2'),
+      text('assistant', 'a2'),
+      text('user', 'u3'),
+    ]
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.1, true))).toBe(true)
+    expect(
+      messages.map((message) => [message.role, message.content.map((block) => (block as TextBlock).text)])
+    ).toEqual([
+      ['user', ['pin']],
+      ['assistant', ['a2', '[... 2 messages elided ...]']],
+      ['user', ['u3']],
+    ])
+  })
+})
+
+describe('repeated message-level reduction', () => {
+  // Regression tests for https://github.com/strands-agents/harness-sdk/issues/4685
+  const strategies = {
+    drop: () => Offload.drop('*').when({ utilization: 0.7, preserveRecent: 3 }),
+    'drop-all': () => Offload.drop('*').when({ utilization: 0.7 }),
+    truncate: () => Offload.truncate('*').when({ utilization: 0.7, preserveRecent: 3 }),
+    'truncate-all': () => Offload.truncate('*').when({ utilization: 0.7 }),
+    emergency: () => new EmergencyTruncateStrategy(),
+  }
+
+  function turn(index: number, textOnly: boolean): Message[] {
+    if (textOnly) return [text('assistant', `a${index}`), text('user', `u${index}`)]
+    return [
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: `tu-${index}`, name: 'read', input: {} })],
+      }),
+      makeToolResultMessage('x', `tu-${index}`),
+    ]
+  }
+
+  describe.each(Object.entries(strategies))('%s', (_, makeStrategy) => {
+    it.each([false, true])('keeps message 0 verbatim when textOnly=%s', async (textOnly) => {
+      const strategy = makeStrategy()
+      const task = () =>
+        new Message({ role: 'user', content: [new TextBlock('task')], metadata: { custom: { pinned: true } } })
+      const messages = [task()]
+      for (let index = 0; index < 30; index++) {
+        const added = turn(index, textOnly)
+        messages.push(...added)
+        await strategy.apply(makeContext(messages, 1.1, true))
+        expect(messages.at(-1)).toBe(added.at(-1))
+      }
+      expect(messages[0]!.content).toEqual(task().content)
+      expect(messages[0]!.metadata).toEqual(task().metadata)
+      expect(messages.length).toBeLessThan(10)
+    })
   })
 })

@@ -57,7 +57,7 @@ Site build conventions (reference `../../references/mdx-authoring.md`):
 - TypeScript code uses `--8<--` snippet includes from sibling `.ts` files, never inlined in MDX. Flag raw TypeScript inside a code fence.
 - Each TypeScript fence includes both an imports snippet and a body snippet. A body-only include missing its imports is incomplete.
 - Python may be inlined.
-- Diagrams use ` ```mermaid ` fences, not ASCII art or box-drawing characters.
+- Diagrams are `<Diagram>` SVGs or ` ```mermaid ` fences, never ASCII art or box-drawing characters. For `<Diagram>` SVGs, run the review checklist in `../../references/diagrams.md`: accent on at most two elements, no hard-coded colors, a complete `alt`, and checked in both themes.
 
 ### 5. Human+AI Readability
 

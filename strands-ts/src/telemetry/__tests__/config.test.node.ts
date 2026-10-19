@@ -1,4 +1,6 @@
+import { createRequire } from 'node:module'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { Attributes, Tracer } from '@opentelemetry/api'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-base'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
@@ -225,5 +227,68 @@ describe('setupMeter (node-specific)', () => {
 
       expect(provider).toBe(customProvider)
     })
+  })
+})
+
+describe('setupTracer baggageProcessor (node-specific)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+  })
+
+  // Starts a span under baggage {tenant.id, session.id, other} and returns its stamped attributes.
+  async function stampedAttributes(provider: { getTracer(name: string): Tracer }): Promise<Attributes> {
+    const { context, propagation } = await import('@opentelemetry/api')
+    const baggage = propagation.createBaggage({
+      'tenant.id': { value: 'acme' },
+      'session.id': { value: 's-1' },
+      other: { value: 'x' },
+    })
+    const span = provider.getTracer('test').startSpan('probe', {}, propagation.setBaggage(context.active(), baggage))
+    span.end()
+    return (span as unknown as { attributes: Attributes }).attributes
+  }
+
+  it.each([
+    ['true', true as const, { 'tenant.id': 'acme', 'session.id': 's-1', other: 'x' }],
+    ['a single predicate', (key: string) => key.startsWith('tenant.'), { 'tenant.id': 'acme' }],
+    [
+      'a predicate list',
+      [(key: string) => key === 'session.id', (key: string) => key.startsWith('tenant.')],
+      { 'tenant.id': 'acme', 'session.id': 's-1' },
+    ],
+  ])('stamps baggage selected by %s onto spans', async (_, baggageProcessor, expected) => {
+    const telemetry = await import('../index.js')
+
+    const provider = telemetry.setupTracer({ baggageProcessor })
+
+    expect(await stampedAttributes(provider)).toStrictEqual(expected)
+  })
+
+  it('throws when its package is absent without breaking the other Node.js defaults', async () => {
+    const realRequire = createRequire(import.meta.url)
+    vi.spyOn(process, 'getBuiltinModule').mockReturnValueOnce({
+      createRequire: () => (id: string) => {
+        if (id === '@opentelemetry/baggage-span-processor') throw new Error('Cannot find module')
+        return realRequire(id)
+      },
+    } as never)
+    const telemetry = await import('../index.js')
+
+    expect(() => telemetry.setupTracer({ baggageProcessor: true })).toThrow(
+      'npm install @opentelemetry/baggage-span-processor'
+    )
+    expect(telemetry.setupTracer()).toBeInstanceOf(NodeTracerProvider)
+  })
+
+  it('warns that it is ignored when a custom provider is passed', async () => {
+    const { logger } = await import('../../logging/index.js')
+    const warnSpy = vi.spyOn(logger, 'warn')
+    const telemetry = await import('../index.js')
+
+    const provider = telemetry.setupTracer({ provider: new NodeTracerProvider(), baggageProcessor: true })
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('baggage_processor=<ignored>'))
+    expect(await stampedAttributes(provider)).toStrictEqual({})
   })
 })

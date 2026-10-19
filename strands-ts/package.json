@@ -80,6 +80,10 @@
       "types": "./dist/src/vended-tools/bash/index.d.ts",
       "default": "./dist/src/vended-tools/bash/index.js"
     },
+    "./vended-tools/python-repl": {
+      "types": "./dist/src/vended-tools/python-repl/index.d.ts",
+      "default": "./dist/src/vended-tools/python-repl/index.js"
+    },
     "./vended-tools/sleep": {
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
       "default": "./dist/src/vended-tools/sleep/index.js"
@@ -259,6 +263,7 @@
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/baggage-span-processor": "^0.5.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
     "@opentelemetry/resources": "^2.8.0",
@@ -316,6 +321,7 @@
     "@google/genai": "^2.6.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/baggage-span-processor": "^0.5.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
     "@opentelemetry/resources": "^2.8.0",
@@ -379,6 +385,9 @@
       "optional": true
     },
     "@opentelemetry/exporter-metrics-otlp-http": {
+      "optional": true
+    },
+    "@opentelemetry/baggage-span-processor": {
       "optional": true
     },
     "@cedar-policy/cedar-wasm": {

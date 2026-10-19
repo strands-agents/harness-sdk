@@ -164,8 +164,8 @@ export async function exportSourceProject(
     '.env.local',
     '.strands-dependencies',
     AGENT_ENTRYPOINT_FILE,
-    relative(root, path),
-    ...privateDirectories.map((path) => relative(root, path)),
+    posixRelative(root, path),
+    ...privateDirectories.map((path) => posixRelative(root, path)),
   ])
   const entrypoint = resolveProjectEntrypoint(
     root,
@@ -528,10 +528,15 @@ function addPath(
     throw new Error('Exported packages cannot contain symbolic links.')
   }
   if (details.isDirectory()) {
-    addDirectory(zip, source, destination, addBytes, new Set(privatePaths.map((path) => relative(source, path))))
+    addDirectory(zip, source, destination, addBytes, new Set(privatePaths.map((path) => posixRelative(source, path))))
   } else if (details.isFile()) {
     addFile(zip, source, destination, addBytes)
   }
+}
+
+/** Exclusion sets and ZIP entry names are always `/`-separated, so Windows paths have to be normalized. */
+function posixRelative(from: string, to: string): string {
+  return relative(from, to).split(sep).join('/')
 }
 
 function addDirectory(
@@ -549,14 +554,14 @@ function addDirectory(
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       safeComponent(entry.name)
       const path = join(directory, entry.name)
-      if (IGNORED_DIRECTORIES.has(entry.name) || excluded.has(relative(root, path))) {
+      if (IGNORED_DIRECTORIES.has(entry.name) || excluded.has(posixRelative(root, path))) {
         continue
       }
       const details = lstatSync(path)
       if (details.isSymbolicLink()) {
         throw new Error('Exported packages cannot contain symbolic links.')
       }
-      const target = [destination, relative(root, path).split(sep).join('/')].filter(Boolean).join('/')
+      const target = [destination, posixRelative(root, path)].filter(Boolean).join('/')
       if (details.isDirectory()) {
         zip.addEmptyDirectory(target)
         visit(path)

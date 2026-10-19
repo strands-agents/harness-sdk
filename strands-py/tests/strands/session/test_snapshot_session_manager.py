@@ -29,6 +29,7 @@ from strands.hooks.events import (
     BeforeMultiAgentInvocationEvent,
     MultiAgentInitializedEvent,
 )
+from strands.hooks.registry import HookOrder
 from strands.interrupt import Interrupt
 from strands.multiagent import GraphBuilder, Swarm
 from strands.multiagent.base import Status
@@ -84,6 +85,78 @@ def _tool_result_text(agent, tool_use_id: str) -> str:
 def _texts(agent) -> list[str]:
     """Flatten an agent's message text content, for asserting which turns are present."""
     return [content["text"] for message in agent.messages for content in message["content"] if "text" in content]
+
+
+class _GatedFirstSnapshotStorage(InMemoryStorage):
+    """Record snapshot generations while gating the first commit."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.committed_generations: list[int] = []
+        self.first_write_started = asyncio.Event()
+        self.release_first_write = asyncio.Event()
+        self._write_count = 0
+
+    async def write(self, key: str, data: bytes) -> None:
+        self._write_count += 1
+        if self._write_count == 1:
+            self.first_write_started.set()
+            await asyncio.wait_for(self.release_first_write.wait(), timeout=1)
+
+        await super().write(key, data)
+        snapshot = _deserialize_snapshot(data)
+        self.committed_generations.append(len(snapshot.data["state"]["completed_nodes"]))
+
+
+@pytest.mark.asyncio
+async def test_parallel_node_snapshot_commits_never_regress() -> None:
+    """Parallel node snapshots advance the persisted frontier monotonically.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4397.
+    """
+    storage = _GatedFirstSnapshotStorage()
+    agent_left = Agent(model=_model("left done"), agent_id="left")
+    agent_right = Agent(model=_model("right done"), agent_id="right")
+
+    async def gated_right_stream(*args, **kwargs):
+        await asyncio.wait_for(storage.first_write_started.wait(), timeout=1)
+        yield {"agent_start": True}
+        yield {
+            "result": AgentResult(
+                message={"role": "assistant", "content": [{"text": "right done"}]},
+                stop_reason="end_turn",
+                state={},
+                metrics=None,
+            )
+        }
+
+    def schedule_first_write_release(event: AfterNodeCallEvent) -> None:
+        if event.node_id == "right":
+            asyncio.get_running_loop().call_soon(storage.release_first_write.set)
+
+    agent_right.stream_async = Mock(side_effect=gated_right_stream)
+
+    builder = GraphBuilder()
+    builder.add_node(agent_left, "left")
+    builder.add_node(agent_right, "right")
+    builder.set_entry_point("left")
+    builder.set_entry_point("right")
+    builder.set_graph_id("parallel-snapshot-graph")
+    builder.set_session_manager(SnapshotSessionManager("parallel-snapshot-session", storage=storage))
+    graph = builder.build()
+    graph.add_hook(
+        schedule_first_write_release,
+        AfterNodeCallEvent,
+        # Release before the manager's default-order callback waits on the first save.
+        order=HookOrder.SDK_FIRST,
+    )
+
+    result = await graph.invoke_async("run both nodes")
+
+    tru_generations = storage.committed_generations
+    exp_generations = [1, 2, 2]
+    assert result.status == Status.COMPLETED
+    assert tru_generations == exp_generations
 
 
 def test_new_session_starts_empty(storage):
@@ -153,6 +226,60 @@ def test_swarm_snapshot_is_persisted_after_run(storage):
     raw = asyncio.run(storage.read(key))
     assert raw is not None
     assert _deserialize_snapshot(raw).data["state"]["type"] == "swarm"
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_save_locks_rebind_per_orchestrator() -> None:
+    """One orchestrator's loop rebind does not replace another's active save lock.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4397.
+    """
+
+    class _GatedOrchestratorStorage(InMemoryStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.committed_generations: list[int] = []
+            self.first_write_started = asyncio.Event()
+            self.release_first_write = asyncio.Event()
+            self._target_write_count = 0
+
+        async def write(self, key: str, data: bytes) -> None:
+            if "/graph-a/" not in key:
+                await super().write(key, data)
+                return
+
+            self._target_write_count += 1
+            if self._target_write_count == 1:
+                self.first_write_started.set()
+                await asyncio.wait_for(self.release_first_write.wait(), timeout=1)
+
+            await super().write(key, data)
+            snapshot = _deserialize_snapshot(data)
+            self.committed_generations.append(snapshot.data["state"]["generation"])
+
+    storage = _GatedOrchestratorStorage()
+    manager = SnapshotSessionManager("mm", storage=storage)
+    orchestrator_a = Mock()
+    orchestrator_a.id = "graph-a"
+    orchestrator_a.serialize_state.side_effect = [{"generation": 1}, {"generation": 2}]
+    orchestrator_b = Mock()
+    orchestrator_b.id = "graph-b"
+    orchestrator_b.serialize_state.return_value = {"generation": 1}
+
+    first_save = asyncio.create_task(manager._save_multi_agent_latest(orchestrator_a))
+    await asyncio.wait_for(storage.first_write_started.wait(), timeout=1)
+
+    def save_other_orchestrator() -> None:
+        asyncio.run(manager._save_multi_agent_latest(orchestrator_b))
+
+    await asyncio.to_thread(save_other_orchestrator)
+    second_save = asyncio.create_task(manager._save_multi_agent_latest(orchestrator_a))
+    asyncio.get_running_loop().call_soon(storage.release_first_write.set)
+    await asyncio.gather(first_save, second_save)
+
+    tru_generations = storage.committed_generations
+    exp_generations = [1, 2]
+    assert tru_generations == exp_generations
 
 
 def test_interrupted_graph_restores_before_applying_response(storage, agenerator):

@@ -25,8 +25,11 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    overload,
 )
 
+from opentelemetry import baggage as baggage_api
+from opentelemetry import context as context_api
 from opentelemetry import trace as trace_api
 from pydantic import BaseModel
 
@@ -50,8 +53,6 @@ if TYPE_CHECKING:
     from .._context_manager.types import ContextManagerConfig
     from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
-from .._middleware import MiddlewareRegistry
-from .._middleware.stages import AgentStreamContext, AgentStreamStage
 from ..handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from ..hooks import (
     AfterInvocationEvent,
@@ -69,6 +70,17 @@ from ..interrupt import InterruptException, _InterruptState
 from ..interventions.handler import InterventionHandler
 from ..interventions.registry import InterventionRegistry
 from ..memory import MemoryManager, MemoryManagerConfig
+from ..middleware._agent_stream import AgentStreamContext, AgentStreamStage
+from ..middleware._registry import MiddlewareRegistry
+from ..middleware.types import (
+    MiddlewareHandler,
+    MiddlewareInputHandler,
+    MiddlewareInputPhase,
+    MiddlewareOutputHandler,
+    MiddlewareOutputPhase,
+    MiddlewareStage,
+    MiddlewareWrapPhase,
+)
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -135,6 +147,11 @@ async def _link_cancel_signal(external: threading.Event, internal: threading.Eve
 
 # TypeVar for generic structured output
 T = TypeVar("T", bound=BaseModel)
+
+# Stage token generics bound by the add_middleware overloads.
+_MwContext = TypeVar("_MwContext")
+_MwResult = TypeVar("_MwResult")
+_MwEvent = TypeVar("_MwEvent")
 
 
 # Sentinel class and object to distinguish between explicit None and default parameter value
@@ -208,6 +225,7 @@ class Agent(AgentBase, LocalAgent):
         load_tools_from_directory: bool = False,
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
+        baggage_attributes: Mapping[str, str] | None = None,
         aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
@@ -275,6 +293,7 @@ class Agent(AgentBase, LocalAgent):
             load_tools_from_directory: Whether to load and automatically reload tools in the `./tools/` directory.
                 Defaults to False.
             trace_attributes: Custom trace attributes to apply to the agent's trace span.
+            baggage_attributes: Optional key-value pairs to attach as OTel baggage context for each agent invocation.
             agent_id: Optional ID for the agent, useful for session management and multi-agent scenarios.
                 Defaults to "default".
             name: name of the Agent
@@ -429,6 +448,7 @@ class Agent(AgentBase, LocalAgent):
                 ):
                     self.trace_attributes[k] = v
 
+        self.baggage_attributes: dict[str, str] = dict(baggage_attributes) if baggage_attributes else {}
         self.record_direct_tool_call = record_direct_tool_call
         self.load_tools_from_directory = load_tools_from_directory
 
@@ -436,6 +456,9 @@ class Agent(AgentBase, LocalAgent):
         self._cancel_signal = threading.Event()
         # Caller-owned external cancel signal for the current invocation, if any.
         self._external_cancel_signal: threading.Event | None = None
+        # Deferred cancellation requested via cancel(after_current_tools=True); read after the tool batch.
+        self._deferred_cancel = False
+        self._cancel_message: str | None = None
 
         self.tool_registry = ToolRegistry()
 
@@ -500,7 +523,7 @@ class Agent(AgentBase, LocalAgent):
         # In agentic mode, surface live token usage to the model so it can decide when to compress.
         if context_manager == "agentic":
             from .._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
-            from .._middleware.stages import InvokeModelStage
+            from ..middleware.stages import InvokeModelStage
 
             self._middleware_registry.add_middleware(InvokeModelStage.Input, create_token_usage_middleware())
 
@@ -621,23 +644,37 @@ class Agent(AgentBase, LocalAgent):
             return MemoryManager(**memory_manager)
         raise ValueError("memory_manager must be a MemoryManager or MemoryManagerConfig")
 
-    def cancel(self) -> None:
+    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
         """Cancel the currently running agent invocation.
 
         This method is thread-safe and can be called from any context
         (e.g., another thread, web request handler, background task).
 
-        The agent will stop gracefully at the next cancellation-safe point:
+        By default the agent stops at the next cancellation-safe point:
         - During model response streaming
         - Before tool execution
         - During MCP tool execution
         - After tool execution, before the next model call
 
-        The agent will return a result with stop_reason="cancelled".
+        With ``after_current_tools=True`` the cancellation is deferred: tools already requested in
+        the current batch run to completion, and the loop exits before the next model call. This is
+        the cooperative stop a tool uses to end the loop from inside the agent; see
+        :mod:`strands.vended_tools.stop` for the vended tool.
+
+        When cancellation actually interrupts the loop the agent returns a result with
+        ``stop_reason="cancelled"``. If ``message`` is given, it becomes the text of the final
+        assistant message; otherwise the result carries the model's last message. When several
+        callers set a message, the last write wins. A deferred cancel that never gets to apply --
+        for example, the model answers with plain text and no tools in the same turn -- is a no-op
+        and the invocation returns with its natural ``stop_reason``.
 
         For cancellation driven from outside the agent (a client disconnect, a request
         lifecycle, a timeout), pass a ``cancel_signal`` into the invocation instead. The agent
         observes both, so either cancels independently.
+
+        Args:
+            message: Text of the final assistant message the invocation ends with.
+            after_current_tools: Let the current tool batch finish before stopping.
 
         Example:
             ```python
@@ -656,7 +693,12 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        self._cancel_signal.set()
+        if message is not None:
+            self._cancel_message = message
+        if after_current_tools:
+            self._deferred_cancel = True
+        else:
+            self._cancel_signal.set()
 
     @property
     def cancel_signal(self) -> threading.Event:
@@ -1243,6 +1285,69 @@ class Agent(AgentBase, LocalAgent):
         """
         self.hooks.add_callback(event_type, callback, order=order)
 
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareInputPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareInputHandler[_MwContext],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareOutputPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareOutputHandler[_MwResult],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: (
+            MiddlewareStage[_MwContext, _MwResult, _MwEvent] | MiddlewareWrapPhase[_MwContext, _MwResult, _MwEvent]
+        ),
+        handler: MiddlewareHandler[_MwContext, _MwEvent],
+    ) -> None: ...
+
+    def add_middleware(self, stage_or_phase: Any, handler: Any) -> None:
+        """Register a middleware handler for a stage or one of its phases.
+
+        Middleware wraps a stage of the agent run (``InvokeModelStage``, ``ExecuteToolStage``) and
+        can transform its input, transform its result, or wrap execution to retry, cache,
+        short-circuit, or gate it behind a human-in-the-loop interrupt. Regardless of registration
+        order, handlers run Input -> Wrap -> Output, and within a phase the first registered is the
+        outermost. Handlers cannot be removed once registered.
+
+        Args:
+            stage_or_phase: A stage token for the Wrap phase, or one of its ``.Input`` / ``.Output``
+                sub-tokens.
+            handler: A Wrap handler is an async generator ``(context, next_fn)`` that yields events,
+                one of which is the stage's result event. An Input handler is
+                ``(context) -> context`` and an Output handler is ``(result) -> result`` on the
+                stage's result type (e.g. ``InvokeModelResult``); both may be sync or async.
+
+        Example:
+            ```python
+            from strands.middleware import InvokeModelStage
+
+            agent = Agent()
+
+            async def timing(context, next_fn):
+                async for event in next_fn(context):
+                    yield event
+
+            agent.add_middleware(InvokeModelStage, timing)
+
+            def be_concise(context):
+                return context.replace(system_prompt="Be concise.")
+
+            agent.add_middleware(InvokeModelStage.Input, be_concise)
+            ```
+
+        Docs:
+            https://strandsagents.com/docs/user-guide/sdk/agents/middleware/
+        """
+        self._middleware_registry.add_middleware(stage_or_phase, handler)
+
     def __del__(self) -> None:
         """Clean up resources when agent is garbage collected."""
         # __del__ is called even when an exception is thrown in the constructor,
@@ -1389,6 +1494,13 @@ class Agent(AgentBase, LocalAgent):
         cancel_watcher: asyncio.Task[None] | None = None
 
         try:
+            # Clear cancel state that bypassed stream_async's finally (e.g.
+            # agent.tool.stop(...) called directly). Keep _cancel_message when the signal is
+            # set so a pre-invocation agent.cancel(message=...) still carries its text.
+            self._deferred_cancel = False
+            if not self._cancel_signal.is_set():
+                self._cancel_message = None
+
             self._external_cancel_signal = cancel_signal
             cancel_watcher = self._start_cancel_watcher(cancel_signal)
 
@@ -1419,52 +1531,60 @@ class Agent(AgentBase, LocalAgent):
             # Process input and get message to add (if any)
             messages = await self._convert_prompt_to_messages(prompt)
 
-            self.trace_span = self._start_agent_trace_span(messages)
+            baggage_ctx = context_api.get_current()
+            for key, value in self.baggage_attributes.items():
+                baggage_ctx = baggage_api.set_baggage(key, value, context=baggage_ctx)
 
-            with trace_api.use_span(self.trace_span):
-                try:
-                    events = self._run_loop(
-                        messages, merged_state, structured_output_model, structured_output_prompt, limits
-                    )
-
-                    # The result is the last EventLoopStopEvent, not the last event overall:
-                    # AgentStreamStage middleware may yield trailing events after the stop event.
-                    stop_event: EventLoopStopEvent | None = None
+            # Baggage is current for span start (processors see it) and the whole invocation.
+            baggage_token = context_api.attach(baggage_ctx)
+            try:
+                self.trace_span = self._start_agent_trace_span(messages)
+                with trace_api.use_span(self.trace_span):
                     try:
-                        async for event in events:
-                            event.prepare(invocation_state=merged_state)
+                        events = self._run_loop(
+                            messages, merged_state, structured_output_model, structured_output_prompt, limits
+                        )
 
-                            if isinstance(event, EventLoopStopEvent):
-                                stop_event = event
+                        # The result is the last EventLoopStopEvent, not the last event overall:
+                        # AgentStreamStage middleware may yield trailing events after the stop event.
+                        stop_event: EventLoopStopEvent | None = None
+                        try:
+                            async for event in events:
+                                event.prepare(invocation_state=merged_state)
 
-                            if event.is_callback_event:
-                                as_dict = event.as_dict()
-                                callback_handler(**as_dict)
-                                yield as_dict
+                                if isinstance(event, EventLoopStopEvent):
+                                    stop_event = event
 
-                        if stop_event is None:
-                            raise RuntimeError(
-                                "Agent stream produced no result event. AgentStreamStage middleware must "
-                                "forward events from next() and must not drop the terminal stop event."
-                            )
+                                if event.is_callback_event:
+                                    as_dict = event.as_dict()
+                                    callback_handler(**as_dict)
+                                    yield as_dict
 
-                        result = AgentResult(*stop_event["stop"])
-                        callback_handler(result=result)
-                        yield AgentResultEvent(result=result).as_dict()
+                            if stop_event is None:
+                                raise RuntimeError(
+                                    "Agent stream produced no result event. AgentStreamStage middleware must "
+                                    "forward events from next() and must not drop the terminal stop event."
+                                )
 
-                        self._end_agent_trace_span(response=result)
-                    finally:
-                        await events.aclose()
+                            result = AgentResult(*stop_event["stop"])
+                            callback_handler(result=result)
+                            yield AgentResultEvent(result=result).as_dict()
 
-                except Exception as e:
-                    self._end_agent_trace_span(error=e)
-                    self._concurrency.complete(begin.registered_token, error=e)
-                    raise
-                except BaseException as cancellation:
-                    # Waiter settlement deferred to the finally block (aborted path) — propagating
-                    # CancelledError into unrelated waiters would be incorrect.
-                    self._end_agent_trace_span(cancellation=cancellation)
-                    raise
+                            self._end_agent_trace_span(response=result)
+                        finally:
+                            await events.aclose()
+
+                    except Exception as e:
+                        self._end_agent_trace_span(error=e)
+                        self._concurrency.complete(begin.registered_token, error=e)
+                        raise
+                    except BaseException as cancellation:
+                        # Waiter settlement deferred to the finally block (aborted path) — propagating
+                        # CancelledError into unrelated waiters would be incorrect.
+                        self._end_agent_trace_span(cancellation=cancellation)
+                        raise
+            finally:
+                context_api.detach(baggage_token)
 
         finally:
             if cancel_watcher is not None:
@@ -1473,8 +1593,10 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
-            # Clear cancel signal to allow agent reuse after cancellation
+            # Clear cancel state to allow agent reuse after cancellation
             self._cancel_signal.clear()
+            self._deferred_cancel = False
+            self._cancel_message = None
 
             self._concurrency.complete(begin.registered_token, result=result)
             if self._concurrency.mode == ConcurrentInvocationMode.THROW:
@@ -1555,9 +1677,6 @@ class Agent(AgentBase, LocalAgent):
                 # restored without ids), so every message carries one before the model is called.
                 for message in self.messages:
                     _ensure_tracking_id(message)
-
-                if continuation_event is None:
-                    await self._append_messages(*current_messages)
 
                 structured_output_context = StructuredOutputContext(
                     structured_output_model or self._default_structured_output_model,
@@ -1704,11 +1823,12 @@ class Agent(AgentBase, LocalAgent):
         """Build the terminal for the AgentStreamStage middleware chain.
 
         The terminal drives the event loop cycle for one invocation pass — the core work the
-        AgentStreamStage middleware wraps. It reads ``invocation_state`` from the context it
-        receives (not a captured value), so an Input/wrap handler that transforms the context
-        via ``dataclasses.replace()`` actually reaches the event loop. It also handles
-        guardrail-driven user-content redaction inline so that behavior runs whether or not
-        middleware is registered.
+        AgentStreamStage middleware wraps. It appends the pass's input and reads
+        ``invocation_state`` from the context it receives (not captured values), so an
+        Input/wrap handler that transforms the context via ``replace()`` reaches history and
+        the event loop, and a handler that short-circuits leaves history untouched. It also
+        handles guardrail-driven user-content redaction inline so that behavior runs whether
+        or not middleware is registered.
 
         Args:
             structured_output_context: Structured output context for this pass.
@@ -1724,7 +1844,9 @@ class Agent(AgentBase, LocalAgent):
         """
 
         async def terminal(ctx: "AgentStreamContext") -> AsyncGenerator[TypedEvent, None]:
-            if continuation_event is not None:
+            if continuation_event is None:
+                await self._append_messages(*ctx.messages)
+            else:
                 messages = _continuation.combine(continuation_event, ctx.messages)
                 await self._append_continuation_messages(messages, continuation_event)
 

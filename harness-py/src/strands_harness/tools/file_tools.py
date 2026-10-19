@@ -7,6 +7,8 @@ candidates to port into the core SDK later; keep them minimal and SDK-idiomatic.
 
 from __future__ import annotations
 
+import ntpath
+import posixpath
 import re
 
 from strands.tools.decorator import tool
@@ -23,8 +25,13 @@ _DOCUMENT_FORMATS = ("pdf", "doc", "docx", "xls", "xlsx")
 
 
 def _validate_path(path: str) -> None:
-    if not path.startswith("/"):
-        raise ValueError(f"The path {path} is not absolute; it should start with '/'.")
+    # The path belongs to the sandbox, not the host, so accept either platform's notion of absolute. The two
+    # libraries disagree only on backslash-rooted-without-drive (``\foo``: Node yes, Python 3.13 no); that
+    # divergence is intentional and stdlib-driven, so do not hand-roll the check to make the SDKs agree.
+    if not (posixpath.isabs(path) or ntpath.isabs(path)):
+        raise ValueError(
+            f"The path {path} is not absolute; it should start with '/' (or a drive letter or UNC share on Windows)."
+        )
     if ".." in re.split(r"[/\\]", path):
         raise ValueError("Invalid path: path traversal is not allowed.")
 

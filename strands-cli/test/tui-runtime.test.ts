@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   Message,
@@ -957,10 +957,12 @@ describe('interactive runtime lifecycle', () => {
       const sandbox = secondOptions.sandbox
       expect(sandbox && sandbox !== false).toBe(true)
       const realSecondWorkspace = await realpath(secondWorkspace)
-      await expect(sandbox && sandbox !== false ? sandbox.execute('pwd') : undefined).resolves.toMatchObject({
-        exitCode: 0,
-        stdout: `${realSecondWorkspace}\n`,
-      })
+      const pwd = sandbox && sandbox !== false ? await sandbox.execute('pwd') : undefined
+      expect(pwd).toMatchObject({ exitCode: 0 })
+      // Windows sandboxes run MSYS `sh`, which prints its own mount paths instead of the C:\ path.
+      expect(pwd?.stdout.trim().replaceAll(sep, '/')).toContain(
+        `${basename(dirname(realSecondWorkspace))}/${basename(realSecondWorkspace)}`
+      )
       expect(mocks.loadMcp).toHaveBeenNthCalledWith(2, {
         cwd: secondWorkspace,
         paths: [explicitMcp],

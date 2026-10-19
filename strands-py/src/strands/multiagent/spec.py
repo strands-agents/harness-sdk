@@ -8,23 +8,18 @@ the parameters the model sees and govern what values it can supply:
 - ``Inherit`` — value taken from the parent agent; hidden from the model.
 - ``Open``   — model supplies a free-form value.
 - ``Choice`` — model picks from a developer-supplied set.
-
-``_resolve_spec`` merges model-supplied arguments, preset defaults, and axis policies
-into a fully resolved ``AgentSpec`` used to build child agents.  ``Inherit`` axes resolve
-to ``None`` (meaning "inherit all"); the class is a self-documenting marker.
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from ..agent import Agent
 from ..models import Model, ModelRouter
-from ..tools.mcp import MCPClient
-from ..tools.mcp.mcp_agent_tool import MCPAgentTool
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +28,17 @@ AgentBuilder = Callable[["AgentSpec"], "Agent"]
 
 _UNSET: Any = object()
 """Sentinel for :attr:`Option.value` so ``None`` can be a legitimate value."""
+
+_AXIS_DESCRIPTIONS = {
+    "agent_type": "Role to assign this agent.",
+    "instructions": "A system prompt defining this agent's role.",
+    "tools": (
+        "Subset of tools to grant this agent. Fewer is safer; it cannot exceed your own. "
+        "Omit to grant all inherited tools."
+    ),
+    "model": "Which model this agent runs on. Omit to inherit the parent's model.",
+}
+"""Model-facing description of each axis property."""
 
 
 @dataclass(frozen=True)
@@ -87,9 +93,14 @@ class Choice:
     def to_schema_property(self, description: str = "") -> dict[str, Any]:
         """Render this axis as a JSON Schema property for a tool's ``inputSchema``.
 
-        Produces a ``string`` enum (or ``array`` of enum when ``multiple``), with per-option
-        descriptions folded into the property's ``description``.
+        .. deprecated::
+            Will be removed in a future release; there is no public replacement.
         """
+        warnings.warn(
+            "Choice.to_schema_property is deprecated and will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         options = self.normalized()
         values = [option.name for option in options]
         lines = [f"- {option.name}: {option.description}" for option in options if option.description]
@@ -114,6 +125,10 @@ class Choice:
         return name
 
 
+Axis = Fixed | Inherit | Open | Choice
+"""Any authority mode an axis can take."""
+
+
 @dataclass(frozen=True)
 class Preset:
     """A named role: a partially applied child configuration selected via ``agent_type``."""
@@ -132,8 +147,73 @@ class AgentSpec:
     agent_type: str | None = None
     instructions: str | None = None
     tools: list[str] | None = None
-    mcp_servers: list[str] | None = None
     model: Model | ModelRouter | str | None = None
+
+
+def _describe_preset(preset: Preset) -> str:
+    """The preset's description plus which fields it sets, omitting instruction text to keep the schema small."""
+    parts = []
+    if preset.instructions is not None:
+        parts.append("instructions")
+    if preset.tools is not None:
+        parts.append(f"tools: {', '.join(preset.tools) or 'none'}")
+    if preset.model is not None:
+        parts.append(f"model: {preset.model}" if isinstance(preset.model, str) else "model")
+    if not parts:
+        return preset.description
+    sets = f"sets {'; '.join(parts)}"
+    return f"{preset.description} ({sets})" if preset.description else sets
+
+
+def _to_schema_properties(
+    *,
+    presets: Mapping[str, Preset],
+    default_preset: str | None,
+    instructions: Axis | None,
+    tools: Axis | None,
+    model: Axis | None,
+) -> dict[str, Any]:
+    """Render each model-visible axis, plus an ``agent_type`` choice over ``presets``, as JSON Schema properties.
+
+    Raises:
+        ValueError: If a ``Choice`` axis has no options, or a ``tools`` ``Choice`` is not ``multiple``.
+    """
+    agent_type = Choice([Option(n, description=_describe_preset(p)) for n, p in presets.items()]) if presets else None
+    axes: dict[str, Axis | None] = {
+        "agent_type": agent_type,
+        "instructions": instructions,
+        "tools": tools,
+        "model": model,
+    }
+    props: dict[str, Any] = {}
+    for key, axis in axes.items():
+        description = _AXIS_DESCRIPTIONS[key]
+        if key == "agent_type" and default_preset is not None:
+            description = f"{description} Omit to use the default ({default_preset!r})."
+        if isinstance(axis, Open):
+            prop: dict[str, Any] = {"type": "string"}
+        elif isinstance(axis, Choice):
+            options = axis.normalized()
+            if not options:
+                raise ValueError(
+                    f"{key}=Choice([]) offers no options; use Fixed(...), or omit {key} to use its default."
+                )
+            if key == "tools" and not axis.multiple:
+                raise ValueError(f"{key}=Choice(...) must be multiple=True; a child agent selects a subset of {key}.")
+            values = [option.name for option in options]
+            lines = [f"- {option.name}: {option.description}" for option in options if option.description]
+            if lines:
+                description = f"{description}\nOptions:\n" + "\n".join(lines)
+            prop = (
+                {"type": "array", "items": {"type": "string", "enum": values}}
+                if axis.multiple
+                else {"type": "string", "enum": values}
+            )
+        else:
+            continue
+        prop["description"] = description
+        props[key] = prop
+    return props
 
 
 def _resolve_scalar(
@@ -190,97 +270,100 @@ def _resolve_list(
     return None
 
 
-def _resolve_spec(
-    model_input: Mapping[str, Any],
+def _resolve_specs(
+    model_inputs: list[Mapping[str, Any]],
     *,
     presets: Mapping[str, Preset],
     default_preset: str | None,
     instructions: Open | Choice | Fixed,
     tools: Choice | Fixed | Inherit | None = None,
-    mcp_servers: Choice | Fixed | Inherit | None = None,
     model: Inherit | Choice | Fixed | None = None,
-) -> AgentSpec:
-    """Combine the model's arguments, the selected preset, and the fixed axes into a spec.
+) -> list[AgentSpec]:
+    """Combine each model-supplied agent input with the axis policies into a spec.
 
     Precedence per axis: a model-supplied argument wins, then the preset's value, then the axis
     default (``Fixed``/``Inherit``). An omitted ``agent_type`` falls back to the default preset, so
     a bare model input behaves like the default role.
 
     Args:
-        model_input: The model-supplied arguments.
+        model_inputs: The model-supplied arguments, one mapping per agent.
         presets: Named presets mapping ``agent_type`` strings to ``Preset`` instances.
         default_preset: The preset to apply when the model omits ``agent_type``.
         instructions: Axis policy for the ``instructions`` field.
         tools: Axis policy for tool selection. Defaults to ``Inherit()`` when not supplied.
-        mcp_servers: Axis policy for MCP server selection. Defaults to ``Inherit()`` when not supplied.
         model: Axis policy for model selection. Defaults to ``Inherit()`` when not supplied.
 
     Returns:
-        The resolved ``AgentSpec`` (the child's configuration).
+        The resolved ``AgentSpec`` for each input, in order.
 
     Raises:
-        ValueError: If ``agent_type`` is provided but not found in ``presets``.
+        ValueError: If ``model_inputs`` is not a list, an input is not a mapping, a name is missing,
+            empty, or duplicated, or an ``agent_type`` is not found in ``presets``.
     """
     if tools is None:
         tools = Inherit()
-    if mcp_servers is None:
-        mcp_servers = Inherit()
     if model is None:
         model = Inherit()
-    name = model_input.get("name")
 
-    # agent_type is a closed enum: a provided value must be an exact preset name (absent = no role).
-    model_agent_type = model_input.get("agent_type")
-    is_known_preset = isinstance(model_agent_type, str) and model_agent_type in presets
-    if model_agent_type is not None and not is_known_preset:
-        raise ValueError(f"Unknown agent_type {model_agent_type!r}; valid values: {sorted(presets)}.")
-    # Ad-hoc instructions (only possible when the axis exposes one) override the default preset.
-    overriding_instructions = isinstance(instructions, (Open, Choice)) and "instructions" in model_input
+    if not isinstance(model_inputs, list):
+        raise ValueError(f"agents must be a list, got {type(model_inputs).__name__}")
 
-    if is_known_preset:
-        agent_type = model_agent_type
-    elif not overriding_instructions:
-        agent_type = default_preset
-    else:
-        agent_type = None
+    seen_names: set[str] = set()
+    specs: list[AgentSpec] = []
+    for index, model_input in enumerate(model_inputs):
+        if not isinstance(model_input, Mapping):
+            raise ValueError(f"Agent at index {index} must be a dict, got {type(model_input).__name__}")
 
-    preset = presets.get(agent_type) if agent_type else None
+        name = model_input.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Agent at index {index} must have a non-empty 'name' string")
+        name = name.strip()
+        if name in seen_names:
+            raise ValueError(f"Duplicate agent name {name!r} at index {index}")
+        seen_names.add(name)
 
-    # Combine the model inputs, axis policies, and presets into an agent spec
-    spec = AgentSpec(name=str(name) if name is not None else None, agent_type=agent_type)
-    spec.instructions = _resolve_scalar(
-        model_input.get("instructions", _UNSET), instructions, preset.instructions if preset else None
-    )
-    spec.tools = _resolve_list(model_input.get("tools", _UNSET), tools, preset.tools if preset else None)
-    spec.mcp_servers = _resolve_list(model_input.get("mcp_servers", _UNSET), mcp_servers)
-    spec.model = _resolve_scalar(model_input.get("model", _UNSET), model, preset.model if preset else None)
+        # agent_type is a closed enum: a provided value must be an exact preset name (absent = no role).
+        model_agent_type = model_input.get("agent_type")
+        is_known_preset = isinstance(model_agent_type, str) and model_agent_type in presets
+        if model_agent_type is not None and not is_known_preset:
+            raise ValueError(f"Unknown agent_type {model_agent_type!r}; valid values: {sorted(presets)}.")
+        # Ad-hoc instructions (only possible when the axis exposes one) override the default preset.
+        overriding_instructions = isinstance(instructions, (Open, Choice)) and "instructions" in model_input
 
-    return spec
+        if is_known_preset:
+            agent_type = model_agent_type
+        elif not overriding_instructions:
+            agent_type = default_preset
+        else:
+            agent_type = None
+        preset = presets.get(agent_type) if agent_type else None
+
+        spec = AgentSpec(name=name, agent_type=agent_type)
+        spec.instructions = _resolve_scalar(
+            model_input.get("instructions", _UNSET), instructions, preset.instructions if preset else None
+        )
+        spec.tools = _resolve_list(model_input.get("tools", _UNSET), tools, preset.tools if preset else None)
+        spec.model = _resolve_scalar(model_input.get("model", _UNSET), model, preset.model if preset else None)
+        specs.append(spec)
+
+    return specs
 
 
 def _default_builder(parent: Agent) -> AgentBuilder:
-    """A builder that creates an Agent inheriting the parent's model, tools, and MCP servers.
+    """A builder that creates an Agent inheriting the parent's model and tools.
 
     Used by the vended multi-agent tools when no custom builder is supplied.
-    Resolves ``spec.tools`` against the parent's tool registry and ``spec.mcp_servers``
-    against the parent's MCP clients (by ``client_name``). Memory tools are also
-    inherited through the tools axis.
+    Resolves ``spec.tools`` against the parent's tool registry, including MCP tools, which
+    keep calling through the parent's MCP client. Memory tools are also inherited through
+    the tools axis.
     """
 
     def build(spec: AgentSpec) -> Agent:
         parent_tools: dict[str, Any] = {}
-        mcp_clients: dict[str, MCPClient] = {}
         # The child's own context manager registers its tools; skip the parent's.
         managed_tools = {id(t) for t in parent.context_manager.tools} if parent and parent.context_manager else set()
         for tool in parent.tool_registry.registry.values() if parent else []:
-            if id(tool) in managed_tools:
-                continue
-            if isinstance(tool, MCPAgentTool):
-                # MCP tools flow through mcp_servers to avoid duplicates with their client.
-                if tool.mcp_client.client_name is not None:
-                    mcp_clients.setdefault(tool.mcp_client.client_name, tool.mcp_client)
-            else:
-                # Plain tools are selected by name via spec.tools.
+            if id(tool) not in managed_tools:
                 parent_tools[tool.tool_name] = tool
 
         # tools=None means inherit all; a list means only those.
@@ -291,19 +374,6 @@ def _default_builder(parent: Agent) -> AgentBuilder:
                     child_tools.append(parent_tools[tool_name])
                 else:
                     logger.warning("subagent requested tool %r but parent does not own it; skipping", tool_name)
-
-        # MCP servers: spec.mcp_servers=None means inherit all, a list means only those.
-        selected: Mapping[str, MCPClient]
-        if spec.mcp_servers is None:
-            selected = mcp_clients
-        else:
-            selected = {}
-            for name in spec.mcp_servers:
-                if name in mcp_clients:
-                    selected[name] = mcp_clients[name]
-                else:
-                    logger.warning("subagent requested MCP server %r but parent does not own it; skipping", name)
-        child_tools.extend(selected.values())
 
         child_model = spec.model or (parent.model if parent else None)
         return Agent(

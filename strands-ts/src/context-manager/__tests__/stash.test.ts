@@ -93,4 +93,45 @@ describe('Stash', () => {
       expect(topKeys).toContain('other-key')
     })
   })
+
+  describe('caller-scoped root', () => {
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
+
+    it('uses the view as the exact root', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage.namespace('tenants/t1/research'), 'sess-1', 'agent-a', {
+        customStashNamespace: true,
+      })
+      await stash.store('tool-1', 0, bytes({ text: 'test' }))
+
+      expect(await storage.list('')).toStrictEqual(['tenants/t1/research/tool-1_0'])
+    })
+
+    it('uses the per-agent root under a view unless allowed', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage.namespace('tenant'), 'sess-1', 'agent-a')
+      await stash.store('tool-1', 0, bytes({ text: 'test' }))
+
+      expect(await storage.list('')).toStrictEqual(['tenant/context/sess-1/scopes/agent/agent-a/tool-1_0'])
+    })
+
+    it('lets agents in different sessions sharing a view read each other entries', async () => {
+      const storage = new InMemoryStorage()
+      const stashA = new Stash(storage.namespace('team'), 'sess-1', 'agent-a', { customStashNamespace: true })
+      const stashB = new Stash(storage.namespace('team'), 'sess-2', 'agent-b', { customStashNamespace: true })
+      await stashA.store('tool-1', 0, bytes({ text: 'from a' }))
+
+      expect(await stashB.retrieve('tool-1_0')).toStrictEqual({ data: { text: 'from a' } })
+    })
+
+    it('keeps a shared view on clearSession', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage.namespace('team'), 'sess-1', 'agent-a', { customStashNamespace: true })
+      await stash.store('tool-1', 0, bytes({ text: 'shared' }))
+
+      await stash.clearSession()
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+  })
 })

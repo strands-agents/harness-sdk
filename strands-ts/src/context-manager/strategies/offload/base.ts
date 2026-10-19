@@ -169,12 +169,13 @@ export function getOldestMatches(
 /**
  * Collects a message and its paired partner (if any) for safe removal.
  * If removing a message would orphan a tool-use/tool-result pair, includes the partner
- * so the pair is removed together. Skips messages[0] (head-pin).
+ * so the pair is removed together. Never collects message 0 or the last message, which the
+ * next model call responds to.
  */
 export function collectRemovableWithPair(messages: Message[], index: number): Message[] {
   const message = messages[index]
   if (!message) return []
-  if (index === 0) return []
+  if (index === 0 || index === messages.length - 1) return []
 
   const result: Message[] = [message]
 
@@ -188,10 +189,11 @@ export function collectRemovableWithPair(messages: Message[], index: number): Me
   }
 
   const hasToolUse = message.content.some((block) => block instanceof ToolUseBlock)
-  if (hasToolUse && index < messages.length - 1) {
+  if (hasToolUse) {
     const next = messages[index + 1]
     if (next && next.content.some((block) => block instanceof ToolResultBlock)) {
-      result.push(next)
+      if (index + 1 < messages.length - 1) result.push(next)
+      else return []
     }
   }
 
@@ -222,6 +224,31 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
     removed++
   }
   return { removed, lowestIndex }
+}
+
+/**
+ * Adds a removal marker as assistant content at the gap left by removed messages.
+ *
+ * The marker is appended to an assistant message beside the gap, which keeps that message's
+ * tracking id and block indices for stash refs, or becomes its own assistant message. It never
+ * joins message 0, and the last message is never removed, so a new marker never ends the history.
+ */
+export function insertMarker(messages: Message[], index: number, text: string): void {
+  index = Math.max(1, Math.min(index, messages.length))
+  const block = new TextBlock(text)
+  for (const neighbor of [index - 1, index]) {
+    const carrier = messages[neighbor]
+    if (neighbor > 0 && carrier?.role === 'assistant') {
+      messages[neighbor] = new Message({
+        role: 'assistant',
+        content: [...carrier.content, block],
+        trackingId: carrier.trackingId,
+        ...(carrier.metadata ? { metadata: carrier.metadata } : {}),
+      })
+      return
+    }
+  }
+  messages.splice(index, 0, new Message({ role: 'assistant', content: [block] }))
 }
 
 /**
@@ -384,8 +411,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
     const marker = this._makeRemovalMarker(removed)
     if (marker) {
-      const insertIndex = Math.max(1, Math.min(lowestIndex, messages.length))
-      messages.splice(insertIndex, 0, new Message({ role: 'user', content: [new TextBlock(marker)] }))
+      insertMarker(messages, lowestIndex, marker)
     }
 
     repairAlternation(messages)
@@ -536,14 +562,21 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     if (messages.length <= 3) return false
 
     const removable = messages.filter((_, index) => index > 0)
-    const removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
+    let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
+    // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
+    if (removable[removeCount]?.role !== 'assistant') removeCount += 1
     const toRemove = removable.slice(0, removeCount)
 
-    const { removed } = spliceWithPairs(messages, toRemove)
+    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
     if (removed === 0) return false
 
+    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
     repairAlternation(messages)
     return true
+  }
+
+  protected override _makeRemovalMarker(count: number): string {
+    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
   }
 
   protected async _replaceBlock(): Promise<ContentBlock | null> {

@@ -5,6 +5,7 @@ backwards compatibility and can be used interchangeably with the actual
 ToolProvider type from strands.tools.
 """
 
+import importlib
 import sys
 import warnings
 
@@ -85,3 +86,12 @@ def test_no_warning_on_production_import(captured_warnings):
     ]
 
     assert len(tool_provider_warnings) == 0
+
+
+def test_stop_experimental_import_warns():
+    sys.modules.pop("strands.experimental.tools", None)
+    tools = importlib.import_module("strands.experimental.tools")
+    with pytest.warns(DeprecationWarning, match="stop has been moved"):
+        _ = tools.stop
+    with pytest.warns(DeprecationWarning, match="make_stop has been moved"):
+        _ = tools.make_stop

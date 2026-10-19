@@ -62,6 +62,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
+│   │   ├── CourseNotice.astro    # Course recording and example update notices
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
 │   │   └── ...

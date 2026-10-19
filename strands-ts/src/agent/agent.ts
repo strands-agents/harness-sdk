@@ -102,6 +102,7 @@ import type { MemoryManagerConfig } from '../memory/index.js'
 import { SessionManager } from '../session/session-manager.js'
 import { Tracer } from '../telemetry/tracer.js'
 import { AgentMetrics, Meter } from '../telemetry/meter.js'
+import { context as otelContext, propagation } from '@opentelemetry/api'
 import type { AttributeValue } from '@opentelemetry/api'
 import { logger } from '../logging/logger.js'
 import { CancelledError, CheckpointError } from '../errors.js'
@@ -275,6 +276,11 @@ export type AgentConfig = {
    * Telemetry must be enabled globally via telemetry.setupTracer() for these to take effect.
    */
   traceAttributes?: Record<string, AttributeValue>
+  /**
+   * OpenTelemetry baggage entries attached to the context for the whole invocation.
+   * Baggage propagates to downstream services via the W3C `baggage` header.
+   */
+  baggageAttributes?: Record<string, string>
   /**
    * Optional name for the agent. Defaults to "Strands Agent".
    */
@@ -471,6 +477,11 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   public readonly storage?: Storage | undefined
 
+  /**
+   * OpenTelemetry baggage entries attached to the context for every invocation.
+   */
+  public readonly baggageAttributes: Readonly<Record<string, string>>
+
   private readonly _sandbox: Sandbox | false | undefined
 
   /**
@@ -556,6 +567,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     this.contextManager = ContextManager.from(config?.contextManager)
     this.sessionManager = config?.sessionManager
     this.storage = config?.storage
+    this.baggageAttributes = { ...config?.baggageAttributes }
     this.memoryManager =
       config?.memoryManager instanceof MemoryManager
         ? config.memoryManager
@@ -1179,6 +1191,37 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public async *stream(
+    args: InvokeArgs,
+    options?: InvokeOptions
+  ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
+    return yield* this._withBaggage(this._streamInvocation(args, options))
+  }
+
+  /**
+   * Drives `invocation` so every step runs with {@link Agent.baggageAttributes} merged into the active baggage.
+   */
+  private async *_withBaggage<T, R>(invocation: AsyncGenerator<T, R, undefined>): AsyncGenerator<T, R, undefined> {
+    if (Object.keys(this.baggageAttributes).length === 0) return yield* invocation
+
+    const active = otelContext.active()
+    let baggage = propagation.getBaggage(active) ?? propagation.createBaggage()
+    for (const [key, value] of Object.entries(this.baggageAttributes)) {
+      baggage = baggage.setEntry(key, { value })
+    }
+    const baggageCtx = propagation.setBaggage(active, baggage)
+
+    // Async generators resume in the caller's context, so every step must re-enter the baggage context.
+    return yield* {
+      [Symbol.asyncIterator](): AsyncGenerator<T, R, undefined> {
+        return this as AsyncGenerator<T, R, undefined>
+      },
+      next: (...args: [] | [undefined]) => otelContext.with(baggageCtx, () => invocation.next(...args)),
+      throw: (error: unknown) => otelContext.with(baggageCtx, () => invocation.throw(error)),
+      return: (value: R | PromiseLike<R>) => otelContext.with(baggageCtx, () => invocation.return(value)),
+    } as AsyncGenerator<T, R, undefined>
+  }
+
+  private async *_streamInvocation(
     args: InvokeArgs,
     options?: InvokeOptions
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
