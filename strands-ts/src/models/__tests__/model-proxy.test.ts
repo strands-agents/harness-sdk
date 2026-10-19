@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { ModelProxy } from '../model-proxy.js'
 import type { StreamAggregatedResult } from '../model.js'
 import { type ModelStreamEvent } from '../streaming.js'
-import { createInvocationContext } from '../../agent/invocation-context.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Message, TextBlock, type ContentBlock } from '../../types/messages.js'
@@ -31,7 +31,7 @@ describe('ModelProxy', () => {
         { type: 'textBlock', text: 'hi' },
         { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
       )
-      const invocationContext = createInvocationContext()
+      const invocationContext = new InvocationContextImpl()
 
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
@@ -39,7 +39,7 @@ describe('ModelProxy', () => {
     })
 
     it('accumulates across calls that share one invocation context', async () => {
-      const invocationContext = createInvocationContext()
+      const invocationContext = new InvocationContextImpl()
       const first = new MockMessageModel().addTurn(
         { type: 'textBlock', text: 'one' },
         { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
@@ -57,22 +57,22 @@ describe('ModelProxy', () => {
 
     it('records nothing when the model call throws', async () => {
       const model = new MockMessageModel().addTurn(new Error('boom'))
-      const invocationContext = createInvocationContext()
+      const invocationContext = new InvocationContextImpl()
 
       await expect(
         drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
       ).rejects.toThrow('boom')
 
-      expect(invocationContext.usage).toEqual(createInvocationContext().usage)
+      expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
     })
 
     it('records nothing when the model reports no usage', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
-      const invocationContext = createInvocationContext()
+      const invocationContext = new InvocationContextImpl()
 
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
-      expect(invocationContext.usage).toEqual(createInvocationContext().usage)
+      expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
     })
 
     it('is a no-op when called without an invocation context', async () => {
@@ -97,7 +97,7 @@ describe('ModelProxy', () => {
 
       const direct = await drain(build().streamAggregated([userMessage('go')]))
       const proxied = await drain(
-        new ModelProxy(build()).streamAggregated([userMessage('go')], undefined, createInvocationContext())
+        new ModelProxy(build()).streamAggregated([userMessage('go')], undefined, new InvocationContextImpl())
       )
 
       expect(proxied.events).toEqual(direct.events)

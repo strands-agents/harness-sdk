@@ -28,7 +28,7 @@ export interface InvocationContext {
  *
  * @internal
  */
-export class InvocationContextImplementation implements InvocationContext {
+export class InvocationContextImpl implements InvocationContext {
   declare readonly [invocationContextBrand]: true
 
   /** Turns taken under this instance, including its nested calls. */
@@ -43,13 +43,13 @@ export class InvocationContextImplementation implements InvocationContext {
    * @param _auxiliary - Whether this is an auxiliary call: the parent's limits don't apply and its turns don't count toward the parent
    */
   constructor(
-    readonly limits: InvokeLimits | undefined,
-    private readonly _parent?: InvocationContextImplementation,
+    readonly limits?: InvokeLimits,
+    private readonly _parent?: InvocationContextImpl,
     private readonly _auxiliary = false
   ) {}
 
   /** The parent whose limits also apply to this instance, if any. */
-  get limitingParent(): InvocationContextImplementation | undefined {
+  get limitingParent(): InvocationContextImpl | undefined {
     return this._auxiliary ? undefined : this._parent
   }
 
@@ -76,23 +76,6 @@ export class InvocationContextImplementation implements InvocationContext {
 }
 
 /**
- * Creates the state for a new request or, given a parent, for a nested call that
- * sets its own limits. A child's usage and turns also count toward the parent,
- * and the parent's limits also apply to it.
- *
- * @param limits - Limits to apply, or `undefined` for none
- * @param parent - The parent instance, if any
- * @returns A new instance with no usage or turns yet
- * @internal
- */
-export function createInvocationContext(
-  limits?: InvokeLimits,
-  parent?: InvocationContextImplementation
-): InvocationContextImplementation {
-  return new InvocationContextImplementation(limits, parent)
-}
-
-/**
  * Creates the {@link InvocationContext} for an auxiliary call: the HITL classifier,
  * steering, goal judge, and web-fetch analyst, and the handle passed to extension
  * points (context strategies, conversation managers, routing strategies, memory
@@ -106,7 +89,7 @@ export function createInvocationContext(
  */
 export function createAuxiliaryInvocationContext(parent: InvocationContext | undefined): InvocationContext | undefined {
   const parentContext = unwrapInvocationContext(parent)
-  return parentContext && new InvocationContextImplementation(undefined, parentContext, true)
+  return parentContext && new InvocationContextImpl(undefined, parentContext, true)
 }
 
 /**
@@ -118,12 +101,12 @@ export function createAuxiliaryInvocationContext(parent: InvocationContext | und
  * @returns The limit stop reason, or `undefined` while no limit is reached
  * @internal
  */
-export function reachedLimit(invocationContext: InvocationContextImplementation): StopReason | undefined {
+export function reachedLimit(invocationContext: InvocationContextImpl): StopReason | undefined {
   const parent = invocationContext.limitingParent
   return reachedOwnLimit(invocationContext) ?? (parent && reachedLimit(parent))
 }
 
-function reachedOwnLimit(invocationContext: InvocationContextImplementation): StopReason | undefined {
+function reachedOwnLimit(invocationContext: InvocationContextImpl): StopReason | undefined {
   const limits = invocationContext.limits
   if (!limits) return undefined
 
@@ -150,9 +133,9 @@ function reachedOwnLimit(invocationContext: InvocationContextImplementation): St
  */
 export function unwrapInvocationContext(
   invocationContext: InvocationContext | undefined
-): InvocationContextImplementation | undefined {
+): InvocationContextImpl | undefined {
   if (invocationContext === undefined) return undefined
-  if (!(invocationContext instanceof InvocationContextImplementation))
+  if (!(invocationContext instanceof InvocationContextImpl))
     throw new TypeError('invocationContext was not created by the SDK')
   return invocationContext
 }

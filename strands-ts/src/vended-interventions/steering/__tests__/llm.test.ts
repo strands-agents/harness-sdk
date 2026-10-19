@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../../../agent/agent.js'
-import { createInvocationContext } from '../../../agent/invocation-context.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { BeforeToolCallEvent } from '../../../hooks/events.js'
 import { HookRegistryImplementation } from '../../../hooks/registry.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
@@ -120,7 +120,7 @@ describe('LLMSteeringHandler', () => {
       })
       const agent = new Agent({ model, interventions: [handler] })
       await agent.initialize()
-      const parentInvocationContext = createInvocationContext({ turns: 1 })
+      const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
       parentInvocationContext.turns = 5
 
       const event = new BeforeToolCallEvent({

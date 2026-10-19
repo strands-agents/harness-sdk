@@ -3,7 +3,7 @@ import { HumanInTheLoop } from '../hitl.js'
 import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
-import { createInvocationContext } from '../../../agent/invocation-context.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { BeforeToolCallEvent } from '../../../hooks/events.js'
 
 describe('HumanInTheLoop', () => {
@@ -634,7 +634,7 @@ describe('HumanInTheLoop', () => {
         )
         const humanInTheLoop = new HumanInTheLoop({ classifier: { model: classifierModel } })
         const agent = new Agent({ model: new MockMessageModel(), printer: false })
-        const parentInvocationContext = createInvocationContext({ turns: 1 })
+        const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
         parentInvocationContext.turns = 5
         const event = new BeforeToolCallEvent({
           agent,

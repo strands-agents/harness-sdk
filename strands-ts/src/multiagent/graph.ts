@@ -1,11 +1,6 @@
 import type { AttributeValue } from '@opentelemetry/api'
 import type { InvocationState, InvokableAgent } from '../types/agent.js'
-import {
-  createInvocationContext,
-  unwrapInvocationContext,
-  type InvocationContextImplementation,
-  type InvocationContext,
-} from '../agent/invocation-context.js'
+import { type InvocationContext, InvocationContextImpl, unwrapInvocationContext } from '../agent/invocation-context.js'
 import type { MultiAgentContentInput, MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
 import {
   applyOrchestratorHookResponses,
@@ -257,7 +252,7 @@ export class Graph implements MultiAgent {
     // child agent so mutations in one node are visible in the next.
     const invocationState: InvocationState = options?.invocationState ?? {}
 
-    const invocationContext = unwrapInvocationContext(options?.invocationContext) ?? createInvocationContext()
+    const invocationContext = unwrapInvocationContext(options?.invocationContext) ?? new InvocationContextImpl()
 
     // Hook invocation lives in `_stream` so hook-raised `InterruptError`s land in the
     // same frame as the execution loop.
@@ -277,7 +272,7 @@ export class Graph implements MultiAgent {
   private async *_stream(
     input: MultiAgentInput,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     externalCancelSignal?: AbortSignal
   ): AsyncGenerator<MultiAgentStreamEvent, MultiAgentResult, undefined> {
     // Reuse state from a prior INTERRUPTED run so `graph.invoke(responses)` can

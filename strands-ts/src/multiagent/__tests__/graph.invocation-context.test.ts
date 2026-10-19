@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Agent } from '../../agent/agent.js'
-import {
-  createInvocationContext,
-  unwrapInvocationContext,
-  type InvocationContextImplementation,
-} from '../../agent/invocation-context.js'
+import { InvocationContextImpl, unwrapInvocationContext } from '../../agent/invocation-context.js'
 import { limitStopMessage } from '../../types/messages.js'
 import { AfterInvocationEvent } from '../../hooks/events.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -30,7 +26,7 @@ describe('Graph request-wide invocation context', () => {
       id: 'b',
     })
 
-    let shared: InvocationContextImplementation | undefined
+    let shared: InvocationContextImpl | undefined
     agentB.addHook(AfterInvocationEvent, (event) => {
       shared = unwrapInvocationContext(event.invocationContext)
     })
@@ -57,10 +53,12 @@ describe('Graph request-wide invocation context', () => {
       id: 'analyst',
     })
     const graph = new Graph({ nodes: [analyst], edges: [] })
-    const request = createInvocationContext()
+    const request = new InvocationContextImpl()
     request.recordUsage({ inputTokens: 100, outputTokens: 100, totalTokens: 200 })
 
-    const result = await graph.invoke('analyze', { invocationContext: createInvocationContext({ turns: 5 }, request) })
+    const result = await graph.invoke('analyze', {
+      invocationContext: new InvocationContextImpl({ turns: 5 }, request),
+    })
 
     expect(result.requestUsage).toBe(request.usage)
     expect(request.usage).toEqual({ inputTokens: 102, outputTokens: 103, totalTokens: 205 })
@@ -73,7 +71,7 @@ describe('Graph request-wide invocation context', () => {
       id: 'analyst',
     })
     const graph = new Graph({ nodes: [analyst], edges: [] })
-    const spentRequest = createInvocationContext({ turns: 1 })
+    const spentRequest = new InvocationContextImpl({ turns: 1 })
     spentRequest.turns = 1
 
     const result = await graph.invoke('analyze', { invocationContext: spentRequest })

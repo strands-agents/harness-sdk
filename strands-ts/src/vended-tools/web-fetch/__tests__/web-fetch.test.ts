@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ToolContext } from '../../../tools/tool.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import { Agent } from '../../../agent/agent.js'
-import { createInvocationContext } from '../../../agent/invocation-context.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { makeWebFetch, webFetch, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONTENT_CHARS } from '../web-fetch.js'
 import { WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from '../types.js'
@@ -358,7 +358,7 @@ describe('webFetch tool', () => {
           { type: 'textBlock', text: 'the answer' },
           { usage: { inputTokens: 20, outputTokens: 6, totalTokens: 26 } }
         )
-        const parentInvocationContext = createInvocationContext({ turns: 1 })
+        const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
         parentInvocationContext.turns = 5
 
         const result = await makeWebFetch({ mode: 'agentic', model: analystModel }).invoke(

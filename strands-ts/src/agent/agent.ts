@@ -36,12 +36,7 @@ import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import { ModelPlugin } from '../plugins/model-plugin.js'
 import { totalPromptTokens, isModelStreamEvent } from '../models/streaming.js'
-import {
-  createInvocationContext,
-  reachedLimit,
-  unwrapInvocationContext,
-  type InvocationContextImplementation,
-} from './invocation-context.js'
+import { InvocationContextImpl, reachedLimit, unwrapInvocationContext } from './invocation-context.js'
 import { ToolRegistry } from '../registry/tool-registry.js'
 import { StateStore } from '../state-store.js'
 import { serializeStateSerializable, loadStateSerializable } from '../types/serializable.js'
@@ -961,7 +956,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _buildLimitStopResult(
     limitStopReason: StopReason,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     messageCountAtStart: number
   ): AgentResult {
     const appendedMessage = this.messages.length > messageCountAtStart ? this.messages.at(-1) : undefined
@@ -984,7 +979,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param invocationContext - The state of the request the pass ran in
    * @returns `true` to run another pass with `event.resume` as input
    */
-  private _shouldResume(event: AfterInvocationEvent, invocationContext: InvocationContextImplementation): boolean {
+  private _shouldResume(event: AfterInvocationEvent, invocationContext: InvocationContextImpl): boolean {
     if (event.resume === undefined) return false
     const limitStopReason = reachedLimit(invocationContext)
     if (limitStopReason === undefined) return true
@@ -1000,10 +995,10 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param options - The per-invocation options, if any
    * @returns The state of the request to run this call in
    */
-  private _resolveInvocationContext(options: InvokeOptions | undefined): InvocationContextImplementation {
+  private _resolveInvocationContext(options: InvokeOptions | undefined): InvocationContextImpl {
     const inherited = unwrapInvocationContext(options?.invocationContext)
-    if (!inherited) return createInvocationContext(options?.limits)
-    return options?.limits === undefined ? inherited : createInvocationContext(options.limits, inherited)
+    if (!inherited) return new InvocationContextImpl(options?.limits)
+    return options?.limits === undefined ? inherited : new InvocationContextImpl(options.limits, inherited)
   }
 
   /**
@@ -1349,7 +1344,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options: InvokeOptions,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     // Snapshot so a gate that re-reads its response after next() still resolves even if a tool cycle called deactivate().
@@ -1422,7 +1417,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private async *_streamCore(
     args: InvokeArgs,
     options: InvokeOptions | undefined,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     const streamGenerator = this._stream(args, options, invocationContext, continuationEvent)
@@ -1596,7 +1591,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private async *_stream(
     args: InvokeArgs,
     options: InvokeOptions | undefined,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     let currentArgs: InvokeArgs | undefined = args
@@ -2035,7 +2030,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private _createInterruptResult(
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation
+    invocationContext: InvocationContextImpl
   ): AgentResult {
     this._interruptState.activate()
     return new AgentResult({
@@ -2180,7 +2175,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private async *_invokeModel(
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     toolChoice?: ToolChoice
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
@@ -2371,7 +2366,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private async *_invokeModelWithMiddleware(
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     selectedModel: Model,
     invokedModelRef: InvokedModelRef,
     toolChoice?: ToolChoice,
@@ -2495,7 +2490,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     messages: Message[],
     streamOptions: StreamOptions,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation
+    invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     messages = normalizeToolUseNames(messages)
     const proxy = new ModelProxy(model)
@@ -2540,7 +2535,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private async *executeTools(
     assistantMessage: Message,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     completedToolResults?: Map<string, ToolResultBlock>
   ): AsyncGenerator<AgentStreamEvent, ToolsExecutionResult, undefined> {
     const beforeToolsEvent = new BeforeToolsEvent({
@@ -2759,7 +2754,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _appendMessage(
     message: Message,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation
+    invocationContext: InvocationContextImpl
   ): MessageAddedEvent {
     this.messages.push(message)
     return new MessageAddedEvent({ agent: this, invocationContext, message, invocationState })
@@ -2769,7 +2764,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     messages: readonly Message[],
     continuationEvent: AfterInvocationEvent | BeforeModelCallEvent,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation
+    invocationContext: InvocationContextImpl
   ): Promise<MessageAddedEvent[]> {
     const events: MessageAddedEvent[] = []
     for (const message of messages) {

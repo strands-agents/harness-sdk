@@ -3,7 +3,7 @@ import { GoalLoop } from '../plugin.js'
 import type { GoalAttempt, GoalResult, ValidationOutcome } from '../plugin.js'
 import { buildJudgePrompt, JUDGE_OUTCOME_SCHEMA } from '../judge.js'
 import { Agent } from '../../../agent/agent.js'
-import { createInvocationContext } from '../../../agent/invocation-context.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { AfterInvocationEvent } from '../../../hooks/events.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { JsonBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -893,7 +893,7 @@ describe('GoalLoop natural-language judge', () => {
         plugins: [plugin],
         printer: false,
       })
-      const spentRequest = createInvocationContext({ turns: 1 })
+      const spentRequest = new InvocationContextImpl({ turns: 1 })
       spentRequest.turns = 1
 
       const result = await agent.invoke('go', { invocationContext: spentRequest })
@@ -907,7 +907,7 @@ describe('GoalLoop natural-language judge', () => {
       const validator = vi.fn(() => true)
       const goal = new GoalLoop({ goal: validator })
       const agent = new Agent({ model: new MockMessageModel(), plugins: [goal], printer: false })
-      const spentRequest = createInvocationContext({ turns: 1 })
+      const spentRequest = new InvocationContextImpl({ turns: 1 })
       spentRequest.turns = 1
 
       await agent.invoke('go', { invocationContext: spentRequest })

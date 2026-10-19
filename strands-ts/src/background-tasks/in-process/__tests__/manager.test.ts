@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
-import { createInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
+import { type InvocationContext, InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Interrupt, InterruptError } from '../../../interrupt.js'
 import { tool } from '../../../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../../../tools/tool.js'
@@ -77,7 +77,7 @@ describe('InProcessTaskManager', () => {
   })
 
   it('runs a task under the invocation context captured when it was submitted', async () => {
-    const invocationContext = createInvocationContext()
+    const invocationContext = new InvocationContextImpl()
     let runInvocationContext: InvocationContext | undefined
     const { manager, work } = createFixture((_input, context) => {
       runInvocationContext = context?.invocationContext

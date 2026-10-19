@@ -2,12 +2,7 @@ import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import type { AttributeValue, Span } from '@opentelemetry/api'
 import type { InvocationState, InvokableAgent } from '../types/agent.js'
-import {
-  createInvocationContext,
-  unwrapInvocationContext,
-  type InvocationContextImplementation,
-  type InvocationContext,
-} from '../agent/invocation-context.js'
+import { type InvocationContext, InvocationContextImpl, unwrapInvocationContext } from '../agent/invocation-context.js'
 import type { MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
 import {
   applyOrchestratorHookResponses,
@@ -247,7 +242,7 @@ export class Swarm implements MultiAgent {
     // are visible to the next.
     const invocationState: InvocationState = options?.invocationState ?? {}
 
-    const invocationContext = unwrapInvocationContext(options?.invocationContext) ?? createInvocationContext()
+    const invocationContext = unwrapInvocationContext(options?.invocationContext) ?? new InvocationContextImpl()
 
     // Hook invocation lives in `_stream` so hook-raised `InterruptError`s land in the
     // same frame as the execution loop.
@@ -263,7 +258,7 @@ export class Swarm implements MultiAgent {
   private async *_stream(
     input: MultiAgentInput,
     invocationState: InvocationState,
-    invocationContext: InvocationContextImplementation,
+    invocationContext: InvocationContextImpl,
     externalCancelSignal?: AbortSignal
   ): AsyncGenerator<MultiAgentStreamEvent, MultiAgentResult, undefined> {
     // Reuse state from a prior INTERRUPTED run so `swarm.invoke(responses)` can

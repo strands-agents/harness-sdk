@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../agent.js'
 import {
-  createInvocationContext,
   createAuxiliaryInvocationContext,
-  InvocationContextImplementation,
-  unwrapInvocationContext,
   type InvocationContext,
+  InvocationContextImpl,
+  unwrapInvocationContext,
 } from '../invocation-context.js'
 import { AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { tool } from '../../tools/tool-factory.js'
@@ -68,7 +67,7 @@ describe('Agent request-wide limits', () => {
       printer: false,
     })
 
-    const inherited = createInvocationContext({ turns: 1 })
+    const inherited = new InvocationContextImpl({ turns: 1 })
     inherited.turns = 5
     const result = await agent.invoke('go', { invocationContext: inherited })
 
@@ -139,7 +138,7 @@ describe('Agent request-wide limits', () => {
       ),
       printer: false,
     })
-    const enclosing = createInvocationContext()
+    const enclosing = new InvocationContextImpl()
     enclosing.recordUsage({ inputTokens: 4000, outputTokens: 4000, totalTokens: 8000 })
 
     const result = await agent.invoke('go', { invocationContext: enclosing, limits: { totalTokens: 5000 } })
@@ -156,7 +155,7 @@ describe('Agent request-wide limits', () => {
       .addTurn([{ type: 'toolUseBlock', name: 'loop', toolUseId: 'tu-1', input: {} }])
       .addTurn([{ type: 'toolUseBlock', name: 'loop', toolUseId: 'tu-2', input: {} }])
     const agent = new Agent({ model, tools: [loopTool], printer: false })
-    const request = createInvocationContext({ turns: 2 })
+    const request = new InvocationContextImpl({ turns: 2 })
     request.turns = 1
 
     const result = await agent.invoke('go', { invocationContext: request, limits: { turns: 5 } })
@@ -176,7 +175,7 @@ describe('Agent request-wide limits', () => {
       })
       .addTurn({ type: 'textBlock', text: 'never reached' })
     const agent = new Agent({ model, tools: [loopTool], printer: false })
-    const enclosing = createInvocationContext({ turns: 10 })
+    const enclosing = new InvocationContextImpl({ turns: 10 })
 
     const result = await agent.invoke('go', { invocationContext: enclosing, limits: { turns: 1 } })
 
@@ -189,7 +188,7 @@ describe('Agent request-wide limits', () => {
   })
 
   it('folds an auxiliary call into the request total without limiting it', async () => {
-    const parentInvocationContext = createInvocationContext({ turns: 1 })
+    const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
     parentInvocationContext.recordUsage({ inputTokens: 1, outputTokens: 2, totalTokens: 3 })
     parentInvocationContext.turns = 5
 
@@ -265,7 +264,7 @@ describe('Agent request-wide limits', () => {
     await agent.invoke('go')
 
     const invocationContext = modelCallEvents[0]?.invocationContext
-    expect(invocationContext).toBeInstanceOf(InvocationContextImplementation)
+    expect(invocationContext).toBeInstanceOf(InvocationContextImpl)
     expect(modelCallEvents[1]?.invocationContext).toBe(invocationContext)
     expect(probeContext?.invocationContext).toBe(invocationContext)
   })

@@ -4,7 +4,7 @@ import { ContextWindowOverflowError, Message, TextBlock, ToolUseBlock, ToolResul
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import { createInvocationContext } from '../../agent/invocation-context.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { Model as ModelBase } from '../../models/model.js'
 import type { Model, BaseModelConfig } from '../../models/model.js'
 
@@ -247,7 +247,7 @@ describe('SummarizingConversationManager', () => {
       )
       const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
       const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
-      const invocationContext = createInvocationContext({ turns: 1 })
+      const invocationContext = new InvocationContextImpl({ turns: 1 })
       invocationContext.turns = 5
 
       const result = await manager.reduce({

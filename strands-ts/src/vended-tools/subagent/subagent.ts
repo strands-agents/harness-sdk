@@ -28,7 +28,7 @@ import type { ToolSpec } from '../../tools/types.js'
 import type { AgentResult, InvokeArgs } from '../../types/agent.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import type { JSONSchema } from '../../types/json.js'
-import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { LIMIT_STOP_REASONS, limitStopMessage, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { DEFAULT_SUBAGENT_DESCRIPTION, DEFAULT_SUBAGENT_MAX_DEPTH, GENERALIST } from './types.js'
 
@@ -310,7 +310,7 @@ class SubagentTool extends Tool {
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
     const toolUseId = toolUse.toolUseId
     const input = toolUse.input
     const raw = (input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<
@@ -329,7 +329,11 @@ class SubagentTool extends Tool {
       }
       const { child, prompt } = prepared
 
-      const gen = child.stream(prompt, { invocationState: { ...invocationState }, cancelSignal })
+      const gen = child.stream(prompt, {
+        invocationState: { ...invocationState },
+        cancelSignal,
+        ...(invocationContext && { invocationContext }),
+      })
       let next = await gen.next()
       while (!next.done) {
         const event = next.value
@@ -493,6 +497,9 @@ class SubagentTool extends Tool {
     this._pending.delete(toolUseId)
     if (result.stopReason === 'cancelled') {
       return this._errorResult(toolUseId, 'Subagent was cancelled.')
+    }
+    if (LIMIT_STOP_REASONS.has(result.stopReason)) {
+      return this._errorResult(toolUseId, limitStopMessage(this.name, result.stopReason))
     }
     return new ToolResultBlock({
       toolUseId,

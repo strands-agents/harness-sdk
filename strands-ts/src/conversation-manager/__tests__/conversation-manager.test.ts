@@ -9,7 +9,7 @@ import { Agent } from '../../agent/agent.js'
 import { Message, TextBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { createInvocationContext, unwrapInvocationContext } from '../../agent/invocation-context.js'
+import { InvocationContextImpl, unwrapInvocationContext } from '../../agent/invocation-context.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import type { BaseModelConfig } from '../../models/model.js'
@@ -172,7 +172,7 @@ describe('ConversationManager', () => {
       const manager = new CapturingManager()
       const mockAgent = createMockAgent()
       manager.initAgent(mockAgent)
-      const request = createInvocationContext({ turns: 1 })
+      const request = new InvocationContextImpl({ turns: 1 })
       request.turns = 1
 
       await invokeTrackedHook(
