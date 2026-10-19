@@ -93,8 +93,6 @@ report = asyncio.run(
 report.display()
 ```
 
-The [Quickstart](quickstart.md) walks through each step (including a sync `run_evaluations()` path for notebook-style runs) and shows the report output.
-
 ## Red teaming vs evaluators
 
 | Aspect | Evaluators | Red Teaming |
@@ -113,8 +111,6 @@ The [Quickstart](quickstart.md) walks through each step (including a sync `run_e
   name="red-teaming-attack-flow"
   alt="How a red-team attack runs. For each case and strategy pair in a RedTeamExperiment, an adversarial case (a RedTeamCase with a risk category and an actor goal) is handed to an attack strategy (an AttackStrategy). Inside the attack loop, the strategy sends attack turns to your agent (an Agent or MultiAgentBase, reached through TargetSession.invoke) and reads its replies, and the strategy decides when to stop. The full conversation and tool trace then go to an LLM judge, the AttackSuccessEvaluator, which scores it from 0.0 to 1.0. The scores feed a breach report, the RedTeamReport, grouped by risk category and strategy."
 />
-
-The experiment holds the cases and strategies, not the target. You pass `agent_factory` to `run_evaluations()` or `run_evaluations_async()`, and the built-in attacker task calls it once per case, so every attack starts from a fresh target.
 
 A strategy runs against the target one case at a time when you call `run_evaluations()`, and against the case x strategy cross-product in parallel (default `max_workers=5`) when you call `run_evaluations_async()`. Each strategy carries its own cheap in-loop "should I stop?" gate, but the authoritative breach verdict always comes from the `AttackSuccessEvaluator` over the full conversation and tool trace.
 
