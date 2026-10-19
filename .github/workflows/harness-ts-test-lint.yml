@@ -9,8 +9,15 @@ on:
 
 jobs:
   test-lint:
-    name: Test and Lint
-    runs-on: strands-agents_ubuntu-latest_4-core
+    # `name` comes from the matrix so the Linux leg keeps its historical check name.
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
+          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
     # Build + check runs in ~2 min; 20 min caps a hung step instead of the 6-hour default.
     timeout-minutes: 20
     permissions:

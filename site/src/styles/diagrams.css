@@ -1,0 +1,187 @@
+/*
+ * Diagram design system for hand-authored SVGs in src/assets/diagrams/,
+ * rendered through <Diagram> (src/components/Diagram.astro).
+ *
+ * SVGs carry geometry and class names only; every color resolves here from
+ * Starlight's theme tokens, so one file serves light and dark mode.
+ * Authoring rules: .agents/references/diagrams.md
+ */
+
+.dg-figure {
+  /* Surfaces */
+  --dg-paper: var(--sl-color-bg);
+  --dg-zone-fill: color-mix(in srgb, var(--sl-color-white) 3%, var(--dg-paper));
+  --dg-zone-line: color-mix(in srgb, var(--sl-color-white) 16%, transparent);
+  --dg-input-fill: color-mix(in srgb, var(--sl-color-white) 5%, var(--dg-paper));
+  /* Ink */
+  --dg-ink: var(--sl-color-white);
+  --dg-line: var(--sl-color-gray-2);
+  --dg-muted: var(--sl-color-gray-3);
+  /* Accent: the text-safe green clears 4.5:1 in both themes */
+  --dg-accent: var(--sl-color-text-accent);
+  --dg-accent-tint: color-mix(in srgb, var(--dg-accent) 9%, var(--dg-paper));
+
+  margin-block: 2rem;
+}
+
+.dg-figure svg {
+  display: block;
+  /* Scale with the column: the viewBox keeps proportions, and on narrow screens the
+     whole diagram stays visible (vector, so pinch-zoom stays sharp). */
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  font-family: var(--sl-font);
+}
+
+.dg-figure figcaption {
+  margin-top: 0.75rem;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+/* ---- Shapes ---------------------------------------------------------- */
+
+/* Default node: a step, component, or agent. */
+.dg-node {
+  fill: var(--dg-paper);
+  stroke: var(--dg-line);
+  stroke-width: 1;
+}
+/* The one or two things the reader should look at first. */
+.dg-node.is-focal {
+  fill: var(--dg-accent-tint);
+  stroke: var(--dg-accent);
+}
+/* Inputs, users, and external systems: quieter than the system itself. */
+.dg-node.is-input {
+  fill: var(--dg-input-fill);
+  stroke: var(--dg-muted);
+}
+/* Accumulated state at the center of a loop. The only filled element. */
+.dg-node.is-hub {
+  fill: var(--dg-ink);
+  stroke: var(--dg-ink);
+}
+/* Optional or conditional step. */
+.dg-node.is-optional {
+  stroke-dasharray: 4 3;
+}
+/* Lifecycle event chip: one event name per chip, stacked inside a stage zone.
+   Tinted so it never reads as a zone or a plain node. */
+.dg-node.is-event {
+  fill: color-mix(in srgb, var(--dg-ink) 7%, var(--dg-paper));
+  stroke: color-mix(in srgb, var(--dg-ink) 40%, transparent);
+}
+
+/* Grouping region: a scope, boundary, or "these belong together". */
+.dg-zone {
+  fill: var(--dg-zone-fill);
+  stroke: var(--dg-zone-line);
+  stroke-width: 1;
+}
+.dg-zone.is-boundary {
+  fill: none;
+  stroke: var(--dg-muted);
+  stroke-dasharray: 4 4;
+}
+
+/* Opaque rect behind edge and zone labels so lines never run through text. */
+.dg-mask {
+  fill: var(--dg-paper);
+}
+/* Same, for labels that sit inside a zone. */
+.dg-mask.is-on-zone {
+  fill: var(--dg-zone-fill);
+}
+
+/* ---- Connectors ------------------------------------------------------ */
+
+.dg-edge {
+  fill: none;
+  stroke: var(--dg-muted);
+  stroke-width: 1.25;
+}
+.dg-edge.is-accent {
+  stroke: var(--dg-accent);
+  stroke-width: 1.5;
+}
+/* Returns, async, optional, and write-backs. */
+.dg-edge.is-dashed {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+/* Sequence diagram lifeline. */
+.dg-lifeline {
+  fill: none;
+  stroke: color-mix(in srgb, var(--dg-ink) 28%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.dg-head {
+  fill: var(--dg-muted);
+}
+.dg-head.is-accent {
+  fill: var(--dg-accent);
+}
+
+/* ---- Text ------------------------------------------------------------ */
+
+/* Node name: human-readable, sentence case. */
+.dg-name {
+  fill: var(--dg-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+/* One-line description under a name. */
+.dg-sub {
+  fill: var(--dg-muted);
+  font-size: 12px;
+}
+/* Technical identifier: a function, class, event, or parameter name. */
+.dg-code {
+  fill: var(--dg-muted);
+  font-family: var(--sl-font-mono);
+  font-size: 11.5px;
+}
+/* Sequence message: a short sentence-case phrase above the arrow. */
+.dg-msg {
+  fill: var(--dg-line);
+  font-size: 12px;
+}
+.dg-msg.is-accent {
+  fill: var(--dg-accent);
+  font-weight: 500;
+}
+/* Edge label: short, uppercase, on a mask. */
+.dg-label {
+  fill: var(--dg-muted);
+  font-family: var(--sl-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.dg-label.is-accent {
+  fill: var(--dg-accent);
+}
+/* Zone and group labels. */
+.dg-eyebrow {
+  fill: var(--dg-muted);
+  font-family: var(--sl-font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+}
+/* Editorial aside. At most two per diagram. */
+.dg-note {
+  fill: var(--dg-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Text modifiers come last so they win over any text class above (including dg-code). */
+.is-focal-text {
+  fill: var(--dg-accent);
+}
+.is-hub-text {
+  fill: var(--dg-paper);
+}

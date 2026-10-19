@@ -1055,6 +1055,123 @@ async def test_stream_bad_request_error(anthropic_client, model):
         await anext(model.stream(messages))
 
 
+def _thinking_binding_error():
+    return anthropic.BadRequestError(
+        "messages.1.content.0: Invalid `signature` in `thinking` block. "
+        "The block is bound to a different conversation.",
+        response=unittest.mock.Mock(),
+        body=None,
+    )
+
+
+def _message_start_stream():
+    event = unittest.mock.Mock(type="message_start", model_dump=lambda: {"type": "message_start"})
+    final_message = unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {}))
+    return generate_mock_stream_context([event], final_message=final_message)
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_with_drop_block_on_thinking_binding_error(anthropic_client, alist, messages, caplog):
+    anthropic_client.default_headers = {"anthropic-beta": "client-beta"}
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), _message_start_stream()]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.anthropic"):
+        tru_events = await alist(model.stream(messages))
+
+    assert tru_events == [{"messageStart": {"role": "assistant"}}]
+    assert "retrying with drop_block" in caplog.text
+
+    first_request, retry_request = [call.kwargs for call in anthropic_client.messages.stream.call_args_list]
+    assert first_request["thinking"] == {"type": "adaptive"}
+    assert "extra_headers" not in first_request
+    exp_thinking = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    exp_headers = {"anthropic-beta": "client-beta,thinking-binding-controls-2026-08-01"}
+    assert retry_request["thinking"] == exp_thinking
+    assert retry_request["extra_headers"] == exp_headers
+
+    anthropic_client.messages.stream.reset_mock(side_effect=True)
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+
+    await alist(model.stream(messages))
+
+    anthropic_client.messages.stream.assert_called_once()
+    assert anthropic_client.messages.stream.call_args.kwargs["thinking"] == exp_thinking
+    assert anthropic_client.messages.stream.call_args.kwargs["extra_headers"] == exp_headers
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
+        {"temperature": 1},
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(anthropic_client, messages, params):
+    anthropic_client.messages.stream.side_effect = _thinking_binding_error()
+    model = AnthropicModel(model_id="m1", max_tokens=1, params=params)
+
+    with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
+        await anext(model.stream(messages))
+
+    anthropic_client.messages.stream.assert_called_once()
+    assert model._drop_stale_thinking_model_id is None
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_drop_block_once_when_params_override_model(anthropic_client, alist, messages):
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), _thinking_binding_error()]
+    model = AnthropicModel(
+        model_id="m1", max_tokens=1, params={"model": "m1-override", "thinking": {"type": "adaptive"}}
+    )
+
+    with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    assert anthropic_client.messages.stream.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("retry_error", "exp_exception"),
+    [
+        (anthropic.RateLimitError("rate limit", response=unittest.mock.Mock(), body=None), ModelThrottledException),
+        (
+            anthropic.BadRequestError("input is too long", response=unittest.mock.Mock(), body=None),
+            ContextWindowOverflowException,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist, messages, retry_error, exp_exception):
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), retry_error]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+
+    with pytest.raises(exp_exception):
+        await alist(model.stream(messages))
+
+    assert anthropic_client.messages.stream.call_count == 2
+
+
+def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):
+    _ = anthropic_client
+    model = AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        params={"thinking": {"type": "adaptive"}, "extra_headers": {"anthropic-beta": "other-beta"}},
+    )
+    model._drop_stale_thinking_model_id = "m1"
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert tru_request["extra_headers"] == {"anthropic-beta": "other-beta,thinking-binding-controls-2026-08-01"}
+
+    model.update_config(model_id="m2")
+
+    assert model.format_request(messages)["thinking"] == {"type": "adaptive"}
+
+
 @pytest.mark.asyncio
 async def test_structured_output(anthropic_client, model, test_output_model_cls, alist):
     messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]

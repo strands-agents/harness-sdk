@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from .types import InjectionContext, InjectionTriggerPredicate
 
 if TYPE_CHECKING:
-    from .._middleware.stages import InvokeModelContext
+    from ..middleware.stages import InvokeModelContext
     from ..types.content import ContentBlock, Message, Messages
 
 logger = logging.getLogger(__name__)

@@ -295,6 +295,57 @@ describe('MCP Integration', () => {
       expect(sdkClientMock.connect).toHaveBeenCalledTimes(1)
     })
 
+    // A cancelling creator must not release the shared connection attempt (#5045).
+    it.each([false, true])(
+      'keeps the connection shared after its creator aborts (continueOnError=%s)',
+      async (continueOnError) => {
+        const abortableClient = new McpClient({ applicationName: 'TestApp', transport: mockTransport, continueOnError })
+        const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+        let resolveConnect!: () => void
+        sdkClient.connect.mockReturnValue(
+          new Promise<void>((resolve) => {
+            resolveConnect = resolve
+          })
+        )
+        const controller = new AbortController()
+        const reason = new Error('creator left')
+
+        const creator = abortableClient.connect(false, { signal: controller.signal })
+        controller.abort(reason)
+        await expect(creator).rejects.toBe(reason)
+        const follower = abortableClient.connect()
+        expect(sdkClient.connect).toHaveBeenCalledTimes(1)
+
+        resolveConnect()
+        await expect(follower).resolves.toBeUndefined()
+        await abortableClient.connect()
+        expect(abortableClient.connectionState).toBe('connected')
+        expect(sdkClient.connect).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it('releases a rejected connection after its creator aborts so an explicit retry can run', async () => {
+      let rejectConnect!: (reason: Error) => void
+      const pending = new Promise<void>((_resolve, reject) => {
+        rejectConnect = reject
+      })
+      const failure = new Error('handshake failed')
+      sdkClientMock.connect.mockReturnValueOnce(pending).mockResolvedValueOnce(undefined)
+      const controller = new AbortController()
+      const creator = client.connect(false, { signal: controller.signal })
+      controller.abort(new Error('creator left'))
+      await expect(creator).rejects.toThrow('creator left')
+
+      const follower = client.connect()
+      const rejected = expect(follower).rejects.toBe(failure)
+      rejectConnect(failure)
+      await rejected
+      expect(sdkClientMock.connect).toHaveBeenCalledTimes(1)
+      await client.connect(true)
+      expect(client.connectionState).toBe('connected')
+      expect(sdkClientMock.connect).toHaveBeenCalledTimes(2)
+    })
+
     it('rejects immediately when connect is called with an aborted signal', async () => {
       const reason = new Error('already cancelled')
       await expect(client.connect(false, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)

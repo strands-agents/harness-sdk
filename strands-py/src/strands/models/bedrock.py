@@ -25,7 +25,7 @@ from .._exception_notes import add_exception_note
 from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
-from ..types.content import CachePoint, ContentBlock, Messages, SystemContentBlock
+from ..types.content import CachePoint, ContentBlock, Messages, ReasoningContentBlock, SystemContentBlock
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -35,6 +35,7 @@ from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._strict_schema import ensure_strict_json_schema
+from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
@@ -70,6 +71,25 @@ _MODELS_INCLUDE_STATUS = [
 # Models that hallucinate when receiving JSON content blocks in tool results
 _MODELS_CONVERT_JSON_TO_TEXT = [
     "amazon.nova",
+]
+
+# Models that reject any reasoningText block replayed in history ("User messages cannot contain reasoning content")
+_MODELS_REJECT_REASONING_TEXT = [
+    "amazon.nova-lite",
+    "amazon.nova-pro",
+    "google.gemma",
+    "meta.llama",
+    "mistral.devstral",
+    "mistral.ministral",
+    "mistral.mistral-large",
+    "nvidia.nemotron-nano-9b",
+    "nvidia.nemotron-super",
+    "openai.gpt-5",
+    "openai.gpt-6",
+    "qwen.qwen3-235b",
+    "qwen.qwen3-coder",
+    "writer.palmyra",
+    "xai.grok",
 ]
 
 # Cache of model IDs for which CountTokens API calls should be skipped.
@@ -139,6 +159,17 @@ DEFAULT_READ_TIMEOUT = 120
 
 # How often the consumer side checks a cancellation signal while waiting for the next event.
 _CANCEL_POLL_INTERVAL = 0.05
+
+
+def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
+    """Return additional request fields that drop stale thinking blocks, or None if they cannot change."""
+    thinking = thinking_with_drop_block(fields.get("thinking"))
+    if thinking is None:
+        return None
+    betas = list(fields.get("anthropic_beta") or [])
+    if THINKING_BINDING_BETA not in betas:
+        betas.append(THINKING_BINDING_BETA)
+    return {**fields, "anthropic_beta": betas, "thinking": thinking}
 
 
 class BedrockModel(Model):
@@ -260,6 +291,7 @@ class BedrockModel(Model):
             include_tool_result_status="auto",
         )
         self._tool_result_turn_separation_model_id: str | None = None
+        self._drop_stale_thinking_model_id: str | None = None
         self.update_config(**model_config)
 
         logger.debug("config=<%s> | initializing", self.config)
@@ -489,7 +521,32 @@ class BedrockModel(Model):
                 return {"additionalModelRequestFields": fields_without_thinking}
             return {}
 
+        if self._drop_stale_thinking_model_id == self.config["model_id"]:
+            additional_fields = _fields_with_drop_block(additional_fields) or additional_fields
+
         return {"additionalModelRequestFields": additional_fields}
+
+    def _converse(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
+        """Invoke the model, retrying once with drop_block when an edit before replayed thinking made it stale.
+
+        The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
+        """
+        try:
+            return converse_method(**request)
+        except ClientError as error:
+            fields = request.get("additionalModelRequestFields") or {}
+            error_code = error.response.get("Error", {}).get("Code")
+            is_binding_error = error_code == "ValidationException" and is_thinking_binding_error(error)
+            retry_fields = _fields_with_drop_block(fields) if is_binding_error else None
+            if retry_fields is None:
+                raise
+
+        logger.warning(
+            "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
+            request["modelId"],
+        )
+        self._drop_stale_thinking_model_id = request["modelId"]
+        return converse_method(**{**request, "additionalModelRequestFields": retry_fields})
 
     def _apply_system_cache_ttl(
         self, system_blocks: list[SystemContentBlock], tools_cache_point: list[dict[str, Any]]
@@ -805,6 +862,29 @@ class BedrockModel(Model):
                 return idx
         return None
 
+    def _rejects_reasoning_block(self, reasoning: ReasoningContentBlock) -> bool:
+        """Whether the configured model would reject this ``reasoningContent`` block if it were replayed.
+
+        Only blocks that are certain to fail are dropped. ``signature`` is Anthropic-only: Anthropic models reject
+        ``reasoningText`` without one and every other model rejects ``reasoningText`` with one. Models in
+        ``_MODELS_REJECT_REASONING_TEXT`` reject ``reasoningText`` outright and DeepSeek rejects any reasoning block.
+        ``redactedContent`` is otherwise opaque and kept, as is every block when the model ID is an ARN or bare
+        inference profile ID that names no vendor.
+        """
+        model_id = self.config["model_id"].lower()
+        if "deepseek" in model_id:
+            return True
+        if "reasoningText" not in reasoning:
+            return False
+        signed = bool(reasoning["reasoningText"].get("signature"))
+        if "anthropic" in model_id or "claude" in model_id:
+            return not signed
+        if model_id.startswith("arn:") or "." not in model_id:
+            return False
+        if any(model in model_id for model in _MODELS_REJECT_REASONING_TEXT):
+            return True
+        return signed
+
     def _format_bedrock_messages(self, messages: Messages, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
         """Format messages for Bedrock API compatibility.
 
@@ -833,7 +913,7 @@ class BedrockModel(Model):
         cleaned_messages: list[dict[str, Any]] = []
 
         filtered_unknown_members = False
-        dropped_deepseek_reasoning_content = False
+        dropped_reasoning_content = False
 
         # Pre-compute the index of the last user message containing text or image content.
         # This ensures guardContent wrapping is maintained across tool execution cycles, where
@@ -851,10 +931,10 @@ class BedrockModel(Model):
                     filtered_unknown_members = True
                     continue
 
-                # DeepSeek models have issues with reasoningContent
-                # TODO: Replace with systematic model configuration registry (https://github.com/strands-agents/harness-sdk/issues/780)
-                if "deepseek" in self.config["model_id"].lower() and "reasoningContent" in content_block:
-                    dropped_deepseek_reasoning_content = True
+                if "reasoningContent" in content_block and self._rejects_reasoning_block(
+                    content_block["reasoningContent"]
+                ):
+                    dropped_reasoning_content = True
                     continue
 
                 # Format content blocks for Bedrock API compatibility
@@ -898,9 +978,9 @@ class BedrockModel(Model):
             logger.warning(
                 "Filtered out SDK_UNKNOWN_MEMBER content blocks from messages, consider upgrading boto3 version"
             )
-        if dropped_deepseek_reasoning_content:
+        if dropped_reasoning_content:
             logger.debug(
-                "Filtered DeepSeek reasoningContent content blocks from messages - https://api-docs.deepseek.com/guides/reasoning_model#multi-round-conversation"
+                "model_id=<%s> | dropped reasoningContent blocks the model does not accept", self.config["model_id"]
             )
 
         # Inject cache point into cleaned_messages (not original messages) if cache_config is set
@@ -1456,7 +1536,7 @@ class BedrockModel(Model):
             converse_method = self.client.converse_stream if streaming else self.client.converse
 
             try:
-                response = converse_method(**request)
+                response = self._converse(converse_method, request)
             except ClientError as error:
                 error_details = error.response.get("Error", {})
                 if error_details.get(
@@ -1472,7 +1552,7 @@ class BedrockModel(Model):
 
                 logger.debug("model_id=<%s> | separating tool result and conversation turns", model_id)
                 request = {**request, "messages": separated_messages}
-                response = converse_method(**request)
+                response = self._converse(converse_method, request)
                 self._tool_result_turn_separation_model_id = model_id
 
             logger.debug("got response from model")

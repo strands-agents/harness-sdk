@@ -750,7 +750,7 @@ async def test_stream_forwards_parent_cancel_signal_to_sub_agent(tool, mock_agen
 
 @pytest.mark.asyncio
 async def test_stream_cancelled_sub_agent_returns_error(tool, mock_agent, tool_use):
-    """A cancelled wrapped agent surfaces as an error tool result."""
+    """A sub-agent cancelled via its signal (external or internal) surfaces as an error."""
     cancelled_result = AgentResult(
         stop_reason="cancelled",
         message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
@@ -758,6 +758,7 @@ async def test_stream_cancelled_sub_agent_returns_error(tool, mock_agent, tool_u
         state={},
     )
     mock_agent.stream_async.return_value = _mock_stream_async(cancelled_result)
+    mock_agent.cancel_signal.is_set.return_value = True
 
     events = [event async for event in tool.stream(tool_use, {})]
 
@@ -767,6 +768,31 @@ async def test_stream_cancelled_sub_agent_returns_error(tool, mock_agent, tool_u
                 "toolUseId": "tool-123",
                 "status": "error",
                 "content": [{"text": "Agent 'test_agent' cancelled"}],
+            }
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_sub_agent_deferred_cancel_surfaces_as_success(tool, mock_agent, tool_use):
+    """stop tool and other deferred cancels never set the signal; the terminal message reaches the parent."""
+    cancelled_result = AgentResult(
+        stop_reason="cancelled",
+        message={"role": "assistant", "content": [{"text": "Summary from stop tool"}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+    mock_agent.stream_async.return_value = _mock_stream_async(cancelled_result)
+    mock_agent.cancel_signal.is_set.return_value = False
+
+    events = [event async for event in tool.stream(tool_use, {})]
+
+    assert events == [
+        ToolResultEvent(
+            {
+                "toolUseId": "tool-123",
+                "status": "success",
+                "content": [{"text": "Summary from stop tool\n"}],
             }
         )
     ]

@@ -24,6 +24,7 @@ Skills for this repository. See [agentskills.io](https://agentskills.io/home) fo
 | **docs-reviewer** | Reviews drafts for voice consistency, structure, and terminology before PR submission. |
 | **docs-audit** | Assesses published pages for quality, accuracy, and voice compliance. |
 | **docs-planner** | Identifies documentation gaps and prioritizes the backlog. |
+| **docs-diagrams** | Designs and draws theme-aware SVG diagrams for the docs following `references/diagrams.md`, then screenshots them in light and dark mode to verify. |
 
 ## Code review
 

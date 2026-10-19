@@ -7,6 +7,8 @@ sourceLinks:
   - path: strands-ts/src/plugins/plugin.ts
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 A plugin bundles hooks and tools into one reusable object you attach to an agent. It works against the low-level primitives the Agent class exposes: `model`, <Syntax py="system_prompt" ts="systemPrompt" />, `messages`, `tools`, and `hooks`. When the built-in plugins don't fit, you build and distribute your own. See [Get Featured](/docs/integrations/get-featured) to share your plugins with the community.
 
 ## Using Plugins
@@ -94,37 +96,32 @@ agent("Calculate 2 + 2 and print the result")
 
 ### What Happens on Attach
 
-When you attach a plugin to an agent, the following happens:
+When you create a plugin and attach it to an agent, the following happens:
 
 <Tabs>
 <Tab label="Python">
 
-1. **Discovery**: The `Plugin` base class scans for methods decorated with `@hook` and `@tool`
-2. **Hook Registration**: Each `@hook` method is registered with the agent's hook registry based on its event type hint
-3. **Tool Registration**: Each `@tool` method is added to the agent's tools list
-4. **Initialization**: The `init_agent(agent)` method is called for any custom setup
+1. **Discovery**: When the plugin is constructed, the `Plugin` base class scans for methods decorated with `@hook` and `@tool`
+2. **Initialization**: The `init_agent(agent)` method is called for any custom setup
+3. **Hook Registration**: Each `@hook` method is registered with the agent's hook registry based on its event type hint
+4. **Tool Registration**: Each `@tool` method is added to the agent's tools list
 
 </Tab>
 <Tab label="TypeScript">
 
-1. **Tool Registration**: The `getTools()` method is called to get tools provided by the plugin
-2. **Initialization**: The `initAgent(agent)` method is called for hook registration and setup
-3. **Hook Registration**: In `initAgent`, use `agent.addHook()` to register event callbacks manually
+1. **Initialization**: The `initAgent(agent)` method is called for hook registration and setup
+2. **Hook Registration**: In `initAgent`, use `agent.addHook()` to register event callbacks manually
+3. **Tool Registration**: The `getTools()` method is called to get tools provided by the plugin
 
 **Note**: TypeScript does not use `@hook` or `@tool` decorators. Instead, tools are returned from `getTools()` and hooks are registered manually in `initAgent()`.
 
 </Tab>
 </Tabs>
 
-```mermaid
-flowchart TD
-    A[Plugin Attached] --> B["Discover Tools\n(@tool / getTools)"]
-    A --> C["Initialize\n(init_agent / initAgent)"]
-    B --> D[Add Tools]
-    C --> E["Register Hooks\n(@hook / addHook)"]
-    D --> F[Plugin Ready]
-    E --> F
-```
+<Diagram
+  name="custom-plugins-attach"
+  alt="What happens when you attach a plugin to an agent. The plugin's init method runs first and can set up the agent's primitives: its model, system prompt, and messages. The plugin's hooks go into the agent's hook registry, which fires them on lifecycle events, and its tools go last into the agent's tool registry, where the model can call them. In TypeScript there is no separate hook step: the init method registers hooks itself with agent.addHook()."
+/>
 
 ### Registering Hooks in Plugins
 

@@ -2780,6 +2780,79 @@ async def test_graph_with_agentbase_implementation(mock_strands_tracer, mock_use
     assert "regular_node" in result.results
 
 
+@pytest.mark.asyncio
+async def test_graph_cancelled_node_signal_set_is_failure(mock_strands_tracer, mock_use_span):
+    """A sub-agent that cancels via its signal (immediate cancel) marks the node FAILED."""
+    import threading
+
+    cancelled_signal = threading.Event()
+    cancelled_signal.set()
+    agent = create_mock_agent("c")
+    agent.cancel_signal = cancelled_signal
+    agent.stream_async = Mock(
+        return_value=_as_async_gen(
+            [
+                {
+                    "result": AgentResult(
+                        message={"role": "assistant", "content": [{"text": "x"}]},
+                        stop_reason="cancelled",
+                        state={},
+                        metrics=Mock(
+                            accumulated_usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+                            accumulated_metrics={"latencyMs": 0},
+                        ),
+                    )
+                }
+            ]
+        )
+    )
+
+    builder = GraphBuilder()
+    builder.add_node(agent, "n")
+    builder.set_entry_point("n")
+    result = await builder.build().invoke_async("go")
+
+    assert result.results["n"].status == Status.FAILED
+
+
+@pytest.mark.asyncio
+async def test_graph_cancelled_node_signal_unset_is_completion(mock_strands_tracer, mock_use_span):
+    """A sub-agent that stopped via deferred cancel (signal never set) marks the node COMPLETED."""
+    import threading
+
+    agent = create_mock_agent("c")
+    agent.cancel_signal = threading.Event()  # unset
+    agent.stream_async = Mock(
+        return_value=_as_async_gen(
+            [
+                {
+                    "result": AgentResult(
+                        message={"role": "assistant", "content": [{"text": "done"}]},
+                        stop_reason="cancelled",
+                        state={},
+                        metrics=Mock(
+                            accumulated_usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+                            accumulated_metrics={"latencyMs": 0},
+                        ),
+                    )
+                }
+            ]
+        )
+    )
+
+    builder = GraphBuilder()
+    builder.add_node(agent, "n")
+    builder.set_entry_point("n")
+    result = await builder.build().invoke_async("go")
+
+    assert result.results["n"].status == Status.COMPLETED
+
+
+async def _as_async_gen(items):
+    for item in items:
+        yield item
+
+
 def test_find_newly_ready_nodes_only_evaluates_outbound_edges():
     """Verify _find_newly_ready_nodes only checks destinations of outbound edges from completed batch.
 

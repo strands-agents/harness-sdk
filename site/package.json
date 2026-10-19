@@ -50,7 +50,7 @@
     "prettier": "^3.9.9",
     "reading-time": "^1.5.0",
     "sanitize-html": "^2.17.7",
-    "satori": "^0.47.1",
+    "satori": "^0.52.0",
     "turndown": "^7.2.2",
     "turndown-plugin-gfm": "^1.0.2",
     "typedoc": "^0.28.20",
@@ -58,7 +58,7 @@
     "vite": "^8.3.4"
   },
   "devDependencies": {
-    "@astrojs/markdown-remark": "^7.2.4",
+    "@astrojs/markdown-remark": "^7.3.3",
     "@astrojs/markdown-satteri": "^0.3.4",
     "@astrojs/starlight": "^0.41.9",
     "@octokit/rest": "^22.0.1",
@@ -69,7 +69,7 @@
     "acorn": "^8.18.0",
     "astro": "^7.3.3",
     "js-yaml": "^4.3.2",
-    "jsdom": "^30.0.1",
+    "jsdom": "^30.1.2",
     "pino": "^10.4.0",
     "pino-pretty": "^13.0.0",
     "remark-parse": "^11.0.0",

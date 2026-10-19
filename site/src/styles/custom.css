@@ -45,10 +45,6 @@
 	font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
-.interrupt-flow .mermaid {
-	justify-content: center;
-}
-
 /* Brand palette and shared Starlight tokens live in fonts.css (loaded on every
    page). Only docs-specific tokens and rules remain here. */
 

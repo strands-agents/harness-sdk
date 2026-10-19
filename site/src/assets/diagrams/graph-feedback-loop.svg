@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 196" width="720" height="196">
+  <!-- Type: loop (cyclic graph). Story: the reviewer sends the draft back until it is approved, then on to the publisher. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <g transform="translate(0,20)">
+    <!-- Edges: conditional edges are dashed; the loop back is the accent -->
+    <path class="dg-edge" d="M168,56 H282" marker-end="url(#arrow)"/>
+    <path class="dg-edge is-dashed" d="M436,56 H550" marker-end="url(#arrow)"/>
+    <path class="dg-edge is-accent is-dashed" d="M360,88 V120 Q360,128 352,128 H100 Q92,128 92,120 V90" marker-end="url(#arrow-accent)"/>
+
+    <!-- Edge labels -->
+    <rect class="dg-mask" x="458" y="36" width="72" height="12" rx="2"/>
+    <text class="dg-label" x="493" y="45" text-anchor="middle">APPROVED</text>
+    <rect class="dg-mask" x="176" y="108" width="100" height="12" rx="2"/>
+    <text class="dg-label is-accent" x="226" y="117" text-anchor="middle">NEEDS REVISION</text>
+
+    <text class="dg-note" x="704" y="164" text-anchor="end">Execution limits stop the loop if the draft is never approved</text>
+
+    <!-- Nodes -->
+    <rect class="dg-node" x="16" y="24" width="152" height="64" rx="6"/>
+    <text class="dg-name" x="92" y="53" text-anchor="middle">Draft writer</text>
+    <text class="dg-code" x="92" y="71" text-anchor="middle">draft_writer</text>
+
+    <rect class="dg-node" x="284" y="24" width="152" height="64" rx="6"/>
+    <text class="dg-name" x="360" y="53" text-anchor="middle">Reviewer</text>
+    <text class="dg-code" x="360" y="71" text-anchor="middle">reviewer</text>
+
+    <rect class="dg-node" x="552" y="24" width="152" height="64" rx="6"/>
+    <text class="dg-name" x="628" y="53" text-anchor="middle">Publisher</text>
+    <text class="dg-code" x="628" y="71" text-anchor="middle">publisher</text>
+
+    <!-- The loop gives every node an incoming edge, so the entry point is set explicitly -->
+    <text class="dg-label" x="92" y="14" text-anchor="middle">ENTRY POINT</text>
+  </g>
+</svg>

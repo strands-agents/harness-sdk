@@ -31,7 +31,6 @@ const model = { id: 'fake-model' } as unknown as Model
 
 class FakeSandbox {
   commands: string[] = []
-  files = new Map<string, Uint8Array>()
   constructor(
     private readonly response: {
       body?: Uint8Array | string
@@ -43,33 +42,24 @@ class FakeSandbox {
   ) {}
   execute(command: string): Promise<ExecutionResult> {
     this.commands.push(command)
-    if (command.startsWith('rm -f ')) {
-      for (const path of command.slice('rm -f '.length).split(' ')) this.files.delete(path.replaceAll("'", ''))
-      return Promise.resolve({ type: 'executionResult', exitCode: 0, stdout: '', stderr: '', outputFiles: [] })
-    }
     const exitCode = this.response.exitCode ?? 0
-    if (exitCode === 0) {
-      const body = this.response.body ?? ''
-      this.files.set(
-        /-o (\S+)/.exec(command)![1]!.replaceAll("'", ''),
-        typeof body === 'string' ? Buffer.from(body) : body
-      )
-    }
+    const body = this.response.body ?? ''
+    // What the shell pipeline prints: the two trailer lines, then base64(1) output (wrapped at 76 columns).
+    const encoded = Buffer.from(typeof body === 'string' ? Buffer.from(body) : body).toString('base64')
+    const wrapped = encoded.match(/.{1,76}/g)?.join('\n') ?? ''
     return Promise.resolve({
       type: 'executionResult',
       exitCode,
-      stdout: `${this.response.contentType ?? 'text/html'}\n${this.response.url ?? 'https://example.com/final'}\n`,
+      stdout:
+        exitCode === 0
+          ? `${this.response.contentType ?? 'text/html'}\n${this.response.url ?? 'https://example.com/final'}\n${wrapped}\n`
+          : '',
       stderr: this.response.stderr ?? '',
       outputFiles: [],
     })
   }
-  readFile(path: string): Promise<Uint8Array> {
-    const data = this.files.get(path)
-    if (!data) throw new Error(`no file ${path}`)
-    return Promise.resolve(data)
-  }
   get curl(): string {
-    return this.commands.find((c) => c.startsWith('curl '))!
+    return this.commands.find((c) => c.startsWith('f=$(mktemp') && c.includes('curl '))!
   }
 }
 
@@ -114,15 +104,17 @@ describe('web_fetch', () => {
       "--proto '=http,https'",
       "--proto-redir '=http,https'",
       '--max-time',
-      '-o ',
+      '-o "$f"',
       '%{content_type}',
       '%{url_effective}',
       " -- '",
     ]) {
       expect(command).toContain(flag)
     }
-    expect(sandbox.commands.at(-1)!.startsWith('rm -f ')).toBe(true)
-    expect(sandbox.files.size).toBe(0)
+    // One round-trip: the shell picks the scratch file, returns the body as base64, and removes the file itself.
+    expect(sandbox.commands).toHaveLength(1)
+    expect(command.startsWith('f=$(mktemp -t strands-web-fetch.XXXXXX) && ')).toBe(true)
+    expect(command).toMatch(/\| base64; s=\$\?; rm -f "\$f"; exit \$s$/)
   })
 
   it('handles a missing content type without shifting the trailer', async () => {
@@ -135,7 +127,7 @@ describe('web_fetch', () => {
     const sandbox = new FakeSandbox({ body: 'x' })
     const tool = makeWebFetch({ model })
     return invoke(tool, { url: 'https://example.com' }, sandbox).then(() => {
-      expect(sandbox.curl).toMatch(/&& head -c 5242880 '[^']+' > '[^']+\.part' && mv -f /)
+      expect(sandbox.curl).toContain('&& head -c 5242880 "$f" | base64')
       expect(sandbox.curl).not.toContain('--max-filesize')
     })
   })
@@ -169,7 +161,7 @@ describe('web_fetch', () => {
     expect(answer).toContain('Failed to fetch https://example.com')
     expect(answer).toContain('500')
     expect(invokeCalls).toHaveLength(0)
-    expect(sandbox.commands.at(-1)!.startsWith('rm -f ')).toBe(true)
+    expect(sandbox.commands).toHaveLength(1)
   })
 
   it('reports a sandbox failure as a fetch failure', async () => {
@@ -267,7 +259,7 @@ describe('web_fetch', () => {
     const tool = makeWebFetch({ model })
     await invoke(tool, { url: 'https://example.com', prompt: 'first' }, sandbox)
     await invoke(tool, { url: 'https://example.com', prompt: 'second' }, sandbox)
-    expect(sandbox.commands.filter((c) => c.startsWith('curl '))).toHaveLength(1)
+    expect(sandbox.commands).toHaveLength(1)
     expect(invokeCalls).toHaveLength(2)
   })
 
@@ -306,7 +298,8 @@ describe('web_fetch', () => {
       expect(await invoke(tool, { url: `${base}/big` }, sandbox)).toBe('日'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/huge` }, sandbox)).toBe('x'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/notype` }, sandbox)).toBe('a < b')
-      expect((await sandbox.execute('ls /tmp | grep -c strands-web-fetch')).stdout.trim()).toBe('0')
+      // Same scratch directory the tool derives: `/tmp` is not readable through Node on Windows.
+      expect((await sandbox.execute('ls "${TMPDIR:-/tmp}" | grep -c strands-web-fetch')).stdout.trim()).toBe('0')
       expect(await invoke(tool, { url: `${base}/missing` }, sandbox)).toContain('404')
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))

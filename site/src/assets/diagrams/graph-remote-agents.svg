@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 232" width="720" height="232">
+  <!-- Type: architecture (fan-out and join across a boundary). Story: local nodes orchestrate while two remote A2A agents do the specialized middle step. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone is-boundary" x="232" y="8" width="256" height="216" rx="8"/>
+  <text class="dg-eyebrow" x="248" y="30">REMOTE · A2A AGENTS</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M168,112 H204 Q212,112 212,104 V88 Q212,80 220,80 H254" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M168,136 H204 Q212,136 212,144 V160 Q212,168 220,168 H254" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M464,80 H500 Q508,80 508,88 V104 Q508,112 516,112 H550" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M464,168 H500 Q508,168 508,160 V144 Q508,136 516,136 H550" marker-end="url(#arrow)"/>
+
+  <!-- Labels -->
+  <text class="dg-label" x="92" y="84" text-anchor="middle">LOCAL</text>
+  <text class="dg-label" x="628" y="84" text-anchor="middle">LOCAL</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="16" y="92" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="92" y="121" text-anchor="middle">Data prep</text>
+  <text class="dg-code" x="92" y="139" text-anchor="middle">prep</text>
+
+  <rect class="dg-node" x="256" y="48" width="208" height="64" rx="6"/>
+  <text class="dg-name" x="360" y="77" text-anchor="middle">ML analysis</text>
+  <text class="dg-code" x="360" y="95" text-anchor="middle">ml</text>
+
+  <rect class="dg-node" x="256" y="136" width="208" height="64" rx="6"/>
+  <text class="dg-name" x="360" y="165" text-anchor="middle">NLP processing</text>
+  <text class="dg-code" x="360" y="183" text-anchor="middle">nlp</text>
+
+  <rect class="dg-node" x="552" y="92" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="628" y="121" text-anchor="middle">Report writer</text>
+  <text class="dg-code" x="628" y="139" text-anchor="middle">report</text>
+</svg>
