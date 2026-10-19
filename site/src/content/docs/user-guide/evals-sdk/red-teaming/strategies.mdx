@@ -110,8 +110,16 @@ when refusal detection matters.
 
 Many errored attacks for this reason mean the attacker model needs replacing, not that
 the target is robust. Choose an attacker model that plays the role reliably: less
-safety-tuned or open-weight models refuse less often than frontier assistant models. Set
-it per strategy, so the judge can stay a strong model:
+safety-tuned or open-weight models refuse less often than frontier assistant models.
+
+Weaker and open-weight models also fail to produce a usable message more often (a
+malformed or empty reply), and that ends the attack the same way. To tell the two apart,
+look at the conversation: a refusal ends with an `attacker_refused` entry holding the
+declined message, while a missing message leaves no such entry. If it's mostly missing
+messages, a less safety-tuned model can make things worse; try a model that's better at
+structured output instead.
+
+Set the attacker model per strategy, so the judge can stay a strong model:
 
 ```python
 experiment = RedTeamExperiment(

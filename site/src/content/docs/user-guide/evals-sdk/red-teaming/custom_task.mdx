@@ -101,6 +101,10 @@ change what happens inside the task.
 | `trajectory` | `list(session.trace)`, the target's tool calls | Evaluators |
 | `environment_state` | `[result.to_environment_state()]`, the strategy's run stats | The report's turns and blocked columns, attacker-refusal handling, and any evaluator with `uses_environment_state=True` |
 
+Return `result.conversation` as it is. `AttackSuccessEvaluator` reads only its
+`{role, content}` turns, so if `output` is a plain string or a list of strings, the judge
+sees an empty conversation, and a breach in it is reported as defended.
+
 Always return `environment_state`. Without it, the attacks are still scored, but the
 report shows no turn or blocked counts, and nothing can tell that the attacker model
 declined its role. An attack cut short that way is scored on the turns that were sent, so

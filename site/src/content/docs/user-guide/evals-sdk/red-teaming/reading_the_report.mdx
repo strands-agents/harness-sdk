@@ -120,7 +120,8 @@ for result in report.attack_results():
 - **`pruned_branches`**: list of `{role, content}` entries for the (attacker, target) pairs Crescendo discarded; same data the matrix's `blocked` column counts (`len(pruned_branches) // 2`).
 - **`attacker_refused`**: `True` when the attacker model declined its role or produced no
   message, and the attack stopped early. Unless an evaluator found a breach, the attack is
-  errored.
+  errored. A conversation without a final `attacker_refused` entry means the attacker
+  returned no usable message rather than a judged refusal.
 - **`refusal_judge_failures`**: how many attacker messages the refusal check couldn't judge;
   those messages were sent unchecked. Shown in `display(verbose=True)` only when above `0`.
 - **`conversation`**: the full attacker/target transcript as a list of `{role, content}`
