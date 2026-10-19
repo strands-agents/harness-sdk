@@ -467,6 +467,7 @@ class BedrockInvokeModel(BedrockModel):
         if self._cache_strategy == "anthropic":
             messages = deepcopy(messages)
             self._inject_cache_point(cast(list[dict[str, Any]], messages), dynamic_trailing_blocks)
+        requires_signature = any(name in self.config["model_id"].lower() for name in ("anthropic", "claude"))
         for msg in messages:
             content: list[dict[str, Any]] = []
             blocks = self._order_anthropic_user_blocks(msg["content"]) if msg["role"] == "user" else msg["content"]
@@ -503,6 +504,12 @@ class BedrockInvokeModel(BedrockModel):
                     reasoning = block["reasoningContent"]
                     if "reasoningText" in reasoning:
                         reasoning_text = reasoning["reasoningText"]
+                        if requires_signature and not reasoning_text.get("signature"):
+                            logger.debug(
+                                "model_id=<%s> | dropped unsigned reasoningContent the model does not accept",
+                                self.config["model_id"],
+                            )
+                            continue
                         entry = {"type": "thinking", "thinking": reasoning_text.get("text", "")}
                         if reasoning_text.get("signature"):
                             entry["signature"] = reasoning_text["signature"]

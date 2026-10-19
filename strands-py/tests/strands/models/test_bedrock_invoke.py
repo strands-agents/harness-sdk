@@ -834,7 +834,8 @@ async def test_stream_anthropic_reasoning(bedrock_client):
 
 
 @pytest.mark.asyncio
-async def test_stream_anthropic_reasoning_without_signature_round_trips(bedrock_client):
+@pytest.mark.parametrize("model_id", [CLAUDE_ID, IMPORTED_ID])
+async def test_stream_anthropic_unsigned_reasoning_replay(bedrock_client, model_id):
     bedrock_client.invoke_model_with_response_stream.return_value = {
         "body": _chunks(
             [
@@ -851,7 +852,7 @@ async def test_stream_anthropic_reasoning_without_signature_round_trips(bedrock_
             ]
         )
     }
-    m = BedrockInvokeModel(model_id=CLAUDE_ID)
+    m = BedrockInvokeModel(model_id=model_id, model_family="anthropic")
 
     processed = [
         event async for event in streaming.process_stream(m.stream([{"role": "user", "content": [{"text": "hi"}]}]))
@@ -859,7 +860,75 @@ async def test_stream_anthropic_reasoning_without_signature_round_trips(bedrock_
     _, message, _, _ = processed[-1]["stop"]
     req = m._format_anthropic_request([message], None, None, None)
 
-    assert req["messages"][0]["content"] == [{"type": "thinking", "thinking": "working"}]
+    exp_messages = (
+        []
+        if model_id == CLAUDE_ID
+        else [{"role": "assistant", "content": [{"type": "thinking", "thinking": "working"}]}]
+    )
+    assert req["messages"] == exp_messages
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream_response", [False, True])
+@pytest.mark.parametrize(
+    "model_id, reject_unsigned",
+    [
+        (CLAUDE_ID, True),
+        ("global.anthropic.claude-sonnet-4-6", True),
+        ("CLAUDE-SONNET-4-6", True),
+        ("arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6", True),
+        (IMPORTED_ID, False),
+        (NATIVE_SCHEMA_ID, False),
+    ],
+)
+async def test_stream_anthropic_cross_model_reasoning_replay(
+    bedrock_client, model_id, reject_unsigned, stream_response
+):
+    """Preserve accepted reasoning and history when switching models (#4779)."""
+    bedrock_client.invoke_model_with_response_stream.return_value = {
+        "body": _chunks([{"type": "message_delta", "delta": {"stop_reason": "end_turn"}}])
+    }
+    body = unittest.mock.Mock()
+    body.read.return_value = b'{"content": [], "stop_reason": "end_turn"}'
+    bedrock_client.invoke_model.return_value = {"body": body}
+    model = BedrockInvokeModel(model_id=model_id, model_family="anthropic", streaming=stream_response)
+    messages = [
+        {"role": "user", "content": [{"text": "hello"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "unsigned"}}},
+                {"reasoningContent": {"reasoningText": {"text": "empty signature", "signature": ""}}},
+                {"reasoningContent": {"reasoningText": {"text": "signed", "signature": "sig"}}},
+                {"reasoningContent": {"redactedContent": b"opaque"}},
+                {"text": "answer"},
+            ],
+        },
+        {"role": "user", "content": [{"text": "continue"}]},
+    ]
+    exp_history = deepcopy(messages)
+
+    await _collect(model, messages)
+
+    invoked = bedrock_client.invoke_model_with_response_stream if stream_response else bedrock_client.invoke_model
+    tru_messages = json.loads(invoked.call_args.kwargs["body"])["messages"]
+    unsigned_content = [
+        {"type": "thinking", "thinking": "unsigned"},
+        {"type": "thinking", "thinking": "empty signature"},
+    ]
+    exp_content = [
+        *([] if reject_unsigned else unsigned_content),
+        {"type": "thinking", "thinking": "signed", "signature": "sig"},
+        {"type": "redacted_thinking", "data": base64.b64encode(b"opaque").decode("utf-8")},
+        {"type": "text", "text": "answer"},
+    ]
+    exp_messages = [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+        {"role": "assistant", "content": exp_content},
+        {"role": "user", "content": [{"type": "text", "text": "continue"}]},
+    ]
+    assert tru_messages == exp_messages
+    assert messages == exp_history
 
 
 @pytest.mark.asyncio
