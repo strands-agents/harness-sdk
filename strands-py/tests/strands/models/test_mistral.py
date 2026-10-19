@@ -408,6 +408,18 @@ def test_format_request_with_tool_use(model, model_id):
 def test_format_request_with_tool_result(model, model_id):
     messages = [
         {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "calc_123",
+                        "name": "calculator",
+                        "input": {"expression": "2+2"},
+                    },
+                },
+            ],
+        },
+        {
             "role": "user",
             "content": [
                 {
@@ -418,7 +430,7 @@ def test_format_request_with_tool_result(model, model_id):
                     }
                 }
             ],
-        }
+        },
     ]
 
     actual_request = model.format_request(messages)
@@ -426,11 +438,85 @@ def test_format_request_with_tool_result(model, model_id):
         "model": model_id,
         "messages": [
             {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "calculator",
+                            "arguments": '{"expression": "2+2"}',
+                        },
+                        "id": "calc_123",
+                        "type": "function",
+                    }
+                ],
+            },
+            {
                 "role": "tool",
-                "name": "calc",
+                "name": "calculator",
                 "content": '4\n{"result": 4}',
                 "tool_call_id": "calc_123",
-            }
+            },
+        ],
+        "max_tokens": 100,
+        "stream": True,
+    }
+
+    assert actual_request == exp_request
+
+
+def test_format_request_with_tool_result_underscore_name(model, model_id):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "call_abc",
+                        "name": "read_file",
+                        "input": {"path": "notes.txt"},
+                    },
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "call_abc",
+                        "status": "success",
+                        "content": [{"text": "hello"}],
+                    }
+                }
+            ],
+        },
+    ]
+
+    actual_request = model.format_request(messages)
+    exp_request = {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path": "notes.txt"}',
+                        },
+                        "id": "call_abc",
+                        "type": "function",
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "name": "read_file",
+                "content": "hello",
+                "tool_call_id": "call_abc",
+            },
         ],
         "max_tokens": 100,
         "stream": True,
