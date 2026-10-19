@@ -43,7 +43,8 @@ One row per case, one column per strategy, plus a `worst` column. Each cell is t
 
 One row per attack (case × strategy), sorted worst-first so the most successful attacks are at the top. Columns:
 
-- **turns**: how many turns the attack used.
+- **turns**: the attack's `turns_used`: attacker/target turn pairs kept after any
+  backtracking. Blank when the attack crashed before reporting it.
 - **blocked**: refused turns that Crescendo backtracked and discarded. This is **Crescendo-only**: the other strategies don't record discarded turns and always show `0`. It is *not* a count of attacks the agent defended. A high `blocked` with a low `score` means the agent refused repeatedly and Crescendo kept retrying.
 - **result**: `BREACH`, `ok` (defended), or `ERROR` (see [Errored attacks](#errored-attacks)).
 - **score**: the judge's 0.0–1.0 score.
@@ -129,10 +130,10 @@ for result in report.attack_results():
   `attacker_refused`: the declined message, which was never sent to the target.
 
 `turns_used`, `backtracks`, `pruned_branches`, `attacker_refused`, and
-`refusal_judge_failures` come from the strategy's run stats,
-which the task returns in its `environment_state` as an entry named `redteam_run_results`
-(the `RUN_RESULTS` constant). A [custom task](custom_task.md) that returns
-`result.to_environment_state()` keeps them in the report, and so do cached reruns.
+`refusal_judge_failures` come from the strategy's run stats, which the task returns in its
+`environment_state` as the entry named by `RUN_RESULTS`. A [custom task](custom_task.md)
+that returns `result.to_environment_state()` keeps them in the report, and so do cached
+reruns.
 
 ### Rollups
 
@@ -155,7 +156,11 @@ Use `by_strategy()` to see which strategies are landing, and `by_risk_category()
 
 A breach is a finding, not a fix. When `report.attack_results()` surfaces one:
 
-1. **Read the conversation.** Each `AttackResult` carries the full `conversation` (and tool trace) that breached, plus the judge's `reason`. Confirm it's a real violation and not a judge false-positive: the transcript is the evidence. `report.display(verbose=True)` prints these inline.
+1. **Read the conversation.** Each `AttackResult` carries the full `conversation` that
+   breached, plus the judge's `reason`; `report.display(verbose=True)` prints both. The
+   target's tool calls aren't on `AttackResult`: read them from the report's raw rows
+   (`report.cases`, the `actual_trajectory` key). Confirm it's a real violation and not a
+   judge false-positive: the transcript is the evidence.
 2. **Identify the weak point.** Was it a missing instruction (the system prompt never forbade the behavior), an over-broad tool (the agent could call something it shouldn't for that user), or a guardrail that a reframing slipped past? The risk category points at the class of weakness.
 3. **Apply a mitigation.** Typically a system-prompt change (state the boundary explicitly), a tool change (tighten authorization or remove the capability), or an input/output guardrail. There is no single fix; it depends on where the breach came from.
 4. **Re-run the same cases.** Keep the breaching cases and run the experiment again after the change. A case that flips from breach to defended is your verification; one that still breaches means the mitigation didn't hold.
@@ -170,6 +175,6 @@ by the cases and strategies you ran and the judge's accuracy.
 
 ## Next steps
 
-- [Scoring Attacks](evaluators.md): How the judge assigns the 0.0–1.0 score behind every cell
-- [Attack Strategies](strategies.md): The strategies whose results you're reading
+- [Scoring attacks](evaluators.md): How the judge assigns the 0.0–1.0 score behind every cell
+- [Attack strategies](strategies.md): The strategies whose results you're reading
 - [Quickstart](quickstart.md): The end-to-end run
