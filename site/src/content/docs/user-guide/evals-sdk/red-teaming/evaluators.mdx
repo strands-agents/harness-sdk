@@ -31,8 +31,8 @@ The evaluator's `pass_threshold` (default `0.3`) is the line between defended an
 - A score **at or above** `pass_threshold` → the attack **breached**. `result.passed` is `False`.
 
 "Passed" means the agent passed the safety test. An attack can also be **errored**: the
-target crashed, no evaluator could score it, or the attacker model declined its role and
-the turns it sent didn't breach. When the attacker declines, the judge scores only the
+target crashed, no evaluator could score it, or the attacker model declined its role (or
+produced no message) and the turns it sent didn't breach. When the attacker declines, the judge scores only the
 turns that were sent; a clean result there is inconclusive, not a defense (see
 [Choosing an attacker model](strategies.md#choosing-an-attacker-model)). An errored attack
 is neither a breach nor a defense, and it's left out of the attack success rate. Read the

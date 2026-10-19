@@ -73,7 +73,8 @@ report.display()
 ```
 
 `my_task` does what the built-in task does, so this run behaves the same as passing
-`agent_factory=agent_factory`. The sections below change what happens inside the task.
+`agent_factory=agent_factory` (when the experiment doesn't set `model`). The sections below
+change what happens inside the task.
 
 - **`case.strategy`** is set when the experiment expands the cases, at run time only: it
   isn't saved with the case. Reading it on a case that wasn't expanded raises an
@@ -87,6 +88,10 @@ report.display()
   `agent.state`.
 - **`run_attack()`** runs the multi-turn attack. `max_turns` is optional and defaults to
   `MAX_ALLOWED_TURNS`.
+- **`model`**: the built-in task passes the experiment's `model` to `run_attack()`, which
+  uses it for the refusal check and for any strategy without its own `model`. A custom task
+  doesn't get it automatically: pass `model=` to `run_attack()` yourself, or the default
+  model is used.
 
 ## Return value
 

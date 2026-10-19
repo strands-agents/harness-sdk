@@ -57,8 +57,8 @@ One row per attack (case × strategy), sorted worst-first so the most successful
 An attack **errors** when it can't tell you whether the agent's defenses held:
 
 - The target crashed, or no evaluator could score the conversation.
-- The attacker model declined its role (see
-  [Choosing an attacker model](strategies.md#choosing-an-attacker-model)) and the turns it
+- The attacker model declined its role or produced no message (see
+  [Choosing an attacker model](strategies.md#choosing-an-attacker-model)), and the turns it
   sent didn't breach. The target was never fully tested, so the result is inconclusive. If
   those turns did breach, the attack counts as a breach.
 
@@ -117,14 +117,17 @@ for result in report.attack_results():
 - **`turns_used`**: how many attacker/target turn pairs the attack kept (after any backtracking).
 - **`backtracks`**: number of refused turns Crescendo rolled back. Crescendo is the only strategy that records backtracks; on every other strategy this is `0` or `None`.
 - **`pruned_branches`**: list of `{role, content}` entries for the (attacker, target) pairs Crescendo discarded; same data the matrix's `blocked` column counts (`len(pruned_branches) // 2`).
-- **`attacker_refused`**: `True` when the attacker model declined its role and the attack
-  stopped early. Unless an evaluator found a breach, the attack is errored.
+- **`attacker_refused`**: `True` when the attacker model declined its role or produced no
+  message, and the attack stopped early. Unless an evaluator found a breach, the attack is
+  errored.
+- **`refusal_judge_failures`**: how many attacker messages the refusal check couldn't judge;
+  those messages were sent unchecked. Shown in `display(verbose=True)` only when above `0`.
 - **`conversation`**: the full attacker/target transcript as a list of `{role, content}`
-  entries. If the attacker declined its role, the last entry has the role
+  entries. If the attacker declined its role with a message, the last entry has the role
   `attacker_refused`: the declined message, which was never sent to the target.
 
-`turns_used`, `backtracks`, `pruned_branches`, and `attacker_refused` come from the
-strategy's run stats,
+`turns_used`, `backtracks`, `pruned_branches`, `attacker_refused`, and
+`refusal_judge_failures` come from the strategy's run stats,
 which the task returns in its `environment_state` as an entry named `redteam_run_results`
 (the `RUN_RESULTS` constant). A [custom task](custom_task.md) that returns
 `result.to_environment_state()` keeps them in the report, and so do cached reruns.

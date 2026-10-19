@@ -58,8 +58,9 @@ The differences that *are* structural, and worth using to choose:
 - **Cost.** Bad Likert Judge and SequentialBreak use no attacker model, so they avoid the
   per-turn attacker-generation calls: typically the cheapest per attempt (they still call
   the judge). The attacker-LLM strategies cost more but adapt to the target, and every
-  attacker message they write gets one small extra call that checks whether the attacker
-  declined its role (see [Choosing an attacker model](#choosing-an-attacker-model)).
+  attacker message they write gets one extra check on the experiment's judge model to see
+  whether the attacker declined its role (see
+  [Choosing an attacker model](#choosing-an-attacker-model)).
 - **Rewinding.** Crescendo rewinds on a refusal, and PAIR and SequentialBreak rewind between attempts; GOAT and Bad Likert Judge are append-only. On an agentic target this doesn't change whether a tool-call breach is caught: the authoritative `AttackSuccessEvaluator` re-scores the full trace for every strategy regardless.
 
 When you're not sure, start with one multi-turn strategy (e.g. Crescendo or GOAT) and one scripted one (e.g. SequentialBreak), then add more based on what `by_strategy()` shows.
@@ -88,12 +89,19 @@ safety-tuned model can decline that role ("I can't help with that"). If that ref
 reached the target, the target would answer it harmlessly and the attack would look
 defended.
 
-So before each attacker message is sent, a small LLM check (run on the strategy's own
-model) decides whether the attacker declined its role. If it did, the attack stops without
-sending that message. Unless the turns already sent breached, the report marks the attack
-**errored**, not defended (see [Errored attacks](reading_the_report.md#errored-attacks)). If
-the check itself fails, the message is sent as normal. Bad Likert Judge and SequentialBreak
-send fixed templates, so they can't refuse.
+So before each attacker message is sent, an LLM check decides whether the attacker
+declined its role. The check runs on the experiment's `model` (the same model as the
+default judge), never on the strategy's own attacker model, which is often a weaker model
+picked to play the role. If the attacker declined, the attack stops without sending that
+message. An attacker that produces no message at all, such as a content-filtered or
+unparseable reply, counts as declining too. Throttling doesn't; the experiment retries the
+case. Unless the turns already sent breached, the report marks the attack **errored**, not
+defended (see [Errored attacks](reading_the_report.md#errored-attacks)). Bad Likert Judge and
+SequentialBreak send fixed templates, so they can't refuse.
+
+If the check itself fails, the message is sent anyway and the failure is counted in
+`refusal_judge_failures`. Only `display(verbose=True)` shows that count, so check it there
+when refusal detection matters.
 
 Many errored attacks for this reason mean the attacker model needs replacing, not that
 the target is robust. Choose an attacker model that plays the role reliably: less
@@ -111,8 +119,10 @@ experiment = RedTeamExperiment(
 )
 ```
 
-The experiment's `model` is the model for the default `AttackSuccessEvaluator` and the
-attacker model for any strategy without its own `model`, including `PromptStrategy`.
+The experiment's `model` is the model for the default `AttackSuccessEvaluator`, the refusal
+check, and the attacker of any strategy without its own `model`, including
+`PromptStrategy`. If you don't set it, all three use the evals default model on Amazon
+Bedrock, so you need Bedrock credentials even when every strategy's attacker runs elsewhere.
 
 ## Crescendo
 
