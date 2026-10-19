@@ -11,6 +11,7 @@ import pytest
 import strands
 from strands.agent import AgentMetadata
 from strands.models import CacheConfig
+from strands.models.litellm import LiteLLMModel
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -601,7 +602,9 @@ def test_format_request_tool_choice_tool():
     assert tru_result == exp_result
 
 
-def test_format_request_messages(system_prompt):
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+@pytest.mark.parametrize("text_position", [None, "before", "after"])
+def test_format_request_messages(system_prompt, model_class, text_position):
     messages = [
         {
             "content": [],
@@ -630,7 +633,11 @@ def test_format_request_messages(system_prompt):
         },
     ]
 
-    tru_result = OpenAIModel.format_request_messages(messages, system_prompt)
+    if text_position is not None:
+        position = 0 if text_position == "before" else len(messages[-1]["content"])
+        messages[-1]["content"].insert(position, {"text": "Injected context"})
+
+    tru_result = model_class.format_request_messages(messages, system_prompt)
     exp_result = [
         {
             "content": system_prompt,
@@ -659,6 +666,76 @@ def test_format_request_messages(system_prompt):
             "role": "tool",
             "tool_call_id": "c1",
         },
+    ]
+    if model_class is LiteLLMModel:
+        exp_result[0]["content"] = [{"type": "text", "text": system_prompt}]
+    if text_position is not None:
+        exp_result.append({"role": "user", "content": [{"type": "text", "text": "Injected context"}]})
+    assert tru_result == exp_result
+
+
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+def test_format_request_messages_groups_tool_results_before_text_and_images(model_class):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": tool_id, "name": "image_tool", "input": {}}} for tool_id in ["t1", "t2"]
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "t1",
+                        "status": "success",
+                        "content": [
+                            {"text": "Image generated"},
+                            {"image": {"format": "png", "source": {"bytes": b"image"}}},
+                        ],
+                    }
+                },
+                {"text": "Injected context"},
+                {"toolResult": {"toolUseId": "t2", "status": "success", "content": [{"text": "done"}]}},
+            ],
+        },
+    ]
+
+    tru_result = model_class.format_request_messages(messages)
+    exp_result = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": tool_id, "type": "function", "function": {"name": "image_tool", "arguments": "{}"}}
+                for tool_id in ["t1", "t2"]
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "t1",
+            "content": [
+                {"type": "text", "text": "Image generated"},
+                {
+                    "type": "text",
+                    "text": (
+                        "Tool successfully returned an image. "
+                        "The image is being provided in the following user message."
+                    ),
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "t2", "content": "done"},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aW1hZ2U=", "detail": "auto", "format": "image/png"},
+                }
+            ],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "Injected context"}]},
     ]
     assert tru_result == exp_result
 

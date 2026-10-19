@@ -14,11 +14,10 @@ Candidate to port into the core SDK later; keep it minimal and SDK-idiomatic.
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import base64
 import re
 import shlex
 import time
-import uuid
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -71,17 +70,18 @@ def _validate_url(url: str) -> str:
     return url
 
 
-def _curl_command(url: str, output: str) -> str:
+def _curl_command(url: str) -> str:
     # -g keeps ``{}``/``[]`` in the URL literal; --proto/--proto-redir keep the request and any redirect on
     # http(s) (curl would otherwise follow a redirect to ftp://); --fail turns HTTP errors into a non-zero
-    # exit; -sS keeps curl's own error text on stderr. The body goes to a file (stdout is decoded text,
-    # which would lose the charset and split multi-byte characters) and is truncated in the sandbox before
-    # it is read back; stdout carries only the final hop's content type and URL.
-    out, part = shlex.quote(output), shlex.quote(output + ".part")
+    # exit; -sS keeps curl's own error text on stderr. The body is spooled to a file the shell picks with
+    # mktemp (so the path only ever has to make sense inside the sandbox), truncated there, and returned over
+    # stdout as base64: ASCII survives the chunked stdout decoding that raw bytes would not, and the charset is
+    # applied once here. stdout is the final hop's content type and URL, then the base64 body.
     return (
+        "f=$(mktemp -t strands-web-fetch.XXXXXX) && "
         f"curl -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time {_TIMEOUT} "
-        f"-A {shlex.quote(_USER_AGENT)} -o {out} -w '%{{content_type}}\\n%{{url_effective}}' -- {shlex.quote(url)} "
-        f"&& head -c {_MAX_BYTES} {out} > {part} && mv -f {part} {out}"
+        f"-A {shlex.quote(_USER_AGENT)} -o \"$f\" -w '%{{content_type}}\\n%{{url_effective}}\\n' -- {shlex.quote(url)} "
+        f'&& head -c {_MAX_BYTES} "$f" | base64; s=$?; rm -f "$f"; exit $s'
     )
 
 
@@ -101,20 +101,14 @@ def _to_text(data: bytes, content_type: str, resolved_url: str, url: str) -> tup
 
 async def _fetch_curl(sandbox: Sandbox, url: str) -> tuple[str, str]:
     """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails."""
-    output = f"/tmp/strands-web-fetch-{uuid.uuid4().hex}"
-    try:
-        result = await sandbox.execute(_curl_command(url, output), timeout=_TIMEOUT + 5)
-        if result.exit_code != 0:
-            raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")
-        # The trailer is the last two lines; the content-type line is empty when the header is absent.
-        lines = result.stdout.splitlines()
-        content_type = lines[-2].strip() if len(lines) >= 2 else ""
-        resolved_url = lines[-1].strip() if lines else ""
-        data = await sandbox.read_file(output)
-    finally:
-        with contextlib.suppress(Exception):
-            await sandbox.execute(f"rm -f {shlex.quote(output)} {shlex.quote(output + '.part')}", timeout=10)
-    return _to_text(data, content_type, resolved_url, url)
+    result = await sandbox.execute(_curl_command(url), timeout=_TIMEOUT + 5)
+    if result.exit_code != 0:
+        raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")
+    # Two header lines (the content-type line is empty when the header is absent), then the base64 body,
+    # which base64(1) may wrap; whitespace is not part of the encoding.
+    content_type, resolved_url, *body = result.stdout.split("\n") + ["", ""]
+    data = base64.b64decode(re.sub(r"\s+", "", "".join(body)))
+    return _to_text(data, content_type.strip(), resolved_url.strip(), url)
 
 
 class _HttpOnlyRedirects(HTTPRedirectHandler):

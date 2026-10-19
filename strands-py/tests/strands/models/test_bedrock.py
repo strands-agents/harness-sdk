@@ -1179,6 +1179,147 @@ def test_separate_tool_result_turns_ignores_conversation_only_user_turns():
     assert BedrockModel._separate_tool_result_turns(messages) == messages
 
 
+THINKING = {"type": "adaptive"}
+DROP_BLOCK_THINKING = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+
+
+def _thinking_binding_error(operation_name):
+    return ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": (
+                    "messages.1.content.0: Invalid `signature` in `thinking` block. "
+                    "The block is bound to a different conversation."
+                ),
+            }
+        },
+        operation_name,
+    )
+
+
+def _converse_response(streaming):
+    if streaming:
+        return {"stream": []}
+    return {"output": {"message": {"role": "assistant", "content": [{"text": "Done"}]}}, "stopReason": "end_turn"}
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.asyncio
+async def test_stream_retries_with_drop_block_on_thinking_binding_error(
+    bedrock_client, alist, messages, streaming, caplog
+):
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error("ConverseStream" if streaming else "Converse"),
+        _converse_response(streaming),
+    ]
+    model = BedrockModel(
+        model_id="m1",
+        streaming=streaming,
+        additional_request_fields={"thinking": THINKING, "anthropic_beta": ["other-beta"]},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        await alist(model.stream(messages))
+
+    tru_fields = [call.kwargs["additionalModelRequestFields"] for call in converse_method.call_args_list]
+    exp_fields = [
+        {"thinking": THINKING, "anthropic_beta": ["other-beta"]},
+        {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["other-beta", "thinking-binding-controls-2026-08-01"]},
+    ]
+    assert tru_fields == exp_fields
+    assert "retrying with drop_block" in caplog.text
+
+    converse_method.reset_mock(side_effect=True)
+    converse_method.return_value = _converse_response(streaming)
+
+    await alist(model.stream(messages))
+
+    converse_method.assert_called_once()
+    assert converse_method.call_args.kwargs["additionalModelRequestFields"] == exp_fields[1]
+
+
+@pytest.mark.parametrize(
+    "additional_request_fields",
+    [
+        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
+        {"reasoning_config": {"type": "enabled"}},
+        None,
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(
+    bedrock_client, alist, messages, additional_request_fields
+):
+    bedrock_client.converse_stream.side_effect = _thinking_binding_error("ConverseStream")
+    model = BedrockModel(model_id="m1", additional_request_fields=additional_request_fields)
+
+    with pytest.raises(ClientError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+    assert model._drop_stale_thinking_model_id is None
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_binding_message_on_non_validation_error(bedrock_client, alist, messages):
+    error = _thinking_binding_error("ConverseStream")
+    error.response["Error"]["Code"] = "InternalServerException"
+    bedrock_client.converse_stream.side_effect = error
+    model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
+
+    with pytest.raises(ClientError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.parametrize(
+    ("retry_error", "exp_exception"),
+    [
+        ({"Code": "ThrottlingException", "Message": "Rate exceeded"}, ModelThrottledException),
+        (
+            {"Code": "ValidationException", "Message": "Input is too long for requested model"},
+            ContextWindowOverflowException,
+        ),
+        ({"Code": "ValidationException", "Message": "bound to a different conversation"}, ClientError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_retry_error_to_sdk_exception(
+    bedrock_client, alist, messages, streaming, retry_error, exp_exception
+):
+    operation_name = "ConverseStream" if streaming else "Converse"
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error(operation_name),
+        ClientError({"Error": retry_error}, operation_name),
+    ]
+    model = BedrockModel(model_id="m1", streaming=streaming, additional_request_fields={"thinking": THINKING})
+
+    with pytest.raises(exp_exception):
+        await alist(model.stream(messages))
+
+    assert converse_method.call_count == 2
+
+
+def test_format_request_drops_stale_thinking_only_for_remembered_model(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
+    model._drop_stale_thinking_model_id = "m1"
+
+    assert model.format_request(messages)["additionalModelRequestFields"] == {
+        "thinking": DROP_BLOCK_THINKING,
+        "anthropic_beta": ["thinking-binding-controls-2026-08-01"],
+    }
+
+    model.update_config(model_id="m2")
+
+    assert model.format_request(messages)["additionalModelRequestFields"] == {"thinking": THINKING}
+
+
 @pytest.mark.asyncio
 async def test_general_exception_is_raised(bedrock_client, model, messages, alist):
     error_message = "Should be raised up"
@@ -2629,6 +2770,58 @@ async def test_stream_deepseek_skips_empty_messages(bedrock_client, alist):
     assert len(sent_messages) == 2
     assert sent_messages[0]["content"] == [{"text": "Hello"}]
     assert sent_messages[1]["content"] == [{"text": "Follow up"}]
+
+
+SIGNED_REASONING = {"reasoningContent": {"reasoningText": {"text": "Claude thinking", "signature": "sig"}}}
+UNSIGNED_REASONING = {"reasoningContent": {"reasoningText": {"text": "gpt-oss thinking"}}}
+REDACTED_REASONING = {"reasoningContent": {"redactedContent": b"opaque"}}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "exp_reasoning"),
+    [
+        # Non-Anthropic models reject the Anthropic-only signature; models with their own reasoning keep it unsigned.
+        ("openai.gpt-oss-120b-1:0", [UNSIGNED_REASONING, REDACTED_REASONING]),
+        ("moonshot.kimi-k2-thinking", [UNSIGNED_REASONING, REDACTED_REASONING]),
+        ("minimax.minimax-m2.5", [UNSIGNED_REASONING, REDACTED_REASONING]),
+        # Anthropic models require a signature on every reasoningText block.
+        ("global.anthropic.claude-opus-5", [SIGNED_REASONING, REDACTED_REASONING]),
+        (
+            "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5",
+            [SIGNED_REASONING, REDACTED_REASONING],
+        ),
+        # Models that reject reasoningText outright; redactedContent is opaque and kept.
+        ("us.amazon.nova-pro-v1:0", [REDACTED_REASONING]),
+        ("us.meta.llama3-3-70b-instruct-v1:0", [REDACTED_REASONING]),
+        ("openai.gpt-5.5", [REDACTED_REASONING]),
+        ("qwen.qwen3-coder-480b-a35b-v1:0", [REDACTED_REASONING]),
+        # DeepSeek rejects reasoning content altogether.
+        ("us.deepseek.r1-v1:0", []),
+        # An ARN or bare inference profile ID can hide the vendor, so nothing is dropped.
+        (
+            "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123",
+            [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING],
+        ),
+        ("abc123xyz", [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING]),
+    ],
+)
+def test_format_request_drops_reasoning_the_model_rejects(bedrock_client, model_id, exp_reasoning):
+    """Replaying history across Bedrock model families keeps only the reasoning blocks the target accepts.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/4779.
+    """
+    model = BedrockModel(model_id=model_id)
+    messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {
+            "role": "assistant",
+            "content": [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING, {"text": "Response"}],
+        },
+    ]
+
+    tru_content = model.format_request(messages)["messages"][1]["content"]
+    exp_content = [*exp_reasoning, {"text": "Response"}]
+    assert tru_content == exp_content
 
 
 def test_format_request_filters_image_content_blocks(model, model_id):

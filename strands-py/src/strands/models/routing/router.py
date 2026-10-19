@@ -54,17 +54,18 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from ..._middleware.stages import InvokeModelStage
 from ...hooks.events import AfterInvocationEvent, AfterModelCallEvent, BeforeInvocationEvent
 from ...hooks.registry import HookOrder
+from ...middleware.stages import InvokeModelStage
 from ...plugins.plugin import Plugin
 from ..model import Model
 from .fallback_strategy import FallbackStrategy
 from .strategy import RoutingAttempt, RoutingContext, RoutingStrategy
 
 if TYPE_CHECKING:
-    from ..._middleware.stages import InvokeModelContext
     from ...agent.agent import Agent
+    from ...middleware.stages import InvokeModelContext
+    from ...types.agent import LocalAgent
     from ...types.content import Messages, SystemPrompt
     from ...types.tools import ToolSpec
 
@@ -205,7 +206,7 @@ class ModelRouter(Plugin):
         if agent._model_router is not self:
             raise ValueError("ModelRouter must be passed through Agent(model=...), not plugins=[...]")
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, self._selection_middleware())
+        agent.add_middleware(InvokeModelStage.Input, self._selection_middleware())
         # Fallback must see whether ModelRetryStrategy (DEFAULT) already claimed the retry.
         agent.hooks.add_callback(AfterModelCallEvent, self._on_model_result, order=HookOrder.MODEL_ROUTING)
         # One invocation_state dict can span several Before/After pairs, because Agent._run_loop
@@ -401,7 +402,7 @@ class ModelRouter(Plugin):
         if _get_routing_state(event.invocation_state, key) is not None:
             del event.invocation_state[key]
 
-    def _state_key(self, agent: Agent) -> str:
+    def _state_key(self, agent: LocalAgent) -> str:
         """Scope routing state to one agent/router pair.
 
         One ``invocation_state`` can serve several agents, and one router several agents, so neither

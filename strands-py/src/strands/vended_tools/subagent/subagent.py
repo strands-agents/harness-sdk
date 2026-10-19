@@ -24,7 +24,8 @@ from ...multiagent.spec import (
     Open,
     Preset,
     _default_builder,
-    _resolve_spec,
+    _resolve_specs,
+    _to_schema_properties,
 )
 from ...tools.tools import AgentTool
 from ...types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
@@ -59,79 +60,48 @@ _FRAMING_END = f"</parent_context>\n\n{_CONTEXT_PREAMBLE}\n\n"
 _SENTINEL = re.compile(r"<(/?)parent_context>")
 
 
-def _description(base: str, presets: Mapping[str, Preset]) -> str:
-    if not presets:
-        return base
-    roles = "\n".join(f"- {name}: {p.description or name}" for name, p in presets.items())
-    return f"{base}\n\nAvailable subagents (agent_type):\n{roles}"
-
-
 def _build_schema(
     *,
     presets: Mapping[str, Preset],
     default_preset: str | None,
     instructions: Open | Choice | Fixed,
-    tools: Choice | Fixed | Inherit,
-    mcp_servers: Choice | Fixed | Inherit,
+    tools: Choice | Fixed | Inherit | None,
     model: Inherit | Choice | Fixed,
     context: Fixed | Choice,
 ) -> dict[str, Any]:
     """Derive the tool's input schema from the axis modes."""
-    props: dict[str, Any] = {
+    properties: dict[str, Any] = {
         "task": {
             "type": "string",
             "description": "The self-contained task, including all context the subagent needs. "
             "It cannot ask follow-up questions.",
-        }
+        },
+        **_to_schema_properties(
+            presets=presets,
+            default_preset=default_preset,
+            instructions=instructions,
+            tools=tools,
+            model=model,
+        ),
     }
-    required = ["task"]
-
-    if presets:
-        props["agent_type"] = {
-            "type": "string",
-            "enum": list(presets),
-            "description": f"Which subagent role to use. Omit to use the default ({default_preset!r}).",
-        }
-
-    if isinstance(instructions, Open):
-        props["instructions"] = {
-            "type": "string",
-            "description": "A system prompt defining the subagent's role.",
-        }
-    elif isinstance(instructions, Choice):
-        props["instructions"] = instructions.to_schema_property("A system prompt defining the subagent's role.")
-
-    if isinstance(tools, Choice):
-        props["tools"] = tools.to_schema_property(
-            "Subset of tools to grant the subagent. Fewer is safer; it cannot exceed your own. "
-            "Omit to grant all inherited tools."
-        )
-
-    if isinstance(mcp_servers, Choice):
-        props["mcp_servers"] = mcp_servers.to_schema_property(
-            "Subset of MCP servers whose tools to grant the subagent. Fewer is safer; it cannot "
-            "exceed your own. Omit to grant all of them.",
-        )
-
-    if isinstance(model, Choice):
-        props["model"] = model.to_schema_property(
-            "Which model the subagent runs on. Omit to inherit the parent's model."
-        )
-
     if isinstance(context, Choice):
-        props["context"] = context.to_schema_property(
-            "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full "
+        options = context.normalized()
+        lines = [f"- {option.name}: {option.description}" for option in options if option.description]
+        options_text = "\nOptions:\n" + "\n".join(lines) if lines else ""
+        properties["context"] = {
+            "type": "string",
+            "enum": [option.name for option in options],
+            "description": "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full "
             "history including tool calls and their results — can be large), 'no_tools' (text turns "
-            "only — tool calls and their results removed). More context costs more tokens.",
-        )
-        if any(str(o.value) != "none" for o in context.normalized()):
-            props["last_messages"] = {
-                "type": "integer",
-                "description": "Optional: limit the shared context to the last N messages. Omit to "
-                "share all of the selected context.",
-            }
-
-    return {"type": "object", "properties": props, "required": required}
+            "only — tool calls and their results removed). More context costs more tokens." + options_text,
+        }
+    if isinstance(context, Choice) and any(str(o.value) != "none" for o in context.normalized()):
+        properties["last_messages"] = {
+            "type": "integer",
+            "description": "Optional: limit the shared context to the last N messages. Omit to "
+            "share all of the selected context.",
+        }
+    return {"type": "object", "properties": properties, "required": ["task"]}
 
 
 class _SubagentTool(AgentTool):
@@ -306,7 +276,12 @@ class _SubagentTool(AgentTool):
         return child, prompt
 
     def _finalize_result(
-        self, tool_use_id: str, tool_use: ToolUse, child: Agent, result: Any
+        self,
+        tool_use_id: str,
+        tool_use: ToolUse,
+        child: Agent,
+        result: Any,
+        child_cancel_signal_set: bool,
     ) -> ToolResultEvent | ToolInterruptEvent:
         """Map the child's result to the terminal event for the parent."""
         if result is None:
@@ -315,7 +290,9 @@ class _SubagentTool(AgentTool):
         if result.stop_reason == "interrupt" and result.interrupts:
             self._pending[tool_use_id] = child
             return ToolInterruptEvent(tool_use, list(result.interrupts))
-        if result.stop_reason == "cancelled":
+        # Immediate cancel (signal set) is an abort → error; the stop tool's deferred cancel
+        # never sets the signal and resolves as a normal completion.
+        if result.stop_reason == "cancelled" and child_cancel_signal_set:
             self._pending.pop(tool_use_id, None)
             return self._error_result(tool_use_id, "Subagent was cancelled.")
         self._pending.pop(tool_use_id, None)
@@ -345,13 +322,17 @@ class _SubagentTool(AgentTool):
             )
             child_state = {**invocation_state} if isinstance(invocation_state, dict) else invocation_state
             result = None
+            # Captured before stream_async's finally clears it.
+            child_cancel_signal_set = False
             async for event in child.stream_async(prompt, invocation_state=child_state, cancel_signal=cancel_signal):
                 if "result" in event:
                     result = event["result"]
+                    child_signal = getattr(child, "cancel_signal", None)
+                    child_cancel_signal_set = child_signal is not None and child_signal.is_set()
                 else:
                     yield ToolStreamEvent(tool_use, event)
 
-            yield self._finalize_result(tool_use_id, tool_use, child, result)
+            yield self._finalize_result(tool_use_id, tool_use, child, result, child_cancel_signal_set)
         except Exception as exc:
             self._pending.pop(tool_use_id, None)
             logger.warning(
@@ -370,7 +351,6 @@ def make_subagent(
     default_preset: str | None = None,
     instructions: Open | Choice | Fixed | None = None,
     tools: Choice | Fixed | Inherit | None = None,
-    mcp_servers: Choice | Fixed | Inherit | None = None,
     model: Inherit | Choice | Fixed | None = None,
     context: Fixed | Choice | None = None,
     max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH,
@@ -400,48 +380,31 @@ def make_subagent(
     if default_preset is None and presets:
         default_preset = next(iter(presets))
 
-    # A tools Choice must be multiple.
-    if tools is None:
-        tools = Inherit()
-    elif isinstance(tools, Choice):
-        if not tools.options:
-            raise ValueError("tools=Choice([]) offers no options; use Fixed([]) for a toolless child, or Inherit().")
-        if not tools.multiple:
-            raise ValueError("tools=Choice(...) must be multiple=True; a subagent selects a subset of tools.")
-
-    if mcp_servers is None:
-        mcp_servers = Inherit()
-    elif isinstance(mcp_servers, Choice):
-        if not mcp_servers.options:
-            raise ValueError("mcp_servers=Choice([]) offers no options; use Fixed([]) for no servers, or Inherit().")
-        if not mcp_servers.multiple:
-            raise ValueError("mcp_servers=Choice(...) must be multiple=True; a subagent selects a subset of servers.")
-
     schema = _build_schema(
         presets=presets,
         default_preset=default_preset,
         instructions=instructions,
         tools=tools,
-        mcp_servers=mcp_servers,
         model=model,
         context=context,
     )
     tool_spec = {
         "name": name,
-        "description": _description(description, presets),
+        "description": description,
         "inputSchema": {"json": schema},
     }
 
     def resolve(raw: Mapping[str, Any]) -> AgentSpec:
-        return _resolve_spec(
-            raw,
+        # The schema has no name field; the child takes the tool's name.
+        model_input: list[Mapping[str, Any]] = [{**raw, "name": name}]
+        return _resolve_specs(
+            model_input,
             presets=presets,
             default_preset=default_preset,
             instructions=instructions,
             tools=tools,
-            mcp_servers=mcp_servers,
             model=model,
-        )
+        )[0]
 
     return _SubagentTool(name, tool_spec, resolve, context, builder, max_depth)
 

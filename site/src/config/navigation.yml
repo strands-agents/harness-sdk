@@ -241,9 +241,8 @@ sidebar:
         items:
           - label: "Choosing an agent foundation"
             slug: docs/user-guide/migrate/choosing-an-agent-foundation
-          # Draft — hidden until the LangGraph migration guide is ready to publish.
-          # - label: "Migrate from LangGraph"
-          #   slug: docs/user-guide/migrate/langgraph
+          - label: "Migrate from LangGraph"
+            slug: docs/user-guide/migrate/langgraph
           - label: "Migrate from OpenAI"
             slug: docs/user-guide/migrate/openai
       - label: Build guides
@@ -343,6 +342,8 @@ sidebar:
             slug: docs/user-guide/sdk/agents/hooks
           - label: "Hook events"
             slug: docs/user-guide/sdk/agents/hooks-events
+          - label: "Middleware"
+            slug: docs/user-guide/sdk/agents/middleware
           - label: Context management
             items:
               - label: "Overview"
@@ -353,6 +354,8 @@ sidebar:
               - docs/user-guide/sdk/context-management/context-estimation
           - label: "Retry strategies"
             slug: docs/user-guide/sdk/agents/retry-strategies
+          - label: "Structured output"
+            slug: docs/user-guide/sdk/agents/structured-output-behavior
           - label: Interrupts
             items:
               - label: "Overview"
@@ -600,6 +603,8 @@ sidebar:
                   - docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator
               - label: "Deterministic"
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
+              - label: "Structured output similarity"
+                slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors
@@ -674,33 +679,33 @@ sidebar:
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning
         items:
-          - label: "Lesson 1: How Agents Really Work"
+          - label: "Lesson 1: How agents really work"
             slug: docs/learning/how-agents-really-work
-          - label: "Lesson 2: Switching Model Providers"
+          - label: "Lesson 2: Switching model providers"
             slug: docs/learning/switching-model-providers
-          - label: "Lesson 3: Give Your Agent Tools Using MCP"
+          - label: "Lesson 3: Give your agent tools using MCP"
             slug: docs/learning/give-your-agent-tools-using-mcp
-          - label: "Lesson 4: Adding Callbacks & Response Streaming"
+          - label: "Lesson 4: Adding callbacks & response streaming"
             slug: docs/learning/adding-callbacks-and-response-streaming
-          - label: "Lesson 5: Control Your Agent With Hooks"
+          - label: "Lesson 5: Control your agent with hooks"
             slug: docs/learning/control-your-agent-with-hooks
-          - label: "Lesson 6: Agent Plugins & Skills"
+          - label: "Lesson 6: Agent plugins & skills"
             slug: docs/learning/agent-plugins-and-skills
-          - label: "Lesson 7: Improve Agent Reliability With Strands Steering"
+          - label: "Lesson 7: Improve agent reliability with Strands steering"
             slug: docs/learning/improve-agent-reliability-with-strands-steering
-          - label: "Lesson 8: Context Engineering & Conversation Management"
+          - label: "Lesson 8: Context engineering & conversation management"
             slug: docs/learning/context-engineering-and-conversation-management
-          - label: "Lesson 9: Persistent Memory With Session Managers"
+          - label: "Lesson 9: Persistent memory with session managers"
             slug: docs/learning/persistent-memory-with-session-managers
-          - label: "Lesson 10: Multi-Agent Patterns: Agents as Tools"
+          - label: "Lesson 10: Multi-agent patterns: agents as tools"
             slug: docs/learning/multi-agent-patterns-agents-as-tools
-          - label: "Lesson 11: Multi-Agent Patterns: Graph Workflows"
+          - label: "Lesson 11: Multi-agent patterns: graph workflows"
             slug: docs/learning/multi-agent-patterns-graph-workflows
-          - label: "Lesson 12: Multi-Agent Patterns: Agent Swarms"
+          - label: "Lesson 12: Multi-agent patterns: agent swarms"
             slug: docs/learning/multi-agent-patterns-agent-swarms
-          - label: "Lesson 13: Evaluating Agents"
+          - label: "Lesson 13: Evaluating agents"
             slug: docs/learning/evaluating-agents
-          - label: "Lesson 14: Deploying Agents to the Cloud"
+          - label: "Lesson 14: Deploying agents to the cloud"
             slug: docs/learning/deploying-agents-to-the-cloud
 
 github:

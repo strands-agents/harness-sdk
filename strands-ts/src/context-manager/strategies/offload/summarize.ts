@@ -21,6 +21,7 @@ import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
+  insertMarker,
   spliceWithPairs,
   repairAlternation,
   type OffloadConditions,
@@ -76,15 +77,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     if (!summary) return false
 
     const totalTokens = await model.countTokens(safe)
-    const summaryMessage = new Message({
-      role: 'user',
-      content: [new TextBlock(formatSummarized(`${safe.length} messages`, totalTokens, summary))],
-    })
-
     const { lowestIndex } = spliceWithPairs(messages, safe)
-
-    const insertIndex = Math.max(1, Math.min(lowestIndex, messages.length))
-    messages.splice(insertIndex, 0, summaryMessage)
+    insertMarker(messages, lowestIndex, formatSummarized(`${safe.length} messages`, totalTokens, summary))
 
     repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)

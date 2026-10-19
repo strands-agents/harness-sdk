@@ -1,0 +1,9 @@
+name: opencode
+description: OpenCode Zen and Go endpoints as a Strands Agents model provider (OpenAI-compatible Chat Completions), with streaming and tool calling.
+integrationType: model-provider
+languages:
+  typescript:
+    package: "@guru.prasath/model-opencode"
+github: https://github.com/aprasadh/model-opencode
+docsUrl: https://github.com/aprasadh/model-opencode#readme
+addedDate: 2026-10-05

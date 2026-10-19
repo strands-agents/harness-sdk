@@ -1,0 +1,10 @@
+name: attenu-guard
+description: "Per-agent permissions on every tool call and handoff: a sub-agent gets a subset of its parent's, and every decision lands in an audit log verified offline."
+integrationType: intervention
+maintainedBy: community
+languages:
+  python:
+    package: attenu-guard
+github: https://github.com/attenu-io/attenu-guard
+docsUrl: https://github.com/attenu-io/attenu-guard/tree/main/examples/integrations/strands
+addedDate: 2026-08-26
