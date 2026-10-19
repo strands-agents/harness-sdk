@@ -1,3 +1,4 @@
+import json
 import logging
 import unittest.mock
 from typing import Any
@@ -5,10 +6,14 @@ from typing import Any
 import pydantic
 import pytest
 import writerai
+from writerai.types.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+from writerai.types.shared.tool_call_streaming import Function, ToolCallStreaming
 
 import strands
+from strands.event_loop.streaming import process_stream
 from strands.models.model import CacheConfig
 from strands.models.writer import WriterModel
+from strands.types._events import ModelStopReason
 from strands.types.exceptions import ContextWindowOverflowException
 
 
@@ -683,3 +688,126 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(writer_client, m
         request = model.format_request(messages)
 
     assert "cache_config" not in request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [['{"x":1}'], ['{"x":', "1}"], ["", '{"x":1}'], [None, '{"x":1}']])
+async def test_stream_preserves_first_tool_argument_delta(writer_client, model, arguments, alist):
+    chunks = []
+    for argument in arguments:
+        call = {
+            "index": 0,
+            "id": "call1",
+            "type": "function",
+            "function": {"name": "calculator", "arguments": argument},
+        }
+        if argument is None:
+            tool_call = ToolCallStreaming.model_construct(
+                index=call["index"],
+                id=call["id"],
+                type=call["type"],
+                function=Function.model_construct(name=call["function"]["name"], arguments=None),
+            )
+            chunks.append(
+                ChatCompletionChunk.model_construct(
+                    id="1",
+                    object="chat.completion.chunk",
+                    created=1,
+                    model="palmyra-x5",
+                    choices=[
+                        Choice.model_construct(
+                            index=0,
+                            delta=ChoiceDelta.model_construct(tool_calls=[tool_call]),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            )
+        else:
+            chunks.append(
+                ChatCompletionChunk.model_validate(
+                    {
+                        "id": "1",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "palmyra-x5",
+                        "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}],
+                    }
+                )
+            )
+    chunks.extend(
+        [
+            ChatCompletionChunk.model_validate(
+                {
+                    "id": "1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "palmyra-x5",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                }
+            ),
+            ChatCompletionChunk.model_validate(
+                {
+                    "id": "1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "palmyra-x5",
+                    "choices": [],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                }
+            ),
+        ]
+    )
+    writer_client.chat.chat.return_value = mock_streaming_response(chunks)
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "calculate"}]}]))
+    tru_inputs = [
+        event["contentBlockDelta"]["delta"]["toolUse"]["input"]
+        for event in events
+        if "contentBlockDelta" in event and "toolUse" in event["contentBlockDelta"]["delta"]
+    ]
+    exp_input = {"x": 1}
+    assert json.loads("".join(tru_inputs)) == exp_input
+
+
+@pytest.mark.asyncio
+async def test_stream_aggregates_parallel_first_tool_arguments(writer_client, model):
+    def chunk(calls, finish=None, usage=None):
+        return ChatCompletionChunk.model_validate(
+            {
+                "id": "1",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "palmyra-x5",
+                "choices": [{"index": 0, "delta": {"tool_calls": calls}, "finish_reason": finish}]
+                if usage is None
+                else [],
+                "usage": usage,
+            }
+        )
+
+    def call(index, arguments):
+        return {
+            "index": index,
+            "id": f"call{index}",
+            "type": "function",
+            "function": {"name": f"tool{index}", "arguments": arguments},
+        }
+
+    chunks = [
+        chunk([call(0, '{"x":'), call(1, '{"y":2}')]),
+        chunk([call(0, "1}")]),
+        chunk([], finish="tool_calls"),
+        chunk([], usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
+    ]
+    writer_client.chat.chat.return_value = mock_streaming_response(chunks)
+    events = [
+        event async for event in process_stream(model.stream([{"role": "user", "content": [{"text": "calculate"}]}]))
+    ]
+    tru_stop = next(event for event in events if isinstance(event, ModelStopReason))
+    tru_tools = [block["toolUse"] for block in tru_stop["stop"][1]["content"] if "toolUse" in block]
+    exp_tools = [
+        ("call0", "tool0", {"x": 1}),
+        ("call1", "tool1", {"y": 2}),
+    ]
+    assert [(tool["toolUseId"], tool["name"], tool["input"]) for tool in tru_tools] == exp_tools
+    assert tru_stop["stop"][0] == "tool_use"

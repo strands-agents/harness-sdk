@@ -347,7 +347,11 @@ class WriterModel(Model):
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
 
-                return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"].function.arguments}}}}
+                # Writer stream deltas are built without validation, so a first
+                # delta can carry arguments=None; emit "" the way the other
+                # OpenAI-compatible providers (openai.py) and the writer-sdk
+                # accumulator itself do.
+                return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"].function.arguments or ""}}}}
 
             case "content_block_stop":
                 return {"contentBlockStop": {}}
@@ -446,7 +450,7 @@ class WriterModel(Model):
         yield self.format_chunk({"chunk_type": "content_block_stop", "data_type": "text"})
 
         for tool_deltas in tool_calls.values():
-            tool_start, tool_deltas = tool_deltas[0], tool_deltas[1:]
+            tool_start = tool_deltas[0]
             yield self.format_chunk({"chunk_type": "content_block_start", "data_type": "tool", "data": tool_start})
 
             for tool_delta in tool_deltas:
