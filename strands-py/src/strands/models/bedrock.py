@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 import warnings
-from collections.abc import AsyncGenerator, Callable, Iterable, ValuesView
+from collections.abc import AsyncGenerator, Callable, Iterable, Iterator, ValuesView
 from typing import Any, Literal, TypeVar, cast
 
 import boto3
@@ -62,6 +62,9 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
 
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
+
+# Bedrock reports an output content-filter block mid-stream as a validationException carrying this substring.
+_CONTENT_FILTER_STREAM_ERROR_MESSAGE = "Output blocked by content filtering policy"
 
 # Models that should include tool result status (include_tool_result_status = True)
 _MODELS_INCLUDE_STATUS = [
@@ -151,6 +154,49 @@ async def _next_stream_event(
 
     get_event.cancel()
     return None
+
+
+def _is_content_filter_stream_error(error: ClientError) -> bool:
+    """Whether a Converse stream error is Bedrock's content filter blocking the model's output."""
+    error_details = error.response.get("Error", {})
+    return error_details.get("Code", "").lower() == "validationexception" and (
+        _CONTENT_FILTER_STREAM_ERROR_MESSAGE in error_details.get("Message", "")
+    )
+
+
+def _end_stream_on_content_filter(stream: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    """Yield the Converse stream's events, ending with a content_filtered stop if the output is blocked.
+
+    Text streamed before the block is kept. An unfinished tool use or reasoning block is dropped, since
+    its input or signature is incomplete.
+
+    Args:
+        stream: Events from a Converse stream response.
+
+    Yields:
+        The stream's events, followed by a closing content block and content_filtered message stop when
+        the stream fails with a content-filter error.
+
+    Raises:
+        ClientError: If the stream fails with any other error.
+    """
+    text_block_open = False
+    try:
+        for chunk in stream:
+            if "contentBlockDelta" in chunk:
+                delta = chunk["contentBlockDelta"]["delta"]
+                text_block_open = "text" in delta or "citation" in delta
+            elif "contentBlockStart" in chunk or "contentBlockStop" in chunk:
+                text_block_open = False
+            yield chunk
+    except ClientError as error:
+        if not _is_content_filter_stream_error(error):
+            raise
+
+        logger.debug("text_block_open=<%s> | output blocked by content filter, ending stream", text_block_open)
+        if text_block_open:
+            yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "content_filtered"}}
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -1560,7 +1606,7 @@ class BedrockModel(Model):
                 redaction_emitted = False
                 saw_guardrail_trace = False
                 last_stop_reason: str | None = None
-                for chunk in response["stream"]:
+                for chunk in _end_stream_on_content_filter(response["stream"]):
                     if cancel_signal is not None and cancel_signal.is_set():
                         # Closing from this thread only: botocore's teardown is not safe against a
                         # read in flight, and this thread is the one reading.
