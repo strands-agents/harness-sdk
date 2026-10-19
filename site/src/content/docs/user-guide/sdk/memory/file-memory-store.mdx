@@ -14,9 +14,15 @@ sidebar:
 
 `FileMemoryStore` is a [`MemoryStore`](./managing-memory#stores)
 that persists knowledge as markdown files through the SDK's
-unified `Storage` interface. Each topic gets its own `.md`
-file, and repeated writes to the same topic append rather
-than overwrite, so related facts accumulate in one place.
+unified [`Storage`](../storage) interface. Each topic gets
+its own `.md` file, and repeated writes to the same topic
+append rather than overwrite, so related facts accumulate
+in one place.
+
+Because the store only talks to the `Storage` interface,
+any backend works: local files, S3, in-memory, or a
+[custom backend](../storage#custom-backends) you write for
+your own database. See [Storage Backend](#storage-backend).
 
 Point it at a store name and the default local-file backend
 handles the rest:
@@ -81,15 +87,12 @@ like `entry-1717459200000.md`.
 [shared `MemoryStore` fields](./managing-memory#stores) (`name`,
 `description`,
 <Syntax py="max_search_results" ts="maxSearchResults" />,
-`writable`, `extraction`) plus one of its own:
+`writable`, `extraction`) plus one of its own: `storage`,
+the `Storage` backend for file operations. It defaults to
+`LocalFileStorage` at `./.strands/` (see
+[Storage Backend](#storage-backend)).
 
-| Field | Purpose |
-|-------|---------|
-| `storage` | The `Storage` backend for file operations. Defaults to `LocalFileStorage` at `./.strands/`. Keys are auto-scoped under `memory/<name>/`, so stores with distinct names safely share one backend. |
-
-`writable` defaults to `true`. Construction accepts an
-empty `name` (the store scopes under `memory//`, which is
-valid but not recommended).
+`writable` defaults to `true`.
 
 To customize the built-in extractor:
 
@@ -147,18 +150,34 @@ store = FileMemoryStore(
 </Tab>
 </Tabs>
 
-The store auto-scopes keys under `memory/<name>/` unless
-the provided storage is already namespaced, so two stores
-with different names on the same backend stay isolated. Two
-stores with the *same* name on the same backend share
-files: give them different names to keep them separate.
+The store writes its files under `memory/<name>/` on the
+backend you pass:
+
+- Stores with different names on the same backend are
+  isolated from each other.
+- Stores with the same name on the same backend read and
+  write the same files.
+- An empty `name` is accepted and scopes to `memory//`.
+  It works, but every unnamed store on that backend shares
+  those files, so give each store a name.
+
+The exception is a backend you have already scoped with
+<Syntax py="storage.namespace(...)" ts="storage.namespace(...)" />.
+The store uses that view as-is and does **not** add
+`memory/<name>/`, so its files land directly under your
+prefix. Every store you hand that same view shares its
+files regardless of `name`; give each store its own
+namespaced view to keep them separate.
 
 ## Search
 
 The default search ranks files by keyword token overlap: it
 counts how many distinct words from the query appear in
 each file's name and content, and returns the top scorers.
-A query with no usable words returns nothing.
+A query with no usable words returns nothing. Search runs
+through the storage backend's pluggable
+[search strategy](../storage/search-strategies), so you can
+swap in a different ranking without changing the store.
 
 :::note
 The default search is lexical, not semantic. "Seat" matches
@@ -216,7 +235,10 @@ each search, so existing files are searchable:
 </Tab>
 </Tabs>
 
-You can also implement the
+See [BM25 search](../storage/search-strategies#bm25-search)
+for setup details, or
+[write a custom strategy](../storage/search-strategies#writing-a-custom-strategy)
+by implementing the
 <Syntax py="SearchStrategy" ts="SearchStrategy" /> interface
 for your own ranking. Keep a reference to the
 strategy so you can call
