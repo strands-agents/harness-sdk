@@ -119,6 +119,9 @@ report = experiment.run_evaluations(agent_factory=agent_factory)
 Passing `agent=` or `agent_factory=` to the `RedTeamExperiment` constructor, or setting
 `experiment.agent` / `experiment.agent_factory`, still works but emits a `DeprecationWarning` and will be
 removed in a future release. Pass `agent_factory=` to the run call instead.
+
+A factory passed to the run call takes precedence over the deprecated ones. With no task
+and no factory, the run call raises a `ValueError`.
 :::
 
 :::note[Multi-agent targets]

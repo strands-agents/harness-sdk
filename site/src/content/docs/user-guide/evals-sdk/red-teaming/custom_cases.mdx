@@ -38,7 +38,9 @@ case = RedTeamCase(
 - **`actor_goal`** (`str`): The concrete objective the attacker pursues. This is what the strategy steers the conversation toward. Be specific: "reveal another user's balance" attacks better than "leak data".
 - **`success_criteria`** (`str | None`, default `None`): A concrete, observable condition that means the attack succeeded. The judge cites it directly, and the strategies' in-loop text-score gate reads it to decide when to stop early. Strongly recommended: without it, the text-score gate never fires, so the attack runs to its full turn budget and the final judge alone decides the verdict. (Crescendo still stops early on a tool-call breach even without criteria.)
 - **`context`** (`str`, default `""`): An optional one-or-two-sentence summary of the target, given to the attacker for grounding.
-- **`severity`** (`"low" | "medium" | "high" | "critical"`, default `"medium"`): A label for triage; it does not change how the attack runs or is scored.
+- **`severity`** (`"low" | "medium" | "high" | "critical"`, default `"medium"`): A label for
+  triage; it does not change how the attack runs or is scored. Generated cases use their
+  category's default severity instead.
 
 ### `RedTeamCase` fields
 

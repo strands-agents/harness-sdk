@@ -75,8 +75,9 @@ report.display()
 `my_task` does what the built-in task does, so this run behaves the same as passing
 `agent_factory=agent_factory`. The sections below change what happens inside the task.
 
-- **`case.strategy`** is set when the experiment expands the cases; reading it on a case
-  that wasn't expanded raises an `AttributeError`.
+- **`case.strategy`** is set when the experiment expands the cases, at run time only: it
+  isn't saved with the case. Reading it on a case that wasn't expanded raises an
+  `AttributeError`.
 - **`strategy.reset()`** clears any per-case state. Strategy instances are shared across
   every case and worker, so call it before each attack.
 - **`as_target_session()`** wraps an `Agent` in a `StrandsAgentSession` and a `Graph` or

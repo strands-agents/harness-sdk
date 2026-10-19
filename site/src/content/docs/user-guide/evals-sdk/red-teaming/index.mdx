@@ -61,7 +61,7 @@ Cases are organized by **risk category**: the kind of violation an attack target
 A case's risk category tells the judge what counts as a breach for that case. Revealing protected data in a reply is `sensitive_data`; sending it out through a tool is `data_exfiltration`. These categories align with the threat types in standard taxonomies like the OWASP LLM Top 10 (for example, `prompt_injection` maps to LLM01, `sensitive_data` to LLM02 and LLM07, and `excessive_agency` to LLM06), so findings translate into the language a security review expects.
 
 :::note[Renamed categories]
-`guideline_bypass` and `system_prompt_leak` still work but emit a `DeprecationWarning`, and resolve to `prompt_injection` and `sensitive_data`. `harmful_content` is no longer a risk category; to score a single response for harmful content, use the [Harmfulness Evaluator](../evaluators/harmfulness_evaluator.md).
+`guideline_bypass` and `system_prompt_leak` still work but emit a `DeprecationWarning`, and resolve to `prompt_injection` and `sensitive_data`. `harmful_content` has no replacement: `AdversarialCaseGenerator` raises a `ValueError` for it.
 :::
 
 ## Quick example
