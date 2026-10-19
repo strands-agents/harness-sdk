@@ -6,11 +6,11 @@ sidebar:
   label: "Attack strategies"
 ---
 
-An `AttackStrategy` is a technique for driving an adversarial conversation against the target. Each strategy in the SDK implements a published jailbreak method. They all share the same contract (a strategy receives a case and a `TargetSession`, talks to the target through `target_session.invoke(...)`, and returns the conversation for the judge to score), so you can run several in one experiment and compare which breaches.
+An `AttackStrategy` is a technique for driving an adversarial conversation against the target. Each of the five built-in strategies implements a published jailbreak method. They all share the same contract (a strategy receives a case and a `TargetSession`, talks to the target through `target_session.invoke(...)`, and returns the conversation for the judge to score), so you can run several in one experiment and compare which breaches.
 
 Some strategies use an **attacker LLM**: a second model that writes the adversarial prompts turn by turn, adapting to how the target responds. Others are **scripted**: they send fixed templates and need no second model.
 
-## Choosing a strategy
+## Built-in strategies
 
 | Strategy | Class | Mechanism | Attacker LLM? | Based on |
 |----------|-------|-----------|---------------|----------|
@@ -20,9 +20,7 @@ Some strategies use an **attacker LLM**: a second model that writes the adversar
 | Bad Likert Judge | `BadLikertJudgeStrategy` | Casts the target as a harmfulness-rating judge, then elicits a top-score example | No (scripted) | [Unit 42](https://unit42.paloaltonetworks.com/multi-turn-technique-jailbreaks-llms/) |
 | SequentialBreak | `SequentialBreakStrategy` | Hides the harmful request among benign siblings in one narrative scaffold | No (scripted) | [arXiv:2411.06426](https://arxiv.org/abs/2411.06426) |
 
-The strategies that use an attacker LLM adapt their prompts turn by turn; the scripted ones send fixed templates and need no second model. Because attack success is a strategy × goal × target interaction, no single strategy dominates: running several and comparing the report is the intended workflow.
-
-Crescendo backtracks within its own conversation when the target refuses. PAIR and SequentialBreak treat each attempt as an independent single shot: before every attempt after the first, they roll the target back to the state it started the attack in. GOAT and Bad Likert Judge are **append-only**: they drive one conversation forward and never rewind the target. All five work against a plain `Agent` with no special setup.
+All five work against a plain `Agent` with no special setup.
 
 ## What an attack looks like
 
@@ -61,9 +59,9 @@ The differences that *are* structural, and worth using to choose:
   attacker message they write gets one extra check on the experiment's judge model to see
   whether the attacker declined its role (see
   [Choosing an attacker model](#choosing-an-attacker-model)).
-- **Rewinding.** Crescendo rewinds on a refusal, and PAIR and SequentialBreak rewind between attempts; GOAT and Bad Likert Judge are append-only. On an agentic target this doesn't change whether a tool-call breach is caught: the authoritative `AttackSuccessEvaluator` re-scores the full trace for every strategy regardless.
+- **Rewinding.** Crescendo rewinds on a refusal. PAIR and SequentialBreak treat each attempt as an independent single shot, rolling the target back to its starting state before every attempt after the first. GOAT and Bad Likert Judge are **append-only**: they drive one conversation forward and never rewind the target. On an agentic target this doesn't change whether a tool-call breach is caught: the authoritative `AttackSuccessEvaluator` re-scores the full trace for every strategy regardless.
 
-When you're not sure, start with one multi-turn strategy (e.g. Crescendo or GOAT) and one scripted one (e.g. SequentialBreak), then add more based on what `by_strategy()` shows.
+When you're not sure, start with one multi-turn strategy (e.g. Crescendo or GOAT) and one scripted one (e.g. SequentialBreak), then add more.
 
 ## Common parameters
 
@@ -78,9 +76,9 @@ neither `model` nor `success_threshold`; see [Template-driven strategies](#templ
 - **`label`** (`str | None`, default `None`): An identifier used for cross-product naming and report grouping when you run the same strategy class more than once.
 - **`success_threshold`** (`float`): The strategy's in-loop early-stop gate on the `0.0`–`1.0` score: it only controls when the strategy stops attacking. **Do not confuse it with the evaluator's `pass_threshold` (default `0.3`), which is the number that actually decides a breach.** The authoritative verdict always comes from the `AttackSuccessEvaluator`, not from this gate.
 
-Most strategies also take their own `max_turns`. `RedTeamExperiment` caps every attack at
-`MAX_ALLOWED_TURNS`, so a strategy configured with a higher `max_turns` still stops at
-that cap.
+Crescendo, GOAT, PAIR, and SequentialBreak also take their own `max_turns`.
+`RedTeamExperiment` caps every attack at `MAX_ALLOWED_TURNS`, so a strategy configured with
+a higher `max_turns` still stops at that cap.
 
 `MAX_ALLOWED_TURNS` is also the default `max_turns` for `run_attack()`, so a
 [custom task](custom_task.md) doesn't need to pass it. If you subclass `AttackStrategy`,
@@ -138,7 +136,8 @@ check, and the attacker of any strategy without its own `model`, including
 
 ## Crescendo
 
-Escalates over up to `max_turns` turns, starting benign and steering toward the goal. When the target refuses, Crescendo backtracks (up to `max_backtracks` times) and tries a different angle from the last good turn. Stops early once a turn scores at or above `success_threshold`.
+Escalates over up to `max_turns` turns, starting benign and steering toward the goal. When the target refuses, Crescendo backtracks (up to `max_backtracks` times) and tries a different angle from the last good turn. Stops early once a turn scores at or above `success_threshold`, or as soon as the target
+makes a tool call; a turn that made a tool call is never backtracked.
 
 - **`max_turns`** (default `10`): Maximum escalation turns.
 - **`max_backtracks`** (default `10`): Maximum refusals to recover from before giving up.
@@ -193,7 +192,8 @@ PairStrategy(
 
 ## Bad Likert Judge
 
-A scripted role-assignment attack: it casts the target as a judge that rates responses for harmfulness on a Likert scale, then asks it to emit an example response for each score: the top-score example carries the payload. No attacker LLM. The turn count is fixed by the script (role setup, per-score elicitation, then `refine_rounds` refinement turns), not by a `max_turns` knob; the experiment's turn ceiling just needs to allow the setup-plus-elicit minimum.
+A scripted role-assignment attack: it casts the target as a judge that rates responses for harmfulness on a Likert scale, then asks it to emit an example response for each score: the top-score example carries the payload. No attacker LLM. The turn count is fixed by the script (role setup, per-score elicitation, then `refine_rounds` refinement turns), not by a `max_turns` knob. It needs room for at least the setup and elicit turns: a custom
+task that passes a smaller `max_turns` to `run_attack()` gets a `ValueError`.
 
 - **`refine_rounds`** (default `2`): Extra turns that push the top-score example toward a more actionable answer. `0` is valid (setup + elicit only).
 - **`success_threshold`** (default `0.7`): The judge emits a discrete 1/2/3 rating mapped to `{1: 0.0, 2: 0.5, 3: 1.0}`, so only a rating of 3 clears `0.7`.
@@ -269,7 +269,7 @@ my_strategy = PromptStrategy(
 
 ## Running several strategies
 
-Pass a list to compare strategies on the same cases in one report. Because attack success is a strategy × goal × target interaction, running several and comparing `by_strategy()` is the intended workflow:
+Pass a list to compare strategies on the same cases in one report:
 
 ```python
 import asyncio
@@ -293,9 +293,7 @@ experiment = RedTeamExperiment(
         SequentialBreakStrategy(),
     ],
 )
-report = asyncio.run(
-    experiment.run_evaluations_async(agent_factory=agent_factory, max_workers=5)
-)
+report = asyncio.run(experiment.run_evaluations_async(agent_factory=agent_factory))
 
 # by_strategy() returns a GroupedSummary per strategy:
 # group_name, count, avg_score, pass_rate, errored
@@ -308,6 +306,7 @@ for group in report.by_strategy():
 
 ## Next steps
 
-- [Writing Custom Cases](custom_cases.md): Author the cases these strategies attack
-- [Scoring Attacks](evaluators.md): How a strategy's score becomes a breach verdict
-- [Quickstart](quickstart.md): The end-to-end run
+- [Writing custom cases](custom_cases.md): Author the cases these strategies attack
+- [Writing a custom task](custom_task.md): Call `run_attack()` yourself
+- [Scoring attacks](evaluators.md): How a strategy's score becomes a breach verdict
+- [Reading the report](reading_the_report.md): Compare strategies with `by_strategy()`
