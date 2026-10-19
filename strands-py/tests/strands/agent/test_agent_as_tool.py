@@ -430,6 +430,74 @@ async def test_stream_resets_empty_initial_state_when_preserve_context_false(fak
 
 
 @pytest.mark.asyncio
+async def test_stream_resets_model_state_when_preserve_context_false(fake_agent):
+    """Model state should reset to its construction-time baseline between invocations."""
+    fake_agent._model_state = {"response_id": "initial_resp"}
+    tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=False)
+
+    fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
+        AgentResult(
+            stop_reason="end_turn",
+            message={"role": "assistant", "content": [{"text": "ok"}]},
+            metrics=EventLoopMetrics(),
+            state={},
+        )
+    )
+
+    tool_use = {
+        "toolUseId": "tool-1",
+        "name": "fake_agent",
+        "input": {"input": "first"},
+    }
+
+    async for _ in tool.stream(tool_use, {}):
+        pass
+
+    # Simulate model provider updating model_state during invocation
+    fake_agent._model_state = {"response_id": "resp_after_call_1"}
+
+    tool_use["toolUseId"] = "tool-2"
+    async for _ in tool.stream(tool_use, {}):
+        pass
+
+    assert fake_agent._model_state == {"response_id": "initial_resp"}
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_model_state_when_preserve_context_true(fake_agent):
+    """Model state should be preserved across invocations when preserve_context=True."""
+    fake_agent._model_state = {"response_id": "initial_resp"}
+    tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=True)
+
+    fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
+        AgentResult(
+            stop_reason="end_turn",
+            message={"role": "assistant", "content": [{"text": "ok"}]},
+            metrics=EventLoopMetrics(),
+            state={},
+        )
+    )
+
+    tool_use = {
+        "toolUseId": "tool-1",
+        "name": "fake_agent",
+        "input": {"input": "first"},
+    }
+
+    async for _ in tool.stream(tool_use, {}):
+        pass
+
+    # Provider updates model_state
+    fake_agent._model_state["response_id"] = "resp_after_call_1"
+
+    tool_use["toolUseId"] = "tool-2"
+    async for _ in tool.stream(tool_use, {}):
+        pass
+
+    assert fake_agent._model_state == {"response_id": "resp_after_call_1"}
+
+
+@pytest.mark.asyncio
 async def test_stream_resets_context_by_default(fake_agent):
     """Default preserve_context=False means each invocation starts fresh."""
     fake_agent.messages = [{"role": "user", "content": [{"text": "old"}]}]
