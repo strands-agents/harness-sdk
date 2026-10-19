@@ -435,6 +435,10 @@ function resolvePolicy(config: BackgroundTasksConfig): ReadonlyMap<string, 'neve
   const policy = new Map<string, 'never' | 'agentic' | 'always'>()
 
   for (const [mode, selectors] of assignments) {
+    // A bare string from untyped callers is iterable too; looping over it would assign each character as a tool name.
+    if (typeof selectors === 'string') {
+      throw new TypeError(`'${mode}' must be an array of tools or tool names, got the string '${selectors}'`)
+    }
     for (const selector of selectors) {
       const name = typeof selector === 'string' ? selector : selector.name
       const existing = policy.get(name)
