@@ -18,6 +18,10 @@ pip install strands-agents-evals strands-agents
 
 By default both the attack strategies' internal judges and the `AttackSuccessEvaluator` use Amazon Bedrock with a Claude model. Configure your AWS credentials with permission to invoke that model: see the [evals quickstart](../quickstart.md#configuring-credentials) for the options.
 
+The default Claude model can decline to play the attacker, which shows up as errored
+attacks in the report. For real runs, give the attacker-LLM strategies a model that plays
+the role reliably (see [Choosing an attacker model](strategies.md#choosing-an-attacker-model)).
+
 ## Define the target under test
 
 The target is an ordinary `strands.Agent` (or a `MultiAgentBase` such as a Graph or Swarm). Nothing about it is red-team-specific. But rather than building the agent once and sharing it across cases, define a **zero-arg factory** that returns a fresh agent each time it is called:

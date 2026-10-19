@@ -106,7 +106,8 @@ for result in report.attack_results():
 - **`score`**: the 0.0–1.0 judge score (the max across evaluators, if you ran more than one).
 - **`state`**: `"breached"`, `"defended"`, or `"errored"`. Use this to read the verdict.
 - **`errored`**: `True` when the attack errored (see [Errored attacks](#errored-attacks)).
-- **`passed`**: `True` when every evaluator that scored the attack passed. An errored attack has no judgments, so its `passed` is also `True`: check `state`, not `passed`.
+- **`passed`**: `True` when every evaluator that scored the attack passed. An errored
+  attack's `passed` is always `True`, so check `state`, not `passed`.
 - **`scores`** / **`passes`** / **`reasons`**: per-evaluator dicts keyed by evaluator name (e.g. `result.scores["AttackSuccessEvaluator"]`). Read these when stacking multiple evaluators.
 - **`reason`**: a single string joining each evaluator's reason; `result.reasons` keeps them per-evaluator.
 - **`case_name`**: carries a `__<strategy>` suffix (e.g. `sensitive_data_0__crescendo`); the printed tables strip it. Each variant also gets its own `session_id`, derived deterministically from the base case's, so traces and CloudWatch records from different strategies don't collide. To group variants back to their base case, use the name prefix or `result.strategy`.

@@ -67,9 +67,14 @@ When you're not sure, start with one multi-turn strategy (e.g. Crescendo or GOAT
 
 ## Common parameters
 
-Every built-in strategy's constructor accepts these (the default for `success_threshold` varies per strategy, see each section):
+Each of the five research-backed strategies accepts these in its constructor (the default
+for `success_threshold` varies per strategy, see each section). `PromptStrategy` takes
+neither `model` nor `success_threshold`; see [Template-driven strategies](#template-driven-strategies).
 
-- **`model`** (`Model | str | None`, default `None`): The model for the strategy's internal judge (and attacker, for the LLM-driven strategies). `None` uses the evals default judge model. A constructor value takes precedence over the `model` passed to the experiment.
+- **`model`** (`Model | str | None`, default `None`): The model for the strategy's internal
+  judge (and attacker, for the LLM-driven strategies). `None` falls back to the experiment's
+  `model`, then to the default model. The refusal check always uses the experiment's
+  `model`, not this one (see [Choosing an attacker model](#choosing-an-attacker-model)).
 - **`label`** (`str | None`, default `None`): An identifier used for cross-product naming and report grouping when you run the same strategy class more than once.
 - **`success_threshold`** (`float`): The strategy's in-loop early-stop gate on the `0.0`–`1.0` score: it only controls when the strategy stops attacking. **Do not confuse it with the evaluator's `pass_threshold` (default `0.3`), which is the number that actually decides a breach.** The authoritative verdict always comes from the `AttackSuccessEvaluator`, not from this gate.
 
@@ -121,8 +126,7 @@ experiment = RedTeamExperiment(
 
 The experiment's `model` is the model for the default `AttackSuccessEvaluator`, the refusal
 check, and the attacker of any strategy without its own `model`, including
-`PromptStrategy`. If you don't set it, all three use the evals default model on Amazon
-Bedrock, so you need Bedrock credentials even when every strategy's attacker runs elsewhere.
+`PromptStrategy`.
 
 ## Crescendo
 
@@ -285,8 +289,12 @@ report = asyncio.run(
     experiment.run_evaluations_async(agent_factory=agent_factory, max_workers=5)
 )
 
-# by_strategy() returns a GroupedSummary per strategy: group_name, count, avg_score, pass_rate
+# by_strategy() returns a GroupedSummary per strategy:
+# group_name, count, avg_score, pass_rate, errored
 for group in report.by_strategy():
+    if group.pass_rate is None:
+        print(f"{group.group_name}: all {group.count} attacks errored")
+        continue
     print(f"{group.group_name}: {group.pass_rate:.0%} defended ({group.count} attacks)")
 ```
 

@@ -17,7 +17,9 @@ the very content the attack elicited, so handle reports accordingly.
 
 Red teaming answers **"can an attacker make my agent misbehave?"** It runs *jailbreaks* (prompts crafted to get a model to do something its instructions forbid) against your agent and scores whether each one got through. While evaluators measure whether an agent does the right thing on cooperative input, red teaming probes what it does under deliberately hostile input: prompts engineered to override its instructions, leak its system prompt or private data, send data out through its tools, or trigger tool calls beyond its authority. An attack that gets through is a **breach**.
 
-You assemble adversarial cases and one or more attack strategies against your agent in a `RedTeamExperiment`, run it, and read the breaches off the report. Each attack is driven by an `AttackStrategy` (a technique drawn from published jailbreak research) and scored by an LLM judge, but you only interact with the experiment.
+You assemble adversarial cases and one or more attack strategies against your agent in a `RedTeamExperiment`, run it, and read the breaches off the report. Each attack is driven by an `AttackStrategy` (a technique drawn from published jailbreak
+research) and scored by an LLM judge. With the built-in task, you only interact with the
+experiment; to drive the target yourself, see [Writing a custom task](custom_task.md).
 
 ## Why red teaming?
 
@@ -100,7 +102,7 @@ The [Quickstart](quickstart.md) walks through each step (including a sync `run_e
 | **Question** | "How well did the agent do?" | "Can an attacker make it misbehave?" |
 | **Input** | Cooperative test cases | Adversarial attacks (multi-turn or scripted) |
 | **Output** | Score + pass/fail | Attack success score + breaching conversations |
-| **Driver** | Your task function, called once per case | An `AttackStrategy` that adapts per turn |
+| **Driver** | Your task function, called once per case | An `AttackStrategy` that drives the conversation turn by turn |
 | **Use Case** | Quality evaluation | Safety probing, guardrail regression |
 
 **Use Together:** Evaluate the agent for quality, then red team it for safety. A high quality score and an undefended jailbreak are both true at once.
