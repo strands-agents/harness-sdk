@@ -981,6 +981,49 @@ class TestClassifierMode:
         # Classifier was only called once (not again on resume)
         assert len(call_count) == 1
 
+    def test_classifier_false_verdict_persists_on_resume(self):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+        call_count = []
+        ask_count = []
+
+        @tool(name="ask_account", context=True)
+        def ask_account(tool_context) -> str:
+            account = tool_context.interrupt("account", reason="Which account?")
+            executed.append(account)
+            return str(account)
+
+        def counting_classifier(event, **kwargs):
+            call_count.append(1)
+            return ClassifierResult(requires_human_in_the_loop=False)
+
+        def capture_ask(prompt, **kwargs):
+            ask_count.append(prompt)
+            return "no"
+
+        agent_model = MockedModelProvider([tool_use_message("ask_account"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[ask_account],
+            interventions=[HumanInTheLoop(classifier=counting_classifier, ask=capture_ask)],
+        )
+
+        result = agent("Go")
+        assert result.stop_reason == "interrupt"
+        assert result.interrupts[0].name == "account"
+        assert result.interrupts[0].reason == "Which account?"
+        assert len(call_count) == 1
+        assert ask_count == []
+        assert executed == []
+
+        interrupt_id = result.interrupts[0].id
+        result = agent([{"interruptResponse": {"interruptId": interrupt_id, "response": "checking"}}])
+        assert result.stop_reason == "end_turn"
+        assert len(call_count) == 1
+        assert ask_count == []
+        assert executed == ["checking"]
+
     def test_wildcard_with_classifier_warns(self, caplog):
         from strands.vended_interventions.hitl.classifier import ClassifierResult
 
