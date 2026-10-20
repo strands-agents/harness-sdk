@@ -11,6 +11,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 import strands.agent.agent as agent_module
+from strands.sandbox.types import ExecutionResult
 from strands.types.tools import ToolContext, ToolUse
 from strands.vended_tools.web_fetch import (
     WebFetchError,
@@ -18,7 +19,7 @@ from strands.vended_tools.web_fetch import (
 )
 from strands.vended_tools.web_fetch import _extract as extract_module
 from strands.vended_tools.web_fetch._extract import _tag_attribute, html_to_markdown
-from strands.vended_tools.web_fetch.web_fetch import _parse_charset
+from strands.vended_tools.web_fetch.web_fetch import _curl_command, _parse_charset, _validate_url
 
 
 def _transport(handler):
@@ -39,6 +40,33 @@ def _make_ctx(cancel: threading.Event | None = None) -> ToolContext:
 
 def _raising_beautiful_soup(*args, **kwargs):
     raise ValueError("mock extraction failure")
+
+
+class _MockSandbox:
+    """Minimal sandbox mock for curl-transport tests."""
+
+    def __init__(self, *, stdout="", stderr="", exit_code=0, file_data=b""):
+        self._stdout = stdout
+        self._stderr = stderr
+        self._exit_code = exit_code
+        self._file_data = file_data
+        self.commands: list[str] = []
+
+    async def execute(self, command, **kwargs):
+        self.commands.append(command)
+        if command.startswith("rm "):
+            return ExecutionResult(exit_code=0, stdout="", stderr="")
+        return ExecutionResult(exit_code=self._exit_code, stdout=self._stdout, stderr=self._stderr)
+
+    async def read_file(self, path, **kwargs):
+        return self._file_data
+
+
+def _sandbox_ctx(sandbox, **kwargs):
+    cancel = kwargs.pop("cancel", None) or threading.Event()
+    agent = SimpleNamespace(model=None, _cancel_signal=cancel, sandbox=sandbox, **kwargs)
+    tool_use = ToolUse(toolUseId="test-wf", name="web_fetch", input={})
+    return ToolContext(tool_use=tool_use, agent=agent, invocation_state={}, cancel_signal=cancel)
 
 
 class TestLazyLoad:
@@ -108,8 +136,12 @@ class TestWebFetchToolCall:
 
     @pytest.mark.asyncio
     async def test_rejects_non_http_scheme(self):
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise httpx.InvalidURL("unsupported scheme")
+
+        tool = make_web_fetch(client=_client(handler), mode="markdown")
         with pytest.raises(WebFetchError, match="Fetch failed"):
-            await make_web_fetch(mode="markdown")(url="file:///etc/passwd")
+            await tool(url="file:///etc/passwd")
 
     @pytest.mark.asyncio
     async def test_transport_error_is_wrapped_as_value_error(self):
@@ -452,3 +484,137 @@ def test__tag_attribute_joins_list_values():
     # BS4 returns ``class`` as a list; _tag_attribute must join it.
     tag = BeautifulSoup('<div class="foo bar">', "html.parser").div
     assert _tag_attribute(tag, "class") == "foo bar"
+
+
+# ---- Curl transport & URL validation ----
+
+
+class TestValidateUrl:
+    """_validate_url rejects anything that isn't a safe http(s) URL."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/page",
+            "http://example.com/",
+            "https://example.com/a%20b",
+            "https://example.com/p?q=1&r=2#frag",
+        ],
+    )
+    def test_accepts_valid_url(self, url):
+        assert _validate_url(url) == url
+
+    def test_strips_whitespace(self):
+        assert _validate_url("  https://example.com/ ") == "https://example.com/"
+
+    @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://ftp.example.com/pub"])
+    def test_rejects_non_http_scheme(self, url):
+        with pytest.raises(WebFetchError, match="only supports http"):
+            _validate_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/has space",
+            "https://example.com/a|b",
+            "https://example.com/`id`",
+        ],
+    )
+    def test_rejects_non_rfc3986_url(self, url):
+        with pytest.raises(WebFetchError, match="RFC 3986"):
+            _validate_url(url)
+
+    def test_rejects_no_host(self):
+        with pytest.raises(WebFetchError, match="no host"):
+            _validate_url("https://")
+
+
+class TestCurlTransport:
+    """End-to-end tool behaviour with the sandbox stubbed out."""
+
+    def _tool(self, **kwargs):
+        return make_web_fetch(client="curl", mode="markdown", **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_html_response_returns_markdown(self):
+        html = "<html><head><title>T</title></head><body><h1>Hi</h1></body></html>"
+        sandbox = _MockSandbox(
+            stdout="text/html; charset=utf-8\nhttps://example.com/\n",
+            file_data=html.encode(),
+        )
+        result = await self._tool()(url="https://example.com/", tool_context=_sandbox_ctx(sandbox))
+        assert "# T" in result
+        assert "# Hi" in result
+
+    @pytest.mark.asyncio
+    async def test_plain_text_and_charset_decoding(self):
+        sandbox = _MockSandbox(
+            stdout="text/plain; charset=iso-8859-1\nhttps://example.com/\n",
+            file_data="café".encode("iso-8859-1"),
+        )
+        result = await self._tool()(url="https://example.com/", tool_context=_sandbox_ctx(sandbox))
+        assert "café" in result
+
+    @pytest.mark.asyncio
+    async def test_curl_error_raises(self):
+        sandbox = _MockSandbox(exit_code=22, stderr="curl: (22) The requested URL returned error: 404")
+        with pytest.raises(WebFetchError, match="404"):
+            await self._tool()(url="https://example.com/missing", tool_context=_sandbox_ctx(sandbox))
+
+    @pytest.mark.asyncio
+    async def test_truncation(self):
+        sandbox = _MockSandbox(stdout="text/plain\nhttps://example.com/\n", file_data=b"x" * 200)
+        result = await self._tool(max_content_chars=50)(
+            url="https://example.com/",
+            tool_context=_sandbox_ctx(sandbox),
+        )
+        assert result.startswith("x" * 50)
+        assert "[content truncated]" in result
+
+    @pytest.mark.asyncio
+    async def test_url_validation_rejects_bad_urls(self):
+        sandbox = _MockSandbox()
+        ctx = _sandbox_ctx(sandbox)
+        with pytest.raises(WebFetchError, match="only supports http"):
+            await self._tool()(url="file:///etc/passwd", tool_context=ctx)
+        with pytest.raises(WebFetchError, match="RFC 3986"):
+            await self._tool()(url="https://example.com/a|b", tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_no_sandbox_raises(self):
+        ctx = _make_ctx()
+        with pytest.raises(WebFetchError, match="requires a sandbox"):
+            await self._tool()(url="https://example.com/", tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_no_tool_context_raises(self):
+        with pytest.raises(WebFetchError, match="requires a sandbox"):
+            await self._tool()(url="https://example.com/")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_runs_on_success_and_failure(self):
+        # Success path
+        sandbox = _MockSandbox(stdout="text/plain\nhttps://example.com/\n", file_data=b"ok")
+        await self._tool()(url="https://example.com/", tool_context=_sandbox_ctx(sandbox))
+        assert len(sandbox.commands) == 2
+        assert sandbox.commands[1].startswith("rm -f")
+
+        # Failure path
+        sandbox = _MockSandbox(exit_code=6, stderr="Could not resolve host")
+        with pytest.raises(WebFetchError):
+            await self._tool()(url="https://example.com/", tool_context=_sandbox_ctx(sandbox))
+        assert any(cmd.startswith("rm -f") for cmd in sandbox.commands)
+
+
+def test_curl_command_shape():
+    cmd = _curl_command("https://example.com/", "/tmp/out", max_bytes=42)
+    assert "https://example.com/" in cmd
+    assert "head -c 42" in cmd
+    assert "--proto '=http,https'" in cmd
+    assert "--proto-redir '=http,https'" in cmd
+    assert "--fail" in cmd
+
+
+def test_make_web_fetch_rejects_invalid_client():
+    with pytest.raises(ValueError, match="client must be"):
+        make_web_fetch(client="wget")  # type: ignore[arg-type]
