@@ -12,6 +12,7 @@ import type { InvocationContext } from '../../agent/invocation-context.js'
 import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
+import { normalizeError } from '../../errors.js'
 
 export const SUMMARIZED_PREFIX = '[Summarized:'
 
@@ -65,17 +66,18 @@ export async function summarizeContent(
   invocationContext?: InvocationContext
 ): Promise<string | null> {
   const result = await callSummarizer(content, model, config, invocationContext)
-  if (result !== undefined) return result
+  if (!(result instanceof Error)) return result
 
   const textOnly = content.filter((block) => block instanceof TextBlock)
   if (textOnly.length === 0 || textOnly.length === content.length) {
-    logger.warn('summarization failed')
+    logger.warn(`error=<${result.message}> | summarization failed`)
     return null
   }
 
   const textResult = await callSummarizer(textOnly, model, config, invocationContext)
-  if (textResult === undefined) logger.warn('summarization failed after text-only retry')
-  return textResult ?? null
+  if (!(textResult instanceof Error)) return textResult
+  logger.warn(`error=<${textResult.message}> | summarization failed after text-only retry`)
+  return null
 }
 
 /**
@@ -142,7 +144,7 @@ async function callSummarizer(
   model: Model,
   config?: SummarizeConfig,
   invocationContext?: InvocationContext
-): Promise<string | null | undefined> {
+): Promise<string | null | Error> {
   const messages = [
     new Message({
       role: 'user',
@@ -178,7 +180,8 @@ async function callSummarizer(
 
     return parts.join('\n') || null
   } catch (error) {
-    logger.debug(`error=<${error instanceof Error ? error.message : String(error)}> | summarization attempt failed`)
-    return undefined
+    const normalized = normalizeError(error)
+    logger.debug(`error=<${normalized.message}> | summarization attempt failed`)
+    return normalized
   }
 }

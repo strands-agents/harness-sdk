@@ -110,7 +110,7 @@ describe('summarizeContent', () => {
     const model = new MockMessageModel().addTurn(new Error('images unsupported')).addTurn(new Error('unavailable'))
 
     expect(await summarizeContent(content, model)).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('summarization failed after text-only retry')
+    expect(warnSpy).toHaveBeenCalledWith('error=<unavailable> | summarization failed after text-only retry')
   })
 
   it('warns when text-only content fails', async () => {
@@ -118,6 +118,6 @@ describe('summarizeContent', () => {
     const model = new MockMessageModel().addTurn(new Error('unavailable'))
 
     expect(await summarizeContent([new TextBlock('notes')], model)).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('summarization failed')
+    expect(warnSpy).toHaveBeenCalledWith('error=<unavailable> | summarization failed')
   })
 })
