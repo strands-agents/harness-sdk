@@ -1,5 +1,6 @@
 """Tests for the summarize method module."""
 
+import logging
 import unittest.mock
 
 import pytest
@@ -11,6 +12,8 @@ from strands._context_manager.methods.summarize import (
 )
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
+
+SUMMARIZE_LOGGER = "strands._context_manager.methods.summarize"
 
 
 @pytest.fixture
@@ -144,10 +147,14 @@ class TestFlattenMessagesToContent:
 
     def test_labels_error_results_and_results_without_a_matching_call(self):
         tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
-        unmatched = ToolResult(toolUseId="call_2", status="error", content=[{"text": "not found"}])
+        unmatched_error = ToolResult(toolUseId="call_2", status="error", content=[{"text": "not found"}])
+        unmatched_success = ToolResult(toolUseId="call_3", status="success", content=[{"text": "ok"}])
         failed = ToolResult(toolUseId="call_1", status="error", content=[{"text": "denied"}])
         messages: Messages = [
-            Message(role="user", content=[ContentBlock(toolResult=unmatched)]),
+            Message(
+                role="user",
+                content=[ContentBlock(toolResult=unmatched_error), ContentBlock(toolResult=unmatched_success)],
+            ),
             Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
             Message(role="user", content=[ContentBlock(toolResult=failed)]),
         ]
@@ -155,12 +162,14 @@ class TestFlattenMessagesToContent:
         tru_result = _flatten_messages_to_content(messages)
         exp_result = [
             ContentBlock(text="\n---\n[user]"),
-            ContentBlock(text="[tool result: error]"),
+            ContentBlock(text="[tool result (error)]"),
             ContentBlock(text="not found"),
+            ContentBlock(text="[tool result]"),
+            ContentBlock(text="ok"),
             ContentBlock(text="\n---\n[assistant]"),
             ContentBlock(text='[tool call: shell] {"command":"ls"}'),
             ContentBlock(text="\n---\n[user]"),
-            ContentBlock(text="[tool result: shell, error]"),
+            ContentBlock(text="[tool result: shell (error)]"),
             ContentBlock(text="denied"),
         ]
         assert tru_result == exp_result
@@ -195,7 +204,7 @@ class TestSummarizeContent:
         assert tru_result == "custom summary"
 
     @pytest.mark.asyncio
-    async def test_text_only_fallback_on_exception(self, mock_model):
+    async def test_text_only_fallback_on_exception(self, mock_model, caplog):
         """When the first call throws, retries with text-only blocks."""
         call_count = 0
 
@@ -212,12 +221,30 @@ class TestSummarizeContent:
             ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
         ]
 
-        tru_result = await _summarize_content(content_blocks, mock_model, {})
+        with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
+            tru_result = await _summarize_content(content_blocks, mock_model, {})
         assert tru_result == "Fallback summary."
         assert call_count == 2
+        assert caplog.records == []
 
     @pytest.mark.asyncio
-    async def test_text_only_fallback_skipped_when_all_text(self, mock_model):
+    async def test_warns_when_text_only_fallback_also_fails(self, mock_model, caplog):
+        def stream_side_effect(*args, **kwargs):
+            raise RuntimeError("model error")
+
+        mock_model.stream = stream_side_effect
+        content_blocks = [
+            ContentBlock(text="some text"),
+            ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
+        ]
+
+        with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
+            tru_result = await _summarize_content(content_blocks, mock_model, {})
+        assert tru_result is None
+        assert [record.getMessage() for record in caplog.records] == ["summarization failed after text-only retry"]
+
+    @pytest.mark.asyncio
+    async def test_text_only_fallback_skipped_when_all_text(self, mock_model, caplog):
         """When all blocks are already text-only, no fallback retry happens."""
 
         def stream_side_effect(*args, **kwargs):
@@ -226,8 +253,10 @@ class TestSummarizeContent:
         mock_model.stream = stream_side_effect
         content_blocks = [ContentBlock(text="only text")]
 
-        tru_result = await _summarize_content(content_blocks, mock_model, {})
+        with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
+            tru_result = await _summarize_content(content_blocks, mock_model, {})
         assert tru_result is None
+        assert [record.getMessage() for record in caplog.records] == ["summarization failed"]
 
     @pytest.mark.asyncio
     async def test_text_only_fallback_skipped_when_no_text_blocks(self, mock_model):

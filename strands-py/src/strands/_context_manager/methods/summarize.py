@@ -72,9 +72,12 @@ async def _summarize_content(
 
     text_only = [block for block in content if is_text_block(block)]
     if not text_only or len(text_only) == len(content):
+        logger.warning("summarization failed")
         return None
 
-    fallback_result, _ = await _call_summarizer(text_only, model, config)
+    fallback_result, fallback_succeeded = await _call_summarizer(text_only, model, config)
+    if not fallback_succeeded:
+        logger.warning("summarization failed after text-only retry")
     return fallback_result
 
 
@@ -93,9 +96,9 @@ def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[Con
 
 def _format_tool_result_label(tool_result: ToolResult, tool_names: dict[str, str]) -> str:
     """Render the label that introduces a tool result in the summarizer input."""
-    parts = [tool_names.get(tool_result["toolUseId"]), "error" if tool_result["status"] == "error" else None]
-    label = ", ".join(part for part in parts if part)
-    return f"[tool result: {label}]" if label else "[tool result]"
+    name = tool_names.get(tool_result["toolUseId"])
+    status = " (error)" if tool_result["status"] == "error" else ""
+    return f"[tool result: {name}{status}]" if name else f"[tool result{status}]"
 
 
 def _message_to_content_blocks(message: Message, tool_names: dict[str, str]) -> list[ContentBlock]:
@@ -174,5 +177,5 @@ async def _call_summarizer(
         return "\n".join(parts).strip() or None, True
 
     except Exception as error:
-        logger.warning("error=<%s> | summarization failed", error)
+        logger.debug("error=<%s> | summarization attempt failed", error)
         return None, False
