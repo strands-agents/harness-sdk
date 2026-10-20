@@ -12,6 +12,7 @@ import type { ExecuteOptions } from './base.js'
 import { ENV_KEY_PATTERN, LANGUAGE_PATTERN, shellQuote } from './constants.js'
 import { SandboxPathNotFoundError } from './errors.js'
 import type { ExecutionResult, FileInfo, StreamChunk } from './types.js'
+import { decodeBase64, encodeBase64 } from '../types/media.js'
 
 /**
  * Validate environment variable names against {@link ENV_KEY_PATTERN}.
@@ -71,7 +72,7 @@ export abstract class PosixShellSandbox extends Sandbox {
     if (!LANGUAGE_PATTERN.test(language)) {
       throw new Error(`language parameter contains invalid characters: ${language}`)
     }
-    const encoded = btoa(Array.from(new TextEncoder().encode(code), (b) => String.fromCharCode(b)).join(''))
+    const encoded = encodeBase64(new TextEncoder().encode(code))
     const eof = `STRANDS_EOF_${crypto.randomUUID().slice(0, 16)}`
     yield* this.executeStreaming(`base64 -d << '${eof}' | ${language}\n${encoded}\n${eof}`, options)
   }
@@ -81,11 +82,11 @@ export abstract class PosixShellSandbox extends Sandbox {
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || `Failed to read file: ${path}`)
     }
-    return Uint8Array.from(atob(result.stdout.replace(/\s/g, '')), (c) => c.charCodeAt(0))
+    return decodeBase64(result.stdout.replace(/\s/g, ''))
   }
 
   async writeFile(path: string, content: Uint8Array): Promise<void> {
-    const encoded = btoa(Array.from(content, (b) => String.fromCharCode(b)).join(''))
+    const encoded = encodeBase64(content)
     const quoted = shellQuote(path)
     const eof = `STRANDS_EOF_${crypto.randomUUID().slice(0, 16)}`
     const cmd = `mkdir -p "$(dirname ${quoted})" && base64 -d << '${eof}' > ${quoted}\n${encoded}\n${eof}`

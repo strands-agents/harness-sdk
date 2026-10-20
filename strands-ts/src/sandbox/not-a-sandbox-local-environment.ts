@@ -7,6 +7,7 @@ import { SandboxPathNotFoundError } from './errors.js'
 import { streamProcess } from './stream-process.js'
 import type { ExecutionResult, FileInfo, StreamChunk } from './types.js'
 import { buildShellEnvPrefix } from './posix-shell.js'
+import { encodeBase64 } from '../types/media.js'
 
 /** Returns true if the error is a missing entry (ENOENT) or a non-directory path component (ENOTDIR). */
 function isMissingPathError(error: unknown): boolean {
@@ -44,7 +45,7 @@ export class NotASandboxLocalEnvironment extends Sandbox {
       throw new Error(`language parameter contains invalid characters: ${language}`)
     }
     const cwd = options?.cwd ?? process.cwd()
-    const encoded = btoa(Array.from(new TextEncoder().encode(code), (b) => String.fromCharCode(b)).join(''))
+    const encoded = encodeBase64(new TextEncoder().encode(code))
     const eof = `STRANDS_EOF_${crypto.randomUUID().slice(0, 16)}`
     yield* streamProcess(
       'sh',
