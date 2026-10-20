@@ -112,7 +112,8 @@ To customize processing, such as disabling echo cancellation when using a headse
 
 Use `ConsoleIO` to type messages and display text, reasoning, speech transcripts, and tool call names.
 
-This example uses [OpenAI Realtime](models/openai.mdx) with text output. Install the terminal and model dependencies:
+This example uses [OpenAI Realtime](models/openai/realtime.mdx) with text output.
+Install the terminal and model dependencies:
 
 ```bash
 pip install "strands-agents[bidi-openai,bidi-io]"
@@ -193,7 +194,8 @@ Connect your own input sources and output destinations to `run()` with asynchron
 - An input callable takes no arguments and returns one [`BidiAgentInput`](content.mdx#send-input) per call.
 - An output callable receives one [`BidiOutputEvent`](events.mdx) and chooses which events to handle.
 
-The following FastAPI example exchanges text messages with a WebSocket client, using [OpenAI Realtime](models/openai.mdx) configured for text output.
+The following FastAPI example exchanges text messages with a WebSocket client,
+using [OpenAI Realtime](models/openai/realtime.mdx) configured for text output.
 
 Install the server and model dependencies:
 

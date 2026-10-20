@@ -35,6 +35,8 @@ _MODULE_PATHS = (
     "models.google",
     "models.model",
     "models.openai",
+    "models.openai.configs",
+    "models.openai.realtime",
     "types.agent",
     "types.content",
     "types.events",
@@ -129,10 +131,10 @@ def test_bedrock_alias_matches_supported_version_behavior():
 
 
 def test_old_leaf_patch_target_updates_stable_module():
-    new_module = importlib.import_module("strands.bidi.models.openai")
+    new_module = importlib.import_module("strands.bidi.models.openai.realtime")
 
     with unittest.mock.patch(
-        "strands.experimental.bidi.models.openai.time.time",
+        "strands.experimental.bidi.models.openai.realtime.time.time",
         return_value=123.0,
     ):
         assert new_module.time.time() == 123.0
