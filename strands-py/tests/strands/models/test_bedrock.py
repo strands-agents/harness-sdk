@@ -6284,3 +6284,44 @@ async def test_stream_cancel_signal_consumes_detached_task_exception(bedrock_cli
     # The detached worker now fails; its exception must be consumed, not reported to the loop.
     await asyncio.sleep(0.2)
     assert not captured, f"detached task exception was not consumed: {captured}"
+
+
+@pytest.mark.asyncio
+async def test_structured_output_fallback_tool_choice_auto(bedrock_client, model, test_output_model_cls, alist):
+    """When toolChoice.any is not supported, structured_output falls back to toolChoice.auto."""
+    messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
+
+    success_stream = {
+        "stream": [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "TestOutputModel"}}}},
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "John", "age": 30}'}}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "tool_use"}},
+        ]
+    }
+
+    error_response = {
+        "Error": {
+            "Code": "ValidationException",
+            "Message": "This model doesn't support the toolConfig.toolChoice.any field. "
+            "Remove toolConfig.toolChoice.any and try again",
+        }
+    }
+
+    bedrock_client.converse_stream.side_effect = [
+        ClientError(error_response, "ConverseStream"),
+        success_stream,
+    ]
+
+    stream = model.structured_output(test_output_model_cls, messages)
+    events = await alist(stream)
+
+    assert events[-1] == {"output": test_output_model_cls(name="John", age=30)}
+    assert bedrock_client.converse_stream.call_count == 2
+
+    first_call = bedrock_client.converse_stream.call_args_list[0]
+    assert first_call.kwargs["toolConfig"]["toolChoice"] == {"any": {}}
+
+    second_call = bedrock_client.converse_stream.call_args_list[1]
+    assert second_call.kwargs["toolConfig"]["toolChoice"] == {"auto": {}}

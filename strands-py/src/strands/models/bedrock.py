@@ -1798,15 +1798,36 @@ class BedrockModel(Model):
         """
         tool_spec = convert_pydantic_to_tool_spec(output_model)
 
-        response = self.stream(
-            messages=prompt,
-            tool_specs=[tool_spec],
-            system_prompt=system_prompt,
-            tool_choice=cast(ToolChoice, {"any": {}}),
-            **kwargs,
-        )
-        async for event in streaming.process_stream(response):
-            yield event
+        tool_choice: ToolChoice = cast(ToolChoice, {"any": {}})
+        try:
+            response = self.stream(
+                messages=prompt,
+                tool_specs=[tool_spec],
+                system_prompt=system_prompt,
+                tool_choice=tool_choice,
+                **kwargs,
+            )
+            async for event in streaming.process_stream(response):
+                yield event
+        except ClientError as error:
+            error_message = str(error)
+            if "toolChoice.any" not in error_message and "toolChoice" not in error_message:
+                raise
+
+            logger.debug(
+                "model_id=<%s> | toolChoice.any not supported, falling back to toolChoice.auto",
+                self.config.get("model_id"),
+            )
+            tool_choice = cast(ToolChoice, {"auto": {}})
+            response = self.stream(
+                messages=prompt,
+                tool_specs=[tool_spec],
+                system_prompt=system_prompt,
+                tool_choice=tool_choice,
+                **kwargs,
+            )
+            async for event in streaming.process_stream(response):
+                yield event
 
         stop_reason, messages, _, _ = event["stop"]
 
