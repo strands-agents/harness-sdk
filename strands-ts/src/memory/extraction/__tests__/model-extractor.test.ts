@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ModelExtractor } from '../model-extractor.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Tracer } from '../../../telemetry/tracer.js'
 import type { Model } from '../../../models/model.js'
 import type { MessageData } from '../../../types/messages.js'
@@ -135,5 +136,22 @@ describe('ModelExtractor', () => {
     expect(endSpy.mock.calls[0]![1]?.error).toBeInstanceOf(Error)
 
     endSpy.mockRestore()
+  })
+
+  describe('request limits', () => {
+    it('adds the extraction usage to the request total even when the request limit is used up', async () => {
+      const model = new MockMessageModel().addTurn(
+        { type: 'textBlock', text: '[{"content": "fact"}]' },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      )
+      const extractor = new ModelExtractor({ model: model as unknown as Model })
+      const invocationContext = new InvocationContextImpl({ turns: 1 })
+      invocationContext.usage.turnsTaken = 5
+
+      const entries = await extractor.extract([userTurn('x')], { invocationContext })
+
+      expect(entries).toEqual([{ content: 'fact' }])
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
+    })
   })
 })

@@ -1,4 +1,5 @@
 import type { InvocationState, InvokeArgs } from '../types/agent.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 import type { CheckpointResumeContent } from '../experimental/checkpoint.js'
 import type { Message, MessageData } from '../types/messages.js'
 import type { HookableEvent } from '../hooks/events.js'
@@ -56,6 +57,9 @@ export interface MultiAgentInvokeOptions {
    * an exceptional exit, not a normal terminal state.
    */
   cancelSignal?: AbortSignal
+
+  /** Runs this orchestration as a nested call in an existing request, shared by every node; see {@link InvokeOptions.invocationContext}. */
+  invocationContext?: InvocationContext
 }
 
 /**

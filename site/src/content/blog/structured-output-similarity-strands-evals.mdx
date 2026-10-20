@@ -1,0 +1,267 @@
+---
+title: 'Evaluating structured agent output, field by field, with Strands Evals'
+date: 2026-10-20
+description: 'StructuredOutputSimilarity scores structured agent output field by field with Stickler: deterministic, per-field accuracy with no LLM judge in the default path.'
+authors:
+  - spencer-romo
+  - vincil-bishop
+  - diego-galaviz
+  - harry-cavanagh
+  - hayley-park
+tags:
+  - Evaluation
+  - Structured Output
+  - Announcement
+draft: false
+---
+
+Agents that extract structured data from documents like invoices, shipping
+records, and medical claims are only as useful as the accuracy of what they
+return. Evaluating that accuracy has been surprisingly hard. If your agent
+returns a five-field shipment record and gets four fields right, whole-object
+equality scores it 0.0, the same as an agent that returned garbage. Developers
+end up spot-checking output by hand, unable to measure whether last week's
+prompt change actually helped.
+
+Strands Evals now ships `StructuredOutputSimilarity`, an evaluator that scores
+structured output field by field. Underneath it is
+[Stickler](https://github.com/awslabs/stickler), an open source AWS library
+that compares two structured objects with type-aware comparators. The result
+is a graded, per-field accuracy score that is deterministic, reproducible,
+and needs no LLM in the default scoring path.
+
+## Why binary evaluation fails structured output
+
+Many agentic systems produce structured output: extracting key information
+from documents, constructing tool calls, passing payloads to downstream APIs.
+Each produces a typed object that downstream code depends on being right.
+Evaluating these agents has a specific shape. You have labeled data
+(documents and the objects they should produce) and you want one question
+answered: how accurate is my agent, and where is it wrong?
+
+Exact-match evaluation cannot answer that question. Consider a shipment record
+with five fields: shipment ID, carrier, ship date, total weight, and line
+items. An extraction that gets four of five fields right is indistinguishable
+from one that gets none right. A developer who improves a prompt from 20%
+field accuracy to 80% sees no movement in the metric, so the metric cannot
+guide the work.
+
+Whole-object equality also fails on differences that don't matter. A
+prediction that lists the same two line items as the ground truth, but in the
+opposite order, scores 0.0, even though extraction order is rarely meaningful
+and models do not preserve it. A predicted weight of 1247.4999 against a
+ground truth of 1247.50 also scores 0.0. Neither is a real failure, and a
+binary evaluator cannot tell you that.
+
+![A shipment record compared field by field. Four fields match, including
+reordered line items and a weight within numeric tolerance. The carrier name
+is wrong. Whole-object equality scores the record 0.0; StructuredOutputSimilarity
+scores it 0.80 and names carrier_name as the weakest
+field.](./resources/structured-output-similarity/field-by-field-scoring.svg)
+
+_Figure 1: The same prediction scored two ways._
+
+Noisy ground truth is a third reason. Manual extraction from documents carries
+measurable error: a
+[study of retrospective chart reviews](https://pubmed.ncbi.nlm.nih.gov/32602916/)
+found an average transcription error rate of 11% per data variable. If errors
+at that rate were spread evenly, a ten-field document would have about a
+one-in-three chance of a fully correct label set. Published benchmarks are no
+cleaner. A re-audit found
+[11.7% of the Tobacco3482 document set](https://arxiv.org/abs/2412.13140)
+mislabeled or unlabelable, and an estimated
+[8.1% label noise in RVL-CDIP](https://arxiv.org/abs/2306.12550), where top
+model error rates now fall within that noise estimate. Whole-object equality
+charges the entire document to one bad label. Field-level scoring charges only
+that field's share and names it, so the number still reflects how the agent
+performed and points at what to inspect, whether the fault is the agent's or
+the label's.
+
+The common workaround is an LLM judge. That works for prose, but it is a poor
+fit for structured data: it costs money per evaluation, it is not reproducible
+run to run, and that non-determinism rules it out as a regression gate in CI.
+When ground truth exists, comparing two objects field by field is arithmetic,
+not judgment.
+
+## How the scoring works
+
+Stickler reads the Pydantic model your agent already returns and decides how
+each field should be compared, so that model becomes the evaluation schema.
+Each field gets a comparison strategy suited to its type: exact match for
+identifiers, numeric tolerance for amounts, date-aware comparison for dates,
+edit distance for names, and fuzzy token matching for free text. Lists of
+objects are paired by content using Hungarian matching rather than compared by
+position, so a reordered set of line items is judged on what it contains.
+
+You do not need to configure any of this to start. Stickler infers a
+comparator for every field from its declared Python type and its name, and
+every choice is inspectable: `explain()` reports the comparator, the
+threshold, and the basis each was selected on. When you need different
+choices, declare the model as a Stickler `StructuredModel` and set comparators
+with `ComparableField`. A `StructuredModel` is used exactly as configured, with
+nothing inferred, so give every field a comparator rather than only the one
+you are changing.
+
+The default scoring path runs locally, with no LLM judge, no credentials, and
+no network calls. Stickler's optional semantic and LLM-based comparators carry
+their own dependency and runtime requirements. Scoring is deterministic and
+fast: on the five-field shipment model, 200 repeated comparisons produced one
+distinct score, at a median of 0.59 ms each (Stickler 1.0.0). Every field counts
+equally by default; [weighting](#weighting-the-fields-that-matter) changes
+that.
+
+## Where Stickler comes from
+
+Stickler began in an AWS Generative AI Innovation Center engagement with
+Enverus, whose customer-facing Courthouse application depends on key
+information extracted from mineral and warranty deeds, and where manual data
+entry cost more than $1 million a year. The fields did not carry equal value,
+so the team built business-weighted scoring on per-field comparators. The
+engagement improved extraction accuracy by 77% and cut per-page processing
+cost by 96%.
+
+That framework became Stickler, now the evaluation engine of the open source
+[GenAI IDP Accelerator](https://github.com/aws-solutions-library-samples/accelerated-intelligent-document-processing-on-aws).
+Myriad Genetics used the accelerator's evaluation framework to
+[benchmark foundation models across 1,200 healthcare documents](https://aws.amazon.com/blogs/machine-learning/how-myriad-genetics-achieved-fast-accurate-and-cost-efficient-document-processing-using-the-aws-open-source-generative-ai-intelligent-document-processing-accelerator/),
+and Stickler itself draws about 5,000 PyPI downloads a month.
+`StructuredOutputSimilarity` brings the same engine to Strands Evals.
+
+## Adding it to your experiment
+
+Adopting the evaluator takes two new lines of evaluation code: the evaluator
+itself, and the report class that carries the per-field rollups. The Strands
+Evals `Case` type is already generic over output type, so labeled ground truth
+is expressed as `Case[str, Shipment]` with no framework change. You keep the
+Pydantic model your agent already uses for structured output, pass it to
+`StructuredOutputSimilarity`, and run the same `Experiment` pipeline you run
+today. No comparison annotations are needed.
+
+```python
+import datetime
+
+from pydantic import BaseModel
+from strands import Agent
+from strands_evals import Case, Experiment, StructuredOutputReport
+from strands_evals.evaluators import StructuredOutputSimilarity
+
+
+# The response model the agent already uses. No comparison config.
+class LineItem(BaseModel):
+    sku: str
+    description: str
+    quantity: int
+    unit_price: float
+
+
+class Shipment(BaseModel):
+    shipment_id: str
+    carrier_name: str
+    ship_date: datetime.date
+    total_weight: float
+    line_items: list[LineItem] = []
+
+
+def extract(case: Case) -> Shipment:
+    agent = Agent(callback_handler=None)
+    return agent(case.input, structured_output_model=Shipment).structured_output
+
+
+cases = [
+    Case[str, Shipment](
+        name="bol-001",
+        input=open("bills_of_lading/bol-001.txt").read(),
+        expected_output=Shipment(
+            shipment_id="SHP-20419",
+            carrier_name="Northwind Freight",
+            ship_date=datetime.date(2026, 3, 14),
+            total_weight=1247.50,
+            line_items=[
+                LineItem(sku="A-100", description="Steel bolts, box of 50", quantity=4, unit_price=12.50),
+                LineItem(sku="B-220", description="Hex nuts, box of 100", quantity=2, unit_price=8.75),
+            ],
+        ),
+    ),
+]
+
+# The new lines: the evaluator, and the report class that adds rollups.
+evaluator = StructuredOutputSimilarity(Shipment)
+experiment = Experiment(cases=cases, evaluators=[evaluator], report_cls=StructuredOutputReport)
+
+report = experiment.run_evaluations(extract)
+for case, score, passed, reason in zip(report.cases, report.scores, report.test_passes, report.reasons):
+    print(f"{case['name']}  {score:.2f}  {'PASS' if passed else 'FAIL'}  {reason}")
+```
+
+Each case gets a score between 0 and 1, a pass/fail decision, and a reason.
+Across three bills of lading, a run looks like this:
+
+```text
+bol-001  0.80  PASS  weakest fields: carrier_name=0.00
+bol-002  0.60  FAIL  weakest fields: carrier_name=0.00; total_weight=0.00
+bol-003  1.00  PASS  all fields matched
+```
+
+A case that matches on every field says so. Any other case names its weakest
+fields and their scores, whether it passes or fails, so the next action does
+not require opening the raw result. In `bol-001`, the reordered line items
+score as a match, the float difference lands within tolerance, and the field
+that really differs is the one flagged.
+
+`report.metrics().field_metrics` answers a different question: which field is
+broken across the whole run? It reports a confusion matrix for every field,
+keyed by dotted path such as `line_items.sku`, with precision, recall, and F1,
+so sorting by F1 puts the worst field at the top. If `carrier_name` fails on, say,
+38 of 50 documents while every other field is close to clean, that points at
+one specific prompt change rather than a general accuracy problem. The
+breakdown also separates fields the agent missed, fields it invented, and
+fields it got wrong, and those three call for different fixes. For the
+per-document view, `report.per_case()` returns field scores, precision,
+recall, and F1 for each case.
+
+## Weighting the fields that matter
+
+By default every field counts equally, so on the five-field shipment record a
+corrupted shipment ID costs 0.2 and the document passes at 0.80. The business
+would dispute that verdict for a record keyed on that identifier.
+
+Setting `weight_hints=True` on the evaluator infers weights from field names:
+identifiers and amounts count more than descriptive fields. On the same
+schema, the shipment ID gets a weight of 3.0 and the carrier name 1.5. A wrong
+carrier name still passes at 0.84, while a wrong shipment ID now fails at
+0.68. `explain()` reports every inferred weight, so you can check the
+heuristic against your own sense of what matters.
+
+When the heuristic doesn't match your business, declare the weights yourself
+on a Stickler `StructuredModel` with `ComparableField(weight=...)`. A
+`StructuredModel` is still a Pydantic model, so the same class keeps driving
+the agent's structured output. This is the mechanism the Enverus engagement
+needed: the fields customers filter on weighted up, the tolerant ones weighted
+down.
+
+## Getting started
+
+`StructuredOutputSimilarity` ships in Strands Evals 1.6.0 as an optional
+extra:
+
+```bash
+pip install "strands-agents-evals[stickler]"
+```
+
+The extra installs Stickler, published on PyPI as
+[stickler-eval](https://pypi.org/project/stickler-eval/). The comparators in
+the default scoring path (exact, edit distance, numeric, date, and fuzzy token
+matching) all run locally. Comparators backed by Amazon Bedrock embeddings or
+an LLM judge exist for the cases that need them, but they stay opt-in, because
+they reintroduce the cost and run-to-run variability a deterministic evaluator
+exists to avoid.
+
+The
+[evaluator reference](/docs/user-guide/evals-sdk/evaluators/structured_output_evaluator/)
+covers every parameter, the pass rule, and the rollup methods. If you are
+building an agent that returns structured output, add
+`StructuredOutputSimilarity` to your Strands Evals experiment and run it
+against your own labeled data. Both projects are open source: file what you
+find at [strands-agents/evals](https://github.com/strands-agents/evals), and
+explore the comparators at
+[awslabs/stickler](https://github.com/awslabs/stickler).

@@ -1,6 +1,7 @@
 import { StateStore } from '../state-store.js'
 import { type ContentBlock, contentBlockFromData } from '../types/messages.js'
 import type { Usage } from '../models/streaming.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
 import type { z } from 'zod'
 import type { JSONValue } from '../types/json.js'
@@ -204,6 +205,8 @@ export class MultiAgentResult {
   readonly error?: Error
   /** Aggregated token usage across all node results. */
   readonly usage: Usage
+  /** The invocation context this run took part in; see {@link AgentResult.invocationContext}. */
+  readonly invocationContext?: InvocationContext
   /** Interrupts aggregated across all node results. Present when any node ended INTERRUPTED. */
   readonly interrupts?: Interrupt[]
 
@@ -214,6 +217,7 @@ export class MultiAgentResult {
     duration: number
     error?: Error
     interrupts?: Interrupt[]
+    invocationContext?: InvocationContext
   }) {
     this.status = data.status ?? this._resolveStatus(data.results)
     this.results = data.results
@@ -221,11 +225,12 @@ export class MultiAgentResult {
     this.duration = data.duration
     if ('error' in data) this.error = data.error
     this.usage = this._aggregateNodeUsage(data.results)
+    if (data.invocationContext !== undefined) this.invocationContext = data.invocationContext
     const interrupts = data.interrupts ?? data.results.flatMap((r) => r.interrupts ?? [])
     if (interrupts.length > 0) this.interrupts = interrupts
   }
 
-  /** Serializes this result to a JSON-compatible value. */
+  /** Serializes this result to a JSON-compatible value, leaving out the live `invocationContext`. */
   toJSON(): JSONValue {
     return {
       type: this.type,

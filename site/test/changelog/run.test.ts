@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { run } from '../../scripts/changelog/run'
+import { run, findMissing } from '../../scripts/changelog/run'
 import type { Client } from '../../scripts/changelog/types'
 
 // Entries are now sourced from the compare API (commits between the prior tag
@@ -242,5 +242,22 @@ describe('run', () => {
       writeFile: async () => {},
     })
     expect(res.warnings.some((w) => /250-commit cap/.test(w))).toBe(true)
+  })
+})
+
+describe('findMissing', () => {
+  it('lists in-scope published releases without a changelog file', async () => {
+    const missing = await findMissing({
+      repo: 'strands-agents/harness-sdk',
+      client: {
+        listReleases: async () => [
+          ...releases,
+          { tag_name: 'harness-cli/v0.3.0', published_at: null, html_url: 'h3', body: '' },
+        ],
+      },
+      exists: async (p) => p.endsWith('python-v1.41.0.md'),
+    })
+    // python-wasm is out of scope and the unpublished draft is skipped.
+    expect(missing).toEqual([{ tag: 'python/v1.42.0', path: 'site/src/content/changelog/sdk/python-v1.42.0.md' }])
   })
 })

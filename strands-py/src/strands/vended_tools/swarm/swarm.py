@@ -184,6 +184,7 @@ def make_swarm(
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if tool_name in _EXCLUDED_TOOLS or child_tool in _SWARM_TOOLS:
                         del child.tool_registry.registry[tool_name]
+                        child.tool_registry.dynamic_tools.pop(tool_name, None)
                 child_agents[spec.name] = child
 
             sdk_swarm = Swarm(

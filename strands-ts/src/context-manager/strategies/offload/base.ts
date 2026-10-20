@@ -13,6 +13,7 @@ import {
   ReasoningBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
+import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
@@ -373,6 +374,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   /** Per-block execution: walk each message, transform individual blocks above threshold. */
   private async _applyPerBlock(context: ContextState): Promise<boolean> {
     const { messages, agent } = context
+    const invocationContext = context.invocationContext
     const toolNameMap = buildToolNameMap(messages)
     const eligible =
       this._preserveRecent > 0
@@ -390,7 +392,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     for (const message of eligible) {
       const index = messages.indexOf(message)
       if (isPinned(messages, index)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, agent)) {
+      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext)) {
         acted = true
       }
     }
@@ -445,7 +447,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     message: Message,
     messages: Message[],
     toolNameMap: Map<string, string>,
-    agent: LocalAgent
+    agent: LocalAgent,
+    invocationContext?: InvocationContext
   ): Promise<boolean> {
     const effectiveThreshold = this._threshold ?? 0
     let acted = false
@@ -457,7 +460,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       if (tokens <= effectiveThreshold) continue
 
       const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs)
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -518,7 +521,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[]
+    stashRefs: string[],
+    invocationContext?: InvocationContext
   ): Promise<ContentBlock | null>
 }
 

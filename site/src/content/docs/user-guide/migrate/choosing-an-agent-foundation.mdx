@@ -1,6 +1,8 @@
 ---
 title: Choosing an Agent Foundation
-description: "Framework or your own agent loop? How Strands compares to a hand-written loop, OpenAI Agents SDK, LangGraph, Vercel AI SDK, and Pydantic AI."
+description: >-
+  Choose between a direct model call, a custom agent loop, or another framework,
+  and follow a practical migration path to Strands Agents without breaking callers.
 sidebar:
   label: Choosing a foundation
 tags: [quickstart]
@@ -18,7 +20,8 @@ eventually needs. It compares Strands against the most common alternatives and
 says plainly when a framework earns its place and when it does not.
 
 If you already know you want a framework and just want to build, skip to the
-[Python quickstart](../sdk/quickstart/python.md) or the [TypeScript quickstart](../sdk/quickstart/typescript.md).
+[Python quickstart](../sdk/quickstart/python.md) or the
+[TypeScript quickstart](../sdk/quickstart/typescript.md).
 
 ## Framework or your own loop?
 
@@ -54,7 +57,7 @@ loop, and four other frameworks. The rows are the ten jobs a production agent
 tends to accumulate. Each cell is marked **Built-in** when the option ships the
 capability as a first-class API, **Partial** when it comes through a companion
 product, adapter, or limited support, and **DIY** when you write and own it
-yourself — with the specifics named alongside.
+yourself, with the specifics named alongside.
 
 <FoundationComparison />
 
@@ -95,6 +98,100 @@ version of the thing you avoided, with none of the tests or docs. When you catch
 yourself writing the second token counter or the second provider adapter, that is
 the signal to reconsider, not a reason to keep going.
 
+## Choose your migration path
+
+Your starting point determines what should stay stable during the move. Keep the
+application boundary that callers already use, such as a function, route, event
+handler, or job, and replace the implementation behind it. This gives you one
+place to compare behavior and one switch to roll back if the new path is not ready.
+
+### From a direct model call
+
+Keep a direct model call when it performs one bounded task and does not need tools,
+multi-step work, or session management. It has no agent loop to migrate, and adding
+a framework would only add surface area.
+
+When that call needs to become an agent:
+
+1. Keep the existing input and output contract. Carry over the model ID and
+   provider settings to the chosen
+   [model provider](../sdk/model-providers/index.md), and move the existing
+   instructions to the agent's system prompt.
+2. Put a Strands `Agent` behind the same application boundary, then adapt its result
+   to the response shape your callers already expect.
+3. Compare representative requests before switching callers. Model wording varies,
+   so compare the required structure, safety behavior, and domain facts rather than
+   exact text.
+4. Add [tools](../sdk/tools/custom-tools.md),
+   [structured output](../sdk/agents/structured-output.md), or
+   [session management](../sdk/agents/session-management.md) only when the use case
+   needs them. Do not add agent features solely to complete the migration.
+
+### From a custom agent loop
+
+Move a custom agent loop to Strands one responsibility at a time. The loop already
+owns the work that Strands will take over, and a staged cutover keeps failures
+pointing to a small part of the move:
+
+1. Record the current contract with representative prompts, tool calls, failure
+   cases, and externally visible side effects.
+2. Configure the same model provider and instructions on an `Agent`, while keeping
+   the caller-facing function or route unchanged.
+3. Register the existing tool implementations as Strands tools. Preserve their
+   names, descriptions, input schemas, and side-effect boundaries until the new
+   path matches the old one.
+4. Replace the manual call-tool-append `while` loop with an agent invocation. The
+   [agent loop](../sdk/agents/agent-loop.md) manages tool calling and conversation
+   history within the invocation.
+5. Move operational controls last: counters become
+   [invocation limits](../sdk/agents/agent-loop.md#invocation-limits), request
+   aborts become [cancellation](../sdk/agents/agent-loop.md#cancellation), durable
+   conversations use [session management](../sdk/agents/session-management.md),
+   and traces use [observability](../sdk/observability-evaluation/observability.md).
+
+Run both paths against the recorded cases before removing the custom loop. The
+[OpenAI migration guide](./openai.md#from-a-hand-written-openai-loop) shows this
+sequence with a complete before-and-after example.
+
+### From an existing agent framework
+
+Move from an existing framework by mapping concepts instead of classes. Start with
+the smallest workflow that represents real production behavior, and keep its public
+entry point and caller-facing identifiers stable.
+
+| Existing responsibility | Strands destination |
+| --- | --- |
+| Model client or model selection | [Model providers][model-providers] |
+| Agent instructions | The `Agent` system prompt |
+| Tool definitions and dispatch | [Tools][tools] and [MCP tools][mcp-tools] |
+| Runner or executor | The [agent loop][agent-loop] and [streaming][streaming] |
+| Conversation persistence | [Session management][session-management] |
+| Durable knowledge across sessions | [Memory][memory] |
+| Handoffs or graph routing | [Multi-agent patterns][multi-agent] |
+| Guardrails | [Interventions][interventions] |
+| Lifecycle extensions and traces | [Hooks][hooks] and [observability][observability] |
+
+[model-providers]: ../sdk/model-providers/index.md
+[tools]: ../sdk/tools/custom-tools.md
+[mcp-tools]: ../sdk/tools/mcp-tools.md
+[agent-loop]: ../sdk/agents/agent-loop.md
+[streaming]: ../sdk/streaming/index.md
+[session-management]: ../sdk/agents/session-management.md
+[memory]: ../sdk/memory/overview.md
+[multi-agent]: ../sdk/multi-agent/multi-agent-patterns.md
+[interventions]: ../sdk/agents/interventions/index.md
+[hooks]: ../sdk/agents/hooks.md
+[observability]: ../sdk/observability-evaluation/observability.md
+
+After mapping the concepts, run the old and new implementations against the same
+cases. Compare tool side effects, stop conditions, persisted state, and output
+contracts. Do not require identical model wording. Switch one workflow at a time,
+and keep the old route available until the new one has handled production traffic.
+
+For the OpenAI Agents SDK, follow the
+[OpenAI migration guide](./openai.md#from-the-openai-agents-sdk) for a concrete
+concept map and end-to-end example.
+
 ## Where Strands fits, and how to start
 
 Reach for Strands (or another framework) when your loop has grown to need several
@@ -121,8 +218,7 @@ first. The same agent code runs against Amazon Bedrock, Anthropic, OpenAI, Googl
 Ollama, or [other providers](../sdk/model-providers/index.md), so model
 portability does not cost you a rewrite.
 
-If you are moving off another framework rather than starting fresh, the
-[migration guides](./openai.md) map concepts across. Otherwise, start
-with the [Python quickstart](../sdk/quickstart/python.md) or the
-[TypeScript quickstart](../sdk/quickstart/typescript.md) and add the jobs above as you need them,
-not before.
+Choose the migration path that matches your current foundation. For a new agent,
+start with the [Python quickstart](../sdk/quickstart/python.md) or the
+[TypeScript quickstart](../sdk/quickstart/typescript.md), then add the jobs above
+as you need them, not before.

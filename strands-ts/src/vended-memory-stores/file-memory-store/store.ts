@@ -9,7 +9,7 @@ import type { MemoryEntry, MemoryStore, MemoryStoreConfig, SearchOptions } from 
 import type { ExtractionConfig, ExtractionResult, Extractor, ExtractorContext } from '../../memory/extraction/types.js'
 import type { JSONValue } from '../../types/json.js'
 import type { MessageData } from '../../types/messages.js'
-import type { Storage } from '../../storage/storage.js'
+import type { Storage, StorageSearchResult } from '../../storage/storage.js'
 import type { Model } from '../../models/model.js'
 import type { SearchStrategy } from '../../storage/search/types.js'
 
@@ -32,8 +32,13 @@ export interface FileMemoryStoreConfig extends MemoryStoreConfig {
   extraction?: boolean | FileMemoryExtractionConfig
   /**
    * Override the search strategy used by this memory store. When set, `search()` delegates to
-   * this strategy instead of the default keyword token-overlap scan. The underlying storage
-   * backend is unaffected — only this store's search behavior changes.
+   * this strategy instead of the storage backend's `search()`. The underlying storage backend is
+   * unaffected — only this store's search behavior changes.
+   *
+   * @deprecated Set the strategy on the storage backend instead, e.g.
+   *   `storage: new LocalFileStorage('./.strands/', { searchStrategy: new QmdSearchStrategy() })`.
+   *   `search()` then delegates to the backend, which also indexes each write when the strategy
+   *   implements `index()`.
    */
   search?: SearchStrategy
 }
@@ -56,8 +61,9 @@ export interface FileMemoryExtractionConfig extends ExtractionConfig {
 import { LocalFileStorage } from '../../storage/local-file-storage.js'
 import { ModelExtractor } from '../../memory/extraction/model-extractor.js'
 import { normalizeKey, resolveNamespace } from '../../storage/storage.js'
-import { tokenize, tokenOverlapScore } from '../../storage/search/keyword.js'
+import { KeywordSearchStrategy } from '../../storage/search/keyword.js'
 import { logger } from '../../logging/logger.js'
+import { warnOnce } from '../../logging/warn-once.js'
 
 /** Overridable framing (via {@link FileMemoryExtractionConfig.systemPrompt}) for what to extract. */
 const DEFAULT_EXTRACTION_GUIDANCE = `You extract durable facts worth remembering across future conversations from a transcript.`
@@ -76,8 +82,6 @@ If there is nothing worth remembering, return [].`
 
 const DEFAULT_MAX_SEARCH_RESULTS = 10
 const STORAGE_NAMESPACE = 'memory'
-/** Cap concurrent reads to avoid throttling on remote storage backends (e.g. S3). */
-const BATCH_SIZE = 8
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
@@ -171,6 +175,13 @@ export class FileMemoryStore implements MemoryStore {
     if (config.description !== undefined) this.description = config.description
     if (config.maxSearchResults !== undefined) this.maxSearchResults = config.maxSearchResults
     this._storage = this._resolveStorage(config.storage ?? new LocalFileStorage())
+    if (config.search) {
+      warnOnce(
+        logger,
+        `store=<${config.name}> | search option is deprecated and will be removed in a future version, ` +
+          'set the search strategy on the storage backend instead'
+      )
+    }
     this._searchStrategy = config.search
     const extraction = this._resolveExtraction(config)
     if (extraction !== undefined) this.extraction = extraction
@@ -191,8 +202,11 @@ export class FileMemoryStore implements MemoryStore {
   }
 
   /**
-   * Search knowledge files by delegating to the storage backend's `search()` when available,
-   * or falling back to a local keyword token-overlap scan.
+   * Search knowledge files.
+   *
+   * Uses the `search` strategy from config when set. Otherwise delegates to the storage
+   * backend's `search()`, so a search strategy configured on the backend applies here. Falls
+   * back to {@link KeywordSearchStrategy} for backends that do not implement `search()`.
    *
    * @param query - Natural-language search query
    * @param options - Optional search configuration (e.g. maxSearchResults)
@@ -201,18 +215,38 @@ export class FileMemoryStore implements MemoryStore {
   async search(query: string, options?: SearchOptions): Promise<MemoryEntry[]> {
     const maxResults = options?.maxSearchResults ?? this.maxSearchResults ?? DEFAULT_MAX_SEARCH_RESULTS
 
+    let results: StorageSearchResult[]
     if (this._searchStrategy) {
-      const results = await this._searchStrategy.search(this._storage, query)
-      return this._hydrateResults(results.slice(0, maxResults))
+      logger.debug(`store=<${this.name}>, path=<strategy> | resolved search`)
+      results = await this._searchStrategy.search(this._storage, query)
+    } else if (this._storage.search) {
+      logger.debug(`store=<${this.name}>, path=<backend> | resolved search`)
+      results = await this._storage.search(query)
+    } else {
+      logger.debug(`store=<${this.name}>, path=<keyword> | resolved search`)
+      results = await KeywordSearchStrategy.search(this._storage, query)
     }
-
-    return this._keywordSearch(query, maxResults)
+    return this._hydrateResults(results, maxResults)
   }
 
-  private async _hydrateResults(results: Array<{ key: string; score: number }>): Promise<MemoryEntry[]> {
+  /**
+   * Turn ranked results into entries, reading any result that came back without `data`.
+   * Walks the ranking until `maxResults` entries are filled, so an unreadable hit is replaced
+   * by the next one instead of shrinking the result set.
+   */
+  private async _hydrateResults(results: StorageSearchResult[], maxResults: number): Promise<MemoryEntry[]> {
     const entries: MemoryEntry[] = []
     for (const result of results) {
-      const bytes = await this._storage.read(result.key)
+      if (entries.length >= maxResults) break
+      let bytes: Uint8Array | null | undefined = result.data
+      if (!bytes) {
+        try {
+          bytes = await this._storage.read(result.key)
+        } catch (error) {
+          logger.debug(`key=<${result.key}> | skipped unreadable memory entry: ${error}`)
+          continue
+        }
+      }
       if (bytes) {
         entries.push({
           content: decoder.decode(bytes).trim(),
@@ -221,44 +255,6 @@ export class FileMemoryStore implements MemoryStore {
       }
     }
     return entries
-  }
-
-  private async _keywordSearch(query: string, maxResults: number): Promise<MemoryEntry[]> {
-    const queryTokens = tokenize(query)
-    if (queryTokens.size === 0) return []
-
-    const allKeys = await this._storage.list('')
-
-    const scored: Array<{ entry: MemoryEntry; relevanceScore: number }> = []
-    for (let offset = 0; offset < allKeys.length; offset += BATCH_SIZE) {
-      const batch = await Promise.all(
-        allKeys.slice(offset, offset + BATCH_SIZE).map(async (key) => {
-          try {
-            const bytes = await this._storage.read(key)
-            if (!bytes) return null
-
-            const body = decoder.decode(bytes)
-            const searchable = `${basename(key)} ${body}`
-
-            const relevanceScore = tokenOverlapScore(queryTokens, searchable)
-            if (relevanceScore === 0) return null
-            return {
-              entry: { content: body.trim(), metadata: { path: key, score: relevanceScore } } as MemoryEntry,
-              relevanceScore,
-            }
-          } catch (error) {
-            logger.debug(`key=<${key}> | skipped unreadable memory entry: ${error}`)
-            return null
-          }
-        })
-      )
-      for (const result of batch) {
-        if (result) scored.push(result)
-      }
-    }
-
-    scored.sort((a, b) => b.relevanceScore - a.relevanceScore)
-    return scored.slice(0, maxResults).map((s) => s.entry)
   }
 
   /**
