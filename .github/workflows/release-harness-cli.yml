@@ -350,6 +350,8 @@ jobs:
     runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: write
+      # Lets this job dispatch the changelog-sync workflow below.
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -380,6 +382,21 @@ jobs:
               --title "$NEW_TAG" \
               --notes-file release-notes.md
           fi
+
+      # A GITHUB_TOKEN-created release emits no `release` event, so dispatch the
+      # changelog sync explicitly. Non-fatal: the cron backstops a failed dispatch.
+      - name: Trigger changelog sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+        run: |
+          gh workflow run changelog-sync.yml \
+            || echo "::warning::Failed to dispatch changelog sync for $NEW_TAG; the cron will backstop."
+          {
+            echo "### Next steps"
+            echo "1. Merge the [changelog PR](https://github.com/strands-agents/harness-sdk/pulls?q=is%3Apr+is%3Aopen+head%3Achangelog%2Fsync) once the sync opens or updates it (a few minutes)."
+            echo "2. Run **Docs: Deploy to GitHub Pages**. It fails until step 1 is done."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Publish to npm ─────────────────────────────────────────────────────
   publish-npm:

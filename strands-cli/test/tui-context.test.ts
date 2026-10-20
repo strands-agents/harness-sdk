@@ -31,9 +31,9 @@ describe('context window limits', () => {
 
   it('prefers provider metadata over SDK defaults and caches it per model', async () => {
     const discover = vi.fn().mockResolvedValue(1_000_000)
-    const model = new AnthropicModel({ modelId: 'claude-sonnet-4-20250514', apiKey: 'test-key' })
+    const model = new AnthropicModel({ modelId: 'claude-sonnet-4-6', apiKey: 'test-key' })
     const runtime = new AgentModelRuntime({ model } as unknown as Agent, {
-      initialModel: 'anthropic/claude-sonnet-4-20250514',
+      initialModel: 'anthropic/claude-sonnet-4-6',
       discoverContextWindow: discover,
     })
 

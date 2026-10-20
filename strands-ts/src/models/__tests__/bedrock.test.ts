@@ -370,19 +370,19 @@ describe('BedrockModel', () => {
 
     it('includes contextWindowLimit in config when provided', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-20250514-v1:0' })
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 1_000_000,
       })
     })
@@ -405,11 +405,11 @@ describe('BedrockModel', () => {
 
     it('does not override explicit contextWindowLimit', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
     })
@@ -977,6 +977,54 @@ describe('BedrockModel', () => {
         ],
         modelId: expect.any(String),
       })
+    })
+
+    const signedBlock = new ReasoningBlock({ text: 'Claude thinking', signature: 'sig' })
+    const unsignedBlock = new ReasoningBlock({ text: 'gpt-oss thinking' })
+    const redactedBlock = new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) })
+    const SIGNED_REASONING = { reasoningContent: { reasoningText: { text: 'Claude thinking', signature: 'sig' } } }
+    const UNSIGNED_REASONING = { reasoningContent: { reasoningText: { text: 'gpt-oss thinking' } } }
+    const REDACTED_REASONING = { reasoningContent: { redactedContent: new Uint8Array([1, 2, 3]) } }
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4779
+    it.each([
+      // Non-Anthropic models reject the Anthropic-only signature; models with their own reasoning keep it unsigned.
+      { modelId: 'openai.gpt-oss-120b-1:0', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      { modelId: 'moonshot.kimi-k2-thinking', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      { modelId: 'minimax.minimax-m2.5', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      // Anthropic models require a signature on every reasoning text block.
+      { modelId: 'global.anthropic.claude-opus-5', expReasoning: [SIGNED_REASONING, REDACTED_REASONING] },
+      {
+        modelId: 'arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5',
+        expReasoning: [SIGNED_REASONING, REDACTED_REASONING],
+      },
+      // Models that reject reasoning text outright; redactedContent is opaque and kept.
+      { modelId: 'us.amazon.nova-pro-v1:0', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-5.5', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'qwen.qwen3-coder-480b-a35b-v1:0', expReasoning: [REDACTED_REASONING] },
+      // DeepSeek rejects reasoning content altogether.
+      { modelId: 'us.deepseek.r1-v1:0', expReasoning: [] },
+      // An ARN or bare inference profile ID can hide the vendor, so nothing is dropped.
+      {
+        modelId: 'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123',
+        expReasoning: [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING],
+      },
+      { modelId: 'abc123xyz', expReasoning: [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING] },
+    ])('drops the replayed reasoning $modelId rejects', async ({ modelId, expReasoning }) => {
+      const provider = new BedrockModel({ modelId })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello')] }),
+        new Message({
+          role: 'assistant',
+          content: [signedBlock, unsignedBlock, redactedBlock, new TextBlock('Response')],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[1]?.content).toEqual([...expReasoning, { text: 'Response' }])
     })
 
     it('formats cache point blocks in messages', async () => {
@@ -4077,6 +4125,39 @@ describe('BedrockModel', () => {
         })
       )
     })
+
+    it('omits an empty source when replaying a citation', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [
+            new CitationsBlock({
+              citations: [
+                {
+                  location: { type: 'documentPage' as const, documentIndex: 0, start: 1, end: 2 },
+                  source: '',
+                  sourceContent: [{ text: 'page source' }],
+                  title: 'letter',
+                },
+              ],
+              content: [{ text: 'summary' }],
+            }),
+          ],
+        }),
+        new Message({ role: 'user', content: [new TextBlock('Follow up')] }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const request = mockConverseStreamCommand.mock.lastCall![0]
+      const replayed = request.messages![0]!.content![0]!.citationsContent!.citations![0]!
+      expect(replayed).toStrictEqual({
+        location: { documentPage: { documentIndex: 0, start: 1, end: 2 } },
+        sourceContent: [{ text: 'page source' }],
+        title: 'letter',
+      })
+    })
   })
 
   describe('media blocks in tool results', () => {
@@ -6111,7 +6192,7 @@ describe('BedrockModel', () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
 
     const provider = new BedrockModel({
-      modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+      modelId: 'anthropic.claude-sonnet-4-6',
       additionalRequestFields: {
         thinking: { type: 'enabled', budget_tokens: 5000 },
         some_other_field: 'value',
@@ -6161,7 +6242,7 @@ describe('BedrockModel', () => {
 
     it('omits additionalModelRequestFields when thinking is the only field and tool choice forces tool use', () => {
       const thinkingOnlyProvider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         additionalRequestFields: {
           thinking: { type: 'enabled', budget_tokens: 5000 },
         },

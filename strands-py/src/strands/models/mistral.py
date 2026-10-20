@@ -271,6 +271,9 @@ class MistralModel(Model):
                 elif "toolResult" in content:
                     tool_messages.append(self._format_request_tool_message(content["toolResult"]))
 
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_messages.extend(tool_messages)
+
             if message_contents or tool_calls:
                 message_content: str | list[dict[str, Any]]
                 if any(isinstance(content, dict) for content in message_contents):
@@ -289,8 +292,6 @@ class MistralModel(Model):
                     formatted_message["tool_calls"] = tool_calls
 
                 formatted_messages.append(formatted_message)
-
-            formatted_messages.extend(tool_messages)
 
         return formatted_messages
 

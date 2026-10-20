@@ -82,6 +82,21 @@ describe('changelogFrontmatterSchema', () => {
     ).toThrow()
   })
 
+  it('requires a language on harness releases and forbids one on cli and box', () => {
+    const base = {
+      version: '0.1.0',
+      tag: 'v0.1.0',
+      date: '2026-10-01',
+      releaseUrl: 'https://github.com/strands-agents/box/releases/tag/v0.1.0',
+      packageUrl: 'https://github.com/strands-agents/box/releases/tag/v0.1.0',
+    }
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'harness' })).toThrow()
+    expect(changelogFrontmatterSchema.parse({ ...base, sdk: 'harness', language: 'python' }).sdk).toBe('harness')
+    expect(changelogFrontmatterSchema.parse({ ...base, sdk: 'box' }).language).toBeUndefined()
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'cli', language: 'typescript' })).toThrow()
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'box', language: 'python' })).toThrow()
+  })
+
   it('rejects an evals release that sets a language', () => {
     expect(() =>
       changelogFrontmatterSchema.parse({
