@@ -5,22 +5,16 @@ import { logger } from '../../logging/logger.js'
 import { normalizeError } from '../../errors.js'
 import type { ExtractionResult, Extractor, ExtractorContext } from './types.js'
 
-/** Default guidance on what counts as a fact; a custom `systemPrompt` replaces it. */
+/** Default instruction guiding the model to emit discrete, durable facts as a JSON array. */
 const DEFAULT_SYSTEM_PROMPT = `You extract durable facts worth remembering across future conversations from a transcript.
 
-Each entry is one discrete, self-contained fact (a preference, decision, or stable detail about the user or task). Do not include transient chit-chat, questions, or anything already obvious.`
-
-/** The response shape the parser requires, appended after every system prompt so a custom prompt cannot drop it. */
-const OUTPUT_FORMAT = `Return ONLY a JSON array of objects, each: {"content": string}. If there is nothing worth remembering, return [].`
+Return ONLY a JSON array of objects, each: {"content": string}. Each object is one discrete, self-contained fact (a preference, decision, or stable detail about the user or task). Do not include transient chit-chat, questions, or anything already obvious. If there is nothing worth remembering, return [].`
 
 /** Options for {@link ModelExtractor}. */
 export interface ModelExtractorOptions {
   /** Model used to extract facts. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
-  /**
-   * System prompt steering what counts as a fact. Defaults to a general fact-extraction prompt. The JSON
-   * output format the extractor parses is always appended after it.
-   */
+  /** System prompt steering what counts as a fact. Defaults to a general fact-extraction prompt. */
   systemPrompt?: string
 }
 
@@ -47,7 +41,7 @@ export class ModelExtractor implements Extractor {
     if (options.model !== undefined) {
       this._model = options.model
     }
-    this._systemPrompt = `${options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT}\n\n${OUTPUT_FORMAT}`
+    this._systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
   }
 
   async extract(messages: MessageData[], context?: ExtractorContext): Promise<ExtractionResult[]> {

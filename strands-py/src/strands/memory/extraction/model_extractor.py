@@ -20,18 +20,14 @@ from .types import ExtractionResult, ExtractorContext
 
 logger = logging.getLogger(__name__)
 
-# Default guidance on what counts as a fact; a custom ``system_prompt`` replaces it.
+# Default instruction guiding the model to emit discrete, durable facts as a JSON array.
 DEFAULT_SYSTEM_PROMPT = (
     "You extract durable facts worth remembering across future conversations from a transcript.\n"
     "\n"
-    "Each entry is one discrete, self-contained fact (a preference, decision, or stable detail about "
-    "the user or task). Do not include transient chit-chat, questions, or anything already obvious."
-)
-
-# The response shape ``_parse_entries`` requires, appended after every system prompt so a custom
-# prompt cannot drop it.
-_OUTPUT_FORMAT = (
-    'Return ONLY a JSON array of objects, each: {"content": string}. If there is nothing worth remembering, return [].'
+    'Return ONLY a JSON array of objects, each: {"content": string}. Each object is one discrete, '
+    "self-contained fact (a preference, decision, or stable detail about the user or task). Do not "
+    "include transient chit-chat, questions, or anything already obvious. If there is nothing worth "
+    "remembering, return []."
 )
 
 
@@ -57,11 +53,10 @@ class ModelExtractor:
             model: Model used to extract facts. Resolution order: this ``model`` >
                 :attr:`ExtractorContext.default_model` (``agent.aux_model`` > ``agent.model``).
             system_prompt: System prompt steering what counts as a fact. Defaults
-                to a general fact-extraction prompt. The JSON output format the
-                extractor parses is always appended after it.
+                to a general fact-extraction prompt.
         """
         self._model = model
-        self._system_prompt = f"{system_prompt or DEFAULT_SYSTEM_PROMPT}\n\n{_OUTPUT_FORMAT}"
+        self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
 
     async def extract(self, messages: list[Message], context: ExtractorContext | None = None) -> list[ExtractionResult]:
         """Extract entries from a batch of messages.
