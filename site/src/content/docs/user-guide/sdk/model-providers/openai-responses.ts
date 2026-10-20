@@ -2,6 +2,7 @@
  * TypeScript examples for OpenAI Responses API documentation.
  */
 
+import OpenAI from 'openai'
 import { Agent } from '@strands-agents/sdk'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 
@@ -141,4 +142,20 @@ import { OpenAIModel } from '@strands-agents/sdk/models/openai'
   const response = await agent.invoke('What is my name?')
   // The model remembers "Alice" via server-side state
   // --8<-- [end:stateful]
+}
+
+// Custom client
+{
+  // --8<-- [start:custom_client]
+  const client = new OpenAI({ apiKey: '<KEY>' })
+
+  const model = new OpenAIModel({
+    client,
+    modelId: 'gpt-4o',
+  })
+
+  const agent = new Agent({ model })
+  const response = await agent.invoke('What is 2+2?')
+  console.log(response)
+  // --8<-- [end:custom_client]
 }
