@@ -8,7 +8,7 @@ These types are modeled after the Bedrock API.
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from typing_extensions import Required, TypedDict
+from typing_extensions import NotRequired, Required, TypedDict
 
 from .citations import CitationsConfig
 
@@ -148,6 +148,9 @@ class DocumentContent(TypedDict, total=False):
 ImageFormat = Literal["png", "jpeg", "gif", "webp"]
 """Supported image formats."""
 
+ImageDetail = Literal["low", "high", "auto"]
+"""Supported image detail levels."""
+
 
 class ImageSource(TypedDict, total=False):
     """Contains the content of an image.
@@ -169,10 +172,13 @@ class ImageContent(TypedDict):
     Attributes:
         format: The format of the image (e.g., "png", "jpeg").
         source: The source containing the image's binary content.
+        detail: The resolution the model processes the image at. Used by `OpenAIModel`, `OpenAIResponsesModel`,
+            `OpenAIRealtimeModel`, and the providers built on `OpenAIModel`; ignored by other providers.
     """
 
     format: ImageFormat
     source: ImageSource
+    detail: NotRequired[ImageDetail]
 
 
 class _ImageBlockData(TypedDict):
@@ -186,14 +192,19 @@ class ImageBlock:
     Attributes:
         format: Image format.
         source: Source containing the image.
+        detail: Resolution the model processes the image at.
     """
 
     format: ImageFormat
     source: ImageSource
+    detail: ImageDetail | None = None
 
     def to_dict(self) -> _ImageBlockData:
         """Return the dictionary form of this block."""
-        return {"image": {"format": self.format, "source": self.source}}
+        image: ImageContent = {"format": self.format, "source": self.source}
+        if self.detail is not None:
+            image["detail"] = self.detail
+        return {"image": image}
 
 
 VideoFormat = Literal["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"]

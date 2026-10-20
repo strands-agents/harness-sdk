@@ -248,6 +248,48 @@ Define a Zod schema and pass it as `structuredOutputSchema`. Validated output is
 
 For schema patterns, error handling, and per-invocation overrides, see [Structured Output](../agents/structured-output/).
 
+### Image detail
+
+OpenAI vision models process an image at the resolution its `detail` level sets: `low`,
+`high`, or `auto`. Set `detail` on an image block to trade image fidelity for fewer input
+tokens. When `detail` is not set, `OpenAIModel` sends `auto`.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    client_args={
+        "api_key": "<KEY>",
+    },
+    model_id="gpt-4o",
+)
+
+agent = Agent(model=model)
+
+with open("path/to/car.jpg", "rb") as fp:
+    image_bytes = fp.read()
+
+response = agent([
+    {"text": "What color is this car?"},
+    {"image": {"format": "jpeg", "source": {"bytes": image_bytes}, "detail": "low"}},
+])
+```
+
+`OpenAIResponsesModel`, `LiteLLMModel`, and `SageMakerAIModel` send `detail` too. Other
+providers ignore it.
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+// Not supported in TypeScript
+```
+</Tab>
+</Tabs>
+
 ### Custom client
 
 You can pass your own OpenAI client to the OpenAIModel for Strands Agents to use directly. You are responsible for handling the lifecycle (e.g., closing) of the client.
