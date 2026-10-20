@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { tool } from '../tool-factory.js'
 import { Tool } from '../tool.js'
+import { createMockContext } from '../../__fixtures__/tool-helpers.js'
 
 describe('tool factory', () => {
   describe('dispatch logic', () => {
@@ -86,6 +87,34 @@ describe('tool factory', () => {
       })
 
       expect(await myTool.invoke({ count: 3 })).toBe(0)
+    })
+
+    // Guards https://github.com/strands-agents/harness-sdk/issues/4795: closing the tool's stream early must
+    // close the callback's generator too, so its cleanup runs.
+    it('runs the generator callback finally when the stream is closed early', async () => {
+      let cleanedUp = false
+      const myTool = tool({
+        name: 'gen',
+        description: 'Generator',
+        inputSchema: { type: 'object' },
+        callback: async function* () {
+          try {
+            yield 'first'
+            yield 'second'
+            return 'done'
+          } finally {
+            cleanedUp = true
+          }
+        },
+      })
+
+      const generator = myTool.stream(createMockContext({ name: 'gen', toolUseId: 'gen-1', input: {} }))
+      await generator.next()
+      expect(cleanedUp).toBe(false)
+
+      await generator.return(undefined as never)
+
+      expect(cleanedUp).toBe(true)
     })
 
     it('passes instanceof Tool check', () => {

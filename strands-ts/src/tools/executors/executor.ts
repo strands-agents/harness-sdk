@@ -332,9 +332,14 @@ export abstract class ToolExecutor {
         // re-enter the tool span for every asynchronous step.
         const toolGenerator = options.tracer.withSpanContext(toolSpan, () => effectiveTool.stream(toolContext))
         let toolNext = await options.tracer.withSpanContext(toolSpan, () => toolGenerator.next())
-        while (!toolNext.done) {
-          yield new ToolStreamUpdateEvent({ agent: options.agent, event: toolNext.value, invocationState })
-          toolNext = await options.tracer.withSpanContext(toolSpan, () => toolGenerator.next())
+        try {
+          while (!toolNext.done) {
+            yield new ToolStreamUpdateEvent({ agent: options.agent, event: toolNext.value, invocationState })
+            toolNext = await options.tracer.withSpanContext(toolSpan, () => toolGenerator.next())
+          }
+        } finally {
+          // Closes the tool's generator when this one is closed early, so the tool's cleanup runs.
+          await options.tracer.withSpanContext(toolSpan, () => toolGenerator.return(undefined as never))
         }
 
         toolResult =
