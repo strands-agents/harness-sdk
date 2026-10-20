@@ -7,7 +7,8 @@ from opentelemetry.metrics._internal import _ProxyMeter
 from opentelemetry.sdk.metrics import MeterProvider
 
 import strands
-from strands.telemetry import MetricsClient
+from strands.telemetry import MetricsClient, ModelInvocationMetric
+from strands.telemetry.metrics import AgentInvocation, EventLoopCycleMetric, EventLoopMetrics
 from strands.types.streaming import Metrics, Usage
 
 
@@ -396,6 +397,8 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
         },
         "agent_invocations": [],
         "average_cycle_time": 0,
+        "average_output_tokens_per_second": None,
+        "output_throughput_sample_count": 0,
         "tool_usage": {
             "tool1": {
                 "execution_stats": {
@@ -419,6 +422,85 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
     }
 
     assert tru_summary == exp_summary
+
+
+@pytest.mark.parametrize(
+    ("tokens", "duration", "exp_tokens", "exp_duration", "exp_rate"),
+    [
+        (20, 2.0, 20, 2.0, 10.0),
+        (0, 2.0, 0, 2.0, 0.0),
+        (None, 2.0, None, 2.0, None),
+        (-1, 2.0, None, 2.0, None),
+        (True, 2.0, None, 2.0, None),
+        (1.5, 2.0, None, 2.0, None),
+        (20, None, 20, None, None),
+        (20, 0, 20, None, None),
+        (20, -1, 20, None, None),
+        (20, float("nan"), 20, None, None),
+        (20, float("inf"), 20, None, None),
+        (20, True, 20, None, None),
+        (10**400, 1.0, 10**400, 1.0, None),
+    ],
+)
+def test_model_invocation_metric_validates_observations(tokens, duration, exp_tokens, exp_duration, exp_rate):
+    sample = ModelInvocationMetric(tokens, duration, "test-model")
+    tru_metric = {**dataclasses.asdict(sample), "output_tokens_per_second": sample.output_tokens_per_second}
+    exp_metric = {
+        "output_tokens": exp_tokens,
+        "client_duration": exp_duration,
+        "model_id": "test-model",
+        "output_tokens_per_second": exp_rate,
+    }
+    assert tru_metric == exp_metric
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        sample.output_tokens = 7
+
+
+def test_output_throughput_weights_only_matching_samples_and_preserves_history():
+    usage = Usage(inputTokens=0, outputTokens=0, totalTokens=0)
+    first = EventLoopCycleMetric("first", usage, [ModelInvocationMetric(10, 1), ModelInvocationMetric(30, 3)])
+    second = EventLoopCycleMetric("second", usage, [ModelInvocationMetric(None, 100), ModelInvocationMetric(0, 4)])
+    metrics = EventLoopMetrics(agent_invocations=[AgentInvocation([first, second])])
+    first_summary = metrics.get_summary()
+    exp_cycles = [
+        {
+            "event_loop_cycle_id": "first",
+            "usage": usage,
+            "model_invocations": [
+                {"output_tokens": 10, "client_duration": 1, "model_id": None, "output_tokens_per_second": 10.0},
+                {"output_tokens": 30, "client_duration": 3, "model_id": None, "output_tokens_per_second": 10.0},
+            ],
+            "output_tokens_per_second": 10.0,
+            "output_throughput_sample_count": 2,
+        },
+        {
+            "event_loop_cycle_id": "second",
+            "usage": usage,
+            "model_invocations": [
+                {"output_tokens": None, "client_duration": 100, "model_id": None, "output_tokens_per_second": None},
+                {"output_tokens": 0, "client_duration": 4, "model_id": None, "output_tokens_per_second": 0.0},
+            ],
+            "output_tokens_per_second": 0.0,
+            "output_throughput_sample_count": 1,
+        },
+    ]
+    assert first_summary["agent_invocations"] == [
+        {
+            "usage": usage,
+            "cycles": exp_cycles,
+            "average_output_tokens_per_second": 5.0,
+            "output_throughput_sample_count": 3,
+        }
+    ]
+    metrics.reset_usage_metrics()
+    metrics.latest_agent_invocation.cycles.append(EventLoopCycleMetric("third", usage, [ModelInvocationMetric(60, 2)]))
+    assert (metrics.average_output_tokens_per_second, metrics.output_throughput_sample_count) == (10.0, 4)
+    assert (first_summary["average_output_tokens_per_second"], first_summary["output_throughput_sample_count"]) == (
+        5.0,
+        3,
+    )
+    first_summary["agent_invocations"][0]["cycles"][0]["model_invocations"][0]["output_tokens"] = 999
+    assert first.model_invocations[0].output_tokens == 10
 
 
 @pytest.mark.parametrize(
