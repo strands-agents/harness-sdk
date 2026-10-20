@@ -846,9 +846,7 @@ class LlamaCppModel(Model):
 
         try:
             # Configure for JSON output with schema constraint
-            params = self.config.get("params", {})
-            if not isinstance(params, dict):
-                params = {}
+            params = original_params.copy()
             params["json_schema"] = schema
             params["cache_prompt"] = True
             self.config["params"] = params

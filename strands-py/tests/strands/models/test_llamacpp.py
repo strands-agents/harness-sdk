@@ -1066,3 +1066,76 @@ class TestCountTokens:
         model.client.post.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "invalid_json", "transport_error"])
+async def test_structured_output_does_not_mutate_caller_params(outcome):
+    class Output(BaseModel):
+        answer: str
+
+    params = {"temperature": 0.2, "cache_prompt": False}
+    original = params.copy()
+    model = LlamaCppModel(params=params)
+    await model.client.aclose()
+    requests = []
+
+    def handle(request):
+        requests.append(json.loads(request.content))
+        if outcome == "transport_error":
+            raise httpx.ConnectError("offline", request=request)
+        text = '{"answer":"yes"}' if outcome == "success" else "not json"
+        event = {"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}
+        return httpx.Response(200, text="data: " + json.dumps(event) + "\n\ndata: [DONE]\n\n")
+
+    model.client = httpx.AsyncClient(base_url=model.base_url, transport=httpx.MockTransport(handle))
+    try:
+        if outcome == "success":
+            events = [
+                event
+                async for event in model.structured_output(Output, [{"role": "user", "content": [{"text": "hi"}]}])
+            ]
+            assert events[-1]["output"].answer == "yes"
+        else:
+            error = json.JSONDecodeError if outcome == "invalid_json" else httpx.ConnectError
+            with pytest.raises(error):
+                async for _ in model.structured_output(Output, [{"role": "user", "content": [{"text": "hi"}]}]):
+                    pass
+        assert requests[0]["json_schema"] == Output.model_json_schema()
+        assert params == original
+        assert model.config["params"] == original
+    finally:
+        await model.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_structured_output_close_preserves_shared_params():
+    class Output(BaseModel):
+        answer: str
+
+    params = {"temperature": 0.3, "cache_prompt": False}
+    original = params.copy()
+    model = LlamaCppModel(params=params)
+    sibling = LlamaCppModel(params=params)
+    await model.client.aclose()
+    event = {"choices": [{"delta": {"content": '{"answer":"yes"}'}, "finish_reason": "stop"}]}
+    model.client = httpx.AsyncClient(
+        base_url=model.base_url,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text="data: " + json.dumps(event) + "\n\ndata: [DONE]\n\n")
+        ),
+    )
+    generator = model.structured_output(Output, [{"role": "user", "content": [{"text": "hi"}]}])
+    try:
+        await anext(generator)
+        # Another model using the same caller dictionary must not inherit the temporary schema.
+        sibling_request = sibling._format_request([{"role": "user", "content": [{"text": "hi"}]}])
+        assert "json_schema" not in sibling_request
+        assert sibling_request["cache_prompt"] is False
+        assert params == original
+    finally:
+        await generator.aclose()
+        await model.client.aclose()
+        await sibling.client.aclose()
+    assert model.config["params"] == original
+    assert params == original
