@@ -10,6 +10,7 @@ import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { BeforeToolCallEvent } from '../../../hooks/events.js'
 import type { DecisionInput, DecisionResult, Question } from '../../../decisions/types.js'
 import type { ToolResultBlock } from '../../../types/messages.js'
+import type { ClassifierDecisionResult } from '../classifier.js'
 
 function findToolResult(agent: Agent): ToolResultBlock | undefined {
   return agent.messages
@@ -607,7 +608,7 @@ describe('HumanInTheLoop', () => {
             return 'deployed'
           }),
         ],
-        interventions: [new HumanInTheLoop({ classifier: () => ({ requiresHumanInTheLoop: false, deny: true }) })],
+        interventions: [new HumanInTheLoop({ classifier: () => ({ decision: 'deny' }) })],
         printer: false,
       })
 
@@ -656,7 +657,50 @@ describe('HumanInTheLoop', () => {
       expect(classifierSpy).not.toHaveBeenCalled()
     })
 
-    it('custom classifier function works', async () => {
+    it('custom classifier approve runs tool', async () => {
+      const agentModel = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'dev' } })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+
+      let toolExecuted = false
+      const agent = new Agent({
+        model: agentModel,
+        tools: [
+          createMockTool('deploy', () => {
+            toolExecuted = true
+            return 'deployed'
+          }),
+        ],
+        interventions: [new HumanInTheLoop({ classifier: () => ({ decision: 'approve' }) })],
+        printer: false,
+      })
+
+      const result = await agent.invoke('Deploy')
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(toolExecuted).toBe(true)
+    })
+
+    it('malformed classifier decision requires approval', async () => {
+      const agentModel = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'prod' } })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+
+      const agent = new Agent({
+        model: agentModel,
+        tools: [createMockTool('deploy', () => 'deployed')],
+        interventions: [
+          new HumanInTheLoop({ classifier: () => ({ decision: 'allow' }) as unknown as ClassifierDecisionResult }),
+        ],
+        printer: false,
+      })
+
+      const result = await agent.invoke('Deploy')
+
+      expect(result.stopReason).toBe('interrupt')
+    })
+
+    it('deprecated requiresHumanInTheLoop result is honored', async () => {
       const agentModel = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'prod' } })
         .addTurn({ type: 'textBlock', text: 'Done' })
@@ -701,7 +745,7 @@ describe('HumanInTheLoop', () => {
         tools: [tool],
         interventions: [
           new HumanInTheLoop({
-            classifier: async () => ({ requiresHumanInTheLoop: true, reason: 'external communication' }),
+            classifier: async () => ({ decision: 'escalate', reason: 'external communication' }),
             ask: async (prompt) => {
               prompts.push(prompt)
               return 'no'

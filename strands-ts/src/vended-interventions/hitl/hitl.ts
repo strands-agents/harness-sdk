@@ -1,9 +1,9 @@
 import { InterventionHandler } from '../../interventions/handler.js'
 import { confirm, deny, proceed, defaultEvaluate } from '../../interventions/actions.js'
 import { logger } from '../../logging/logger.js'
-import { createDecisionModelRiskClassifier, createLlmRiskClassifier } from './classifier.js'
+import { createDecisionModelRiskClassifier, createLlmRiskClassifier, normalizeClassifierResult } from './classifier.js'
 import type {
-  ClassifierResult,
+  ClassifierDecisionResult,
   DecisionModelClassifierConfig,
   HumanInTheLoopClassifier,
   LlmClassifierConfig,
@@ -197,15 +197,15 @@ export class HumanInTheLoop extends InterventionHandler {
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
     const toolName = event.toolUse.name
 
-    const classifierResult = await this._requiresApproval(event)
-    if (classifierResult.deny === true) {
-      return deny(classifierResult.reason ?? DEFAULT_DENY_REASON)
+    const classification = await this._classify(event)
+    if (classification.decision === 'deny') {
+      return deny(classification.reason ?? DEFAULT_DENY_REASON)
     }
-    if (!classifierResult.requiresHumanInTheLoop) {
+    if (classification.decision === 'approve') {
       return proceed()
     }
 
-    const reason = classifierResult.reason ? ` — ${classifierResult.reason}` : ''
+    const reason = classification.reason ? ` — ${classification.reason}` : ''
     const input = JSON.stringify(event.toolUse.input)
     const prompt = `Approve "${toolName}"${reason}?\n  Input: ${input}`
 
@@ -245,42 +245,42 @@ export class HumanInTheLoop extends InterventionHandler {
    * 5. Classifier (if provided) → its decision (approve, deny, or escalate)
    * 6. Default (no classifier) → requires approval
    */
-  private async _requiresApproval(event: BeforeToolCallEvent): Promise<ClassifierResult> {
+  private async _classify(event: BeforeToolCallEvent): Promise<ClassifierDecisionResult> {
     const toolName = event.toolUse.name
 
     if (this._allowedTools.has(`!${toolName}`)) {
-      return { requiresHumanInTheLoop: true }
+      return { decision: 'escalate' }
     }
 
     const trusted = (event.agent.appState.get(TRUSTED_TOOLS_KEY) as string[] | undefined) ?? []
     if (trusted.includes(toolName)) {
-      return { requiresHumanInTheLoop: false }
+      return { decision: 'approve' }
     }
 
-    if (this._allowedTools.has('*')) return { requiresHumanInTheLoop: false }
-    if (this._allowedTools.has(toolName)) return { requiresHumanInTheLoop: false }
+    if (this._allowedTools.has('*')) return { decision: 'approve' }
+    if (this._allowedTools.has(toolName)) return { decision: 'approve' }
 
     if (this._classifier) {
       const toolUseId = event.toolUse.toolUseId
       if (this._classifiedToolUseIds.has(toolUseId)) {
-        return { requiresHumanInTheLoop: true }
+        return { decision: 'escalate' }
       }
       this._classifiedToolUseIds.add(toolUseId)
 
       try {
-        const result = await this._classifier(event)
-        if (typeof result?.requiresHumanInTheLoop !== 'boolean') {
+        const result = normalizeClassifierResult(await this._classifier(event))
+        if (result === undefined) {
           logger.warn(`tool=<${toolName}> | classifier returned malformed result, defaulting to approval required`)
-          return { requiresHumanInTheLoop: true }
+          return { decision: 'escalate' }
         }
         return result
       } catch (error) {
         logger.warn(`tool=<${toolName}> | classifier failed, defaulting to approval required`, error)
-        return { requiresHumanInTheLoop: true }
+        return { decision: 'escalate' }
       }
     }
 
-    return { requiresHumanInTheLoop: true }
+    return { decision: 'escalate' }
   }
 
   private _trustTool(event: BeforeToolCallEvent, toolName: string): void {

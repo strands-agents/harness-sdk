@@ -8,16 +8,38 @@ import type { BeforeToolCallEvent } from '../../hooks/events.js'
 import type { Model } from '../../models/model.js'
 
 /**
- * Result from a {@link HumanInTheLoopClassifier}.
+ * How a classifier handles a tool call: `approve` runs it, `escalate` asks a human,
+ * and `deny` blocks it without asking a human.
  */
-export interface ClassifierResult {
-  /** Whether the tool call requires human-in-the-loop approval. */
-  requiresHumanInTheLoop: boolean
-  /** Block the tool call without asking a human. Takes precedence over `requiresHumanInTheLoop`. */
-  deny?: boolean
+export type ClassifierDecision = 'approve' | 'deny' | 'escalate'
+
+/**
+ * Decision returned by a {@link HumanInTheLoopClassifier}.
+ */
+export interface ClassifierDecisionResult {
+  /** How the tool call is handled. */
+  decision: ClassifierDecision
   /** Reason shown to the human in the approval prompt, or to the model when the call is denied. */
   reason?: string
 }
+
+/**
+ * Boolean result returned by a {@link HumanInTheLoopClassifier}.
+ *
+ * @deprecated Return a {@link ClassifierDecisionResult} instead. `requiresHumanInTheLoop: true`
+ * is equivalent to `decision: 'escalate'`, and `false` to `decision: 'approve'`.
+ */
+export interface LegacyClassifierResult {
+  /** Whether the tool call requires human-in-the-loop approval. */
+  requiresHumanInTheLoop: boolean
+  /** Reason shown to the human in the approval prompt. */
+  reason?: string
+}
+
+/**
+ * Result from a {@link HumanInTheLoopClassifier}.
+ */
+export type ClassifierResult = ClassifierDecisionResult | LegacyClassifierResult
 
 /**
  * Function (sync or async) that decides whether a tool call runs, is denied, or requires human approval.
@@ -44,19 +66,11 @@ export interface DecisionModelClassifierConfig {
   question?: string
 }
 
-const RISK_DECISIONS = ['approve', 'deny', 'escalate'] as const
-
-type RiskDecision = (typeof RISK_DECISIONS)[number]
-
-const DECISION_RESULTS: Record<RiskDecision, ClassifierResult> = {
-  approve: { requiresHumanInTheLoop: false },
-  deny: { requiresHumanInTheLoop: false, deny: true },
-  escalate: { requiresHumanInTheLoop: true },
-}
+const CLASSIFIER_DECISIONS = ['approve', 'deny', 'escalate'] as const satisfies readonly ClassifierDecision[]
 
 const RISK_DECISION = z.object({
   decision: z
-    .enum(RISK_DECISIONS)
+    .enum(CLASSIFIER_DECISIONS)
     .describe('approve: run without approval; escalate: ask a human for approval; deny: block without asking a human'),
   reason: z.string().describe('Brief reason (under 10 words) for the decision'),
 })
@@ -112,7 +126,7 @@ export function createLlmRiskClassifier(config?: LlmClassifierConfig): HumanInTh
   const systemPrompt = config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
   const configuredModel = config?.model
 
-  return async (event: BeforeToolCallEvent): Promise<ClassifierResult> => {
+  return async (event: BeforeToolCallEvent): Promise<ClassifierDecisionResult> => {
     const model = configuredModel ?? event.agent.auxModel
     if (!model) {
       throw new Error(
@@ -135,7 +149,7 @@ export function createLlmRiskClassifier(config?: LlmClassifierConfig): HumanInTh
     const result = await inner.invoke(prompt, invokeOptions)
     const decision = RISK_DECISION.parse(result.structuredOutput)
 
-    return toClassifierResult(decision.decision, decision.reason)
+    return { decision: decision.decision, reason: decision.reason }
   }
 }
 
@@ -151,19 +165,41 @@ export function createDecisionModelRiskClassifier(config: DecisionModelClassifie
   const { decisionModel } = config
   const question = config.question ?? DEFAULT_RISK_QUESTION
 
-  return async (event: BeforeToolCallEvent): Promise<ClassifierResult> => {
+  return async (event: BeforeToolCallEvent): Promise<ClassifierDecisionResult> => {
     const result = await decisionModel.ask(formatToolCall(event), {
-      decision: { question, choices: RISK_DECISIONS },
+      decision: { question, choices: CLASSIFIER_DECISIONS },
     })
     const answer = result.answers.decision
 
-    if (answer instanceof Uncertain) return toClassifierResult('escalate', answer.reason)
-    return toClassifierResult(answer)
+    if (answer instanceof Uncertain) {
+      return { decision: 'escalate', ...(answer.reason !== undefined && { reason: answer.reason }) }
+    }
+    return { decision: answer }
   }
 }
 
-function toClassifierResult(decision: RiskDecision, reason?: string): ClassifierResult {
-  return { ...DECISION_RESULTS[decision], ...(reason !== undefined && { reason }) }
+/**
+ * Normalizes a classifier's return value, including the deprecated boolean shape.
+ *
+ * @internal
+ * @param result - Value returned by a classifier.
+ * @returns The decision, or `undefined` when the result is malformed.
+ */
+export function normalizeClassifierResult(result: unknown): ClassifierDecisionResult | undefined {
+  if (typeof result !== 'object' || result === null) return undefined
+  const { decision, requiresHumanInTheLoop, reason } = result as Record<string, unknown>
+  const resolved = isClassifierDecision(decision) ? decision : legacyDecision(requiresHumanInTheLoop)
+  if (resolved === undefined) return undefined
+  return { decision: resolved, ...(typeof reason === 'string' && { reason }) }
+}
+
+function isClassifierDecision(value: unknown): value is ClassifierDecision {
+  return (CLASSIFIER_DECISIONS as readonly unknown[]).includes(value)
+}
+
+function legacyDecision(requiresHumanInTheLoop: unknown): ClassifierDecision | undefined {
+  if (typeof requiresHumanInTheLoop !== 'boolean') return undefined
+  return requiresHumanInTheLoop ? 'escalate' : 'approve'
 }
 
 function formatToolCall(event: BeforeToolCallEvent): string {
