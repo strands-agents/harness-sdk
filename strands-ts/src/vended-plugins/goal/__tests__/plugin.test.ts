@@ -894,7 +894,7 @@ describe('GoalLoop natural-language judge', () => {
         printer: false,
       })
       const spentRequest = new InvocationContextImpl({ turns: 1 })
-      spentRequest.turns = 1
+      spentRequest.usage.turnsTaken = 1
 
       const result = await agent.invoke('go', { invocationContext: spentRequest })
 
@@ -908,7 +908,7 @@ describe('GoalLoop natural-language judge', () => {
       const goal = new GoalLoop({ goal: validator })
       const agent = new Agent({ model: new MockMessageModel(), plugins: [goal], printer: false })
       const spentRequest = new InvocationContextImpl({ turns: 1 })
-      spentRequest.turns = 1
+      spentRequest.usage.turnsTaken = 1
 
       await agent.invoke('go', { invocationContext: spentRequest })
 
@@ -938,7 +938,12 @@ describe('GoalLoop natural-language judge', () => {
         stopReason: 'satisfied',
         attempts: [{ attempt: 1, passed: true }],
       })
-      expect(result.requestUsage).toEqual({ inputTokens: 41, outputTokens: 6, totalTokens: 47 })
+      expect(result.invocationContext?.usage).toEqual({
+        turnsTaken: 1,
+        inputTokens: 41,
+        outputTokens: 6,
+        totalTokens: 47,
+      })
     })
   })
 })

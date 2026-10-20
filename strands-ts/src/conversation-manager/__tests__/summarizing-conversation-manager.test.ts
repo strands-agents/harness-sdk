@@ -248,7 +248,7 @@ describe('SummarizingConversationManager', () => {
       const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
       const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
       const invocationContext = new InvocationContextImpl({ turns: 1 })
-      invocationContext.turns = 5
+      invocationContext.usage.turnsTaken = 5
 
       const result = await manager.reduce({
         agent: mockAgent,
@@ -259,8 +259,7 @@ describe('SummarizingConversationManager', () => {
 
       expect(result).toBe(true)
       expect(mockAgent.messages[0]!.content).toEqual([{ type: 'textBlock', text: 'Summary of conversation' }])
-      expect(invocationContext.usage).toEqual({ inputTokens: 4, outputTokens: 5, totalTokens: 9 })
-      expect(invocationContext.turns).toBe(5)
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 

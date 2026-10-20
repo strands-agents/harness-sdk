@@ -961,7 +961,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   ): AgentResult {
     const appendedMessage = this.messages.length > messageCountAtStart ? this.messages.at(-1) : undefined
     return new AgentResult({
-      requestUsage: invocationContext.requestUsage,
+      invocationContext,
       stopReason: limitStopReason,
       lastMessage: appendedMessage ?? new Message({ role: 'assistant', content: [] }),
       traces: this._tracer.localTraces,
@@ -1253,7 +1253,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           await this._invokeCallbacks(afterEvent)
           yield afterEvent
           return new AgentResult({
-            requestUsage: invocationContext.requestUsage,
+            invocationContext,
             stopReason: 'endTurn',
             lastMessage: message,
             traces: this._tracer.localTraces,
@@ -1394,7 +1394,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           yield new InterruptEvent({ agent: this, invocationContext, interrupt, invocationState })
         }
         return new AgentResult({
-          requestUsage: invocationContext.requestUsage,
+          invocationContext,
           stopReason: 'interrupt',
           lastMessage:
             this.messages.length > 0
@@ -1754,7 +1754,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               // Normal end of turn.
               yield this._appendMessage(modelResult.message, invocationState, invocationContext)
               result = new AgentResult({
-                requestUsage: invocationContext.requestUsage,
+                invocationContext,
                 stopReason: modelResult.stopReason,
                 lastMessage: modelResult.message,
                 traces: this._tracer.localTraces,
@@ -1785,7 +1785,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               closeCycle()
 
               result = new AgentResult({
-                requestUsage: invocationContext.requestUsage,
+                invocationContext,
                 stopReason: 'cancelled',
                 lastMessage: modelResult.message,
                 traces: this._tracer.localTraces,
@@ -1807,7 +1807,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               if (priorResumePosition !== 'afterModel') {
                 closeCycle()
                 result = new AgentResult({
-                  requestUsage: invocationContext.requestUsage,
+                  invocationContext,
                   stopReason: 'checkpoint',
                   lastMessage: modelResult.message,
                   traces: this._tracer.localTraces,
@@ -1881,7 +1881,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             yield this._appendMessage(lastMessage, invocationState, invocationContext)
 
             result = new AgentResult({
-              requestUsage: invocationContext.requestUsage,
+              invocationContext,
               stopReason: 'endTurn',
               lastMessage,
               traces: this._tracer.localTraces,
@@ -1897,7 +1897,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             : undefined
           if (structuredOutput !== undefined) {
             result = new AgentResult({
-              requestUsage: invocationContext.requestUsage,
+              invocationContext,
               stopReason: 'toolUse',
               lastMessage: assistantMessage,
               traces: this._tracer.localTraces,
@@ -1914,7 +1914,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           // iteration's cancellation check return `cancelled`.
           if (this._checkpointing && !this.isCancelled) {
             result = new AgentResult({
-              requestUsage: invocationContext.requestUsage,
+              invocationContext,
               stopReason: 'checkpoint',
               lastMessage: assistantMessage,
               traces: this._tracer.localTraces,
@@ -1944,7 +1944,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         }
 
         result = new AgentResult({
-          requestUsage: invocationContext.requestUsage,
+          invocationContext,
           stopReason: 'cancelled',
           lastMessage: cancelMessage,
           traces: this._tracer.localTraces,
@@ -2034,7 +2034,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   ): AgentResult {
     this._interruptState.activate()
     return new AgentResult({
-      requestUsage: invocationContext.requestUsage,
+      invocationContext,
       stopReason: 'interrupt',
       lastMessage:
         this.messages.length > 0

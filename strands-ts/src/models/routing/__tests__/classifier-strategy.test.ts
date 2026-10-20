@@ -559,13 +559,12 @@ describe('ClassifierStrategy', () => {
       const strategy = new ClassifierStrategy(classifier)
       const router = new ModelRouter([candidate('first'), candidate('second')], { strategy })
       const invocationContext = new InvocationContextImpl({ turns: 1 })
-      invocationContext.turns = 5
+      invocationContext.usage.turnsTaken = 5
 
       const selected = await strategy.select({ ...routingContext(router), invocationContext })
 
       expect(selected).toBe(router.candidates[1])
-      expect(invocationContext.usage).toEqual({ inputTokens: 4, outputTokens: 5, totalTokens: 9 })
-      expect(invocationContext.turns).toBe(5)
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 

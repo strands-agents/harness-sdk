@@ -8,18 +8,31 @@ declare const invocationContextBrand: unique symbol
  * Handle to the request an object belongs to.
  *
  * A top-level `invoke()` / `stream()` call starts a request, and the SDK attaches
- * its handle to the objects it passes to hooks, tools, and extension points. Pass
- * it to {@link InvokeOptions.invocationContext} to run a nested call in the same
- * request, sharing its limits and usage.
+ * its handle to the objects it passes to hooks, tools, and extension points and
+ * to the call's result. Pass it to {@link InvokeOptions.invocationContext} to run
+ * a nested call in the same request, sharing its limits and usage, for example
+ * to continue a previous call's budget.
  *
- * Only the SDK can create one, and its type exposes no state.
+ * Only the SDK can create one; its state is read-only.
  */
 export interface InvocationContext {
   readonly [invocationContextBrand]: true
+
+  /** What the work in this context has used so far; it keeps growing while that work runs. */
+  readonly usage: Readonly<InvocationContextUsage>
 }
 
 /**
- * The state behind an {@link InvocationContext}: a request's limits, turns, and usage.
+ * What the work in an {@link InvocationContext} has used: its turns and the token
+ * usage of every model call, including nested and auxiliary calls.
+ */
+export interface InvocationContextUsage extends Usage {
+  /** Turns taken in this context, including its nested calls. */
+  turnsTaken: number
+}
+
+/**
+ * The state behind an {@link InvocationContext}: a request's limits and usage.
  *
  * Every nested call that joins the request shares one instance. A nested call
  * that sets its own limits, and an auxiliary call, get a child instance instead.
@@ -31,14 +44,11 @@ export interface InvocationContext {
 export class InvocationContextImpl implements InvocationContext {
   declare readonly [invocationContextBrand]: true
 
-  /** Turns taken under this instance, including its nested calls. */
-  turns = 0
-
-  /** Token usage of every model call made under this instance, including its children. */
-  readonly usage: Usage = createEmptyUsage()
+  /** Turns and token usage counted under this instance; see {@link recordTurn} and {@link recordUsage}. */
+  readonly usage: InvocationContextUsage = { turnsTaken: 0, ...createEmptyUsage() }
 
   /**
-   * @param limits - Limits checked against this instance's turns and usage; `undefined` for none
+   * @param limits - Limits checked against this instance's usage; `undefined` for none
    * @param _parent - The parent instance, which also receives this one's usage, if any
    * @param _auxiliary - Whether this is an auxiliary call: the parent's limits don't apply and its turns don't count toward the parent
    */
@@ -53,11 +63,6 @@ export class InvocationContextImpl implements InvocationContext {
     return this._auxiliary ? undefined : this._parent
   }
 
-  /** Usage of the whole request, read from the top-level instance. */
-  get requestUsage(): Usage {
-    return this._parent?.requestUsage ?? this.usage
-  }
-
   /**
    * Adds one model call's usage to this instance and every parent.
    *
@@ -70,7 +75,7 @@ export class InvocationContextImpl implements InvocationContext {
 
   /** Counts one turn here and in every parent whose limits apply to this instance. */
   recordTurn(): void {
-    this.turns += 1
+    this.usage.turnsTaken += 1
     this.limitingParent?.recordTurn()
   }
 }
@@ -110,8 +115,8 @@ function reachedOwnLimit(invocationContext: InvocationContextImpl): StopReason |
   const limits = invocationContext.limits
   if (!limits) return undefined
 
-  const { outputTokens, totalTokens } = invocationContext.usage
-  if (limits.turns !== undefined && invocationContext.turns >= limits.turns) {
+  const { turnsTaken, outputTokens, totalTokens } = invocationContext.usage
+  if (limits.turns !== undefined && turnsTaken >= limits.turns) {
     return 'limitTurns'
   }
   if (limits.totalTokens !== undefined && totalTokens >= limits.totalTokens) {

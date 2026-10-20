@@ -68,7 +68,7 @@ describe('Agent request-wide limits', () => {
     })
 
     const inherited = new InvocationContextImpl({ turns: 1 })
-    inherited.turns = 5
+    inherited.usage.turnsTaken = 5
     const result = await agent.invoke('go', { invocationContext: inherited })
 
     expect(result.stopReason).toBe('limitTurns')
@@ -124,9 +124,33 @@ describe('Agent request-wide limits', () => {
 
     const result = await outer.invoke('go')
 
-    expect({ requestUsage: result.requestUsage, agentUsage: result.metrics?.accumulatedUsage }).toEqual({
-      requestUsage: { inputTokens: 7, outputTokens: 10, totalTokens: 17 },
+    expect({ requestUsage: result.invocationContext?.usage, agentUsage: result.metrics?.accumulatedUsage }).toEqual({
+      requestUsage: { turnsTaken: 3, inputTokens: 7, outputTokens: 10, totalTokens: 17 },
       agentUsage: expect.objectContaining({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
+    })
+  })
+
+  it("continues a previous call's limits and usage when passed its invocation context", async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'first' }, { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } })
+      .addTurn({ type: 'textBlock', text: 'second' }, { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } })
+      .addTurn({ type: 'textBlock', text: 'never reached' })
+    const agent = new Agent({ model, printer: false })
+
+    const first = await agent.invoke('one', { limits: { turns: 2 } })
+    const second = await agent.invoke('two', { invocationContext: first.invocationContext! })
+    const third = await agent.invoke('three', { invocationContext: second.invocationContext! })
+
+    expect({
+      stopReasons: [first.stopReason, second.stopReason, third.stopReason],
+      sameContext: second.invocationContext === first.invocationContext,
+      usage: third.invocationContext?.usage,
+      modelCalls: model.callCount,
+    }).toEqual({
+      stopReasons: ['endTurn', 'endTurn', 'limitTurns'],
+      sameContext: true,
+      usage: { turnsTaken: 2, inputTokens: 2, outputTokens: 2, totalTokens: 4 },
+      modelCalls: 2,
     })
   })
 
@@ -143,9 +167,14 @@ describe('Agent request-wide limits', () => {
 
     const result = await agent.invoke('go', { invocationContext: enclosing, limits: { totalTokens: 5000 } })
 
-    expect({ stopReason: result.stopReason, requestUsage: result.requestUsage }).toEqual({
+    expect({
+      stopReason: result.stopReason,
+      ownUsage: result.invocationContext?.usage,
+      requestUsage: enclosing.usage,
+    }).toEqual({
       stopReason: 'endTurn',
-      requestUsage: { inputTokens: 4010, outputTokens: 4010, totalTokens: 8020 },
+      ownUsage: { turnsTaken: 1, inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+      requestUsage: { turnsTaken: 1, inputTokens: 4010, outputTokens: 4010, totalTokens: 8020 },
     })
   })
 
@@ -156,11 +185,15 @@ describe('Agent request-wide limits', () => {
       .addTurn([{ type: 'toolUseBlock', name: 'loop', toolUseId: 'tu-2', input: {} }])
     const agent = new Agent({ model, tools: [loopTool], printer: false })
     const request = new InvocationContextImpl({ turns: 2 })
-    request.turns = 1
+    request.usage.turnsTaken = 1
 
     const result = await agent.invoke('go', { invocationContext: request, limits: { turns: 5 } })
 
-    expect({ stopReason: result.stopReason, modelCalls: model.callCount, requestTurns: request.turns }).toEqual({
+    expect({
+      stopReason: result.stopReason,
+      modelCalls: model.callCount,
+      requestTurns: request.usage.turnsTaken,
+    }).toEqual({
       stopReason: 'limitTurns',
       modelCalls: 1,
       requestTurns: 2,
@@ -181,16 +214,13 @@ describe('Agent request-wide limits', () => {
 
     expect(result.stopReason).toBe('limitTurns')
     expect(model.callCount).toBe(1)
-    expect({ usage: enclosing.usage, turns: enclosing.turns }).toEqual({
-      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
-      turns: 1,
-    })
+    expect(enclosing.usage).toEqual({ turnsTaken: 1, inputTokens: 1, outputTokens: 2, totalTokens: 3 })
   })
 
   it('folds an auxiliary call into the request total without limiting it', async () => {
     const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
     parentInvocationContext.recordUsage({ inputTokens: 1, outputTokens: 2, totalTokens: 3 })
-    parentInvocationContext.turns = 5
+    parentInvocationContext.usage.turnsTaken = 5
 
     const aux = new Agent({
       model: new MockMessageModel().addTurn(
@@ -205,7 +235,7 @@ describe('Agent request-wide limits', () => {
     })
 
     expect(result.stopReason).toBe('endTurn')
-    expect(parentInvocationContext.usage).toEqual({ inputTokens: 5, outputTokens: 7, totalTokens: 12 })
+    expect(parentInvocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 5, outputTokens: 7, totalTokens: 12 })
   })
 
   it('joins the request when a hand-written tool forwards context.invocationContext', async () => {
@@ -300,7 +330,7 @@ describe('Agent request-wide limits', () => {
     expect(firstInvocationContext).toBeDefined()
     expect(secondInvocationContext).toBeDefined()
     expect(secondInvocationContext).not.toBe(firstInvocationContext)
-    expect(unwrapInvocationContext(secondInvocationContext)?.turns).toBe(1)
+    expect(unwrapInvocationContext(secondInvocationContext)?.usage.turnsTaken).toBe(1)
   })
 
   it('ends on a limit stop even when a hook asks to resume', async () => {

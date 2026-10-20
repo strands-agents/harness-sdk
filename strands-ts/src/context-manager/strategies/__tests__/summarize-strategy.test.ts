@@ -211,7 +211,7 @@ describe('Offload.summarize', () => {
       const messages = [makeToolResultMessage('x'.repeat(2500 * 4 + 100))]
       const strategy = Offload.summarize('toolResults', { model: summarizer })
       const invocationContext = new InvocationContextImpl({ turns: 1 })
-      invocationContext.turns = 5
+      invocationContext.usage.turnsTaken = 5
 
       const result = await strategy.apply({ ...makeContext(messages, 0.9, { stream: vi.fn() }), invocationContext })
 
@@ -223,8 +223,7 @@ describe('Offload.summarize', () => {
           content: [new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output')],
         }),
       ])
-      expect(invocationContext.usage).toEqual({ inputTokens: 4, outputTokens: 5, totalTokens: 9 })
-      expect(invocationContext.turns).toBe(5)
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 })

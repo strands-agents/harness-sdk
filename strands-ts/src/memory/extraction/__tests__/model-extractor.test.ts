@@ -146,13 +146,12 @@ describe('ModelExtractor', () => {
       )
       const extractor = new ModelExtractor({ model: model as unknown as Model })
       const invocationContext = new InvocationContextImpl({ turns: 1 })
-      invocationContext.turns = 5
+      invocationContext.usage.turnsTaken = 5
 
       const entries = await extractor.extract([userTurn('x')], { invocationContext })
 
       expect(entries).toEqual([{ content: 'fact' }])
-      expect(invocationContext.usage).toEqual({ inputTokens: 4, outputTokens: 5, totalTokens: 9 })
-      expect(invocationContext.turns).toBe(5)
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 })

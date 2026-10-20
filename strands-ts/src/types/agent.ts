@@ -44,7 +44,6 @@ import type { Model } from '../models/model.js'
 import type { InvocationContext } from '../agent/invocation-context.js'
 import type { z } from 'zod'
 import { AgentMetrics } from '../telemetry/meter.js'
-import type { Usage } from '../models/streaming.js'
 
 /**
  * Arguments for invoking an agent.
@@ -156,8 +155,9 @@ export interface InvokeOptions {
    * limits apply to them. The same holds for an agent that an extension point (a
    * conversation manager, context or routing strategy, or memory extractor) runs
    * with the `invocationContext` it receives, unless the extension point also passes
-   * `limits`. Usage and turns start from zero on each top-level call;
-   * {@link AgentResult.requestUsage} reports the request's usage.
+   * `limits`. Usage starts from zero on each top-level call; pass
+   * {@link AgentResult.invocationContext} to a later call to continue on the same
+   * limits and usage.
    *
    * Limits are checked before each turn, so tools requested by the previous turn
    * finish first and `agent.messages` stays reinvokable. Each limit, when set,
@@ -469,14 +469,15 @@ export class AgentResult {
   readonly metrics?: AgentMetrics
 
   /**
-   * Token usage of the whole request this call ran in: this agent, its nested
-   * calls, and auxiliary calls. {@link metrics} covers this agent only. The
-   * request's limits are checked against this usage; a nested call's own limits
-   * are checked against its share. It is the same live object on every result in
-   * the request, so work that finishes after this call returns (for example a
-   * background task) still adds to it.
+   * The invocation context this call ran in. Its `usage` covers the whole request
+   * (this agent, its nested calls, and auxiliary calls), unlike {@link metrics},
+   * which covers this agent only; for a nested call that set its own limits, it is
+   * that call's context and covers its share. Pass it as
+   * {@link InvokeOptions.invocationContext} to continue on the same limits and
+   * usage. It is live, so work that finishes after this call returns (for example
+   * a background task) still adds to it.
    */
-  readonly requestUsage?: Readonly<Usage>
+  readonly invocationContext?: InvocationContext
 
   /**
    * Per-invocation state passed into the agent, threaded through hooks and
@@ -507,7 +508,7 @@ export class AgentResult {
     invocationState: InvocationState
     traces?: AgentTrace[]
     metrics?: AgentMetrics
-    requestUsage?: Usage
+    invocationContext?: InvocationContext
     structuredOutput?: z.output<z.ZodType>
     interrupts?: Interrupt[]
     checkpoint?: Checkpoint
@@ -521,8 +522,8 @@ export class AgentResult {
     if (data.metrics !== undefined) {
       this.metrics = data.metrics
     }
-    if (data.requestUsage !== undefined) {
-      this.requestUsage = data.requestUsage
+    if (data.invocationContext !== undefined) {
+      this.invocationContext = data.invocationContext
     }
     if (data.structuredOutput !== undefined) {
       this.structuredOutput = data.structuredOutput
@@ -555,10 +556,10 @@ export class AgentResult {
   }
 
   /**
-   * Custom JSON serialization that excludes traces, metrics, requestUsage, and invocationState.
+   * Custom JSON serialization that excludes traces, metrics, invocationContext, and invocationState.
    * Traces and metrics are excluded to avoid sending large payloads over the wire
-   * in API responses; `requestUsage` is excluded because it is live and can still
-   * change; `invocationState` is excluded because its values are caller-owned and
+   * in API responses; `invocationContext` is excluded because it is live and can
+   * still change; `invocationState` is excluded because its values are caller-owned and
    * may not be serializable (see {@link InvocationState}).
    *
    * All four remain accessible via their properties for debugging.

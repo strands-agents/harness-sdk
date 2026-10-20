@@ -35,7 +35,7 @@ describe('ModelProxy', () => {
 
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
-      expect(invocationContext.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+      expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
     it('accumulates across calls that share one invocation context', async () => {
@@ -52,7 +52,7 @@ describe('ModelProxy', () => {
       await drain(new ModelProxy(first).streamAggregated([userMessage('go')], undefined, invocationContext))
       await drain(new ModelProxy(second).streamAggregated([userMessage('again')], undefined, invocationContext))
 
-      expect(invocationContext.usage).toEqual({ inputTokens: 30, outputTokens: 15, totalTokens: 45 })
+      expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 30, outputTokens: 15, totalTokens: 45 })
     })
 
     it('records nothing when the model call throws', async () => {

@@ -173,7 +173,7 @@ describe('ConversationManager', () => {
       const mockAgent = createMockAgent()
       manager.initAgent(mockAgent)
       const request = new InvocationContextImpl({ turns: 1 })
-      request.turns = 1
+      request.usage.turnsTaken = 1
 
       await invokeTrackedHook(
         mockAgent,
@@ -191,7 +191,7 @@ describe('ConversationManager', () => {
       handed.recordUsage({ inputTokens: 1, outputTokens: 2, totalTokens: 3 })
       expect({ limits: handed.limits, requestUsage: request.usage }).toEqual({
         limits: undefined,
-        requestUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        requestUsage: { turnsTaken: 1, inputTokens: 1, outputTokens: 2, totalTokens: 3 },
       })
     })
   })

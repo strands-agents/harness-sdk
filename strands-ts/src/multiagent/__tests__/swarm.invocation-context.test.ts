@@ -41,6 +41,6 @@ describe('Swarm request-wide invocation context', () => {
 
     await swarm.invoke('hello')
 
-    expect(shared?.usage).toEqual({ inputTokens: 30, outputTokens: 60, totalTokens: 90 })
+    expect(shared?.usage).toEqual({ turnsTaken: 2, inputTokens: 30, outputTokens: 60, totalTokens: 90 })
   })
 })

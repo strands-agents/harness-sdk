@@ -402,7 +402,7 @@ export class Swarm implements MultiAgent {
         results: state.results,
         content: this._resolveContent(state),
         duration: Date.now() - state.startTime,
-        requestUsage: invocationContext.requestUsage,
+        invocationContext,
       })
       // Stash on interrupt so same-instance resume has state; otherwise start fresh.
       if (result.status === Status.INTERRUPTED) {

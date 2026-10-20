@@ -635,7 +635,7 @@ describe('HumanInTheLoop', () => {
         const humanInTheLoop = new HumanInTheLoop({ classifier: { model: classifierModel } })
         const agent = new Agent({ model: new MockMessageModel(), printer: false })
         const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
-        parentInvocationContext.turns = 5
+        parentInvocationContext.usage.turnsTaken = 5
         const event = new BeforeToolCallEvent({
           agent,
           toolUse: { name: 'readFile', toolUseId: 'tool-1', input: { path: '/tmp/x' } },
@@ -647,8 +647,12 @@ describe('HumanInTheLoop', () => {
         const action = await humanInTheLoop.beforeToolCall(event)
 
         expect(action).toEqual({ type: 'proceed' })
-        expect(parentInvocationContext.usage).toEqual({ inputTokens: 12, outputTokens: 3, totalTokens: 15 })
-        expect(parentInvocationContext.turns).toBe(5)
+        expect(parentInvocationContext.usage).toEqual({
+          turnsTaken: 5,
+          inputTokens: 12,
+          outputTokens: 3,
+          totalTokens: 15,
+        })
       })
     })
   })

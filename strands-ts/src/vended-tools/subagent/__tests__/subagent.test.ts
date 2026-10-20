@@ -305,10 +305,9 @@ describe('subagent tool', () => {
 
       const { result } = await run(makeSubagent({ builder: () => child }), { task: 'x' }, { invocationContext })
 
-      expect({ text: resultText(result), usage: invocationContext.usage, turns: invocationContext.turns }).toEqual({
+      expect({ text: resultText(result), usage: invocationContext.usage }).toEqual({
         text: 'child done',
-        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
-        turns: 1,
+        usage: { turnsTaken: 1, inputTokens: 3, outputTokens: 4, totalTokens: 7 },
       })
     })
 

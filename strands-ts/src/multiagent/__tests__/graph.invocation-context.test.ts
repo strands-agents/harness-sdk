@@ -38,12 +38,11 @@ describe('Graph request-wide invocation context', () => {
 
     const result = await graph.invoke('hello')
 
-    expect(shared?.usage).toEqual({ inputTokens: 30, outputTokens: 60, totalTokens: 90 })
-    expect(shared?.turns).toBe(2)
-    expect(result.requestUsage).toBe(shared?.usage)
+    expect(shared?.usage).toEqual({ turnsTaken: 2, inputTokens: 30, outputTokens: 60, totalTokens: 90 })
+    expect(result.invocationContext).toBe(shared)
   })
 
-  it("reports the whole request's usage when it runs inside a nested call's own limits", async () => {
+  it("adds its usage to the request when it runs inside a nested call's own limits", async () => {
     const analyst = new Agent({
       model: new MockMessageModel().addTurn(
         { type: 'textBlock', text: 'done' },
@@ -56,12 +55,15 @@ describe('Graph request-wide invocation context', () => {
     const request = new InvocationContextImpl()
     request.recordUsage({ inputTokens: 100, outputTokens: 100, totalTokens: 200 })
 
-    const result = await graph.invoke('analyze', {
-      invocationContext: new InvocationContextImpl({ turns: 5 }, request),
-    })
+    const nested = new InvocationContextImpl({ turns: 5 }, request)
 
-    expect(result.requestUsage).toBe(request.usage)
-    expect(request.usage).toEqual({ inputTokens: 102, outputTokens: 103, totalTokens: 205 })
+    const result = await graph.invoke('analyze', { invocationContext: nested })
+
+    expect({ context: result.invocationContext, ownUsage: nested.usage, requestUsage: request.usage }).toEqual({
+      context: nested,
+      ownUsage: { turnsTaken: 1, inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      requestUsage: { turnsTaken: 1, inputTokens: 102, outputTokens: 103, totalTokens: 205 },
+    })
   })
 
   it('fails a node whose agent stops on the forwarded request limit', async () => {
@@ -72,7 +74,7 @@ describe('Graph request-wide invocation context', () => {
     })
     const graph = new Graph({ nodes: [analyst], edges: [] })
     const spentRequest = new InvocationContextImpl({ turns: 1 })
-    spentRequest.turns = 1
+    spentRequest.usage.turnsTaken = 1
 
     const result = await graph.invoke('analyze', { invocationContext: spentRequest })
 

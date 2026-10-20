@@ -121,7 +121,7 @@ describe('LLMSteeringHandler', () => {
       const agent = new Agent({ model, interventions: [handler] })
       await agent.initialize()
       const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
-      parentInvocationContext.turns = 5
+      parentInvocationContext.usage.turnsTaken = 5
 
       const event = new BeforeToolCallEvent({
         agent,
@@ -133,8 +133,12 @@ describe('LLMSteeringHandler', () => {
       await getHookRegistry(agent).invokeCallbacks(event)
 
       expect(event.cancel).toBe('GUIDANCE: [strands:llm-steering-handler] narrow the query')
-      expect(parentInvocationContext.usage).toEqual({ inputTokens: 30, outputTokens: 8, totalTokens: 38 })
-      expect(parentInvocationContext.turns).toBe(5)
+      expect(parentInvocationContext.usage).toEqual({
+        turnsTaken: 5,
+        inputTokens: 30,
+        outputTokens: 8,
+        totalTokens: 38,
+      })
     })
   })
 })

@@ -359,7 +359,7 @@ describe('webFetch tool', () => {
           { usage: { inputTokens: 20, outputTokens: 6, totalTokens: 26 } }
         )
         const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
-        parentInvocationContext.turns = 5
+        parentInvocationContext.usage.turnsTaken = 5
 
         const result = await makeWebFetch({ mode: 'agentic', model: analystModel }).invoke(
           { url: 'https://example.com/', prompt: 'Summarize' },
@@ -367,8 +367,12 @@ describe('webFetch tool', () => {
         )
 
         expect(result).toBe('the answer')
-        expect(parentInvocationContext.usage).toEqual({ inputTokens: 20, outputTokens: 6, totalTokens: 26 })
-        expect(parentInvocationContext.turns).toBe(5)
+        expect(parentInvocationContext.usage).toEqual({
+          turnsTaken: 5,
+          inputTokens: 20,
+          outputTokens: 6,
+          totalTokens: 26,
+        })
       })
     })
   })
