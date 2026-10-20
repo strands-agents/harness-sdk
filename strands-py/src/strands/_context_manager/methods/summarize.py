@@ -64,20 +64,18 @@ async def _summarize_content(
     config: SummarizeConfig | None = None,
 ) -> str | None:
     """Summarize content blocks via an LLM call, falling back to text-only on failure."""
-    result, succeeded = await _call_summarizer(content, model, config)
-    if result is not None:
+    result, error = await _call_summarizer(content, model, config)
+    if error is None:
         return result
-    if succeeded:
-        return None
 
     text_only = [block for block in content if is_text_block(block)]
     if not text_only or len(text_only) == len(content):
-        logger.warning("summarization failed")
+        logger.warning("error=<%s> | summarization failed", error)
         return None
 
-    fallback_result, fallback_succeeded = await _call_summarizer(text_only, model, config)
-    if not fallback_succeeded:
-        logger.warning("summarization failed after text-only retry")
+    fallback_result, fallback_error = await _call_summarizer(text_only, model, config)
+    if fallback_error is not None:
+        logger.warning("error=<%s> | summarization failed after text-only retry", fallback_error)
     return fallback_result
 
 
@@ -146,8 +144,8 @@ async def _call_summarizer(
     content: list[ContentBlock],
     model: Model,
     config: SummarizeConfig | None = None,
-) -> tuple[str | None, bool]:
-    """Call the model to generate a summary. Returns (text, succeeded)."""
+) -> tuple[str | None, Exception | None]:
+    """Call the model to generate a summary. Returns (text, error), with error set when the call raised."""
     system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
 
     messages: Messages = [
@@ -167,15 +165,15 @@ async def _call_summarizer(
 
         if result_message is None:
             logger.warning("result=<empty> | summarization produced no response")
-            return None, True
+            return None, None
 
         parts: list[str] = []
         for block in result_message.get("content", []):
             if "text" in block:
                 parts.append(block["text"])
 
-        return "\n".join(parts).strip() or None, True
+        return "\n".join(parts).strip() or None, None
 
     except Exception as error:
         logger.debug("error=<%s> | summarization attempt failed", error)
-        return None, False
+        return None, error

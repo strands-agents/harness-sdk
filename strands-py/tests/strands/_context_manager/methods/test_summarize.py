@@ -229,8 +229,10 @@ class TestSummarizeContent:
 
     @pytest.mark.asyncio
     async def test_warns_when_text_only_fallback_also_fails(self, mock_model, caplog):
+        errors = iter([RuntimeError("images unsupported"), RuntimeError("unavailable")])
+
         def stream_side_effect(*args, **kwargs):
-            raise RuntimeError("model error")
+            raise next(errors)
 
         mock_model.stream = stream_side_effect
         content_blocks = [
@@ -241,7 +243,9 @@ class TestSummarizeContent:
         with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
             tru_result = await _summarize_content(content_blocks, mock_model, {})
         assert tru_result is None
-        assert [record.getMessage() for record in caplog.records] == ["summarization failed after text-only retry"]
+        assert [record.getMessage() for record in caplog.records] == [
+            "error=<unavailable> | summarization failed after text-only retry"
+        ]
 
     @pytest.mark.asyncio
     async def test_text_only_fallback_skipped_when_all_text(self, mock_model, caplog):
@@ -256,7 +260,7 @@ class TestSummarizeContent:
         with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
             tru_result = await _summarize_content(content_blocks, mock_model, {})
         assert tru_result is None
-        assert [record.getMessage() for record in caplog.records] == ["summarization failed"]
+        assert [record.getMessage() for record in caplog.records] == ["error=<model error> | summarization failed"]
 
     @pytest.mark.asyncio
     async def test_text_only_fallback_skipped_when_no_text_blocks(self, mock_model):
