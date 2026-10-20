@@ -60,7 +60,7 @@ import {
   resolveConfigMetadata,
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
-import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/messages.js'
+import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import type { Citation, CitationLocation, CitationsBlockData } from '../types/citations.js'
@@ -95,6 +95,28 @@ const MODELS_INCLUDE_STATUS = ['anthropic.claude']
  * @see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
  */
 const MODELS_SUPPORTING_ANTHROPIC_CACHING = ['anthropic', 'claude']
+
+/**
+ * Models that reject any reasoning text block replayed in history
+ * ("User messages cannot contain reasoning content").
+ */
+const MODELS_REJECT_REASONING_TEXT = [
+  'amazon.nova-lite',
+  'amazon.nova-pro',
+  'google.gemma',
+  'meta.llama',
+  'mistral.devstral',
+  'mistral.ministral',
+  'mistral.mistral-large',
+  'nvidia.nemotron-nano-9b',
+  'nvidia.nemotron-super',
+  'openai.gpt-5',
+  'openai.gpt-6',
+  'qwen.qwen3-235b',
+  'qwen.qwen3-coder',
+  'writer.palmyra',
+  'xai.grok',
+]
 
 /**
  * Error messages that indicate context window overflow.
@@ -970,9 +992,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       ? this._findLastUserTextMessageIndex(messages)
       : undefined
 
+    let droppedReasoningContent = false
+
     const formattedMessages = messages.reduce<BedrockMessage[]>((acc, message, idx) => {
       const shouldApplyGuardBlocks = idx === lastUserTextIdx
       const content = message.content
+        .filter((block: ContentBlock) => {
+          if (block.type !== 'reasoningBlock' || !this._rejectsReasoningBlock(block)) return true
+          droppedReasoningContent = true
+          return false
+        })
         .map((block: ContentBlock) => {
           const formattedBlock = this._formatContentBlock(block)
           return shouldApplyGuardBlocks ? this._applyGuardBlocks(formattedBlock) : formattedBlock
@@ -986,6 +1015,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       return acc
     }, [])
 
+    if (droppedReasoningContent) {
+      logger.debug(
+        `model_id=<${this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId}> | dropped reasoningContent blocks the model does not accept`
+      )
+    }
+
     const cacheConfig = this._config.cacheConfig
     const messagesCache = this._shouldEnableCaching()
       ? resolveCacheSection(cacheConfig?.messagesTTL, cacheConfig?.ttl)
@@ -995,6 +1030,30 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     return formattedMessages
+  }
+
+  /**
+   * Whether the configured model would reject this reasoning block if it were replayed.
+   *
+   * Only blocks that are certain to fail are dropped. `signature` is Anthropic-only: Anthropic models reject
+   * reasoning text without one and every other model rejects reasoning text with one. Models in
+   * `MODELS_REJECT_REASONING_TEXT` reject reasoning text outright and DeepSeek rejects any reasoning block.
+   * `redactedContent` is otherwise opaque and kept, as is every block when the model ID is an ARN or bare
+   * inference profile ID that names no vendor.
+   *
+   * @param block - Reasoning block replayed from message history
+   * @returns True if the block must be dropped from the request
+   */
+  private _rejectsReasoningBlock(block: ReasoningBlock): boolean {
+    const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+    if (modelId.includes('deepseek')) return true
+    if (block.text === undefined && block.signature === undefined) return false
+
+    const signed = Boolean(block.signature)
+    if (modelId.includes('anthropic') || modelId.includes('claude')) return !signed
+    if (modelId.startsWith('arn:') || !modelId.includes('.')) return false
+    if (MODELS_REJECT_REASONING_TEXT.some((model) => modelId.includes(model))) return true
+    return signed
   }
 
   /**
@@ -2013,7 +2072,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     return {
       location: this._mapCitationLocationToBedrock(citation.location),
       sourceContent: citation.sourceContent.map((sc) => ({ text: sc.text })),
-      source: citation.source,
+      // An empty source marks one Bedrock never returned (e.g. document citations), and Bedrock
+      // rejects `source` on those locations while requiring it on search-result locations.
+      ...(citation.source && { source: citation.source }),
       title: citation.title,
     }
   }

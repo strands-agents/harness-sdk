@@ -836,6 +836,10 @@ class Graph(MultiAgentBase):
 
         event_queue: asyncio.Queue[Any | None | Exception] = asyncio.Queue()
 
+        # Mark nodes DISPATCHED before scheduling so a serialize in the pre-EXECUTING window sees them as in-flight.
+        for node in nodes:
+            node.execution_status = Status.DISPATCHED
+
         # Start all node streams as independent tasks
         tasks = [asyncio.create_task(self._stream_node_to_queue(node, event_queue, invocation_state)) for node in nodes]
 
@@ -1376,11 +1380,12 @@ class Graph(MultiAgentBase):
         branch*, so a fan-in node stays not-ready while any parent that will still produce a result
         is outstanding. It has two seeds:
 
-        - In-flight nodes (``execution_status == EXECUTING``): serialize runs from the per-node
-          ``AfterNodeCallEvent`` while sibling nodes in the same parallel batch are still executing.
-          Their partial progress is not persisted, so they re-run on resume. This is the
-          authoritative in-flight signal, and it catches siblings with no completed ancestor (e.g.
-          two concurrent entry points feeding one join) that forward reachability alone would miss.
+        - In-flight nodes (``execution_status in (EXECUTING, DISPATCHED)``): serialize runs from the per-node
+          ``AfterNodeCallEvent`` while sibling nodes in the same parallel batch are still executing
+          or dispatched but not yet started. Their partial progress is not persisted, so they re-run
+          on resume. This is the authoritative in-flight signal, and it catches siblings with no
+          completed ancestor (e.g. two concurrent entry points feeding one join) that forward
+          reachability alone would miss.
         - Completed nodes: their traversable outgoing edges lead to nodes that will be scheduled
           next on resume.
 
@@ -1400,9 +1405,11 @@ class Graph(MultiAgentBase):
             The set of not-yet-completed nodes that will execute on resume — in-flight nodes plus
             everything reachable from the completed or in-flight frontier via traversable edges.
         """
-        executing_nodes = {node for node in self.nodes.values() if node.execution_status == Status.EXECUTING}
-        pending: set[GraphNode] = set(executing_nodes)
-        visited = completed_nodes | executing_nodes
+        in_flight_nodes = {
+            node for node in self.nodes.values() if node.execution_status in (Status.EXECUTING, Status.DISPATCHED)
+        }
+        pending: set[GraphNode] = set(in_flight_nodes)
+        visited = completed_nodes | in_flight_nodes
         frontier = list(visited)
         while frontier:
             source = frontier.pop()

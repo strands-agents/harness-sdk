@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { type InvocationContext, InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Interrupt, InterruptError } from '../../../interrupt.js'
 import { tool } from '../../../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../../../tools/tool.js'
@@ -73,6 +74,26 @@ describe('InProcessTaskManager', () => {
     expect(await manager.list()).toEqual([completed])
     await manager.remove([admitted.taskId])
     await expect(manager.get(admitted.taskId)).resolves.toBeUndefined()
+  })
+
+  it('runs a task under the invocation context captured when it was submitted', async () => {
+    const invocationContext = new InvocationContextImpl()
+    let runInvocationContext: InvocationContext | undefined
+    const { manager, work } = createFixture((_input, context) => {
+      runInvocationContext = context?.invocationContext
+      return 'done'
+    })
+
+    await manager.submit(
+      { name: 'work', toolUseId: 'tool-use-1', input: { value: 'x' } },
+      {},
+      'pass-1',
+      work,
+      invocationContext
+    )
+    await manager.waitForIdle()
+
+    expect(runInvocationContext).toBe(invocationContext)
   })
 
   it('deduplicates repeated submissions within one pass', async () => {

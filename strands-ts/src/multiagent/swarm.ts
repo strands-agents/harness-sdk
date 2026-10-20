@@ -2,6 +2,7 @@ import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import type { AttributeValue, Span } from '@opentelemetry/api'
 import type { InvocationState, InvokableAgent } from '../types/agent.js'
+import { type InvocationContext, InvocationContextImpl, unwrapInvocationContext } from '../agent/invocation-context.js'
 import type { MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
 import {
   applyOrchestratorHookResponses,
@@ -20,7 +21,7 @@ import { MultiAgentPluginRegistry } from './plugins.js'
 import type { SessionManager } from '../session/session-manager.js'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock } from '../types/messages.js'
-import type { AgentNodeOptions } from './nodes.js'
+import type { AgentNodeOptions, NodeInputOptions } from './nodes.js'
 import { AgentNode } from './nodes.js'
 import { MultiAgentState, MultiAgentResult, NodeResult, Status } from './state.js'
 import type { MultiAgent } from './multiagent.js'
@@ -241,9 +242,11 @@ export class Swarm implements MultiAgent {
     // are visible to the next.
     const invocationState: InvocationState = options?.invocationState ?? {}
 
+    const invocationContext = unwrapInvocationContext(options?.invocationContext) ?? new InvocationContextImpl()
+
     // Hook invocation lives in `_stream` so hook-raised `InterruptError`s land in the
     // same frame as the execution loop.
-    const gen = this._stream(input, invocationState, options?.cancelSignal)
+    const gen = this._stream(input, invocationState, invocationContext, options?.cancelSignal)
     let next = await gen.next()
     while (!next.done) {
       yield next.value
@@ -255,6 +258,7 @@ export class Swarm implements MultiAgent {
   private async *_stream(
     input: MultiAgentInput,
     invocationState: InvocationState,
+    invocationContext: InvocationContextImpl,
     externalCancelSignal?: AbortSignal
   ): AsyncGenerator<MultiAgentStreamEvent, MultiAgentResult, undefined> {
     // Reuse state from a prior INTERRUPTED run so `swarm.invoke(responses)` can
@@ -364,6 +368,7 @@ export class Swarm implements MultiAgent {
           handoff,
           multiAgentSpan,
           invocationState,
+          invocationContext,
           nodeCancelSignal
         )
         nextInput = input
@@ -397,6 +402,7 @@ export class Swarm implements MultiAgent {
         results: state.results,
         content: this._resolveContent(state),
         duration: Date.now() - state.startTime,
+        invocationContext,
       })
       // Stash on interrupt so same-instance resume has state; otherwise start fresh.
       if (result.status === Status.INTERRUPTED) {
@@ -436,6 +442,7 @@ export class Swarm implements MultiAgent {
     handoff: HandoffResult | undefined,
     multiAgentSpan: Span | null,
     invocationState: InvocationState,
+    invocationContext: InvocationContext,
     executionSignal?: AbortSignal
   ): AsyncGenerator<MultiAgentStreamEvent, NodeResult, undefined> {
     const nodeState = state.node(node.id)!
@@ -484,13 +491,13 @@ export class Swarm implements MultiAgent {
     const cancelSignal = signals.length > 0 ? AbortSignal.any(signals) : undefined
 
     try {
-      const gen = this._tracer.withSpanContext(nodeSpan, () =>
-        node.stream(nodeInput, state, {
-          structuredOutputSchema: handoffSchema,
-          invocationState,
-          ...(cancelSignal && { cancelSignal }),
-        })
-      )
+      const nodeOptions: NodeInputOptions = {
+        structuredOutputSchema: handoffSchema,
+        invocationState,
+        invocationContext,
+        ...(cancelSignal && { cancelSignal }),
+      }
+      const gen = this._tracer.withSpanContext(nodeSpan, () => node.stream(nodeInput, state, nodeOptions))
       let next = await this._tracer.withSpanContext(nodeSpan, () => gen.next())
       while (!next.done) {
         if (next.value instanceof HookableEvent) {

@@ -319,7 +319,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
     """Test that messages with reasoningContent are accepted when thinking is explicitly disabled."""
     # First, get a real reasoning response with thinking enabled
     thinking_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "enabled",
@@ -335,7 +335,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
 
     # Now create a model with thinking disabled and use the messages from the thinking session
     disabled_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "disabled",
@@ -532,7 +532,7 @@ def test_prompt_caching_backward_compatibility_no_ttl(quiet_strands_logging):
 class TestCountTokens:
     @pytest.fixture
     def model(self):
-        return BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0", use_native_token_count=True)
+        return BedrockModel(model_id="anthropic.claude-sonnet-4-6", use_native_token_count=True)
 
     @pytest.fixture
     def messages(self):

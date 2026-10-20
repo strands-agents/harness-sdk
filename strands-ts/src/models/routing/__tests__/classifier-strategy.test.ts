@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { logger } from '../../../logging/logger.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../../tools/structured-output-tool.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
@@ -541,6 +542,29 @@ describe('ClassifierStrategy', () => {
 
       expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'nested' })
       expect(classifier.calls).toBe(1)
+    })
+  })
+
+  describe('request limits', () => {
+    it('adds the classifier usage to the request total even when the request limit is used up', async () => {
+      const classifier = new ClassifierModel().addTurn(
+        {
+          type: 'toolUseBlock',
+          name: STRUCTURED_OUTPUT_TOOL_NAME,
+          toolUseId: 'classification',
+          input: { selectedCandidateIndex: 1 },
+        },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      ) as ClassifierModel
+      const strategy = new ClassifierStrategy(classifier)
+      const router = new ModelRouter([candidate('first'), candidate('second')], { strategy })
+      const invocationContext = new InvocationContextImpl({ turns: 1 })
+      invocationContext.usage.turnsTaken = 5
+
+      const selected = await strategy.select({ ...routingContext(router), invocationContext })
+
+      expect(selected).toBe(router.candidates[1])
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 

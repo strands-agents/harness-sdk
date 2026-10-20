@@ -3,7 +3,8 @@ import { z } from 'zod'
 
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../agent/agent.js'
-import { AfterToolCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
+import type { InvocationContext } from '../../agent/invocation-context.js'
+import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
@@ -200,6 +201,58 @@ describe('BackgroundTasks', () => {
           backgroundTasks: { always: [work], never: [work] },
         })
     ).toThrow("Tool 'work' cannot be configured as both 'always' and 'never'")
+  })
+
+  it('runs queued work under the request that submitted it, even after that request returned', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const blocker = tool({
+      name: 'blocker',
+      description: 'Hold the only execution slot.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'unblocked'
+      },
+    })
+    let probeRan = false
+    let probeInvocationContext: InvocationContext | undefined
+    const probe = tool({
+      name: 'probe',
+      description: 'Record the request it runs under.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        probeRan = true
+        probeInvocationContext = context?.invocationContext
+        return 'probed'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'blocker', toolUseId: 'blocker-use', input: { _background_execution: true } },
+        { type: 'toolUseBlock', name: 'probe', toolUseId: 'probe-use', input: { _background_execution: true } },
+      ])
+      .addTurn({ type: 'textBlock', text: 'Tasks admitted.' })
+    const agent = new Agent({
+      model,
+      tools: [blocker, probe],
+      backgroundTasks: { waitForCompletion: false, maxConcurrency: 1 },
+      printer: false,
+    })
+    let submittingInvocationContext: InvocationContext | undefined
+    agent.addHook(BeforeModelCallEvent, (event) => {
+      submittingInvocationContext ??= event?.invocationContext
+    })
+
+    await agent.invoke('Run both.')
+    expect(probeRan).toBe(false)
+
+    release()
+    await expect.poll(() => probeRan).toBe(true)
+    expect(submittingInvocationContext).toBeDefined()
+    expect(probeInvocationContext).toBe(submittingInvocationContext)
   })
 
   it('delivers work that finishes between invocations', async () => {
