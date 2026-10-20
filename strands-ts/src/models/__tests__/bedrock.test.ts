@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   BedrockRuntimeClient,
+  ConverseCommand,
   ConverseStreamCommand,
   CountTokensCommand,
   ValidationException,
@@ -18,6 +19,7 @@ import type { StreamOptions } from '../model.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
+import { logger } from '../../logging/logger.js'
 
 /**
  * Helper function to mock BedrockRuntimeClient implementation with customizable config.
@@ -368,19 +370,19 @@ describe('BedrockModel', () => {
 
     it('includes contextWindowLimit in config when provided', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-20250514-v1:0' })
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 1_000_000,
       })
     })
@@ -403,11 +405,11 @@ describe('BedrockModel', () => {
 
     it('does not override explicit contextWindowLimit', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
     })
@@ -977,6 +979,54 @@ describe('BedrockModel', () => {
       })
     })
 
+    const signedBlock = new ReasoningBlock({ text: 'Claude thinking', signature: 'sig' })
+    const unsignedBlock = new ReasoningBlock({ text: 'gpt-oss thinking' })
+    const redactedBlock = new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) })
+    const SIGNED_REASONING = { reasoningContent: { reasoningText: { text: 'Claude thinking', signature: 'sig' } } }
+    const UNSIGNED_REASONING = { reasoningContent: { reasoningText: { text: 'gpt-oss thinking' } } }
+    const REDACTED_REASONING = { reasoningContent: { redactedContent: new Uint8Array([1, 2, 3]) } }
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4779
+    it.each([
+      // Non-Anthropic models reject the Anthropic-only signature; models with their own reasoning keep it unsigned.
+      { modelId: 'openai.gpt-oss-120b-1:0', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      { modelId: 'moonshot.kimi-k2-thinking', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      { modelId: 'minimax.minimax-m2.5', expReasoning: [UNSIGNED_REASONING, REDACTED_REASONING] },
+      // Anthropic models require a signature on every reasoning text block.
+      { modelId: 'global.anthropic.claude-opus-5', expReasoning: [SIGNED_REASONING, REDACTED_REASONING] },
+      {
+        modelId: 'arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5',
+        expReasoning: [SIGNED_REASONING, REDACTED_REASONING],
+      },
+      // Models that reject reasoning text outright; redactedContent is opaque and kept.
+      { modelId: 'us.amazon.nova-pro-v1:0', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-5.5', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'qwen.qwen3-coder-480b-a35b-v1:0', expReasoning: [REDACTED_REASONING] },
+      // DeepSeek rejects reasoning content altogether.
+      { modelId: 'us.deepseek.r1-v1:0', expReasoning: [] },
+      // An ARN or bare inference profile ID can hide the vendor, so nothing is dropped.
+      {
+        modelId: 'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123',
+        expReasoning: [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING],
+      },
+      { modelId: 'abc123xyz', expReasoning: [SIGNED_REASONING, UNSIGNED_REASONING, REDACTED_REASONING] },
+    ])('drops the replayed reasoning $modelId rejects', async ({ modelId, expReasoning }) => {
+      const provider = new BedrockModel({ modelId })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello')] }),
+        new Message({
+          role: 'assistant',
+          content: [signedBlock, unsignedBlock, redactedBlock, new TextBlock('Response')],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[1]?.content).toEqual([...expReasoning, { text: 'Response' }])
+    })
+
     it('formats cache point blocks in messages', async () => {
       const provider = new BedrockModel()
       const messages = [
@@ -1434,6 +1484,133 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    describe('stale thinking recovery', () => {
+      const bindingError = new ValidationException({
+        message:
+          'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.',
+        $metadata: {},
+      })
+      const thinking = { type: 'adaptive' }
+      const dropBlockFields = {
+        thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+        anthropic_beta: ['other-beta', 'thinking-binding-controls-2026-08-01'],
+      }
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const sentFields = (command: typeof ConverseStreamCommand | typeof ConverseCommand): unknown[] =>
+        vi.mocked(command).mock.calls.map((call) => call[0].additionalModelRequestFields)
+
+      it.each([
+        { mode: 'streaming', stream: true, command: ConverseStreamCommand },
+        { mode: 'non-streaming', stream: false, command: ConverseCommand },
+      ])('retries a $mode request once with drop_block and keeps it on', async ({ stream, command }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const response = stream
+          ? { stream: (async function* (): AsyncGenerator<unknown> {})() }
+          : {
+              output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+              stopReason: 'end_turn',
+              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+              metrics: { latencyMs: 100 },
+            }
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockResolvedValue(response)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          stream,
+          additionalRequestFields: { thinking, anthropic_beta: ['other-beta'] },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(sentFields(command)).toStrictEqual([{ thinking, anthropic_beta: ['other-beta'] }, dropBlockFields])
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('retrying with drop_block'))
+
+        await collectIterator(provider.stream(messages))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        expect(sentFields(command).at(-1)).toStrictEqual(dropBlockFields)
+        warnSpy.mockRestore()
+      })
+
+      it.each([
+        {
+          name: 'a caller-set block_binding',
+          fields: { thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'error' } } },
+        },
+        { name: 'no thinking config', fields: { reasoning_config: { type: 'enabled' } } },
+        { name: 'no additional request fields', fields: undefined },
+      ])('re-throws the binding error with $name', async ({ fields }) => {
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', ...(fields && { additionalRequestFields: fields }) })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('re-throws the binding message on a non-validation error', async () => {
+        const mockSend = vi.fn().mockRejectedValue(new Error(bindingError.message))
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it.each([
+        {
+          name: 'a throttle',
+          retry: async () => ({
+            stream: (async function* (): AsyncGenerator<unknown> {
+              yield { throttlingException: { message: 'Rate exceeded' } }
+            })(),
+          }),
+          expected: ModelThrottledError,
+        },
+        {
+          name: 'a context window overflow',
+          retry: async () => {
+            throw new Error('Input is too long for requested model')
+          },
+          expected: ContextWindowOverflowError,
+        },
+      ])('maps $name on the retry to its SDK error', async ({ retry, expected }) => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValueOnce(bindingError).mockImplementationOnce(retry)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('re-throws a second binding error without retrying again', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const mockSend = vi.fn().mockRejectedValue(bindingError)
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        expect(mockSend).toHaveBeenCalledTimes(2)
+        warnSpy.mockRestore()
+      })
+
+      it('keeps thinking off when a forced tool choice follows the retry', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+        await collectIterator(provider.stream(messages))
+
+        await collectIterator(provider.stream(messages, { toolChoice: { any: {} } }))
+
+        expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
+      })
+    })
+
     it.each([
       { mode: 'streaming', stream: true },
       { mode: 'non-streaming', stream: false },
@@ -3948,6 +4125,39 @@ describe('BedrockModel', () => {
         })
       )
     })
+
+    it('omits an empty source when replaying a citation', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [
+            new CitationsBlock({
+              citations: [
+                {
+                  location: { type: 'documentPage' as const, documentIndex: 0, start: 1, end: 2 },
+                  source: '',
+                  sourceContent: [{ text: 'page source' }],
+                  title: 'letter',
+                },
+              ],
+              content: [{ text: 'summary' }],
+            }),
+          ],
+        }),
+        new Message({ role: 'user', content: [new TextBlock('Follow up')] }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const request = mockConverseStreamCommand.mock.lastCall![0]
+      const replayed = request.messages![0]!.content![0]!.citationsContent!.citations![0]!
+      expect(replayed).toStrictEqual({
+        location: { documentPage: { documentIndex: 0, start: 1, end: 2 } },
+        sourceContent: [{ text: 'page source' }],
+        title: 'letter',
+      })
+    })
   })
 
   describe('media blocks in tool results', () => {
@@ -5982,7 +6192,7 @@ describe('BedrockModel', () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
 
     const provider = new BedrockModel({
-      modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+      modelId: 'anthropic.claude-sonnet-4-6',
       additionalRequestFields: {
         thinking: { type: 'enabled', budget_tokens: 5000 },
         some_other_field: 'value',
@@ -6032,7 +6242,7 @@ describe('BedrockModel', () => {
 
     it('omits additionalModelRequestFields when thinking is the only field and tool choice forces tool use', () => {
       const thinkingOnlyProvider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         additionalRequestFields: {
           thinking: { type: 'enabled', budget_tokens: 5000 },
         },

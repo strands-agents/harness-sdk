@@ -91,16 +91,29 @@ def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[Con
     return blocks
 
 
+def _message_to_content_blocks(message: Message) -> list[ContentBlock]:
+    """Convert a message's content to ContentBlocks for the summarizer, leaving out reasoning."""
+    blocks: list[ContentBlock] = []
+    for block in message["content"]:
+        if "toolResult" in block:
+            blocks.extend(_tool_result_to_content_blocks(block["toolResult"]["content"]))
+        elif "reasoningContent" not in block:
+            blocks.append(block)
+    return blocks
+
+
 def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
-    """Flatten messages into a single ContentBlock list with role markers."""
+    """Flatten messages into a single ContentBlock list with role markers.
+
+    Reasoning blocks are left out: they are assistant-only content, and their signatures are bound to the
+    conversation that produced them. Messages with nothing left get no role marker.
+    """
     blocks: list[ContentBlock] = []
     for message in messages:
-        blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
-        for block in message["content"]:
-            if "toolResult" in block:
-                blocks.extend(_tool_result_to_content_blocks(block["toolResult"]["content"]))
-            else:
-                blocks.append(block)
+        content = _message_to_content_blocks(message)
+        if content:
+            blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
+            blocks.extend(content)
     return blocks
 
 

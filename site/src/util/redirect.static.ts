@@ -5,17 +5,13 @@
  * The client-side fallback in Redirect404.astro works for humans, but crawlers
  * don't execute it — old URLs return HTTP 404 and backlink equity is lost.
  *
- * buildStaticRedirects() enumerates every *known* legacy URL at config time so
- * astro.config.mjs can feed them to Astro's `redirects` option, which emits a
- * static HTML stub per URL (meta refresh + canonical link) that crawlers do
- * follow. Sources come from:
+ * buildStaticRedirects() enumerates every known legacy URL at config time so
+ * astro.config.mjs can feed them to Astro's `redirects` option. Sources come
+ * from:
  *
  *   1. STATIC_SLUG_REDIRECTS in redirect.ts (exact-match slug renames)
  *   2. `redirectFrom` frontmatter entries in src/content docs
- *
- * Dynamic rules — version-prefix stripping (/latest/, /1.x/) and
- * /documentation/docs/ normalization — can't be enumerated and remain handled
- * only by the client-side 404 fallback.
+ *   3. The append-only published route registry
  *
  * This module runs at config time, before the content layer exists, so it
  * reads frontmatter from disk instead of using astro:content (unlike
@@ -27,7 +23,7 @@ import path from 'node:path'
 import fg from 'fast-glob'
 import yaml from 'js-yaml'
 
-import { STATIC_SLUG_REDIRECTS } from './redirect'
+import { resolveRedirectFromUrl, STATIC_SLUG_REDIRECTS } from './redirect'
 import { pathToDocsSlug } from './links'
 
 /**
@@ -116,7 +112,42 @@ function scanPages(pagesDir: string): Set<string> {
 /** Format a slug as a root-relative URL path in the site's directory format. */
 function toUrlPath(slug: string, base: string): string {
   const prefix = base.replace(/\/+$/, '')
-  return `${prefix}/${slug.replace(/^\/+|\/+$/g, '')}/`
+  const suffix = slug.replace(/^\/+|\/+$/g, '')
+  return suffix ? `${prefix}/${suffix}/` : `${prefix}/` || '/'
+}
+
+function resolveDestination(target: string, source: string, validSlugs: Set<string>, base: string): string {
+  if (/^https?:\/\//.test(target)) return target
+
+  const targetSlug = target.replace(/^\/+|\/+$/g, '')
+  if (!validSlugs.has(targetSlug)) {
+    throw new Error(`[redirect.static] redirect target "${target}" (from "${source}") has no page`)
+  }
+  return toUrlPath(targetSlug, base)
+}
+
+function registerRedirect(
+  redirects: Record<string, string>,
+  source: string,
+  target: string,
+  validSlugs: Set<string>,
+  base: string
+): void {
+  const sourceSlug = source.replace(/^\/+|\/+$/g, '')
+  if (validSlugs.has(sourceSlug)) {
+    throw new Error(`[redirect.static] redirect source "${sourceSlug}" collides with an existing page`)
+  }
+
+  const destination = resolveDestination(target, sourceSlug, validSlugs, base)
+
+  const sourcePath = `/${sourceSlug}`
+  const existing = redirects[sourcePath]
+  if (existing !== undefined && existing !== destination) {
+    throw new Error(
+      `[redirect.static] redirect source "${sourceSlug}" points to both "${existing}" and "${destination}"`
+    )
+  }
+  redirects[sourcePath] = destination
 }
 
 /**
@@ -133,15 +164,19 @@ function toUrlPath(slug: string, base: string): string {
  * @param pagesDir - Absolute path to src/pages; custom Astro pages found there
  *   (e.g. integrations.astro) are additional valid redirect targets. Defaults
  *   to the sibling of contentDir, matching the src/ layout.
+ * @param legacyRoutes - Published URL paths to preserve. Current routes are
+ *   ignored; routes changed by version normalization or rename rules are emitted.
  */
 export function buildStaticRedirects(
   contentDir: string,
   base = '/',
   staticRedirects: Record<string, string> = STATIC_SLUG_REDIRECTS,
-  pagesDir: string = path.resolve(contentDir, '../pages')
+  pagesDir: string = path.resolve(contentDir, '../pages'),
+  legacyRoutes: string[] = []
 ): Record<string, string> {
   const { slugs, redirectFromEntries } = scanContent(contentDir)
   const pageSlugs = scanPages(pagesDir)
+  const validSlugs = new Set([...slugs, ...pageSlugs])
 
   // A redirectFrom entry that collides with a rename rule but points elsewhere
   // is an authoring mistake — the rename rule would silently win. Same
@@ -165,23 +200,33 @@ export function buildStaticRedirects(
   const redirects: Record<string, string> = {}
 
   for (const [source, target] of Object.entries(slugMap)) {
-    // A source that resolves to a real page would make Astro emit a redirect
-    // stub on top of it (or fail the build) — always a configuration mistake.
-    if (slugs.has(source)) {
-      throw new Error(`[redirect.static] redirect source "${source}" collides with an existing content file`)
-    }
+    registerRedirect(redirects, source, target, validSlugs, base)
+  }
 
-    if (/^https?:\/\//.test(target)) {
-      redirects[`/${source}`] = target
-      continue
-    }
+  for (const route of legacyRoutes) {
+    const source = route.replace(/^\/+|\/+$/g, '')
+    const target = resolveRedirectFromUrl(route, redirectFromEntries)
+    if (!target) continue
 
-    if (!slugs.has(target) && !pageSlugs.has(target)) {
-      throw new Error(`[redirect.static] redirect target "${target}" (from "${source}") has no content file`)
-    }
+    const normalizedTarget = /^https?:\/\//.test(target) ? target : target.replace(/^\/+|\/+$/g, '')
+    if (source === normalizedTarget) continue
 
-    redirects[`/${source}`] = toUrlPath(target, base)
+    registerRedirect(redirects, source, target, validSlugs, base)
   }
 
   return redirects
+}
+
+export function buildPublishedRedirects(
+  contentDir: string,
+  legacyRoutes: string[],
+  base = '/'
+): Record<string, string> {
+  return buildStaticRedirects(
+    contentDir,
+    base,
+    STATIC_SLUG_REDIRECTS,
+    path.resolve(contentDir, '../pages'),
+    legacyRoutes
+  )
 }

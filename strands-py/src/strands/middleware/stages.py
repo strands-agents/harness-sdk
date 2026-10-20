@@ -14,6 +14,8 @@ from ..types.events import ModelStopReason, ToolResultEvent
 from .types import MiddlewareStage
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ..interrupt import _InterruptState
     from ..models.model import Model
     from ..types.agent import LocalAgent
@@ -52,6 +54,7 @@ class InvokeModelContext:
     model: Model
     projected_input_tokens: int | None = None
     dynamic_trailing_blocks: int = 0
+    structured_output_model: type[BaseModel] | None = None
 
     def replace(
         self,

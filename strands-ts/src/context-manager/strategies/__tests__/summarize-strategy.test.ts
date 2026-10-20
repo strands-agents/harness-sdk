@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
+import { summarizeContent } from '../../methods/summarize.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 
@@ -193,6 +196,34 @@ describe('Offload.summarize', () => {
       const result = await strategy.apply(context)
 
       expect(result).toBe(false)
+    })
+  })
+
+  describe('request limits', () => {
+    it('adds the summarizer usage to the request total even when the request limit is used up', async () => {
+      const actualSummarize =
+        await vi.importActual<typeof import('../../methods/summarize.js')>('../../methods/summarize.js')
+      vi.mocked(summarizeContent).mockImplementationOnce(actualSummarize.summarizeContent)
+      const summarizer = new MockMessageModel().addTurn(
+        { type: 'textBlock', text: 'Summary of tool output' },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      )
+      const messages = [makeToolResultMessage('x'.repeat(2500 * 4 + 100))]
+      const strategy = Offload.summarize('toolResults', { model: summarizer })
+      const invocationContext = new InvocationContextImpl({ turns: 1 })
+      invocationContext.usage.turnsTaken = 5
+
+      const result = await strategy.apply({ ...makeContext(messages, 0.9, { stream: vi.fn() }), invocationContext })
+
+      expect(result).toBe(true)
+      expect(messages[0]!.content).toEqual([
+        new ToolResultBlock({
+          toolUseId: 'tool-123',
+          status: 'success',
+          content: [new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output')],
+        }),
+      ])
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
 })

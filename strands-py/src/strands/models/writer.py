@@ -262,13 +262,15 @@ class WriterModel(Model):
                 if "toolResult" in content
             ]
 
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_messages.extend(formatted_tool_messages)
+
             formatted_message = {
                 "role": message["role"],
                 "content": formatted_contents if len(formatted_contents) > 0 else "",
                 **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
             }
             formatted_messages.append(formatted_message)
-            formatted_messages.extend(formatted_tool_messages)
 
         return [message for message in formatted_messages if message["content"] or "tool_calls" in message]
 

@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import logging
 import os
 import sys
@@ -27,6 +28,7 @@ from strands.models.bedrock import (
     _next_stream_event,
     _suppress_task_exception,
 )
+from strands.tools import convert_pydantic_to_tool_spec
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from strands.types.tools import ToolSpec
 
@@ -366,7 +368,7 @@ def test__init__context_window_limit(bedrock_client):
 def test__init__auto_populates_context_window_limit(bedrock_client):
     _ = bedrock_client
 
-    model = BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0")
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
 
     assert model.get_config().get("context_window_limit") == 1_000_000
 
@@ -390,7 +392,7 @@ def test__init__auto_populates_context_window_limit_default_model(bedrock_client
 def test__init__explicit_context_window_limit_not_overridden(bedrock_client):
     _ = bedrock_client
 
-    model = BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0", context_window_limit=100_000)
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", context_window_limit=100_000)
 
     assert model.get_config().get("context_window_limit") == 100_000
 
@@ -1177,6 +1179,147 @@ def test_separate_tool_result_turns_ignores_conversation_only_user_turns():
     ]
 
     assert BedrockModel._separate_tool_result_turns(messages) == messages
+
+
+THINKING = {"type": "adaptive"}
+DROP_BLOCK_THINKING = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+
+
+def _thinking_binding_error(operation_name):
+    return ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": (
+                    "messages.1.content.0: Invalid `signature` in `thinking` block. "
+                    "The block is bound to a different conversation."
+                ),
+            }
+        },
+        operation_name,
+    )
+
+
+def _converse_response(streaming):
+    if streaming:
+        return {"stream": []}
+    return {"output": {"message": {"role": "assistant", "content": [{"text": "Done"}]}}, "stopReason": "end_turn"}
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.asyncio
+async def test_stream_retries_with_drop_block_on_thinking_binding_error(
+    bedrock_client, alist, messages, streaming, caplog
+):
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error("ConverseStream" if streaming else "Converse"),
+        _converse_response(streaming),
+    ]
+    model = BedrockModel(
+        model_id="m1",
+        streaming=streaming,
+        additional_request_fields={"thinking": THINKING, "anthropic_beta": ["other-beta"]},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        await alist(model.stream(messages))
+
+    tru_fields = [call.kwargs["additionalModelRequestFields"] for call in converse_method.call_args_list]
+    exp_fields = [
+        {"thinking": THINKING, "anthropic_beta": ["other-beta"]},
+        {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["other-beta", "thinking-binding-controls-2026-08-01"]},
+    ]
+    assert tru_fields == exp_fields
+    assert "retrying with drop_block" in caplog.text
+
+    converse_method.reset_mock(side_effect=True)
+    converse_method.return_value = _converse_response(streaming)
+
+    await alist(model.stream(messages))
+
+    converse_method.assert_called_once()
+    assert converse_method.call_args.kwargs["additionalModelRequestFields"] == exp_fields[1]
+
+
+@pytest.mark.parametrize(
+    "additional_request_fields",
+    [
+        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
+        {"reasoning_config": {"type": "enabled"}},
+        None,
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(
+    bedrock_client, alist, messages, additional_request_fields
+):
+    bedrock_client.converse_stream.side_effect = _thinking_binding_error("ConverseStream")
+    model = BedrockModel(model_id="m1", additional_request_fields=additional_request_fields)
+
+    with pytest.raises(ClientError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+    assert model._drop_stale_thinking_model_id is None
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_binding_message_on_non_validation_error(bedrock_client, alist, messages):
+    error = _thinking_binding_error("ConverseStream")
+    error.response["Error"]["Code"] = "InternalServerException"
+    bedrock_client.converse_stream.side_effect = error
+    model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
+
+    with pytest.raises(ClientError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.parametrize(
+    ("retry_error", "exp_exception"),
+    [
+        ({"Code": "ThrottlingException", "Message": "Rate exceeded"}, ModelThrottledException),
+        (
+            {"Code": "ValidationException", "Message": "Input is too long for requested model"},
+            ContextWindowOverflowException,
+        ),
+        ({"Code": "ValidationException", "Message": "bound to a different conversation"}, ClientError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_retry_error_to_sdk_exception(
+    bedrock_client, alist, messages, streaming, retry_error, exp_exception
+):
+    operation_name = "ConverseStream" if streaming else "Converse"
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error(operation_name),
+        ClientError({"Error": retry_error}, operation_name),
+    ]
+    model = BedrockModel(model_id="m1", streaming=streaming, additional_request_fields={"thinking": THINKING})
+
+    with pytest.raises(exp_exception):
+        await alist(model.stream(messages))
+
+    assert converse_method.call_count == 2
+
+
+def test_format_request_drops_stale_thinking_only_for_remembered_model(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
+    model._drop_stale_thinking_model_id = "m1"
+
+    assert model.format_request(messages)["additionalModelRequestFields"] == {
+        "thinking": DROP_BLOCK_THINKING,
+        "anthropic_beta": ["thinking-binding-controls-2026-08-01"],
+    }
+
+    model.update_config(model_id="m2")
+
+    assert model.format_request(messages)["additionalModelRequestFields"] == {"thinking": THINKING}
 
 
 @pytest.mark.asyncio
@@ -2132,18 +2275,29 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
     bedrock_client.converse_stream.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_structured_output(bedrock_client, model, test_output_model_cls, alist):
-    messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
-
-    bedrock_client.converse_stream.return_value = {
-        "stream": [
-            {"messageStart": {"role": "assistant"}},
+@pytest.mark.parametrize(
+    "content_events",
+    [
+        [
             {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "TestOutputModel"}}}},
             {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "John", "age": 30}'}}}},
             {"contentBlockStop": {}},
             {"messageStop": {"stopReason": "tool_use"}},
-        ]
+        ],
+        [
+            {"contentBlockDelta": {"delta": {"text": '{"name": "John", "age": 30}'}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ],
+    ],
+    ids=["tool_use", "native_json_text"],
+)
+@pytest.mark.asyncio
+async def test_structured_output(native_output_client, model, test_output_model_cls, alist, content_events):
+    messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
+
+    native_output_client.converse_stream.return_value = {
+        "stream": [{"messageStart": {"role": "assistant"}}, *content_events]
     }
 
     stream = model.structured_output(test_output_model_cls, messages)
@@ -2152,6 +2306,188 @@ async def test_structured_output(bedrock_client, model, test_output_model_cls, a
     tru_output = events[-1]
     exp_output = {"output": test_output_model_cls(name="John", age=30)}
     assert tru_output == exp_output
+
+
+FORCED_TOOL_CHOICE_REJECTION = "This model doesn't support the toolConfig.toolChoice.tool field."
+NATIVE_OUTPUT_REJECTION = "This model doesn't support the outputConfig field."
+
+
+class Scores(pydantic.BaseModel):
+    scores: dict[str, int]
+
+
+def _validation_error(message):
+    return ClientError({"Error": {"Code": "ValidationException", "Message": message}}, "ConverseStream")
+
+
+def _mechanism(request):
+    """The structured output mechanism a sent Converse request uses."""
+    if "tool" in request["toolConfig"]["toolChoice"]:
+        return "forced"
+    return "native" if "outputConfig" in request else "auto"
+
+
+@pytest.fixture
+def native_output_client(bedrock_client):
+    """A client whose botocore accepts the Converse outputConfig field."""
+    bedrock_client.meta.service_model.operation_model.return_value.input_shape.members = {"outputConfig": {}}
+    return bedrock_client
+
+
+@pytest.fixture
+def stream_structured_output(model, test_output_model_cls, alist):
+    async def stream_structured_output(messages, output_model=None):
+        output_model = output_model or test_output_model_cls
+        tool_spec = convert_pydantic_to_tool_spec(output_model)
+        await alist(
+            model.stream(
+                messages,
+                [tool_spec],
+                tool_choice={"tool": {"name": tool_spec["name"]}},
+                structured_output_model=output_model,
+            )
+        )
+
+    return stream_structured_output
+
+
+@pytest.mark.parametrize(
+    ("rejections", "exp_mechanisms"),
+    [
+        ([], ["forced"]),
+        ([FORCED_TOOL_CHOICE_REJECTION], ["forced", "native"]),
+        ([FORCED_TOOL_CHOICE_REJECTION, NATIVE_OUTPUT_REJECTION], ["forced", "native", "auto"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_structured_output_falls_back_to_next_mechanism(
+    native_output_client, stream_structured_output, messages, rejections, exp_mechanisms
+):
+    native_output_client.converse_stream.side_effect = [*map(_validation_error, rejections), {"stream": []}]
+
+    await stream_structured_output(messages)
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in native_output_client.converse_stream.call_args_list]
+    assert tru_mechanisms == exp_mechanisms
+
+    native_output_client.converse_stream.reset_mock(side_effect=True)
+    native_output_client.converse_stream.return_value = {"stream": []}
+
+    await stream_structured_output(messages)
+
+    native_output_client.converse_stream.assert_called_once()
+    assert _mechanism(native_output_client.converse_stream.call_args.kwargs) == exp_mechanisms[-1]
+
+
+@pytest.mark.parametrize(
+    ("supports_native_output", "output_model", "exp_warning"),
+    [
+        (True, Scores, r"cannot represent Scores \(dict fields\)"),
+        (False, None, r"requires botocore>=1\.42\.42"),
+    ],
+    ids=["unrepresentable_schema", "old_botocore"],
+)
+@pytest.mark.asyncio
+async def test_stream_structured_output_skips_native(
+    bedrock_client, stream_structured_output, messages, supports_native_output, output_model, exp_warning
+):
+    members = {"outputConfig": {}} if supports_native_output else {}
+    bedrock_client.meta.service_model.operation_model.return_value.input_shape.members = members
+    bedrock_client.converse_stream.side_effect = [_validation_error(FORCED_TOOL_CHOICE_REJECTION), {"stream": []}]
+
+    with pytest.warns(UserWarning, match=exp_warning):
+        await stream_structured_output(messages, output_model)
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in bedrock_client.converse_stream.call_args_list]
+    assert tru_mechanisms == ["forced", "auto"]
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_surfaces_unrelated_error(
+    native_output_client, stream_structured_output, messages
+):
+    native_output_client.converse_stream.side_effect = _validation_error("Malformed input request")
+
+    with pytest.raises(ClientError, match="Malformed input request"):
+        await stream_structured_output(messages)
+
+    native_output_client.converse_stream.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_separates_tool_result_turns(
+    native_output_client, stream_structured_output, tool_result_turn_messages, separated_tool_result_turn_messages
+):
+    native_output_client.converse_stream.side_effect = [
+        _validation_error("Conversation blocks and tool result blocks cannot be provided in the same turn."),
+        _validation_error(FORCED_TOOL_CHOICE_REJECTION),
+        {"stream": []},
+    ]
+
+    await stream_structured_output(tool_result_turn_messages)
+
+    tru_requests = [
+        (_mechanism(call.kwargs), call.kwargs["messages"])
+        for call in native_output_client.converse_stream.call_args_list
+    ]
+    exp_requests = [
+        ("forced", tool_result_turn_messages),
+        ("forced", separated_tool_result_turn_messages),
+        ("native", separated_tool_result_turn_messages),
+    ]
+    assert tru_requests == exp_requests
+
+
+@pytest.mark.parametrize(
+    ("config", "exp_request_fields"),
+    [
+        ({"additional_request_fields": {"thinking": THINKING}}, {"thinking": THINKING}),
+        (
+            {
+                "additional_request_fields": {"thinking": THINKING},
+                "additional_args": {"additionalModelRequestFields": {"user": 1}},
+            },
+            {"user": 1},
+        ),
+    ],
+    ids=["thinking_restored", "additional_args_wins"],
+)
+@pytest.mark.parametrize("mechanism", ["native", "auto"])
+def test_structured_output_request_rebuilds_request_fields_for_auto_tool_choice(
+    bedrock_client, messages, test_output_model_cls, config, exp_request_fields, mechanism
+):
+    model = BedrockModel(model_id="m1", **config)
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+    forced_request = model.format_request(messages, [tool_spec], tool_choice={"tool": {"name": tool_spec["name"]}})
+
+    tru_request = model._structured_output_request(forced_request, mechanism, test_output_model_cls)
+
+    assert tru_request["toolConfig"]["toolChoice"] == {"auto": {}}
+    assert tru_request["additionalModelRequestFields"] == exp_request_fields
+
+
+def test_structured_output_request_native_keeps_output_config(bedrock_client, messages, test_output_model_cls):
+    model = BedrockModel(model_id="m1", additional_args={"outputConfig": {"effort": "high"}})
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+    forced_request = model.format_request(messages, [tool_spec], tool_choice={"tool": {"name": tool_spec["name"]}})
+
+    tru_output_config = model._structured_output_request(forced_request, "native", test_output_model_cls)[
+        "outputConfig"
+    ]
+    tru_schema = json.loads(tru_output_config["textFormat"]["structure"]["jsonSchema"].pop("schema"))
+    exp_output_config = {
+        "effort": "high",
+        "textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"name": "TestOutputModel"}}},
+    }
+    exp_schema = {
+        "type": "object",
+        "title": "TestOutputModel",
+        "properties": {"name": {"type": "string", "title": "Name"}, "age": {"type": "integer", "title": "Age"}},
+        "additionalProperties": False,
+        "required": ["name", "age"],
+    }
+    assert tru_output_config == exp_output_config
+    assert tru_schema == exp_schema
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="This test requires Python 3.11 or higher (need add_note)")
@@ -2513,7 +2849,7 @@ def test_format_request_removes_status_field_when_configured(model, model_id):
 
 
 def test_auto_behavior_anthropic_vs_non_anthropic(bedrock_client):
-    model_anthropic = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model_anthropic = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6")
     assert model_anthropic.get_config()["include_tool_result_status"] == "auto"
 
     model_non_anthropic = BedrockModel(model_id="amazon.titan-text-v1")
@@ -2521,7 +2857,7 @@ def test_auto_behavior_anthropic_vs_non_anthropic(bedrock_client):
 
 
 def test_explicit_boolean_values_preserved(bedrock_client):
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", include_tool_result_status=True)
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", include_tool_result_status=True)
     assert model.get_config()["include_tool_result_status"] is True
 
     model2 = BedrockModel(model_id="amazon.titan-text-v1", include_tool_result_status=False)
@@ -3766,9 +4102,7 @@ async def test_format_request_with_guardrail_multiple_tool_results_same_message(
 
 def test_cache_strategy_auto_maps_claude_to_anthropic(bedrock_client):
     """Under strategy="auto", a Claude/Anthropic model id resolves to the anthropic strategy."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
     assert model._cache_strategy == "anthropic"
 
     model2 = BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0", cache_config=CacheConfig(strategy="auto"))
@@ -3783,7 +4117,7 @@ def test_cache_strategy_auto_is_none_for_non_claude(bedrock_client):
 
 def test_cache_strategy_is_none_without_cache_config(bedrock_client):
     """A caching-capable model still resolves to no strategy until cache_config turns caching on."""
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6")
     assert model._cache_strategy is None
 
 
@@ -4148,9 +4482,7 @@ def test_inject_cache_point_drops_an_honored_point_when_a_document_leads_the_mes
 
 def test_inject_cache_point_adds_to_last_user(bedrock_client):
     """Test that _inject_cache_point adds cache point to last user message."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -4168,9 +4500,7 @@ def test_inject_cache_point_adds_to_last_user(bedrock_client):
 
 def test_inject_cache_point_single_user_message(bedrock_client):
     """Test that _inject_cache_point adds cache point to single user message."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -4185,9 +4515,7 @@ def test_inject_cache_point_single_user_message(bedrock_client):
 
 def test_inject_cache_point_empty_messages(bedrock_client):
     """Test that _inject_cache_point handles empty messages list."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = []
     model._inject_cache_point(cleaned_messages)
@@ -4197,9 +4525,7 @@ def test_inject_cache_point_empty_messages(bedrock_client):
 
 def test_inject_cache_point_with_tool_result_last_user(bedrock_client):
     """Test that cache point is added to last user message even when it contains toolResult."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {"role": "user", "content": [{"text": "Use the tool"}]},
@@ -4235,9 +4561,7 @@ def test_inject_cache_point_skipped_for_non_claude(bedrock_client):
 def test_format_bedrock_messages_does_not_mutate_original(bedrock_client):
     """Test that _format_bedrock_messages does not mutate original messages."""
 
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     original_messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -4255,9 +4579,7 @@ def test_format_bedrock_messages_does_not_mutate_original(bedrock_client):
 
 def test_inject_cache_point_strips_existing_cache_points(bedrock_client):
     """Test that _inject_cache_point strips existing cache points and adds new one at correct position."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     # Messages with existing cache points in various positions
     cleaned_messages = [
@@ -4281,9 +4603,7 @@ def test_inject_cache_point_strips_existing_cache_points(bedrock_client):
 
 def test_inject_cache_point_before_non_pdf_document(bedrock_client):
     """Test that cache point is inserted before non-PDF document blocks."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {
@@ -4306,9 +4626,7 @@ def test_inject_cache_point_before_non_pdf_document(bedrock_client):
 
 def test_inject_cache_point_after_pdf_document(bedrock_client):
     """Test that cache point is appended at end when only PDF documents are present."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {
@@ -4331,9 +4649,7 @@ def test_inject_cache_point_after_pdf_document(bedrock_client):
 
 def test_inject_cache_point_mixed_pdf_and_non_pdf_documents(bedrock_client):
     """Test that cache point is inserted before the first non-PDF document in mixed content."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {
@@ -4359,9 +4675,7 @@ def test_inject_cache_point_mixed_pdf_and_non_pdf_documents(bedrock_client):
 def test_inject_cache_point_before_the_first_of_several_non_pdf_documents(bedrock_client):
     """A cache point after any of them would be directly preceded by a document, which Bedrock rejects."""
     _ = bedrock_client
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
     first = {"document": {"format": "csv", "name": "first", "source": {"bytes": b"a,b,c"}}}
     second = {"document": {"format": "csv", "name": "second", "source": {"bytes": b"d,e,f"}}}
 
@@ -4383,9 +4697,7 @@ def test_inject_cache_point_skipped_when_leading_non_pdf_document(bedrock_client
     A leading cache point has no prefix to cache and Bedrock rejects it with a ValidationException,
     so injection is skipped for that message.
     """
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
         {
@@ -4427,9 +4739,7 @@ def test_inject_cache_point_anthropic_strategy_skips_model_check(bedrock_client)
 
 def test_inject_cache_point_auto_strategy_resolves_to_anthropic_for_claude(bedrock_client):
     """Test that auto strategy resolves to anthropic strategy for Claude models."""
-    model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0", cache_config=CacheConfig(strategy="auto")
-    )
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -5123,7 +5433,7 @@ class TestCountTokens:
 def test_inject_cache_point_with_ttl(bedrock_client):
     """Test that _inject_cache_point includes TTL when cache_config has ttl set."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="5m"),
     )
 
@@ -5141,7 +5451,7 @@ def test_inject_cache_point_with_ttl(bedrock_client):
 def test_inject_cache_point_without_ttl(bedrock_client):
     """Test that _inject_cache_point omits TTL when cache_config has no ttl."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto"),
     )
 
@@ -5197,7 +5507,7 @@ def test_format_request_tools_ttl_true_derives_from_shared_ttl(bedrock_client, m
     """tools_ttl=True mirrors system_prompt_ttl: it derives the tools section duration from cache_config.ttl."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True),
     )
 
@@ -5210,7 +5520,7 @@ def test_format_request_tools_ttl_string_sets_the_section_duration(bedrock_clien
     """A tools_ttl string sets the tools section's own duration rather than deriving from the shared ttl."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
     )
 
@@ -5223,7 +5533,7 @@ def test_format_request_tools_ttl_string_stands_the_system_point_down(bedrock_cl
     """A shorter tools_ttl leaves the auto system cache point at the provider default."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
     )
 
@@ -5237,7 +5547,7 @@ def test_format_request_tools_ttl_true_without_shared_ttl_stays_untimed(bedrock_
     """With nothing to derive from, tools_ttl=True still caches the tools but at the provider default."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", tools_ttl=True),
     )
 
@@ -5250,7 +5560,7 @@ def test_format_request_tools_ttl_false_disables_the_tools_cache_point(bedrock_c
     """tools_ttl=False disables tool caching even when the shared ttl is set."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=False),
     )
 
@@ -5263,7 +5573,7 @@ def test_format_request_tools_ttl_defaults_to_off(bedrock_client, messages, tool
     """tools_ttl defaults to None (unset), so cache_config alone does not cache the tools yet."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h"),
     )
 
@@ -5290,7 +5600,7 @@ def test_format_request_tools_ttl_takes_precedence_over_deprecated_cache_tools(b
     _ = bedrock_client
     with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
         model = BedrockModel(
-            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            model_id="global.anthropic.claude-sonnet-4-6",
             cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
             cache_tools=CacheToolsConfig(ttl="1h"),
         )
@@ -5305,7 +5615,7 @@ def test_format_request_tools_ttl_false_overrides_deprecated_cache_tools(bedrock
     _ = bedrock_client
     with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
         model = BedrockModel(
-            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            model_id="global.anthropic.claude-sonnet-4-6",
             cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=False),
             cache_tools=CacheToolsConfig(ttl="1h"),
         )
@@ -5338,7 +5648,7 @@ def test_format_request_auto_keeps_tools_cache_point_for_a_claude_model(bedrock_
     _ = bedrock_client
     with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
         model = BedrockModel(
-            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            model_id="global.anthropic.claude-sonnet-4-6",
             cache_config=CacheConfig(strategy="auto"),
             cache_tools=CacheToolsConfig(ttl="1h"),
         )
@@ -5353,7 +5663,7 @@ def test_format_request_auto_cache_tools_inherits_shared_ttl_for_a_claude_model(
     _ = bedrock_client
     with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
         model = BedrockModel(
-            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            model_id="global.anthropic.claude-sonnet-4-6",
             cache_config=CacheConfig(strategy="auto", ttl="1h"),
             cache_tools=CacheToolsConfig(),
         )
@@ -5668,7 +5978,7 @@ def test_format_request_auto_appends_system_cache_point(bedrock_client, messages
     Regression guard for https://github.com/strands-agents/harness-sdk/issues/3144.
     """
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto"),
     )
 
@@ -5683,7 +5993,7 @@ def test_format_request_auto_appends_system_cache_point(bedrock_client, messages
 def test_format_request_auto_system_cache_point_honors_ttl(bedrock_client, messages):
     """Auto mode carries cache_config.ttl into the appended system cache point."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h"),
     )
 
@@ -5695,7 +6005,7 @@ def test_format_request_auto_system_cache_point_honors_ttl(bedrock_client, messa
 def test_format_request_auto_skips_system_cache_point_when_empty(bedrock_client, messages):
     """Auto mode does not inject a system cache point when the system prompt is empty."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto"),
     )
 
@@ -5719,7 +6029,7 @@ def test_format_request_auto_skips_system_cache_point_for_non_claude(bedrock_cli
 def test_format_request_auto_preserves_caller_placed_system_cache_point(bedrock_client, messages):
     """Auto mode does not double-append when the caller already placed a trailing cachePoint."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto"),
     )
 
@@ -5734,7 +6044,7 @@ def test_format_request_auto_preserves_caller_placed_system_cache_point(bedrock_
 
 def test_format_request_no_cache_config_leaves_system_untouched(bedrock_client, messages):
     """With no cache_config, the system prompt is passed through unchanged."""
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6")
 
     tru_request = model.format_request(messages, system_prompt_content=[{"text": "static"}])
 
@@ -5756,7 +6066,7 @@ def test_format_request_anthropic_strategy_appends_system_cache_point(bedrock_cl
 def test_format_request_auto_does_not_inject_system_cache_point_when_opted_out(bedrock_client, messages):
     """system_prompt_ttl=False disables only the auto-injected system point."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", system_prompt_ttl=False),
     )
 
@@ -5768,7 +6078,7 @@ def test_format_request_auto_does_not_inject_system_cache_point_when_opted_out(b
 def test_format_request_auto_honors_a_caller_placed_system_cache_point_anywhere(bedrock_client, messages):
     """A caller point anywhere in the system prefix is honored; no second point is appended."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto"),
     )
 
@@ -5785,7 +6095,7 @@ def test_format_request_auto_honors_a_caller_placed_system_cache_point_anywhere(
 def test_format_request_auto_leaves_a_single_point_for_the_deprecated_cache_prompt(bedrock_client, messages):
     """The deprecated cache_prompt appends a point, so honor-anywhere must not add a second one."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto"),
         cache_prompt="default",
     )
@@ -5805,7 +6115,7 @@ def test_format_request_auto_stands_the_system_cache_point_down_behind_a_shorter
     longer TTL behind the 5m tools point and trip Bedrock's non-increasing rule.
     """
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="1h"),
         cache_tools=CacheToolsConfig(ttl="5m"),
     )
@@ -5819,7 +6129,7 @@ def test_format_request_auto_stands_the_system_cache_point_down_behind_a_shorter
 def test_format_request_auto_system_prompt_ttl_string_sets_the_section_duration(bedrock_client, messages):
     """A system_prompt_ttl string sets the system section's own duration rather than deriving from the shared ttl."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", system_prompt_ttl="1h"),
     )
 
@@ -5836,7 +6146,7 @@ def test_format_request_auto_system_prompt_ttl_string_is_honored_behind_a_differ
     Mirrors the TS systemPromptTTL contract: the caller owns cross-section ordering when they set the string.
     """
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         cache_config=CacheConfig(strategy="auto", ttl="5m", system_prompt_ttl="1h"),
         cache_tools=CacheToolsConfig(ttl="5m"),
     )
@@ -5903,7 +6213,7 @@ def test_nova_model_converts_mixed_json_and_text_in_tool_result(bedrock_client):
 
 def test_claude_model_preserves_json_in_tool_result(bedrock_client):
     """Claude models should preserve JSON content blocks as-is."""
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6")
     messages = [
         {
             "role": "user",
@@ -5973,7 +6283,7 @@ def test_should_convert_json_to_text_nova_variants(bedrock_client):
         assert model._should_convert_json_to_text(), f"{model_id} should convert JSON to text"
 
     non_nova_ids = [
-        "us.anthropic.claude-sonnet-4-20250514-v1:0",
+        "global.anthropic.claude-sonnet-4-6",
         "amazon.titan-text-v1",
         "us.meta.llama3-1-70b-instruct-v1:0",
     ]

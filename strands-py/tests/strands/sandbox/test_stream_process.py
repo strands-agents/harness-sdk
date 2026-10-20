@@ -135,3 +135,28 @@ async def test_cancellation_kills_the_process():
         await asyncio.sleep(0.02)
     else:
         pytest.fail("process survived cancellation")
+
+
+@pytest.mark.asyncio
+async def test_cwd_option_runs_the_child_there(tmp_path):
+    _, result = await _collect(_stream_process("sh", ["-c", "pwd"], cwd=str(tmp_path)))
+    assert result is not None and os.path.realpath(result.stdout.strip()) == os.path.realpath(str(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_env_option_replaces_the_environment():
+    env = {"GREETING": "hi", "PATH": os.environ["PATH"]}
+    _, result = await _collect(_stream_process("sh", ["-c", 'echo "$GREETING:$HOME"'], env=env))
+    assert result is not None and result.stdout == "hi:\n"
+
+
+@pytest.mark.asyncio
+async def test_input_is_fed_to_stdin_and_closed():
+    _, result = await _collect(_stream_process("cat", [], input="hello from stdin"))
+    assert result == ExecutionResult(exit_code=0, stdout="hello from stdin", stderr="")
+
+
+@pytest.mark.asyncio
+async def test_input_to_a_child_that_exits_early_does_not_hang_or_raise():
+    _, result = await _collect(_stream_process("sh", ["-c", "exit 0"], timeout=5, input="x" * 1_000_000))
+    assert result is not None and result.exit_code == 0

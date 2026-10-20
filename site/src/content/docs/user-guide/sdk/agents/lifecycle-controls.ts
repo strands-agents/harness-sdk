@@ -26,12 +26,16 @@ async function cancelTimeoutExample() {
   const agent = new Agent()
 
   // Cancel from a timer after 30 seconds
-  setTimeout(() => agent.cancel(), 30_000)
+  const deadline = setTimeout(() => agent.cancel(), 30_000)
 
-  const result = await agent.invoke('Analyze this large dataset')
+  try {
+    const result = await agent.invoke('Analyze this large dataset')
 
-  if (result.stopReason === 'cancelled') {
-    console.log('Agent was cancelled due to timeout')
+    if (result.stopReason === 'cancelled') {
+      console.log('Agent was cancelled due to timeout')
+    }
+  } finally {
+    clearTimeout(deadline)
   }
   // --8<-- [end:cancel_timeout]
 }
@@ -69,10 +73,11 @@ function cancelInToolExample() {
 // --8<-- [start:worked_example]
 const MODEL_ID = 'global.anthropic.claude-sonnet-5'
 
-type Outcome = 'completed' | 'budgetExceeded' | 'timedOut'
+type Outcome = 'completed' | 'budgetExceeded' | 'cancelled' | 'blocked' | 'stopped'
 
 function classify(stopReason: string): Outcome {
-  if (stopReason === 'cancelled') return 'timedOut'
+  if (stopReason === 'endTurn' || stopReason === 'stopSequence') return 'completed'
+  if (stopReason === 'cancelled') return 'cancelled'
   if (
     stopReason === 'limitTurns' ||
     stopReason === 'limitTotalTokens' ||
@@ -80,7 +85,14 @@ function classify(stopReason: string): Outcome {
   ) {
     return 'budgetExceeded'
   }
-  return 'completed'
+  if (
+    stopReason === 'contentFiltered' ||
+    stopReason === 'guardrailIntervened' ||
+    stopReason === 'refusal'
+  ) {
+    return 'blocked'
+  }
+  return 'stopped'
 }
 
 async function handleRequest(prompt: string, deadlineMs = 20_000) {
@@ -92,6 +104,8 @@ async function handleRequest(prompt: string, deadlineMs = 20_000) {
     cancelSignal: AbortSignal.timeout(deadlineMs),
   })
 
-  return { outcome: classify(result.stopReason), message: result.lastMessage }
+  const outcome = classify(result.stopReason)
+  const text = outcome === 'completed' ? result.toString() : null
+  return { outcome, text }
 }
 // --8<-- [end:worked_example]
