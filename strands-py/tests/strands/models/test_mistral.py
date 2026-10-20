@@ -985,3 +985,78 @@ def test_format_request_filters_location_source_document(model, caplog):
     user_content = formatted_messages[0]["content"]
     assert user_content == "analyze this document"
     assert "Location sources are not supported by Mistral" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [{"q": "你好", "limit": 0}, '{"q": "你好", "limit": 0}', {}])
+async def test_non_streaming_tool_arguments_normalized(mistral_client, messages, arguments):
+
+    from mistralai.client.models import ChatCompletionResponse
+
+    from strands.event_loop.streaming import process_stream
+
+    response = ChatCompletionResponse.model_validate(
+        {
+            "id": "test",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "mistral",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "call1", "type": "function", "function": {"name": "search", "arguments": arguments}}
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+    )
+    mistral_client.chat.complete_async.return_value = response
+    model = MistralModel(model_id="mock", stream=False)
+    events = [event async for event in process_stream(model.stream(messages))]
+    message = next(event["stop"][1] for event in events if "stop" in event)
+    assert message["content"] == [
+        {
+            "toolUse": {
+                "toolUseId": "call1",
+                "name": "search",
+                "input": arguments if isinstance(arguments, dict) else {"q": "你好", "limit": 0},
+            }
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_dictionary_and_string_fragments_stay_separate(model):
+    from mistralai.client.models import ToolCall
+
+    from strands.event_loop.streaming import process_stream
+
+    calls = [
+        ToolCall.model_validate(
+            {"id": "call1", "type": "function", "function": {"name": "first", "arguments": {"nested": [1, False]}}}
+        ),
+        ToolCall.model_validate(
+            {"id": "call2", "type": "function", "function": {"name": "second", "arguments": '{"x":2}'}}
+        ),
+    ]
+
+    async def chunks():
+        yield model.format_chunk({"chunk_type": "message_start"})
+        for call in calls:
+            yield model.format_chunk({"chunk_type": "content_start", "data_type": "tool", "data": call})
+            fragments = [call.function.arguments] if call.id == "call1" else ['{"x":', "2}"]
+            for fragment in fragments:
+                yield model.format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": fragment})
+            yield model.format_chunk({"chunk_type": "content_stop"})
+        yield model.format_chunk({"chunk_type": "message_stop", "data": "tool_calls"})
+
+    events = [event async for event in process_stream(chunks())]
+    message = next(event["stop"][1] for event in events if "stop" in event)
+    assert [content["toolUse"]["input"] for content in message["content"]] == [{"nested": [1, False]}, {"x": 2}]
