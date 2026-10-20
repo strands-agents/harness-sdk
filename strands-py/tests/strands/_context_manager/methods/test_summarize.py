@@ -9,7 +9,9 @@ from strands._context_manager.methods.summarize import (
     _summarize_content,
     _tool_result_to_content_blocks,
 )
-from strands.types.content import ContentBlock, Message
+from strands.models.openai_responses import OpenAIResponsesModel
+from strands.types.content import ContentBlock, Message, Messages
+from strands.types.tools import ToolResult, ToolUse
 
 
 @pytest.fixture
@@ -17,6 +19,16 @@ def mock_model():
     model = unittest.mock.AsyncMock()
     model.stream = unittest.mock.AsyncMock()
     return model
+
+
+def _make_tool_call_history() -> Messages:
+    tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
+    tool_result = ToolResult(toolUseId="call_1", status="success", content=[{"text": "a.ts b.ts"}])
+    return [
+        Message(role="user", content=[ContentBlock(text="fix the build")]),
+        Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
+        Message(role="user", content=[ContentBlock(toolResult=tool_result)]),
+    ]
 
 
 def _make_stream_events(text: str):
@@ -114,6 +126,47 @@ class TestFlattenMessagesToContent:
         ]
         tru_result = _flatten_messages_to_content(messages)
         assert tru_result == [ContentBlock(text="\n---\n[user]"), ContentBlock(text="next")]
+
+    def test_renders_tool_calls_as_text(self):
+        # guards against tool-use blocks reaching the summarizer in a user turn (#5291)
+        tru_result = _flatten_messages_to_content(_make_tool_call_history())
+        exp_result = [
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="fix the build"),
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text='[tool call: shell] {"command":"ls"}'),
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="a.ts b.ts"),
+        ]
+        assert tru_result == exp_result
+
+    def test_responses_request_has_no_function_call_items(self):
+        # guards against tool-use blocks reaching the summarizer in a user turn (#5291)
+        summarizer_input = Message(
+            role="user",
+            content=[
+                ContentBlock(text="<content>"),
+                *_flatten_messages_to_content(_make_tool_call_history()),
+                ContentBlock(text="</content>"),
+            ],
+        )
+        tru_request = OpenAIResponsesModel._format_request_messages([summarizer_input])
+        exp_request = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "<content>"},
+                    {"type": "input_text", "text": "\n---\n[user]"},
+                    {"type": "input_text", "text": "fix the build"},
+                    {"type": "input_text", "text": "\n---\n[assistant]"},
+                    {"type": "input_text", "text": '[tool call: shell] {"command":"ls"}'},
+                    {"type": "input_text", "text": "\n---\n[user]"},
+                    {"type": "input_text", "text": "a.ts b.ts"},
+                    {"type": "input_text", "text": "</content>"},
+                ],
+            }
+        ]
+        assert tru_request == exp_request
 
 
 class TestSummarizeContent:

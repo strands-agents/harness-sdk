@@ -281,3 +281,47 @@ class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
         )
         summaries = [b for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Summarized:")]
         assert len(summaries) == 1
+
+
+class TestSummarizationWithToolCalls:
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5291."""
+
+    @pytest.mark.asyncio
+    async def test_summarizes_tool_calls_as_text_in_a_single_model_call(self, mock_agent):
+        tru_calls: list[Messages] = []
+        summary_stream = _make_stream_events("Listed the files")
+
+        def recording_stream(messages, *args, **kwargs):
+            tru_calls.append(messages)
+            return summary_stream(messages, *args, **kwargs)
+
+        mock_agent.model.stream = recording_stream
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=2)
+        tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
+        tool_result = ToolResult(toolUseId="call_1", status="success", content=[{"text": "a.ts b.ts"}])
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="fix the build")]),
+            Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
+            Message(role="user", content=[ContentBlock(toolResult=tool_result)]),
+            Message(role="assistant", content=[ContentBlock(text="done")]),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+        mock_agent.messages = messages
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+        exp_calls = [
+            [
+                Message(
+                    role="user",
+                    content=[
+                        ContentBlock(text="<content>"),
+                        ContentBlock(text="\n---\n[assistant]"),
+                        ContentBlock(text='[tool call: shell] {"command":"ls"}'),
+                        ContentBlock(text="\n---\n[user]"),
+                        ContentBlock(text="a.ts b.ts"),
+                        ContentBlock(text="</content>"),
+                    ],
+                )
+            ]
+        ]
+        assert tru_calls == exp_calls

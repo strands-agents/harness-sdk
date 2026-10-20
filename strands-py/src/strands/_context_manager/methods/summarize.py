@@ -92,11 +92,18 @@ def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[Con
 
 
 def _message_to_content_blocks(message: Message) -> list[ContentBlock]:
-    """Convert a message's content to ContentBlocks for the summarizer, leaving out reasoning."""
+    """Convert a message's content to ContentBlocks for the summarizer.
+
+    Tool calls are rendered as text; reasoning is left out.
+    """
     blocks: list[ContentBlock] = []
     for block in message["content"]:
         if "toolResult" in block:
             blocks.extend(_tool_result_to_content_blocks(block["toolResult"]["content"]))
+        elif "toolUse" in block:
+            tool_use = block["toolUse"]
+            tool_input = json.dumps(tool_use["input"], separators=(",", ":"), ensure_ascii=False)
+            blocks.append(ContentBlock(text=f"[tool call: {tool_use['name']}] {tool_input}"))
         elif "reasoningContent" not in block:
             blocks.append(block)
     return blocks
@@ -152,5 +159,5 @@ async def _call_summarizer(
         return "\n".join(parts).strip() or None, True
 
     except Exception as error:
-        logger.debug("error=<%s> | summarization failed", error)
+        logger.warning("error=<%s> | summarization failed", error)
         return None, False
