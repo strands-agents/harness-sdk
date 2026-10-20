@@ -320,6 +320,20 @@ The OpenAI Responses provider does not currently implement native token counting
 </Tab>
 </Tabs>
 
+### Reasoning Models
+
+Pass `reasoning` in `params` to set the effort for a reasoning model, for example
+<Syntax py='{"reasoning": {"effort": "high"}}' ts="{ reasoning: { effort: 'high' } }" />.
+
+In the default stateless mode, earlier reasoning is not sent back to the model. Reasoning
+blocks in the message history are dropped with a warning, and the request does not ask
+OpenAI for encrypted reasoning content, so in a multi-turn tool loop each model call
+starts without the model's earlier reasoning.
+[Server-side conversation state](#server-side-conversation-state) avoids this: each
+request references the previous response by ID, and OpenAI keeps that response's
+reasoning on the server. Carrying reasoning across turns in stateless mode is tracked in
+[#3389](https://github.com/strands-agents/harness-sdk/issues/3389).
+
 ## References
 
 - [Migrate from OpenAI to Strands](../../migrate/openai.md) — move a hand-written OpenAI loop or an OpenAI Agents SDK app to Strands
