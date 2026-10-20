@@ -1,0 +1,24 @@
+{
+  "name": "bidi-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "npm ci --prefix ../../..",
+    "clean": "rm -rf dist node_modules package-lock.json",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "workspaces": [
+    "../../"
+  ],
+  "dependencies": {
+    "@google/genai": "^2.6.0",
+    "@strands-agents/sdk": "*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vite": "^8.0.0"
+  }
+}

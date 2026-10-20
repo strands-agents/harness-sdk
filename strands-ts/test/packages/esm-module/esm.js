@@ -27,6 +27,7 @@ import { BedrockModel as BedrockFromSubpath } from '@strands-agents/sdk/models/b
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { GoogleModel } from '@strands-agents/sdk/models/google'
+import { GoogleGeminiLiveModel } from '@strands-agents/sdk/bidi/models/google'
 
 import { z } from 'zod'
 
@@ -158,3 +159,9 @@ if (GoalLoopFromSubpath !== GoalLoop) {
   throw new Error('GoalLoop from subpath should match barrel export')
 }
 console.log('✓ GoalLoop subpath export verified')
+
+// Verify the bidi Google subpath resolves (it needs the optional @google/genai peer)
+if (typeof GoogleGeminiLiveModel !== 'function') {
+  throw new Error('GoogleGeminiLiveModel from bidi/models/google is not a constructor')
+}
+console.log('✓ bidi/models/google subpath export verified')

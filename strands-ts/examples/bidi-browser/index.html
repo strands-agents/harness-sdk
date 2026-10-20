@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Strands bidi in the browser</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #1d1d1f; }
+      h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+      p.note { color: #6e6e73; margin-top: 0; }
+      fieldset { border: 1px solid #d2d2d7; border-radius: 8px; margin: 1rem 0; padding: 0.75rem 1rem; }
+      label { display: block; margin: 0.4rem 0; }
+      label span { display: inline-block; width: 9rem; }
+      input, select { font: inherit; padding: 0.25rem 0.4rem; width: 22rem; max-width: 100%; }
+      button { font: inherit; padding: 0.4rem 1rem; margin-right: 0.5rem; cursor: pointer; }
+      [hidden] { display: none !important; }
+      #status { font-weight: 600; }
+      #log { border: 1px solid #d2d2d7; border-radius: 8px; padding: 0.75rem 1rem; min-height: 10rem; }
+      .user { color: #0058b0; }
+      .assistant { color: #1d1d1f; }
+      .tool { color: #8a5a00; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+      .error { color: #c00; }
+    </style>
+  </head>
+  <body>
+    <h1>Strands bidi agent, browser only</h1>
+    <p class="note">
+      Credentials stay in this page's memory and go straight to the provider. For local development only; in production,
+      mint short-lived credentials on a server.
+    </p>
+
+    <fieldset>
+      <legend>Model</legend>
+      <label><span>Provider</span>
+        <select id="provider" data-testid="provider">
+          <option value="nova">Amazon Nova Sonic (Bedrock)</option>
+          <option value="openai">OpenAI Realtime</option>
+          <option value="gemini">Gemini Live</option>
+        </select>
+      </label>
+
+      <div data-provider="nova">
+        <label><span>Region</span><input id="aws-region" value="us-east-1" /></label>
+        <label><span>Access key ID</span><input id="aws-access-key-id" data-testid="aws-access-key-id" autocomplete="off" /></label>
+        <label><span>Secret access key</span><input id="aws-secret-access-key" data-testid="aws-secret-access-key" type="password" autocomplete="off" /></label>
+        <label><span>Session token</span><input id="aws-session-token" data-testid="aws-session-token" type="password" autocomplete="off" placeholder="for temporary credentials" /></label>
+      </div>
+      <div data-provider="openai" hidden>
+        <label><span>API key</span><input id="openai-key" data-testid="openai-key" type="password" autocomplete="off" placeholder="sk-… or an ephemeral ek_… client secret" /></label>
+      </div>
+      <div data-provider="gemini" hidden>
+        <label><span>API key</span><input id="gemini-key" data-testid="gemini-key" type="password" autocomplete="off" /></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Notes storage (BrowserSandbox)</legend>
+      <span id="storage">Private browser storage (OPFS)</span>
+      <button id="pick-folder" type="button">Use a local folder…</button>
+    </fieldset>
+
+    <p>
+      <button id="start" data-testid="start">Start talking</button>
+      <button id="stop" data-testid="stop" disabled>Stop</button>
+      <span id="status" data-testid="status">Idle</span>
+    </p>
+    <p class="note">Try: “What time is it in Tokyo?”, “Roll two dice”, “Save a note called groceries: milk and eggs”, “Use JavaScript to compute 17 factorial”.</p>
+    <div id="log" data-testid="log"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

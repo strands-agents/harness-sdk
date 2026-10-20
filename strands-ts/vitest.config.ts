@@ -5,9 +5,21 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// Fake microphone and autoplay, so browser tests can exercise getUserMedia and AudioContext unattended.
+const CHROMIUM_MEDIA_ARGS = [
+  '--use-fake-ui-for-media-stream',
+  '--use-fake-device-for-media-stream',
+  '--autoplay-policy=no-user-gesture-required',
+]
+
 // Conditionally exclude bash tool from coverage on Windows
 // since tests are skipped on Windows (bash not available)
-const coverageExclude = ['src/**/__tests__/**', 'src/**/__fixtures__/**', 'src/vended-tools/**/__tests__/**', 'src/vended-plugins/**/__tests__/**']
+const coverageExclude = [
+  'src/**/__tests__/**',
+  'src/**/__fixtures__/**',
+  'src/vended-tools/**/__tests__/**',
+  'src/vended-plugins/**/__tests__/**',
+]
 if (process.platform === 'win32') {
   coverageExclude.push('src/vended-tools/bash/**')
 }
@@ -59,7 +71,7 @@ export default defineConfig({
           retry: 2,
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({ launchOptions: { args: CHROMIUM_MEDIA_ARGS } }),
             headless: true,
             screenshotDirectory: 'test/.artifacts/browser-screenshots/',
             instances: [
@@ -108,7 +120,15 @@ export default defineConfig({
           retry: 1,
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({
+              launchOptions: {
+                args: [
+                  ...CHROMIUM_MEDIA_ARGS,
+                  // The fake microphone speaks this question on a loop for the bidi audio integration tests.
+                  `--use-file-for-fake-audio-capture=${path.resolve(__dirname, './test/integ/__resources__/what-is-two-plus-two.wav')}`,
+                ],
+              },
+            }),
             headless: true,
             screenshotDirectory: 'test/.artifacts/browser-screenshots/',
             instances: [

@@ -63,6 +63,8 @@ function sdkRules(options) {
         process: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
         atob: 'readonly',
         btoa: 'readonly',
         crypto: 'readonly',
@@ -101,6 +103,8 @@ function unitTestRules(options) {
         navigator: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
       },
     },
     plugins: {

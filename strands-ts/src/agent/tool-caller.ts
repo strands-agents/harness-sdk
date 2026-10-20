@@ -16,8 +16,20 @@ import type { InvocationState } from '../types/agent.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
 import { ToolStreamEvent } from '../tools/tool.js'
 import type { ToolUse } from '../tools/types.js'
-import type { Agent } from './agent.js'
+import type { LocalAgent } from '../types/agent.js'
 import { ConcurrentInvocationError } from '../errors.js'
+
+/**
+ * The minimal agent surface direct tool calling needs.
+ *
+ * Widened from {@link Agent} so bidirectional agents can reuse the same caller.
+ *
+ * @internal
+ */
+export interface ToolCallerAgent extends LocalAgent {
+  /** Whether the agent is currently mid-invocation. */
+  readonly isInvoking: boolean
+}
 
 /**
  * Options for direct tool call execution.
@@ -105,7 +117,7 @@ export type AppendMessageFn = (message: Message, invocationState?: InvocationSta
  * @internal This class is not intended for direct instantiation by users.
  */
 export class ToolCaller {
-  private readonly _agent: Agent
+  private readonly _agent: ToolCallerAgent
   private readonly _appendMessage: AppendMessageFn
 
   /**
@@ -120,11 +132,11 @@ export class ToolCaller {
    *   Passed in (rather than calling a public agent method) so message mutation stays
    *   encapsulated within the agent.
    */
-  static create(agent: Agent, appendMessage: AppendMessageFn): ToolCallerProxy {
+  static create(agent: ToolCallerAgent, appendMessage: AppendMessageFn): ToolCallerProxy {
     return new ToolCaller(agent, appendMessage) as unknown as ToolCallerProxy
   }
 
-  private constructor(agent: Agent, appendMessage: AppendMessageFn) {
+  private constructor(agent: ToolCallerAgent, appendMessage: AppendMessageFn) {
     this._agent = agent
     this._appendMessage = appendMessage
 

@@ -6,17 +6,29 @@ import { ExecuteToolStage } from '../../middleware/index.js'
 import { deepCopy } from '../../types/json.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 
-import type { Agent } from '../../agent/agent.js'
+import type { InterruptState } from '../../interrupt.js'
 import type { BackgroundTasks } from '../../background-tasks/background-tasks.js'
 import type { ToolUseData } from '../../hooks/events.js'
 import type { ExecuteToolContext, ExecuteToolResult, MiddlewareRegistry } from '../../middleware/index.js'
 import type { Meter } from '../../telemetry/meter.js'
 import type { Tracer } from '../../telemetry/tracer.js'
-import type { AgentStreamEvent, InvocationState } from '../../types/agent.js'
+import type { AgentStreamEvent, InvocationState, LocalAgent } from '../../types/agent.js'
 import type { InterruptParams } from '../../types/interrupt.js'
 import type { JSONValue } from '../../types/json.js'
 import type { Message, ToolResultBlockData, ToolUseBlock } from '../../types/messages.js'
 import type { Tool, ToolContext } from '../tool.js'
+
+/**
+ * The agent surface the tool executor needs: a local agent that also carries interrupt state.
+ *
+ * Widened from `Agent` so `BidiAgent` can drive the same executor.
+ *
+ * @internal
+ */
+export interface ToolExecutorAgent extends LocalAgent {
+  /** Interrupt state updated while a tool call is in flight. */
+  _interruptState: InterruptState
+}
 
 /**
  * Dependencies supplied for one tool-executor invocation.
@@ -25,7 +37,7 @@ import type { Tool, ToolContext } from '../tool.js'
  */
 export interface ToolExecutorOptions {
   /** Agent whose tools are being executed. */
-  readonly agent: Agent
+  readonly agent: ToolExecutorAgent
   /** Registry containing middleware for the agent. */
   readonly middlewareRegistry: MiddlewareRegistry
   /** Tracer used to record tool calls. */
