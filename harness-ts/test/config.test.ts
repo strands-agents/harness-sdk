@@ -63,6 +63,14 @@ describe('HarnessAgentConfig', () => {
     expect(options).not.toHaveProperty('caching')
   })
 
+  it('bridges auxModel as "auto" by default, a provider string, or null to opt out', async () => {
+    const options = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig({ auxModel: 'openai/gpt-5-mini' }))
+    expect(options.auxModel).toBe('openai/gpt-5-mini')
+    expect((await harnessAgentOptionsFromConfig(DEFAULT_HARNESS_AGENT_CONFIG)).auxModel).toBe('auto')
+    expect((await harnessAgentOptionsFromConfig(defineHarnessAgentConfig({ auxModel: null }))).auxModel).toBeNull()
+    expect(() => normalizeHarnessAgentConfig({ auxModel: '' })).toThrow(/auxModel/)
+  })
+
   it('forwards a disabled session as off', async () => {
     const config = defineHarnessAgentConfig({ session: false })
     await expect(harnessAgentOptionsFromConfig(config)).resolves.toMatchObject({ session: false })

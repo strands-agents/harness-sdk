@@ -2,8 +2,8 @@
 
 Fetches the URL, reduces it to text, and asks a small fast model to answer the prompt over that
 content, returning the answer rather than the raw page so large payloads never reach the main
-agent's context. The summarizer runs on the same provider as the main agent (see
-``resolve_web_fetch_model`` in ``models.py``), so credentials always align.
+agent's context. The summarizer defaults to the agent's ``aux_model`` (see ``resolve_aux_model`` in
+``models.py``), so credentials always align.
 
 By default the HTTP request runs as ``curl`` inside the agent's ``sandbox`` (the same seam ``shell``
 and the file tools use), so a sandbox with network isolation or egress rules covers ``web_fetch``
@@ -153,8 +153,9 @@ async def _fetch_text(sandbox: Sandbox, url: str, transport: WebFetchTransport) 
     return await _fetch_direct(url)
 
 
-def make_web_fetch(*, model: Model, transport: WebFetchTransport = "curl") -> Any:
-    """Build a ``web_fetch`` tool whose summarizer answers over the fetched page using ``model``.
+def make_web_fetch(*, model: Model | None = None, transport: WebFetchTransport = "curl") -> Any:
+    """Build a ``web_fetch`` tool whose summarizer answers over the fetched page using ``model``, or
+    the agent's ``aux_model`` when ``None``.
 
     ``transport`` is ``"curl"`` (run inside the agent's sandbox, the default) or ``"direct"`` (from the
     harness process).
@@ -191,7 +192,9 @@ def make_web_fetch(*, model: Model, transport: WebFetchTransport = "curl") -> An
         if not prompt.strip():
             return text
 
-        summarizer = Agent(model=model, system_prompt=_SUMMARIZER_PROMPT, callback_handler=None)
+        summarizer = Agent(
+            model=model or tool_context.agent.aux_model, system_prompt=_SUMMARIZER_PROMPT, callback_handler=None
+        )
         result = await summarizer.invoke_async(
             f"Fetched URL: {resolved_url}\n\nRequest: {prompt}\n\n--- Content ---\n{text}"
         )

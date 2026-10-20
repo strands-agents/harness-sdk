@@ -2,15 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MemoryManager, ModelRouter, type MemoryEntry, type MemoryStore } from '@strands-agents/sdk'
-import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { MemoryManager, type MemoryEntry, type MemoryStore } from '@strands-agents/sdk'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 
 import { createHarness } from '../src/agent.js'
 import { resolveMemory } from '../src/memory.js'
 import { extractionModel, injectionTrigger, storeOf, storesOf } from './memory-internals.js'
-
-const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
 
 function managerOf(agent: Awaited<ReturnType<typeof createHarness>>): MemoryManager | undefined {
   return agent.memoryManager
@@ -32,7 +29,7 @@ afterEach(() => {
 
 describe('resolveMemory', () => {
   it('builds a MemoryManager over a writable FileMemoryStore named "memory"', async () => {
-    const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir() })
+    const manager = await resolveMemory({ dir: makeTempDir() })
     expect(manager).toBeInstanceOf(MemoryManager)
     const store = storeOf(manager)
     expect(store).toBeInstanceOf(FileMemoryStore)
@@ -41,49 +38,33 @@ describe('resolveMemory', () => {
   })
 
   it('exposes search_memory but no add_memory tool (extraction-only)', async () => {
-    const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir() })
+    const manager = await resolveMemory({ dir: makeTempDir() })
     const names = manager.getTools().map((t) => t.name)
     expect(names).toContain('search_memory')
     expect(names).not.toContain('add_memory')
   })
 
-  it('distills facts on the small provider model, not the main model', async () => {
-    const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir() })
-    expect(extractionModel(manager)?.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
-  })
-
-  it('extracts on a ModelRouter default model', async () => {
-    const defaultModel = new BedrockModel({ modelId: 'fast' })
-    const router = new ModelRouter([defaultModel, new BedrockModel({ modelId: 'deep' })])
-    const manager = await resolveMemory({ model: router, dir: makeTempDir() })
-    expect(extractionModel(manager)).toBe(defaultModel)
+  it('pins no extraction model, so extraction follows the agent auxModel', async () => {
+    const manager = await resolveMemory({ dir: makeTempDir() })
+    expect(extractionModel(manager)).toBeUndefined()
   })
 
   it('writes memory files directly under the memory dir, not a nested memory/ path', async () => {
     const dir = makeTempDir()
-    const manager = await resolveMemory({ model: DEFAULT, dir: dir })
+    const manager = await resolveMemory({ dir: dir })
     const store = storeOf(manager)
     await store.add?.('# Stack\nThe user works in TypeScript.')
     expect(existsSync(join(dir, 'stack.md'))).toBe(true)
     expect(readFileSync(join(dir, 'stack.md'), 'utf8')).toContain('TypeScript')
   })
 
-  it('extracts on an explicit web_fetch.model override when one is set', async () => {
-    const manager = await resolveMemory({
-      model: 'bedrock/global.anthropic.claude-opus-4-8',
-      dir: makeTempDir(),
-      webFetch: { model: 'bedrock/us.amazon.nova-lite-v1:0' },
-    })
-    expect(extractionModel(manager)?.getConfig().modelId).toBe('us.amazon.nova-lite-v1:0')
-  })
-
   it('injects memory on every turn, not only on a fresh user ask', async () => {
-    const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir() })
+    const manager = await resolveMemory({ dir: makeTempDir() })
     expect(injectionTrigger(manager)).toBe('everyTurn')
   })
 
   it('builds a recall-only store (searchable, no writes, no extraction) when writable is false', async () => {
-    const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir(), writable: false })
+    const manager = await resolveMemory({ dir: makeTempDir(), writable: false })
     const store = storeOf(manager)
     expect(store).toBeInstanceOf(FileMemoryStore)
     expect(store.writable).toBe(false)
@@ -100,7 +81,7 @@ describe('resolveMemory', () => {
   })
 
   it('falls back to the default file store when stores is an empty array', async () => {
-    const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir(), stores: [] })
+    const manager = await resolveMemory({ dir: makeTempDir(), stores: [] })
     const store = storeOf(manager)
     expect(store).toBeInstanceOf(FileMemoryStore)
     expect(store.name).toBe('memory')

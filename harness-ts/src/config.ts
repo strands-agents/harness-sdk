@@ -30,6 +30,7 @@ import {
   DEFAULT_BUILTIN_PLUGINS,
   DEFAULT_BUILTIN_TOOLS,
   DEFAULT_CONTEXT_MANAGER,
+  DEFAULT_AUX_MODEL,
   DEFAULT_EFFORT,
   DEFAULT_MEMORY_DIR,
   DEFAULT_MODEL,
@@ -273,6 +274,7 @@ export interface HarnessAgentConfig {
   instructions: string
   model: string
   modelModule: HarnessModuleReference | null
+  auxModel: string | (HarnessModuleReference & { kind: 'model' }) | null
   effort: Effort
   tools: readonly HarnessModuleReference[]
   subagents: readonly HarnessModuleReference[]
@@ -300,6 +302,7 @@ export const DEFAULT_HARNESS_AGENT_CONFIG: HarnessAgentConfig = {
   instructions: '',
   model: DEFAULT_MODEL,
   modelModule: null,
+  auxModel: DEFAULT_AUX_MODEL,
   effort: DEFAULT_EFFORT,
   tools: [],
   subagents: [],
@@ -354,18 +357,29 @@ export async function harnessAgentOptionsFromConfig(
 ): Promise<HarnessAgentOptions> {
   const config = normalizeHarnessAgentConfig(input)
   const generation = sourceGeneration(config, baseDir)
-  const [tools, subagents, plugins, sandbox, memoryStores, model, builtinTools, interventions, agentConfigModules] =
-    await Promise.all([
-      loadMany<ToolList[number]>(config.tools, baseDir, generation),
-      loadMany<Agent>(config.subagents, baseDir, generation),
-      loadMany<Plugin>(config.plugins, baseDir, generation),
-      loadOptional<Sandbox | false>(config.sandbox, baseDir, generation),
-      loadMany<MemoryStore>(config.memoryStores, baseDir, generation),
-      loadOptional<Model>(config.modelModule, baseDir, generation),
-      builtinToolsOption(config.builtinTools, baseDir, generation),
-      loadMany<InterventionValue>(config.interventionModules, baseDir, generation),
-      loadReferenceRecord(config.agentConfigModules, baseDir, generation),
-    ])
+  const [
+    tools,
+    subagents,
+    plugins,
+    sandbox,
+    memoryStores,
+    model,
+    auxModel,
+    builtinTools,
+    interventions,
+    agentConfigModules,
+  ] = await Promise.all([
+    loadMany<ToolList[number]>(config.tools, baseDir, generation),
+    loadMany<Agent>(config.subagents, baseDir, generation),
+    loadMany<Plugin>(config.plugins, baseDir, generation),
+    loadOptional<Sandbox | false>(config.sandbox, baseDir, generation),
+    loadMany<MemoryStore>(config.memoryStores, baseDir, generation),
+    loadOptional<Model>(config.modelModule, baseDir, generation),
+    config.auxModel === null ? null : loadModelSetting(config.auxModel, baseDir, generation),
+    builtinToolsOption(config.builtinTools, baseDir, generation),
+    loadMany<InterventionValue>(config.interventionModules, baseDir, generation),
+    loadReferenceRecord(config.agentConfigModules, baseDir, generation),
+  ])
   return {
     ...config.agentConfig,
     ...agentConfigModules,
@@ -373,6 +387,7 @@ export async function harnessAgentOptionsFromConfig(
     ...(config.description ? { description: config.description } : {}),
     ...(config.instructions ? { instructions: config.instructions } : {}),
     model: model ?? config.model,
+    ...(auxModel !== undefined && { auxModel }),
     effort: config.effort,
     // Specialist agents declared as `subagents` module refs are wired the same way as any tool: each
     // is exposed via `Agent.asTool()` and appended to `tools` (the harness has no separate subagents param).
@@ -404,6 +419,7 @@ function sourceGeneration(config: HarnessAgentConfig, baseDir: string): string {
     ...config.interventionModules,
     ...Object.values(config.agentConfigModules),
     ...(config.modelModule ? [config.modelModule] : []),
+    ...(typeof config.auxModel === 'object' && config.auxModel !== null ? [config.auxModel] : []),
     ...(config.sandbox ? [config.sandbox] : []),
   ]
   const webFetch = Array.isArray(config.builtinTools)
@@ -472,11 +488,19 @@ async function builtinToolsOption(
     return { ...mapping } as BuiltinToolsConfig
   }
   const { model: modelSetting, ...rest } = webFetch
-  const model =
-    modelSetting === undefined || typeof modelSetting === 'string'
-      ? modelSetting
-      : await loadReference<Model>(modelSetting, baseDir, generation)
+  const model = await loadModelSetting(modelSetting, baseDir, generation)
   return { ...mapping, web_fetch: model === undefined ? rest : { ...rest, model } } as BuiltinToolsConfig
+}
+
+/** A model setting as written in config: a `provider/name` string passes through, a module reference is loaded. */
+async function loadModelSetting(
+  setting: string | HarnessModuleReference | undefined,
+  baseDir: string,
+  generation: string
+): Promise<Model | string | undefined> {
+  return setting === undefined || typeof setting === 'string'
+    ? setting
+    : await loadReference<Model>(setting, baseDir, generation)
 }
 
 // Directory options in a portable config resolve against the project root (`baseDir`) even when
@@ -723,6 +747,12 @@ const HarnessAgentConfigSchema = z.object({
   instructions: z.string({ error: 'must be a string.' }).default(DEFAULT_HARNESS_AGENT_CONFIG.instructions),
   model: NonEmptyString.default(DEFAULT_HARNESS_AGENT_CONFIG.model),
   modelModule: moduleReferenceSchema('model').nullable().default(null),
+  auxModel: z
+    .union([NonEmptyString, moduleReferenceSchema('model')], {
+      error: 'must be "auto", a "provider/name" string, a model module reference, or null.',
+    })
+    .nullable()
+    .default(DEFAULT_AUX_MODEL),
   effort: z
     .enum(EFFORT_LEVELS, { error: `must be one of: ${EFFORT_LEVELS.join(', ')}.` })
     .default(DEFAULT_HARNESS_AGENT_CONFIG.effort),

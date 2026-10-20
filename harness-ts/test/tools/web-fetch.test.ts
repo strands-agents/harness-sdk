@@ -63,8 +63,8 @@ class FakeSandbox {
   }
 }
 
-function invoke(tool: Tool, input: unknown, sandbox: unknown = new FakeSandbox()): Promise<string> {
-  const context = { agent: { sandbox } } as unknown as ToolContext
+function invoke(tool: Tool, input: unknown, sandbox: unknown = new FakeSandbox(), auxModel?: unknown): Promise<string> {
+  const context = { agent: { sandbox, auxModel } } as unknown as ToolContext
   return (tool as unknown as { invoke: (i: unknown, c: ToolContext) => Promise<string> }).invoke(input, context)
 }
 
@@ -83,6 +83,8 @@ describe('web_fetch', () => {
 
     expect(answer).toBe('summary answer')
     expect(constructed[0]!.model).toBe(model)
+    await invoke(makeWebFetch(), { url: 'https://example.com', prompt: '?' }, new FakeSandbox(), 'aux')
+    expect(constructed[1]!.model).toBe('aux')
     const prompt = invokeCalls[0]!
     expect(prompt).toContain('What does it say?')
     expect(prompt).toContain('Fetched URL: https://example.com/final')

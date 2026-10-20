@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from strands.agent.state import AgentState
-from strands.memory import MemoryEntry, MemoryManager, MemoryStore
-from strands.models import BedrockModel, Model, ModelRouter
+from strands.memory import MemoryEntry, MemoryManager, MemoryStore, ModelExtractor
+from strands.models import Model
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 
 from strands_harness import agent as agent_module
@@ -22,8 +22,6 @@ from strands_harness import create_harness, resolve_memory
 from strands_harness.memory import _ReadOnlyStore
 from strands_harness.options import _normalize_builtin_tools
 from strands_harness.tools.subagent import build_default_subagent
-
-DEFAULT_MODEL = "bedrock/global.anthropic.claude-opus-4-8"
 
 _MISSING = object()
 
@@ -52,10 +50,6 @@ def _extraction_model(manager: MemoryManager) -> Model | None:
         return None
     extractor = bindings[0].config.extractor
     return getattr(extractor, "_model", None) if extractor is not None else None
-
-
-def _model_id(model: Model | None) -> str | None:
-    return model.config["model_id"] if model is not None else None
 
 
 def _tool_names(manager: MemoryManager) -> list[str]:
@@ -92,7 +86,7 @@ class _StubStore:
 
 class TestResolveMemory:
     def test_builds_writable_file_store_named_memory(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path))
+        manager = resolve_memory(memory_dir=str(tmp_path))
         assert isinstance(manager, MemoryManager)
         store = _store_of(manager)
         assert isinstance(store, FileMemoryStore)
@@ -100,42 +94,30 @@ class TestResolveMemory:
         assert store.writable is True
 
     def test_exposes_search_but_no_add_tool(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path))
+        manager = resolve_memory(memory_dir=str(tmp_path))
         names = _tool_names(manager)
         assert "search_memory" in names
         assert "add_memory" not in names
 
-    def test_distills_on_the_small_provider_model(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path))
-        assert _model_id(_extraction_model(manager)) == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-
-    def test_extracts_on_a_router_default_model(self, tmp_path):
-        default = BedrockModel(model_id="fast")
-        router = ModelRouter([default, BedrockModel(model_id="deep")])
-        manager = resolve_memory(model=router, memory_dir=str(tmp_path))
-        assert _extraction_model(manager) is default
+    def test_extractor_pins_no_model_so_it_follows_the_agents_aux_model(self, tmp_path):
+        manager = resolve_memory(memory_dir=str(tmp_path))
+        bindings = manager._extraction_stores
+        assert isinstance(bindings[0].config.extractor, ModelExtractor)
+        assert _extraction_model(manager) is None
 
     async def test_writes_files_flat_under_the_memory_dir(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path))
+        manager = resolve_memory(memory_dir=str(tmp_path))
         await _store_of(manager).add("# Stack\nThe user works in Python.")
         stack = tmp_path / "stack.md"
         assert stack.exists()
         assert "Python" in stack.read_text()
 
-    def test_extracts_on_an_explicit_web_fetch_model_override(self, tmp_path):
-        manager = resolve_memory(
-            model=DEFAULT_MODEL,
-            memory_dir=str(tmp_path),
-            web_fetch_model="bedrock/us.amazon.nova-lite-v1:0",
-        )
-        assert _model_id(_extraction_model(manager)) == "us.amazon.nova-lite-v1:0"
-
     def test_injects_on_every_turn(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path))
+        manager = resolve_memory(memory_dir=str(tmp_path))
         assert _injection_trigger(manager) == "everyTurn"
 
     def test_recall_only_store_when_not_writable(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path), writable=False)
+        manager = resolve_memory(memory_dir=str(tmp_path), writable=False)
         store = _store_of(manager)
         assert isinstance(store, FileMemoryStore)
         assert store.writable is False
@@ -150,7 +132,7 @@ class TestResolveMemory:
         assert _stores_of(manager) == [first, second]
 
     def test_empty_stores_list_falls_back_to_default(self, tmp_path):
-        manager = resolve_memory(model=DEFAULT_MODEL, memory_dir=str(tmp_path), stores=[])
+        manager = resolve_memory(memory_dir=str(tmp_path), stores=[])
         store = _store_of(manager)
         assert isinstance(store, FileMemoryStore)
         assert store.name == "memory"

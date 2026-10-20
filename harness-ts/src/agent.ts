@@ -26,7 +26,6 @@ import { AgentSkills, type SkillSource } from '@strands-agents/sdk/vended-plugin
 import { EnvironmentContext, Todos } from './plugins/index.js'
 import {
   buildBuiltinTools,
-  builtinToolConfig,
   enabledBuiltinTools,
   resolveBuiltinTools,
   selectBuiltinTools,
@@ -38,6 +37,7 @@ import {
   DEFAULT_BUILTIN_PLUGINS,
   DEFAULT_CACHING,
   DEFAULT_CONTEXT_MANAGER,
+  DEFAULT_AUX_MODEL,
   DEFAULT_EFFORT,
   DEFAULT_MEMORY,
   DEFAULT_MODEL,
@@ -48,7 +48,7 @@ import {
 } from './defaults.js'
 import { type InterventionsOption, resolveInterventions } from './interventions.js'
 import { resolveMemory } from './memory.js'
-import { resolveModel } from './models.js'
+import { resolveAuxModel, resolveModel } from './models.js'
 import { buildSystemPrompt } from './prompt.js'
 import { setupTelemetry } from './telemetry.js'
 import type { BuiltinPluginName, BuiltinToolName } from './config.js'
@@ -74,7 +74,7 @@ const ALWAYS_BACKGROUND_TOOL_NAMES = new Set(['subagent'])
  */
 export interface HarnessAgentOptions extends Omit<
   AgentConfig,
-  'model' | 'tools' | 'plugins' | 'interventions' | 'backgroundTasks' | 'contextManager'
+  'model' | 'auxModel' | 'tools' | 'plugins' | 'interventions' | 'backgroundTasks' | 'contextManager'
 > {
   /**
    * A `Model` or `ModelRouter` instance, a `"provider/name"` string (e.g.
@@ -82,6 +82,15 @@ export interface HarnessAgentOptions extends Omit<
    * (Bedrock Opus 5).
    */
   model?: Model | ModelRouter | string
+  /**
+   * The model for the SDK's auxiliary side calls (`Agent({ auxModel })`: context summarization, memory
+   * extraction, the `web_fetch` summarizer, ...). `'auto'` (the default) picks the small fast model of
+   * the main model's provider so credentials align (Bedrock follows the main model's family; a `Model`
+   * instance as `model` is reused as-is); reasoning is off and caching never applied. `null` sets no
+   * auxiliary model, so side calls follow `model` like a plain `Agent`. Otherwise a `Model` or
+   * `"provider/name"` string; a `ModelRouter` throws, as on `Agent`.
+   */
+  auxModel?: Model | string | 'auto' | null
   /**
    * Reasoning effort applied to the resolved model, mapped to each provider's request fields.
    * `'auto'` (the default) uses the provider's recommended level, `'off'` turns reasoning off
@@ -347,6 +356,7 @@ function resolveBackgroundTasks(
 export async function createHarness(options: HarnessAgentOptions = {}): Promise<Agent> {
   const {
     model,
+    auxModel = DEFAULT_AUX_MODEL,
     effort = DEFAULT_EFFORT,
     instructions,
     tools,
@@ -369,7 +379,6 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   // A `subagent` child inherits this record, so it only ever sees the normalized shape.
   const resolvedBuiltins: ResolvedBuiltinTools = resolveBuiltinTools(builtinTools)
   const webSearch = webSearchMode(resolvedBuiltins.web_search, webSearchExplicit(builtinTools), model)
-  const webFetch = builtinToolConfig(resolvedBuiltins, 'web_fetch')
 
   // Not passing `caching` uses the default (on) and warns on unsupported providers; passing any
   // value is an explicit request, so `'auto'`/`true` raises there instead (a `Model`/`ModelRouter`
@@ -384,6 +393,9 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     cachingOn,
     cachingExplicit
   )
+  // Only strings are the harness's to interpret; anything else is the SDK's to validate.
+  const resolvedAuxModel =
+    typeof auxModel === 'string' ? await resolveAuxModel(model, auxModel === 'auto' ? undefined : auxModel) : auxModel
 
   if (agentConfig.systemPrompt === undefined) {
     agentConfig.systemPrompt = buildSystemPrompt(instructions)
@@ -417,6 +429,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     tools: consumer,
     builtinTools: forwardedBuiltins,
     ...(model !== undefined && { model }),
+    ...(auxModel !== undefined && { auxModel }),
     ...(caching !== undefined && { caching }),
     ...(builtinPlugins !== undefined && { builtinPlugins }),
     ...(consumerPluginsOption !== undefined && { plugins: consumerPluginsOption }),
@@ -476,9 +489,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       const memoryConfig: MemoryConfig = memory === true ? {} : memory
       memoryManager = await resolveMemory({
         stores: memoryConfig.stores,
-        model,
         dir: memoryConfig.dir,
-        webFetch,
       })
     }
   }
@@ -511,6 +522,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   const agent = new Agent({
     ...agentConfig,
     model: resolvedModel,
+    ...(resolvedAuxModel != null && { auxModel: resolvedAuxModel }),
     tools: agentTools,
     plugins,
     backgroundTasks: resolvedBackgroundTasks,

@@ -17,7 +17,7 @@ import {
 import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
-import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
+import { resolveAuxModel, supportsMedia, supportsWebSearch } from './models.js'
 import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
@@ -145,9 +145,9 @@ export function webSearchMode(
 /** The `createHarness` factory, injected to avoid a value import from `agent.ts`. */
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
-// `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
-// it only when the setting is `'exa'`.
+// `web_fetch` summarizes on its own `model` override or else the agent's `auxModel`, and `subagent`
+// takes the whole parent config to rebuild a child. `web_search` here is the Exa tool;
+// `createHarness` selects it only when the setting is `'exa'`.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
@@ -166,7 +166,7 @@ export async function buildBuiltinTools(
     write,
     edit,
     web_fetch: makeWebFetch({
-      model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
+      model: webFetch?.model === undefined ? undefined : await resolveAuxModel(undefined, webFetch.model),
       transport: webFetch?.transport,
     }),
     web_search: exaWebSearch,
@@ -256,9 +256,7 @@ export function buildDefaultSubagent(
       const memoryConfig = parentMemory === true ? {} : parentMemory
       childConfig.memoryManager = await resolveMemory({
         stores: memoryConfig.stores,
-        model: parentConfig.model,
         dir: memoryConfig.dir,
-        webFetch: builtinToolConfig(parentBuiltins, 'web_fetch'),
         writable: false,
       })
     }
