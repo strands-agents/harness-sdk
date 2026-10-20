@@ -1,0 +1,372 @@
+---
+title: A2A Server Configuration
+description: 'Reference for configuring a Strands A2A server: constructor options, the agent card, custom request-handler components, authentication, and path-based mounting.'
+sidebar:
+  label: "Server configuration"
+tags: [multi-agent]
+sourceLinks:
+  - path: strands-py/src/strands/multiagent/a2a/server.py
+  - path: strands-py/src/strands/multiagent/a2a/executor.py
+  - path: strands-ts/src/a2a/server.ts
+  - path: strands-ts/src/a2a/express-server.ts
+  - path: strands-ts/src/a2a/executor.ts
+redirectFrom:
+  - docs/user-guide/sdk/multi-agent/a2a-server-configuration
+---
+
+After you create an A2A server (see [Creating an A2A Server](index.md#creating-an-a2a-server)), use this page as the reference for tuning it.
+
+## Constructor Options
+
+<Tabs>
+<Tab label="Python">
+
+[`A2AServer`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer) is imported from `strands.multiagent.a2a`. The `agent` parameter is positional; every other parameter is keyword-only.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `agent_factory` | `Callable[[str], Agent]` | `None` | Takes a `context_id` and returns a dedicated agent for that context. Recommended. |
+| `agent` | `Agent` | `None` | A single agent reused across every context. Deprecated; emits a `DeprecationWarning`. |
+| `max_contexts` | `int` | `1000` | Maximum number of contexts retained at once. The least recently used context is evicted beyond this. Must be at least 1. |
+| `host` | `str` | `"127.0.0.1"` | Address [`serve()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.serve) binds to. |
+| `port` | `int` | `9000` | Port [`serve()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.serve) binds to. |
+| `http_url` | `str` | `None` | Public URL advertised in the agent card. A path component enables [path-based mounting](#path-based-mounting). |
+| `serve_at_root` | `bool` | `False` | Serves at `/` even when `http_url` contains a path. |
+| `version` | `str` | `"0.0.1"` | Agent version advertised in the agent card. |
+| `skills` | `list[AgentSkill]` | `None` | Skills advertised in the agent card. When `None`, one skill is generated per agent tool. |
+| `task_store` | `TaskStore` | `InMemoryTaskStore()` | Persists A2A task state. |
+| `queue_manager` | `QueueManager` | `None` | Manages the event queues that stream task updates. |
+| `push_config_store` | `PushNotificationConfigStore` | `None` | Stores push notification configurations. |
+| `push_sender` | `PushNotificationSender` | `None` | Sends push notifications. |
+| `enable_a2a_compliant_streaming` | `bool` | `False` | Streams responses as A2A artifact updates. When `False`, the server uses legacy status-update streaming and emits a `UserWarning`. This becomes the default in the next major version. |
+
+Provide exactly one of `agent_factory` or `agent`; otherwise the constructor raises `ValueError`. It also raises `ValueError` when `max_contexts` is less than 1, or when a single `agent` has a `session_manager`.
+
+</Tab>
+<Tab label="TypeScript">
+
+The TypeScript SDK provides two server classes:
+
+- `A2AServer` (from `@strands-agents/sdk/a2a`) builds the agent card and request handler. Use it to integrate with an HTTP framework other than Express.
+- `A2AExpressServer` (from `@strands-agents/sdk/a2a/express`) extends `A2AServer` with an Express transport through `serve()` and `createMiddleware()`.
+
+`A2AExpressServer` accepts the following config object. `A2AServer` accepts the same object without `host`, `port`, and `userBuilder`. With no address to derive it from, its `httpUrl` defaults to `''`, so set it explicitly.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `name` | `string` | Required | Agent name advertised in the agent card. |
+| `agentFactory` | `(contextId: string) => InvokableAgent` | `undefined` | Takes a `contextId` and returns a dedicated agent for that context. Recommended. |
+| `agent` | `InvokableAgent` | `undefined` | A single agent reused across every context. Deprecated. |
+| `maxContexts` | `number` | `1000` | Maximum number of contexts retained at once. The least recently used context is evicted beyond this. Must be at least 1. |
+| `description` | `string` | The agent's `description`, else `''` | Agent description advertised in the agent card. |
+| `host` | `string` | `'127.0.0.1'` | Address `serve()` binds to. |
+| `port` | `number` | `9000` | Port `serve()` listens on. Use `0` for an OS-assigned port. |
+| `httpUrl` | `string` | `http://{host}:{port}` (`''` on `A2AServer`) | Public URL advertised in the agent card. |
+| `version` | `string` | `'0.0.1'` | Agent version advertised in the agent card. |
+| `skills` | `AgentSkill[]` | `[]` | Skills advertised in the agent card. |
+| `taskStore` | `TaskStore` | `InMemoryTaskStore` | Persists A2A task state. |
+| `userBuilder` | `UserBuilder` | `UserBuilder.noAuthentication` | Resolves the caller identity for each request. See [Authentication](#authentication). |
+
+Provide exactly one of `agentFactory` or `agent`; otherwise the constructor throws. It also throws when `maxContexts` is less than 1, or when a single `agent` has a `sessionManager`.
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration_imports.ts:server_config_imports"
+
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration.ts:server_config"
+```
+
+</Tab>
+</Tabs>
+
+## Agent Card
+
+The server builds the [agent card](index.md#key-concepts) that clients use to discover it. When you pass an agent factory, the server calls it once at construction with the placeholder context ID `__agent_card__` to read card metadata. That agent never handles requests, so keep the factory free of expensive side effects.
+
+<Tabs>
+<Tab label="Python">
+
+The card `name` and `description` come from the agent. Both are required: building the app raises `ValueError` when either is empty.
+
+After construction, override the advertised URL with [`agent_card_url`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.agent_card_url) and the advertised skills with [`agent_skills`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.agent_skills). The card is built when [`serve()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.serve), [`to_starlette_app()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.to_starlette_app), or [`to_fastapi_app()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.to_fastapi_app) runs, so set both before that call.
+
+```python
+from a2a.types import AgentSkill
+from strands import Agent
+from strands.multiagent.a2a import A2AServer
+
+
+def create_agent(context_id: str) -> Agent:
+    return Agent(
+        name="Calculator Agent",
+        description="Evaluates arithmetic expressions",
+        callback_handler=None,
+    )
+
+
+a2a_server = A2AServer(
+    agent_factory=create_agent,
+    http_url="https://agents.example.com/calculator",
+    enable_a2a_compliant_streaming=True,
+)
+
+# http_url is advertised with a trailing slash; advertise the bare URL instead
+a2a_server.agent_card_url = "https://agents.example.com/calculator"
+a2a_server.agent_skills = [
+    AgentSkill(
+        id="arithmetic",
+        name="Arithmetic",
+        description="Adds, subtracts, multiplies, and divides",
+        tags=["math"],
+    )
+]
+
+a2a_server.serve()
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+The card `name` comes from the config. The card `description` falls back to the agent's `description` when the config omits it. Read the built card from `server.agentCard`.
+
+`serve()` sets the card URL to the bound address, `http://{host}:{port}`, which replaces `httpUrl`. To advertise `httpUrl`, mount `createMiddleware()` in your own Express app instead, as shown in [Embedding in an Existing App](#embedding-in-an-existing-app).
+
+</Tab>
+</Tabs>
+
+## Serve Options
+
+<Tabs>
+<Tab label="Python">
+
+[`serve()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.serve) starts uvicorn and blocks until shutdown.
+
+```python
+a2a_server.serve(app_type="fastapi", host="0.0.0.0", port=8080, log_level="warning")
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `app_type` | `"starlette"` | Application type: `"starlette"` or `"fastapi"`. |
+| `host` | Constructor `host` | Overrides the bind address. |
+| `port` | Constructor `port` | Overrides the bind port. |
+| `**kwargs` | None | Forwarded to `uvicorn.run()`. |
+
+Overriding `host` or `port` also updates the advertised URL, unless `http_url` was set. [`serve()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.serve) logs startup errors instead of raising them.
+
+</Tab>
+<Tab label="TypeScript">
+
+`serve()` resolves once the server is listening. Pass an `AbortSignal` to stop it. After `serve()` resolves, `server.port` returns the bound port, which is useful with `port: 0`.
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration_imports.ts:server_config_imports"
+
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration.ts:abort_signal"
+```
+
+</Tab>
+</Tabs>
+
+## Advanced Server Customization
+
+Use these when the `serve()` defaults do not fit your deployment.
+
+### Embedding in an Existing App
+
+Build the server into your own application to add routes, middleware, or lifecycle hooks.
+
+<Tabs>
+<Tab label="Python">
+
+[`to_fastapi_app()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.to_fastapi_app) and [`to_starlette_app()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.to_starlette_app) return the application without starting it. `app_kwargs` is forwarded to the FastAPI or Starlette constructor.
+
+```python
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from strands import Agent
+from strands.multiagent.a2a import A2AServer
+
+
+def create_agent(context_id: str) -> Agent:
+    return Agent(
+        name="Helper Agent",
+        description="Answers general questions",
+        callback_handler=None,
+    )
+
+
+a2a_server = A2AServer(agent_factory=create_agent, enable_a2a_compliant_streaming=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Open shared resources before yield and release them after
+    yield
+
+
+app = a2a_server.to_fastapi_app(app_kwargs={"lifespan": lifespan})
+app.add_middleware(CORSMiddleware, allow_origins=["https://console.example.com"])
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+uvicorn.run(app, host="127.0.0.1", port=9000)
+```
+
+When `http_url` contains a path, both methods return a parent app with the A2A app mounted at that path. `app_kwargs` applies to the mounted A2A app, not to the parent.
+
+</Tab>
+<Tab label="TypeScript">
+
+`createMiddleware()` returns an Express `Router` that serves `GET /.well-known/agent-card.json` and JSON-RPC requests at `POST /`.
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration_imports.ts:express_middleware_imports"
+
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration.ts:express_middleware"
+```
+
+</Tab>
+</Tabs>
+
+### Path-Based Mounting
+
+Behind a load balancer or reverse proxy, an agent often lives under a path prefix such as `/calculator`.
+
+<Tabs>
+<Tab label="Python">
+
+When `http_url` contains a path, the server mounts the A2A app at that path and advertises the full URL in the agent card.
+
+```python
+from strands import Agent
+from strands.multiagent.a2a import A2AServer
+
+
+def create_agent(context_id: str) -> Agent:
+    return Agent(
+        name="Calculator Agent",
+        description="Evaluates arithmetic expressions",
+        callback_handler=None,
+    )
+
+
+# Serves at /calculator/ and advertises https://my-alb.example.com/calculator/
+a2a_server = A2AServer(
+    agent_factory=create_agent,
+    http_url="https://my-alb.example.com/calculator",
+    enable_a2a_compliant_streaming=True,
+)
+
+# For a load balancer that strips the prefix, serve at / and keep the advertised URL
+root_server = A2AServer(
+    agent_factory=create_agent,
+    http_url="https://my-alb.example.com/calculator",
+    serve_at_root=True,
+    enable_a2a_compliant_streaming=True,
+)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+Set `httpUrl` to the public URL, then mount `createMiddleware()` at the matching path. The Express app serves the agent card at `/calculator/.well-known/agent-card.json`.
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration_imports.ts:express_middleware_imports"
+
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration.ts:path_mounting"
+```
+
+</Tab>
+</Tabs>
+
+### Request Handler Components
+
+Every A2A server uses an in-memory task store by default, so task state is lost on restart. Replace it to persist tasks across restarts or share them across replicas.
+
+<Tabs>
+<Tab label="Python">
+
+[`A2AServer`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer) forwards `task_store`, `queue_manager`, `push_config_store`, and `push_sender` to the A2A SDK `DefaultRequestHandler`. Pass any implementation of the matching interface:
+
+| Parameter | Interface |
+|-----------|-----------|
+| `task_store` | `a2a.server.tasks.TaskStore` |
+| `queue_manager` | `a2a.server.events.QueueManager` |
+| `push_config_store` | `a2a.server.tasks.PushNotificationConfigStore` |
+| `push_sender` | `a2a.server.tasks.PushNotificationSender` |
+
+The A2A SDK ships implementations of each. The `strands-agents[a2a]` extra installs the SQL dependencies `DatabaseTaskStore` needs.
+
+```python
+import httpx
+from a2a.server.events import InMemoryQueueManager
+from a2a.server.tasks import (
+    BasePushNotificationSender,
+    DatabaseTaskStore,
+    InMemoryPushNotificationConfigStore,
+)
+from sqlalchemy.ext.asyncio import create_async_engine
+from strands import Agent
+from strands.multiagent.a2a import A2AServer
+
+
+def create_agent(context_id: str) -> Agent:
+    return Agent(
+        name="Helper Agent",
+        description="Answers general questions",
+        callback_handler=None,
+    )
+
+
+push_config_store = InMemoryPushNotificationConfigStore()
+
+a2a_server = A2AServer(
+    agent_factory=create_agent,
+    task_store=DatabaseTaskStore(create_async_engine("sqlite+aiosqlite:///tasks.db")),
+    queue_manager=InMemoryQueueManager(),
+    push_config_store=push_config_store,
+    push_sender=BasePushNotificationSender(
+        httpx.AsyncClient(), config_store=push_config_store
+    ),
+    enable_a2a_compliant_streaming=True,
+)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+Pass any implementation of the `TaskStore` interface from `@a2a-js/sdk/server` as `taskStore`. The server forwards it to the A2A SDK `DefaultRequestHandler`.
+
+</Tab>
+</Tabs>
+
+### Authentication
+
+The server does not authenticate callers by default. Conversations are keyed on the client-supplied context ID, which is not an authentication boundary: a caller who knows another caller's context ID can attach to that conversation. Enforce authenticated identity in front of the server for multi-tenant deployments.
+
+<Tabs>
+<Tab label="Python">
+
+Add authentication middleware to the app returned by [`to_fastapi_app()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.to_fastapi_app) or [`to_starlette_app()`](@api/python/strands.multiagent.a2a.server#strands.multiagent.a2a.server.A2AServer.to_starlette_app), or enforce it at a gateway. See [Embedding in an Existing App](#embedding-in-an-existing-app).
+
+</Tab>
+<Tab label="TypeScript">
+
+Pass a `userBuilder` that resolves the caller from the Express request. The resolved user is available to hooks and tools as `invocationState.a2aRequestContext.context.user`.
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration_imports.ts:user_builder_imports"
+
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent/server-configuration.ts:user_builder"
+```
+
+</Tab>
+</Tabs>

@@ -420,8 +420,11 @@ sidebar:
               - docs/user-guide/sdk/sandbox/custom-sandbox
           - label: Multi-agent
             items:
-              - docs/user-guide/sdk/multi-agent/agent-to-agent
-              - docs/user-guide/sdk/multi-agent/a2a-server-configuration
+              - label: Agent2Agent (A2A)
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/multi-agent/agent-to-agent
+                  - docs/user-guide/sdk/multi-agent/agent-to-agent/server-configuration
               - docs/user-guide/sdk/multi-agent/agents-as-tools
               - docs/user-guide/sdk/multi-agent/swarm
               - docs/user-guide/sdk/multi-agent/graph

@@ -17,6 +17,17 @@ async function basicUsageExample() {
   // --8<-- [end:basic_usage]
 }
 
+async function fetchAgentCardExample() {
+  // --8<-- [start:fetch_agent_card]
+  const a2aAgent = new A2AAgent({ url: 'http://localhost:9000' })
+
+  const card = await a2aAgent.getAgentCard()
+  console.log(`Agent: ${card.name}`)
+  console.log(`Description: ${card.description}`)
+  console.log(`Skills: ${card.skills.map((skill) => skill.name).join(', ')}`)
+  // --8<-- [end:fetch_agent_card]
+}
+
 async function streamingExample() {
   // --8<-- [start:streaming]
   const remoteAgent = new A2AAgent({ url: 'http://localhost:9000' })
@@ -101,6 +112,7 @@ async function factoryServerExample() {
 }
 
 void basicUsageExample()
+void fetchAgentCardExample()
 void streamingExample()
 void asToolExample()
 void basicServerExample()
