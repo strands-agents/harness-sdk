@@ -3705,28 +3705,10 @@ class TestResumeInFlightSibling:
 
 
 class TestResumeDispatchedSibling:
-    """Verify a fan-in node is not marked ready while a dispatched sibling has not yet started.
-
-    A node that was dispatched (``asyncio.create_task``) but crashed before its generator body set
-    ``Status.EXECUTING`` is left ``DISPATCHED`` rather than reverting to ``PENDING``. Without the
-    DISPATCHED status such a node would be PENDING and — when it has no completed ancestor (e.g.
-    two concurrent entry points feeding one join) — ``_compute_pending_sources`` would not seed it,
-    so it would be treated as a bypassed dead branch: its edge into the fan-in would be dropped and
-    the fan-in marked ready off the already-completed sibling alone, double-executing it on resume.
-    Seeding DISPATCHED as in-flight keeps the fan-in not-ready until the dispatched sibling runs.
-    """
+    """Verify a fan-in node is not marked ready while a dispatched sibling has not yet started."""
 
     def test_dispatched_sibling_excluded_from_resume_frontier(self):
-        """join is excluded and right included when right is dispatched but not yet executing.
-
-        Focused unit test that injects the DISPATCHED state directly
-        (``right.execution_status = DISPATCHED``) rather than driving the real dispatch path;
-        it pins ``_compute_ready_nodes_for_resume`` for the DISPATCHED window. The companion
-        ``test_resume_runs_fan_in_once_for_dispatched_sibling`` exercises the real dispatch
-        path end-to-end. On master (no DISPATCHED enum) this raises ``AttributeError`` on
-        ``Status.DISPATCHED`` — a valid red signal, distinct from the assertion failure of
-        the end-to-end test.
-        """
+        """join is excluded and right included when right is dispatched but not yet executing."""
         builder = GraphBuilder()
         builder.add_node(create_mock_agent("left"), "left")
         builder.add_node(create_mock_agent("right"), "right")
@@ -3762,20 +3744,7 @@ class TestResumeDispatchedSibling:
 
     @pytest.mark.asyncio
     async def test_resume_runs_fan_in_once_for_dispatched_sibling(self):
-        """A restore from a dispatched-but-not-started snapshot runs the fan-in exactly once.
-
-        Reproduces the real dispatch path (no state injection): left and right are concurrent
-        entry points feeding join. The production ``_execute_nodes_parallel`` path sets right to
-        DISPATCHED and schedules its task; a thin wrapper holds right in that window — before
-        ``_execute_node`` flips it to EXECUTING — so the snapshot captured from left's
-        ``AfterNodeCallEvent`` sees right genuinely DISPATCHED. The snapshot is resumed into a
-        fresh graph; join must run exactly once with both parents' outputs present.
-
-        On master (no DISPATCHED status) right stays PENDING, so it is treated as a bypassed
-        dead branch: join is marked ready off left alone and lands in
-        ``next_nodes_to_execute``, which double-executes it on resume — a real assertion
-        failure, not an AttributeError.
-        """
+        """A restore from a dispatched-but-not-started snapshot runs the fan-in exactly once."""
         release_right = asyncio.Event()
 
         agent_left = create_mock_agent("left", "left done")
@@ -3795,10 +3764,7 @@ class TestResumeDispatchedSibling:
         real_stream_node_to_queue = graph._stream_node_to_queue
 
         async def blocking_right_dispatch(node, event_queue, invocation_state):
-            # Hold right in the DISPATCHED window: its task has been created (DISPATCHED set by
-            # _execute_nodes_parallel) but _execute_node has not run yet, so EXECUTING is never
-            # set until release. This widens the one-tick create_task→_execute_node gap into a
-            # deterministic capture point reached by left's AfterNodeCallEvent.
+            # Hold right in the DISPATCHED window until left's AfterNodeCallEvent has captured the state.
             if node.node_id == "right":
                 await release_right.wait()
             await real_stream_node_to_queue(node, event_queue, invocation_state)

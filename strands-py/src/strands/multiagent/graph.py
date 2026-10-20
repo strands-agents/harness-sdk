@@ -836,10 +836,7 @@ class Graph(MultiAgentBase):
 
         event_queue: asyncio.Queue[Any | None | Exception] = asyncio.Queue()
 
-        # Mark each node as DISPATCHED before scheduling its task. _execute_node flips the
-        # status to EXECUTING once the node's generator body starts; this marks the window in
-        # between so a serialize captured there (node dispatched but not yet executing) treats
-        # the node as in-flight rather than a bypassed dead branch — see _compute_pending_sources.
+        # Mark nodes DISPATCHED before scheduling so a serialize in the pre-EXECUTING window sees them as in-flight.
         for node in nodes:
             node.execution_status = Status.DISPATCHED
 
@@ -1375,15 +1372,12 @@ class Graph(MultiAgentBase):
         branch*, so a fan-in node stays not-ready while any parent that will still produce a result
         is outstanding. It has two seeds:
 
-        - In-flight nodes (``execution_status in (EXECUTING, DISPATCHED)``): serialize runs
-          from the per-node ``AfterNodeCallEvent`` while sibling nodes in the same parallel batch
-          are still executing (EXECUTING), or while a node has been dispatched but its generator
-          body has not yet started (DISPATCHED). Their partial progress is not persisted, so they
-          re-run on resume. This is the authoritative in-flight signal, and it catches siblings
-          with no completed ancestor (e.g. two concurrent entry points feeding one join) that
-          forward reachability alone would miss. DISPATCHED specifically covers a node that was
-          scheduled but crashed before reaching EXECUTING — without it the node stays PENDING and
-          is treated as a bypassed dead branch, double-executing its fan-in children on resume.
+        - In-flight nodes (``execution_status in (EXECUTING, DISPATCHED)``): serialize runs from the per-node
+          ``AfterNodeCallEvent`` while sibling nodes in the same parallel batch are still executing
+          or dispatched but not yet started. Their partial progress is not persisted, so they re-run
+          on resume. This is the authoritative in-flight signal, and it catches siblings with no
+          completed ancestor (e.g. two concurrent entry points feeding one join) that forward
+          reachability alone would miss.
         - Completed nodes: their traversable outgoing edges lead to nodes that will be scheduled
           next on resume.
 
