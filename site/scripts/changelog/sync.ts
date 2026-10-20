@@ -4,7 +4,7 @@
 // running this locally) commits the resulting diff. Runnable locally:
 //   tsx scripts/changelog/sync.ts --mode backfill
 //   tsx scripts/changelog/sync.ts --tag python/v1.42.0
-//   tsx scripts/changelog/sync.ts --check   (exit 1 if a published release has no file)
+//   tsx scripts/changelog/sync.ts --check   (exit 1: a release has no file; 2: could not verify)
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
@@ -48,6 +48,9 @@ async function main() {
       repo: sourceRepo,
       client: makeClient(resolveToken(), (m) => console.warn(`warning: ${m}`)),
       exists: async (p) => existsSync(join(repoRoot, p)),
+    }).catch((e) => {
+      console.error(`changelog: could not verify ${sourceRepo}: ${e instanceof Error ? e.message : e}`)
+      process.exit(2)
     })
     for (const m of missing) console.error(`changelog: ${sourceRepo} ${m.tag} has no ${m.path}`)
     if (missing.length) process.exit(1)

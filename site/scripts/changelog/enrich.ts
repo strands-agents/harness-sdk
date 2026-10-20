@@ -5,16 +5,17 @@
 // A null fetch (404: permission/cross-repo edge cases) degrades to an
 // unenriched entry; rate limits fail the run in github-client instead.
 
+import { streamKey } from './tag-meta'
 import type { PrData, Enrichment } from './types'
 
 // Monorepo top-level dirs mapped to the release stream (see streamKey) they
 // ship in. `mcp` has no changelog stream, so its PRs drop from every stream.
 const STREAM_DIRS = new Map([
-  ['strands-py', 'sdk:python'],
-  ['strands-ts', 'sdk:typescript'],
-  ['harness-py', 'harness:python'],
-  ['harness-ts', 'harness:typescript'],
-  ['strands-cli', 'cli'],
+  ['strands-py', streamKey('sdk', 'python')],
+  ['strands-ts', streamKey('sdk', 'typescript')],
+  ['harness-py', streamKey('harness', 'python')],
+  ['harness-ts', streamKey('harness', 'typescript')],
+  ['strands-cli', streamKey('cli')],
   ['strands-mcp', 'mcp'],
 ])
 
@@ -24,7 +25,7 @@ const STREAM_DIRS = new Map([
 // so a GitHub-controlled path cannot reach Object.prototype. Lockfiles only:
 // the sibling manifests (package.json, pyproject.toml) also carry repo-wide
 // tooling, which belongs to neither SDK.
-const ROOT_LOCKFILES = new Map([['package-lock.json', 'sdk:typescript']])
+const ROOT_LOCKFILES = new Map([['package-lock.json', streamKey('sdk', 'typescript')]])
 
 // Top-level dirs holding docs/blog/website content rather than SDK code.
 // `site/` is the monorepo home for all docs+blog+website; `docs/` is the

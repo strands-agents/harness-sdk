@@ -54,7 +54,7 @@ describe('tag-meta', () => {
     expect(tagToMeta('strands-agents/harness-sdk', 'python-wasm/v0.0.1')).toBe(null)
   })
 
-  it('archived sdk-typescript repo bare v tags map to harness/typescript', () => {
+  it('archived sdk-typescript repo bare v tags map to sdk/typescript', () => {
     expect(tagToMeta('strands-agents/sdk-typescript', 'v1.3.0')).toEqual({
       sdk: 'sdk',
       language: 'typescript',

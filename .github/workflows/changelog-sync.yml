@@ -78,15 +78,15 @@ jobs:
 
       # One rolling PR for every source: create-pull-request rebuilds the branch
       # from main on each run, so each run must regenerate everything still
-      # missing from main. Restoring the files already on the PR branch first
-      # keeps reviewer edits (e.g. highlights) and makes the skip-existing runs
-      # below only add new releases.
+      # missing from main. Restoring what the PR branch changed since its base
+      # keeps reviewer edits and re-renders (without reverting newer main
+      # changes), and makes the skip-existing runs below only add new releases.
       # Non-fatal: without the restore, the run still syncs; it only loses edits.
       - name: Restore files from the open sync PR
         continue-on-error: true
         run: |
           git fetch --no-tags https://github.com/strands-agent/harness-sdk.git "$SYNC_BRANCH" || exit 0
-          git diff --name-only --diff-filter=A HEAD FETCH_HEAD -- site/src/content/changelog \
+          git diff --name-only --diff-filter=AM HEAD...FETCH_HEAD -- site/src/content/changelog \
             | xargs -r git checkout FETCH_HEAD --
 
       - name: Generate missing harness-sdk changelog files
@@ -139,7 +139,7 @@ jobs:
         run: |
           {
             echo 'list<<EOF'
-            git status --porcelain -- site/src/content/changelog | awk '{print "- `" $2 "`"}'
+            git status --porcelain --untracked-files=all -- site/src/content/changelog | awk '{print "- `" $2 "`"}'
             echo EOF
           } >> "$GITHUB_OUTPUT"
 

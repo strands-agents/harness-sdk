@@ -40,14 +40,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          failed=0
+          missing=0 unverified=0
           for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box; do
-            npm run -s changelog:sync -- --check --source-repo "$repo" || failed=1
+            code=0
+            npm run -s changelog:sync -- --check --source-repo "$repo" || code=$?
+            if [ "$code" = 1 ]; then missing=1; elif [ "$code" != 0 ]; then unverified=1; fi
           done
-          if [ "$failed" = 1 ]; then
+          if [ "$missing" = 1 ]; then
             echo "::error::Merge the open changelog PR before deploying: https://github.com/strands-agents/harness-sdk/pulls?q=is%3Apr+is%3Aopen+head%3Achangelog%2Fsync"
-            exit 1
           fi
+          if [ "$unverified" = 1 ]; then
+            echo "::error::Could not list releases from GitHub; re-run the deploy, or check skip_changelog_check if the API is down."
+          fi
+          [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
       - name: Build CMS
         run: npm run cms:build

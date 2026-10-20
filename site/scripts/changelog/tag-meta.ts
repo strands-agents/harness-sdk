@@ -43,7 +43,7 @@ export function tagToMeta(repo: string, tag: string): TagMeta | null {
     return { sdk: 'evals', language: undefined, version: cleanVersion('v' + m[1]) }
   }
   // The archived pre-monorepo TypeScript repo: all its releases are
-  // harness/typescript history (used only by the one-time backfill).
+  // sdk/typescript history (used only by the one-time backfill).
   if (repo.endsWith('/sdk-typescript')) {
     if (!/^v\.?\d/.test(tag)) return null
     return { sdk: 'sdk', language: 'typescript', version: cleanVersion(tag) }
