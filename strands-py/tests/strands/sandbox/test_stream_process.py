@@ -135,3 +135,18 @@ async def test_cancellation_kills_the_process():
         await asyncio.sleep(0.02)
     else:
         pytest.fail("process survived cancellation")
+
+
+@pytest.mark.asyncio
+async def test_multibyte_utf8_split_across_read_boundaries_is_preserved():
+    # Regression guard for #4461. A multibyte character straddling a read boundary
+    # must not be decoded as two invalid halves. The child writes enough 3-byte
+    # characters to cross the 64 KiB read size, so decoding each read on its own
+    # would replace the split character with U+FFFD at every boundary.
+    script = "import sys; sys.stdout.buffer.write(('☕' * 100000).encode()); sys.stdout.flush()"
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+    expected = "☕" * 100000
+    assert result.stdout == expected
+    assert "\ufffd" not in result.stdout
+    # The incremental chunks must join to the same text as the final result.
+    assert "".join(c.data for c in chunks if c.stream_type == "stdout") == expected
