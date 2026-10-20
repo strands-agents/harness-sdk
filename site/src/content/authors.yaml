@@ -257,3 +257,8 @@
   name: Rachit Mehta
   role: "Software Engineer, AWS Agentic AI"
   bio: Rachit is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: spencer-romo
+  name: Spencer Romo
+  role: "Stickler maintainer, AWS"
+  bio: Spencer Romo maintains Stickler, the open source AWS library for field-level evaluation of structured output, and built the StructuredOutputSimilarity evaluator in Strands Evals on top of it.
