@@ -8,7 +8,7 @@ export const GET: APIRoute = async (context) => {
   const releases = await getReleases()
   return rss({
     title: 'Strands Agents Changelog',
-    description: 'Releases across the Strands Agents Strands harness and Evals SDKs.',
+    description: 'Releases across Strands Agents products.',
     site: context.site!,
     items: releases.map((r) => ({
       title: `${streamLabel(r.data.sdk, r.data.language)} v${r.data.version}`,

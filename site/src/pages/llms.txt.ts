@@ -130,7 +130,9 @@ function buildLlmsTxt(
   // grouped by stream (sdk + language). Releases arrive newest-first.
   lines.push(`## Changelog`)
   lines.push('')
-  lines.push(`- [Changelog](${base}/changelog/index.md): All releases across the SDK and Evals SDK`)
+  lines.push(
+    `- [Changelog](${base}/changelog/index.md): All releases across the SDK, Harness, Harness CLI, Evals, and Box`
+  )
   const byStream = new Map<string, ChangelogRelease[]>()
   for (const r of releases) {
     const label = streamLabel(r.data.sdk, r.data.language)

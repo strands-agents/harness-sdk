@@ -555,7 +555,12 @@ function hasWebSearch(providerName: string, name: string): boolean {
     return false
   }
   // Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-  return providerName !== 'bedrock-mantle' || name.startsWith('openai.gpt-5.') || name.startsWith('openai.gpt-6-')
+  return (
+    providerName !== 'bedrock-mantle' ||
+    name.startsWith('openai.gpt-5.') ||
+    name.startsWith('openai.gpt-6-') ||
+    name.startsWith('openai.gpt-6.')
+  )
 }
 
 /**

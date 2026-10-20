@@ -294,7 +294,7 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
    also carry their own display, hence listed here too. */
 .cl-version[hidden], .cl-version-item[hidden], .cl-entry[hidden], .cl-group[hidden],
 .cl-area[hidden], .cl-area-item[hidden], .cl-empty[hidden], .cl-novel[hidden],
-.cl-badge[hidden], .cl-more[hidden], .cl-lang button[hidden] { display: none; }
+.cl-badge[hidden], .cl-more[hidden], .cl-lang button[hidden], .cl-control-row[hidden] { display: none; }
 
 /* Respect reduced-motion: drop the cosmetic transitions (rail color, drawer
    slide). Functional state changes still apply instantly. */

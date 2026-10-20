@@ -7,6 +7,7 @@ keyword-based search via ``search_memory`` (registered by MemoryManager).
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import TYPE_CHECKING
@@ -18,11 +19,14 @@ from ...memory.extraction.types import ExtractionConfig, ExtractionResult, Extra
 from ...memory.types import MemoryEntry, MemoryStore, Metadata, SearchOptions
 from ...storage.local_file_storage import LocalFileStorage
 from ...storage.storage import _normalize_key, _resolve_namespace
+from ...types.exceptions import StorageError
 from .types import FileMemoryStoreConfig
 
 if TYPE_CHECKING:
     from ...storage.storage import Storage
     from ...types.content import Message
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_EXTRACTION_FRAMING = (
     "You extract durable facts worth remembering across future conversations from a transcript."
@@ -136,7 +140,10 @@ class FileMemoryStore(MemoryStore):
         return extraction
 
     async def search(self, query: str, options: SearchOptions | None = None) -> list[MemoryEntry]:
-        """Search knowledge files by keyword token-overlap scoring.
+        """Search knowledge files through the storage backend's ``search()``.
+
+        Uses the search strategy configured on the backend (keyword token-overlap
+        scoring by default). Entries that cannot be read are skipped.
 
         Args:
             query: Natural-language search query.
@@ -158,8 +165,18 @@ class FileMemoryStore(MemoryStore):
 
         results = await self._storage.search(query)
         entries: list[MemoryEntry] = []
-        for result in results[:max_results]:
-            data = result.data if result.data is not None else await self._storage.read(result.key)
+        # Walk the ranking until max_results entries are filled, so an unreadable hit is
+        # replaced by the next one instead of shrinking the result set.
+        for result in results:
+            if len(entries) >= max_results:
+                break
+            data = result.data
+            if data is None:
+                try:
+                    data = await self._storage.read(result.key)
+                except StorageError as error:
+                    logger.debug("key=<%s>, error=<%s> | skipped unreadable memory entry", result.key, error)
+                    continue
             if data is not None:
                 entries.append(
                     MemoryEntry(
