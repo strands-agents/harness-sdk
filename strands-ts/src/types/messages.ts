@@ -726,6 +726,25 @@ export type StopReason =
   | (string & {}) // Allow any string while preserving autocomplete for known values
 
 /**
+ * Stop reasons for a call that stopped because a limit ({@link InvokeOptions.limits}) was reached.
+ *
+ * @internal
+ */
+export const LIMIT_STOP_REASONS = new Set<StopReason>(['limitTurns', 'limitTotalTokens', 'limitOutputTokens'])
+
+/**
+ * Explains that a nested call stopped because a limit (its own or the request's) was reached, so its answer is incomplete.
+ *
+ * @param agentName - Name of the agent that stopped
+ * @param stopReason - The limit stop reason it returned
+ * @returns The message to surface in place of the agent's answer
+ * @internal
+ */
+export function limitStopMessage(agentName: string, stopReason: StopReason): string {
+  return `Agent '${agentName}' stopped early (${stopReason}): a limit on this call was reached, so its answer is incomplete`
+}
+
+/**
  * System prompt for guiding model behavior.
  * Can be a simple string or an array of content blocks for advanced caching.
  *

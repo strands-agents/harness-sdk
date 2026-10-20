@@ -3,10 +3,10 @@
 // injected client + fs ops, so it's unit-testable without network. The real
 // client is supplied by sync.ts via github-client.ts.
 
-import { buildReleaseFile, type BuildDeps } from './build-release-file'
+import { buildReleaseFile, releaseFilePath, type BuildDeps } from './build-release-file'
 import { enrichFromPr } from './enrich'
 import { deriveEntries, previousTagInStream } from './derive-entries'
-import { tagToMeta } from './tag-meta'
+import { tagToMeta, streamKey } from './tag-meta'
 import { compareVersionDesc } from '../../src/util/semver'
 import type { Client, Release, PrData } from './types'
 
@@ -37,7 +37,7 @@ export async function run(opts: RunOpts): Promise<{ written: string[]; warnings:
   // are backfilled), and whether they appear must NOT hinge on whether the
   // publisher ticked GitHub's "pre-release" box. A flagged prerelease whose tag
   // is NOT a recognized version (an oddball/non-stream tag) is still dropped.
-  releases = releases.filter((r) => r && r.published_at && (!r.prerelease || tagToMeta(opts.repo, r.tag_name) != null))
+  releases = inScope(opts.repo, releases)
 
   // Memoize PR fetches: a first-time contributor's PR usually also appears in
   // "What's Changed", and on the monorepo each fetch includes a paginated file
@@ -53,7 +53,6 @@ export async function run(opts: RunOpts): Promise<{ written: string[]; warnings:
   // Backfill: derive it from the already-fetched release list (no extra tag
   // listing). Single: query tags via previousTagInStream. Cached per tag.
   const priorCache = new Map<string, string | null>()
-  const streamKey = (m: ReturnType<typeof tagToMeta>) => (m ? `${m.sdk}:${m.language ?? ''}` : null)
   let backfillPrior: Map<string, string | null> | null = null
   if (opts.mode === 'backfill') {
     // Group in-scope release tags by stream, newest-first, so each release's
@@ -62,10 +61,10 @@ export async function run(opts: RunOpts): Promise<{ written: string[]; warnings:
     const byStream = new Map<string, Array<{ tag: string; version: string }>>()
     for (const r of releases) {
       const m = tagToMeta(opts.repo, r.tag_name)
-      const k = streamKey(m)
-      if (!k) continue
+      if (!m) continue
+      const k = streamKey(m.sdk, m.language)
       if (!byStream.has(k)) byStream.set(k, [])
-      byStream.get(k)!.push({ tag: r.tag_name, version: m!.version })
+      byStream.get(k)!.push({ tag: r.tag_name, version: m.version })
     }
     for (const list of byStream.values()) {
       list.sort((a, b) => compareVersionDesc(a.version, b.version)) // newest-first
@@ -102,4 +101,22 @@ export async function run(opts: RunOpts): Promise<{ written: string[]; warnings:
     if (built.warning) warnings.push(built.warning)
   }
   return { written, warnings }
+}
+
+function inScope(repo: string, releases: Release[]): Release[] {
+  return releases.filter((r) => r && r.published_at && (!r.prerelease || tagToMeta(repo, r.tag_name) != null))
+}
+
+/** Changelog files that published releases of `repo` should have but don't. */
+export async function findMissing(opts: {
+  repo: string
+  client: Pick<Client, 'listReleases'>
+  exists(path: string): Promise<boolean>
+}): Promise<Array<{ tag: string; path: string }>> {
+  const missing: Array<{ tag: string; path: string }> = []
+  for (const r of inScope(opts.repo, await opts.client.listReleases(opts.repo))) {
+    const path = releaseFilePath(opts.repo, r.tag_name)
+    if (path && !(await opts.exists(path))) missing.push({ tag: r.tag_name, path })
+  }
+  return missing
 }

@@ -9,6 +9,7 @@ import { Agent } from '../../agent/agent.js'
 import { Message, TextBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
+import { InvocationContextImpl, unwrapInvocationContext } from '../../agent/invocation-context.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import type { BaseModelConfig } from '../../models/model.js'
@@ -157,6 +158,41 @@ describe('ConversationManager', () => {
       expect(receivedArgs[0]!.error).toBe(error)
       expect(receivedArgs[0]!.agent).toBe(mockAgent)
       expect(receivedArgs[0]!.model).toBe(event.model)
+    })
+
+    it('passes reduce a handle that counts toward the request usage without its limits', async () => {
+      const receivedArgs: ConversationManagerReduceOptions[] = []
+      class CapturingManager extends ConversationManager {
+        readonly name = 'test:capturing'
+        reduce(args: ConversationManagerReduceOptions): boolean {
+          receivedArgs.push(args)
+          return false
+        }
+      }
+      const manager = new CapturingManager()
+      const mockAgent = createMockAgent()
+      manager.initAgent(mockAgent)
+      const request = new InvocationContextImpl({ turns: 1 })
+      request.usage.turnsTaken = 1
+
+      await invokeTrackedHook(
+        mockAgent,
+        new AfterModelCallEvent({
+          agent: mockAgent,
+          model: {} as any,
+          attemptCount: 1,
+          error: new ContextWindowOverflowError('overflow'),
+          invocationState: {},
+          invocationContext: request,
+        })
+      )
+
+      const handed = unwrapInvocationContext(receivedArgs[0]!.invocationContext)!
+      handed.recordUsage({ inputTokens: 1, outputTokens: 2, totalTokens: 3 })
+      expect({ limits: handed.limits, requestUsage: request.usage }).toEqual({
+        limits: undefined,
+        requestUsage: { turnsTaken: 1, inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      })
     })
   })
 

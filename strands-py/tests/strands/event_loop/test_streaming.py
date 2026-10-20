@@ -2,6 +2,7 @@ import threading
 import unittest.mock
 from typing import cast
 
+import pydantic
 import pytest
 
 import strands
@@ -1890,3 +1891,24 @@ async def test_stream_messages_forwards_cancel_signal_to_model(agenerator, alist
     await alist(stream)
 
     assert mock_model.stream.call_args.kwargs["cancel_signal"] is cancel_signal
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_forwards_structured_output_model_to_model(agenerator, alist):
+    class Answer(pydantic.BaseModel):
+        value: str
+
+    mock_model = unittest.mock.MagicMock()
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+
+    stream = strands.event_loop.streaming.stream_messages(
+        mock_model,
+        system_prompt=None,
+        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
+        tool_specs=None,
+        structured_output_model=Answer,
+    )
+
+    await alist(stream)
+
+    assert mock_model.stream.call_args.kwargs["structured_output_model"] is Answer

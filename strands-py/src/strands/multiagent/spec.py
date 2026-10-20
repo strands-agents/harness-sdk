@@ -13,7 +13,6 @@ the parameters the model sees and govern what values it can supply:
 from __future__ import annotations
 
 import logging
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -89,33 +88,6 @@ class Choice:
                 name = str(entry)
                 result.append(Option(name, name))
         return result
-
-    def to_schema_property(self, description: str = "") -> dict[str, Any]:
-        """Render this axis as a JSON Schema property for a tool's ``inputSchema``.
-
-        .. deprecated::
-            Will be removed in a future release; there is no public replacement.
-        """
-        warnings.warn(
-            "Choice.to_schema_property is deprecated and will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        options = self.normalized()
-        values = [option.name for option in options]
-        lines = [f"- {option.name}: {option.description}" for option in options if option.description]
-        desc = description
-        if lines:
-            block = "Options:\n" + "\n".join(lines)
-            desc = f"{description}\n{block}" if description else block
-        prop: dict[str, Any] = (
-            {"type": "array", "items": {"type": "string", "enum": values}}
-            if self.multiple
-            else {"type": "string", "enum": values}
-        )
-        if desc:
-            prop["description"] = desc
-        return prop
 
     def value_for(self, name: str) -> Any:
         """The resolved value behind ``name``, or ``name`` itself if unknown."""
@@ -350,12 +322,14 @@ def _resolve_specs(
 
 
 def _default_builder(parent: Agent) -> AgentBuilder:
-    """A builder that creates an Agent inheriting the parent's model and tools.
+    """A builder that creates an Agent inheriting the parent's model, tools, and interventions.
 
     Used by the vended multi-agent tools when no custom builder is supplied.
     Resolves ``spec.tools`` against the parent's tool registry, including MCP tools, which
     keep calling through the parent's MCP client. Memory tools are also inherited through
-    the tools axis.
+    the tools axis. The child shares the parent's intervention handler instances, so tool
+    calls made by the child are subject to the same approval and authorization checks as
+    the parent's.
     """
 
     def build(spec: AgentSpec) -> Agent:
@@ -385,6 +359,7 @@ def _default_builder(parent: Agent) -> AgentBuilder:
             sandbox=parent.sandbox if parent else None,
             callback_handler=parent.callback_handler if parent else None,
             trace_attributes=parent.trace_attributes if parent else None,
+            interventions=parent._intervention_registry.handlers if parent else None,
         )
 
     return build
