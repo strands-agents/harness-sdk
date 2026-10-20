@@ -11,20 +11,69 @@ sidebar:
 
 Long-term memory lets the agent recall durable facts across conversations without you
 re-supplying them. Strands harness keeps it on by default: it distills facts into markdown files,
-searches them before each turn, and folds the top matches into context. Persistence is
+searches them before each model call, and folds the top matches into context. Persistence is
 plain files, independent of any session, so memory survives across sessions and works with
 sessions off.
 
 ## What memory does by default
 
 With memory on, Strands harness runs a memory manager over a file-backed store under
-`./.agent/memory`. Before each turn it searches that store and injects the most relevant
+`./.agent/memory`. Before each model call it searches that store and injects the most relevant
 entries, and the agent also gets a `search_memory` tool for on-demand recall. Extraction,
 distilling durable facts from the conversation, runs in the background every few turns on a
 small, credential-aligned model, so keeping memory costs little.
 
-Memory injection runs on every turn, not only when the user speaks, so an autonomous step
-or a delegate consults memory at each turn of a multi-step task.
+## Change when memory is recalled
+
+How often memory is recalled sets what it costs. Strands harness recalls before every
+model call, not only when the user sends a message, so each step of a tool loop sees
+relevant memory. A task that takes ten model calls can run ten searches, each injecting up
+to five entries; with the default file store, each entry is a whole topic file. The
+injected text sits after the cached prompt prefix, so you pay for it as fresh input tokens
+on every call.
+
+To recall less often, build a memory manager yourself and pass it as `memory`. Strands
+harness uses it as-is. This one recalls only when the user sends a message and injects at
+most two entries:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands.memory import MemoryInjectionConfig, MemoryManager
+    from strands.vended_memory_stores.file_memory_store import FileMemoryStore
+    from strands_harness import create_harness
+
+    memory = MemoryManager(
+        stores=[FileMemoryStore(name="memory", extraction=True)],
+        injection=MemoryInjectionConfig(trigger="userTurn", max_entries=2),
+    )
+    agent = create_harness(memory=memory)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+    import { MemoryManager } from '@strands-agents/sdk'
+    import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+
+    const memory = new MemoryManager({
+      stores: [new FileMemoryStore({ name: 'memory', extraction: true })],
+      injection: { trigger: 'userTurn', maxEntries: 2 },
+    })
+    const agent = await createHarness({ memory })
+    ```
+  </Tab>
+</Tabs>
+
+To stop automatic recall and keep only the `search_memory` tool, set
+<Syntax py="injection=False" ts="injection: false" /> instead. The agent then reads memory
+only when it calls the tool.
+
+A manager you build owns its store, so the harness defaults no longer apply to it: this
+`FileMemoryStore` uses the SDK's default location, and extraction runs on the agent's
+model rather than the harness's small model. The `generalist` delegate gets no memory from
+a manager passed this way. For every injection option, see
+[context injection](../../../sdk/memory/managing-memory/#context-injection).
 
 ## Move the memory files
 
