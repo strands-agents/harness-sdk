@@ -141,9 +141,9 @@ describe('AnthropicModel', () => {
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'claude-sonnet-4-20250514' })
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         maxTokens: 64_000,
         contextWindowLimit: 1_000_000,
       })
@@ -161,11 +161,11 @@ describe('AnthropicModel', () => {
     it('does not override explicit contextWindowLimit', () => {
       const provider = new AnthropicModel({
         apiKey: 'sk-test',
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         maxTokens: 64_000,
         contextWindowLimit: 100_000,
       })
@@ -194,15 +194,15 @@ describe('AnthropicModel', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test' })
       expect(provider.getConfig().contextWindowLimit).toBe(1_000_000) // claude-sonnet-4-6 default
 
-      provider.updateConfig({ modelId: 'claude-sonnet-4-20250514' })
-      expect(provider.getConfig().contextWindowLimit).toBe(1_000_000) // claude-sonnet-4-20250514 value
+      provider.updateConfig({ modelId: 'claude-sonnet-4-5-20250929' })
+      expect(provider.getConfig().contextWindowLimit).toBe(200_000) // claude-sonnet-4-5-20250929 value
     })
 
     it('preserves explicit contextWindowLimit when modelId changes', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test', contextWindowLimit: 50_000 })
       expect(provider.getConfig().contextWindowLimit).toBe(50_000)
 
-      provider.updateConfig({ modelId: 'claude-sonnet-4-20250514' })
+      provider.updateConfig({ modelId: 'claude-sonnet-4-6' })
       expect(provider.getConfig().contextWindowLimit).toBe(50_000) // preserved
     })
   })

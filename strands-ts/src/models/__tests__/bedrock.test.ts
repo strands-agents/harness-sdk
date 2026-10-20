@@ -370,19 +370,19 @@ describe('BedrockModel', () => {
 
     it('includes contextWindowLimit in config when provided', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 200_000,
       })
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-20250514-v1:0' })
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 1_000_000,
       })
     })
@@ -405,11 +405,11 @@ describe('BedrockModel', () => {
 
     it('does not override explicit contextWindowLimit', () => {
       const provider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
     })
@@ -6111,7 +6111,7 @@ describe('BedrockModel', () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
 
     const provider = new BedrockModel({
-      modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+      modelId: 'anthropic.claude-sonnet-4-6',
       additionalRequestFields: {
         thinking: { type: 'enabled', budget_tokens: 5000 },
         some_other_field: 'value',
@@ -6161,7 +6161,7 @@ describe('BedrockModel', () => {
 
     it('omits additionalModelRequestFields when thinking is the only field and tool choice forces tool use', () => {
       const thinkingOnlyProvider = new BedrockModel({
-        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        modelId: 'anthropic.claude-sonnet-4-6',
         additionalRequestFields: {
           thinking: { type: 'enabled', budget_tokens: 5000 },
         },

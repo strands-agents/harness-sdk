@@ -2,7 +2,7 @@ import type { SearchStrategy } from './search/types.js'
 import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
-import { namespace, normalizeKey, normalizePrefix } from './storage.js'
+import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /** Configuration for {@link S3Storage}. */
@@ -36,10 +36,12 @@ const S3_PAGE_SIZE = 1000
  */
 export class S3Storage implements Storage {
   private readonly _bucket: string
-  private readonly _prefix: string
-  private readonly _region: string | undefined
+  private _prefix: string
+  private _region: string | undefined
   private readonly _searchStrategy: SearchStrategy<S3Storage> | undefined
   private _client: import('@aws-sdk/client-s3').S3Client | undefined
+  // Set on instances returned by namespace(), so they share the root instance's client.
+  private _root: S3Storage | undefined
 
   /**
    * @param bucket - Target S3 bucket name
@@ -170,15 +172,37 @@ export class S3Storage implements Storage {
   }
 
   private async _getClient(): Promise<import('@aws-sdk/client-s3').S3Client> {
+    if (this._root) return this._root._getClient()
     if (this._client) return this._client
     const { S3Client } = await import('@aws-sdk/client-s3')
     this._client = new S3Client(this._region ? { region: this._region } : {})
     return this._client
   }
 
-  /** Returns a prefixed view of this storage without mutating the original. */
-  namespace(prefix: string): Storage {
-    return namespace(this, prefix)
+  /**
+   * Returns an `S3Storage` scoped to `prefix` within this storage's bucket and prefix, sharing
+   * its S3 client and search strategy. The original storage is not mutated.
+   *
+   * Unlike a generic prefixed view, the scoped instance's `search()` only lists and reads objects
+   * under the prefix and scores keys without it, rather than scanning the whole bucket.
+   *
+   * The shared search strategy receives the scoped instance and keys relative to the prefix.
+   * A strategy that keeps its own index must not key it by those relative keys alone; see
+   * {@link SearchStrategy.index}.
+   *
+   * @param prefix - Prefix to prepend to all keys
+   * @returns An `S3Storage` scoped to the prefix
+   */
+  namespace(prefix: string): S3Storage {
+    const normalized = normalizePrefix(prefix).replace(/\/$/, '')
+    // Copy this instance rather than constructing a new one, so a subclass's overrides and
+    // fields carry over to the scoped instance. The copy keeps the bucket, region and search
+    // strategy; its client always comes from _root.
+    const scoped: S3Storage = Object.assign(Object.create(Object.getPrototypeOf(this)), this)
+    scoped._prefix = normalized ? `${this._prefix}${normalized}/` : this._prefix
+    scoped._root = this._root ?? this
+    Object.defineProperty(scoped, NAMESPACED, { value: true })
+    return scoped
   }
 
   private _objectKey(key: string): string {

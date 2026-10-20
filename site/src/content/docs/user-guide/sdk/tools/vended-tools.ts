@@ -330,8 +330,8 @@ async function subagentCustomExample() {
       }),
     },
     model: new Choice([
-      new Option('fast', 'us.anthropic.claude-sonnet-4-20250514-v1:0', 'quick tasks'),
-      new Option('deep', 'us.anthropic.claude-opus-4-20250514-v1:0', 'hard problems'),
+      new Option('fast', 'global.anthropic.claude-sonnet-4-6', 'quick tasks'),
+      new Option('deep', 'global.anthropic.claude-opus-4-6-v1', 'hard problems'),
     ]),
     context: new Choice(['none', 'all', 'no_tools']),
     tools: new Choice(['read', 'shell', 'write'], true),

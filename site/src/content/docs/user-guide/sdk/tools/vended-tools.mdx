@@ -875,8 +875,8 @@ subagent = make_subagent(
         ),
     },
     model=Choice([
-        Option("fast", "us.anthropic.claude-sonnet-4-20250514-v1:0", "quick tasks"),
-        Option("deep", "us.anthropic.claude-opus-4-20250514-v1:0", "hard problems"),
+        Option("fast", "global.anthropic.claude-sonnet-4-6", "quick tasks"),
+        Option("deep", "global.anthropic.claude-opus-4-6-v1", "hard problems"),
     ]),
     context=Choice(["none", "all", "no_tools"]),
     tools=Choice(["read", "shell", "write"], multiple=True),

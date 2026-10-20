@@ -92,7 +92,7 @@ def test__init__model_configs(anthropic_client, model_id, max_tokens):
 def test__init__auto_populates_context_window_limit(anthropic_client):
     _ = anthropic_client
 
-    model = AnthropicModel(model_id="claude-sonnet-4-20250514", max_tokens=1)
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
     assert model.get_config().get("context_window_limit") == 1_000_000
 
@@ -100,7 +100,7 @@ def test__init__auto_populates_context_window_limit(anthropic_client):
 def test__init__explicit_context_window_limit_not_overridden(anthropic_client):
     _ = anthropic_client
 
-    model = AnthropicModel(model_id="claude-sonnet-4-20250514", max_tokens=1, context_window_limit=100_000)
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1, context_window_limit=100_000)
 
     assert model.get_config().get("context_window_limit") == 100_000
 
