@@ -54,7 +54,8 @@ class _StableModuleFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 sys.meta_path.insert(0, _StableModuleFinder())
 
 warnings.warn(
-    "strands.experimental.bidi is deprecated and will be removed in v1.60.0. Import from strands.bidi instead.",
+    "strands.experimental.bidi is deprecated and will be removed in v1.60.0. Import from strands.bidi instead. "
+    "The experimental OpenAILiveModel in strands.experimental.bidi.models.openai_live is not deprecated.",
     DeprecationWarning,
     stacklevel=2,
 )
