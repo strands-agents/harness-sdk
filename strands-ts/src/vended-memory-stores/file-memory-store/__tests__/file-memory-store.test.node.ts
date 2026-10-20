@@ -608,7 +608,9 @@ describe('FileMemoryStore', () => {
 
       const messages: MessageData[] = [{ role: 'user', content: [{ text: 'Hello' }] }]
       await customExtractor.extract(messages, { defaultModel: createMockModel('default') as never })
-      expect(customModel.streamAggregated.mock.calls[0]![1].systemPrompt).toBe('Custom prompt.')
+      const systemPrompt = customModel.streamAggregated.mock.calls[0]![1].systemPrompt as string
+      expect(systemPrompt.startsWith('Custom prompt.\n\n')).toBe(true)
+      expect(systemPrompt).not.toContain('The first line is a markdown heading')
     })
   })
 })

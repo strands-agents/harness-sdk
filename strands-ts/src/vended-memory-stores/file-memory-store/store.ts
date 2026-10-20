@@ -69,16 +69,11 @@ import { warnOnce } from '../../logging/warn-once.js'
 const DEFAULT_EXTRACTION_GUIDANCE = `You extract durable facts worth remembering across future conversations from a transcript.`
 
 /**
- * Output contract the store owns and always appends after the (possibly overridden) guidance: the JSON
- * array shape {@link ModelExtractor} parses and the heading-first layout {@link FileMemoryStore.add}
- * slugifies to group facts. Appending it lets an overridden prompt retune guidance without breaking
- * parsing or append-on-topic.
+ * Heading-first layout {@link FileMemoryStore.add} slugifies to group facts by topic, always appended
+ * after the (possibly overridden) guidance so an overridden prompt keeps append-on-topic.
+ * {@link ModelExtractor} appends the JSON output format after it.
  */
-const EXTRACTION_CONTRACT = `Return ONLY a JSON array of objects: {"content": string}.
-
-Group related facts into a single entry. The first line is a markdown heading (e.g. "# User preferences", "# Project setup", "# Team conventions"). Put each fact on its own line below the heading.
-
-If there is nothing worth remembering, return [].`
+const EXTRACTION_CONTRACT = `Group related facts into a single entry. The first line is a markdown heading (e.g. "# User preferences", "# Project setup", "# Team conventions"). Put each fact on its own line below the heading.`
 
 const DEFAULT_MAX_SEARCH_RESULTS = 10
 const STORAGE_NAMESPACE = 'memory'
