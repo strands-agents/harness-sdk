@@ -508,7 +508,8 @@ describe('ACP server', () => {
   })
 
   it('keeps the process alive through bounded cleanup when a prompt ignores cancellation', async () => {
-    const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+    // `--experimental-loader` requires a file:// URL; a bare Windows path is rejected by the ESM loader.
+    const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
     const fixture = fileURLToPath(new URL('./fixtures/acp-dispose-timeout-process.mjs', import.meta.url))
     const child = spawn(
       process.execPath,

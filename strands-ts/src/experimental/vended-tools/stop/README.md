@@ -4,18 +4,18 @@
 
 Lets the model gracefully end the agent loop when it decides its work is complete.
 
-The model calls stop with an optional final message. The current tool batch runs to completion, then the loop ends without calling the model again. The final `AgentResult.stopReason` is `endTurn`, and the loop's last assistant `Message` carries a `TextBlock` whose text is the string the model passed to stop (or a default if it passed none).
+The model calls stop with an optional final message. The current tool batch runs to completion, then the loop ends without calling the model again. The loop's last assistant `Message` carries a `TextBlock` whose text is the string the model passed to stop (or a default if it passed none).
 
 This is a cooperative stop, not an abort. Any other tools the model requested in the same turn still run; the loop halts after the batch finishes, not mid-batch. For hard cancellation, use `agent.cancel()`.
 
 ## SDK behavioral difference
 
-The Python and TypeScript SDKs terminate on different primitives, which produces a small but observable difference in the final `AgentResult`:
+Both SDKs end the loop after the current tool batch and surface the stop text as the final assistant message. They differ only in the `stopReason` label:
 
-- **TypeScript** halts via `AfterToolsEvent.endTurn`, which synthesizes a new assistant message with the stop text. `result.stopReason` is `"endTurn"` and `result.lastMessage` is a `Message` whose text content carries the stop text (extract via the message's `TextBlock` content).
-- **Python** halts via `invocation_state["request_state"]["stop_event_loop"] = True`, which short-circuits inside the current tool-use cycle. `result.stop_reason` is `"tool_use"` and `result.message` is the model's tool-use assistant message from that batch; the stop text appears in history as the tool's `toolResult`, not as a new final assistant turn.
+- **TypeScript** halts via `AfterToolsEvent.endTurn`. `result.stopReason` is `"endTurn"`.
+- **Python** halts via `agent.cancel(message=..., after_current_tools=True)`. `result.stop_reason` is `"cancelled"`.
 
-If a caller needs the stop string as the last assistant message on Python, read it from the tool result on the final message or append it explicitly.
+In both cases the loop's last assistant `Message` carries the stop text in a `TextBlock`; branch on `stopReason` only if your logic needs to distinguish stop-tool exits from other end-turn/cancel paths.
 
 ## When to use it
 

@@ -22,7 +22,9 @@ class _FakeResult:
 
 
 class _FakeChild:
-    def __init__(self, *results, activated=False):
+    def __init__(self, *results, activated=False, cancel_signal_set=False):
+        import threading
+
         self._results = list(results)
         self.messages: list = []
         self.prompts: list = []
@@ -30,6 +32,9 @@ class _FakeChild:
         self.cancel_signals: list = []
         self.state = AgentState()
         self._interrupt_state = SimpleNamespace(activated=activated, interrupts={})
+        self.cancel_signal = threading.Event()
+        if cancel_signal_set:
+            self.cancel_signal.set()
 
     async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
         self.prompts.append(prompt)
@@ -56,9 +61,8 @@ def test_axes_derive_expected_parameters():
         presets={},
         instructions=Choice(["concise", "verbose"]),
         model=Choice(["fast", "deep"]),
-        context=Choice(["none", "all"]),
+        context=Choice([Option("none", description="fresh"), "all"]),
         tools=Choice(["read", "shell"], multiple=True),
-        mcp_servers=Choice(["fs", "api"], multiple=True),
     )
     props = tool.tool_spec["inputSchema"]["json"]["properties"]
     assert set(props) == {
@@ -68,13 +72,13 @@ def test_axes_derive_expected_parameters():
         "model",
         "context",
         "last_messages",
-        "mcp_servers",
     }
     assert props["tools"]["items"]["enum"] == ["read", "shell"]
     assert props["model"]["enum"] == ["fast", "deep"]
     assert props["instructions"]["enum"] == ["concise", "verbose"]
-    assert props["mcp_servers"]["items"]["enum"] == ["fs", "api"]
     assert props["last_messages"]["type"] == "integer"
+    assert props["context"]["enum"] == ["none", "all"]
+    assert props["context"]["description"].endswith("more tokens.\nOptions:\n- none: fresh")
 
 
 def test_fixed_and_inherit_hide_parameters():
@@ -102,23 +106,9 @@ def test_presets_add_agent_type_parameter():
     )
     props = tool.tool_spec["inputSchema"]["json"]["properties"]
     assert props["agent_type"]["enum"] == ["generalist", "reviewer"]
-    assert "reviews diffs" in tool.tool_spec["description"]
+    assert "reviews diffs" in props["agent_type"]["description"]
     # Description names the default preset.
     assert "generalist" in props["agent_type"]["description"]
-
-
-@pytest.mark.parametrize(
-    "axis,match",
-    [
-        ({"tools": Choice([])}, "offers no options"),
-        ({"tools": Choice(["read", "shell"])}, "must be multiple"),
-        ({"mcp_servers": Choice([])}, "offers no options"),
-        ({"mcp_servers": Choice(["fs"])}, "must be multiple"),
-    ],
-)
-def test_invalid_choice_raises(axis, match):
-    with pytest.raises(ValueError, match=match):
-        make_subagent(builder=lambda spec: None, **axis)
 
 
 @pytest.mark.parametrize("kwargs", [{"name": ""}, {"description": ""}, {"max_depth": 0}, {"max_depth": -1}])
@@ -142,7 +132,23 @@ async def test_run_builds_child_and_returns_output():
     result = _result(await _events(tool, {"task": "do it"}))
     assert result["status"] == "success"
     assert result["content"][0]["text"] == "the answer"
+    assert captured["spec"].name == "subagent"
     assert captured["spec"].instructions == GENERALIST.instructions
+
+
+@pytest.mark.asyncio
+async def test_preset_resolves_through_builder():
+    specs = []
+
+    def builder(spec):
+        specs.append(spec)
+        return _FakeChild(_FakeResult("built"))
+
+    tool = make_subagent(builder=builder, presets={"expert": Preset(instructions="be expert")})
+    for _ in range(2):
+        result = _result(await _events(tool, {"task": "do it", "agent_type": "expert"}))
+        assert result["content"][0]["text"] == "built"
+    assert [(s.agent_type, s.instructions) for s in specs] == [("expert", "be expert")] * 2
 
 
 @pytest.mark.asyncio
@@ -384,11 +390,22 @@ async def test_child_exception_becomes_error_result():
 
 
 @pytest.mark.asyncio
-async def test_cancelled_child_becomes_error_result():
-    child = _FakeChild(_FakeResult(stop_reason="cancelled"))
+async def test_immediate_cancel_becomes_error_result():
+    """A child cancelled via its signal (abort) surfaces as an error."""
+    child = _FakeChild(_FakeResult(stop_reason="cancelled"), cancel_signal_set=True)
     tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
     result = _result(await _events(tool, {"task": "x"}))
     assert result["status"] == "error" and "cancelled" in result["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_deferred_cancel_from_stop_tool_becomes_success():
+    """A child stopped via the stop tool (deferred cancel, signal unset) is a success."""
+    child = _FakeChild(_FakeResult(text="task summary", stop_reason="cancelled"))
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    result = _result(await _events(tool, {"task": "x"}))
+    assert result["status"] == "success"
+    assert result["content"][0]["text"] == "task summary"
 
 
 @pytest.mark.asyncio

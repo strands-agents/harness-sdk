@@ -1,24 +1,38 @@
 ---
-title: "Lesson 11: Multi-Agent Patterns: Graph Workflows"
+title: "Lesson 11: Multi-agent patterns: graph workflows"
 description: "Some workflows have a fixed structure: step A feeds into step B, step B branches based on a condition, both branches converge at step C. You don't want the model deciding whether to run step B. You want it guaranteed."
 redirectFrom:
   - docs/community/learning/lesson11-multi-agent-patterns-graph-workflows
 ---
 
-<YouTube id="jDeV2V5fJUQ" title="Lesson 11: Multi-Agent Patterns: Graph Workflows" />
-*[Watch on YouTube](https://www.youtube.com/watch?v=jDeV2V5fJUQ&list=PLDzwjhH-4yhU&index=11)*
+import CourseNotice from '../../../components/CourseNotice.astro'
 
-:::note[About this lesson]
-The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
-:::
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="jDeV2V5fJUQ" title="Lesson 11: Multi-agent patterns: graph workflows" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=jDeV2V5fJUQ&list=PLDzwjhH-4yhU&index=11)*
 
 *Code for this lesson: [`samples/11-graphs`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/11-graphs)*
 
-## Deterministic Control Over Execution
+## Deterministic control over execution
 
 Graphs and workflows give you deterministic control over multi-agent execution. Unlike agents-as-tools, where the orchestrator decides the flow dynamically, these patterns let you define the exact execution order, dependencies, and parallel paths upfront. Use them when you can draw the workflow on a whiteboard.
 
 ## Graph
+
+<CourseNotice>
+
+The graph API in this lesson still works. The researcher now uses the SDK
+web-fetch tool, which needs `pip install "strands-agents[web-fetch]"`. Follow
+the current import below when running the graph example.
+
+</CourseNotice>
 
 Each node is a full agent; edges express dependencies. A node executes when all its incoming edges are satisfied, and the graph resolves what runs in parallel and what waits.
 
@@ -71,9 +85,9 @@ Data flow: entry nodes receive the original task. Downstream nodes receive the o
 
 Common shapes: sequential pipelines, parallel fan-out (as above), conditional branching, and cyclic feedback loops. If you build a cycle, set `set_max_node_executions` so it can't loop forever.
 
-## Key Concepts
+## Key concepts
 
-- **Nodes** are agents (or any callable). They execute when all incoming edges are satisfied.
+- **Nodes** are agents, other multi-agent systems, or `MultiAgentNode` implementations. They execute when all incoming edges are satisfied.
 - **Edges** define dependencies. An edge from A to B means B waits for A.
 - **Parallel fan-out**: nodes without dependencies on each other run concurrently.
 - **Context passing**: each step receives the output of its predecessors.

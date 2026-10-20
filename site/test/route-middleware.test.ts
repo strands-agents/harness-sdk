@@ -404,6 +404,6 @@ describe('onRequest integration: lesson pagination via real collection', () => {
 
     const pagination = starlightRoute.pagination as { prev?: SidebarLink; next?: SidebarLink }
     expect(pagination.prev).toBeUndefined()
-    expect(pagination.next?.label).toBe('Lesson 2: Switching Model Providers')
+    expect(pagination.next?.label).toBe('Lesson 2: Switching model providers')
   })
 })

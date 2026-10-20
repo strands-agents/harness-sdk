@@ -680,6 +680,8 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch('google/gemini-3.5-flash')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-5.6-luna')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6-astra')).toBe(true)
+    // https://github.com/strands-agents/harness-sdk/issues/5187
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-6.1-sol')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
     expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
   })

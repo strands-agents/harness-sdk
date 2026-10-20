@@ -1053,6 +1053,8 @@ class Graph(MultiAgentBase):
             elif isinstance(node.executor, AgentBase):
                 # For AgentBase implementations (Agent, A2AAgent, etc.), stream events and collect result
                 agent_response = None
+                # Captured before stream_async's finally clears it.
+                node_cancel_signal_set = False
                 async for event in node.executor.stream_async(node_input, invocation_state=invocation_state):
                     # Forward agent events with node context
                     wrapped_event = MultiAgentNodeStreamEvent(node.node_id, event)
@@ -1060,6 +1062,8 @@ class Graph(MultiAgentBase):
                     # Capture the final result event
                     if "result" in event:
                         agent_response = event["result"]
+                        signal = getattr(node.executor, "cancel_signal", None)
+                        node_cancel_signal_set = signal is not None and signal.is_set()
 
                 # Use the captured result from streaming (no double execution)
                 if agent_response is None:
@@ -1075,10 +1079,14 @@ class Graph(MultiAgentBase):
                 # Handle stop_reason and interrupts (use getattr for AgentBase compatibility)
                 stop_reason = getattr(agent_response, "stop_reason", "end_turn")
                 interrupts = getattr(agent_response, "interrupts", None) or []
-                agent_status = {
-                    "cancelled": Status.FAILED,
-                    "interrupt": Status.INTERRUPTED,
-                }.get(stop_reason, Status.COMPLETED)
+                # Immediate cancel (signal set) is an abort → FAILED; the stop tool's deferred
+                # cancel never sets the signal and resolves as a normal completion.
+                if stop_reason == "cancelled":
+                    agent_status = Status.FAILED if node_cancel_signal_set else Status.COMPLETED
+                elif stop_reason == "interrupt":
+                    agent_status = Status.INTERRUPTED
+                else:
+                    agent_status = Status.COMPLETED
 
                 node_result = NodeResult(
                     result=agent_response,

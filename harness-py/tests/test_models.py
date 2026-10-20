@@ -452,6 +452,8 @@ def test_supports_web_search_by_provider():
     assert supports_web_search("google/gemini-3.5-flash") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-5.6-luna") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is True
+    # https://github.com/strands-agents/harness-sdk/issues/5187
+    assert supports_web_search("bedrock-mantle/openai.gpt-6.1-sol") is True
     assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
     assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
     assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is False
