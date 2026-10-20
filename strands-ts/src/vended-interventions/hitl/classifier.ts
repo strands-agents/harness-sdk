@@ -13,12 +13,14 @@ import type { Model } from '../../models/model.js'
 export interface ClassifierResult {
   /** Whether the tool call requires human-in-the-loop approval. */
   requiresHumanInTheLoop: boolean
-  /** Reason shown to the human in the approval prompt. */
+  /** Block the tool call without asking a human. Takes precedence over `requiresHumanInTheLoop`. */
+  deny?: boolean
+  /** Reason shown to the human in the approval prompt, or to the model when the call is denied. */
   reason?: string
 }
 
 /**
- * Function (sync or async) that decides whether a tool call requires human approval.
+ * Function (sync or async) that decides whether a tool call runs, is denied, or requires human approval.
  */
 export type HumanInTheLoopClassifier = (event: BeforeToolCallEvent) => ClassifierResult | Promise<ClassifierResult>
 
@@ -36,47 +38,66 @@ export interface LlmClassifierConfig {
  * Configuration for a {@link DecisionModel}-backed risk classifier.
  */
 export interface DecisionModelClassifierConfig {
-  /** Decision model that answers whether a tool call requires approval. */
+  /** Decision model that chooses whether a tool call is approved, denied, or escalated to a human. */
   decisionModel: DecisionModel
   /** Question posed to the decision model. Defaults to a general-purpose risk question. */
   question?: string
 }
 
+const RISK_DECISIONS = ['approve', 'deny', 'escalate'] as const
+
+type RiskDecision = (typeof RISK_DECISIONS)[number]
+
+const DECISION_RESULTS: Record<RiskDecision, ClassifierResult> = {
+  approve: { requiresHumanInTheLoop: false },
+  deny: { requiresHumanInTheLoop: false, deny: true },
+  escalate: { requiresHumanInTheLoop: true },
+}
+
 const RISK_DECISION = z.object({
-  requiresApproval: z.boolean().describe('Whether this tool call requires human approval before executing'),
-  reason: z.string().describe('Brief reason (under 10 words) why approval is or is not required'),
+  decision: z
+    .enum(RISK_DECISIONS)
+    .describe('approve: run without approval; escalate: ask a human for approval; deny: block without asking a human'),
+  reason: z.string().describe('Brief reason (under 10 words) for the decision'),
 })
 
-const RISK_CRITERIA = `## When to require approval
+const RISK_CRITERIA = `## Deny
 
-Require approval when the tool call:
+Deny the tool call, without asking a human, only when no reasonable human would approve it:
+- Is destructive at a scale no task justifies (wiping a filesystem root, dropping every database)
+- Sends credentials, secrets, or PII to an external or unknown destination
+- Contains obfuscated or encoded commands whose effect cannot be determined from the arguments
+
+## Escalate
+
+Ask a human for approval when the tool call:
 - Is destructive or irreversible (deleting data, dropping tables, revoking access)
 - Modifies important state in production or shared environments
 - Accesses or transmits sensitive data (credentials, PII, financial records)
 - Communicates externally (sending emails, posting messages, making payments)
 - Has a large blast radius (affecting many records, users, or systems)
 
-## When approval is NOT needed
+## Approve
 
-Do not require approval when the tool call:
+Run the tool call without approval when it:
 - Is read-only AND does not access sensitive data (listing non-sensitive files, querying public data, searching)
 - Operates on local or temporary resources
 - Has easily reversible effects
 - Is scoped to a single non-critical resource
 
-Note: even read-only operations that access credentials, secrets, PII, or financial data still require approval.`
+Note: even read-only operations that access credentials, secrets, PII, or financial data still require escalation.`
 
-const DEFAULT_SYSTEM_PROMPT = `You are a risk evaluator for an AI agent's tool calls. Your job is to decide whether each tool call requires human approval before executing.
+const DEFAULT_SYSTEM_PROMPT = `You are a risk evaluator for an AI agent's tool calls. Your job is to decide whether each tool call is approved, escalated to a human for approval, or denied.
 
 ${RISK_CRITERIA}
 
 ## Instructions
 
-Evaluate the tool name and its input arguments. Consider what could go wrong if this specific call executes with these specific arguments. When uncertain, require approval.
+Evaluate the tool name and its input arguments. Consider what could go wrong if this specific call executes with these specific arguments. When uncertain whether to approve, escalate. When uncertain whether to deny, escalate.
 
-Keep your reason under 10 words — it is shown to a human in a CLI prompt.`
+Keep your reason under 10 words — it is shown to a human in a CLI prompt, or to the agent when the call is denied.`
 
-const DEFAULT_RISK_QUESTION = `Does this AI agent tool call require human approval before executing? Consider what could go wrong if this specific call executes with these specific arguments.
+const DEFAULT_RISK_QUESTION = `Should this AI agent tool call be approved, escalated to a human for approval, or denied? Consider what could go wrong if this specific call executes with these specific arguments. When uncertain, escalate.
 
 ${RISK_CRITERIA}`
 
@@ -106,7 +127,7 @@ export function createLlmRiskClassifier(config?: LlmClassifierConfig): HumanInTh
       printer: false,
     })
 
-    const prompt = `Should this tool call require human approval?\n\n${formatToolCall(event)}`
+    const prompt = `Should this tool call be approved, escalated, or denied?\n\n${formatToolCall(event)}`
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(event.invocationContext)
     const invokeOptions: InvokeOptions = {
       ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
@@ -114,16 +135,13 @@ export function createLlmRiskClassifier(config?: LlmClassifierConfig): HumanInTh
     const result = await inner.invoke(prompt, invokeOptions)
     const decision = RISK_DECISION.parse(result.structuredOutput)
 
-    return {
-      requiresHumanInTheLoop: decision.requiresApproval,
-      reason: decision.reason,
-    }
+    return toClassifierResult(decision.decision, decision.reason)
   }
 }
 
 /**
- * Creates a risk classifier that asks a {@link DecisionModel} whether a tool call requires approval.
- * An `Uncertain` answer requires approval.
+ * Creates a risk classifier that asks a {@link DecisionModel} whether a tool call is approved,
+ * denied, or escalated to a human. An `Uncertain` answer escalates.
  *
  * @internal
  * @param config - Decision model and optional question override.
@@ -135,15 +153,17 @@ export function createDecisionModelRiskClassifier(config: DecisionModelClassifie
 
   return async (event: BeforeToolCallEvent): Promise<ClassifierResult> => {
     const result = await decisionModel.ask(formatToolCall(event), {
-      requiresApproval: { question, choices: 'boolean' },
+      decision: { question, choices: RISK_DECISIONS },
     })
-    const answer = result.answers.requiresApproval
+    const answer = result.answers.decision
 
-    if (answer instanceof Uncertain) {
-      return { requiresHumanInTheLoop: true, ...(answer.reason !== undefined && { reason: answer.reason }) }
-    }
-    return { requiresHumanInTheLoop: answer }
+    if (answer instanceof Uncertain) return toClassifierResult('escalate', answer.reason)
+    return toClassifierResult(answer)
   }
+}
+
+function toClassifierResult(decision: RiskDecision, reason?: string): ClassifierResult {
+  return { ...DECISION_RESULTS[decision], ...(reason !== undefined && { reason }) }
 }
 
 function formatToolCall(event: BeforeToolCallEvent): string {

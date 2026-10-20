@@ -1,5 +1,5 @@
 import { InterventionHandler } from '../../interventions/handler.js'
-import { confirm, proceed, defaultEvaluate } from '../../interventions/actions.js'
+import { confirm, deny, proceed, defaultEvaluate } from '../../interventions/actions.js'
 import { logger } from '../../logging/logger.js'
 import { createDecisionModelRiskClassifier, createLlmRiskClassifier } from './classifier.js'
 import type {
@@ -14,6 +14,7 @@ import type { JSONValue } from '../../types/json.js'
 
 const TRUST_RESPONSES = new Set(['t', 'trust'])
 const TRUSTED_TOOLS_KEY = 'hitl:trustedTools'
+const DEFAULT_DENY_REASON = 'denied by risk classifier'
 
 /**
  * CLI prompt that reads from stdin.
@@ -69,11 +70,14 @@ export interface HumanInTheLoopConfig {
   /**
    * Determines how approval decisions are made for tools not in `allowedTools`.
    *
+   * A classifier approves the call (runs freely), escalates it (asks a human), or denies it
+   * (blocks without asking a human; the reason is shown to the model).
+   *
    * - **Omitted / `false`**: all non-allowed tools require approval (default behavior).
    * - **`true`**: uses the built-in LLM risk classifier with defaults.
    * - **Config object** (`{ systemPrompt?, model? }`): built-in LLM classifier with custom settings.
    * - **Decision model config** (`{ decisionModel, question? }`): asks any `DecisionModel` (e.g.
-   *   `LLMDecisionModel`) whether the call requires approval. An `Uncertain` answer requires approval.
+   *   `LLMDecisionModel`) to approve, deny, or escalate the call. An `Uncertain` answer escalates.
    * - **Custom function**: your own sync or async classification logic.
    */
   classifier?: boolean | LlmClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier
@@ -138,7 +142,7 @@ export interface HumanInTheLoopConfig {
  *   interventions: [new HumanInTheLoop({ allowedTools: ['readFile'] })],
  * })
  *
- * // LLM-driven risk classification — only risky calls get escalated
+ * // LLM-driven risk classification — risky calls are escalated, clearly unacceptable ones denied
  * const agent = new Agent({
  *   interventions: [new HumanInTheLoop({
  *     allowedTools: ['readFile', 'listDir'],
@@ -194,6 +198,9 @@ export class HumanInTheLoop extends InterventionHandler {
     const toolName = event.toolUse.name
 
     const classifierResult = await this._requiresApproval(event)
+    if (classifierResult.deny === true) {
+      return deny(classifierResult.reason ?? DEFAULT_DENY_REASON)
+    }
     if (!classifierResult.requiresHumanInTheLoop) {
       return proceed()
     }
@@ -235,7 +242,7 @@ export class HumanInTheLoop extends InterventionHandler {
    * 2. Trusted at runtime via 't' response (stored in agent.appState) → runs freely
    * 3. Wildcard (`*`) → runs freely
    * 4. Explicitly listed in allowedTools → runs freely
-   * 5. Classifier (if provided) → its decision
+   * 5. Classifier (if provided) → its decision (approve, deny, or escalate)
    * 6. Default (no classifier) → requires approval
    */
   private async _requiresApproval(event: BeforeToolCallEvent): Promise<ClassifierResult> {
