@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest'
-import { flattenMessagesToContent } from '../summarize.js'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { flattenMessagesToContent, summarizeContent } from '../summarize.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { logger } from '../../../logging/logger.js'
+import { ImageBlock } from '../../../types/media.js'
 import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 
 describe('flattenMessagesToContent', () => {
@@ -56,6 +59,7 @@ describe('flattenMessagesToContent', () => {
           role: 'user',
           content: [
             new ToolResultBlock({ toolUseId: 'call_2', status: 'error', content: [new TextBlock('not found')] }),
+            new ToolResultBlock({ toolUseId: 'call_3', status: 'success', content: [new TextBlock('ok')] }),
           ],
         }),
         new Message({
@@ -70,14 +74,50 @@ describe('flattenMessagesToContent', () => {
 
       expect(flattenMessagesToContent(messages)).toEqual([
         new TextBlock('\n---\n[user]'),
-        new TextBlock('[tool result: error]'),
+        new TextBlock('[tool result (error)]'),
         new TextBlock('not found'),
+        new TextBlock('[tool result]'),
+        new TextBlock('ok'),
         new TextBlock('\n---\n[assistant]'),
         new TextBlock('[tool call: shell] {"command":"ls"}'),
         new TextBlock('\n---\n[user]'),
-        new TextBlock('[tool result: shell, error]'),
+        new TextBlock('[tool result: shell (error)]'),
         new TextBlock('denied'),
       ])
     })
+  })
+})
+
+describe('summarizeContent', () => {
+  const content = [new TextBlock('notes'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })]
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('does not warn when the text-only retry succeeds', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const model = new MockMessageModel()
+      .addTurn(new Error('images unsupported'))
+      .addTurn({ type: 'textBlock', text: 'summary' })
+
+    expect(await summarizeContent(content, model)).toBe('summary')
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('warns when the text-only retry also fails', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const model = new MockMessageModel().addTurn(new Error('images unsupported')).addTurn(new Error('unavailable'))
+
+    expect(await summarizeContent(content, model)).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith('summarization failed after text-only retry')
+  })
+
+  it('warns when text-only content fails', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const model = new MockMessageModel().addTurn(new Error('unavailable'))
+
+    expect(await summarizeContent([new TextBlock('notes')], model)).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith('summarization failed')
   })
 })

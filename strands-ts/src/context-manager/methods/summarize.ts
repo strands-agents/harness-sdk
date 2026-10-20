@@ -68,9 +68,13 @@ export async function summarizeContent(
   if (result !== undefined) return result
 
   const textOnly = content.filter((block) => block instanceof TextBlock)
-  if (textOnly.length === 0 || textOnly.length === content.length) return null
+  if (textOnly.length === 0 || textOnly.length === content.length) {
+    logger.warn('summarization failed')
+    return null
+  }
 
   const textResult = await callSummarizer(textOnly, model, config, invocationContext)
+  if (textResult === undefined) logger.warn('summarization failed after text-only retry')
   return textResult ?? null
 }
 
@@ -88,8 +92,9 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
 }
 
 function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, string>): string {
-  const parts = [toolNames.get(block.toolUseId), block.status === 'error' ? 'error' : undefined].filter(Boolean)
-  return parts.length > 0 ? `[tool result: ${parts.join(', ')}]` : '[tool result]'
+  const name = toolNames.get(block.toolUseId)
+  const status = block.status === 'error' ? ' (error)' : ''
+  return name ? `[tool result: ${name}${status}]` : `[tool result${status}]`
 }
 
 /**
@@ -173,7 +178,7 @@ async function callSummarizer(
 
     return parts.join('\n') || null
   } catch (error) {
-    logger.warn(`error=<${error instanceof Error ? error.message : String(error)}> | summarization failed`)
+    logger.debug(`error=<${error instanceof Error ? error.message : String(error)}> | summarization attempt failed`)
     return undefined
   }
 }
