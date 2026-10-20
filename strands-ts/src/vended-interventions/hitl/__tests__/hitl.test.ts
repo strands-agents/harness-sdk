@@ -9,19 +9,11 @@ import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { BeforeToolCallEvent } from '../../../hooks/events.js'
 import type { DecisionInput, DecisionResult, Question } from '../../../decisions/types.js'
-import type { ToolResultBlock } from '../../../types/messages.js'
-import type { ClassifierDecisionResult } from '../classifier.js'
-
-function findToolResult(agent: Agent): ToolResultBlock | undefined {
-  return agent.messages
-    .flatMap((message) => message.content)
-    .find((block): block is ToolResultBlock => block.type === 'toolResultBlock')
-}
 
 class StubDecisionModel extends DecisionModel {
   readonly calls: { state: DecisionInput; questions: Record<string, Question> }[] = []
 
-  constructor(private readonly _answer: 'approve' | 'deny' | 'escalate' | Uncertain | Error) {
+  constructor(private readonly _answer: boolean | Uncertain | Error) {
     super()
   }
 
@@ -31,7 +23,7 @@ class StubDecisionModel extends DecisionModel {
   ): Promise<DecisionResult<Q>> {
     this.calls.push({ state, questions })
     if (this._answer instanceof Error) throw this._answer
-    return { answers: { decision: this._answer } as DecisionResult<Q>['answers'], metadata: { latencyMs: 0 } }
+    return { answers: { requiresApproval: this._answer } as DecisionResult<Q>['answers'], metadata: { latencyMs: 0 } }
   }
 }
 
@@ -463,7 +455,7 @@ describe('HumanInTheLoop', () => {
         type: 'toolUseBlock',
         name: 'strands_structured_output',
         toolUseId: 'inner-1',
-        input: { decision: 'escalate', reason: 'destructive operation' },
+        input: { requiresApproval: true, reason: 'destructive operation' },
       })
 
       const agentModel = new MockMessageModel()
@@ -498,7 +490,7 @@ describe('HumanInTheLoop', () => {
         type: 'toolUseBlock',
         name: 'strands_structured_output',
         toolUseId: 'inner-1',
-        input: { decision: 'escalate', reason: 'destructive operation' },
+        input: { requiresApproval: true, reason: 'destructive operation' },
       })
       const agentModel = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'deleteFile', toolUseId: 'tool-1', input: { path: '/data' } })
@@ -526,7 +518,7 @@ describe('HumanInTheLoop', () => {
         type: 'toolUseBlock',
         name: 'strands_structured_output',
         toolUseId: 'inner-1',
-        input: { decision: 'approve', reason: 'read-only operation' },
+        input: { requiresApproval: false, reason: 'read-only operation' },
       })
 
       const agentModel = new MockMessageModel()
@@ -554,74 +546,6 @@ describe('HumanInTheLoop', () => {
 
       expect(result.stopReason).toBe('endTurn')
       expect(toolExecuted).toBe(true)
-    })
-
-    it('classifier: true denies tool without asking when LLM says deny', async () => {
-      const classifierModel = new MockMessageModel().addTurn({
-        type: 'toolUseBlock',
-        name: 'strands_structured_output',
-        toolUseId: 'inner-1',
-        input: { decision: 'deny', reason: 'wipes filesystem root' },
-      })
-      const agentModel = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'deleteFile', toolUseId: 'tool-1', input: { path: '/' } })
-        .addTurn({ type: 'textBlock', text: 'Done' })
-
-      let toolExecuted = false
-      const ask = vi.fn(async () => 'yes')
-      const agent = new Agent({
-        model: agentModel,
-        tools: [
-          createMockTool('deleteFile', () => {
-            toolExecuted = true
-            return 'deleted'
-          }),
-        ],
-        interventions: [new HumanInTheLoop({ classifier: { model: classifierModel }, ask })],
-        printer: false,
-      })
-
-      const result = await agent.invoke('Delete everything')
-
-      expect(result.stopReason).toBe('endTurn')
-      expect(toolExecuted).toBe(false)
-      expect(ask).not.toHaveBeenCalled()
-      expect(findToolResult(agent)).toEqual(
-        expect.objectContaining({
-          status: 'error',
-          content: [expect.objectContaining({ text: expect.stringContaining('wipes filesystem root') })],
-        })
-      )
-    })
-
-    it('custom classifier deny blocks tool with default reason', async () => {
-      const agentModel = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'prod' } })
-        .addTurn({ type: 'textBlock', text: 'Done' })
-
-      let toolExecuted = false
-      const agent = new Agent({
-        model: agentModel,
-        tools: [
-          createMockTool('deploy', () => {
-            toolExecuted = true
-            return 'deployed'
-          }),
-        ],
-        interventions: [new HumanInTheLoop({ classifier: () => ({ decision: 'deny' }) })],
-        printer: false,
-      })
-
-      const result = await agent.invoke('Deploy')
-
-      expect(result.stopReason).toBe('endTurn')
-      expect(toolExecuted).toBe(false)
-      expect(findToolResult(agent)).toEqual(
-        expect.objectContaining({
-          status: 'error',
-          content: [expect.objectContaining({ text: expect.stringContaining('denied by risk classifier') })],
-        })
-      )
     })
 
     it('allowedTools bypasses classifier', async () => {
@@ -657,50 +581,7 @@ describe('HumanInTheLoop', () => {
       expect(classifierSpy).not.toHaveBeenCalled()
     })
 
-    it('custom classifier approve runs tool', async () => {
-      const agentModel = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'dev' } })
-        .addTurn({ type: 'textBlock', text: 'Done' })
-
-      let toolExecuted = false
-      const agent = new Agent({
-        model: agentModel,
-        tools: [
-          createMockTool('deploy', () => {
-            toolExecuted = true
-            return 'deployed'
-          }),
-        ],
-        interventions: [new HumanInTheLoop({ classifier: () => ({ decision: 'approve' }) })],
-        printer: false,
-      })
-
-      const result = await agent.invoke('Deploy')
-
-      expect(result.stopReason).toBe('endTurn')
-      expect(toolExecuted).toBe(true)
-    })
-
-    it('malformed classifier decision requires approval', async () => {
-      const agentModel = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'prod' } })
-        .addTurn({ type: 'textBlock', text: 'Done' })
-
-      const agent = new Agent({
-        model: agentModel,
-        tools: [createMockTool('deploy', () => 'deployed')],
-        interventions: [
-          new HumanInTheLoop({ classifier: () => ({ decision: 'allow' }) as unknown as ClassifierDecisionResult }),
-        ],
-        printer: false,
-      })
-
-      const result = await agent.invoke('Deploy')
-
-      expect(result.stopReason).toBe('interrupt')
-    })
-
-    it('deprecated requiresHumanInTheLoop result is honored', async () => {
+    it('custom classifier function works', async () => {
       const agentModel = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'deploy', toolUseId: 'tool-1', input: { env: 'prod' } })
         .addTurn({ type: 'textBlock', text: 'Done' })
@@ -745,7 +626,7 @@ describe('HumanInTheLoop', () => {
         tools: [tool],
         interventions: [
           new HumanInTheLoop({
-            classifier: async () => ({ decision: 'escalate', reason: 'external communication' }),
+            classifier: async () => ({ requiresHumanInTheLoop: true, reason: 'external communication' }),
             ask: async (prompt) => {
               prompts.push(prompt)
               return 'no'
@@ -768,7 +649,7 @@ describe('HumanInTheLoop', () => {
             type: 'toolUseBlock',
             name: 'strands_structured_output',
             toolUseId: 'inner-1',
-            input: { decision: 'approve', reason: 'read-only operation' },
+            input: { requiresApproval: false, reason: 'read-only operation' },
           },
           { usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } }
         )
@@ -801,7 +682,7 @@ describe('HumanInTheLoop', () => {
     async function invokeWithDecisionModel(
       decisionModel: DecisionModel,
       config: { question?: string; allowedTools?: string[]; ask?: (prompt: string) => Promise<string> } = {}
-    ): Promise<{ stopReason: string; toolExecuted: boolean; toolResult: ToolResultBlock | undefined }> {
+    ): Promise<{ stopReason: string; toolExecuted: boolean }> {
       const agentModel = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'deleteFile', toolUseId: 'tool-1', input: { path: '/data' } })
         .addTurn({ type: 'textBlock', text: 'Done' })
@@ -826,38 +707,22 @@ describe('HumanInTheLoop', () => {
       })
 
       const result = await agent.invoke('Delete the file')
-      return { stopReason: result.stopReason, toolExecuted, toolResult: findToolResult(agent) }
+      return { stopReason: result.stopReason, toolExecuted }
     }
 
-    it('runs the tool when the decision model approves', async () => {
-      const result = await invokeWithDecisionModel(new StubDecisionModel('approve'))
+    it('requires approval when the decision model answers true', async () => {
+      const result = await invokeWithDecisionModel(new StubDecisionModel(true))
 
-      expect(result).toEqual(expect.objectContaining({ stopReason: 'endTurn', toolExecuted: true }))
+      expect(result).toEqual({ stopReason: 'interrupt', toolExecuted: false })
     })
 
-    it('requires approval when the decision model escalates', async () => {
-      const result = await invokeWithDecisionModel(new StubDecisionModel('escalate'))
+    it('runs the tool when the decision model answers false', async () => {
+      const result = await invokeWithDecisionModel(new StubDecisionModel(false))
 
-      expect(result).toEqual(expect.objectContaining({ stopReason: 'interrupt', toolExecuted: false }))
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
     })
 
-    it('denies the tool without asking when the decision model denies', async () => {
-      const ask = vi.fn(async () => 'yes')
-
-      const result = await invokeWithDecisionModel(new StubDecisionModel('deny'), { ask })
-
-      expect(result).toEqual({
-        stopReason: 'endTurn',
-        toolExecuted: false,
-        toolResult: expect.objectContaining({
-          status: 'error',
-          content: [expect.objectContaining({ text: expect.stringContaining('denied by risk classifier') })],
-        }),
-      })
-      expect(ask).not.toHaveBeenCalled()
-    })
-
-    it('escalates with the uncertainty reason when the decision model is uncertain', async () => {
+    it('requires approval with the uncertainty reason when the decision model is uncertain', async () => {
       const prompts: string[] = []
 
       const result = await invokeWithDecisionModel(new StubDecisionModel(new Uncertain('path scope unclear')), {
@@ -872,16 +737,14 @@ describe('HumanInTheLoop', () => {
     })
 
     it('asks about the tool call with the configured question', async () => {
-      const decisionModel = new StubDecisionModel('approve')
+      const decisionModel = new StubDecisionModel(false)
 
-      await invokeWithDecisionModel(decisionModel, { question: 'How should this call be handled?' })
+      await invokeWithDecisionModel(decisionModel, { question: 'Is this call risky?' })
 
       expect(decisionModel.calls).toEqual([
         {
           state: 'Tool: deleteFile\nInput: {\n  "path": "/data"\n}',
-          questions: {
-            decision: { question: 'How should this call be handled?', choices: ['approve', 'deny', 'escalate'] },
-          },
+          questions: { requiresApproval: { question: 'Is this call risky?', choices: 'boolean' } },
         },
       ])
     })
@@ -889,15 +752,15 @@ describe('HumanInTheLoop', () => {
     it('requires approval when the decision model throws', async () => {
       const result = await invokeWithDecisionModel(new StubDecisionModel(new Error('provider down')))
 
-      expect(result).toEqual(expect.objectContaining({ stopReason: 'interrupt', toolExecuted: false }))
+      expect(result).toEqual({ stopReason: 'interrupt', toolExecuted: false })
     })
 
     it('allowedTools bypasses the decision model', async () => {
-      const decisionModel = new StubDecisionModel('escalate')
+      const decisionModel = new StubDecisionModel(true)
 
       const result = await invokeWithDecisionModel(decisionModel, { allowedTools: ['deleteFile'] })
 
-      expect(result).toEqual(expect.objectContaining({ stopReason: 'endTurn', toolExecuted: true }))
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
       expect(decisionModel.calls).toEqual([])
     })
 
@@ -907,13 +770,13 @@ describe('HumanInTheLoop', () => {
           type: 'toolUseBlock',
           name: 'strands_structured_output',
           toolUseId: 'decision-1',
-          input: { decision: { answer: 'deny' } },
+          input: { requiresApproval: { answer: 'false' } },
         }),
       })
 
       const result = await invokeWithDecisionModel(decisionModel)
 
-      expect(result).toEqual(expect.objectContaining({ stopReason: 'endTurn', toolExecuted: false }))
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
     })
   })
 })

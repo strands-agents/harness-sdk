@@ -22,12 +22,4 @@
 
 export { HumanInTheLoop } from './hitl.js'
 export type { HumanInTheLoopConfig } from './hitl.js'
-export type {
-  ClassifierDecision,
-  ClassifierDecisionResult,
-  ClassifierResult,
-  DecisionModelClassifierConfig,
-  HumanInTheLoopClassifier,
-  LegacyClassifierResult,
-  LlmClassifierConfig,
-} from './classifier.js'
+export type { DecisionModelClassifierConfig, HumanInTheLoopClassifier, LlmClassifierConfig } from './classifier.js'
