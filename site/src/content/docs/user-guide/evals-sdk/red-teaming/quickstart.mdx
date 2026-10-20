@@ -65,7 +65,7 @@ A `RedTeamCase` pairs a **risk category** (the kind of violation to probe) with 
 `AdversarialCaseGenerator` reads the agent's system prompt and tools, infers which risk categories are relevant, and writes cases for each. Pass a freshly built target so it can introspect the configuration:
 
 ```python
-from strands_evals.redteaming import AdversarialCaseGenerator
+from strands_evals.redteam import AdversarialCaseGenerator
 
 cases = AdversarialCaseGenerator().generate_cases(
     agent=agent_factory(), num_cases=3
@@ -102,7 +102,7 @@ A `RedTeamExperiment` ties the cases and one or more attack strategies together.
 ```python
 import asyncio
 
-from strands_evals.redteaming import (
+from strands_evals.redteam import (
     CrescendoStrategy,
     GoatStrategy,
     RedTeamExperiment,
@@ -214,7 +214,7 @@ If your suite uses a custom strategy class, pass it via `from_file(..., custom_s
 import asyncio
 
 from strands import Agent
-from strands_evals.redteaming import (
+from strands_evals.redteam import (
     AdversarialCaseGenerator,
     CrescendoStrategy,
     GoatStrategy,

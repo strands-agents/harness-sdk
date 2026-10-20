@@ -33,7 +33,7 @@ the task once per variant. A red-team task does five things:
 import asyncio
 
 from strands import Agent
-from strands_evals.redteaming import (
+from strands_evals.redteam import (
     AdversarialCaseGenerator,
     CrescendoStrategy,
     GoatStrategy,
@@ -117,7 +117,7 @@ turn. Subclass `StrandsAgentSession` (for a `Graph` or `Swarm`, `StrandsMultiAge
 and override `invoke` to run your own code on every turn. This example puts an input filter in front of the agent:
 
 ```python
-from strands_evals.redteaming import StrandsAgentSession
+from strands_evals.redteam import StrandsAgentSession
 
 class GuardedSession(StrandsAgentSession):
     """Runs an input filter on every attacker turn before it reaches the agent."""

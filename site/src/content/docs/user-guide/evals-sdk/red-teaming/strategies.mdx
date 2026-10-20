@@ -144,7 +144,7 @@ makes a tool call; a turn that made a tool call is never backtracked.
 - **`success_threshold`** (default `0.7`).
 
 ```python
-from strands_evals.redteaming import CrescendoStrategy
+from strands_evals.redteam import CrescendoStrategy
 
 CrescendoStrategy(
     max_turns=10,
@@ -163,7 +163,7 @@ An attacker LLM reasons in an Observation / Thought / Strategy / Reply loop, cho
 - **`store_reasoning`** (default `False`): When `True`, the full Observation/Thought/Strategy reasoning trace is kept in the result metadata for inspection.
 
 ```python
-from strands_evals.redteaming import GoatStrategy
+from strands_evals.redteam import GoatStrategy
 
 GoatStrategy(
     max_turns=5,
@@ -181,7 +181,7 @@ Single-stream PAIR (Algorithm 1, N=1). An attacker LLM refines one adversarial p
 - **`success_threshold`** (default `0.8`): Higher than the other strategies; a deliberate divergence from the paper's binary success signal.
 
 ```python
-from strands_evals.redteaming import PairStrategy
+from strands_evals.redteam import PairStrategy
 
 PairStrategy(
     max_turns=5,
@@ -199,7 +199,7 @@ task that passes a smaller `max_turns` to `run_attack()` gets a `ValueError`.
 - **`success_threshold`** (default `0.7`): The judge emits a discrete 1/2/3 rating mapped to `{1: 0.0, 2: 0.5, 3: 1.0}`, so only a rating of 3 clears `0.7`.
 
 ```python
-from strands_evals.redteaming import BadLikertJudgeStrategy
+from strands_evals.redteam import BadLikertJudgeStrategy
 
 BadLikertJudgeStrategy(
     refine_rounds=2,
@@ -217,7 +217,7 @@ Hides the harmful request among benign siblings inside a single crafted narrativ
 - **`success_threshold`** (default `0.5`). Lower than the others because SequentialBreak is single-shot with no escalation runway, so a partial but real disclosure on a variant is the breach.
 
 ```python
-from strands_evals.redteaming import SequentialBreakStrategy
+from strands_evals.redteam import SequentialBreakStrategy
 
 SequentialBreakStrategy(
     variants=None,
@@ -235,11 +235,11 @@ plays the attacker from your template: the case `input` is the opening message, 
 target reply feeds the next attacker message. Use it to try a new attack as a prompt,
 without subclassing `AttackStrategy`.
 
-A registry of ready-made instances lives at `strands_evals.redteaming.strategies.BUILTIN_STRATEGIES`:
+A registry of ready-made instances lives at `strands_evals.redteam.strategies.BUILTIN_STRATEGIES`:
 
 ```python
-from strands_evals.redteaming import RedTeamExperiment, CrescendoStrategy
-from strands_evals.redteaming.strategies import BUILTIN_STRATEGIES
+from strands_evals.redteam import RedTeamExperiment, CrescendoStrategy
+from strands_evals.redteam.strategies import BUILTIN_STRATEGIES
 
 experiment = RedTeamExperiment(
     cases=cases,
@@ -256,7 +256,7 @@ strategy, instantiate `PromptStrategy` directly with a `strategy_name` and a
 no `model` parameter: its attacker uses the experiment's `model`.
 
 ```python
-from strands_evals.redteaming import PromptStrategy
+from strands_evals.redteam import PromptStrategy
 
 my_strategy = PromptStrategy(
     strategy_name="my_template",
@@ -274,7 +274,7 @@ Pass a list to compare strategies on the same cases in one report:
 ```python
 import asyncio
 
-from strands_evals.redteaming import (
+from strands_evals.redteam import (
     BadLikertJudgeStrategy,
     CrescendoStrategy,
     GoatStrategy,

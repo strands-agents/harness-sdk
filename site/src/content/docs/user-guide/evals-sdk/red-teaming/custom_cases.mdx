@@ -13,7 +13,7 @@ sidebar:
 A `RedTeamCase` wraps a `RedTeamConfig`, which holds an `AttackGoal`. The `AttackGoal` is where you describe the attack:
 
 ```python
-from strands_evals.redteaming import (
+from strands_evals.redteam import (
     AttackGoal,
     RedTeamCase,
     RedTeamConfig,
@@ -59,7 +59,7 @@ Custom cases run exactly like generated ones: pass them to the experiment, and t
 import asyncio
 
 from strands import Agent
-from strands_evals.redteaming import (
+from strands_evals.redteam import (
     AttackGoal,
     BadLikertJudgeStrategy,
     RedTeamCase,
@@ -108,7 +108,7 @@ A criterion phrased as something you could check by reading the transcript gives
 The two are interchangeable (both are `RedTeamCase` objects), so you can combine a generated baseline with hand-authored cases for your highest-priority risks:
 
 ```python
-from strands_evals.redteaming import AdversarialCaseGenerator
+from strands_evals.redteam import AdversarialCaseGenerator
 
 generated = AdversarialCaseGenerator().generate_cases(agent=agent_factory(), num_cases=3)
 all_cases = generated + cases  # `cases` from the example above
