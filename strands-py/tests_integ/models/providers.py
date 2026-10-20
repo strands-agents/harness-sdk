@@ -10,6 +10,8 @@ from pytest import mark
 
 from strands.models import BedrockModel, Model
 from strands.models.anthropic import AnthropicModel
+from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID
+from strands.models.bedrock_invoke import BedrockInvokeModel
 from strands.models.gemini import GeminiModel
 from strands.models.litellm import LiteLLMModel
 from strands.models.llamaapi import LlamaAPIModel
@@ -78,6 +80,14 @@ anthropic = ProviderInfo(
     ),
 )
 bedrock = ProviderInfo(id="bedrock", factory=lambda: BedrockModel())
+bedrock_invoke_streaming = ProviderInfo(
+    id="bedrock_invoke_streaming",
+    factory=lambda: BedrockInvokeModel(model_id=DEFAULT_BEDROCK_MODEL_ID, streaming=True),
+)
+bedrock_invoke_non_streaming = ProviderInfo(
+    id="bedrock_invoke_non_streaming",
+    factory=lambda: BedrockInvokeModel(model_id=DEFAULT_BEDROCK_MODEL_ID, streaming=False),
+)
 cohere = ProviderInfo(
     id="cohere",
     environment_variable="COHERE_API_KEY",
@@ -164,6 +174,8 @@ all_providers = [
     provider
     for provider in [
         bedrock,
+        bedrock_invoke_streaming,
+        bedrock_invoke_non_streaming,
         anthropic,
         cohere,
         gemini,

@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
+import { tmpdir } from 'os'
 import path from 'path'
 import { NotASandboxLocalEnvironment } from '../not-a-sandbox-local-environment.js'
 import { SandboxPathNotFoundError } from '../errors.js'
 
-const TEST_DIR = '/tmp/strands-test-not-a-sandbox'
+const TEST_DIR = path.join(tmpdir(), 'strands-test-not-a-sandbox')
 // Written relative (resolved against process.cwd()) to exercise _resolvePath; cleaned up below.
 const REL_NAME = 'strands-not-a-sandbox-rel-probe.txt'
 const REL_ABS = path.join(process.cwd(), REL_NAME)
