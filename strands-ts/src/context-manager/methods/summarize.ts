@@ -87,15 +87,20 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
   })
 }
 
+function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, string>): string {
+  const parts = [toolNames.get(block.toolUseId), block.status === 'error' ? 'error' : undefined].filter(Boolean)
+  return parts.length > 0 ? `[tool result: ${parts.join(', ')}]` : '[tool result]'
+}
+
 /**
- * Converts a message's content to ContentBlocks for the summarizer, rendering tool calls as text and
- * leaving out reasoning.
+ * Converts a message's content to ContentBlocks for the summarizer, rendering tool calls and tool result
+ * labels as text and leaving out reasoning.
  */
-function messageToContentBlocks(message: Message): ContentBlock[] {
+function messageToContentBlocks(message: Message, toolNames: Map<string, string>): ContentBlock[] {
   const blocks: ContentBlock[] = []
   for (const block of message.content) {
     if (block instanceof ToolResultBlock) {
-      blocks.push(...toolResultToContentBlocks(block.content))
+      blocks.push(new TextBlock(formatToolResultLabel(block, toolNames)), ...toolResultToContentBlocks(block.content))
     } else if (block instanceof ToolUseBlock) {
       blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
     } else if (!(block instanceof ReasoningBlock)) {
@@ -112,9 +117,15 @@ function messageToContentBlocks(message: Message): ContentBlock[] {
  * conversation that produced them. Messages with nothing left get no role marker.
  */
 export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
+  const toolNames = new Map<string, string>()
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block instanceof ToolUseBlock) toolNames.set(block.toolUseId, block.name)
+    }
+  }
   const blocks: ContentBlock[] = []
   for (const message of messages) {
-    const content = messageToContentBlocks(message)
+    const content = messageToContentBlocks(message, toolNames)
     if (content.length === 0) continue
     blocks.push(new TextBlock(`\n---\n[${message.role}]`), ...content)
   }

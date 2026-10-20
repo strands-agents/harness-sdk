@@ -259,6 +259,7 @@ describe('Offload.summarize', () => {
             new TextBlock('\n---\n[assistant]'),
             new TextBlock('[tool call: shell] {"command":"ls"}'),
             new TextBlock('\n---\n[user]'),
+            new TextBlock('[tool result: shell]'),
             new TextBlock('a.ts b.ts'),
             new TextBlock('</content>'),
           ],
