@@ -226,6 +226,46 @@ describe('Offload.summarize', () => {
       expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
     })
   })
+
+  describe('tool call history', () => {
+    // guards against a rejected first request and a text-only retry that drops tool calls (#5291)
+    it('summarizes tool calls as text in a single model call', async () => {
+      const actualSummarize =
+        await vi.importActual<typeof import('../../methods/summarize.js')>('../../methods/summarize.js')
+      vi.mocked(summarizeContent).mockImplementationOnce(actualSummarize.summarizeContent)
+      const summarizer = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Listed the files' })
+      const streamSpy = vi.spyOn(summarizer, 'stream')
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('fix the build')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'shell', toolUseId: 'call_1', input: { command: 'ls' } })],
+        }),
+        makeToolResultMessage('a.ts b.ts', 'call_1'),
+        new Message({ role: 'assistant', content: [new TextBlock('done')] }),
+        new Message({ role: 'user', content: [new TextBlock('next')] }),
+      ]
+      const strategy = Offload.summarize('*', { model: summarizer }).when({ utilization: 0.7, preserveRecent: 2 })
+
+      const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+
+      expect(result).toBe(true)
+      expect(streamSpy).toHaveBeenCalledTimes(1)
+      expect(streamSpy.mock.calls[0]![0]).toEqual([
+        expect.objectContaining({
+          role: 'user',
+          content: [
+            new TextBlock('<content>'),
+            new TextBlock('\n---\n[assistant]'),
+            new TextBlock('[tool call: shell] {"command":"ls"}'),
+            new TextBlock('\n---\n[user]'),
+            new TextBlock('a.ts b.ts'),
+            new TextBlock('</content>'),
+          ],
+        }),
+      ])
+    })
+  })
 })
 
 describe('repeated summarization', () => {

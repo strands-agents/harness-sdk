@@ -9,7 +9,7 @@
 import type { Model } from '../../models/model.js'
 import { ModelProxy } from '../../models/model-proxy.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
-import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
@@ -88,13 +88,16 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
 }
 
 /**
- * Converts a message's content to ContentBlocks for the summarizer, leaving out reasoning.
+ * Converts a message's content to ContentBlocks for the summarizer, rendering tool calls as text and
+ * leaving out reasoning.
  */
 function messageToContentBlocks(message: Message): ContentBlock[] {
   const blocks: ContentBlock[] = []
   for (const block of message.content) {
     if (block instanceof ToolResultBlock) {
       blocks.push(...toolResultToContentBlocks(block.content))
+    } else if (block instanceof ToolUseBlock) {
+      blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
     } else if (!(block instanceof ReasoningBlock)) {
       blocks.push(block)
     }
@@ -159,7 +162,7 @@ async function callSummarizer(
 
     return parts.join('\n') || null
   } catch (error) {
-    logger.debug(`error=<${error instanceof Error ? error.message : String(error)}> | summarization failed`)
+    logger.warn(`error=<${error instanceof Error ? error.message : String(error)}> | summarization failed`)
     return undefined
   }
 }
