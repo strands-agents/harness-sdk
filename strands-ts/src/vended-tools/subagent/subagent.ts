@@ -330,9 +330,14 @@ class SubagentTool extends Tool {
       const { child, prompt } = prepared
 
       const gen = child.stream(prompt, { invocationState: { ...invocationState }, cancelSignal })
+      // Read on the result event, before stream()'s finally resets the signal.
+      let childCancelSignalAborted = false
       let next = await gen.next()
       while (!next.done) {
         const event = next.value
+        if (event.type === 'agentResultEvent') {
+          childCancelSignalAborted = child.cancelSignal.aborted
+        }
         if (event.type === 'toolStreamUpdateEvent') {
           yield event.event
         } else {
@@ -341,7 +346,14 @@ class SubagentTool extends Tool {
         next = await gen.next()
       }
 
-      return this._finalizeResult(toolUseId, child, next.value as AgentResult | undefined, parentState, prefix)
+      return this._finalizeResult(
+        toolUseId,
+        child,
+        next.value as AgentResult | undefined,
+        parentState,
+        prefix,
+        childCancelSignalAborted
+      )
     } catch (error) {
       if (error instanceof InterruptError) {
         throw error
@@ -465,7 +477,8 @@ class SubagentTool extends Tool {
     child: Agent,
     result: AgentResult | undefined,
     parentState: InterruptState | undefined,
-    prefix: string
+    prefix: string,
+    childCancelSignalAborted: boolean
   ): ToolResultBlock {
     if (result === undefined) {
       this._pending.delete(toolUseId)
@@ -491,7 +504,9 @@ class SubagentTool extends Tool {
       throw new InterruptError(raised)
     }
     this._pending.delete(toolUseId)
-    if (result.stopReason === 'cancelled') {
+    // Immediate cancel (signal aborted) is an abort → error; the stop tool's deferred
+    // cancel never aborts the signal and resolves as a normal completion.
+    if (result.stopReason === 'cancelled' && childCancelSignalAborted) {
       return this._errorResult(toolUseId, 'Subagent was cancelled.')
     }
     return new ToolResultBlock({

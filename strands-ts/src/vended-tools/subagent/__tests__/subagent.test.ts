@@ -44,6 +44,8 @@ class FakeChild {
   readonly _interruptState = { activated: false }
   readonly prompts: InvokeArgs[] = []
   readonly calls: { invocationState: InvocationState; cancelSignal: AbortSignal }[] = []
+  /** Mirrors Agent.cancelSignal: aborted only by an immediate cancel. */
+  cancelSignal: AbortSignal = new AbortController().signal
   private readonly _results: (AgentResult | undefined)[]
 
   constructor(...results: (AgentResult | undefined)[]) {
@@ -57,6 +59,8 @@ class FakeChild {
     this.prompts.push(prompt)
     this.calls.push(options)
     yield { type: 'modelStreamUpdateEvent' }
+    yield { type: 'agentResultEvent' }
+    this.cancelSignal = new AbortController().signal // mirrors stream()'s finally
     return this._results.shift()
   }
 
@@ -250,7 +254,7 @@ describe('subagent tool', () => {
         new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('the answer')] })
       )
       expect(specs[0]!.instructions).toBe(GENERALIST.instructions)
-      expect(items.map((item) => item.data)).toEqual([{ type: 'modelStreamUpdateEvent' }])
+      expect(items.map((item) => item.data)).toEqual([{ type: 'modelStreamUpdateEvent' }, { type: 'agentResultEvent' }])
     })
 
     it('passes a copy of the invocation state and the tool cancel signal to the child', async () => {
@@ -471,16 +475,38 @@ describe('subagent tool', () => {
       expect(warn).toHaveBeenCalledWith('tool_name=<subagent>, tool_use_id=<t1>, error=<boom> | subagent failed')
     })
 
-    it.each([
-      ['a cancelled child', fakeResult('', 'cancelled'), 'Subagent was cancelled.'],
-      ['a missing child result', undefined, 'Subagent produced no result.'],
-    ])('turns %s into an error result', async (_, childResult, message) => {
-      const { builder } = capturingBuilder(new FakeChild(childResult))
+    it.each([['a missing child result', undefined, 'Subagent produced no result.']])(
+      'turns %s into an error result',
+      async (_, childResult, message) => {
+        const { builder } = capturingBuilder(new FakeChild(childResult))
+
+        const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+        expect(result).toEqual(
+          new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock(message)] })
+        )
+      }
+    )
+
+    it('turns an immediately cancelled child into an error result', async () => {
+      const child = new FakeChild(fakeResult('', 'cancelled'))
+      child.cancelSignal = AbortSignal.abort()
+      const { builder } = capturingBuilder(child)
 
       const { result } = await run(makeSubagent({ builder }), { task: 'x' })
 
       expect(result).toEqual(
-        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock(message)] })
+        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('Subagent was cancelled.')] })
+      )
+    })
+
+    it('treats a child that ended via a deferred cancel (stop tool) as a success', async () => {
+      const { builder } = capturingBuilder(new FakeChild(fakeResult('summary', 'cancelled')))
+
+      const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('summary')] })
       )
     })
   })

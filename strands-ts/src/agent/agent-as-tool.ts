@@ -230,9 +230,14 @@ export class AgentAsTool extends Tool {
         invocationState,
         cancelSignal,
       })
+      // Read on the result event, before stream()'s finally resets the signal.
+      let subCancelSignalAborted = false
       let next = await gen.next()
       while (!next.done) {
         const event = next.value
+        if (event.type === 'agentResultEvent') {
+          subCancelSignalAborted = this._agent.cancelSignal.aborted
+        }
         if (event.type == 'toolStreamUpdateEvent') {
           yield event.event
         } else {
@@ -258,7 +263,9 @@ export class AgentAsTool extends Tool {
         delete (parentState.context[INTERRUPTED_TURNS_KEY] as Record<string, JSONValue> | undefined)?.[toolUseId]
       }
 
-      if (result.stopReason === 'cancelled') {
+      // Immediate cancel (signal aborted) is an abort → error; the stop tool's deferred
+      // cancel never aborts the signal and falls through to the success path.
+      if (result.stopReason === 'cancelled' && subCancelSignalAborted) {
         return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
       }
 
