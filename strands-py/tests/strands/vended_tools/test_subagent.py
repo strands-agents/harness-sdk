@@ -408,6 +408,28 @@ async def test_deferred_cancel_from_stop_tool_becomes_success():
     assert result["content"][0]["text"] == "task summary"
 
 
+@pytest.mark.parametrize(
+    ("stop_reason", "text", "exp_text"),
+    [
+        (
+            "content_filtered",
+            "I'll retrieve that now.",
+            "Subagent stopped before finishing (stop_reason=content_filtered)."
+            "\n\nPartial output:\nI'll retrieve that now.",
+        ),
+        ("refusal", "", "Subagent stopped before finishing (stop_reason=refusal)."),
+    ],
+)
+@pytest.mark.asyncio
+async def test_blocked_child_becomes_error_result(stop_reason, text, exp_text):
+    """A child blocked before answering surfaces as an error naming the stop reason."""
+    child = _FakeChild(_FakeResult(text=text, stop_reason=stop_reason))
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    tru_result = _result(await _events(tool, {"task": "x"}))
+    exp_result = {"toolUseId": "t1", "status": "error", "content": [{"text": exp_text}]}
+    assert tru_result == exp_result
+
+
 @pytest.mark.asyncio
 async def test_depth_tracking():
     built = []

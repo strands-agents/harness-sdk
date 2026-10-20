@@ -153,6 +153,29 @@ describe('AgentAsTool', () => {
       expect(result).toEqual(createErrorResult("Agent 'test-agent' cancelled", 'tool-1'))
     })
 
+    it.each([
+      [
+        'contentFiltered',
+        "I'll retrieve that now.",
+        "Agent 'test-agent' stopped before finishing (stopReason=contentFiltered).\n\nPartial output:\nI'll retrieve that now.",
+      ],
+      ['refusal', '', "Agent 'test-agent' stopped before finishing (stopReason=refusal)."],
+    ])('returns an error when the wrapped agent stops on %s', async (stopReason, text, message) => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text }, { stopReason })
+      const agent = new Agent({ model, name: 'test-agent', printer: false })
+      const tool = new AgentAsTool({ agent })
+
+      const context = createMockContext({
+        name: 'test-agent',
+        toolUseId: 'tool-1',
+        input: { input: 'Hello agent' },
+      })
+
+      const { result } = await collectGenerator(tool.stream(context))
+
+      expect(result).toEqual(createErrorResult(message, 'tool-1'))
+    })
+
     it('does not persist cancellation when the signal aborts during initialization', async () => {
       let signalInitializationStarted!: () => void
       const initializationStarted = new Promise<void>((resolve) => {

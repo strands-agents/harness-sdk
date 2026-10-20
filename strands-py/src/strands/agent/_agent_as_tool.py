@@ -35,6 +35,10 @@ DELEGATION_DESCRIPTION_SUFFIX = (
 
 _INTERRUPTED_TURNS_KEY = "sub_agent_interrupted_turns"
 
+# Stop reasons that mean the sub-agent never produced an answer; the parent must see a failure, not its partial text.
+# "refusal" comes from the Anthropic providers and is absent from the StopReason literal.
+_FAILED_STOP_REASONS = frozenset({"content_filtered", "refusal"})
+
 
 class _AgentAsTool(AgentTool):
     """Adapter that exposes an Agent as a tool for use by other agents.
@@ -274,6 +278,20 @@ class _AgentAsTool(AgentTool):
                         "toolUseId": tool_use_id,
                         "status": "error",
                         "content": [{"text": f"Agent '{self._tool_name}' cancelled"}],
+                    }
+                )
+                return
+
+            if result.stop_reason in _FAILED_STOP_REASONS:
+                message = f"Agent '{self._tool_name}' stopped before finishing (stop_reason={result.stop_reason})."
+                partial = str(result).rstrip("\n")
+                if partial:
+                    message += f"\n\nPartial output:\n{partial}"
+                yield ToolResultEvent(
+                    {
+                        "toolUseId": tool_use_id,
+                        "status": "error",
+                        "content": [{"text": message}],
                     }
                 )
                 return

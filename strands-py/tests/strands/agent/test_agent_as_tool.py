@@ -798,6 +798,43 @@ async def test_stream_sub_agent_deferred_cancel_surfaces_as_success(tool, mock_a
     ]
 
 
+@pytest.mark.parametrize(
+    ("stop_reason", "text", "exp_text"),
+    [
+        (
+            "content_filtered",
+            "I'll retrieve that now.",
+            "Agent 'test_agent' stopped before finishing (stop_reason=content_filtered)."
+            "\n\nPartial output:\nI'll retrieve that now.",
+        ),
+        ("refusal", "", "Agent 'test_agent' stopped before finishing (stop_reason=refusal)."),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_blocked_sub_agent_returns_error(tool, mock_agent, tool_use, stop_reason, text, exp_text):
+    """A sub-agent blocked before answering surfaces as an error naming the stop reason."""
+    blocked_result = AgentResult(
+        stop_reason=stop_reason,
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+    mock_agent.stream_async.return_value = _mock_stream_async(blocked_result)
+
+    tru_events = [event async for event in tool.stream(tool_use, {})]
+
+    exp_events = [
+        ToolResultEvent(
+            {
+                "toolUseId": "tool-123",
+                "status": "error",
+                "content": [{"text": exp_text}],
+            }
+        )
+    ]
+    assert tru_events == exp_events
+
+
 @pytest.mark.asyncio
 async def test_stream_pre_set_parent_cancel_signal_returns_error_without_model_response(tool_use):
     """A parent signal that is already set cancels the wrapped agent before it produces a response."""

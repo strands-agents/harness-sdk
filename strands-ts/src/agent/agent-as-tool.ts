@@ -83,6 +83,9 @@ interface AgentToolConfig extends AgentAsToolOptions {
 
 const INTERRUPTED_TURNS_KEY = 'subAgentInterruptedTurns'
 
+// Stop reasons that mean the sub-agent never produced an answer; the parent must see a failure, not its partial text.
+const FAILED_STOP_REASONS: ReadonlySet<string> = new Set(['contentFiltered', 'refusal'])
+
 /** Ids of the interrupts a stored sub-agent turn is waiting on, or undefined if its interrupt state is unreadable. */
 function awaitedInterruptIds(turn: JSONValue): string[] | undefined {
   try {
@@ -260,6 +263,15 @@ export class AgentAsTool extends Tool {
 
       if (result.stopReason === 'cancelled') {
         return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
+      }
+
+      if (FAILED_STOP_REASONS.has(result.stopReason)) {
+        let message = `Agent '${this.name}' stopped before finishing (stopReason=${result.stopReason}).`
+        const partial = result.toString().replace(/\n+$/, '')
+        if (partial) {
+          message += `\n\nPartial output:\n${partial}`
+        }
+        return createErrorResult(message, toolUseId)
       }
 
       // Build the tool result

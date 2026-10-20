@@ -44,6 +44,10 @@ if TYPE_CHECKING:
 
 _DEPTH_STATE_KEY = "strands.subagent_depth"
 
+# Stop reasons that mean the child never produced an answer; the parent must see a failure, not its partial text.
+# "refusal" comes from the Anthropic providers and is absent from the StopReason literal.
+_FAILED_STOP_REASONS = frozenset({"content_filtered", "refusal"})
+
 _FORK_PREAMBLE = (
     "The conversation so far is the parent agent's. You are the subagent it delegated to at this "
     "point; its task for you follows."
@@ -296,6 +300,12 @@ class _SubagentTool(AgentTool):
             self._pending.pop(tool_use_id, None)
             return self._error_result(tool_use_id, "Subagent was cancelled.")
         self._pending.pop(tool_use_id, None)
+        if result.stop_reason in _FAILED_STOP_REASONS:
+            message = f"Subagent stopped before finishing (stop_reason={result.stop_reason})."
+            partial = str(result).rstrip("\n")
+            if partial:
+                message += f"\n\nPartial output:\n{partial}"
+            return self._error_result(tool_use_id, message)
         return ToolResultEvent(
             {
                 "toolUseId": tool_use_id,

@@ -474,6 +474,16 @@ describe('subagent tool', () => {
     it.each([
       ['a cancelled child', fakeResult('', 'cancelled'), 'Subagent was cancelled.'],
       ['a missing child result', undefined, 'Subagent produced no result.'],
+      [
+        'a content-filtered child',
+        fakeResult("I'll retrieve that now.", 'contentFiltered'),
+        "Subagent stopped before finishing (stopReason=contentFiltered).\n\nPartial output:\nI'll retrieve that now.",
+      ],
+      [
+        'a child that refused without answering',
+        fakeResult('', 'refusal'),
+        'Subagent stopped before finishing (stopReason=refusal).',
+      ],
     ])('turns %s into an error result', async (_, childResult, message) => {
       const { builder } = capturingBuilder(new FakeChild(childResult))
 

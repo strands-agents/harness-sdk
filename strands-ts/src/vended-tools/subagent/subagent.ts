@@ -36,6 +36,9 @@ const CONTEXT_MODES: readonly string[] = ['none', 'all', 'no_tools']
 
 const DEPTH_STATE_KEY = 'strands.subagent_depth'
 
+// Stop reasons that mean the child never produced an answer; the parent must see a failure, not its partial text.
+const FAILED_STOP_REASONS: ReadonlySet<string> = new Set(['contentFiltered', 'refusal'])
+
 const FORK_PREAMBLE =
   "The conversation so far is the parent agent's. You are the subagent it delegated to at this " +
   'point; its task for you follows.'
@@ -493,6 +496,14 @@ class SubagentTool extends Tool {
     this._pending.delete(toolUseId)
     if (result.stopReason === 'cancelled') {
       return this._errorResult(toolUseId, 'Subagent was cancelled.')
+    }
+    if (FAILED_STOP_REASONS.has(result.stopReason)) {
+      let message = `Subagent stopped before finishing (stopReason=${result.stopReason}).`
+      const partial = result.toString().replace(/\n+$/, '')
+      if (partial) {
+        message += `\n\nPartial output:\n${partial}`
+      }
+      return this._errorResult(toolUseId, message)
     }
     return new ToolResultBlock({
       toolUseId,
