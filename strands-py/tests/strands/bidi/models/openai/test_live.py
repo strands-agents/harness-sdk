@@ -70,7 +70,7 @@ def client(monkeypatch, connection):
 
 
 @pytest.fixture
-def model(client, monkeypatch):
+def model(client, monkeypatch, recwarn):
     identifiers = itertools.count(1)
     monkeypatch.setattr(live, "uuid4", lambda: f"id-{next(identifiers)}")
     return live.OpenAILiveModel(
@@ -101,12 +101,14 @@ def tool_spec():
     }
 
 
-def test__init__(model, client, caplog):
+def test__init__(model, client, recwarn):
     live.AsyncOpenAI.assert_called_once_with(api_key="test")
     client.live.connect.assert_not_called()
     assert isinstance(model, AudioCapable)
     assert isinstance(model, Restartable)
-    assert any("experimental" in record.message for record in caplog.get_records("setup"))
+    warning = recwarn.pop(UserWarning)
+    assert str(warning.message) == "OpenAILiveModel is experimental and may change in future versions."
+    assert warning.filename == __file__
 
     tru_config = model.get_config()
     exp_config = {"model_id": "live-model", "connection": {"auto_restart": False}}

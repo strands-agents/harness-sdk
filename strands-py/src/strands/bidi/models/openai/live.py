@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import mimetypes
+import warnings
 from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Literal, NoReturn, cast, final
@@ -149,7 +150,7 @@ class OpenAILiveModel(BidiModel, AudioCapable, Restartable):
             **model_config: Shared model configuration. ``model_id`` is required and ``params`` is ignored.
                 Automatic restart is disabled by default.
         """
-        logger.warning("OpenAILiveModel is experimental and may change in future versions.")
+        warnings.warn("OpenAILiveModel is experimental and may change in future versions.", stacklevel=2)
 
         self._delegation_config = delegation_config
         self._voice = voice
