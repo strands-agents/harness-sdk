@@ -47,9 +47,10 @@ async function searchAndAdd() {
   // --8<-- [start:search_and_add]
   const store = new FileMemoryStore({ name: 'agent-memory' })
 
-  await store.add('# Travel preferences\n- Prefers aisle seats')
+  const key = await store.add('# Travel preferences\n- Prefers aisle seats')
+  console.log(key) // travel-preferences.md
 
-  const results = await store.search('seat preference')
+  const results = await store.search('aisle seats')
   for (const entry of results) {
     console.log(entry.content, entry.metadata?.score)
   }
@@ -108,8 +109,7 @@ function extractionCustom() {
       model: new BedrockModel({
         modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
       }),
-      systemPrompt:
-        'Extract durable user preferences as discrete facts.',
+      systemPrompt: 'Extract durable user preferences as discrete facts.',
     },
   })
   // --8<-- [end:extraction_custom]

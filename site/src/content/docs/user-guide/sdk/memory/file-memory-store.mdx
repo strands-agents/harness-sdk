@@ -7,7 +7,7 @@ tags: [memory]
 sourceLinks:
   - path: strands-py/src/strands/vended_memory_stores/file_memory_store/store.py
   - path: strands-ts/src/vended-memory-stores/file-memory-store/store.ts
-addedDate: 2026-09-08
+addedDate: 2026-10-20
 sidebar:
   label: "File Store"
 ---
@@ -54,14 +54,13 @@ agent = Agent(
 </Tab>
 </Tabs>
 
-The store is writable by default, so the
-[`add_memory` tool](./managing-memory#memory-tools) and
-[automatic extraction](./managing-memory#automatic-extraction)
-work without extra setup.
-
-Search defaults to keyword matching, not semantic. For
-embedding-based search over a managed vector store, use the
-[Bedrock Knowledge Base store](./bedrock-knowledge-base).
+The agent can recall from the store right away. The store
+is writable by default, but writing is opt-in: pass
+<Syntax py="add_tool_config=True" ts="addToolConfig: true" />
+to the `MemoryManager` to give the agent the
+[`add_memory` tool](./managing-memory#memory-tools), and set
+`extraction` on the store to turn on
+[automatic extraction](#extraction).
 
 ## How It Works
 
@@ -90,30 +89,8 @@ like `entry-1717459200000.md`.
 `writable`, `extraction`) plus one of its own: `storage`,
 the `Storage` backend for file operations. It defaults to
 `LocalFileStorage` at `./.strands/` (see
-[Storage Backend](#storage-backend)).
-
-`writable` defaults to `true`.
-
-To customize the built-in extractor:
-
-<Tabs>
-<Tab label="Python">
-
-Pass an `ExtractionConfig` with your own `ModelExtractor`
-(see [Extraction](#extraction)).
-
-</Tab>
-<Tab label="TypeScript">
-
-Pass an object as `extraction` with these extra fields:
-
-| Field | Purpose |
-|-------|---------|
-| `extraction.model` | Model the built-in extractor uses to distill facts. Defaults to the agent's `auxModel` if set, otherwise the agent's own model; set a cheaper one to cut cost. |
-| `extraction.systemPrompt` | Custom framing for what counts as a durable fact, replacing the default guidance. |
-
-</Tab>
-</Tabs>
+[Storage Backend](#storage-backend)). `extraction` is off
+until you set it (see [Extraction](#extraction)).
 
 ## Storage Backend
 
@@ -157,13 +134,14 @@ backend you pass:
   isolated from each other.
 - Stores with the same name on the same backend read and
   write the same files.
-- An empty `name` is accepted and scopes to `memory//`.
-  It works, but every unnamed store on that backend shares
-  those files, so give each store a name.
+- An empty `name` is accepted but scopes the store to
+  `memory/` itself. Listing is recursive, so an unnamed
+  store reads and searches every named store's files on
+  that backend. Give each store a name.
 
-The exception is a backend you have already scoped with
-<Syntax py="storage.namespace(...)" ts="storage.namespace(...)" />.
-The store uses that view as-is and does **not** add
+The exception is a view you have already scoped with a
+built-in backend's `namespace(...)`. The store uses that
+view as-is and does **not** add
 `memory/<name>/`, so its files land directly under your
 prefix. Every store you hand that same view shares its
 files regardless of `name`; give each store its own
@@ -174,26 +152,28 @@ namespaced view to keep them separate.
 The default search ranks files by keyword token overlap: it
 counts how many distinct words from the query appear in
 each file's name and content, and returns the top scorers.
-A query with no usable words returns nothing. Search runs
-through the storage backend's pluggable
-[search strategy](../storage/search-strategies), so you can
-swap in a different ranking without changing the store.
+Common stop words such as "the" and "is" don't count, and
+neither does the `.md` extension. A query with no usable
+words returns nothing.
 
 :::note
-The default search is lexical, not semantic. "Seat" matches
-"seat" but not "chair." For embedding-based semantic search
-over a managed vector store, use the
+The default search matches exact words, not meanings.
+"Seats" matches "seats" but not "seat" or "chair." For
+embedding-based semantic search over a managed vector
+store, use the
 [Bedrock Knowledge Base store](./bedrock-knowledge-base).
 :::
+
+The store's `search` delegates to the storage backend's
+pluggable [search strategy](../storage/search-strategies),
+so to change the ranking, give the backend a different
+strategy:
 
 <Tabs>
 <Tab label="Python">
 
-To change the search behavior, give the storage backend a
-search strategy; the store's
-<Syntax py="search" ts="search" /> delegates to it and
-each <Syntax py="add" ts="add" /> is indexed as it is
-written. `Bm25SearchStrategy` ranks with BM25 using the
+Each `add` is indexed as it is written.
+`Bm25SearchStrategy` ranks with BM25 using the
 built-in `sqlite3` FTS5 module. It only indexes content
 written after it is attached, so attach it before the
 store's first write:
@@ -219,9 +199,6 @@ await strategy.close()
 </Tab>
 <Tab label="TypeScript">
 
-To change the search behavior, give the storage backend a
-search strategy; the store's
-<Syntax py="search" ts="search" /> delegates to it.
 `QmdSearchStrategy` ranks with BM25 using
 [QMD](https://github.com/tobi/qmd) (requires
 `@tobilu/qmd`) and re-indexes the storage directory on
@@ -238,18 +215,15 @@ each search, so existing files are searchable:
 See [BM25 search](../storage/search-strategies#bm25-search)
 for setup details, or
 [write a custom strategy](../storage/search-strategies#writing-a-custom-strategy)
-by implementing the
-<Syntax py="SearchStrategy" ts="SearchStrategy" /> interface
-for your own ranking. Keep a reference to the
-strategy so you can call
-<Syntax py="close()" ts="close()" /> on it: the store does
-not close it for you.
+by implementing the `SearchStrategy` interface for your
+own ranking. Keep a reference to the strategy so you can
+call `close()` on it: the store does not close it for you.
 
 ## Writing Memories
 
-<Syntax py="add" ts="add" /> stores content and returns
-the canonical storage key. The heading line drives the
-filename; subsequent lines are the facts:
+`add` stores content and returns the file's key, relative
+to the store's `memory/<name>/` namespace. The heading line
+drives the filename; subsequent lines are the facts:
 
 <Tabs>
 <Tab label="Python">
@@ -264,8 +238,9 @@ store = FileMemoryStore(name="agent-memory")
 key = await store.add(
     "# Travel preferences\n- Prefers aisle seats"
 )
+print(key)  # travel-preferences.md
 
-results = await store.search("seat preference")
+results = await store.search("aisle seats")
 for entry in results:
     print(entry.content, entry.metadata.get("score"))
 ```
@@ -280,8 +255,8 @@ for entry in results:
 </Tab>
 </Tabs>
 
-Concurrent writes to the same file are serialized so they
-don't clobber each other.
+Concurrent writes through one store instance are serialized
+so they don't clobber each other.
 
 ## Extraction
 
@@ -315,7 +290,7 @@ store = FileMemoryStore(
 
 With <Syntax py="extraction=True" ts="extraction: true" />,
 the store creates a **key-aware
-extractor** that reads the existing file headings from
+extractor** that reads the existing topic filenames from
 storage and injects them into the extraction prompt. The
 model then reuses those headings when new facts belong to
 an existing topic, keeping related knowledge grouped
@@ -323,6 +298,10 @@ instead of fragmenting across files.
 
 <Tabs>
 <Tab label="Python">
+
+To change only the cadence or filter, pass an
+`ExtractionConfig` with `trigger` or `filter` and no
+`extractor`; the store keeps the key-aware extractor.
 
 To steer what the extractor captures, pass an
 `ExtractionConfig` with a custom `ModelExtractor`:
@@ -344,24 +323,38 @@ store = FileMemoryStore(
             model=BedrockModel(
                 model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
             ),
-            system_prompt="Extract durable user preferences as discrete facts.",
+            system_prompt=(
+                "Extract durable user preferences. Return ONLY a"
+                ' JSON array of objects: {"content": string}.'
+                " Start each content with a markdown heading"
+                " naming its topic. If nothing, return []."
+            ),
         ),
     ),
 )
 ```
 
 A custom extractor replaces the key-aware one, so the
-store no longer injects existing headings into the
-prompt. The store names each file after the first line
-of an entry, so to keep facts grouped by topic, have
-your prompt start each entry with a markdown heading
-naming its topic.
+store no longer adds its output format or the existing
+topics to the prompt. Your `system_prompt` replaces the
+extractor's default prompt entirely, so it must ask for
+the JSON array of `{"content": string}` objects; otherwise
+nothing parses and nothing is stored. The store names each
+file after the first line of an entry, so to keep facts
+grouped by topic, also have the prompt start each entry
+with a markdown heading naming its topic.
 </Tab>
 <Tab label="TypeScript">
 
-Pass `model` and `systemPrompt` directly in the extraction
-config to customize the built-in extractor without
-replacing it:
+Pass these fields in the extraction config to customize
+the built-in extractor without replacing it:
+
+- `model`: the model that distills facts. Defaults to the
+  agent's `auxModel` if set, otherwise the agent's own
+  model; set a cheaper one to cut cost.
+- `systemPrompt`: what counts as a durable fact. It
+  replaces the default guidance; the store still appends
+  its output format and the existing topics.
 
 ```typescript
 --8<-- "user-guide/sdk/memory/file-memory-store_imports.ts:extraction_custom_imports"
@@ -371,7 +364,7 @@ replacing it:
 </Tab>
 </Tabs>
 
-The store implements <Syntax py="add" ts="add" /> but not
+The store implements `add` but not
 <Syntax py="add_messages" ts="addMessages" />, so
 extraction runs client-side: a `ModelExtractor` distills
 facts from the conversation and writes each through `add`.
@@ -385,10 +378,10 @@ small team: hundreds to low thousands of files. Each
 `add` reads the target file and rewrites it, so throughput
 depends on the storage backend, not the store itself.
 
-Separate instances or processes writing the same storage
-namespace are not coordinated beyond in-process write
-locking. Avoid pointing two instances at
-the same namespace; the last write wins.
+Write locking is per store instance. Separate instances
+writing the same storage namespace, whether in one process
+or several, are not coordinated. Avoid pointing two
+instances at the same namespace; the last write wins.
 
 ## Related
 
