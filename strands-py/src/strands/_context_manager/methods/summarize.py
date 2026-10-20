@@ -14,7 +14,7 @@ from typing_extensions import TypedDict
 
 from ...event_loop.streaming import process_stream
 from ...types.content import ContentBlock, Message, Messages
-from ...types.tools import ToolResultContent
+from ...types.tools import ToolResult, ToolResultContent
 from ..types import is_text_block
 
 if TYPE_CHECKING:
@@ -91,15 +91,24 @@ def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[Con
     return blocks
 
 
-def _message_to_content_blocks(message: Message) -> list[ContentBlock]:
+def _format_tool_result_label(tool_result: ToolResult, tool_names: dict[str, str]) -> str:
+    """Render the label that introduces a tool result in the summarizer input."""
+    parts = [tool_names.get(tool_result["toolUseId"]), "error" if tool_result["status"] == "error" else None]
+    label = ", ".join(part for part in parts if part)
+    return f"[tool result: {label}]" if label else "[tool result]"
+
+
+def _message_to_content_blocks(message: Message, tool_names: dict[str, str]) -> list[ContentBlock]:
     """Convert a message's content to ContentBlocks for the summarizer.
 
-    Tool calls are rendered as text; reasoning is left out.
+    Tool calls and tool result labels are rendered as text; reasoning is left out.
     """
     blocks: list[ContentBlock] = []
     for block in message["content"]:
         if "toolResult" in block:
-            blocks.extend(_tool_result_to_content_blocks(block["toolResult"]["content"]))
+            tool_result = block["toolResult"]
+            blocks.append(ContentBlock(text=_format_tool_result_label(tool_result, tool_names)))
+            blocks.extend(_tool_result_to_content_blocks(tool_result["content"]))
         elif "toolUse" in block:
             tool_use = block["toolUse"]
             tool_input = json.dumps(tool_use["input"], separators=(",", ":"), ensure_ascii=False)
@@ -115,9 +124,15 @@ def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
     Reasoning blocks are left out: they are assistant-only content, and their signatures are bound to the
     conversation that produced them. Messages with nothing left get no role marker.
     """
+    tool_names = {
+        block["toolUse"]["toolUseId"]: block["toolUse"]["name"]
+        for message in messages
+        for block in message["content"]
+        if "toolUse" in block
+    }
     blocks: list[ContentBlock] = []
     for message in messages:
-        content = _message_to_content_blocks(message)
+        content = _message_to_content_blocks(message, tool_names)
         if content:
             blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
             blocks.extend(content)

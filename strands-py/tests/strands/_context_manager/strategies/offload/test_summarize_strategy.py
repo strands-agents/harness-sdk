@@ -318,6 +318,7 @@ class TestSummarizationWithToolCalls:
                         ContentBlock(text="\n---\n[assistant]"),
                         ContentBlock(text='[tool call: shell] {"command":"ls"}'),
                         ContentBlock(text="\n---\n[user]"),
+                        ContentBlock(text="[tool result: shell]"),
                         ContentBlock(text="a.ts b.ts"),
                         ContentBlock(text="</content>"),
                     ],
