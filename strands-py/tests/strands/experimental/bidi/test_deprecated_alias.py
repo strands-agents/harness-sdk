@@ -101,8 +101,8 @@ def test_root_and_owner_exports_are_same_objects(pyaudio_stub):
     for owner_name in _OWNER_MODULES:
         old_owner = importlib.import_module(f"strands.experimental.bidi.{owner_name}")
         new_owner = importlib.import_module(f"strands.bidi.{owner_name}")
-        assert old_owner.__all__ == new_owner.__all__
-        for public_name in new_owner.__all__:
+        assert set(old_owner.__all__) <= set(new_owner.__all__)
+        for public_name in old_owner.__all__:
             assert getattr(old_owner, public_name) is getattr(new_owner, public_name)
 
 

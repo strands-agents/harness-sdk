@@ -16,15 +16,12 @@ from strands.bidi.models import (
     GoogleGeminiLiveAudioStreamConfig,
     ModelConfig,
     ModelUpdateConfig,
-    OpenAILiveAudioConfig,
-    OpenAILiveResponsesDelegationConfig,
     Restartable,
 )
 
 if TYPE_CHECKING:
     from strands.bidi.models import BedrockNovaSonicModel as BedrockNovaSonicModel
     from strands.bidi.models import GoogleGeminiLiveModel as GoogleGeminiLiveModel
-    from strands.bidi.models import OpenAILiveModel as OpenAILiveModel
     from strands.bidi.models import OpenAIRealtimeModel as OpenAIRealtimeModel
 
 __all__ = [
@@ -40,8 +37,6 @@ __all__ = [
     "GoogleGeminiLiveAudioStreamConfig",
     "ModelConfig",
     "ModelUpdateConfig",
-    "OpenAILiveAudioConfig",
-    "OpenAILiveResponsesDelegationConfig",
     "Restartable",
 ]
 
