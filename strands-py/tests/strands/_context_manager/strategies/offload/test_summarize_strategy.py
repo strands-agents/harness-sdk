@@ -170,6 +170,48 @@ class TestSummarizeStrategyPerBlock:
         assert "[Offloaded:" in messages[1]["content"][0]["text"]
 
     @pytest.mark.asyncio
+    async def test_keeps_block_and_continues_pass_when_summarization_fails(self, mock_agent, caplog):
+        summary_stream = _make_stream_events("Summary of content.")
+        calls = iter([RuntimeError("rejected"), None])
+
+        def stream(*args, **kwargs):
+            error = next(calls)
+            if error:
+                raise error
+            return summary_stream(*args, **kwargs)
+
+        mock_agent.model.stream = stream
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        def tool_result_message(tool_use_id: str) -> Message:
+            tool_result = ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": "x" * 10000}])
+            return Message(role="user", content=[ContentBlock(toolResult=tool_result)])
+
+        messages: Messages = [tool_result_message("call_1"), tool_result_message("call_2")]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(context) is True
+        assert messages[0]["content"][0]["toolResult"]["content"][0]["text"] == "x" * 10000
+        assert "[Summarized:" in messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+        assert "error=<rejected>" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_offloads_video_block_without_summarizing(self, mock_agent):
+        mock_agent.model.stream = unittest.mock.Mock()
+        strategy = Offload.summarize("*").when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(video={"format": "mp4", "source": {"bytes": b"video"}})]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        assert await strategy.apply(context) is True
+        assert messages[0]["content"][0]["text"].startswith("[Offloaded:")
+        mock_agent.model.stream.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
         # guards against summarizer failures being hidden by a lossy retry (#5291)
         mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))

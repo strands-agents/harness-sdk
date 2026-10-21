@@ -1,5 +1,6 @@
 """Tests for the summarize method module."""
 
+import json
 import unittest.mock
 
 import pytest
@@ -119,6 +120,46 @@ class TestFlattenMessagesToContent:
         ]
         tru_result = _flatten_messages_to_content(messages)
         assert tru_result == [ContentBlock(text="\n---\n[user]"), ContentBlock(text="next")]
+
+    def test_passes_only_text_images_and_documents_and_renders_other_blocks_as_text(self):
+        image = ContentBlock(image={"format": "png", "source": {"bytes": b"\x01"}})
+        tool_result = ToolResult(
+            toolUseId="call_1",
+            status="success",
+            content=[{"json": {"ok": True}}, {"video": {"format": "mp4", "source": {"bytes": b"\x01"}}}],
+        )
+        messages: Messages = [
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(guardContent={"text": {"text": "guarded text", "qualifiers": []}}),
+                    ContentBlock(video={"format": "mp4", "source": {"bytes": b"\x01"}}),
+                    ContentBlock(audio={"format": "mp3", "source": {"bytes": b"\x01"}}),
+                    image,
+                    ContentBlock(cachePoint={"type": "default"}),
+                    ContentBlock(toolResult=tool_result),
+                ],
+            ),
+            Message(
+                role="assistant",
+                content=[ContentBlock(citationsContent={"citations": [], "content": [{"text": "cited answer"}]})],
+            ),
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+        exp_result = [
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="guarded text"),
+            ContentBlock(text="[video omitted]"),
+            ContentBlock(text="[audio omitted]"),
+            image,
+            ContentBlock(text="[tool result]"),
+            ContentBlock(text=json.dumps({"ok": True}, indent=2)),
+            ContentBlock(text="[video omitted]"),
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text="cited answer"),
+        ]
+        assert tru_result == exp_result
 
     def test_renders_tool_calls_and_their_results_as_labeled_text(self):
         # guards against tool-use blocks reaching the summarizer in a user turn (#5291)

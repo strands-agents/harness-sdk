@@ -91,17 +91,35 @@ async def _summarize_content(
     return "\n".join(parts).strip() or None
 
 
+def _to_summarizer_blocks(block: ContentBlock | ToolResultContent) -> list[ContentBlock]:
+    """Convert a block to what the summarizer accepts in a user turn.
+
+    Text, images, and documents pass through; other content is rendered as text or a placeholder, and the rest
+    is left out.
+    """
+    if "text" in block:
+        return [ContentBlock(text=block["text"])]
+    if "image" in block:
+        return [ContentBlock(image=block["image"])]
+    if "document" in block:
+        return [ContentBlock(document=block["document"])]
+    if "json" in block:
+        return [ContentBlock(text=json.dumps(block["json"], indent=2))]
+    if "citationsContent" in block:
+        return [ContentBlock(text=content["text"]) for content in block["citationsContent"].get("content", [])]
+    if "guardContent" in block:
+        guard_text = block["guardContent"].get("text")
+        return [ContentBlock(text=guard_text["text"] if guard_text else "[image omitted]")]
+    if "video" in block:
+        return [ContentBlock(text="[video omitted]")]
+    if "audio" in block:
+        return [ContentBlock(text="[audio omitted]")]
+    return []
+
+
 def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[ContentBlock]:
-    """Convert ToolResultContent list to ContentBlocks, serializing JSON to text."""
-    blocks: list[ContentBlock] = []
-    for item in content:
-        if "json" in item:
-            blocks.append(ContentBlock(text=json.dumps(item["json"], indent=2)))
-        elif "text" in item:
-            blocks.append(ContentBlock(text=item["text"]))
-        else:
-            blocks.append(item)  # type: ignore[arg-type]
-    return blocks
+    """Convert ToolResultContent list to ContentBlocks the summarizer accepts."""
+    return [converted for item in content for converted in _to_summarizer_blocks(item)]
 
 
 def _format_tool_result_label(tool_result: ToolResult, tool_names: dict[str, str]) -> str:
@@ -114,7 +132,7 @@ def _format_tool_result_label(tool_result: ToolResult, tool_names: dict[str, str
 def _message_to_content_blocks(message: Message, tool_names: dict[str, str]) -> list[ContentBlock]:
     """Convert a message's content to ContentBlocks for the summarizer.
 
-    Tool calls and tool result labels are rendered as text; reasoning is left out.
+    Tool calls and tool result labels are rendered as text.
     """
     blocks: list[ContentBlock] = []
     for block in message["content"]:
@@ -126,8 +144,8 @@ def _message_to_content_blocks(message: Message, tool_names: dict[str, str]) -> 
             tool_use = block["toolUse"]
             tool_input = json.dumps(tool_use["input"], separators=(",", ":"), ensure_ascii=False)
             blocks.append(ContentBlock(text=f"[tool call: {tool_use['name']}] {tool_input}"))
-        elif "reasoningContent" not in block:
-            blocks.append(block)
+        else:
+            blocks.extend(_to_summarizer_blocks(block))
     return blocks
 
 
