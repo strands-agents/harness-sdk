@@ -1,8 +1,13 @@
 """Tests for _AgentAsTool - the agent-as-tool adapter."""
 
+import asyncio
+import copy
+import json
 from unittest.mock import MagicMock
 from urllib.parse import quote
 
+import httpx
+import openai
 import pytest
 
 import strands
@@ -11,6 +16,7 @@ from strands.agent.agent import Agent
 from strands.agent.agent_result import AgentResult
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.interrupt import Interrupt, _InterruptState
+from strands.models.openai_responses import OpenAIResponsesModel
 from strands.session.file_session_manager import FileSessionManager
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.types._events import AgentAsToolStreamEvent, ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
@@ -430,71 +436,94 @@ async def test_stream_resets_empty_initial_state_when_preserve_context_false(fak
 
 
 @pytest.mark.asyncio
-async def test_stream_resets_model_state_when_preserve_context_false(fake_agent):
-    """Model state should reset to its construction-time baseline between invocations."""
-    fake_agent._model_state = {"response_id": "initial_resp"}
-    tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=False)
+@pytest.mark.parametrize("baseline", [{}, {"response_id": "initial", "nested": {"values": ["initial"]}}])
+@pytest.mark.parametrize("preserve_context", [False, True])
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+async def test_stream_model_state_isolation(fake_agent, agent_result, alist, baseline, preserve_context, outcome):
+    # Independent provider calls restore a deep copy of the captured baseline (#5208).
+    fake_agent._model_state = copy.deepcopy(baseline)
+    tool = fake_agent.as_tool(preserve_context=preserve_context)
+    external_state = fake_agent._model_state
+    external_state.setdefault("nested", {"values": []})["values"].append("external")
+    external_state["response_id"] = "external"
+    expected = copy.deepcopy(external_state if preserve_context else baseline)
+    observed = []
 
-    fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
-        AgentResult(
-            stop_reason="end_turn",
-            message={"role": "assistant", "content": [{"text": "ok"}]},
-            metrics=EventLoopMetrics(),
-            state={},
-        )
-    )
+    async def stream(prompt, **kwargs):
+        observed.append(copy.deepcopy(fake_agent._model_state))
+        fake_agent._model_state.setdefault("nested", {"values": []})["values"].append("provider")
+        fake_agent._model_state["response_id"] = f"resp_{len(observed)}"
+        if len(observed) == 1 and outcome == "error":
+            raise RuntimeError("provider failed")
+        if len(observed) == 1 and outcome == "cancel":
+            raise asyncio.CancelledError
+        yield {"result": agent_result}
 
-    tool_use = {
-        "toolUseId": "tool-1",
-        "name": "fake_agent",
-        "input": {"input": "first"},
-    }
+    fake_agent.stream_async = stream
+    for index in range(3):
+        invocation = tool.stream({"toolUseId": f"call-{index}", "input": {"input": "task"}}, {})
+        if index == 0 and outcome == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await alist(invocation)
+        else:
+            events = await alist(invocation)
+            exp_status = "error" if index == 0 and outcome == "error" else "success"
+            assert events[-1]["tool_result"]["status"] == exp_status
 
-    async for _ in tool.stream(tool_use, {}):
-        pass
-
-    # Simulate model provider updating model_state during invocation
-    fake_agent._model_state = {"response_id": "resp_after_call_1"}
-
-    tool_use["toolUseId"] = "tool-2"
-    async for _ in tool.stream(tool_use, {}):
-        pass
-
-    assert fake_agent._model_state == {"response_id": "initial_resp"}
+    exp_states = []
+    for index in range(3):
+        exp_states.append(copy.deepcopy(expected))
+        if preserve_context:
+            expected.setdefault("nested", {"values": []})["values"].append("provider")
+            expected["response_id"] = f"resp_{index + 1}"
+    assert observed == exp_states
 
 
 @pytest.mark.asyncio
-async def test_stream_preserves_model_state_when_preserve_context_true(fake_agent):
-    """Model state should be preserved across invocations when preserve_context=True."""
-    fake_agent._model_state = {"response_id": "initial_resp"}
-    tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=True)
+@pytest.mark.parametrize("preserve_context", [False, True])
+@pytest.mark.parametrize("baseline_id", [None, "baseline"])
+async def test_stream_openai_responses_request_chaining(monkeypatch, alist, preserve_context, baseline_id):
+    # Exercise the real provider and SDK stream parser without network access (#5208).
+    requests = []
 
-    fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
-        AgentResult(
-            stop_reason="end_turn",
-            message={"role": "assistant", "content": [{"text": "ok"}]},
-            metrics=EventLoopMetrics(),
-            state={},
-        )
+    def handle(request):
+        requests.append(json.loads(request.content))
+        response_id = f"resp_{len(requests)}"
+        events = [
+            {"type": "response.created", "response": {"id": response_id}},
+            {"type": "response.output_text.delta", "delta": "offline answer"},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": response_id,
+                    "status": "completed",
+                    "usage": {"input_tokens": 2, "output_tokens": 2, "total_tokens": 4},
+                },
+            },
+        ]
+        data = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=data)
+
+    original_client = openai.AsyncOpenAI
+
+    def client(**kwargs):
+        return original_client(**kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+
+    agent = Agent(
+        model=OpenAIResponsesModel(model_id="gpt-4o", stateful=True, client_args={"api_key": "offline-test"}),
+        callback_handler=None,
     )
-
-    tool_use = {
-        "toolUseId": "tool-1",
-        "name": "fake_agent",
-        "input": {"input": "first"},
-    }
-
-    async for _ in tool.stream(tool_use, {}):
-        pass
-
-    # Provider updates model_state
-    fake_agent._model_state["response_id"] = "resp_after_call_1"
-
-    tool_use["toolUseId"] = "tool-2"
-    async for _ in tool.stream(tool_use, {}):
-        pass
-
-    assert fake_agent._model_state == {"response_id": "resp_after_call_1"}
+    if baseline_id is not None:
+        agent._model_state = {"response_id": baseline_id}
+    tool = agent.as_tool(name="researcher", preserve_context=preserve_context)
+    monkeypatch.setattr("strands.models.openai_responses.openai.AsyncOpenAI", client)
+    for index in range(3):
+        events = await alist(tool.stream({"toolUseId": f"call-{index}", "input": {"input": f"task {index}"}}, {}))
+        results = [event["tool_result"]["status"] for event in events if isinstance(event, ToolResultEvent)]
+        assert results == ["success"]
+    tru_ids = [request.get("previous_response_id") for request in requests]
+    exp_ids = [baseline_id, "resp_1", "resp_2"] if preserve_context else [baseline_id] * 3
+    assert tru_ids == exp_ids
 
 
 @pytest.mark.asyncio
@@ -952,6 +981,7 @@ async def test_stream_resume_restores_ephemeral_sub_agent_from_a_stored_turn(orc
     """An ephemeral sub-agent rebuilt from scratch resumes from the stored turn."""
     interrupted = Agent(name="fake_agent", callback_handler=None)
     interrupted.messages = [{"role": "user", "content": [{"text": "go"}]}]
+    interrupted._model_state = {"response_id": "interrupted"}
     interrupted._interrupt_state.interrupts["interrupt-1"] = Interrupt(id="interrupt-1", name="approval", reason="r")
     interrupted._interrupt_state.activate()
 
@@ -983,6 +1013,7 @@ async def test_stream_resume_restores_ephemeral_sub_agent_from_a_stored_turn(orc
     tru_messages = rebuilt.messages
     exp_messages = [{"role": "user", "content": [{"text": "go"}]}]
     assert tru_messages == exp_messages
+    assert rebuilt._model_state == {"response_id": "interrupted"}
     assert list(rebuilt._interrupt_state.interrupts) == ["interrupt-1"]
 
     tru_prompt = rebuilt.stream_async.call_args[0][0]

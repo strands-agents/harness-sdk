@@ -121,8 +121,7 @@ class _AgentAsTool(AgentTool):
                 )
             self._initial_messages = copy.deepcopy(agent.messages)
             self._initial_state = AgentState(agent.state.get())
-            if hasattr(agent, "_model_state"):
-                self._initial_model_state = copy.deepcopy(agent._model_state)
+            self._initial_model_state = copy.deepcopy(agent._model_state)
 
     @property
     def agent(self) -> Agent:
@@ -358,8 +357,7 @@ class _AgentAsTool(AgentTool):
         )
         self._agent.messages = copy.deepcopy(self._initial_messages)
         self._agent.state = AgentState(self._initial_state.get())
-        if hasattr(self._agent, "_model_state"):
-            self._agent._model_state = copy.deepcopy(self._initial_model_state)
+        self._agent._model_state = copy.deepcopy(self._initial_model_state)
         self._agent._interrupt_state = _InterruptState()
 
     def _is_resuming(self, parent: Agent, prefix: str) -> bool:
