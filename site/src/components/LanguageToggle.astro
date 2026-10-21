@@ -11,6 +11,7 @@ import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-p
 import { getLanguageSwitchTarget, type LanguageSlug } from '../util/language-switch'
 import { getApiCounterpartMap } from '../util/api-counterparts'
 import { getBase, pathWithBase } from '../util/links'
+import { getSampleLanguageSwitchPath } from '../util/sample-navigation'
 import typescriptIcon from '../assets/lang/typescript.svg?raw'
 import pythonIcon from '../assets/lang/python.svg?raw'
 
@@ -24,6 +25,9 @@ const rawPath = Astro.url.pathname
 const currentPath = base && rawPath.startsWith(base) ? rawPath.slice(base.length) || '/' : rawPath
 
 function switchHref(lang: LanguageSlug): string | undefined {
+  const sampleTarget = getSampleLanguageSwitchPath(currentPath, lang)
+  if (sampleTarget) return pathWithBase(sampleTarget)
+
   const target = getLanguageSwitchTarget(currentPath, lang, docIds, apiCounterparts)
   return target ? pathWithBase(target) : undefined
 }
@@ -165,7 +169,23 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
     window.__strandsLanguageToggleInit = true;
     // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
 
+    function getExamplesRouteLanguage() {
+      var segments = window.location.pathname.split('/').filter(Boolean);
+      var examplesIndex = segments.findIndex(function (segment, index) {
+        return segment === 'examples' && segments[index - 1] !== 'docs';
+      });
+      if (examplesIndex === -1) return null;
+
+      var routeLanguage = segments[examplesIndex + 1];
+      if (routeLanguage === 'python') return 'Python';
+      if (routeLanguage === 'typescript') return 'TypeScript';
+      return examplesIndex === segments.length - 1 ? 'TypeScript' : null;
+    }
+
     function getPreference() {
+      var examplesRouteLanguage = getExamplesRouteLanguage();
+      if (examplesRouteLanguage) return examplesRouteLanguage;
+
       try {
         return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
       } catch (e) {

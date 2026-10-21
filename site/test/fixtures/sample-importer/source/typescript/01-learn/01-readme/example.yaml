@@ -1,0 +1,10 @@
+schemaVersion: 1
+title: Marker title
+run:
+  - npm install
+  - npm start
+content:
+  guide: README.md
+  featured:
+    - package.json
+    - src/index.ts

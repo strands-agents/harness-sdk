@@ -1,0 +1,7 @@
+schemaVersion: 1
+id: python/01-learn/03-marker
+slug: python/marker
+title: Marker-only Sample
+summary: Added without changing the migration manifest.
+tags:
+  - Marker

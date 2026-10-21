@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "prebuild": "npm run samples:sync",
     "build": "astro build",
     "build:all": "npm run sdk:generate && npm run build",
+    "predev": "npm run samples:sync",
     "dev": "astro dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -21,7 +23,7 @@
     "routes:update": "tsx scripts/update-known-routes.ts",
     "changelog:sync": "tsx scripts/changelog/sync.ts",
     "catalog:stats": "tsx scripts/catalog/refresh-stats.ts",
-    "samples:detail": "tsx scripts/build-sample-detail-snapshot.ts",
+    "samples:sync": "tsx scripts/samples/sync.ts",
     "astro": "astro"
   },
   "author": "",
@@ -43,6 +45,7 @@
     "@types/turndown": "^5.0.6",
     "express": "^5.1.0",
     "fast-glob": "^3.3.3",
+    "github-slugger": "^2.0.0",
     "markdown-it": "^15.0.2",
     "mdast-util-to-string": "^4.0.0",
     "node-fetch": "^3.3.2",

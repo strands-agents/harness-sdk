@@ -134,4 +134,11 @@ const containsCurrent = (item: ProductNavItem): boolean =>
   :global(html[data-lang-pref='python']) li:has(> a[href*='/api/typescript']) {
     display: none;
   }
+
+  /* The examples reader contributes one top-level band per SDK language.
+     Keep the mobile tree aligned with the global language preference. */
+  :global(html:not([data-lang-pref='python'])) .mnav__band:has(a[href*='/examples/python/']),
+  :global(html[data-lang-pref='python']) .mnav__band:has(a[href*='/examples/typescript/']) {
+    display: none;
+  }
 </style>

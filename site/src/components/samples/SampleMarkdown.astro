@@ -1,0 +1,22 @@
+---
+import { Code } from 'astro-expressive-code/components'
+import type { SampleMarkdownPart } from '../../util/sample-details'
+
+interface Props {
+  parts: SampleMarkdownPart[]
+}
+
+const { parts } = Astro.props
+---
+
+{
+  parts.map((part) =>
+    part.type === 'html' ? (
+      <Fragment set:html={part.html} />
+    ) : part.code.trim() ? (
+      <Code code={part.code} lang={part.language} meta={part.meta || undefined} />
+    ) : (
+      <pre><code></code></pre>
+    )
+  )
+}

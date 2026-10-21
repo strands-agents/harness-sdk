@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "repository": "example/samples",
+  "categories": [
+    {
+      "language": "typescript",
+      "id": "learn",
+      "label": "Learn"
+    },
+    {
+      "language": "python",
+      "id": "learn",
+      "label": "Learn"
+    }
+  ],
+  "samples": [
+    {
+      "id": "typescript/01-learn/01-readme",
+      "slug": "typescript/readme",
+      "language": "typescript",
+      "category": "learn",
+      "categoryLabel": "Learning",
+      "title": "Manifest title",
+      "description": "A sample with a README.",
+      "tags": ["TypeScript"],
+      "path": "typescript/01-learn/01-readme"
+    },
+    {
+      "id": "python/01-learn/02-notebook",
+      "language": "python",
+      "category": "learn",
+      "categoryLabel": "Learn",
+      "title": "Notebook Sample",
+      "description": "A sample whose guide comes from a notebook.",
+      "tags": ["Notebook"],
+      "path": "python/01-learn/02-notebook",
+      "notebook": "guide.ipynb"
+    }
+  ]
+}

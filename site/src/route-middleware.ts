@@ -58,7 +58,7 @@ export function filterSidebarByBasePath(entries: SidebarEntry[], basePath: strin
   // group alive in every section.
   const hasBaseMatch = (items: SidebarEntry[]): boolean =>
     items.some((e) =>
-      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false,
+      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false
     )
   const anchored = hasBaseMatch(entries)
 
@@ -181,6 +181,14 @@ export const onRequest = defineRouteMiddleware(async (context) => {
     starlightRoute.hasSidebar = false
     starlightRoute.sidebar = []
     starlightRoute.pagination = { prev: undefined, next: undefined }
+    return
+  }
+
+  // The generated examples pages supply their own sample/category sidebar.
+  // Preserve it exactly so every category stays expanded like the other
+  // documentation section bands and the selected sample remains highlighted.
+  const examplesBasePath = pathWithBase('/examples')
+  if (currentPath === examplesBasePath || currentPath.startsWith(`${examplesBasePath}/`)) {
     return
   }
 

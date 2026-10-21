@@ -67,6 +67,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
+│   │   ├── samples/              # Shared examples reader and Markdown/code rendering
 │   │   └── ...
 │   ├── config/                   # Site configuration
 │   ├── content/                  # Content collections
@@ -87,22 +88,25 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── labs/
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
-│   ├── data/                     # Generated data (catalog stats and pinned sample snapshots;
-│   │                             #   update through their scripts, do not hand-edit)
+│   ├── data/                     # Generated data and the small committed sample-detail fallback
+│   │                             #   (update through their scripts, do not hand-edit)
 │   ├── layouts/                  # Custom layouts
-│   ├── pages/                    # Astro pages (incl. integrations.astro and examples/ detail routes)
+│   ├── pages/                    # Astro pages (incl. integrations.astro and generated examples reader routes)
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions
 ├── astro.config.mjs              # Astro configuration
+├── ec.config.mjs                 # Shared Expressive Code themes and frame styling
 ├── package.json                  # Node.js dependencies and scripts
 ├── tsconfig.json                 # TypeScript configuration
 ├── LICENSE
 ├── NOTICE
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
-├── scripts/                      # Build and utility scripts (scripts/catalog/ — stats refresh
-│                                 #   run by the weekly catalog-stats workflow)
+├── scripts/                      # Build and utility scripts
+│   ├── catalog/                  # Stats refresh run by the weekly catalog-stats workflow
+│   ├── changelog/                # Release-note import and rendering utilities
+│   └── samples/                  # Deterministic local-checkout importer for sample detail pages
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files
 ```

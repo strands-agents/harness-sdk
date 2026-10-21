@@ -16,7 +16,7 @@ const product = currentProduct(Astro.url.pathname)
 // Learning (courses) and Examples aren't products, but their sidebars lead
 // with the same bordered slug box so they match the product pages.
 const isLearning = !product && Astro.url.pathname.includes('/docs/learning/')
-const isExamples = !product && /\/examples\/?$/.test(Astro.url.pathname)
+const isExamples = !product && /\/examples(?:\/|$)/.test(Astro.url.pathname)
 // The catalog landing and the "Add your integration" page share the /integrations slug.
 const isIntegrations =
   !product &&
@@ -48,10 +48,24 @@ const staticSlug = isLearning
     function set(label) {
       document.documentElement.dataset.langPref = label === 'Python' ? 'python' : 'typescript'
     }
+
+    function getExamplesRouteLanguage() {
+      var segments = window.location.pathname.split('/').filter(Boolean)
+      var examplesIndex = segments.findIndex(function (segment, index) {
+        return segment === 'examples' && segments[index - 1] !== 'docs'
+      })
+      if (examplesIndex === -1) return null
+
+      var routeLanguage = segments[examplesIndex + 1]
+      if (routeLanguage === 'python') return 'Python'
+      if (routeLanguage === 'typescript') return 'TypeScript'
+      return examplesIndex === segments.length - 1 ? 'TypeScript' : null
+    }
+
     try {
-      set(localStorage.getItem(KEY) || 'TypeScript')
+      set(getExamplesRouteLanguage() || localStorage.getItem(KEY) || 'TypeScript')
     } catch (e) {
-      set('TypeScript')
+      set(getExamplesRouteLanguage() || 'TypeScript')
     }
     window.addEventListener('lang-change', function (e) {
       if (e && e.detail) set(e.detail)
@@ -232,4 +246,23 @@ const staticSlug = isLearning
     }
     sidebarSearch.addEventListener('input', apply)
   }
+
+  function revealCurrentExample() {
+    if (!/\/examples(?:\/|$)/.test(window.location.pathname)) return
+    const sidebarPane = document.querySelector<HTMLElement>('.sidebar-pane')
+    const current = sidebarPane?.querySelector<HTMLElement>('.sidebar-content a[aria-current="page"]')
+    if (!sidebarPane || !current) return
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const paneRect = sidebarPane.getBoundingClientRect()
+        const currentRect = current.getBoundingClientRect()
+        const isVisible = currentRect.top >= paneRect.top && currentRect.bottom <= paneRect.bottom
+        if (!isVisible) current.scrollIntoView({ block: 'center', inline: 'nearest' })
+      })
+    })
+  }
+
+  revealCurrentExample()
+  document.addEventListener('astro:page-load', revealCurrentExample)
 </script>

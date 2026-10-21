@@ -119,6 +119,43 @@ The collection base is `src/content` (not `src/content/docs`), so all doc slugs 
 [AgentResult](@api/python/strands.agent.agent_result#AgentResult)
 ```
 
+### 6. Samples Repository Import (`scripts/samples/`)
+
+**What it does:** Builds the documentation-style `/examples/` reader from a local checkout of
+`strands-agents/samples`. `/examples/` renders the first TypeScript sample, and every generated
+sample route keeps a persistent Starlight sidebar with all samples grouped by language-aware
+category sections. The importer resolves the checkout's exact Git commit, renders each sample's
+README or notebook guide, selects safe text source files, and writes an ignored snapshot to
+`.build/samples/sample-details.json`.
+
+**Why:** Sample content stays owned by the samples repository while the website owns presentation.
+Every docs build can pick up the selected samples revision without copying guides or source files into
+this repository, and every rendered page links back to the exact GitHub commit it used.
+
+CI, preview, and production workflows check out the samples repository separately and set
+`SAMPLES_SOURCE_DIR`. CI fails if that checkout is unavailable. For local development, point the same
+variable at a clean samples checkout:
+
+```bash
+SAMPLES_SOURCE_DIR=/path/to/samples npm run dev
+```
+
+Metadata is resolved in this order:
+
+1. A root `samples.json` in the samples checkout, when present.
+2. `src/data/samples.json` as the migration manifest while metadata moves out of this repository.
+3. A versioned `example.yaml` inside a sample directory, which can override presentation metadata or
+   register a new sample without changing the migration manifest.
+
+New marker-only samples must declare stable `id` and `slug` values plus a title and summary. Existing
+IDs, slugs, languages, and categories are treated as routing contracts rather than mutable display
+metadata.
+
+The importer does not execute sample code. It omits symlinks, secrets, lock files, binary or oversized
+files, generated/data directories, and notebook outputs. README HTML is sanitized before rendering,
+relative links are rewritten to the pinned GitHub snapshot, and fenced guide/source code is rendered
+through the same Expressive Code integration used by the main documentation.
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:

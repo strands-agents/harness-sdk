@@ -1,0 +1,6 @@
+{
+  "name": "readme-sample",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  }
+}

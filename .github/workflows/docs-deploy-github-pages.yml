@@ -7,6 +7,15 @@ on:
         description: 'Deploy even if a published release has no changelog entry yet'
         type: boolean
         default: false
+      samples_sha:
+        description: 'Samples commit SHA to deploy (defaults to samples/main)'
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  group: docs-production
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -25,10 +34,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          repository: strands-agents/samples
+          ref: ${{ inputs.samples_sha || 'main' }}
+          path: samples-source
+          persist-credentials: false
+
+      - name: Record samples revision
+        id: samples
+        working-directory: samples-source
+        run: |
+          samples_sha=$(git rev-parse HEAD)
+          echo "sha=$samples_sha" >> "$GITHUB_OUTPUT"
+          echo "### Samples source" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`strands-agents/samples@$samples_sha\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -57,7 +85,13 @@ jobs:
       - name: Build CMS
         run: npm run cms:build
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
           SITE_DOMAIN: https://strandsagents.com
+
+      - name: Test generated site
+        run: npm test
 
       - name: Create latest/ symlinks for llms.txt files
         run: |
@@ -75,5 +109,5 @@ jobs:
           rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
           cd gh-pages-deploy
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from ${{ github.sha }}"
+          git diff --cached --quiet || git commit -m "Deploy site ${{ github.sha }} with samples ${{ steps.samples.outputs.sha }}"
           git push origin HEAD:gh-pages

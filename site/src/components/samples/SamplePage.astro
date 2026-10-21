@@ -1,0 +1,343 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import { Code } from 'astro-expressive-code/components'
+import '../../styles/sample-detail.css'
+import {
+  getSampleFileSourceUrl,
+  getSampleGuideLabel,
+  getSampleLanguageLabel,
+  getSampleRunCommands,
+  getSampleRunWorkingDirectory,
+  getSampleSourceUrl,
+  normalizeSampleCodeLanguage,
+  renderSampleMarkdownParts,
+  sampleFileId,
+  type SampleDetail,
+} from '../../util/sample-details'
+import { buildSampleSidebar, getSamplePagination } from '../../util/sample-navigation'
+import SampleMarkdown from './SampleMarkdown.astro'
+
+interface Props {
+  sample: SampleDetail
+}
+
+const { sample } = Astro.props
+const guideParts = renderSampleMarkdownParts(sample, sample.guide.markdown, sample.guide.path, {
+  stripTitle: true,
+})
+const guideLabel = getSampleGuideLabel(sample)
+const guideLabelLower = guideLabel.toLowerCase()
+const sourceUrl = getSampleSourceUrl(sample)
+const shortCommit = sample.source.commit.slice(0, 7)
+const prerequisites = sample.metadata.prerequisites ?? []
+const runCommands = getSampleRunCommands(sample)
+const runWorkingDirectory = getSampleRunWorkingDirectory(sample)
+const hasSetupAside = prerequisites.length > 0 || runCommands.length > 0
+const renderedFileCount = sample.files.length
+const omittedSourceEntryCount = Math.max(0, sample.skippedFileCount)
+const fileCountLabel = `${renderedFileCount} ${renderedFileCount === 1 ? 'file' : 'files'} rendered`
+const sourceCoverageLabel =
+  omittedSourceEntryCount > 0
+    ? `${omittedSourceEntryCount} additional source ${
+        omittedSourceEntryCount === 1 ? 'entry' : 'entries'
+      } on GitHub`
+    : 'all selected source files rendered'
+const sidebar = buildSampleSidebar()
+const pagination = getSamplePagination(sample)
+---
+
+<StarlightPage
+  frontmatter={{
+    title: sample.metadata.title,
+    description: sample.metadata.summary,
+    tableOfContents: false,
+    prev: pagination.prev,
+    next: pagination.next,
+  }}
+  sidebar={sidebar}
+>
+  <div class="sample-detail" data-sample-detail data-sample-id={sample.id}>
+    <header class="sample-detail__header">
+      <p class="sample-detail__summary">{sample.metadata.summary}</p>
+      <div class="sample-detail__meta" aria-label="Example metadata">
+        <span>{getSampleLanguageLabel(sample.metadata.language)}</span>
+        <span>{sample.metadata.categoryLabel}</span>
+        {sample.metadata.tags.map((tag) => <span>{tag}</span>)}
+      </div>
+      <p class="sample-detail__source-note">
+        Rendered from <a href={sourceUrl} target="_blank" rel="noopener">
+          {sample.source.repository}@{shortCommit}
+        </a>
+        <span aria-hidden="true"> · </span>
+        {fileCountLabel}
+        <span aria-hidden="true"> · </span>
+        {sourceCoverageLabel}
+      </p>
+      <div class="sample-detail__actions">
+        <a class="sample-detail__button sample-detail__button--primary" href="#guide">
+          Read the {guideLabelLower}
+        </a>
+        <a class="sample-detail__button" href={sourceUrl} target="_blank" rel="noopener">
+          View full example on GitHub <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </header>
+
+    <nav class="sample-detail__tabs" role="tablist" aria-label="Example sections">
+      <a
+        id="guide-tab"
+        class="sample-detail__tab"
+        href="#guide"
+        role="tab"
+        aria-controls="guide"
+        aria-selected="true"
+        tabindex="0"
+        data-sample-tab="guide"
+      >
+        {guideLabel}
+      </a>
+      <a
+        id="files-tab"
+        class="sample-detail__tab"
+        href="#files"
+        role="tab"
+        aria-controls="files"
+        aria-selected="false"
+        tabindex="-1"
+        data-sample-tab="files"
+      >
+        Files ({renderedFileCount})
+      </a>
+    </nav>
+
+    <section
+      id="guide"
+      class="sample-detail__panel"
+      role="tabpanel"
+      aria-labelledby="guide-tab"
+      tabindex="0"
+      data-sample-panel="guide"
+    >
+      <div class:list={['sample-detail__guide-grid', !hasSetupAside && 'sample-detail__guide-grid--single']}>
+        <article class="sample-detail__readme">
+          <p class="sample-detail__guide-source">
+            {sample.guide.path ? (
+              <>
+                {guideLabel} rendered from <code>{sample.guide.path}</code>
+              </>
+            ) : (
+              'Guide generated from sample metadata'
+            )}
+          </p>
+          <SampleMarkdown parts={guideParts} />
+        </article>
+
+        {hasSetupAside && (
+          <aside class="sample-detail__aside" aria-label="Example setup">
+            {prerequisites.length > 0 && (
+              <section>
+                <h2>Before you start</h2>
+                <ul>
+                  {prerequisites.map((prerequisite) => <li>{prerequisite}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {runCommands.length > 0 && (
+              <section>
+                <h2>Run locally</h2>
+                {runWorkingDirectory && (
+                  <p>
+                    From <code>{runWorkingDirectory}</code>:
+                  </p>
+                )}
+                <Code code={runCommands.join('\n')} lang="bash" frame="terminal" />
+              </section>
+            )}
+          </aside>
+        )}
+      </div>
+    </section>
+
+    <section
+      id="files"
+      class="sample-detail__panel"
+      role="tabpanel"
+      aria-labelledby="files-tab"
+      tabindex="0"
+      data-pagefind-ignore
+      data-sample-panel="files"
+    >
+      <header class="sample-detail__files-header">
+        <div>
+          <h2>Selected files</h2>
+          <p>
+            {renderedFileCount} selected {renderedFileCount === 1 ? 'file is' : 'files are'} rendered here.
+            {omittedSourceEntryCount > 0 &&
+              ` ${omittedSourceEntryCount} additional source ${
+                omittedSourceEntryCount === 1 ? 'entry is' : 'entries are'
+              } available in the repository snapshot.`}
+          </p>
+        </div>
+        <a href={sourceUrl} target="_blank" rel="noopener">
+          Browse the full repository snapshot <span aria-hidden="true">↗</span>
+        </a>
+      </header>
+
+      {sample.files.length > 0 ? (
+        <div class="sample-detail__files">
+          <div class="sample-detail__file-list" aria-label="Rendered example files">
+            <p>Files</p>
+            {sample.files.map((file, index) => (
+              <button
+                type="button"
+                aria-pressed={index === 0 ? 'true' : 'false'}
+                aria-controls={sampleFileId(file.path)}
+                data-sample-file={file.path}
+                title={file.path}
+              >
+                {file.path}
+              </button>
+            ))}
+          </div>
+
+          <div class="sample-detail__file-content">
+            {sample.files.map((file) => (
+              <article id={sampleFileId(file.path)} data-sample-file-panel={file.path}>
+                <div class="sample-detail__file-source">
+                  <a href={getSampleFileSourceUrl(sample, file.path)} target="_blank" rel="noopener">
+                    View on GitHub <span aria-hidden="true">↗</span>
+                  </a>
+                </div>
+                {file.content.trim() ? (
+                  <Code
+                    code={file.content}
+                    lang={normalizeSampleCodeLanguage(file.language)}
+                    title={file.path}
+                    frame="code"
+                  />
+                ) : (
+                  <p class="sample-detail__empty-file">This file is empty.</p>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div class="sample-detail__files-empty">
+          <p>No source files are included in this on-site snapshot.</p>
+          <a href={sourceUrl} target="_blank" rel="noopener">
+            View all files on GitHub <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      )}
+    </section>
+  </div>
+</StarlightPage>
+
+<style is:global>
+  html:not([data-lang-pref='python'])
+    .sidebar-content
+    ul.top-level
+    > li:has(.section-group a[href*='/examples/python/']) {
+    display: none;
+  }
+
+  html[data-lang-pref='python']
+    .sidebar-content
+    ul.top-level
+    > li:has(.section-group a[href*='/examples/typescript/']),
+  html[data-lang-pref='python']
+    .sidebar-content
+    ul.top-level
+    > li:has(.section-group a[href$='/examples/']) {
+    display: none;
+  }
+</style>
+
+<script>
+  const root = document.querySelector<HTMLElement>('[data-sample-detail]')
+
+  function activatePanel(panelName: string, updateHash: boolean) {
+    if (!root) return
+    root.querySelectorAll<HTMLElement>('[data-sample-panel]').forEach((panel) => {
+      panel.hidden = panel.dataset.samplePanel !== panelName
+    })
+    root.querySelectorAll<HTMLElement>('[data-sample-tab]').forEach((tab) => {
+      const selected = tab.dataset.sampleTab === panelName
+      tab.setAttribute('aria-selected', String(selected))
+      tab.setAttribute('tabindex', selected ? '0' : '-1')
+    })
+    if (updateHash) history.replaceState(null, '', `#${panelName}`)
+  }
+
+  function activateFile(filePath: string) {
+    if (!root) return
+    root.querySelectorAll<HTMLElement>('[data-sample-file-panel]').forEach((panel) => {
+      panel.hidden = panel.dataset.sampleFilePanel !== filePath
+    })
+    root.querySelectorAll<HTMLButtonElement>('[data-sample-file]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.sampleFile === filePath))
+    })
+  }
+
+  function activateHash() {
+    if (!root) return
+    const hash = location.hash.slice(1)
+    const linkedFile = hash ? document.getElementById(hash) : null
+    if (linkedFile instanceof HTMLElement && root.contains(linkedFile) && linkedFile.dataset.sampleFilePanel) {
+      activatePanel('files', false)
+      activateFile(linkedFile.dataset.sampleFilePanel)
+      return
+    }
+    activatePanel(hash === 'files' ? 'files' : 'guide', false)
+  }
+
+  if (root) {
+    root.classList.add('sample-detail--enhanced')
+
+    root.querySelectorAll<HTMLElement>('[data-sample-tab]').forEach((tab) => {
+      tab.addEventListener('click', (event) => {
+        event.preventDefault()
+        activatePanel(tab.dataset.sampleTab || 'guide', true)
+      })
+      tab.addEventListener('keydown', (event) => {
+        if (event.key === ' ') {
+          event.preventDefault()
+          activatePanel(tab.dataset.sampleTab || 'guide', true)
+          return
+        }
+
+        const tabs = [...root.querySelectorAll<HTMLElement>('[data-sample-tab]')]
+        const currentIndex = tabs.indexOf(tab)
+        let nextIndex: number | undefined
+
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length
+        if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length
+        if (event.key === 'Home') nextIndex = 0
+        if (event.key === 'End') nextIndex = tabs.length - 1
+        if (nextIndex === undefined) return
+
+        event.preventDefault()
+        const nextTab = tabs[nextIndex]
+        nextTab?.focus()
+        activatePanel(nextTab?.dataset.sampleTab || 'guide', true)
+      })
+    })
+
+    root.querySelectorAll<HTMLButtonElement>('[data-sample-file]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const filePath = button.dataset.sampleFile
+        if (!filePath) return
+        activateFile(filePath)
+        history.replaceState(null, '', `#${button.getAttribute('aria-controls')}`)
+      })
+    })
+
+    window.addEventListener('hashchange', activateHash)
+
+    const firstFile = root.querySelector<HTMLButtonElement>('[data-sample-file]')
+    if (firstFile?.dataset.sampleFile) activateFile(firstFile.dataset.sampleFile)
+    activateHash()
+  }
+</script>

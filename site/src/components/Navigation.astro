@@ -12,6 +12,7 @@ import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
 import { getProductNav } from '../util/product-nav';
+import { buildSampleMobileNav } from '../util/sample-navigation';
 import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
@@ -51,6 +52,7 @@ const learnCategories = [
     title: 'Examples',
     description: 'Runnable samples you can drop into your own project.',
     href: pathWithBase('/examples/'),
+    nav: buildSampleMobileNav(),
   },
 ];
 

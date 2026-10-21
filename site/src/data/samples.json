@@ -1029,12 +1029,25 @@
     },
     {
       "id": "typescript/01-learn/01-first-agent",
+      "slug": "typescript/first-agent",
       "language": "typescript",
       "category": "learn",
       "categoryLabel": "Learn",
       "title": "First Agent",
       "description": "Create your first agent",
-      "tags": [],
+      "tags": [
+        "Agent",
+        "Amazon Bedrock"
+      ],
+      "prerequisites": [
+        "Node.js 22 or later",
+        "AWS credentials",
+        "Amazon Bedrock model access"
+      ],
+      "run": [
+        "npm install",
+        "npx tsx src/firstAgent.ts"
+      ],
       "path": "typescript/01-learn/01-first-agent",
       "url": "https://github.com/strands-agents/samples/tree/main/typescript/01-learn/01-first-agent"
     },
@@ -1092,6 +1105,22 @@
       "tags": [],
       "path": "typescript/01-learn/06-browser-agent",
       "url": "https://github.com/strands-agents/samples/tree/main/typescript/01-learn/06-browser-agent"
+    },
+    {
+      "id": "typescript/01-learn/07-express-chatbot",
+      "language": "typescript",
+      "category": "learn",
+      "categoryLabel": "Learn",
+      "title": "Express Chatbot",
+      "description": "Build a stateful Express chatbot with SSE streaming, Zod tools, MCP, and interventions",
+      "tags": [
+        "Express",
+        "SSE",
+        "MCP",
+        "Interventions"
+      ],
+      "path": "typescript/01-learn/07-express-chatbot",
+      "url": "https://github.com/strands-agents/samples/tree/main/typescript/01-learn/07-express-chatbot"
     },
     {
       "id": "typescript/02-deploy/01-agentcore",
