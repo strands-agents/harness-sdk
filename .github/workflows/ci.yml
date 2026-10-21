@@ -24,6 +24,8 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       harness-py: ${{ steps.filter.outputs.harness-py }}
       harness-ts: ${{ steps.filter.outputs.harness-ts }}
+      strands-py-src: ${{ steps.filter.outputs.strands-py-src }}
+      strands-ts-src: ${{ steps.filter.outputs.strands-ts-src }}
       strands-cli: ${{ steps.filter.outputs.strands-cli }}
       pr-metrics: ${{ steps.filter.outputs.pr-metrics }}
     steps:
@@ -60,6 +62,14 @@ jobs:
               - 'harness-ts/**/!(*.md)'
               - '.github/workflows/harness-ts-*'
               - '.github/workflows/ci.yml'
+            # SDK runtime sources: changes here also run the harness suites against the local SDK.
+            strands-py-src:
+              - 'strands-py/src/**/!(*.md)'
+              - 'strands-py/pyproject.toml'
+            strands-ts-src:
+              - 'strands-ts/src/**/!(*.md)'
+              - 'strands-ts/package.json'
+              - 'strands-ts/tsconfig.base.json'
             strands-cli:
               - 'strands-cli/**/!(*.md)'
               - '.github/workflows/harness-cli-*'
@@ -129,22 +139,24 @@ jobs:
   harness-python:
     name: Harness Python
     needs: detect-changes
-    if: needs.detect-changes.outputs.harness-py == 'true'
+    if: needs.detect-changes.outputs.harness-py == 'true' || needs.detect-changes.outputs.strands-py-src == 'true'
     uses: ./.github/workflows/harness-py-test-lint.yml
     permissions:
       contents: read
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-strands-py: ${{ needs.detect-changes.outputs.strands-py-src == 'true' }}
 
   harness-typescript:
     name: Harness TypeScript
     needs: detect-changes
-    if: needs.detect-changes.outputs.harness-ts == 'true'
+    if: needs.detect-changes.outputs.harness-ts == 'true' || needs.detect-changes.outputs.strands-ts-src == 'true'
     uses: ./.github/workflows/harness-ts-test-lint.yml
     permissions:
       contents: read
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-strands-ts: ${{ needs.detect-changes.outputs.strands-ts-src == 'true' }}
 
   cli:
     name: Strands CLI
