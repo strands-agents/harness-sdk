@@ -87,10 +87,10 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── labs/
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
-│   ├── data/                     # Bot-maintained data (catalog-stats.json — updated by the
-│   │                             #   catalog-stats workflow; do not hand-edit)
+│   ├── data/                     # Generated data (catalog stats and pinned sample snapshots;
+│   │                             #   update through their scripts, do not hand-edit)
 │   ├── layouts/                  # Custom layouts
-│   ├── pages/                    # Astro pages (incl. integrations.astro — the /integrations page)
+│   ├── pages/                    # Astro pages (incl. integrations.astro and examples/ detail routes)
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions

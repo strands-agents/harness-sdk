@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "samples": [
+    {
+      "id": "typescript/01-learn/01-first-agent",
+      "slug": "typescript/first-agent",
+      "source": {
+        "repository": "strands-agents/samples",
+        "commit": "77ae4c2ae832155c515bbcb4d460f5f501aaa815",
+        "path": "typescript/01-learn/01-first-agent"
+      },
+      "metadata": {
+        "title": "First Agent",
+        "summary": "Create and run a minimal Strands agent with TypeScript and Amazon Bedrock.",
+        "language": "TypeScript",
+        "category": "Learn",
+        "tags": ["Agent", "Amazon Bedrock"],
+        "prerequisites": ["Node.js 22 or later", "AWS credentials", "Amazon Bedrock model access"]
+      },
+      "guide": {
+        "path": "README.md",
+        "markdown": "# Getting started with Strands Agents (TypeScript)\n\nStrands Agents is an open source SDK that takes a model-driven approach to building AI agents in just a few lines of code. This quickstart guide will walk you through creating your first agent in TypeScript using large language models to handle planning and tool usage autonomously.\n\n\n## Prerequisites\n\n- Node.js 22 or later (the version `@strands-agents/sdk` supports; older versions print warnings)\n- AWS credentials configured with access to Amazon Bedrock, and the model enabled in your region\n- Basic understanding of TypeScript/JavaScript programming\n\n## What this agent does\n\nThis is the smallest useful Strands agent: one agent, one model, no tools. It shows the loop every Strands agent is built on.\n\n1. **You create an agent** with a model (Claude Sonnet 4.6 on Amazon Bedrock) and a system prompt that sets its behaviour: *\"You are a helpful assistant that provides concise responses.\"*\n2. **You invoke it with a message**: *\"Hello! Tell me a joke.\"*\n3. **Strands sends the conversation to the model** and streams the reply back to your terminal as it is generated.\n\nThere are no tools yet, so the model answers directly. Later samples add tools, and the same `agent.invoke()` call then lets the model decide when to use them.\n\n## Creating Your First Agent\n\n![Agent Architecture](images/simple_agent.png)\n\n| Feature | Description |\n|---------|-------------|\n| Agent Structure | Single agent architecture |\n\nThe example in `src/firstAgent.ts` demonstrates how to:\n\n- Create a basic agent with the Claude Sonnet 4.6 model from Amazon Bedrock\n- Configure the agent with a system prompt\n- Invoke the agent with a message\n- Stream the response to the console\n\n## Running the Example\n\n```bash\ncd typescript/01-learn/01-first-agent\nnpm install\nnpx tsx src/firstAgent.ts\n```\n\nTo use a different Bedrock model or inference profile, set `MODEL_ID`:\n\n```bash\nMODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0 npx tsx src/firstAgent.ts\n```\n## Expected output\n\nThe agent prints one short, friendly reply, and the command exits with status `0`. The joke varies from run to run because the model generates it fresh each time.\n\n![Expected terminal output: a one-line joke from the agent, then exit status 0](images/expected-output.png)\n\n```text\n$ npx tsx src/firstAgent.ts\nHere's one:\n\nWhy don't scientists trust atoms?\n\n**Because they make up everything!** 😄\n\nWant to hear another one?\n```\n\n## Check that it works\n\n| Check | Command | Expected |\n|---|---|---|\n| Runs end to end | `npx tsx src/firstAgent.ts` | One reply, printed once, then `echo $?` shows `0` |\n| Compiles | `npm run build && npm start` | Same reply from the compiled `dist/firstAgent.js` |\n| Model override | `MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0 npx tsx src/firstAgent.ts` | A reply from Claude Haiku 4.5 |\n\n## Troubleshooting\n\n| You see | Cause | Fix |\n|---|---|---|\n| `ModelError: The security token included in the request is invalid.` (exit `1`) | Missing or expired AWS credentials | Run `aws sts get-caller-identity`; refresh your credentials or `AWS_PROFILE` |\n| `ModelError: The provided model identifier is invalid.` (exit `1`) | `MODEL_ID` is misspelled or not available in your region | Use a model ID or inference profile listed in the Bedrock console for your region |\n| `NodeVersionSupportWarning` or `EBADENGINE` warnings | Node.js older than 22 | Upgrade to Node.js 22 or later |\n\n## Additional Resources\n\n- [Strands Agents Documentation](https://strandsagents.com/latest/)\n\n\n\n"
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "language": "json",
+          "content": "{\n  \"name\": \"first-agent\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Getting started with Strands Agents in TypeScript - First Agent Tutorial\",\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=22\"\n  },\n  \"main\": \"dist/index.js\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"start\": \"node dist/firstAgent.js\",\n    \"dev\": \"tsx src/firstAgent.ts\",\n    \"clean\": \"rm -rf dist\"\n  },\n  \"dependencies\": {\n    \"@strands-agents/sdk\": \"^1.19.0\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"^22.0.0\",\n    \"tsx\": \"^4.20.6\",\n    \"typescript\": \"^5.0.0\"\n  }\n}\n",
+          "sha256": "1828f77beaf92fc078a54c7df04b0cd3738a4d4872ffed088259b52f6998a5eb"
+        },
+        {
+          "path": "src/firstAgent.ts",
+          "language": "typescript",
+          "content": "/**\n * First Agent - Getting Started with Strands Agents\n *\n * This example demonstrates how to create and invoke a simple agent.\n */\n\nimport { Agent, BedrockModel } from \"@strands-agents/sdk\";\n\nasync function main() {\n    // Create an agent backed by Amazon Bedrock. The model is pinned so the sample\n    // behaves the same when the SDK's default model changes; override it with MODEL_ID.\n    const agent = new Agent({\n        model: new BedrockModel({\n            modelId: process.env.MODEL_ID ?? \"global.anthropic.claude-sonnet-4-6\",\n        }),\n        systemPrompt: \"You are a helpful assistant that provides concise responses.\"\n    });\n\n    // Send a message to the agent. The agent streams its reply to the console\n    // as it is generated, so there is no need to print the result again.\n    await agent.invoke(\"Hello! Tell me a joke.\");\n}\n\nmain().catch((error) => {\n    console.error(error);\n    process.exitCode = 1;\n});\n",
+          "sha256": "31da07c2461cded0ae4adb3779aa9e1831e6896dd0b2cecba6daebf5d09eabf3"
+        },
+        {
+          "path": "tsconfig.json",
+          "language": "json",
+          "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2020\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"outDir\": \"./dist\",\n    \"rootDir\": \"./src\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"allowSyntheticDefaultImports\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"resolveJsonModule\": true,\n    \"declaration\": true,\n    \"declarationMap\": true,\n    \"sourceMap\": true\n  },\n  \"include\": [\"src/**/*\"],\n  \"exclude\": [\"node_modules\", \"dist\"]\n}\n",
+          "sha256": "b34ccb717dccca126162a7cb11f8c4803e1bd0997fd748ee7fba10dac47965bf"
+        }
+      ]
+    }
+  ]
+}

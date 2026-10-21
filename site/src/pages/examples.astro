@@ -5,6 +5,8 @@ import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { GITHUB_ICON } from '../components/catalog/icons'
 import fallbackManifest from '../data/samples.json'
 import '../styles/catalog.css'
+import { pathWithBase } from '../util/links'
+import { getSampleDetailPath } from '../util/sample-details'
 
 // Dynamic pull: fetch the manifest from the samples repo branch at build time
 // (the real integration reads it straight from GitHub). Falls back to the
@@ -32,7 +34,16 @@ type Sample = {
   notebook?: string
 }
 
-const samples = manifest.samples as Sample[]
+const samples = (manifest.samples as Sample[]).map((sample) => {
+  const detailPath = getSampleDetailPath(sample.id)
+  return {
+    ...sample,
+    detailPath,
+    href: detailPath ? pathWithBase(detailPath) : sample.url,
+    target: detailPath ? undefined : '_blank',
+    rel: detailPath ? undefined : 'noopener',
+  }
+})
 const categories = manifest.categories as { language: string; id: string; label: string }[]
 
 const sectionsFor = (lang: string) =>
@@ -63,9 +74,9 @@ const description = `${samples.length} runnable Strands Agents samples, pulled f
 <StarlightPage frontmatter={{ title, description }} sidebar={sidebar}>
   <div class="samples-page">
     <p class="samples__lede">
-      Runnable, end-to-end examples to learn from and adapt. Pick one below, open it
-      on <a href="https://github.com/strands-agents/samples" target="_blank" rel="noopener">GitHub</a>,
-      and run it. Each is self-contained.
+      Runnable, end-to-end examples to learn from and adapt. Open the TypeScript First Agent to try the on-site guide and file
+      viewer, or browse every sample on <a href="https://github.com/strands-agents/samples" target="_blank" rel="noopener">GitHub</a>.
+      Each is self-contained.
     </p>
 
     {languages.map((lang) =>
@@ -90,9 +101,9 @@ const description = `${samples.length} runnable Strands Agents samples, pulled f
                     </svg>
                   </span>
                   <div class="cat-card-head">
-                    <a class="cat-card-title" href={s.url} target="_blank" rel="noopener" title={s.title}>
+                    <a class="cat-card-title" href={s.href} target={s.target} rel={s.rel} title={s.title}>
                       {s.title}
-                      <span class="cat-external" aria-hidden="true">↗</span>
+                      {!s.detailPath && <span class="cat-external" aria-hidden="true">↗</span>}
                     </a>
                   </div>
                 </div>
