@@ -22,15 +22,6 @@ export interface SampleCategory {
   label: string
 }
 
-export interface SampleRunConfig {
-  command?: string
-  commands?: string[]
-  workingDirectory?: string
-  cwd?: string
-}
-
-export type SampleRun = string | string[] | SampleRunConfig
-
 export interface SampleMetadata {
   title: string
   summary: string
@@ -39,22 +30,19 @@ export interface SampleMetadata {
   categoryLabel: string
   tags: string[]
   prerequisites?: string[]
-  run?: SampleRun
+  run?: string[]
 }
 
 export interface SampleFile {
   path: string
   language: string
   content: string
-  sha256: string
 }
 
 export interface SampleGuide {
-  kind?: string
-  format?: string
+  kind: 'readme' | 'notebook' | 'generated'
   path: string
   markdown: string
-  sha256?: string
 }
 
 export interface SampleDetail {
@@ -86,62 +74,6 @@ interface SampleSnapshot {
   samples: SampleDetail[]
 }
 
-interface LegacySampleDetail extends Omit<SampleDetail, 'metadata' | 'guide' | 'skippedFileCount'> {
-  metadata: Omit<SampleMetadata, 'categoryLabel'> & { category: string }
-  guide: Omit<SampleGuide, 'kind' | 'format'>
-}
-
-interface LegacySampleSnapshot {
-  schemaVersion: 1
-  samples: LegacySampleDetail[]
-}
-
-function categoryId(label: string): string {
-  return label
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-function normalizeLegacySnapshot(legacy: LegacySampleSnapshot): SampleSnapshot {
-  const firstSample = legacy.samples[0]
-  if (!firstSample) throw new Error('Legacy sample detail snapshot contains no samples.')
-
-  const categories = new Map<string, SampleCategory>()
-  const samples = legacy.samples.map((sample) => {
-    const language = sample.metadata.language.toLowerCase()
-    const categoryLabel = sample.metadata.category
-    const category = categoryId(categoryLabel)
-    categories.set(`${language}:${category}`, { language, id: category, label: categoryLabel })
-
-    return {
-      ...sample,
-      metadata: {
-        ...sample.metadata,
-        category,
-        categoryLabel,
-      },
-      guide: {
-        ...sample.guide,
-        kind: sample.guide.path.toLowerCase().endsWith('.ipynb') ? 'notebook' : 'readme',
-        format: 'markdown',
-      },
-      skippedFileCount: 0,
-    }
-  })
-
-  return {
-    schemaVersion: 2,
-    source: {
-      repository: firstSample.source.repository,
-      commit: firstSample.source.commit,
-    },
-    categories: [...categories.values()],
-    samples,
-  }
-}
-
 function loadSnapshot(): SampleSnapshot {
   const generatedSnapshotPath = path.resolve(process.cwd(), '.build/samples/sample-details.json')
   const input: unknown = existsSync(generatedSnapshotPath)
@@ -149,7 +81,6 @@ function loadSnapshot(): SampleSnapshot {
     : fallbackSnapshot
   const schemaVersion = (input as { schemaVersion?: unknown }).schemaVersion
 
-  if (schemaVersion === 1) return normalizeLegacySnapshot(input as LegacySampleSnapshot)
   if (schemaVersion !== 2) {
     throw new Error(`Unsupported sample detail snapshot schema: ${String(schemaVersion)}`)
   }
@@ -162,7 +93,6 @@ function loadSnapshot(): SampleSnapshot {
 
 const data = loadSnapshot()
 
-export const sampleSnapshotSource = data.source
 export const sampleCategories = data.categories
 export const sampleDetails = data.samples
 
@@ -198,7 +128,7 @@ export function getSampleFileSourceUrl(sample: SampleDetail, filePath: string): 
 }
 
 export function getSampleGuideKind(sample: SampleDetail): string {
-  return (sample.guide.kind ?? sample.guide.format ?? 'markdown').toLowerCase()
+  return sample.guide.kind
 }
 
 export function getSampleGuideLabel(sample: SampleDetail): string {
@@ -217,19 +147,7 @@ export function getSampleLanguageLabel(language: string): string {
 }
 
 export function getSampleRunCommands(sample: SampleDetail): string[] {
-  const run = sample.metadata.run
-  if (!run) return []
-  if (typeof run === 'string') return run.trim() ? [run] : []
-  if (Array.isArray(run)) return run.filter((command) => command.trim() !== '')
-
-  const commands = run.commands ?? (run.command ? [run.command] : [])
-  return commands.filter((command) => command.trim() !== '')
-}
-
-export function getSampleRunWorkingDirectory(sample: SampleDetail): string | undefined {
-  const run = sample.metadata.run
-  if (!run || typeof run === 'string' || Array.isArray(run)) return undefined
-  return run.workingDirectory ?? run.cwd
+  return sample.metadata.run?.filter((command) => command.trim() !== '') ?? []
 }
 
 export function sampleFileId(filePath: string): string {
@@ -632,20 +550,4 @@ export function renderSampleMarkdownParts(
   const trailingHtml = sanitized.slice(cursor)
   if (trailingHtml.trim()) parts.push({ type: 'html', html: trailingHtml })
   return parts
-}
-
-export function renderSampleMarkdown(
-  sample: SampleDetail,
-  markdown: string,
-  currentPath: string,
-  options: { stripTitle?: boolean } = {}
-): string {
-  const md = createSampleMarkdownRenderer(sample, currentPath)
-  return renderSampleMarkdownParts(sample, markdown, currentPath, options)
-    .map((part) => {
-      if (part.type === 'html') return part.html
-      const language = encodeURIComponent(part.language)
-      return `<pre><code class="language-${language}">${md.utils.escapeHtml(part.code)}</code></pre>`
-    })
-    .join('')
 }

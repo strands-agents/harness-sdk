@@ -48,16 +48,13 @@ export interface SampleMetadata {
 export interface SampleGuide {
   path: string
   kind: 'readme' | 'notebook' | 'generated'
-  format: 'markdown'
   markdown: string
-  sha256: string
 }
 
 export interface SampleFile {
   path: string
   language: string
   content: string
-  sha256: string
 }
 
 export interface SampleDetail {

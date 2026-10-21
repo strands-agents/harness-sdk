@@ -4,16 +4,12 @@ import {
   getSampleDetailPath,
   getSampleGuideKind,
   getSampleGuideLabel,
-  getSampleRunCommands,
-  getSampleRunWorkingDirectory,
   getSampleSourceUrl,
-  renderSampleMarkdown,
   renderSampleMarkdownParts,
   resolveSampleHref,
   sampleCategories,
   sampleDetails,
   sampleFileId,
-  sampleSnapshotSource,
   type SampleDetail,
 } from '../src/util/sample-details'
 
@@ -22,10 +18,29 @@ if (!sample) throw new Error('Expected at least one sample in the snapshot')
 
 const sampleWithFile = sampleDetails.find((candidate) => candidate.files.length > 0) ?? sample
 
+function escapeHtml(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+function renderMarkdown(
+  candidate: SampleDetail,
+  markdown: string,
+  currentPath: string,
+  options: { stripTitle?: boolean } = {}
+): string {
+  return renderSampleMarkdownParts(candidate, markdown, currentPath, options)
+    .map((part) =>
+      part.type === 'html'
+        ? part.html
+        : `<pre><code class="language-${encodeURIComponent(part.language)}">${escapeHtml(part.code)}</code></pre>`
+    )
+    .join('')
+}
+
 describe('sample details', () => {
   it('loads a pinned snapshot shared by the catalog and detail routes', () => {
-    expect(sampleSnapshotSource.repository).toBeTruthy()
-    expect(sampleSnapshotSource.commit).toMatch(/^[0-9a-f]{40}$/)
+    expect(sample.source.repository).toBeTruthy()
+    expect(sample.source.commit).toMatch(/^[0-9a-f]{40}$/)
     expect(sampleCategories.length).toBeGreaterThan(0)
     expect(sampleDetails.length).toBeGreaterThan(0)
   })
@@ -36,31 +51,12 @@ describe('sample details', () => {
     expect(getSampleDetailPath('unknown')).toBeUndefined()
   })
 
-  it('labels notebook-led guides without coupling to one guide field', () => {
-    const notebookSample = {
-      ...sample,
-      guide: { ...sample.guide, kind: undefined, format: 'notebook' },
-    } as SampleDetail
+  it('labels notebook-led guides', () => {
+    const notebookSample = sampleDetails.find((candidate) => candidate.guide.kind === 'notebook')
+    if (!notebookSample) throw new Error('Expected a notebook sample')
 
     expect(getSampleGuideKind(notebookSample)).toBe('notebook')
     expect(getSampleGuideLabel(notebookSample)).toBe('Notebook')
-  })
-
-  it('normalizes optional run metadata', () => {
-    const configuredSample = {
-      ...sample,
-      metadata: {
-        ...sample.metadata,
-        run: {
-          workingDirectory: 'src',
-          commands: ['npm install', 'npm start'],
-        },
-      },
-    } satisfies SampleDetail
-
-    expect(getSampleRunCommands(configuredSample)).toEqual(['npm install', 'npm start'])
-    expect(getSampleRunWorkingDirectory(configuredSample)).toBe('src')
-    expect(getSampleRunCommands({ ...sample, metadata: { ...sample.metadata, run: undefined } })).toEqual([])
   })
 
   it('rewrites relative images against the pinned source commit', () => {
@@ -93,7 +89,7 @@ describe('sample details', () => {
     if (!hitl || !memory || !triage) throw new Error('Expected cross-linked samples in the generated snapshot')
 
     expect(resolveSampleHref(hitl, hitl.guide.path, '../06-memory/', 'link')).toBe(getSampleDetailPath(memory.id))
-    expect(renderSampleMarkdown(hitl, '[Memory](../06-memory/)', hitl.guide.path)).toContain(
+    expect(renderMarkdown(hitl, '[Memory](../06-memory/)', hitl.guide.path)).toContain(
       `href="${getSampleDetailPath(memory.id)}"`
     )
     expect(resolveSampleHref(triage, triage.guide.path, '../../../CONTRIBUTING.md', 'link')).toBe(
@@ -114,7 +110,7 @@ describe('sample details', () => {
   })
 
   it('renders untrusted markdown without active HTML', () => {
-    const html = renderSampleMarkdown(
+    const html = renderMarkdown(
       sample,
       '# Duplicate title\n\n<script>alert(1)</script>\n\n[External](https://example.com)',
       'README.md',
@@ -132,7 +128,7 @@ describe('sample details', () => {
     const file = sampleWithFile.files[0]
     if (!file) throw new Error('Expected a rendered sample file')
 
-    const html = renderSampleMarkdown(
+    const html = renderMarkdown(
       sampleWithFile,
       [
         '<div style="text-align:center">',
@@ -167,7 +163,7 @@ describe('sample details', () => {
   })
 
   it('escapes disallowed raw tags and neutralizes unsafe URL schemes', () => {
-    const html = renderSampleMarkdown(
+    const html = renderMarkdown(
       sample,
       '<stop/>\n\n<a href="javascript:alert(1)">Unsafe</a>\n\n<iframe src="https://example.com"></iframe>',
       'README.md'
@@ -181,7 +177,7 @@ describe('sample details', () => {
   })
 
   it('removes a leading-content Setext title and adds deterministic fragment ids', () => {
-    const html = renderSampleMarkdown(
+    const html = renderMarkdown(
       sample,
       [
         '[Status badge](https://example.com/status)',
@@ -208,7 +204,7 @@ describe('sample details', () => {
   })
 
   it('demotes additional h1 sections after removing the document title', () => {
-    const html = renderSampleMarkdown(sample, '# Duplicate title\n\n# Additional section', 'README.md', {
+    const html = renderMarkdown(sample, '# Duplicate title\n\n# Additional section', 'README.md', {
       stripTitle: true,
     })
 
@@ -217,7 +213,7 @@ describe('sample details', () => {
   })
 
   it('keeps guide headings and fragment links clear of page-level ids', () => {
-    const html = renderSampleMarkdown(sample, '## Files\n\n[Jump to files](#files)', 'README.md', {
+    const html = renderMarkdown(sample, '## Files\n\n[Jump to files](#files)', 'README.md', {
       stripTitle: true,
     })
 
@@ -226,7 +222,7 @@ describe('sample details', () => {
   })
 
   it('normalizes heading jumps after removing the guide title', () => {
-    const html = renderSampleMarkdown(sample, '# Title\n\n#### Deep section\n\n###### Child', 'README.md', {
+    const html = renderMarkdown(sample, '# Title\n\n#### Deep section\n\n###### Child', 'README.md', {
       stripTitle: true,
     })
 
@@ -235,7 +231,7 @@ describe('sample details', () => {
   })
 
   it('adds an empty alt attribute to raw decorative images', () => {
-    const html = renderSampleMarkdown(sample, '<img src="images/diagram.png">', 'README.md')
+    const html = renderMarkdown(sample, '<img src="images/diagram.png">', 'README.md')
     expect(html).toContain('alt=""')
   })
 
@@ -255,7 +251,7 @@ describe('sample details', () => {
     ].join('\n')
     const parts = renderSampleMarkdownParts(sample, markdown, 'README.md')
     const codeParts = parts.filter((part) => part.type === 'code')
-    const html = renderSampleMarkdown(sample, markdown, 'README.md')
+    const html = renderMarkdown(sample, markdown, 'README.md')
 
     expect(codeParts).toEqual([
       { type: 'code', code: 'npm install\n', language: 'bash', meta: '' },

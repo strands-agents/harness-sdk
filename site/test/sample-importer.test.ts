@@ -13,7 +13,6 @@ import {
   MAX_FILES_PER_SAMPLE,
   MAX_MANIFEST_BYTES,
   prepareSampleSummary,
-  renderNotebook,
   resolveGitCommit,
 } from '../scripts/samples/importer'
 
@@ -42,33 +41,10 @@ afterEach(async () => {
 })
 
 describe('sample importer', () => {
-  it('renders only notebook markdown and code cells', () => {
-    const markdown = renderNotebook(
-      {
-        cells: [
-          { cell_type: 'markdown', source: ['# Guide\n', 'Introduction'] },
-          {
-            cell_type: 'code',
-            source: '  print("hello")',
-            outputs: [{ text: 'SECRET OUTPUT' }],
-          },
-          { cell_type: 'raw', source: 'RAW CELL' },
-        ],
-        metadata: { language_info: { name: 'python' } },
-      },
-      'python'
-    )
-
-    expect(markdown).toContain('# Guide')
-    expect(markdown).toContain('```python\n  print("hello")\n```')
-    expect(markdown).not.toContain('SECRET OUTPUT')
-    expect(markdown).not.toContain('RAW CELL')
-  })
-
   it('builds every manifest and marker sample deterministically', async () => {
     const sourceDir = await copyFixture()
     const readmeRoot = path.join(sourceDir, 'typescript/01-learn/01-readme')
-    await rm(path.join(sourceDir, 'python/01-learn/03-marker/README.md'))
+    await writeFile(path.join(readmeRoot, '.env'), 'SECRET_VALUE=do-not-publish\n')
     await writeFile(path.join(readmeRoot, 'oversize.txt'), 'x'.repeat(MAX_FILE_BYTES + 1))
     await symlink(path.join(readmeRoot, 'package.json'), path.join(readmeRoot, 'linked.json'))
     await Promise.all(
@@ -104,6 +80,7 @@ describe('sample importer', () => {
     expect(notebook?.guide.kind).toBe('notebook')
     expect(notebook?.guide.markdown).toContain('```python')
     expect(notebook?.guide.markdown).not.toContain('SECRET OUTPUT MUST NOT APPEAR')
+    expect(notebook?.guide.markdown).not.toContain('RAW CELL MUST NOT APPEAR')
 
     const markerOnly = first.samples[1]
     expect(markerOnly?.metadata.title).toBe('Marker-only Sample')
@@ -121,6 +98,12 @@ describe('sample importer', () => {
     expect(readme?.files).toHaveLength(MAX_FILES_PER_SAMPLE)
     expect(readme?.files.map((file) => file.path)).toContain('package.json')
     expect(readme?.files.map((file) => file.path)).toContain('src/index.ts')
+    expect(readme?.files.map((file) => file.path)).toContain('.env.example')
+    expect(readme?.files.map((file) => file.path)).not.toContain('.env')
+    expect(readme?.files.map((file) => file.path)).not.toContain('package-lock.json')
+    expect(readme?.files.map((file) => file.path)).not.toContain('data/training.json')
+    expect(readme?.files.map((file) => file.path)).not.toContain('linked.json')
+    expect(readme?.files.map((file) => file.path)).not.toContain('oversize.txt')
     expect(readme?.skippedFileCount).toBeGreaterThanOrEqual(5)
     expect(first.stats.fileCount).toBe(first.samples.reduce((total, sample) => total + sample.files.length, 0))
   })
@@ -135,23 +118,6 @@ describe('sample importer', () => {
 
     expect(loaded.manifestLabel).toBe('site/src/data/samples.json')
     expect(loaded.manifest.samples).toHaveLength(3)
-  })
-
-  it('includes environment templates without publishing actual environment files', async () => {
-    const sourceDir = await copyFixture()
-    const sampleRoot = path.join(sourceDir, 'typescript/01-learn/01-readme')
-    await writeFile(path.join(sampleRoot, '.env.example'), 'AWS_REGION=us-east-1\n')
-    await writeFile(path.join(sampleRoot, '.env'), 'SECRET_VALUE=do-not-publish\n')
-    await commitFixture(sourceDir)
-
-    const snapshot = await buildSampleSnapshot({
-      sourceDir,
-      migrationManifestPath: path.join(sourceDir, 'unused-migration.json'),
-    })
-    const sample = snapshot.samples.find((candidate) => candidate.id === 'typescript/01-learn/01-readme')
-
-    expect(sample?.files.map((file) => file.path)).toContain('.env.example')
-    expect(sample?.files.map((file) => file.path)).not.toContain('.env')
   })
 
   it('repairs truncated or markup-heavy migration summaries from the guide', () => {
@@ -216,52 +182,21 @@ describe('sample importer', () => {
     ).rejects.toThrow('Duplicate sample category')
   })
 
-  it('rejects a marker that tries to change an existing immutable id', async () => {
-    const sourceDir = await copyFixture()
-    await writeFile(
-      path.join(sourceDir, 'typescript/01-learn/01-readme/example.yaml'),
-      'schemaVersion: 1\nid: typescript/01-learn/replaced\n'
-    )
-
-    await expect(
-      loadManifest({
-        sourceDir,
-        migrationManifestPath: path.join(sourceDir, 'unused-migration.json'),
-      })
-    ).rejects.toThrow('cannot change immutable id')
-  })
-
-  it('rejects a marker that tries to replace a derived immutable slug', async () => {
-    const sourceDir = await copyFixture()
-    await writeFile(
-      path.join(sourceDir, 'python/01-learn/02-notebook/example.yaml'),
-      'schemaVersion: 1\nslug: python/replaced\n'
-    )
-
-    await expect(
-      loadManifest({
-        sourceDir,
-        migrationManifestPath: path.join(sourceDir, 'unused-migration.json'),
-      })
-    ).rejects.toThrow('cannot change immutable slug python/notebook')
-  })
-
   it.each([
-    ['language', 'python', 'typescript'],
-    ['category', 'advanced', 'learn'],
-  ] as const)('rejects a marker that changes an existing immutable %s', async (field, replacement, original) => {
+    ['typescript/01-learn/01-readme', 'id', 'typescript/01-learn/replaced', 'id typescript/01-learn/01-readme'],
+    ['python/01-learn/02-notebook', 'slug', 'python/replaced', 'slug python/notebook'],
+    ['typescript/01-learn/01-readme', 'language', 'python', 'language typescript'],
+    ['typescript/01-learn/01-readme', 'category', 'advanced', 'category learn'],
+  ] as const)('rejects a marker that changes the immutable %s %s', async (samplePath, field, replacement, expected) => {
     const sourceDir = await copyFixture()
-    await writeFile(
-      path.join(sourceDir, 'typescript/01-learn/01-readme/example.yaml'),
-      `schemaVersion: 1\n${field}: ${replacement}\n`
-    )
+    await writeFile(path.join(sourceDir, samplePath, 'example.yaml'), `schemaVersion: 1\n${field}: ${replacement}\n`)
 
     await expect(
       loadManifest({
         sourceDir,
         migrationManifestPath: path.join(sourceDir, 'unused-migration.json'),
       })
-    ).rejects.toThrow(`cannot change immutable ${field} ${original}`)
+    ).rejects.toThrow(`cannot change immutable ${expected}`)
   })
 
   it('rejects unsupported manifest versions instead of parsing them as version 1', async () => {
@@ -305,7 +240,7 @@ describe('sample importer', () => {
     const trackedCommit = await commitFixture(trackedSource)
     expect(await resolveGitCommit(trackedSource)).toBe(trackedCommit)
 
-    await writeFile(path.join(trackedSource, 'python/01-learn/02-notebook/main.py'), 'print("changed")\n')
+    await writeFile(path.join(trackedSource, 'python/01-learn/02-notebook/guide.ipynb'), '{}\n')
     await expect(
       buildSampleSnapshot({
         sourceDir: trackedSource,
@@ -383,19 +318,5 @@ describe('sample importer', () => {
         scanLimits: { depth: 2 },
       })
     ).rejects.toThrow('Samples checkout exceeds the 2-level scan depth limit')
-  })
-
-  it('keeps hashes tied to the normalized published text', async () => {
-    const sourceDir = await copyFixture()
-    await commitFixture(sourceDir)
-    const snapshot = await buildSampleSnapshot({
-      sourceDir,
-      migrationManifestPath: path.join(sourceDir, 'unused-migration.json'),
-    })
-    const sample = snapshot.samples.find((candidate) => candidate.id === 'typescript/01-learn/01-readme')
-    const source = await readFile(path.join(sourceDir, 'typescript/01-learn/01-readme/src/index.ts'), 'utf8')
-
-    expect(sample?.files.find((file) => file.path === 'src/index.ts')?.content).toBe(source)
-    expect(sample?.files.find((file) => file.path === 'src/index.ts')?.sha256).toMatch(/^[0-9a-f]{64}$/)
   })
 })

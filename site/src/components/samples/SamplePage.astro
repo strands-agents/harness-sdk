@@ -7,7 +7,6 @@ import {
   getSampleGuideLabel,
   getSampleLanguageLabel,
   getSampleRunCommands,
-  getSampleRunWorkingDirectory,
   getSampleSourceUrl,
   normalizeSampleCodeLanguage,
   renderSampleMarkdownParts,
@@ -31,7 +30,6 @@ const sourceUrl = getSampleSourceUrl(sample)
 const shortCommit = sample.source.commit.slice(0, 7)
 const prerequisites = sample.metadata.prerequisites ?? []
 const runCommands = getSampleRunCommands(sample)
-const runWorkingDirectory = getSampleRunWorkingDirectory(sample)
 const hasSetupAside = prerequisites.length > 0 || runCommands.length > 0
 const renderedFileCount = sample.files.length
 const omittedSourceEntryCount = Math.max(0, sample.skippedFileCount)
@@ -56,7 +54,7 @@ const pagination = getSamplePagination(sample)
   }}
   sidebar={sidebar}
 >
-  <div class="sample-detail" data-sample-detail data-sample-id={sample.id}>
+  <div class="sample-detail" data-sample-detail>
     <header class="sample-detail__header">
       <p class="sample-detail__summary">{sample.metadata.summary}</p>
       <div class="sample-detail__meta" aria-label="Example metadata">
@@ -146,11 +144,6 @@ const pagination = getSamplePagination(sample)
             {runCommands.length > 0 && (
               <section>
                 <h2>Run locally</h2>
-                {runWorkingDirectory && (
-                  <p>
-                    From <code>{runWorkingDirectory}</code>:
-                  </p>
-                )}
                 <Code code={runCommands.join('\n')} lang="bash" frame="terminal" />
               </section>
             )}
@@ -294,8 +287,6 @@ const pagination = getSamplePagination(sample)
   }
 
   if (root) {
-    root.classList.add('sample-detail--enhanced')
-
     root.querySelectorAll<HTMLElement>('[data-sample-tab]').forEach((tab) => {
       tab.addEventListener('click', (event) => {
         event.preventDefault()

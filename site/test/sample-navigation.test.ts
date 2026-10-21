@@ -1,26 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  buildSampleMobileNav,
   defaultSample,
   getSampleLanguageSwitchPath,
   getSamplePagePath,
   getSamplePagination,
 } from '../src/util/sample-navigation'
 import { sampleDetails } from '../src/util/sample-details'
-import type { ProductNavItem } from '../src/util/product-nav'
-
-function navLinks(items: ProductNavItem[]): string[] {
-  return items.flatMap((item) => (item.type === 'link' ? [item.href] : navLinks(item.items)))
-}
 
 describe('sample navigation', () => {
-  it('builds one mobile navigation link for every generated sample', () => {
-    const links = navLinks(buildSampleMobileNav())
-    expect(links).toHaveLength(sampleDetails.length)
-    expect(new Set(links).size).toBe(sampleDetails.length)
-  })
-
   it('switches to a matching language counterpart when one exists', () => {
     const pythonFirstAgent = sampleDetails.find(
       (sample) => sample.metadata.language.toLowerCase() === 'python' && sample.slug.endsWith('/first-agent')

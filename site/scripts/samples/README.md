@@ -26,6 +26,15 @@ The importer:
 There are no timestamps or branch names in the output. Samples, files, and tags use stable sorting, and published
 text uses normalized line endings.
 
+## Catalog ownership
+
+Existing registered samples pick up guide and source-file changes automatically on each site build. New sample
+directories must be registered in a root `samples.json` in the samples repository or with an `example.yaml` marker.
+Until the samples repository owns that catalog, `site/src/data/samples.json` is the migration manifest.
+
+The samples checkout is a build input only. Production publishes static pages and does not require a samples
+runtime, package, or service.
+
 ## `example.yaml` markers
 
 A version 1 marker in a directory already listed by the manifest can overlay display metadata such as `title`,
@@ -62,7 +71,7 @@ before the per-sample file cap, but remain subject to every content safety rule.
 - Source panels accept an explicit text extension/name allowlist.
 - Symlinks, secret-like paths, lockfiles, generated/data directories, invalid UTF-8, notebooks, and files over
   256 KiB are omitted.
-- At most 40 source files are included per sample. The snapshot records omitted source entries; skipped directory
+- At most 100 source files are included per sample. The snapshot records omitted source entries; skipped directory
   trees are not traversed and count once.
 - Traversal fails closed above 2,000 entries per sample, 50,000 entries overall, or 16 directory levels.
 

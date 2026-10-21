@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import { lstat, opendir, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -380,10 +379,6 @@ function displayLanguage(value: string): string {
   if (value.toLowerCase() === 'typescript') return 'TypeScript'
   if (value.toLowerCase() === 'javascript') return 'JavaScript'
   return titleCase(value)
-}
-
-function sha256(content: string): string {
-  return createHash('sha256').update(content).digest('hex')
 }
 
 function normalizeText(content: string): string {
@@ -804,9 +799,7 @@ async function guideFromPath(
     return {
       path: guidePath,
       kind: 'notebook',
-      format: 'markdown',
       markdown,
-      sha256: sha256(markdown),
     }
   }
 
@@ -815,9 +808,7 @@ async function guideFromPath(
   return {
     path: guidePath,
     kind: 'readme',
-    format: 'markdown',
     markdown,
-    sha256: sha256(markdown),
   }
 }
 
@@ -859,9 +850,7 @@ async function chooseGuide(sampleRoot: string, sample: ManifestSample, scanState
   return {
     path: '',
     kind: 'generated',
-    format: 'markdown',
     markdown,
-    sha256: sha256(markdown),
   }
 }
 
@@ -999,7 +988,6 @@ async function collectFiles(
       path: candidate.path,
       language: candidate.language,
       content,
-      sha256: sha256(content),
     })
   }
 

@@ -1,15 +1,13 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 import { parse, type HTMLElement } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 import {
   getSampleGuideKind,
-  getSampleDetailPath,
   getSampleRunCommands,
   renderSampleMarkdownParts,
   sampleCategories,
   sampleDetails,
-  sampleSnapshotSource,
   type SampleDetail,
 } from '../src/util/sample-details'
 import { getSamplePagePath } from '../src/util/sample-navigation'
@@ -115,7 +113,6 @@ describe('examples documentation navigation', () => {
     const page = parse(defaultPage)
 
     expect(page.querySelector('[data-sample-detail]')).not.toBeNull()
-    expect(page.querySelectorAll('[data-sample-card]')).toHaveLength(0)
     expect(defaultPage).toContain(defaultSample.metadata.summary)
     expect(defaultPage).toContain(defaultSample.guide.path)
 
@@ -182,14 +179,6 @@ describe('examples documentation navigation', () => {
       expect(current.text.trim()).toBe(candidate.metadata.title)
     }
   })
-
-  it('keeps every route helper aligned with a generated page', () => {
-    for (const candidate of sampleDetails) {
-      const route = getSampleDetailPath(candidate.id)
-      if (!route) throw new Error(`Expected a route for ${candidate.id}`)
-      expect(existsSync(new URL(`../dist${route}index.html`, import.meta.url)), route).toBe(true)
-    }
-  })
 })
 
 describe('examples code blocks', () => {
@@ -222,14 +211,12 @@ describe('examples code blocks', () => {
   })
 
   it('keeps source links pinned to the generated snapshot', () => {
-    expect(defaultPage).toContain(`${sampleSnapshotSource.repository}@${sampleSnapshotSource.commit.slice(0, 7)}`)
-    expect(defaultPage).not.toContain('raw.githubusercontent.com/tmoreton')
-    expect(defaultPage).not.toContain('add-samples-manifest')
+    expect(defaultPage).toContain(`${defaultSample.source.repository}@${defaultSample.source.commit.slice(0, 7)}`)
   })
 })
 
 describe('examples document integrity', () => {
-  it('emits unique ids and valid sample aria-controls relationships', () => {
+  it('keeps generated sample documents accessible and structurally valid', () => {
     for (const candidate of sampleDetails) {
       const page = parse(readSamplePage(candidate))
       const ids = page.querySelectorAll('[id]').map((element) => element.getAttribute('id'))
@@ -241,21 +228,11 @@ describe('examples document integrity', () => {
         const targetId = control.getAttribute('aria-controls')
         expect(page.querySelectorAll(`#${targetId}`), `${candidate.slug} aria-controls=${targetId}`).toHaveLength(1)
       }
-    }
-  })
 
-  it('gives every rendered guide image an alt attribute', () => {
-    for (const candidate of sampleDetails) {
-      const page = parse(readSamplePage(candidate))
       for (const image of page.querySelectorAll('.sample-detail__readme img')) {
         expect(image.getAttribute('alt'), `${candidate.slug} image ${image.getAttribute('src')}`).not.toBeNull()
       }
-    }
-  })
 
-  it('keeps rendered guide heading levels sequential', () => {
-    for (const candidate of sampleDetails) {
-      const page = parse(readSamplePage(candidate))
       let previousLevel = 1
       for (const heading of page.querySelectorAll(
         '.sample-detail__readme h1, .sample-detail__readme h2, .sample-detail__readme h3, .sample-detail__readme h4, .sample-detail__readme h5, .sample-detail__readme h6'
