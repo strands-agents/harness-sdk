@@ -259,6 +259,7 @@ def test_streaming_returns_usage_metrics(model_fixture, request):
     assert result.metrics.accumulated_usage["totalTokens"] > 0
 
 
+@pytest.mark.skip(reason="Turn-2 prompt-cache read intermittently returns 0 tokens; see #5315")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [True, False])
 async def test_cache_read_tokens_multi_turn(model, streaming):
