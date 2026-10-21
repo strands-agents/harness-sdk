@@ -23,7 +23,11 @@ class StubDecisionModel extends DecisionModel {
   ): Promise<DecisionResult<Q>> {
     this.calls.push({ state, questions })
     if (this._answer instanceof Error) throw this._answer
-    return { answers: { requiresApproval: this._answer } as DecisionResult<Q>['answers'], metadata: { latencyMs: 0 } }
+    return {
+      answers: { requiresApproval: this._answer } as DecisionResult<Q>['answers'],
+      usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+      metadata: { latencyMs: 0 },
+    }
   }
 }
 
@@ -762,6 +766,24 @@ describe('HumanInTheLoop', () => {
 
       expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
       expect(decisionModel.calls).toEqual([])
+    })
+
+    it('adds the decision usage to the request total', async () => {
+      const humanInTheLoop = new HumanInTheLoop({ classifier: { decisionModel: new StubDecisionModel(false) } })
+      const agent = new Agent({ model: new MockMessageModel(), printer: false })
+      const invocationContext = new InvocationContextImpl()
+      const event = new BeforeToolCallEvent({
+        agent,
+        toolUse: { name: 'readFile', toolUseId: 'tool-1', input: { path: '/tmp/x' } },
+        tool: undefined,
+        invocationState: {},
+        invocationContext,
+      })
+
+      const action = await humanInTheLoop.beforeToolCall(event)
+
+      expect(action).toEqual({ type: 'proceed' })
+      expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 4, outputTokens: 1, totalTokens: 5 })
     })
 
     it('works with LLMDecisionModel', async () => {

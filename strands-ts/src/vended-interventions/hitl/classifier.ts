@@ -134,9 +134,11 @@ export function createDecisionModelRiskClassifier(config: DecisionModelClassifie
   const question = config.question ?? DEFAULT_RISK_QUESTION
 
   return async (event: BeforeToolCallEvent): Promise<ClassifierResult> => {
-    const result = await decisionModel.ask(formatToolCall(event), {
-      requiresApproval: { question, choices: 'boolean' },
-    })
+    const result = await decisionModel.ask(
+      formatToolCall(event),
+      { requiresApproval: { question, choices: 'boolean' } },
+      { ...(event.invocationContext && { invocationContext: event.invocationContext }) }
+    )
     const answer = result.answers.requiresApproval
 
     if (answer instanceof Uncertain) {
