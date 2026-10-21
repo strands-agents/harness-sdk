@@ -1,14 +1,34 @@
 import { promises as fs } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
+
+import type { HarnessAgentConfig, HarnessAgentOptions } from '@strands-agents/harness'
 
 import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
-import type { SessionRootCatalog } from './catalog.js'
+import { workspaceSessionDirectory, type SessionRootCatalog } from './catalog.js'
+import { withSession } from './options.js'
+import { isRecord } from '../values.js'
+import { isMissingPathError } from '../paths.js'
 
-export { SessionRootCatalog } from './catalog.js'
+export { sessionRootDirectory, SessionRootCatalog, workspaceSessionDirectory } from './catalog.js'
 
 const SESSION_REFERENCE_PREFIX = 'strands-session:'
 const SESSION_METADATA_FILE = 'cli-session.json'
 export const DEFAULT_SESSION_DIR = './.agent/sessions'
+
+/**
+ * Points the built-in agent's sessions at its central workspace directory unless the profile disables
+ * sessions or chooses its own `session.dir`.
+ */
+export function withWorkspaceSessionDirectory(
+  options: HarnessAgentOptions,
+  profile: Pick<HarnessAgentConfig, 'session'>,
+  workspace: string
+): HarnessAgentOptions {
+  if (profile.session === false || (typeof profile.session === 'object' && profile.session.dir !== undefined)) {
+    return options
+  }
+  return withSession(options, { dir: workspaceSessionDirectory(workspace) })
+}
 
 interface SessionInfo extends Partial<SessionMetadata> {
   id: string
@@ -29,6 +49,7 @@ export interface SessionTarget {
 
 export interface ChatSessionRuntime {
   readonly current: string | undefined
+  readonly currentTarget?: SessionTarget | undefined
   readonly directory: string
   list(): Promise<readonly SessionInfo[]>
   resolve(reference: string): Promise<SessionTarget>
@@ -50,6 +71,7 @@ export class FileSessionRuntime implements ChatSessionRuntime {
   private readonly _directory: string
   private readonly _workspace: string
   private readonly _catalog: SessionRootCatalog | undefined
+  private readonly _currentSessionResumable: boolean
   readonly directory: string
 
   constructor(
@@ -58,16 +80,27 @@ export class FileSessionRuntime implements ChatSessionRuntime {
       readonly sessionDirectory: string
     },
     directory: string,
-    options: { catalog?: SessionRootCatalog; workspace?: string } = {}
+    options: { workspace: string; catalog?: SessionRootCatalog; currentSessionResumable?: boolean }
   ) {
     this._directory = resolve(directory)
-    this._workspace = resolve(options.workspace ?? dirname(dirname(this._directory)))
+    this._workspace = resolve(options.workspace)
     this._catalog = options.catalog
+    this._currentSessionResumable = options.currentSessionResumable !== false
     this.directory = options.catalog ? 'all registered workspaces' : sanitizeTerminalText(directory)
   }
 
   get current(): string | undefined {
     return this._host.sessionId === undefined ? undefined : sanitizeTerminalText(this._host.sessionId)
+  }
+
+  get currentTarget(): SessionTarget | undefined {
+    if (!this._currentSessionResumable || !this._host.sessionId) return undefined
+    return {
+      sessionId: this._host.sessionId,
+      sessionDirectory: resolve(this._host.sessionDirectory),
+      workspace: this._workspace,
+      active: true,
+    }
   }
 
   async list(): Promise<readonly SessionInfo[]> {
@@ -148,7 +181,7 @@ async function listFileSessions(directory: string, current?: string): Promise<Se
   try {
     entries = await fs.readdir(directory, { withFileTypes: true })
   } catch (error) {
-    if (isMissing(error)) {
+    if (isMissingPathError(error)) {
       return current ? [{ id: sanitizeTerminalText(current), active: true }] : []
     }
     throw error
@@ -207,7 +240,7 @@ async function readSession(directory: string, id: string, active: boolean): Prom
   try {
     updatedAt = (await fs.stat(path)).mtime.toISOString()
   } catch (error) {
-    if (isMissing(error)) {
+    if (isMissingPathError(error)) {
       return undefined
     }
   }
@@ -310,16 +343,6 @@ function messagePreview(messages: readonly unknown[]): string | undefined {
     }
   }
   return undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function isMissing(error: unknown): boolean {
-  return Boolean(
-    error && typeof error === 'object' && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-  )
 }
 
 export function sessionWorkspaceLabel(workspace: string | undefined, directory: string | undefined): string {

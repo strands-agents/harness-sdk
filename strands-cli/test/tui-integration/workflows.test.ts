@@ -1,0 +1,34 @@
+import { describe, expect, it } from 'vitest'
+
+import { TUI_CASE } from './catalog.js'
+import { expectRestoredTerminal, runTuiScenario } from './harness.js'
+
+describe('TUI workflow integration', () => {
+  it(TUI_CASE.followUp.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.followUp.scenario)
+    const clean = result.screens.join('\n')
+    expect(clean).toContain('Fixture turn 1')
+    expect(clean).toContain('Fixture turn 2')
+    expectRestoredTerminal(result)
+  })
+
+  it(TUI_CASE.approval.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.approval.scenario)
+    const clean = result.screens.join('\n')
+    expect(clean).toContain('Choose an action')
+    expect(clean).toContain('Allow tool call?')
+    expect(clean).toMatch(/Tool\s+write/u)
+    expect(clean).toContain('approved.txt')
+    expect(clean).toContain('Allow once')
+    expect(clean).not.toContain('Permission required')
+    expect(clean).toContain('Approval accepted')
+    expectRestoredTerminal(result)
+  })
+
+  it(TUI_CASE.setupExport.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.setupExport.scenario)
+    expect(result.exportSaved).toBe(true)
+    expect(result.screens.join('\n')).toContain('Export complete')
+    expectRestoredTerminal(result)
+  })
+})

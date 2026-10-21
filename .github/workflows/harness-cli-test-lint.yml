@@ -1,13 +1,11 @@
-name: "Harness CLI: Test and Lint"
+name: 'Harness CLI: Test and Lint'
 
 # Build + lint + unit tests for the Strands CLI (`@strands-agents/cli`). Reusable:
 # called by ci.yml on PRs that touch strands-cli, and by release-harness-cli.yml
 # at release time. Mirrors harness-ts-test-lint.yml.
 #
-# The CLI installs standalone (its own package-lock.json) against the published
-# @strands-agents/harness (< 2.0.0) and @strands-agents/sdk, not the repo-root
-# workspace. `npm run build` also bundles the sibling harness-py source
-# (scripts/bundle-python.js reads ../harness-py), so this needs a full checkout.
+# The CLI installs standalone against published Harness and SDK packages.
+# Python runtime tests install the sibling packages, requiring a full checkout.
 
 on:
   workflow_call:
@@ -38,6 +36,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -45,6 +44,19 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Prepare Python agent runtime
+        run: |
+          python -m venv ../harness-py/.venv
+          python -c "import os, pathlib, subprocess; root=pathlib.Path('../harness-py/.venv'); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); subprocess.check_call([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-e', '../strands-py', '-e', '../harness-py[openai]'])"
+
+      - name: Select test Python
+        run: python -c "import os, pathlib; root=pathlib.Path('../harness-py/.venv').resolve(); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); env=open(os.environ['GITHUB_ENV'], 'a'); print(f'PYTHON={python}', file=env); print(f'STRANDS_TEST_PYTHON={python}', file=env)"
 
       - name: Install dependencies
         run: npm ci

@@ -10,45 +10,25 @@ import {
   webSearchExplicit,
   webSearchMode,
 } from '@strands-agents/harness/internal'
-import { Message, TextBlock, tool, type Agent, type JSONSchema, type Tool } from '@strands-agents/sdk'
+import { Message, TextBlock, tool, type Agent, type Tool } from '@strands-agents/sdk'
 
 import { validateNoConfigSecrets } from './project/configuration.js'
 import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } from './builtin-tools.js'
-import {
-  PROVIDER_IDS,
-  normalizeToolName,
-  type CliConfigStore,
-  type SetupConfiguration,
-  type ProviderId,
-} from './config.js'
+import { PROVIDER_IDS, type CliConfigStore, type SetupConfiguration, type ProviderId } from './config.js'
 import { resolveModelTarget, validateModelSelection } from './model/selection.js'
 import { discoverProviderModels } from './provider/discovery.js'
 import type { ChatBuiltinToolsRuntime, ChatDiffPreview } from './chat/types.js'
 import { createDiffPreview } from './permissions/file-change-preview.js'
-import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS, parseSettings } from './settings.js'
+import { isRecord } from './values.js'
 
-const CONFIGURATION_SETTING_KEYS = new Set([
-  ...VISUAL_SETTING_DEFINITIONS.map(({ key }) => key),
-  'mcpDiscovery',
-  'skillDiscovery',
-  'agentMessaging',
-])
-const CONFIGURATION_SETTING_PROPERTIES: NonNullable<JSONSchema['properties']> = Object.fromEntries(
-  SETTING_DEFINITIONS.filter(({ key }) => CONFIGURATION_SETTING_KEYS.has(key)).map(({ key, options }) => {
-    const values = options.map(({ value }) => value)
-    return [
-      key,
-      values.every((value) => typeof value === 'boolean') ? { type: 'boolean' } : { type: 'string', enum: values },
-    ]
-  })
-)
-
-export interface SetupChange {
-  configuration?: SetupConfiguration
-  agentProject?: string
+export type SetupChange = {
   conversationId?: string
   onFailure?: (message: string) => Promise<void>
-}
+} & (
+  | { configuration: SetupConfiguration; profile?: never; agentProject?: string }
+  | { configuration?: never; profile: HarnessAgentConfig; agentProject?: never }
+  | { configuration?: never; profile?: never; agentProject: string }
+)
 
 export type RequestSetup = (change?: SetupChange) => void
 
@@ -67,7 +47,6 @@ export function configurationFromStore(config: CliConfigStore): SetupConfigurati
 
 /** Backs `/tools`: applying saves the selection and reloads the agent through setup. */
 export function createBuiltinToolsRuntime(
-  config: CliConfigStore,
   profile: () => HarnessAgentConfig,
   requestSetup: RequestSetup,
   conversationId: string
@@ -88,7 +67,7 @@ export function createBuiltinToolsRuntime(
           next = { ...next, builtinTools: withBuiltinToolChoice(next, choice, selected) }
         }
       }
-      requestSetup({ configuration: { ...configurationFromStore(config), profile: next }, conversationId })
+      requestSetup({ profile: next, conversationId })
     },
   }
 }
@@ -104,28 +83,26 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
   tool: Tool
   profile(): HarnessAgentConfig
   preview(): ChatDiffPreview
+  discard(expectedRevision: number): boolean
   takePending(): SetupChange | undefined
 } {
-  let draft: SetupConfiguration | undefined
+  let draft: HarnessAgentConfig | undefined
   let pending: SetupChange | undefined
   let revision = 0
-  const current = (): SetupConfiguration => {
-    const saved = configurationFromStore(options.config)
-    return draft
-      ? { ...draft, settings: { ...saved.settings, ...draft.settings } }
-      : { ...saved, profile: options.profile() }
-  }
+  const current = (): HarnessAgentConfig => draft ?? options.profile()
 
-  const configurationTool = tool({
+  const configurationTool: Tool = tool({
     name: 'strands_config',
     description:
-      'Inspect, recommend, and change the persistent CLI configuration. inspect shows all supported profile fields and current values. ' +
+      'Inspect, recommend, and change the persistent agent definition. inspect shows all supported profile fields and current values. ' +
       'Credential-bearing values are shown as [redacted]; omit them from patches to preserve their existing values. ' +
       'Use environment placeholders such as ${env:API_KEY} for new credentials. ' +
-      'models lists provider models. update stages a patch; arrays replace existing arrays and object fields merge one level. ' +
+      'models lists provider models. update stages a patch in memory; draft profile changes appear in /config and /export. ' +
+      'Arrays replace existing arrays and object fields merge one level. ' +
       'apply requires the latest revision returned by inspect or update. ' +
       'apply saves the draft and reloads the agent after this turn, keeping the conversation. ' +
-      'Use this for model, effort, prompt, tools, skills, plugins, memory, context management, appearance, and discovery settings. ' +
+      'Use this for model, effort, prompt, tools, skills, plugins, memory, and context management. ' +
+      'CLI preferences, provider setup, and permissions are user-controlled through /settings, /setup, and /permissions. ' +
       'For a source-backed agent, inspect identifies its source; edit that code, then apply to reload it.',
     inputSchema: {
       type: 'object',
@@ -144,19 +121,6 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
             'Use agentConfig.backgroundTasks to enable/disable background tasks.',
           additionalProperties: true,
         },
-        settings: {
-          type: 'object',
-          description:
-            'CLI presentation and discovery settings. Appearance options include colorMode, frogTheme, transcriptSpacing, animations, showReasoning, and toolOutput.',
-          properties: CONFIGURATION_SETTING_PROPERTIES,
-          additionalProperties: false,
-        },
-        permissionMode: { type: 'string', enum: ['default', 'bypassPermissions'] },
-        allowedTools: {
-          type: 'array',
-          description: 'Tool names that skip approval prompts when permissionMode is default.',
-          items: { type: 'string' },
-        },
       },
       required: ['action'],
       additionalProperties: false,
@@ -167,8 +131,13 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         throw new Error('Only the main conversation agent can change its configuration.')
       }
       const request = record(input, 'configuration request')
+      for (const key of Object.keys(request)) {
+        if (!Object.hasOwn(configurationTool.toolSpec.inputSchema!.properties!, key)) {
+          throw new Error(`Unsupported strands_config field: ${key}. This tool only edits the agent definition.`)
+        }
+      }
       if (request.action === 'models') {
-        const provider = request.provider ?? resolveModelTarget(current().profile.model).provider
+        const provider = request.provider ?? resolveModelTarget(current().model).provider
         if (!PROVIDER_IDS.includes(provider as ProviderId)) throw new Error('Unknown model provider.')
         const catalog = await discoverProviderModels(provider as ProviderId, options.config.providerEnvironment())
         const query = typeof request.query === 'string' ? request.query.toLowerCase() : ''
@@ -179,7 +148,6 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         })
       }
       if (request.action === 'inspect') {
-        const configuration = current()
         return JSON.stringify({
           revision,
           target: options.source ? { source: options.source } : { config: options.config.snapshot().path },
@@ -191,11 +159,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
                   tools: options.agent()?.tools.map((tool) => tool.name),
                 },
               }
-            : { profile: redactedProfile(configuration.profile) }),
-          settings: configuration.settings,
-          permissionMode: configuration.permissionMode,
-          allowedTools: configuration.allowedTools,
-          providers: configuration.providers,
+            : { profile: redactedProfile(current()) }),
           builtins: {
             tools: DEFAULT_HARNESS_AGENT_CONFIG.builtinTools,
             plugins: DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins,
@@ -218,7 +182,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           { ...DEFAULT_HARNESS_AGENT_CONFIG, ...patch },
           typeof patch.mcpServers === 'string' ? {} : undefined
         )
-        const profile = { ...previous.profile } as Record<string, unknown>
+        const profile = { ...previous } as Record<string, unknown>
         for (const [key, value] of Object.entries(patch)) {
           const existing = profile[key]
           profile[key] =
@@ -232,35 +196,13 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
               : value
         }
         if (patch.model !== undefined && patch.modelModule === undefined) profile.modelModule = null
-        const settingsPatch = request.settings === undefined ? {} : record(request.settings, 'settings')
-        for (const key of Object.keys(settingsPatch)) {
-          if (!CONFIGURATION_SETTING_KEYS.has(key)) {
-            throw new Error(`Invalid setting: ${key}.`)
-          }
-        }
-        const settings = parseSettings({ ...previous.settings, ...settingsPatch }, 'strands_config')
-        const permissionMode = request.permissionMode ?? previous.permissionMode
-        if (permissionMode !== 'default' && permissionMode !== 'bypassPermissions') {
-          throw new Error('permissionMode must be default or bypassPermissions.')
-        }
-        const allowedTools =
-          request.allowedTools === undefined ? previous.allowedTools : parseAllowedTools(request.allowedTools)
-        draft = {
-          ...previous,
-          profile: normalizeHarnessAgentConfig(profile),
-          settings: { ...previous.settings!, ...settings },
-          permissionMode,
-          ...(allowedTools === undefined ? {} : { allowedTools }),
-        }
+        draft = normalizeHarnessAgentConfig(profile)
         revision++
         pending = undefined
         return JSON.stringify({
-          status: 'draft updated; use apply when the user is ready',
+          status: 'Draft updated; not saved or applied. Use apply when ready.',
           revision,
-          profile: redactedProfile(draft.profile),
-          settings: draft.settings,
-          permissionMode,
-          allowedTools,
+          profile: redactedProfile(draft),
         })
       }
       if (request.action === 'apply') {
@@ -269,15 +211,14 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         }
         let exaNotice = ''
         if (options.source) {
-          pending = {}
+          pending = { agentProject: options.source }
         } else {
-          const configuration = current()
           const validatingRevision = revision
           const environment = options.config.providerEnvironment()
-          const profile = configuration.profile
+          const profile = current()
           const agentOptions = await harnessAgentOptionsFromConfig(
             profile,
-            configuration.profileBaseDir ?? process.cwd()
+            options.config.snapshot().profileBaseDir ?? process.cwd()
           )
           if (!profile.modelModule) {
             await validateModelSelection(
@@ -303,16 +244,10 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
               agentOptions.caching !== undefined
             )
           }
-          const provider = resolveModelTarget(profile.model).provider as ProviderId
           if (validatingRevision !== revision) {
             throw new Error('The configuration changed during validation. Inspect the latest draft and apply it again.')
           }
-          pending = {
-            configuration: {
-              ...configuration,
-              providers: [...new Set([provider, ...configuration.providers])],
-            },
-          }
+          pending = { profile }
         }
         pending.onFailure = async (message): Promise<void> => {
           agent.messages.push(
@@ -329,7 +264,11 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           )
           await agent.sessionManager?.saveSnapshot({ target: agent, isLatest: true })
         }
-        return 'Configuration validated. It will be applied after this turn, preserving the conversation.' + exaNotice
+        return (
+          (options.source ? 'Source reload requested.' : 'Configuration validated.') +
+          ' Reload pending until this turn finishes; the conversation will be preserved.' +
+          exaNotice
+        )
       }
       throw new Error('Unknown strands_config action.')
     },
@@ -337,7 +276,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
   return {
     tool: configurationTool,
     profile(): HarnessAgentConfig {
-      return current().profile
+      return current()
     },
     preview(): ChatDiffPreview {
       if (options.source) {
@@ -346,22 +285,15 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           lines: [{ kind: 'header', text: 'Reload the agent defined in this file.' }],
         }
       }
-      const serialize = (configuration: SetupConfiguration): string =>
-        JSON.stringify(
-          {
-            permissionMode: configuration.permissionMode,
-            allowedTools: configuration.allowedTools,
-            profile: redactedProfile(configuration.profile),
-            settings: configuration.settings,
-          },
-          null,
-          2
-        )
-      return createDiffPreview(
-        options.config.snapshot().path,
-        serialize(configurationFromStore(options.config)),
-        serialize(current())
-      )
+      const serialize = (profile: HarnessAgentConfig): string => JSON.stringify(redactedProfile(profile), null, 2)
+      return createDiffPreview(options.config.snapshot().path, serialize(options.profile()), serialize(current()))
+    },
+    discard(expectedRevision: number): boolean {
+      if (!draft || expectedRevision !== revision) return false
+      draft = undefined
+      pending = undefined
+      revision++
+      return true
     },
     takePending(): SetupChange | undefined {
       const change = pending
@@ -380,13 +312,6 @@ function assertNoRedactedValues(value: unknown): void {
   }
 }
 
-function parseAllowedTools(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
-    throw new Error('allowedTools must be an array of tool names.')
-  }
-  return [...new Set(value.map(normalizeToolName))].sort((left, right) => left.localeCompare(right))
-}
-
 function redactedProfile(profile: HarnessAgentConfig): unknown {
   return redactConfigValue(profile, (value) => {
     const candidate = { ...DEFAULT_HARNESS_AGENT_CONFIG, ...record(value, 'profile') }
@@ -400,7 +325,7 @@ function redactConfigValue(value: unknown, validate: (value: unknown) => void): 
     return value
   } catch {
     // Keep argument arrays together so credentials following flags cannot lose their context.
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       return '[redacted]'
     }
     return Object.fromEntries(
@@ -413,6 +338,6 @@ function redactConfigValue(value: unknown, validate: (value: unknown) => void): 
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Expected an object for ${label}.`)
-  return value as Record<string, unknown>
+  if (!isRecord(value)) throw new Error(`Expected an object for ${label}.`)
+  return value
 }

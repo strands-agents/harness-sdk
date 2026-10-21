@@ -4,6 +4,8 @@ import { TurnRenderer } from '../../console.js'
 import { importAgentProject } from './import.js'
 import { exportSourceProject } from './export.js'
 import { ChatController, type ChatConversation } from '../chat/controller.js'
+import { configurationSource } from '../configuration-source.js'
+import type { RequestSetup } from '../agent-configuration.js'
 import type { CliConfigStore } from '../config.js'
 import { HARNESS_VERSION } from '../package-version.js'
 import { ConversationManager } from '../session/conversations.js'
@@ -16,28 +18,40 @@ export async function createPythonChat(
   config: CliConfigStore,
   options: PythonOptions,
   signal: AbortSignal,
-  requestSetup: () => void,
+  requestSetup: RequestSetup,
   conversation?: ChatConversation
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
-  const createController = (
+  const createController = async (
     backend: PythonBackend,
     initialTurns?: ChatConversation['completedTurns']
-  ): ChatController => {
+  ): Promise<ChatController> => {
     const snapshot = config.snapshot()
+    const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
+      workspace: backend.cwd,
+      currentSessionResumable: backend.sessionIdentity !== undefined,
+    })
+    const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
     return new ChatController(backend, {
-      runtime: { cwd: backend.cwd, version: HARNESS_VERSION, session: backend.sessionId ?? 'managed' },
+      runtime: {
+        cwd: backend.cwd,
+        version: HARNESS_VERSION,
+        session: sessionName ?? backend.sessionId ?? 'managed',
+        ...(sessionName ? { sessionName } : {}),
+      },
       settings: snapshot.settings,
       initialMessages: backend.messages,
       ...(initialTurns ? { initialTurns } : {}),
-      sessions: new FileSessionRuntime(backend, backend.sessionDirectory, { workspace: backend.cwd }),
+      sessions,
       skills: { list: () => Promise.resolve(backend.skills), activate: (name) => backend.activateSkill(name) },
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
       project,
-      exportAgentProject: (language, destination) =>
-        exportSourceProject(project, backend.name, language, backend.privatePaths, destination),
+      exportAgentProject: (language, destination, output): Promise<string | undefined> => {
+        return exportSourceProject(project, backend.name, language, backend.privatePaths, destination, output)
+      },
+      configurationSource: () => configurationSource(config.snapshot().profile, project),
     })
   }
   const backend = await PythonBackend.open(
@@ -55,7 +69,7 @@ export async function createPythonChat(
     if (conversation) {
       await backend.restoreConversation(conversation)
     }
-    return new ConversationManager(createController(backend, conversation?.completedTurns), {
+    return new ConversationManager(await createController(backend, conversation?.completedTurns), {
       fork: async (source): Promise<ChatController> => {
         if (!(source.backend instanceof PythonBackend)) throw new Error('Expected a Python conversation.')
         return createController(await source.backend.fork({ ...options, interactive: true }, signal))
@@ -77,6 +91,9 @@ export async function createPythonChat(
           )
         ),
       voice: new PythonVoiceSession({ cwd: options.cwd ?? process.cwd() }),
+      project,
+      projectPrivatePaths: backend.privatePaths,
+      reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
     })
   } catch (error) {
     await backend.dispose()

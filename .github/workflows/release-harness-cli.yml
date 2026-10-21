@@ -4,7 +4,7 @@ name: "Harness CLI: Release"
 # SDK's release-typescript.yml / release-harness-ts.yml, retargeted to the CLI:
 # tag prefix `harness-cli/v*`, and the harness-cli-* reusable workflows.
 #
-# Shape: scan -> test-lint / integ / audit / pack -> inspect -> notes ->
+# Shape: scan -> test-lint / TUI integ / live integ / audit / pack -> inspect -> notes ->
 #        approve -> tag + release -> publish -> verify.
 #
 # The CLI depends on @strands-agents/harness and @strands-agents/sdk as version
@@ -168,6 +168,15 @@ jobs:
     with:
       ref: ${{ needs.scan-commits.outputs.release_sha }}
 
+  tui-integration:
+    name: Harness CLI TUI integration tests
+    needs: scan-commits
+    uses: ./.github/workflows/harness-cli-tui-integration-test.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
   # ── Integration tests ──────────────────────────────────────────────────
   integ:
     name: Harness CLI integration tests
@@ -256,11 +265,12 @@ jobs:
   # ── Draft notes grouped by commit type ─────────────────────────────────
   draft-notes:
     name: Draft release notes (grouped by commit type)
-    needs: [scan-commits, test-lint, integ, security-audit, package-pack, inspect]
+    needs: [scan-commits, test-lint, tui-integration, integ, security-audit, package-pack, inspect]
     if: |
       always() &&
       needs.scan-commits.result == 'success' &&
       needs.test-lint.result == 'success' &&
+      needs.tui-integration.result == 'success' &&
       (needs.integ.result == 'success' || needs.integ.result == 'skipped') &&
       needs.security-audit.result == 'success' &&
       needs.package-pack.result == 'success' &&

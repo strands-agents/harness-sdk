@@ -1,5 +1,7 @@
 import { tool, type JSONValue, type LocalAgent, type Plugin } from '@strands-agents/sdk'
 
+import { isRecord } from './values.js'
+
 const MAX_MESSAGE_CHARS = 20_000
 const PEER_MESSAGE_METADATA_KEY = 'strands.peerMessage'
 
@@ -225,8 +227,4 @@ function readAgentMessageInput(input: unknown): { action: 'list' } | { action: '
 
 function isParticipant(value: unknown): value is PeerParticipant {
   return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string'
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

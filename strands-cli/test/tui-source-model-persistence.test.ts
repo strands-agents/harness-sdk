@@ -53,7 +53,7 @@ async function open(
     },
     config: CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
     cwd: root,
-    sessionCatalogPath: join(root, 'catalog.json'),
+    sessionRoot: join(root, 'sessions'),
     persistModelChanges: false,
     ...(conversation ? { conversation } : {}),
   })

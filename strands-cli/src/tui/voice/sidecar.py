@@ -1,161 +1,250 @@
 # /// script
-# requires-python = ">=3.12,<3.14"
+# requires-python = ">=3.12,<3.15"
 # dependencies = [
-#   "strands-agents[bidi,bidi-aec,bidi-pyaudio] @ git+https://github.com/strands-agents/harness-sdk.git@647128383ea9ba4598d3cf47e376642091d339d9#subdirectory=strands-py",
+#   "strands-agents[bidi,bidi-aec,bidi-io,bidi-openai,bidi-pyaudio]==1.60.0",
 # ]
 # ///
 
-"""Nova Sonic audio sidecar for the Strands CLI voice runtime."""
+"""Bidirectional audio sidecar for the Strands CLI voice runtime."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import json
 import logging
 import math
 import os
 import signal
 import sys
+import threading
 import time
 from array import array
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import boto3
 import pyaudio  # pyright: ignore[reportMissingModuleSource]
 from strands import tool
-from strands.experimental.bidi import (
-    AudioProcessorConfig,
-    BidiAgent,
-    BidiAudioInputEvent,
-    BidiAudioIO,
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
+from strands.bidi import BidiAgent  # pyright: ignore[reportMissingImports]
+from strands.bidi.io import AudioIO, AudioProcessorConfig, ConsoleIO  # pyright: ignore[reportMissingImports]
+from strands.bidi.models import BedrockNovaSonicModel, OpenAIRealtimeModel  # pyright: ignore[reportMissingImports]
+from strands.bidi.types import (  # pyright: ignore[reportMissingImports]
+    AudioDelta,
+    BidiAudioDeltaEvent,
+    BidiBargeInEvent,
     BidiConnectionRestartEvent,
     BidiConnectionStartEvent,
-    BidiErrorEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiConnectionStopEvent,
+    BidiOutputEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptStreamEvent,
-    BidiUsageEvent,
+    BidiResponseStopEvent,
+    BidiToolUseBlocksEvent,
+    BidiTranscriptBlockEvent,
+    BidiTranscriptDeltaEvent,
+    InputStream,
+    OutputStream,
 )
-from strands.experimental.bidi.models import BidiNovaSonicModel
-from strands.experimental.bidi.types.events import BidiOutputEvent
-from strands.experimental.bidi.types.io import BidiInput, BidiOutput
-from strands.experimental.hooks.events import BidiAfterToolCallEvent, BidiBeforeToolCallEvent
-from strands.hooks import HookProvider
+from strands.types.tools import ToolResultBlock, ToolSpec  # pyright: ignore[reportAttributeAccessIssue]
 
-DEFAULT_MODEL = "amazon.nova-2-5-sonic"
+DEFAULT_MODELS = {
+    "bedrock": "amazon.nova-2-5-sonic",
+    "openai": "gpt-realtime-2.1",
+}
+DEFAULT_VOICES = {
+    "bedrock": "tiffany",
+    "openai": "coral",
+}
+OPENAI_TRANSCRIPTION_MODEL = "gpt-transcribe"
 DEFAULT_ENDPOINTING_SENSITIVITY = "LOW"
-DEFAULT_SYSTEM_PROMPT = """
-You are Strands harness, a concise coding assistant in a live voice conversation.
-Keep spoken answers short unless the user asks for detail.
-Use current_working_directory whenever the user asks where you are working.
-The user may speak over you or send typed text during the conversation.
-""".strip()
-SIDECAR_SYSTEM_PROMPT = """
-You are a speech transcription transport for a separate coding agent.
-Listen carefully to the user and keep each response to one short acknowledgement.
-Do not answer questions, use tools, or attempt coding work.
-""".strip()
-SPEAK_PROMPT = """
-Read the coding assistant response below aloud naturally.
-Preserve its meaning and do not add commentary.
-Skip markdown punctuation, URLs, and code syntax that would be awkward to speak.
+OPENAI_SILENCE_DURATION_MS = {
+    "HIGH": 350,
+    "MEDIUM": 500,
+    "LOW": 800,
+}
+SYSTEM_PROMPT = """
+You are Strands Voice, the user's persistent real-time conversational supervisor over the active
+Strands harness coding agent.
 
-<coding_assistant_response>
+At the beginning of every response, call route_voice_turn exactly once:
+- conversation: casual conversation, a general question you can answer confidently, or a
+  clarification that needs no workspace state, live information, tools, or external action.
+- status: a question about what the harness agent is doing, what happened, or whether work finished.
+- delegate: any request to inspect, change, run, search, research, create, fix, continue, or otherwise
+  act through the harness agent.
+- cancel: a clear request to stop the harness agent's current work.
+- narration: only for an internal grounded harness update.
+
+For delegation, preserve the user's complete request. The harness agent owns files, tools, approvals,
+coding work, and detailed execution. Do not claim that work started, changed, finished, or failed
+unless the routing result says so. After routing, respond naturally and briefly. Continue talking
+with the user while harness work runs. If the user interrupts you, stop speaking and listen.
+""".strip()
+NARRATION_PROMPT = """
+Route this internal request as narration, then give the user a concise, natural update. Preserve the
+grounded facts, omit awkward markdown and code syntax, and do not invent progress.
+
+<harness_update>
 {text}
-</coding_assistant_response>
+</harness_update>
 """.strip()
 INPUT_LEVEL_FLOOR_DB = -60.0
 INPUT_LEVEL_INTERVAL_SECONDS = 0.08
 
 
 def emit(event_type: str, **payload: Any) -> None:
+    """Write one event to the Node parent process."""
     print(json.dumps({"type": event_type, **payload}, default=str, separators=(",", ":")), flush=True)
 
 
-@tool
-def current_working_directory() -> str:
-    """Return the absolute working directory for this voice session."""
-    return str(Path.cwd())
-
-
-class TypedTextInput(BidiInput):
-    """Read optional text input while microphone streaming remains active."""
+class SupervisorBridge:
+    """Resolve BiDi routing tools through the Node conversation manager."""
 
     def __init__(self) -> None:
-        self._lines: asyncio.Queue[str] = asyncio.Queue()
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._file_descriptor = sys.stdin.fileno()
+        self._next_request_id = 0
+        self._pending: dict[str, asyncio.Future[Any]] = {}
 
-    async def start(self, agent: BidiAgent) -> None:
-        del agent
-        self._loop = asyncio.get_running_loop()
-        self._loop.add_reader(self._file_descriptor, self._read_line)
-        print("text> ", end="", file=sys.stderr, flush=True)
+    async def request(self, action: str, **payload: Any) -> Any:
+        """Send one supervisor request and await its correlated result."""
+        self._next_request_id += 1
+        request_id = f"supervisor-{self._next_request_id}"
+        future = asyncio.get_running_loop().create_future()
+        self._pending[request_id] = future
+        emit("supervisor_request", request_id=request_id, action=action, **payload)
+        try:
+            return await asyncio.wait_for(future, timeout=30)
+        finally:
+            self._pending.pop(request_id, None)
 
-    async def stop(self) -> None:
-        if self._loop is not None:
-            self._loop.remove_reader(self._file_descriptor)
-            self._loop = None
+    def resolve(self, command: dict[str, Any]) -> None:
+        """Resolve a pending request from a parent control message."""
+        request_id = str(command.get("request_id", ""))
+        future = self._pending.get(request_id)
+        if future is None or future.done():
+            return
+        if command.get("ok") is True:
+            future.set_result(command.get("result"))
+        else:
+            future.set_exception(RuntimeError(str(command.get("error", "The harness action failed."))))
 
-    async def __call__(self) -> BidiTextInputEvent:
-        text = (await self._lines.get()).strip()
-        if not text:
-            return await self()
-        print("text> ", end="", file=sys.stderr, flush=True)
-        return BidiTextInputEvent(text=text)
-
-    def _read_line(self) -> None:
-        line = sys.stdin.readline()
-        if line:
-            self._lines.put_nowait(line)
+    def cancel(self) -> None:
+        """Cancel unresolved requests during shutdown."""
+        for future in self._pending.values():
+            if not future.done():
+                future.cancel()
+        self._pending.clear()
 
 
-class MutableAudioInput(BidiInput):
-    """Replace captured audio with silence while the sidecar is muted."""
+_supervisor_bridge: SupervisorBridge | None = None
 
-    def __init__(self, input_: BidiInput, report_levels: bool) -> None:
-        self._input = input_
+
+def supervisor_bridge() -> SupervisorBridge:
+    """Return the bridge for the active sidecar session."""
+    if _supervisor_bridge is None:
+        raise RuntimeError("The voice supervisor is not connected.")
+    return _supervisor_bridge
+
+
+VoiceTurnIntent = Literal["conversation", "status", "delegate", "cancel", "narration"]
+
+
+@tool
+async def route_voice_turn(intent: VoiceTurnIntent, request: str) -> Any:
+    """Route every voice turn before responding.
+
+    Args:
+        intent: Whether this turn is conversation, status, delegation, cancellation, or narration.
+        request: The user's complete request or the supplied grounded harness update.
+    """
+    text = request.strip()
+    if intent == "conversation":
+        return {"mode": "conversation", "instruction": "Answer the user directly, naturally, and briefly."}
+    if intent == "status":
+        return await supervisor_bridge().request("get_current_work")
+    if intent == "cancel":
+        return await supervisor_bridge().request("cancel_current_work")
+    if not text:
+        raise ValueError("The routed request cannot be empty.")
+    if intent == "delegate":
+        return await supervisor_bridge().request("send_instruction", instruction=text)
+    return {
+        "mode": "narration",
+        "instruction": "Summarize this grounded update naturally without adding facts.",
+        "content": text,
+    }
+
+
+class RoutedNovaSonicModel(BedrockNovaSonicModel):
+    """Require one routing tool call before each spoken response."""
+
+    def _get_prompt_start_event(self, tools: list[ToolSpec]) -> str:
+        event = json.loads(super()._get_prompt_start_event(tools))
+        tool_configuration = event["event"]["promptStart"].get("toolConfiguration")
+        if tool_configuration is not None:
+            tool_configuration["toolChoice"] = {"tool": {"name": "route_voice_turn"}}
+        return json.dumps(event, separators=(",", ":"))
+
+
+class RoutedOpenAIRealtimeModel(OpenAIRealtimeModel):
+    """Require routing for user turns and allow speech after the routing result."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._route_result_pending = False
+        super().__init__(**kwargs)
+
+    async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
+        # The SDK may defer response.create until the active response stops.
+        self._route_result_pending = True
+        await super()._send_tool_result(tool_result)
+
+    async def _send_event(self, event: dict[str, Any]) -> None:
+        routed_response = self._route_result_pending and event.get("type") == "response.create"
+        if routed_response:
+            event = {**event, "response": {**event.get("response", {}), "tool_choice": "none"}}
+        await super()._send_event(event)
+        if routed_response:
+            self._route_result_pending = False
+
+
+class MutableAudioInput:
+    """Capture microphone audio while allowing mute and level reporting."""
+
+    def __init__(self, input_stream: InputStream) -> None:
+        self._input_stream = input_stream
         self._muted = False
-        self._report_levels = report_levels
         self._smoothed_level = 0.0
         self._last_level_emit = 0.0
 
     async def start(self, agent: BidiAgent) -> None:
-        await self._input.start(agent)
+        """Start microphone capture."""
+        await self._input_stream.start(agent)
 
     async def stop(self) -> None:
-        await self._input.stop()
+        """Stop microphone capture."""
+        await self._input_stream.stop()
 
-    async def __call__(self) -> BidiAudioInputEvent:
-        event = await self._input()
-        if not isinstance(event, BidiAudioInputEvent):
+    async def __call__(self) -> AudioDelta:
+        """Return captured audio, replacing it with silence while muted."""
+        event = await self._input_stream()
+        if not isinstance(event, AudioDelta):
             raise TypeError(f"Expected audio input, received {type(event).__name__}.")
-        audio = base64.b64decode(event.audio)
+        audio = event.source.get("bytes")
+        if not isinstance(audio, bytes):
+            raise TypeError("Expected microphone audio bytes.")
         self._report_input_level(audio)
         if not self._muted:
             return event
-        return BidiAudioInputEvent(
-            audio=base64.b64encode(bytes(len(audio))).decode("utf-8"),
-            format=event.format,
-            sample_rate=event.sample_rate,
-            channels=event.channels,
-        )
+        return AudioDelta(format=event.format, source={"bytes": bytes(len(audio))})
 
     def set_muted(self, muted: bool) -> None:
+        """Enable or disable microphone audio."""
         self._muted = muted
         if muted:
             self._smoothed_level = 0.0
             self._emit_input_level(0.0, INPUT_LEVEL_FLOOR_DB)
 
     def _report_input_level(self, audio: bytes) -> None:
-        if not self._report_levels or self._muted:
+        if self._muted:
             return
         now = time.monotonic()
         if now - self._last_level_emit < INPUT_LEVEL_INTERVAL_SECONDS:
@@ -179,9 +268,9 @@ class MutableAudioInput(BidiInput):
         smoothed_db = INPUT_LEVEL_FLOOR_DB + self._smoothed_level * -INPUT_LEVEL_FLOOR_DB
         self._emit_input_level(self._smoothed_level, smoothed_db)
 
-    def _emit_input_level(self, level: float, db: float) -> None:
-        if self._report_levels:
-            emit("input_level", level=round(level, 3), db=round(db, 1))
+    @staticmethod
+    def _emit_input_level(level: float, db: float) -> None:
+        emit("input_level", level=round(level, 3), db=round(db, 1))
 
 
 class SidecarControl:
@@ -190,192 +279,214 @@ class SidecarControl:
     def __init__(self) -> None:
         self._commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._file_descriptor = sys.stdin.fileno()
+        self._stopped = threading.Event()
 
     async def start(self) -> None:
+        """Start reading control messages."""
         self._loop = asyncio.get_running_loop()
-        self._loop.add_reader(self._file_descriptor, self._read_line)
+        threading.Thread(target=self._read_lines, name="voice-sidecar-control", daemon=True).start()
 
     async def stop(self) -> None:
-        if self._loop is not None:
-            self._loop.remove_reader(self._file_descriptor)
-            self._loop = None
+        """Stop reading control messages."""
+        self._stopped.set()
+        self._loop = None
 
     async def next(self) -> dict[str, Any]:
+        """Wait for the next control message."""
         return await self._commands.get()
 
-    def _read_line(self) -> None:
-        line = sys.stdin.readline()
-        if not line:
-            self._commands.put_nowait({"type": "stop", "reason": "stdin_closed"})
-            return
-        try:
-            command = json.loads(line)
-        except json.JSONDecodeError as error:
-            emit("control_error", message=str(error))
-            return
-        if isinstance(command, dict):
-            self._commands.put_nowait(command)
+    def _read_lines(self) -> None:
+        while not self._stopped.is_set():
+            line = sys.stdin.readline()
+            if not line:
+                self._enqueue({"type": "stop"})
+                return
+            try:
+                command = json.loads(line)
+            except json.JSONDecodeError as error:
+                self._enqueue({"type": "control_error", "message": str(error)})
+                continue
+            if isinstance(command, dict):
+                self._enqueue(command)
+
+    def _enqueue(self, command: dict[str, Any]) -> None:
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._commands.put_nowait, command)
 
 
-class JsonEventOutput(BidiOutput):
-    """Project useful Bidi events to JSON without dumping audio payloads."""
+class JsonEventOutput:
+    """Project the stable Bidi event stream onto the CLI sidecar protocol."""
 
     def __init__(self) -> None:
-        self._audio_started = False
-        self._last_usage_total = -100
+        self._transcripts: dict[str, str] = {}
+
+    async def start(self, agent: BidiAgent) -> None:
+        """Prepare event projection."""
+        del agent
+
+    async def stop(self) -> None:
+        """Clear incomplete transcripts."""
+        self._transcripts.clear()
 
     async def __call__(self, event: BidiOutputEvent) -> None:
+        """Emit the subset of events consumed by the Node parent."""
         if isinstance(event, BidiConnectionStartEvent):
             emit("connection_start", connection_id=event.connection_id, model=event.model)
         elif isinstance(event, BidiConnectionRestartEvent):
-            emit("connection_restart", error=str(event.timeout_error))
-        elif isinstance(event, BidiResponseStartEvent):
-            self._audio_started = False
-            emit("response_start", response_id=event.response_id)
-        elif isinstance(event, BidiAudioStreamEvent):
-            if not self._audio_started:
-                self._audio_started = True
-                emit(
-                    "audio_output_start",
-                    format=event.format,
-                    sample_rate=event.sample_rate,
-                    channels=event.channels,
-                )
-        elif isinstance(event, BidiTranscriptStreamEvent):
+            self._transcripts.clear()
+            emit(
+                "connection_restart",
+                reason=event.reason,
+                turn_interrupted=event.turn_interrupted,
+                error=str(event.timeout_error) if event.timeout_error is not None else None,
+            )
+        elif isinstance(event, BidiTranscriptDeltaEvent):
+            transcript = f"{self._transcripts.get(event.content_id, '')}{event.delta}"
+            self._transcripts[event.content_id] = transcript
             emit(
                 "transcript",
                 role=event.role,
-                text=event.text,
-                is_final=event.is_final,
-                current_transcript=event.current_transcript,
+                current_transcript=transcript,
+                is_final=False,
             )
-        elif isinstance(event, BidiInterruptionEvent):
-            self._audio_started = False
-            emit("interruption", reason=event.reason)
-        elif isinstance(event, BidiResponseCompleteEvent):
-            self._audio_started = False
-            emit("response_complete", response_id=event.response_id, stop_reason=event.stop_reason)
-        elif isinstance(event, BidiUsageEvent):
-            if event.total_tokens - self._last_usage_total >= 100:
-                self._last_usage_total = event.total_tokens
-                emit(
-                    "usage",
-                    input_tokens=event.input_tokens,
-                    output_tokens=event.output_tokens,
-                    total_tokens=event.total_tokens,
-                )
-        elif isinstance(event, BidiConnectionCloseEvent):
-            emit("connection_close", connection_id=event.connection_id, reason=event.reason)
-        elif isinstance(event, BidiErrorEvent):
-            emit("error", code=event.code, message=event.message, details=event.details)
+        elif isinstance(event, BidiTranscriptBlockEvent):
+            self._transcripts.pop(event.content_id, None)
+            emit(
+                "transcript",
+                role=event.role,
+                current_transcript=event.transcript,
+                is_final=True,
+            )
+        elif isinstance(event, BidiConnectionStopEvent):
+            self._transcripts.clear()
+            emit("connection_stop", connection_id=event.connection_id, reason=event.reason)
 
 
-class ControlledAudioOutput(BidiOutput):
-    """Play only responses explicitly requested by the Node parent process."""
+class _SilentOutput:
+    """Suppress the console output bundled with AudioIO."""
 
-    def __init__(self, output: BidiOutput) -> None:
-        self._output = output
+    async def start(self, agent: BidiAgent) -> None:
+        del agent
+
+    async def stop(self) -> None:
+        return
+
+    async def __call__(self, event: BidiOutputEvent) -> None:
+        del event
+
+
+class _SilentConsoleIO:
+    """Provide AudioIO with a console that never writes to the terminal."""
+
+    def output(self) -> OutputStream:
+        """Return a no-op output stream."""
+        return _SilentOutput()
+
+
+class ControlledAudioOutput:
+    """Play conversational and narrated replies while spoken output is enabled."""
+
+    def __init__(self, output_stream: OutputStream) -> None:
+        self._output_stream = output_stream
         self._response_id: str | None = None
         self._play_current = False
         self._audio_started = False
-        self._armed = False
+        self._tool_response = False
+        self._enabled = False
+        self._interrupted_response_id: str | None = None
         self._idle = asyncio.Event()
         self._idle.set()
 
     async def start(self, agent: BidiAgent) -> None:
-        await self._output.start(agent)
+        """Start speaker output."""
+        await self._output_stream.start(agent)
 
     async def stop(self) -> None:
-        await self._output.stop()
+        """Stop speaker output."""
+        await self._output_stream.stop()
+        self._interrupted_response_id = None
+        self._finish_response()
 
     async def __call__(self, event: BidiOutputEvent) -> None:
+        """Route response audio according to the current playback request."""
         if isinstance(event, BidiResponseStartEvent):
-            if not self._idle.is_set() and event.response_id == self._response_id:
-                return
             self._response_id = event.response_id
             self._idle.clear()
-            self._play_current = self._armed
-            self._armed = False
+            self._play_current = self._enabled
             self._audio_started = False
-            return
-        if isinstance(event, BidiAudioStreamEvent):
+            self._tool_response = False
+        elif isinstance(event, BidiToolUseBlocksEvent):
+            self._tool_response = True
+        elif isinstance(event, BidiAudioDeltaEvent):
             if not self._play_current:
                 return
             if not self._audio_started:
                 self._audio_started = True
                 emit("speech_output_start")
-            await self._output(event)
-            return
-        if isinstance(event, BidiTranscriptStreamEvent):
-            if event.role == "assistant" and event.is_final and not self._idle.is_set():
-                if self._play_current:
-                    emit("speech_output_complete", response_id=self._response_id)
-                self._finish_response()
-            return
-        if isinstance(event, BidiInterruptionEvent):
-            await self._output(event)
-            if self._play_current:
-                emit("speech_output_interrupted", reason=event.reason)
-            self._finish_response()
-            return
-        if isinstance(event, BidiResponseCompleteEvent):
-            if self._play_current:
+            await self._output_stream(event)
+        elif isinstance(event, BidiBargeInEvent):
+            await self._output_stream(event)
+            if self._response_id is None:
+                self._idle.clear()
+                return
+            if self._audio_started:
+                emit("speech_output_interrupted")
+            self._interrupted_response_id = self._response_id
+            self._finish_response(idle=False)
+        elif isinstance(event, BidiResponseStopEvent):
+            if event.response_id == self._interrupted_response_id:
+                self._interrupted_response_id = None
+                self._idle.set()
+                return
+            if self._tool_response and not self._audio_started:
+                self._finish_response(idle=False)
+                return
+            if self._audio_started:
                 emit("speech_output_complete", response_id=event.response_id)
             self._finish_response()
+        elif isinstance(event, (BidiConnectionRestartEvent, BidiConnectionStopEvent)):
+            await self.stop_speaking()
 
     async def wait_until_idle(self) -> None:
+        """Wait until the model finishes its current response."""
         await self._idle.wait()
 
-    def arm_next_response(self) -> None:
-        self._armed = True
+    def mark_response_pending(self) -> None:
+        """Reserve playback before a programmatic response is submitted."""
+        self._finish_response(idle=False)
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Enable or suppress speaker output for subsequent responses."""
+        self._enabled = enabled
 
     async def stop_speaking(self) -> None:
-        was_speaking = self._play_current or self._armed
-        await self._output(BidiInterruptionEvent(reason="user_speech"))
-        self._play_current = False
-        self._audio_started = False
-        self._armed = False
+        """Clear current and pending spoken output."""
+        was_speaking = self._audio_started
+        await self._output_stream(BidiBargeInEvent())
+        self._interrupted_response_id = None
+        self._finish_response()
         if was_speaking:
             emit("speech_output_stopped")
 
-    def _finish_response(self) -> None:
+    def _finish_response(self, *, idle: bool = True) -> None:
         self._response_id = None
         self._play_current = False
         self._audio_started = False
-        self._armed = False
-        self._idle.set()
-
-
-class ToolEventHooks(HookProvider):
-    """Emit definitive tool lifecycle events from hooks."""
-
-    def register_hooks(self, registry: Any, **_: Any) -> None:
-        registry.add_callback(BidiBeforeToolCallEvent, self._before_tool)
-        registry.add_callback(BidiAfterToolCallEvent, self._after_tool)
-
-    def _before_tool(self, event: BidiBeforeToolCallEvent) -> None:
-        emit(
-            "tool_start",
-            tool_use_id=event.tool_use.get("toolUseId"),
-            name=event.tool_use.get("name"),
-            input=event.tool_use.get("input", {}),
-        )
-
-    def _after_tool(self, event: BidiAfterToolCallEvent) -> None:
-        emit(
-            "tool_finish",
-            tool_use_id=event.tool_use.get("toolUseId"),
-            name=event.tool_use.get("name"),
-            result=event.result,
-        )
+        self._tool_response = False
+        if idle:
+            self._idle.set()
+        else:
+            self._idle.clear()
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Exercise Strands Bidi with Nova Sonic and local audio.")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    """Parse sidecar configuration."""
+    parser = argparse.ArgumentParser(description="Run the Strands CLI bidirectional voice supervisor.")
+    parser.add_argument("--provider", choices=["bedrock", "openai"], default="bedrock")
+    parser.add_argument("--model")
     parser.add_argument("--region", help="AWS region; defaults to the active AWS configuration.")
-    parser.add_argument("--voice", default="tiffany")
+    parser.add_argument("--voice")
     parser.add_argument(
         "--endpointing-sensitivity",
         choices=["HIGH", "MEDIUM", "LOW"],
@@ -383,8 +494,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-device", type=int)
     parser.add_argument("--output-device", type=int)
+    parser.add_argument("--spoken-replies", action="store_true")
     parser.add_argument("--list-devices", action="store_true")
-    parser.add_argument("--sidecar", action="store_true", help="Run as the Strands CLI transcription sidecar.")
     parser.add_argument(
         "--check", action="store_true", help="Validate credentials and audio devices without connecting."
     )
@@ -392,6 +503,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def audio_devices() -> list[dict[str, Any]]:
+    """List local audio devices."""
     audio = pyaudio.PyAudio()
     try:
         devices = []
@@ -411,27 +523,35 @@ def audio_devices() -> list[dict[str, Any]]:
         audio.terminate()
 
 
-def preflight(args: argparse.Namespace) -> tuple[str, list[dict[str, Any]]]:
-    credentials = boto3.Session().get_credentials()
-    if credentials is None:
-        raise RuntimeError("AWS credentials were not found.")
+def preflight(args: argparse.Namespace) -> tuple[str | None, list[dict[str, Any]]]:
+    """Validate credentials, region, and local audio devices."""
+    args.model = args.model or DEFAULT_MODELS[args.provider]
+    args.voice = args.voice or DEFAULT_VOICES[args.provider]
+    region: str | None = None
+    if args.provider == "bedrock":
+        session = boto3.Session()
+        if session.get_credentials() is None:
+            raise RuntimeError("AWS credentials were not found. Configure Bedrock with /setup, then try again.")
+        region = (
+            args.region
+            or session.region_name
+            or os.getenv("AWS_REGION")
+            or os.getenv("AWS_DEFAULT_REGION")
+            or "us-east-1"
+        )
+    elif not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not configured. Add OpenAI credentials with /setup, then try again.")
 
-    region: str = (
-        args.region
-        or boto3.Session().region_name
-        or os.getenv("AWS_REGION")
-        or os.getenv("AWS_DEFAULT_REGION")
-        or "us-east-1"
-    )
     devices = audio_devices()
     if not any(device["input_channels"] > 0 for device in devices):
         raise RuntimeError("No microphone input device was found.")
-    if not args.sidecar and not any(device["output_channels"] > 0 for device in devices):
+    if not any(device["output_channels"] > 0 for device in devices):
         raise RuntimeError("No speaker output device was found.")
 
     emit(
         "preflight",
         ok=True,
+        provider=args.provider,
         model=args.model,
         region=region,
         cwd=str(Path.cwd()),
@@ -442,146 +562,135 @@ def preflight(args: argparse.Namespace) -> tuple[str, list[dict[str, Any]]]:
     return region, devices
 
 
-async def run_voice(args: argparse.Namespace, region: str) -> None:
-    model = BidiNovaSonicModel(
-        model_id=args.model,
-        provider_config={
-            "audio": {"voice": args.voice},
-            "turn_detection": {"endpointingSensitivity": args.endpointing_sensitivity},
-        },
-        client_config={"region": region},
-    )
-    audio = BidiAudioIO(
-        processor=AudioProcessorConfig(),
+async def run_voice(args: argparse.Namespace, region: str | None) -> None:
+    """Run the sidecar until the parent, signal, or model ends the session."""
+    global _supervisor_bridge
+    bridge = SupervisorBridge()
+    _supervisor_bridge = bridge
+    if args.provider == "bedrock":
+        model = RoutedNovaSonicModel(
+            model_id=args.model,
+            region=region,
+            voice=args.voice,
+            params={
+                "turnDetectionConfiguration": {
+                    "endpointingSensitivity": args.endpointing_sensitivity,
+                }
+            },
+        )
+    else:
+        model = RoutedOpenAIRealtimeModel(
+            model_id=args.model,
+            transcription_model_id=OPENAI_TRANSCRIPTION_MODEL,
+            voice=args.voice,
+            params={
+                "tool_choice": {"type": "function", "name": "route_voice_turn"},
+                "audio": {
+                    "input": {
+                        "turn_detection": {
+                            "silence_duration_ms": OPENAI_SILENCE_DURATION_MS[args.endpointing_sensitivity],
+                        }
+                    }
+                }
+            },
+        )
+    audio = AudioIO(
+        audio_processor=AudioProcessorConfig(),
+        console=cast(ConsoleIO, _SilentConsoleIO()),
         input_device_index=args.input_device,
         output_device_index=args.output_device,
     )
     agent = BidiAgent(
         model=model,
-        tools=[] if args.sidecar else [current_working_directory],
-        system_prompt=SIDECAR_SYSTEM_PROMPT if args.sidecar else DEFAULT_SYSTEM_PROMPT,
-        hooks=[] if args.sidecar else [ToolEventHooks()],
+        tools=[route_voice_turn],
+        system_prompt=SYSTEM_PROMPT,
         name="Strands Voice",
     )
-    audio_input = MutableAudioInput(audio.input(), report_levels=args.sidecar)
-    text_input = TypedTextInput()
-    audio_output = audio.output()
-    controlled_audio_output = ControlledAudioOutput(audio_output)
-    json_output = JsonEventOutput()
-    sidecar_control = SidecarControl() if args.sidecar else None
-    inputs = [audio_input] if args.sidecar else [audio_input, text_input]
-    outputs = [controlled_audio_output if args.sidecar else audio_output, json_output]
+    audio_input = MutableAudioInput(audio.input())
+    audio_output = ControlledAudioOutput(audio.output())
+    audio_output.set_enabled(args.spoken_replies)
+    event_output = JsonEventOutput()
+    control = SidecarControl()
+    narrations: asyncio.Queue[str] = asyncio.Queue()
     stop_requested = asyncio.Event()
     loop = asyncio.get_running_loop()
-
-    def request_stop(reason: str) -> None:
-        if stop_requested.is_set():
-            return
-        emit("session_stop_requested", reason=reason)
-        stop_requested.set()
+    registered_signals: list[signal.Signals] = []
 
     for signal_number in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signal_number, request_stop, signal.Signals(signal_number).name.lower())
-
-    async def run_input(input_: BidiInput) -> None:
-        while True:
-            await agent.send(await input_())
-
-    async def run_output() -> None:
-        async for event in agent.receive():
-            await asyncio.gather(*(output(event) for output in outputs))
-        request_stop("connection_closed")
+        try:
+            loop.add_signal_handler(signal_number, stop_requested.set)
+            registered_signals.append(signal_number)
+        except NotImplementedError:
+            pass
 
     async def run_controls() -> None:
-        assert sidecar_control is not None
         while True:
-            command = await sidecar_control.next()
+            command = await control.next()
             command_type = command.get("type")
             if command_type == "set_muted":
-                muted = bool(command.get("muted"))
+                muted = command.get("muted") is True
                 audio_input.set_muted(muted)
                 emit("mute_changed", muted=muted)
-            elif command_type == "speak":
+            elif command_type == "set_spoken_replies":
+                enabled = command.get("enabled") is True
+                audio_output.set_enabled(enabled)
+                if not enabled:
+                    await audio_output.stop_speaking()
+            elif command_type == "narrate":
                 text = str(command.get("text", "")).strip()
                 if not text:
-                    emit("control_error", message="The speak command requires non-empty text.")
+                    emit("control_error", message="The narration command requires non-empty text.")
                     continue
-                await controlled_audio_output.wait_until_idle()
-                controlled_audio_output.arm_next_response()
-                await agent.send(BidiTextInputEvent(text=SPEAK_PROMPT.format(text=text)))
-                emit("speech_output_queued")
+                await narrations.put(text)
+            elif command_type == "supervisor_result":
+                bridge.resolve(command)
             elif command_type == "stop_speaking":
-                await controlled_audio_output.stop_speaking()
+                await audio_output.stop_speaking()
             elif command_type == "stop":
-                request_stop(str(command.get("reason", "parent_request")))
                 return
+            elif command_type == "control_error":
+                emit("control_error", message=command.get("message"))
             else:
                 emit("control_error", message=f"Unknown control message: {command_type}")
 
-    emit(
-        "session_start",
-        model=args.model,
-        region=region,
-        voice=args.voice,
-        endpointing_sensitivity=args.endpointing_sensitivity,
-    )
-    if not args.sidecar:
-        print(
-            "Voice session starting. Speak normally, type at the text> prompt, interrupt while the assistant speaks, "
-            "and press Ctrl+C to stop.",
-            file=sys.stderr,
-            flush=True,
-        )
-    workers: list[asyncio.Task[None]] = []
-    stop_waiter: asyncio.Task[bool] | None = None
-    started = False
-    try:
-        await agent.start()
-        started = True
-        for channel in [*inputs, *outputs]:
-            await channel.start(agent)
-        if sidecar_control is not None:
-            await sidecar_control.start()
+    async def run_narrations() -> None:
+        while True:
+            text = await narrations.get()
+            await audio_output.wait_until_idle()
+            audio_output.mark_response_pending()
+            try:
+                await agent.send(NARRATION_PROMPT.format(text=text))
+            except BaseException:
+                await audio_output.stop_speaking()
+                raise
 
-        workers = [
-            *(asyncio.create_task(run_input(input_)) for input_ in inputs),
-            asyncio.create_task(run_output()),
-            *([asyncio.create_task(run_controls())] if sidecar_control is not None else []),
+    tasks: list[asyncio.Task[Any]] = []
+    await control.start()
+    try:
+        tasks = [
+            asyncio.create_task(agent.run(inputs=[audio_input], outputs=[audio_output, event_output])),
+            asyncio.create_task(run_controls()),
+            asyncio.create_task(run_narrations()),
+            asyncio.create_task(stop_requested.wait()),
         ]
-        stop_waiter = asyncio.create_task(stop_requested.wait())
-        done, _ = await asyncio.wait([stop_waiter, *workers], return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
-            if task is stop_waiter or task.cancelled():
+            if task is tasks[3] or task.cancelled():
                 continue
             task.result()
     finally:
-        if stop_waiter is not None:
-            stop_waiter.cancel()
-        for worker in workers:
-            worker.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
-        if stop_waiter is not None:
-            await asyncio.gather(stop_waiter, return_exceptions=True)
-        for channel in [*inputs, *outputs, *([sidecar_control] if sidecar_control is not None else [])]:
-            try:
-                await channel.stop()
-            except Exception as error:
-                emit("cleanup_error", component=type(channel).__name__, message=str(error))
-        if started:
-            # The experimental Nova client can hang while writing protocol end events after cancellation.
-            # Clearing the connection ID skips those writes; BidiAgent.stop still closes the stream and loop.
-            if hasattr(agent.model, "_connection_id"):
-                agent.model._connection_id = None  # pyright: ignore[reportAttributeAccessIssue]
-            try:
-                await asyncio.wait_for(agent.stop(), timeout=10)
-            except TimeoutError:
-                emit("cleanup_error", component="BidiAgent", message="Timed out while stopping the agent loop.")
-            except Exception as error:
-                emit("cleanup_error", component="BidiAgent", message=str(error))
-        emit("session_stopped")
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        bridge.cancel()
+        _supervisor_bridge = None
+        await control.stop()
+        for signal_number in registered_signals:
+            loop.remove_signal_handler(signal_number)
 
 
 def main() -> int:
+    """Run the voice sidecar."""
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
     args = parse_args()
 
@@ -595,7 +704,6 @@ def main() -> int:
         asyncio.run(run_voice(args, region))
         return 0
     except KeyboardInterrupt:
-        emit("session_stop", reason="keyboard_interrupt")
         return 0
     except Exception as error:
         emit("fatal_error", code=type(error).__name__, message=str(error))

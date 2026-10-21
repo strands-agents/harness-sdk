@@ -1,20 +1,22 @@
 import { spawn } from 'node:child_process'
 
-export function externalUrlCommand(
-  platform: NodeJS.Platform,
-  url: string
-): { command: string; args: readonly string[] } {
+export interface SystemOpenCommand {
+  command: string
+  args: readonly string[]
+}
+
+export function systemOpenCommand(platform: NodeJS.Platform, target: string): SystemOpenCommand {
   if (platform === 'darwin') {
-    return { command: 'open', args: [url] }
+    return { command: 'open', args: [target] }
   }
   if (platform === 'win32') {
-    return { command: 'cmd', args: ['/c', 'start', '', url] }
+    return { command: 'cmd', args: ['/c', 'start', '', target] }
   }
-  return { command: 'xdg-open', args: [url] }
+  return { command: 'xdg-open', args: [target] }
 }
 
 export function openExternalUrl(url: string): void {
-  const { command, args } = externalUrlCommand(process.platform, url)
+  const { command, args } = systemOpenCommand(process.platform, url)
   const child = spawn(command, args, {
     detached: true,
     stdio: 'ignore',

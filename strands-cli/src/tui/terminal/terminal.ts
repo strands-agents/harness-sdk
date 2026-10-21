@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process'
 import { fstatSync } from 'node:fs'
 
+import { sanitizeTerminalText } from './sanitize.js'
+
 const ENTER_ALTERNATE_SCREEN = '\u001b[?1049h\u001b[2J\u001b[H'
 const RESET_KITTY_KEYBOARD = '\u001b[<u'.repeat(16)
 const ENABLE_MOUSE = '\u001b[?1002h\u001b[?1006h'
@@ -17,6 +19,30 @@ const CURSOR_HOME = '\u001b[H'
 export interface TerminalOutput {
   isTTY?: boolean
   write(value: string): unknown
+}
+
+export function setTerminalTitle(title: string, output: TerminalOutput = process.stdout): void {
+  if (!output.isTTY) return
+  const text = sanitizeTerminalText(title).replace(/\s+/gu, ' ').trim() || 'Strands'
+  output.write(`\u001b]2;${text}\u0007`)
+}
+
+export function saveTerminalTitle(output: TerminalOutput = process.stdout): () => void {
+  let saved = output.isTTY === true
+  if (saved) output.write('\u001b[22;2t')
+  return (): void => {
+    if (!saved) return
+    saved = false
+    output.write('\u001b[23;2t')
+  }
+}
+
+// Apple's Terminal renders OSC 8 markers as literal text instead of a hyperlink.
+export function hyperlinkEscapes(url: string): { open: string; close: string } | undefined {
+  if (process.env.TERM_PROGRAM === 'Apple_Terminal') {
+    return undefined
+  }
+  return { open: `\u001b]8;;${url}\u0007`, close: '\u001b]8;;\u0007' }
 }
 
 export function enterAlternateScreen(output: TerminalOutput = process.stdout): () => void {

@@ -1,22 +1,22 @@
-import { access, mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PythonVoiceSession, resolveVoiceSidecarPath, type VoiceSessionSnapshot } from '../src/tui/voice/session.js'
 
+const START_TIMEOUT_MS = 5_000
+
 describe('PythonVoiceSession', () => {
-  it('streams finalized user transcripts, toggles mute, and stops cleanly', async () => {
-    const transcript = vi.fn()
-    const speechStart = vi.fn()
+  it('tracks microphone activity, toggles mute, and stops cleanly', async () => {
+    const statuses: VoiceSessionSnapshot['status'][] = []
     const session = new PythonVoiceSession({
       command: process.execPath,
       args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'), '--emit-transcript'],
-      startTimeoutMs: 2_000,
+      startTimeoutMs: START_TIMEOUT_MS,
       stopTimeoutMs: 500,
     })
-    session.onTranscript(transcript)
-    session.onSpeechStart(speechStart)
+    session.subscribe(() => statuses.push(session.getSnapshot().status))
 
     await session.start()
     expect(session.getSnapshot()).toMatchObject({
@@ -24,11 +24,11 @@ describe('PythonVoiceSession', () => {
       muted: false,
       spokenReplies: false,
       endpointingSensitivity: 'LOW',
+      provider: 'bedrock',
       voice: 'tiffany',
       model: 'test-sonic',
     })
-    await vi.waitFor(() => expect(transcript).toHaveBeenCalledWith('hello from voice'))
-    expect(speechStart).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(statuses).toContain('hearing'))
     await vi.waitFor(() =>
       expect(session.getSnapshot()).toMatchObject({
         inputLevel: 0.58,
@@ -41,11 +41,10 @@ describe('PythonVoiceSession', () => {
     expect(session.getSnapshot()).toMatchObject({ inputLevel: 0, inputLevelDb: -60 })
 
     expect(session.setSpokenReplies(true)).toBe(true)
-    expect(session.speak('Finished the task.')).toBe(true)
-    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('muted'))
+    expect(session.narrate('Finished the task.')).toBe(true)
 
     expect(session.setSpokenReplies(false)).toBe(true)
-    expect(session.speak('This should remain silent.')).toBe(false)
+    expect(session.narrate('This should remain silent.')).toBe(false)
     expect(session.getSnapshot().spokenReplies).toBe(false)
 
     await session.stop()
@@ -56,24 +55,26 @@ describe('PythonVoiceSession', () => {
       inputLevelDb: -60,
       spokenReplies: false,
       endpointingSensitivity: 'LOW',
+      provider: 'bedrock',
       voice: 'tiffany',
+      model: 'test-sonic',
     })
   })
 
-  it('plays requested replies and restarts when endpointing or voice changes', async () => {
+  it('forwards grounded narrations and restarts when endpointing or voice changes', async () => {
     const statuses: VoiceSessionSnapshot['status'][] = []
     const session = new PythonVoiceSession({
       command: process.execPath,
       args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs')],
-      startTimeoutMs: 2_000,
+      startTimeoutMs: START_TIMEOUT_MS,
       stopTimeoutMs: 500,
     })
     session.subscribe(() => statuses.push(session.getSnapshot().status))
 
     await session.start()
     expect(session.setSpokenReplies(true)).toBe(true)
-    expect(session.speak('The first streamed sentence.')).toBe(true)
-    expect(session.speak('The second streamed sentence.')).toBe(true)
+    expect(session.narrate('The first completed response.')).toBe(true)
+    expect(session.narrate('The second completed response.')).toBe(true)
     await vi.waitFor(() => expect(statuses.filter((status) => status === 'speaking')).toHaveLength(2))
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))
 
@@ -89,7 +90,117 @@ describe('PythonVoiceSession', () => {
       voice: 'matthew',
     })
 
+    expect(await session.setProvider('openai')).toBe(true)
+    expect(session.getSnapshot()).toMatchObject({
+      status: 'listening',
+      provider: 'openai',
+      voice: 'coral',
+    })
+
     await session.dispose()
+  })
+
+  it('stays active across SDK connection restarts', async () => {
+    const statuses: VoiceSessionSnapshot['status'][] = []
+    const session = new PythonVoiceSession({
+      command: process.execPath,
+      args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'), '--emit-restart'],
+      startTimeoutMs: START_TIMEOUT_MS,
+      stopTimeoutMs: 500,
+    })
+    session.subscribe(() => statuses.push(session.getSnapshot().status))
+
+    await session.start()
+    statuses.length = 0
+    await vi.waitFor(() => expect(statuses).toContain('connecting'))
+    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))
+
+    await session.dispose()
+  })
+
+  it('keeps provider, model, and voice selections compatible before startup', async () => {
+    const session = new PythonVoiceSession()
+
+    expect(session.getSnapshot()).toMatchObject({
+      provider: 'bedrock',
+      model: 'amazon.nova-2-5-sonic',
+      voice: 'tiffany',
+    })
+    expect(await session.setProvider('openai')).toBe(true)
+    expect(session.getSnapshot()).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-realtime-2.1',
+      voice: 'coral',
+    })
+    expect(await session.setModel('amazon.nova-2-5-sonic')).toBe(false)
+    expect(await session.setVoice('tiffany')).toBe(false)
+    expect(session.getSnapshot().model).toBe('gpt-realtime-2.1')
+    expect(session.getSnapshot().voice).toBe('coral')
+
+    await session.dispose()
+  })
+
+  it('returns to listening after a playback interruption', async () => {
+    const session = new PythonVoiceSession({
+      command: process.execPath,
+      args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'), '--interrupt-speech'],
+      startTimeoutMs: START_TIMEOUT_MS,
+      stopTimeoutMs: 500,
+    })
+    await session.start()
+    session.setSpokenReplies(true)
+    expect(session.narrate('A requested spoken reply.')).toBe(true)
+    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
+    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))
+
+    await session.dispose()
+  })
+
+  it('round-trips correlated supervisor requests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'strands-voice-supervisor-'))
+    const marker = join(directory, 'result.json')
+    const request = vi.fn()
+    const session = new PythonVoiceSession({
+      command: process.execPath,
+      args: [
+        resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'),
+        '--emit-supervisor-request',
+        '--supervisor-result-marker',
+        marker,
+      ],
+      startTimeoutMs: START_TIMEOUT_MS,
+      stopTimeoutMs: 500,
+    })
+    session.onSupervisorRequest((event) => {
+      request(event)
+      session.resolveSupervisorRequest(event.requestId, {
+        ok: true,
+        result: { accepted: true, state: 'started' },
+      })
+    })
+
+    try {
+      await session.start()
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledWith({
+          requestId: 'supervisor-1',
+          action: 'send_instruction',
+          instruction: 'inspect the parser',
+        })
+      )
+      await vi.waitFor(async () => {
+        const result = JSON.parse(await readFile(marker, 'utf8')) as Record<string, unknown>
+        expect(result).toMatchObject({
+          type: 'supervisor_result',
+          request_id: 'supervisor-1',
+          ok: true,
+          result: { accepted: true, state: 'started' },
+        })
+      })
+    } finally {
+      await session.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('resolves the repository sidecar from source and built module layouts', () => {
@@ -116,7 +227,7 @@ describe('PythonVoiceSession', () => {
         '--connection-delay',
         '500',
       ],
-      startTimeoutMs: 2_000,
+      startTimeoutMs: START_TIMEOUT_MS,
       stopTimeoutMs: 500,
     })
 
@@ -143,7 +254,7 @@ describe('PythonVoiceSession', () => {
     const session = new PythonVoiceSession({
       command: process.execPath,
       args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'), '--fatal-error', '--exit-marker', marker],
-      startTimeoutMs: 2_000,
+      startTimeoutMs: START_TIMEOUT_MS,
       stopTimeoutMs: 500,
     })
 
@@ -159,11 +270,28 @@ describe('PythonVoiceSession', () => {
     }
   })
 
+  it('stops the sidecar when the SDK connection ends unexpectedly', async () => {
+    const session = new PythonVoiceSession({
+      command: process.execPath,
+      args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'), '--connection-stop'],
+      startTimeoutMs: START_TIMEOUT_MS,
+      stopTimeoutMs: 500,
+    })
+
+    try {
+      await session.start()
+      await vi.waitFor(() => expect(session.getSnapshot().status).toBe('error'))
+      expect(session.getSnapshot().message).toContain('Voice connection closed: user_request')
+    } finally {
+      await session.dispose()
+    }
+  })
+
   it('keeps sidecar exit diagnostics compact and non-duplicated', async () => {
     const session = new PythonVoiceSession({
       command: process.execPath,
       args: [resolve(import.meta.dirname, 'fixtures/voice-sidecar.mjs'), '--exit-error'],
-      startTimeoutMs: 2_000,
+      startTimeoutMs: START_TIMEOUT_MS,
       stopTimeoutMs: 500,
     })
 

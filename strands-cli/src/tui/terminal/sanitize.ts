@@ -70,3 +70,8 @@ export function sanitizeTerminalValue(value: JSONValue): JSONValue {
   }
   return typeof value === 'string' ? sanitizeTerminalText(value) : value
 }
+
+export function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0
+  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+}

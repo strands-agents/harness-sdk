@@ -3,6 +3,7 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 
 import { readCliVersion } from '../tui/package-version.js'
+import { isRecord } from '../tui/values.js'
 
 export interface ParsedArgs {
   update: boolean
@@ -242,7 +243,7 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
   let target = config
   for (const key of keys.slice(0, -1)) {
     const value = target[key]
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       target[key] = {}
     }
     target = target[key] as Record<string, unknown>

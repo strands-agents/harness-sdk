@@ -1,29 +1,55 @@
 import { lstatSync, readFileSync, realpathSync, readdirSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { unzipSync } from 'fflate'
 import { ZipFile } from 'yazl'
 
 import { webFetchModelId } from '../builtin-tools.js'
-import { configuredSkillPaths } from '../skills.js'
+import { resolveSkillPaths } from '../skills.js'
 import { PROVIDER_PACKAGES } from '../provider/packages.js'
 import { chooseSaveFile } from '../terminal/directory-picker.js'
 import { agentProjectSource } from './source.js'
-import { AGENT_ENTRYPOINT_FILE, regularFile, resolveProjectEntrypoint } from './archive.js'
+import { AGENT_ENTRYPOINT_FILE, archiveExecutableModes, regularFile, resolveProjectEntrypoint } from './archive.js'
 import type { AgentProjectLanguage, ImportedAgentProject } from './import.js'
 import { portableConfig, validateNoConfigSecrets } from './configuration.js'
-import { containsPath, type PackagedSource } from './packaging.js'
+import { containsPath, expandHome } from '../paths.js'
+import { isRecord } from '../values.js'
+import {
+  assertPortablePathComponent,
+  hasIgnoredDirectory,
+  IGNORED_DIRECTORIES,
+  MAX_PROJECT_BYTES,
+  type PackagedSource,
+} from './packaging.js'
 
-const MAX_PROJECT_BYTES = 50 * 1024 * 1024
+export type AgentProjectOutput = 'zip' | 'directory'
 
 interface SkillPackage {
   id: string
   path: string
+}
+
+/** @internal Shared configuration and packaged paths for the preview and exported project. */
+export function prepareAgentProject(
+  profile: HarnessAgentConfig,
+  language: AgentProjectLanguage,
+  skillPaths: readonly string[],
+  baseDir = process.cwd()
+): { config: HarnessAgentConfig; skills: SkillPackage[]; sources: PackagedSource[] } {
+  const localSkillPaths = skillPaths
+    .filter((path) => !path.startsWith('https://'))
+    .map((path) => resolve(baseDir, path))
+  const optionalSkillPaths = new Set(profile.skills === true ? [resolve(baseDir, '.agent', 'skills')] : [])
+  const skills = discoverSkillPackages(localSkillPaths, optionalSkillPaths)
+  const exportedSkillSources = portableSkillSources(skillPaths, skills.length > 0)
+  const sources: PackagedSource[] = []
+  const config = portableConfig(profile, language, exportedSkillSources, sources, baseDir)
+  return { config, skills, sources }
 }
 
 export async function exportAgentProject(
@@ -31,23 +57,33 @@ export async function exportAgentProject(
   language: AgentProjectLanguage,
   skillPaths: readonly string[],
   baseDir = process.cwd(),
-  destination?: string
+  destination?: string,
+  output: AgentProjectOutput = 'zip'
 ): Promise<string | undefined> {
   const selectedDestination =
     destination ??
-    (await chooseSaveFile(
-      `Export ${language === 'typescript' ? 'TypeScript' : 'Python'} harness project`,
-      exportFileName(profile.name, language)
-    ))
+    (output === 'zip'
+      ? await chooseSaveFile(
+          `Export ${language === 'typescript' ? 'TypeScript' : 'Python'} harness project`,
+          exportFileName(profile.name, language)
+        )
+      : undefined)
   if (!selectedDestination) {
     return undefined
   }
-  const path = selectedDestination.toLowerCase().endsWith('.zip') ? selectedDestination : `${selectedDestination}.zip`
-  return writeAgentProject(profile, language, skillPaths, path, baseDir, destination === undefined)
+  const path =
+    output === 'directory' || selectedDestination.toLowerCase().endsWith('.zip')
+      ? selectedDestination
+      : `${selectedDestination}.zip`
+  return writeAgentProject(profile, language, skillPaths, path, baseDir, destination === undefined, output)
 }
 
 export function exportFileName(name: string, language: AgentProjectLanguage): string {
   return `${slug(name)}-${language}.zip`
+}
+
+export function exportDirectoryName(name: string): string {
+  return slug(name)
 }
 
 /**
@@ -65,12 +101,12 @@ export async function exportSavedAgent(
   }
   const baseDir = saved.profileBaseDir ?? cwd
   const skills = saved.profile.skills
-  const path = destination.startsWith('~/') ? resolve(homedir(), destination.slice(2)) : resolve(cwd, destination)
+  const path = resolve(cwd, expandHome(destination))
   const zipPath = path.toLowerCase().endsWith('.zip') ? path : `${path}.zip`
   return writeAgentProject(
     saved.profile,
     language,
-    configuredSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir),
+    resolveSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir, false),
     zipPath,
     baseDir,
     false
@@ -83,12 +119,11 @@ export async function writeAgentProject(
   skillPaths: readonly string[],
   destination: string,
   baseDir = process.cwd(),
-  overwrite = true
+  overwrite = true,
+  output: AgentProjectOutput = 'zip'
 ): Promise<string> {
-  const skills = discoverSkillPackages(skillPaths.map((path) => resolve(baseDir, path)))
+  const { config, skills, sources } = prepareAgentProject(profile, language, skillPaths, baseDir)
   const privatePaths = resolvePrivatePaths(profilePrivatePaths(profile), baseDir)
-  const sources: PackagedSource[] = []
-  const config = portableConfig(profile, language, skills.length > 0, sources, baseDir)
   const files = language === 'typescript' ? typescriptProject(config) : pythonProject(config)
   const zip = new ZipFile()
   let bytes = 0
@@ -99,6 +134,7 @@ export async function writeAgentProject(
     }
   }
   for (const [path, contents] of Object.entries(files)) {
+    assertPortableArchivePath(path)
     const buffer = Buffer.from(contents)
     addBytes(buffer.length)
     zip.addBuffer(buffer, path, { compress: false, mode: 0o100644 })
@@ -108,17 +144,19 @@ export async function writeAgentProject(
   }
   for (const source of sources) {
     if ('contents' in source) {
+      assertPortableArchivePath(`agent/${source.destination}`)
       const buffer = Buffer.from(source.contents)
       addBytes(buffer.length)
       zip.addBuffer(buffer, `agent/${source.destination}`, { compress: false, mode: 0o100644 })
     } else if (source.directoryOnly) {
+      assertPortableArchivePath(`agent/${source.destination}`)
       zip.addEmptyDirectory(`agent/${source.destination}`)
     } else {
       addPath(zip, source.source, `agent/${source.destination}`, addBytes, privatePaths)
     }
   }
   await mkdir(dirname(destination), { recursive: true })
-  await writeZip(zip, destination, overwrite)
+  await writeProject(zip, destination, overwrite, output)
   return destination
 }
 
@@ -138,7 +176,8 @@ export async function exportSourceProject(
   name: string,
   language: AgentProjectLanguage,
   privatePaths: readonly string[] = [],
-  destination?: string
+  destination?: string,
+  output: AgentProjectOutput = 'zip'
 ): Promise<string | undefined> {
   if (language !== project.language) {
     throw new Error(
@@ -152,11 +191,13 @@ export async function exportSourceProject(
       'The agent stores private state in its source folder. Use a separate session and memory directory before exporting.'
     )
   }
-  const selected = destination ?? (await chooseSaveFile('Export agent project', `${slug(name)}-${language}.zip`))
+  const selected =
+    destination ??
+    (output === 'zip' ? await chooseSaveFile('Export agent project', `${slug(name)}-${language}.zip`) : undefined)
   if (!selected) {
     return undefined
   }
-  const path = selected.toLowerCase().endsWith('.zip') ? selected : `${selected}.zip`
+  const path = output === 'directory' || selected.toLowerCase().endsWith('.zip') ? selected : `${selected}.zip`
   const excluded = new Set([
     '.agent/sessions',
     '.agent/memory',
@@ -173,9 +214,7 @@ export async function exportSourceProject(
   )
   if (
     !entrypoint ||
-    relative(root, entrypoint)
-      .split(sep)
-      .some((part) => IGNORED_DIRECTORIES.has(part)) ||
+    hasIgnoredDirectory(relative(root, entrypoint)) ||
     [...excluded].some((path) => containsPath(resolve(root, path), entrypoint))
   ) {
     throw new Error(
@@ -205,13 +244,13 @@ export async function exportSourceProject(
     { compress: false }
   )
   await mkdir(dirname(path), { recursive: true })
-  await writeZip(zip, path, destination === undefined)
+  await writeProject(zip, path, destination === undefined, output)
   return path
 }
 
 function resolvePrivatePaths(paths: readonly string[], baseDir: string): string[] {
   return paths.map((path) => {
-    const absolute = resolve(baseDir, path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : path)
+    const absolute = resolve(baseDir, expandHome(path))
     try {
       return realpathSync(absolute)
     } catch (error) {
@@ -231,7 +270,7 @@ function validateLocalDependencies(root: string, excluded: ReadonlySet<string>):
     const document = JSON.parse(readFileSync(manifest, 'utf8').replace(/^\uFEFF/u, '')) as Record<string, unknown>
     for (const field of ['dependencies', 'optionalDependencies', ...(directory === root ? ['devDependencies'] : [])]) {
       const dependencies = document[field]
-      if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue
+      if (!isRecord(dependencies)) continue
       for (const [name, version] of Object.entries(dependencies)) {
         if (typeof version !== 'string') continue
         const local = version.startsWith('file:') ? version.slice(5) : version
@@ -251,10 +290,9 @@ function validateLocalDependencies(root: string, excluded: ReadonlySet<string>):
             cause: error,
           })
         }
-        const path = relative(root, target)
         if (
           !containsPath(root, target) ||
-          path.split(sep).some((part) => IGNORED_DIRECTORIES.has(part)) ||
+          hasIgnoredDirectory(relative(root, target)) ||
           [...excluded].some((entry) => containsPath(resolve(root, entry), target))
         ) {
           throw new Error(
@@ -423,17 +461,35 @@ function environmentTemplate(config: HarnessAgentConfig): string {
 
 function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguage): string {
   const python = language === 'python'
+  const install = python
+    ? ['python3 -m venv .venv', 'source .venv/bin/activate', 'python -m pip install -r requirements.txt']
+    : ['npm install']
+  const windowsInstall = python
+    ? ['python -m venv .venv', '.\\.venv\\Scripts\\Activate.ps1', 'python -m pip install -r requirements.txt']
+    : ['npm install']
+  if (python && Object.keys(config.dependencies.typescript).length > 0) {
+    install.push('npm install')
+    windowsInstall.push('npm install')
+  }
   return [
     `# ${config.name}`,
     '',
     config.description,
     '',
+    '## Setup on macOS or Linux',
+    '',
     '```bash',
-    ...(python
-      ? ['python3 -m venv .venv', 'source .venv/bin/activate', 'python -m pip install -r requirements.txt']
-      : ['npm install']),
-    ...(python && Object.keys(config.dependencies.typescript).length > 0 ? ['npm install'] : []),
+    ...install,
     'cp .env.example .env',
+    '# Set credentials in .env or use your existing provider credential chain.',
+    'strands --agent . --env-file .env',
+    '```',
+    '',
+    '## Setup on Windows PowerShell',
+    '',
+    '```powershell',
+    ...windowsInstall,
+    'Copy-Item .env.example .env',
     '# Set credentials in .env or use your existing provider credential chain.',
     'strands --agent . --env-file .env',
     '```',
@@ -459,14 +515,29 @@ function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguag
   ].join('\n')
 }
 
-function discoverSkillPackages(paths: readonly string[]): SkillPackage[] {
+function portableSkillSources(paths: readonly string[], hasLocalSkills: boolean): string[] {
+  const sources: string[] = []
+  let includedLocalSkills = false
+  for (const path of paths) {
+    if (path.startsWith('https://')) {
+      if (!sources.includes(path)) sources.push(path)
+    } else if (hasLocalSkills && !includedLocalSkills) {
+      sources.push('./agent/skills')
+      includedLocalSkills = true
+    }
+  }
+  return sources
+}
+
+function discoverSkillPackages(paths: readonly string[], optionalPaths: ReadonlySet<string>): SkillPackage[] {
   const packages = new Map<string, SkillPackage>()
   for (const path of paths) {
     let details
     try {
       details = lstatSync(path)
-    } catch {
-      continue
+    } catch (error) {
+      if (optionalPaths.has(path) && (error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw new Error(`Configured skill source ${JSON.stringify(path)} cannot be read.`, { cause: error })
     }
     const candidates =
       details.isFile() && basename(path).toLowerCase() === 'skill.md'
@@ -479,16 +550,21 @@ function discoverSkillPackages(paths: readonly string[]): SkillPackage[] {
                 .map((entry) => join(path, entry.name))
                 .filter(hasSkillFile)
             : []
+    if (candidates.length === 0 && !optionalPaths.has(path)) {
+      throw new Error(`Configured skill source ${JSON.stringify(path)} contains no SKILL.md.`)
+    }
     for (const candidate of candidates) {
-      const id = safeComponent(basename(candidate))
+      const id = basename(candidate)
+      assertPortablePathComponent(id)
       const resolved = realpathSync(candidate)
-      const existing = packages.get(id)
+      const key = id.toLowerCase()
+      const existing = packages.get(key)
       if (existing && existing.path !== resolved) {
         throw new Error(
           `Two skills share the folder name ${JSON.stringify(id)} (${existing.path} and ${resolved}); rename one before export.`
         )
       }
-      packages.set(id, { id, path: resolved })
+      packages.set(key, { id, path: resolved })
     }
   }
   return [...packages.values()].sort((left, right) => left.id.localeCompare(right.id))
@@ -499,9 +575,7 @@ function hasSkillFile(path: string): boolean {
 }
 
 // The manifest scan never sees packaged file trees, so credential-shaped files get the same
-// fail-explicitly treatment by name before they reach the archive. Junk directories that are
-// never part of shareable source are skipped silently instead of failing the export.
-const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', '.venv', '__pycache__'])
+// fail-explicitly treatment by name before they reach the archive.
 const SECRET_FILE_PATTERN =
   /^(?:\.env(?:\..+)?|\.npmrc|\.netrc|credentials(?:\.json)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..+)?|.+\.(?:pem|p12|pfx|key|keystore|jks))$/iu
 const SECRET_FILE_TEMPLATES = new Set(['.env.example', '.env.sample', '.env.template'])
@@ -520,6 +594,7 @@ function addPath(
   addBytes: (size: number) => void,
   privatePaths: readonly string[]
 ): void {
+  assertPortableArchivePath(destination)
   if (privatePaths.some((path) => containsPath(path, source))) {
     throw new Error('Keep exported source outside the configured session and memory directories.')
   }
@@ -551,8 +626,14 @@ function addDirectory(
     zip.addEmptyDirectory(destination)
   }
   const visit = (directory: string): void => {
+    const names = new Set<string>()
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      safeComponent(entry.name)
+      assertPortablePathComponent(entry.name)
+      const key = entry.name.toLowerCase()
+      if (names.has(key)) {
+        throw new Error(`Directory ${JSON.stringify(directory)} contains names that collide on Windows.`)
+      }
+      names.add(key)
       const path = join(directory, entry.name)
       if (IGNORED_DIRECTORIES.has(entry.name) || excluded.has(posixRelative(root, path))) {
         continue
@@ -603,19 +684,14 @@ function validateSourceConfiguration(path: string, contents: Buffer): void {
     return
   }
   if (!path.endsWith('.json')) return
-  let value: unknown
+  let document: unknown
   try {
-    value = JSON.parse(contents.toString().replace(/^\uFEFF/u, ''))
+    document = JSON.parse(contents.toString().replace(/^\uFEFF/u, ''))
   } catch {
     return
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return
-  const document = value as Record<string, unknown>
-  if (
-    basename(path) === 'mcp.json' ||
-    basename(path) === '.mcp.json' ||
-    (document.mcpServers && typeof document.mcpServers === 'object' && !Array.isArray(document.mcpServers))
-  ) {
+  if (!isRecord(document)) return
+  if (basename(path) === 'mcp.json' || basename(path) === '.mcp.json' || isRecord(document.mcpServers)) {
     validateNoConfigSecrets(normalizeHarnessAgentConfig({ mcpServers: document }))
   }
   if (basename(path) === 'package.json') {
@@ -660,7 +736,23 @@ function harnessPythonSpecifier(): string {
   return `~=${major}.${minor}.0`
 }
 
-function writeZip(zip: ZipFile, destination: string, overwrite: boolean): Promise<void> {
+async function writeProject(
+  zip: ZipFile,
+  destination: string,
+  overwrite: boolean,
+  output: AgentProjectOutput
+): Promise<void> {
+  const archive = await serializeZip(zip)
+  if (output === 'directory') {
+    await writeProjectDirectory(archive, destination)
+    return
+  }
+  await writeFile(destination, archive, { flag: overwrite ? 'w' : 'wx' }).catch((error: unknown) => {
+    throw exportWriteError(error, destination)
+  })
+}
+
+function serializeZip(zip: ZipFile): Promise<Buffer> {
   return new Promise((resolvePromise, reject) => {
     const chunks: Buffer[] = []
     let bytes = 0
@@ -676,26 +768,49 @@ function writeZip(zip: ZipFile, destination: string, overwrite: boolean): Promis
         reject(new Error('The exported agent project exceeds 50 MB.'))
         return
       }
-      void writeFile(destination, Buffer.concat(chunks), { flag: overwrite ? 'w' : 'wx' }).then(
-        resolvePromise,
-        (error: unknown) => {
-          reject(
-            error instanceof Error && 'code' in error && error.code === 'EEXIST'
-              ? new Error(`Export destination already exists: ${destination}. Choose a different path.`)
-              : error
-          )
-        }
-      )
+      resolvePromise(Buffer.concat(chunks))
     })
     zip.end()
   })
 }
 
-function safeComponent(value: string): string {
-  if (!value || value.includes('/') || value.includes('\\') || value === '.' || value === '..') {
-    throw new Error('Exported projects contain an unsafe path component.')
+async function writeProjectDirectory(archive: Buffer, destination: string): Promise<void> {
+  let created = false
+  try {
+    await mkdir(destination)
+    created = true
+    const files = unzipSync(archive)
+    const modes = archiveExecutableModes(archive)
+    for (const [name, contents] of Object.entries(files)) {
+      const path = name.replace(/\/$/u, '')
+      if (!path) continue
+      assertPortableArchivePath(path)
+      const target = join(destination, ...path.split('/'))
+      if (name.endsWith('/')) {
+        await mkdir(target, { recursive: true })
+      } else {
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, contents, { flag: 'wx', mode: 0o644 | (modes.get(name) ?? 0) })
+      }
+    }
+  } catch (error) {
+    if (created) {
+      await rm(destination, { recursive: true, force: true })
+    }
+    throw exportWriteError(error, destination)
   }
-  return value
+}
+
+function exportWriteError(error: unknown, destination: string): unknown {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST'
+    ? new Error(`Export destination already exists: ${destination}. Choose a different path.`)
+    : error
+}
+
+function assertPortableArchivePath(path: string): void {
+  for (const component of path.split('/')) {
+    assertPortablePathComponent(component)
+  }
 }
 
 function slug(value: string): string {

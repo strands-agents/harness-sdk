@@ -3,10 +3,12 @@ import { resolve } from 'node:path'
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
 import type { Message, Agent, Tool } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { createBuiltinToolsRuntime, createConfigurationTool, type RequestSetup } from './agent-configuration.js'
+import { configurationSource } from './configuration-source.js'
 import { CONFIGURATION_INSTRUCTIONS } from './configuration-instructions.js'
 import { exportAgentProject, exportSourceProject } from './project/export.js'
 import type { ImportedAgentProject } from './project/import.js'
@@ -15,10 +17,12 @@ import { BackgroundAgentActivityStore, observeSubagentActivity } from './backgro
 import { BackgroundAgentInbox } from './background/inbox.js'
 import {
   ChatController,
+  type ChatConfigurationSource,
   type ChatConversation,
   type ChatDiffPreview,
   type ChatForkState,
   type ChatSettings,
+  type ContextOffloadThreshold,
 } from './chat/controller.js'
 import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
 import { ConversationManager } from './session/conversations.js'
@@ -41,7 +45,7 @@ import {
   restoreSessionAgentDefinition,
 } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
-import { configuredSkillPaths, FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
+import { FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
@@ -62,7 +66,8 @@ interface CreateInteractiveChatOptions {
   mcpDigests?: Readonly<Record<string, string>>
   configPath?: string
   config?: CliConfigStore
-  sessionCatalogPath?: string
+  /** Directory holding the built-in agent's per-workspace session directories; defaults to `~/.strands/sessions`. */
+  sessionRoot?: string
   requestSetup?: RequestSetup
   conversation?: ChatConversation
 }
@@ -82,9 +87,10 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
   const initialWorkspace = resolve(options.cwd ?? process.cwd())
   const configuredSessionSettings = sessionSettings(options.agentOptions?.session)
   const initialSessionDirectory = resolve(initialWorkspace, configuredSessionSettings.dir ?? DEFAULT_SESSION_DIR)
-  const sessionCatalog = await loadSessionCatalog(options.sessionCatalogPath)
+  const sessionCatalog = await loadSessionCatalog(options.sessionRoot)
 
   const config = options.config ?? (await CliConfigStore.load(options.configPath))
+  const launchSettings = config.snapshot().settings
   const configuredInterventions = await resolveInterventions(options.agentOptions?.interventions)
   const configuredSessionId = configuredSessionSettings.id
   const {
@@ -155,9 +161,12 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       throw new Error('Runtime is disposed.')
     }
     const agentOptions = { ...controllerOptions, ...overrides }
-    requireBedrockRegion(agentOptions.model)
+    const resolvedAgentOptions = options.project
+      ? agentOptions
+      : withContextOffloadThreshold(agentOptions, launchSettings.contextOffloadThreshold)
+    requireBedrockRegion(resolvedAgentOptions.model)
     const agent = await (options.buildAgent ?? createHarness)({
-      ...agentOptions,
+      ...resolvedAgentOptions,
       tools: [...configuredTools],
       plugins: [
         ...(agentOptions.plugins ?? []),
@@ -243,7 +252,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const sessionId = sessionEnabled
       ? (request.sessionId ?? (request.sessionManager === undefined ? createInteractiveSessionId() : undefined))
       : undefined
-    await registerSessionRoot(sessionCatalog, sessionDirectory, workspace)
+    if (sessionEnabled) await registerSessionRoot(sessionCatalog, sessionDirectory, workspace)
 
     const baseAgentOptions: HarnessAgentOptions = sessionEnabled
       ? withSession(selectedAgentOptions, { id: sessionId, dir: sessionDirectory })
@@ -252,7 +261,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ? baseAgentOptions
       : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
-    const profileSkillPaths = configuredSkillPaths(configuredSkillSources, workspace)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)
@@ -260,17 +268,23 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const mcp = await loadMcp({
       ...(await workspaceMcpOptions(options, initialWorkspace, workspace, config.snapshot().settings.mcpDiscovery)),
       ...(configuredMcpServers ? { servers: configuredMcpServers } : {}),
+      backgroundConnect: true,
+      disabledServers: config.snapshot().settings.disabledMcpServers,
     })
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
       ...(restoredAgentOptions.tools ?? []),
       ...mcp.clients,
     ]
     const permissionBroker = new ToolPermissionBroker()
+    let resetConfigurationPreview: (() => void) | undefined
     const cedarPermissions = new CedarPermissions({
       broker: permissionBroker,
       config,
       cwd: workspace,
       configurationPreview: (): ChatDiffPreview | undefined => configuration?.preview(),
+      configurationDenied: (revision): void => {
+        if (configuration?.discard(revision)) resetConfigurationPreview?.()
+      },
     })
     const liveSteering: LiveSteering = new LiveSteering((candidate) => {
       return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))
@@ -283,6 +297,8 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       sandbox,
       interventions: [liveSteering, cedarPermissions, ...configuredInterventions],
     }
+    // Exported source factories retain authored options unless the override contains the key.
+    if (configuredMcpServers) Reflect.set(controllerOptions, 'mcpServers', undefined)
 
     const configSnapshot = config.snapshot()
     let exportProfile = {
@@ -409,46 +425,75 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       const sessions = new FileSessionRuntime(runtime, sessionDirectory, {
         ...(sessionCatalog ? { catalog: sessionCatalog } : {}),
         workspace,
+        currentSessionResumable: sessionEnabled && request.sessionManager === undefined,
       })
+      const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
       const skills = new FileSkillsRuntime(skillPaths, () => runtime.agent)
-      const skillNames = (await skills.list()).map((skill) => skill.name)
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
-          session: sessionId ?? (request.sessionManager !== undefined ? 'managed' : 'in-memory'),
+          session: sessionName ?? sessionId ?? (request.sessionManager !== undefined ? 'managed' : 'in-memory'),
+          ...(sessionName ? { sessionName } : {}),
           cwd: workspace,
         },
         settings: { ...configSnapshot.settings, ...request.settings },
         sessions,
         skills,
-        skillNames,
         mcp,
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         initialMessages: agent.messages,
         ...(request.conversation ? { initialTurns: request.conversation.completedTurns } : {}),
+        ...(request.conversation?.configurationBaseline
+          ? { initialConfigurationBaseline: request.conversation.configurationBaseline }
+          : {}),
         setSettings: (settings): Promise<void> => config.setSettings(settings),
         ...(options.project ? { project: options.project } : {}),
-        exportAgentProject: (language, destination): Promise<string | undefined> =>
-          options.project
-            ? exportSourceProject(
-                options.project,
-                runtime.agent.name,
-                language,
-                [sessionDirectory, memoryDirectory(controllerOptions.memory)],
-                destination
-              )
-            : exportAgentProject(
-                exportProfile,
-                language,
-                profileSkillPaths,
-                configSnapshot.profileBaseDir ?? initialWorkspace,
-                destination
-              ),
-        ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
+        exportAgentProject: (language, destination, output): Promise<string | undefined> => {
+          if (options.project) {
+            return exportSourceProject(
+              options.project,
+              runtime.agent.name,
+              language,
+              [sessionDirectory, memoryDirectory(controllerOptions.memory)],
+              destination,
+              output
+            )
+          }
+          const profile = configuration?.profile() ?? exportProfile
+          const baseDir = configSnapshot.profileBaseDir ?? initialWorkspace
+          return exportAgentProject(
+            profile,
+            language,
+            resolveSkillPaths(
+              typeof profile.skills === 'object' ? [...profile.skills] : profile.skills,
+              baseDir,
+              false
+            ),
+            baseDir,
+            destination,
+            output
+          )
+        },
+        ...(configuration
+          ? {
+              configurationSource: (): ChatConfigurationSource =>
+                configurationSource(
+                  configuration.profile(),
+                  options.project,
+                  configSnapshot.profileBaseDir ?? initialWorkspace
+                ),
+            }
+          : {}),
+        ...(options.requestSetup
+          ? {
+              requestSetup: options.requestSetup,
+              useExportedProject: (path: string): void =>
+                options.requestSetup?.({ agentProject: path, conversationId: peerEndpointId }),
+            }
+          : {}),
         ...(options.requestSetup && !options.project
           ? {
               builtinTools: createBuiltinToolsRuntime(
-                config,
                 (): HarnessAgentConfig => exportProfile,
                 options.requestSetup,
                 peerEndpointId
@@ -457,6 +502,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           : {}),
         peerEndpointId,
       })
+      resetConfigurationPreview = (): void => controller.refreshConfiguration(true)
       if (configuration) {
         stopConfigurationWatch = controller.subscribe(() => {
           if (controller.busy) return
@@ -508,6 +554,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ...(configuredSessionManager !== undefined ? { sessionManager: configuredSessionManager } : {}),
       ...(options.conversation ? { conversation: options.conversation } : {}),
     })
+    const project = options.project
     return new ConversationManager(primary, {
       fork: async (source): Promise<ChatController> => {
         const seed = source.backend.forkState?.()
@@ -540,10 +587,44 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       dispose: disposeShared,
       agentMessaging,
       voice: new PythonVoiceSession({ cwd: initialWorkspace }),
+      ...(project && options.requestSetup
+        ? {
+            project,
+            projectPrivatePaths: [
+              initialSessionDirectory,
+              resolve(initialWorkspace, memoryDirectory(selectedAgentOptions.memory)),
+            ],
+            reloadProject: (conversationId: string): void =>
+              options.requestSetup?.({ agentProject: project.entrypoint, conversationId }),
+          }
+        : {}),
     })
   } catch (error) {
     await disposeShared()
     throw error
+  }
+}
+
+function withContextOffloadThreshold(
+  options: HarnessAgentOptions,
+  threshold: ContextOffloadThreshold
+): HarnessAgentOptions {
+  const contextManager = options.contextManager
+  if (
+    threshold === 'default' ||
+    (contextManager !== undefined && contextManager !== 'auto' && contextManager !== 'agentic')
+  ) {
+    return options
+  }
+  const summarizeUtilization = contextManager === 'agentic' ? 1 : 0.85
+  return {
+    ...options,
+    contextManager: {
+      strategies: [
+        Offload.truncate('toolResults', { previewTokens: 750 }).when({ threshold }),
+        Offload.summarize('*').when({ utilization: summarizeUtilization, preserveRecent: 4 }),
+      ],
+    },
   }
 }
 
@@ -581,9 +662,9 @@ export function interactiveBackgroundTasks(
   return { ...(configured === true ? {} : configured), waitForCompletion }
 }
 
-async function loadSessionCatalog(path: string | undefined): Promise<SessionRootCatalog | undefined> {
+async function loadSessionCatalog(root: string | undefined): Promise<SessionRootCatalog | undefined> {
   try {
-    return await SessionRootCatalog.load(path)
+    return await SessionRootCatalog.load(root)
   } catch {
     return undefined
   }

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { SandboxAbortError, SandboxPathNotFoundError } from '@strands-agents/sdk'
 import { describe, expect, it } from 'vitest'
 
@@ -27,8 +27,7 @@ describe('WorkspaceSandbox', () => {
       await expect(sandbox.listFiles('skill.md')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
       await expect(sandbox.listFiles('missing')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
 
-      // Writes and removes must not go through `sh` either: PowerShell has none, so the
-      // PosixShellSandbox default fails with `spawn sh ENOENT` on Windows.
+      // File operations must work without a POSIX shell.
       await sandbox.writeText(join(directory, 'out', 'novel.json'), '{"a":1}')
       await expect(readFile(join(directory, 'out', 'novel.json'), 'utf8')).resolves.toBe('{"a":1}')
       await sandbox.writeText('chapter.md', '# One')
@@ -40,6 +39,42 @@ describe('WorkspaceSandbox', () => {
     }
   })
 
+  it('describes the local environment without shell probes', () => {
+    expect(new WorkspaceSandbox('/work', { platform: 'linux' }).environment).toMatchObject({
+      platform: 'Linux',
+      cwd: resolve('/work'),
+      shell: 'sh',
+    })
+    expect(new WorkspaceSandbox('/work', { platform: 'win32' }).environment).toMatchObject({
+      platform: 'Windows',
+      shell: 'PowerShell',
+    })
+  })
+
+  it('uses sh on POSIX and PowerShell on Windows', () => {
+    expect(new WorkspaceSandbox('/work', { platform: 'linux' }).shellInvocation('echo hi')).toEqual({
+      command: 'sh',
+      args: ['-c', 'echo hi'],
+    })
+    const windows = new WorkspaceSandbox('/work', { platform: 'win32' }).shellInvocation('Get-ChildItem "a b"')
+    expect(windows.command).toBe('powershell.exe')
+    expect(windows.args).toEqual(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File'])
+    expect(windows.script).toContain('Get-ChildItem "a b"')
+    expect(windows.script).toContain('exit $LASTEXITCODE')
+  })
+
+  it('feeds code directly to the interpreter', async () => {
+    const sandbox = new WorkspaceSandbox(process.cwd())
+    sandbox.shellInvocation = () => {
+      throw new Error('executeCode must not use a shell')
+    }
+    await expect(sandbox.executeCode('process.stdout.write("ok")', 'node')).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: 'ok',
+    })
+    await expect(sandbox.executeCode('x', 'python; rm -rf /')).rejects.toThrow('invalid characters')
+  })
+
   it('decodes UTF-8 characters split across stdout and stderr chunks', async () => {
     const script = [
       'process.stdout.write(Buffer.from([0xe2]))',
@@ -49,7 +84,10 @@ describe('WorkspaceSandbox', () => {
       '  process.stderr.write(Buffer.from([0xa3]))',
       '}, 20)',
     ].join(';')
-    const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`
+    const command =
+      process.platform === 'win32'
+        ? `& '${process.execPath.replaceAll("'", "''")}' -e '${script.replaceAll("'", "''")}'`
+        : `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`
     const sandbox = new WorkspaceSandbox(process.cwd())
     const streamed = { stdout: '', stderr: '' }
     let result

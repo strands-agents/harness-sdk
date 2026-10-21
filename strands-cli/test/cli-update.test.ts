@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { updateCli, type UpdateRunner } from '../src/cli/update.js'
-import { availableCliUpdate, compareVersions, isNewerVersion } from '../src/tui/update-check.js'
+import { availableCliUpdate, compareVersions } from '../src/tui/update-check.js'
 
 function memoryOutput(): { stream: Pick<NodeJS.WriteStream, 'write'>; text: () => string } {
   let value = ''
@@ -32,7 +32,9 @@ describe('updateCli', () => {
       1
     )
     expect(commands.capture).not.toHaveBeenCalled()
-    expect(errors.text()).toContain('development checkout')
+    expect(errors.text()).toBe(
+      'error: This is a development checkout, so npm cannot update it. Update it with Git; `npm run setup` only rebuilds the local CLI afterward.\n'
+    )
   })
 
   it('reports an already-current global installation', async () => {
@@ -143,7 +145,7 @@ describe('availableCliUpdate', () => {
   })
 })
 
-describe('isNewerVersion', () => {
+describe('compareVersions', () => {
   it.each([
     ['1.2.0', '1.1.9', true],
     ['2.0.0', '1.99.99', true],
@@ -151,9 +153,8 @@ describe('isNewerVersion', () => {
     ['1.2.0-beta.10', '1.2.0-beta.2', true],
     ['1.2.0-beta.2', '1.2.0', false],
     ['1.2.0', '2.0.0-beta.1', false],
-    ['invalid', '1.2.0', false],
   ])('compares %s against %s', (candidate, current, expected) => {
-    expect(isNewerVersion(candidate, current)).toBe(expected)
+    expect(compareVersions(candidate, current) === 1).toBe(expected)
   })
 
   it('ignores build metadata and rejects malformed versions', () => {

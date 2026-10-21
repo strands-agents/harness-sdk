@@ -3,7 +3,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 
 import type { AgentProjectLanguage } from './import.js'
-import { containsPath, packageName, packageSources, realSource, type PackagedSource } from './packaging.js'
+import { containsPath } from '../paths.js'
+import { packageName, packageSources, realSource, type PackagedSource } from './packaging.js'
+import { isRecord } from '../values.js'
 
 export function packageMcpServers(
   servers: Record<string, unknown>,
@@ -16,10 +18,10 @@ export function packageMcpServers(
   const packages = new Map<string, (path: string) => string>()
   return Object.fromEntries(
     Object.entries(servers).map(([name, raw]) => {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      if (!isRecord(raw)) {
         return [name, raw]
       }
-      const { files, ...server } = raw as Record<string, unknown>
+      const { files, ...server } = raw
       if (
         files !== undefined &&
         (!Array.isArray(files) || files.some((path) => typeof path !== 'string' || !path.trim()))

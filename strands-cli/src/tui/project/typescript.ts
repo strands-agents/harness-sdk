@@ -2,8 +2,7 @@ import { register } from 'node:module'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pathToFileURL, URL } from 'node:url'
 import { register as registerTypescript } from 'tsx/esm/api'
 import type { Agent } from '@strands-agents/sdk'
@@ -12,6 +11,7 @@ import type { HarnessAgentOptions } from '@strands-agents/harness'
 import type { ImportedAgentProject } from './import.js'
 import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { prepareArchiveDependencies } from './archive.js'
+import { expandHome } from '../paths.js'
 
 export type AgentFactory = (options: HarnessAgentOptions) => Promise<Agent>
 
@@ -108,8 +108,7 @@ export async function loadTypescriptProject(
 
 /** @internal */
 export function projectOptions(input: HarnessAgentOptions, root: string): HarnessAgentOptions {
-  const path = (value: string): string =>
-    value.startsWith('~/') ? join(homedir(), value.slice(2)) : resolve(root, value)
+  const path = (value: string): string => resolve(root, expandHome(value))
   const options = { ...input }
   if (typeof options.skills === 'string') {
     options.skills = options.skills.startsWith('https://') ? options.skills : path(options.skills)

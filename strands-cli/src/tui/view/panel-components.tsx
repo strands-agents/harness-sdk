@@ -1,8 +1,8 @@
-import type { ReactElement, ReactNode } from 'react'
+import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
 import type { ChatPanel, ChatPanelRow } from '../chat/controller.js'
-import { PanelHelpFooter } from './help-footer.js'
+import { Cursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 
 export interface PanelRowsProps {
@@ -15,6 +15,13 @@ export interface PanelRowsProps {
   hoveredRow?: number
   onPanelElement?: (element: DOMElement | null) => void
   onRowElement?: (index: number, element: DOMElement | null) => void
+}
+
+export const TONE_COLORS = { normal: undefined, success: 'green', warning: 'yellow', danger: 'red' } as const
+
+/** Badge text always gets a color so a `normal` badge renders gray instead of the accent. */
+export function badgeColor(tone: keyof typeof TONE_COLORS): string {
+  return TONE_COLORS[tone] ?? 'gray'
 }
 
 export function PanelItemHeader({
@@ -34,14 +41,16 @@ export function PanelItemHeader({
   color?: string
   wrap?: 'truncate-end' | 'wrap'
 }): ReactElement {
-  const { accent, hover } = useTheme()
-  const markerColor = pressed && clickable ? hover : active ? (color ?? accent) : undefined
-  const labelColor = pressed && clickable ? hover : active || pressed ? (color ?? accent) : undefined
+  const { accent } = useTheme()
+  const markerColor = active || (pressed && clickable) ? (color ?? accent) : undefined
+  const labelColor = active || pressed ? (color ?? accent) : undefined
   return (
     <Box flexShrink={1} overflow="hidden">
-      <Text {...(markerColor ? { color: markerColor } : {})} dimColor={!active && !pressed}>
-        {active && clickable ? '› ' : '  '}
-      </Text>
+      <Box flexShrink={0}>
+        <Text {...(markerColor ? { color: markerColor } : {})} dimColor={!active && !pressed}>
+          {active && clickable ? '› ' : '  '}
+        </Text>
+      </Box>
       <Text {...(labelColor ? { color: labelColor } : {})} bold={bold || (active && !pressed)} wrap={wrap}>
         {label}
       </Text>
@@ -49,39 +58,29 @@ export function PanelItemHeader({
   )
 }
 
-export function PanelTitle({ title, color }: { title: string; color: string }): ReactElement {
-  return (
-    <Text color={color} bold wrap="truncate-end">
-      {title}
-    </Text>
-  )
-}
-
-export function PanelOverlay({
-  width,
-  height,
-  children,
+export function PanelSearchHeader({
+  query,
+  placeholder,
+  focused,
   onElement,
+  paddingX,
 }: {
-  width: number
-  height?: number
-  children: ReactNode
+  query: string
+  placeholder: string
+  focused: boolean
   onElement?: (element: DOMElement | null) => void
+  paddingX?: number
 }): ReactElement {
-  const theme = useTheme()
+  const { accent } = useTheme()
   return (
-    <Box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" padding={1}>
-      <Box
-        ref={onElement}
-        width={width}
-        {...(height === undefined ? {} : { height, overflow: 'hidden' })}
-        flexDirection="column"
-        paddingX={1}
-        backgroundColor={theme.panel}
-      >
-        {children}
-        <PanelHelpFooter width={width - 2} />
+    <Box ref={onElement} {...(paddingX === undefined ? { flexShrink: 1 } : { paddingX })}>
+      <Box flexShrink={0} marginRight={1}>
+        <Text {...(focused ? { color: accent } : { dimColor: true })}>/</Text>
       </Box>
+      <Text {...(query ? {} : { dimColor: true })} wrap={query ? 'truncate-start' : 'truncate-end'}>
+        {query || (focused ? '' : placeholder)}
+        {focused ? <Cursor /> : null}
+      </Text>
     </Box>
   )
 }

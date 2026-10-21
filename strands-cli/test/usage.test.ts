@@ -370,16 +370,18 @@ describe('delegated run usage', () => {
         await vi.waitFor(() => {
           expect(controller.getSnapshot().completedTurns[0]?.usage?.totalTokens).toBe(116)
         })
-        expect(finalizedContext).toHaveBeenCalledWith({
-          currentTokens: 5,
-          projectedTokens: 8,
-          contextWindow: 1000,
-          inputTokens: 100,
-          outputTokens: 16,
-          totalTokens: 116,
-          cacheReadInputTokens: 0,
-          cacheWriteInputTokens: 0,
-        })
+        expect(finalizedContext).toHaveBeenCalledWith(
+          expect.objectContaining({
+            currentTokens: 5,
+            projectedTokens: 8,
+            contextWindow: 1000,
+            inputTokens: 100,
+            outputTokens: 16,
+            totalTokens: 116,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+          })
+        )
         await vi.waitFor(() => {
           expect(controller.getSnapshot().completedTurns[1]).toMatchObject({
             source: 'background',

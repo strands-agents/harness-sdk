@@ -18,6 +18,29 @@ class SourceReloadModel(Model):
         raise NotImplementedError
 
     async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs) -> AsyncIterator[StreamEvent]:
+        image = next(
+            (
+                block["image"]
+                for message in reversed(messages)
+                if message["role"] == "user"
+                for block in message["content"]
+                if "image" in block
+            ),
+            None,
+        )
+        if image:
+            size = len(image["source"]["bytes"])
+            yield {"messageStart": {"role": "assistant"}}
+            yield {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": f"Received {image['format']} image with {size} bytes."},
+                }
+            }
+            yield {"contentBlockStop": {"contentBlockIndex": 0}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+            yield {"metadata": {"usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}}}
+            return
         prompt = next(
             block["text"]
             for message in reversed(messages)

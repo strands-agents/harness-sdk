@@ -20,6 +20,7 @@ import {
 import { sanitizeTerminalText, sanitizeTerminalValue } from '../terminal/sanitize.js'
 import { latestResultModelUsage, normalizeUsage, type NormalizedUsage } from '../../usage.js'
 import { contextWindowLimit } from '../model/context.js'
+import { isRecord } from '../values.js'
 
 interface ProjectAgentEventOptions {
   alwaysBackgroundTools?: ReadonlySet<string>
@@ -82,7 +83,7 @@ function isBackgroundToolCall(name: string, input: JSONValue, options: ProjectAg
   if (options.alwaysBackgroundTools?.has(name)) {
     return true
   }
-  return input !== null && typeof input === 'object' && !Array.isArray(input) && input._background_execution === true
+  return isRecord(input) && input._background_execution === true
 }
 
 export function projectAgentResult(

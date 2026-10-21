@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import {
   AGENT_ENTRYPOINT_FILE,
@@ -10,7 +10,7 @@ import {
   regularFile,
   resolveProjectEntrypoint,
 } from './archive.js'
-import { containsPath } from './packaging.js'
+import { containsPath, expandHome } from '../paths.js'
 
 export type AgentProjectLanguage = 'typescript' | 'python'
 
@@ -20,12 +20,15 @@ export interface ImportedAgentProject {
   language: AgentProjectLanguage
 }
 
-export function agentLaunchCommand(path: string): string {
+export function agentLaunchCommand(path: string, platform = process.platform): string {
+  if (platform === 'win32') {
+    return `strands --agent '${path.replaceAll("'", "''")}'`
+  }
   return `strands --agent '${path.replaceAll("'", "'\\''")}'`
 }
 
 export function importAgentProject(path: string): ImportedAgentProject {
-  const expanded = path === '~' ? homedir() : path.startsWith(`~${sep}`) ? join(homedir(), path.slice(2)) : path
+  const expanded = expandHome(path)
   const root = projectRoot(expanded)
   const candidate = regularFile(expanded) && SOURCE_EXTENSION.test(expanded) ? realpathSync(expanded) : undefined
   const entries = AGENT_ENTRYPOINTS.map((name) => join(root, name)).filter(regularFile)

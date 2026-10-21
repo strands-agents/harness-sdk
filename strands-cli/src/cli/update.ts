@@ -31,7 +31,7 @@ export async function updateCli(options: UpdateOptions = {}): Promise<number> {
 
   if (currentVersion.includes('development')) {
     errorOutput.write(
-      'error: `strands update` is unavailable from a development checkout. Pull the latest source and run `npm run setup` instead.\n'
+      'error: This is a development checkout, so npm cannot update it. Update it with Git; `npm run setup` only rebuilds the local CLI afterward.\n'
     )
     return 1
   }

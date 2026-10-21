@@ -2,7 +2,13 @@ import { ChildProcess, spawn } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { copyTerminalText, enterAlternateScreen, setTerminalMouseMotion } from '../src/tui/terminal/terminal.js'
+import {
+  copyTerminalText,
+  enterAlternateScreen,
+  saveTerminalTitle,
+  setTerminalMouseMotion,
+  setTerminalTitle,
+} from '../src/tui/terminal/terminal.js'
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
@@ -18,6 +24,25 @@ afterEach(() => {
 })
 
 describe('terminal lifecycle', () => {
+  it('sets a sanitized single-line title and restores the saved title once', () => {
+    const writes: string[] = []
+    const output = { isTTY: true, write: (value: string) => writes.push(value) }
+    const restore = saveTerminalTitle(output)
+    setTerminalTitle('  Release\nplanning\u0007\u001b]2;injected\u0007  ', output)
+    restore()
+    restore()
+    expect(writes).toEqual(['\u001b[22;2t', '\u001b]2;Release planning\u0007', '\u001b[23;2t'])
+  })
+
+  it('does not write title controls to redirected output', () => {
+    const write = vi.fn()
+    const output = { isTTY: false, write }
+    const restore = saveTerminalTitle(output)
+    setTerminalTitle('Release planning', output)
+    restore()
+    expect(write).not.toHaveBeenCalled()
+  })
+
   it('enters and leaves the alternate screen with one mouse-reporting lifecycle', () => {
     const writes: string[] = []
     const leave = enterAlternateScreen({ write: (value) => writes.push(value) })

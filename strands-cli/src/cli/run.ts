@@ -7,6 +7,7 @@ import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } 
 import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
+import { withWorkspaceSessionDirectory } from '../tui/session/sessions.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
@@ -151,12 +152,15 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       ...(mode === 'plain' ? { confirm: confirmWorkspaceMcp } : {}),
       discovery: settings.mcpDiscovery,
     })
-    if (mcp.paths.length > 0) {
+    if (options.mcpServers || mcp.paths.length > 0) {
       loadedMcp = await loadMcp({
+        ...(options.mcpServers ? { servers: options.mcpServers } : {}),
         paths: mcp.paths,
         strictPaths: mcp.strictPaths,
         ...(mcp.expectedDigests ? { expectedDigests: mcp.expectedDigests } : {}),
       })
+      // Exported source factories retain authored options unless the override contains the key.
+      Reflect.set(options, 'mcpServers', undefined)
       options.tools = [...(options.tools ?? []), ...loadedMcp.clients]
     }
     agent = await (invocation.buildAgent ?? createHarness)(options).catch(rethrowWithProviderHint)
@@ -172,8 +176,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
     // Extraction runs in the background on a turn interval, so a short run exits with recent turns
     // unsaved. Flush at the process boundary to persist them, best-effort: a flush failure must not
     // fail a completed turn or skip MCP teardown.
-    await Promise.allSettled([agent?.memoryManager?.flush()])
-    await loadedMcp?.dispose()
+    await Promise.allSettled([agent?.memoryManager?.flush(), loadedMcp?.dispose()])
   }
 }
 
@@ -201,7 +204,8 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
     config.useEnvironmentFiles(args.envFiles)
     const initialWorkspace = process.cwd()
     let pinged = false
-    process.exitCode = await runInkChat(
+    let updateRequested = false
+    const exitCode = await runInkChat(
       async (signal, requestSetup, conversation, launch, confirmMcp) => {
         signal.throwIfAborted()
         const initialMcp = await resolveMcpConfig(args.mcpConfig, {
@@ -210,8 +214,9 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           discovery: config.snapshot().settings.mcpDiscovery,
         })
         signal.throwIfAborted()
+        const profile = launch?.profile ?? launch?.configuration?.profile
         const projectPath =
-          launch?.agentProject ?? (launch?.configuration ? undefined : (args.agent ?? config.snapshot().agentProject))
+          launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject))
         const project = projectPath ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../tui/project/run.js')
@@ -228,12 +233,13 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         signal.throwIfAborted()
         if (launch?.configuration) config.applyProviderEnvironment()
         const invocation =
-          launch?.configuration && !launch.agentProject
+          profile && !launch?.agentProject
             ? {
-                profile: launch.configuration.profile,
-                options: await harnessAgentOptionsFromConfig(
-                  launch.configuration.profile,
-                  launch.configuration.profileBaseDir ?? initialWorkspace
+                profile,
+                options: withWorkspaceSessionDirectory(
+                  await harnessAgentOptionsFromConfig(profile, config.snapshot().profileBaseDir ?? initialWorkspace),
+                  profile,
+                  initialWorkspace
                 ),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)
@@ -245,8 +251,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           ...(invocation.project ? { project: invocation.project } : {}),
           cwd: initialWorkspace,
           // Flags describe one run; only a profile-driven session writes model changes back to it.
-          persistModelChanges:
-            !invocation.project && (launch?.configuration !== undefined || shouldPersistModelChanges(args)),
+          persistModelChanges: !invocation.project && (profile !== undefined || shouldPersistModelChanges(args)),
           config,
           mcpPaths: initialMcp.paths,
           mcpStrictPaths: initialMcp.strictPaths,
@@ -266,8 +271,17 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         intro: config.snapshot().settings.animations,
         setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
         config,
+        onUpdateRequested: () => {
+          updateRequested = true
+        },
       }
     )
+    if (updateRequested) {
+      const { updateCli } = await import('./update.js')
+      process.exitCode = await updateCli()
+    } else {
+      process.exitCode = exitCode
+    }
   } catch (err) {
     process.stderr.write(`error: ${errorMessage(err)}\n`)
     process.exitCode = 1

@@ -25,6 +25,7 @@ export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
     model: sanitizeTerminalText(runtime.model),
     ...(runtime.effort !== undefined ? { effort: sanitizeTerminalText(runtime.effort) } : {}),
     session: sanitizeTerminalText(runtime.session),
+    ...(runtime.sessionName !== undefined ? { sessionName: sanitizeTerminalText(runtime.sessionName) } : {}),
     cwd: sanitizeTerminalText(runtime.cwd),
     tools: runtime.tools.map((tool) => ({
       name: sanitizeTerminalText(tool.name),
@@ -66,4 +67,8 @@ export function isUnresolvedBackgroundTask(task: ChatTask): boolean {
     task.source === 'background' &&
     (isActiveTask(task.status) || task.deliveryState === 'pending' || task.deliveryState === 'ready')
   )
+}
+
+export function isConfigurationTool(name: string): boolean {
+  return name.replaceAll('-', '_').toLowerCase() === 'strands_config'
 }

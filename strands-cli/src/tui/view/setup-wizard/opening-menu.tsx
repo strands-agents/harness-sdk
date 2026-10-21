@@ -1,15 +1,14 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { useStdout, type DOMElement } from 'ink'
+import type { ReactElement } from 'react'
+import type { DOMElement } from 'ink'
 
 import { Box, Text, useTheme } from '../theme.js'
-import { FadeIn, mixHexColors } from '../fade-in.js'
+import { FadeIn } from '../fade-in.js'
 import { OPENING_CHOICES } from './steps.js'
 
-const HOVER_FADE_DURATION_MS = 180
-
-/** Shared with the setup brand so the lockup starts on the grid's left edge. */
+/** Quickstart spans the grid as the primary choice; the remaining choices share the row below it. */
 export function openingGridLayout(width: number): {
   columns: number
+  rows: number
   columnGap: number
   rowGap: number
   cardWidth: number
@@ -22,6 +21,7 @@ export function openingGridLayout(width: number): {
   const gridWidth = cardWidth * columns + (columns - 1) * columnGap
   return {
     columns,
+    rows: columns === 2 ? 1 + Math.ceil((OPENING_CHOICES.length - 1) / columns) : OPENING_CHOICES.length,
     columnGap,
     rowGap: columns === 2 ? 2 : 1,
     cardWidth,
@@ -30,17 +30,38 @@ export function openingGridLayout(width: number): {
   }
 }
 
+/** The opening choice an arrow key moves to from `index`, following the hero-plus-row layout. */
+export function openingNeighbor(index: number, direction: 'up' | 'down' | 'left' | 'right', columns: number): number {
+  const last = OPENING_CHOICES.length - 1
+  if (columns === 1 || index === 0) {
+    return direction === 'up' || direction === 'left' ? Math.max(0, index - 1) : Math.min(last, index + 1)
+  }
+  if (direction === 'up') return 0
+  if (direction === 'down') return index
+  const column = (index - 1) % columns
+  return direction === 'left'
+    ? column > 0
+      ? index - 1
+      : index
+    : column < columns - 1
+      ? Math.min(last, index + 1)
+      : index
+}
+
 export function OpeningMenu({
   width,
   height,
   buttonHeight,
   selection,
   showSelection,
-  hovered,
   topGap,
   animate,
   error,
   availableUpdate,
+  escapeHint,
+  escapeFocused = false,
+  escapeHovered = false,
+  onEscapeElement,
   onRowElement,
 }: {
   width: number
@@ -48,16 +69,22 @@ export function OpeningMenu({
   buttonHeight: number
   selection: number
   showSelection: boolean
-  hovered?: number
   topGap: number
   animate: boolean
   error?: string
   availableUpdate?: string
+  escapeHint: string
+  escapeFocused?: boolean
+  escapeHovered?: boolean
+  onEscapeElement?(element: DOMElement | null): void
   onRowElement(index: number, element: DOMElement | null): void
 }): ReactElement {
   const palette = useTheme()
-  const hoverProgress = useHoverProgress(hovered, OPENING_CHOICES.length, animate)
   const { columnGap, rowGap, cardWidth, gridWidth, left } = openingGridLayout(width)
+  // Matches the model panel's sections: the selected card carries the accent border, the rest stay dim.
+  const bordered = buttonHeight >= 3
+  const innerHeight = bordered ? buttonHeight - 2 : buttonHeight
+  const descriptionHeight = Math.min(3, Math.max(1, innerHeight - (innerHeight >= 5 ? 2 : 1)))
   return (
     <FadeIn animate={animate} background={palette.background}>
       <Box
@@ -71,31 +98,33 @@ export function OpeningMenu({
         <Box width={gridWidth} marginLeft={left} flexWrap="wrap" columnGap={columnGap} rowGap={rowGap}>
           {OPENING_CHOICES.map((choice, index) => {
             const active = showSelection && index === selection
-            const hover = hoverProgress[index] ?? 0
-            const background = mixHexColors(active ? palette.selection : palette.surface, palette.accent, hover)
-            const title = mixHexColors(active ? palette.accent : palette.foreground, palette.surface, hover)
-            const description = mixHexColors(active ? palette.foreground : palette.muted, palette.surface, hover)
-            const descriptionLines = wrapDescription(choice.description, Math.max(1, cardWidth - 4))
-            const descriptionHeight = Math.min(3, Math.max(1, buttonHeight - (buttonHeight >= 5 ? 2 : 1)))
+            const span = index === 0 ? gridWidth : cardWidth
+            const descriptionLines = wrapDescription(choice.description, Math.max(1, span - 4))
             return (
               <Box
                 key={choice.id}
                 ref={(element) => onRowElement(index, element)}
-                width={cardWidth}
+                width={span}
                 height={buttonHeight}
                 alignItems="center"
                 justifyContent="center"
-                backgroundColor={background}
+                {...(bordered
+                  ? { borderStyle: 'single', borderColor: active ? palette.accent : undefined, borderDimColor: !active }
+                  : {})}
               >
-                {buttonHeight >= 3 ? (
+                {innerHeight >= 3 ? (
                   <Box flexDirection="column" alignItems="center">
-                    <Text bold color={title}>
-                      {choice.title}
-                    </Text>
-                    {buttonHeight >= 5 ? <Text> </Text> : null}
-                    <Box height={descriptionHeight} flexDirection="column" alignItems="center" justifyContent="center">
+                    <Text bold>{choice.title}</Text>
+                    {innerHeight >= 5 ? <Text> </Text> : null}
+                    <Box
+                      // The full-width card stands alone, so it fits its own text; paired cards share one height.
+                      height={index === 0 ? Math.min(descriptionHeight, descriptionLines.length) : descriptionHeight}
+                      flexDirection="column"
+                      alignItems="center"
+                      justifyContent="center"
+                    >
                       {descriptionLines.map((line) => (
-                        <Text key={line} color={description}>
+                        <Text key={line} color={palette.muted}>
                           {line}
                         </Text>
                       ))}
@@ -103,21 +132,29 @@ export function OpeningMenu({
                   </Box>
                 ) : (
                   <Text wrap="truncate-end">
-                    <Text bold color={title}>
+                    <Text bold {...(active && !bordered ? { color: palette.accent } : {})}>
                       {choice.title}
                     </Text>
                     {'  '}
-                    <Text color={description}>{choice.description}</Text>
+                    <Text color={palette.muted}>{choice.description}</Text>
                   </Text>
                 )}
               </Box>
             )
           })}
         </Box>
+        <Box width={gridWidth} marginLeft={left} marginTop={2} justifyContent="center">
+          <Box ref={(element) => onEscapeElement?.(element)} height={1} flexShrink={0}>
+            <Text color={escapeFocused || escapeHovered ? palette.accent : palette.muted} bold wrap="truncate-end">
+              {'⬅  '}
+              {escapeHint}
+            </Text>
+          </Box>
+        </Box>
         {availableUpdate ? (
           <Box width={gridWidth} marginLeft={left} marginTop={1}>
             <Text wrap="truncate-end">
-              <Text color={palette.accent}>Strands CLI {availableUpdate} is available.</Text>
+              <Text color={palette.accent}>Strands CLI {availableUpdate} is available!</Text>
               <Text color={palette.muted}> Run `strands update` to install it.</Text>
             </Text>
           </Box>
@@ -130,38 +167,6 @@ export function OpeningMenu({
       </Box>
     </FadeIn>
   )
-}
-
-function useHoverProgress(hovered: number | undefined, count: number, animate: boolean): readonly number[] {
-  const { stdout } = useStdout()
-  const enabled = animate && stdout.isTTY
-  const current = useRef<number[]>(Array.from({ length: count }, () => 0))
-  const [progress, setProgress] = useState<readonly number[]>(current.current)
-
-  useEffect(() => {
-    const target = Array.from({ length: count }, (_, index) => (index === hovered ? 1 : 0))
-    if (!enabled) {
-      current.current = target
-      setProgress(target)
-      return
-    }
-
-    const start = current.current
-    const startedAt = Date.now()
-    const timer = setInterval(() => {
-      const elapsed = Math.min(1, (Date.now() - startedAt) / HOVER_FADE_DURATION_MS)
-      const eased = 1 - (1 - elapsed) ** 3
-      const next = start.map((value, index) => value + (target[index]! - value) * eased)
-      current.current = next
-      setProgress(next)
-      if (elapsed === 1) {
-        clearInterval(timer)
-      }
-    }, 24)
-    return (): void => clearInterval(timer)
-  }, [count, enabled, hovered])
-
-  return progress
 }
 
 function wrapDescription(value: string, width: number): string[] {

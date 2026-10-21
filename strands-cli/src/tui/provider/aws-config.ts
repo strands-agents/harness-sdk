@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { expandHome } from '../paths.js'
 
 export interface AwsConfigurationDiscovery {
   profiles: readonly string[]
@@ -69,7 +70,7 @@ export function awsConfigurationFiles(environment: NodeJS.ProcessEnv): { filepat
 
 function readConfiguration(path: string): string | undefined {
   try {
-    path = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
+    path = expandHome(path)
     const stats = statSync(path)
     if (!stats.isFile() || stats.size > 1_048_576) return undefined
     return readFileSync(path, 'utf8')

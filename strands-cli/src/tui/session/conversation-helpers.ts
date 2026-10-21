@@ -8,11 +8,19 @@ export function unquote(value: string): string {
   const first = value[0]
   const last = value.at(-1)
   if (first === '"' && last === '"') {
-    try {
-      return JSON.parse(value) as string
-    } catch {
-      return value.slice(1, -1)
+    const inner = value.slice(1, -1)
+    let result = ''
+    for (let index = 0; index < inner.length; index++) {
+      const character = inner[index]!
+      const next = inner[index + 1]
+      if (character === '\\' && (next === '\\' || next === '"')) {
+        result += next
+        index++
+      } else {
+        result += character
+      }
     }
+    return result
   }
   return first === "'" && last === "'" ? value.slice(1, -1) : value
 }

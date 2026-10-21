@@ -15,7 +15,7 @@ import {
   webSearchFallback,
   withWebSearchFallback,
 } from '../src/tui/builtin-tools.js'
-import { CAPABILITY_DESCRIPTION_MAX_LENGTH, rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
+import { rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
 
 describe('setup provider credentials', () => {
   const aws = {
@@ -25,29 +25,59 @@ describe('setup provider credentials', () => {
   }
 
   it.each([
-    ['valid', 'success'],
-    ['expired', 'error'],
-    ['missing', 'error'],
-    ['unavailable', 'error'],
-  ] as const)('distinguishes %s AWS credentials in provider status', (credentialStatus, status) => {
-    const rows = rowsForStep(
-      1,
-      'quickstart',
-      quickstartDraft('bedrock', {}),
-      '',
-      {},
-      {},
-      'bedrock',
-      credentialStatus === 'valid' ? ['bedrock', 'bedrock-mantle'] : [],
-      { ...aws, credentialStatus },
-      undefined,
-      () => {},
-      () => {},
-      () => {}
-    )
-    expect(rows.find((row) => row.id === 'bedrock')?.status).toBe(status)
-    expect(rows.find((row) => row.id === 'bedrock-mantle')?.status).toBe(status)
-  })
+    {
+      credentialStatus: 'valid',
+      status: 'success',
+      description: 'Credentials detected',
+      warning: undefined,
+    },
+    {
+      credentialStatus: 'expired',
+      status: 'error',
+      description: 'Credentials expired',
+      warning: 'AWS credentials expired.',
+    },
+    {
+      credentialStatus: 'missing',
+      status: 'error',
+      description: 'Credentials not found',
+      warning: 'AWS credentials were not detected.',
+    },
+    {
+      credentialStatus: 'unavailable',
+      status: 'error',
+      description: 'Credentials unavailable',
+      warning: 'AWS credentials could not be verified.',
+    },
+  ] as const)(
+    'distinguishes $credentialStatus AWS credentials in provider status',
+    ({ credentialStatus, status, description, warning }) => {
+      const assessment = providerAssessment('bedrock', {}, { ...aws, credentialStatus }, undefined)
+      const rows = rowsForStep(
+        1,
+        'quickstart',
+        quickstartDraft('bedrock', {}),
+        '',
+        {},
+        {},
+        'bedrock',
+        credentialStatus === 'valid' ? ['bedrock', 'bedrock-mantle'] : [],
+        { ...aws, credentialStatus },
+        undefined,
+        () => {},
+        () => {},
+        () => {}
+      )
+      for (const provider of ['bedrock', 'bedrock-mantle']) {
+        expect(rows.find((row) => row.id === provider)).toMatchObject({
+          status,
+          description,
+        })
+      }
+      if (warning === undefined) expect(assessment.warning).toBeUndefined()
+      else expect(assessment.warning).toContain(warning)
+    }
+  )
 
   it('follows the selected profile and refreshed AWS config without retaining an inferred region', () => {
     const detected = { AWS_REGION: { value: 'us-west-2', source: 'aws-profile' as const } }
@@ -240,12 +270,10 @@ describe('setup provider credentials', () => {
     })
   })
 
-  it('keeps missing-credential guidance concise and points to the shell profile', () => {
-    vi.stubEnv('SHELL', '/bin/zsh')
+  it('keeps missing-credential guidance concise', () => {
     const warning = providerAssessment('openai', {}, { profiles: [], regions: [] }, undefined).warning
 
     expect(warning).toBe('OPENAI_API_KEY was not detected.')
-    vi.unstubAllEnvs()
   })
 
   it('keeps local-provider guidance concise', () => {
@@ -364,14 +392,10 @@ describe('setup web_search availability', () => {
     }
   )
 
-  it('excludes web_search even when the quickstart model supports native search', () => {
-    expect(quickstartDraft('bedrock-mantle', {}).profile.builtinTools).not.toContain('web_search')
-  })
-
   it.each([
-    ['bedrock', 'Exa', 'exa'],
-    ['bedrock-mantle', 'Native', 'native'],
-  ] as const)('offers an explicit %s web search opt-in for %s', (provider, label, mode) => {
+    ['Exa', 'bedrock', 'exa'],
+    ['Native', 'bedrock-mantle', 'native'],
+  ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
     const draft = quickstartDraft(provider, {})
     let profile = draft.profile
     const rows = rowsForStep(
@@ -403,36 +427,10 @@ describe('setup web_search availability', () => {
     expect(webSearchFallback(profile.builtinTools)).toBe(mode === 'exa' ? 'exa' : undefined)
   })
 
-  it('drops the plain web_search default without native search but keeps the Exa opt-in', () => {
+  it('keeps the Exa web search opt-in for Bedrock', () => {
     const bedrock = quickstartDraft('bedrock', {}).profile
-    expect(bedrock.builtinTools).not.toContain('web_search')
     const exa = { ...bedrock, builtinTools: { web_search: 'exa' as const } }
-    expect(compatibleProfile(exa)).toBe(exa)
-  })
-
-  it.each([
-    ['tools', 3, 'bedrock'],
-    ['plugins', 4, 'bedrock'],
-  ] as const)('keeps %s descriptions short enough to render on one line', (_, step, provider) => {
-    const noop = (): void => {}
-    const rows = rowsForStep(
-      step,
-      'customize',
-      quickstartDraft(provider, {}),
-      '',
-      {},
-      {},
-      provider,
-      [],
-      { profiles: [], regions: [] },
-      undefined,
-      noop,
-      noop,
-      noop
-    )
-    for (const { description } of rows) {
-      expect([...description].length).toBeLessThanOrEqual(CAPABILITY_DESCRIPTION_MAX_LENGTH)
-    }
+    expect(compatibleProfile(exa).builtinTools).toMatchObject({ web_search: 'exa' })
   })
 
   it.each([

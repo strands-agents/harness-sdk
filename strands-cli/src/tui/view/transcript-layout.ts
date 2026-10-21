@@ -7,17 +7,15 @@ export interface TranscriptWindow {
 
 export interface TranscriptLayoutPlan {
   window: TranscriptWindow
-  /** Whether the content overflows the viewport and must be anchored to its bottom edge. */
-  anchorBottom: boolean
   /** The scroll offset after clamping to the measured content, in rows. */
   scrollOffset: number
 }
 
 /**
- * Decide which completed turns to mount and how to anchor the transcript from the heights measured
- * so far. An `undefined` height marks a turn that has not been measured yet; such turns are always
- * mounted so the next measurement can fill them in. A zero viewport height means nothing has been
- * measured at all, so every turn mounts.
+ * Decide which completed turns to mount and how far to scroll the transcript from the heights
+ * measured so far. An `undefined` height marks a turn that has not been measured yet; such turns are
+ * always mounted so the next measurement can fill them in. A zero viewport height means nothing has
+ * been measured at all, so every turn mounts.
  */
 export function planTranscriptLayout(
   heights: readonly (number | undefined)[],
@@ -32,7 +30,6 @@ export function planTranscriptLayout(
   if (viewportHeight <= 0) {
     return {
       window: { start: 0, end: heights.length, before: 0, after: 0 },
-      anchorBottom: false,
       scrollOffset: bounded,
     }
   }
@@ -46,12 +43,11 @@ export function planTranscriptLayout(
     window.before = known.slice(0, window.start).reduce((sum, height) => sum + height, 0)
     window.after = known.slice(window.end).reduce((sum, height) => sum + height, 0)
   }
-  return { window, anchorBottom: contentHeight > viewportHeight, scrollOffset: bounded }
+  return { window, scrollOffset: bounded }
 }
 
 export function sameTranscriptLayoutPlan(previous: TranscriptLayoutPlan, next: TranscriptLayoutPlan): boolean {
   return (
-    previous.anchorBottom === next.anchorBottom &&
     previous.scrollOffset === next.scrollOffset &&
     previous.window.start === next.window.start &&
     previous.window.end === next.window.end &&

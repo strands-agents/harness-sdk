@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { stdin } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import { userDirectory } from '../config.js'
 
 import { defaultMcpPaths, projectMcpPaths } from '../mcp/config.js'
-import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
+import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { expandHome, isMissingPathError } from '../paths.js'
 
 export interface ResolvedMcpConfig {
   paths: readonly string[]
@@ -94,12 +94,11 @@ async function canonicalPaths(paths: readonly string[], cwd: string): Promise<st
     ...new Set(
       await Promise.all(
         paths.map(async (path) => {
-          const expanded = path.startsWith('~/') ? resolve(homedir(), path.slice(2)) : path
-          const absolute = isAbsolute(expanded) ? expanded : resolve(cwd, expanded)
+          const absolute = resolve(cwd, expandHome(path))
           try {
             return await realpath(absolute)
           } catch (error) {
-            if (isMissing(error)) {
+            if (isMissingPathError(error)) {
               return absolute
             }
             throw error
@@ -118,7 +117,7 @@ export async function inspectWorkspaceMcp(cwd = process.cwd()): Promise<Workspac
     try {
       digests[path] = digest(await readFile(path))
     } catch (error) {
-      if (!isMissing(error)) {
+      if (!isMissingPathError(error)) {
         throw error
       }
     }
@@ -163,7 +162,7 @@ async function readTrustFile(path: string): Promise<TrustFile> {
   try {
     text = await readFile(path, 'utf8')
   } catch (error) {
-    if (isMissing(error)) {
+    if (isMissingPathError(error)) {
       return { version: 1, workspaces: {} }
     }
     throw error
@@ -177,11 +176,11 @@ async function readTrustFile(path: string): Promise<TrustFile> {
       Array.isArray(value.workspaces) ||
       Object.values(value.workspaces).some((fingerprint) => typeof fingerprint !== 'string')
     ) {
-      throw new Error('expected version 1 with a workspaces object')
+      return { version: 1, workspaces: {} }
     }
     return { version: 1, workspaces: { ...value.workspaces } }
-  } catch (error) {
-    throw new Error(`Invalid workspace trust file at ${path}: ${errorMessage(error)}`, { cause: error })
+  } catch {
+    return { version: 1, workspaces: {} }
   }
 }
 
@@ -198,8 +197,4 @@ async function writeTrustFile(path: string, trust: TrustFile): Promise<void> {
 
 function digest(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex')
-}
-
-function isMissing(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
 }

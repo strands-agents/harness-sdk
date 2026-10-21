@@ -2,6 +2,7 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-
 
 import { webFetchModelModule } from '../builtin-tools.js'
 import type { AgentProjectLanguage } from './import.js'
+import { isRecord } from '../values.js'
 
 export function agentProjectSource(config: HarnessAgentConfig, language: AgentProjectLanguage): string {
   const python = language === 'python'
@@ -102,12 +103,14 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     options.delete(optionName('contextManager'))
   }
   if (!sameJson(config.skills, DEFAULT_HARNESS_AGENT_CONFIG.skills)) {
+    const skill = (value: string): string =>
+      value.startsWith('https://') ? literal(value) : projectPath(literal(value))
     expression(
       'skills',
       typeof config.skills === 'string'
-        ? projectPath(literal(config.skills))
+        ? skill(config.skills)
         : Array.isArray(config.skills)
-          ? `[${config.skills.map((skill) => projectPath(literal(skill))).join(', ')}]`
+          ? `[${config.skills.map(skill).join(', ')}]`
           : literal(config.skills)
     )
   } else {
@@ -328,9 +331,8 @@ function sourceLiteral(
 function mcpServersForSource(servers: HarnessAgentConfig['mcpServers']): HarnessAgentConfig['mcpServers'] {
   if (typeof servers === 'string') return servers
   return Object.fromEntries(
-    Object.entries(servers).map(([name, raw]) => {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [name, raw]
-      const server = raw as Record<string, unknown>
+    Object.entries(servers).map(([name, server]) => {
+      if (!isRecord(server)) return [name, server]
       const localRunner =
         typeof server.command === 'string' &&
         /^(?:node|python(?:\d+(?:\.\d+)*)?|(?:ba|da|z)?sh)(?:\.exe)?$/iu.test(server.command)

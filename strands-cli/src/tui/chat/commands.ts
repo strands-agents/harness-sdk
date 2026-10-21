@@ -15,23 +15,33 @@ export const LOCAL_COMMANDS: readonly LocalCommandSpec[] = [
   { name: 'effort', usage: '/effort [level]', description: 'Show or change the reasoning effort' },
   { name: 'fork', usage: '/fork [request]', description: 'Fork this conversation into an independent agent' },
   { name: 'agents', usage: '/agents', description: 'View and switch between forked conversations' },
-  { name: 'rename', usage: '/rename <name>', description: 'Rename the currently viewed agent' },
+  {
+    name: 'rename',
+    usage: '/rename [name]',
+    description: 'Rename the current saved session (same as /sessions rename)',
+  },
   {
     name: 'sessions',
-    usage: '/sessions [rename <name>]',
+    usage: '/sessions [rename [name]]',
     description: 'Browse, resume, or rename the current saved conversation',
   },
   { name: 'tools', usage: '/tools', description: 'Choose the built-in tools the agent has' },
   { name: 'skills', usage: '/skills', description: 'Browse and run available skills' },
+  { name: 'file', usage: '/file [clear|<path>...]', description: 'Attach files to your next message' },
   { name: 'mcp', usage: '/mcp', description: 'Show configured MCP servers and connection state' },
   { name: 'permissions', usage: '/permissions [default|bypass]', description: 'Configure tool approvals' },
-  { name: 'voice', usage: '/voice [on|off|status]', description: 'Open bidirectional voice controls' },
+  { name: 'voice', usage: '/voice [on|off|status]', description: 'Open the bidirectional voice supervisor' },
   { name: 'settings', usage: '/settings', description: 'Configure the terminal experience' },
+  {
+    name: 'config',
+    usage: '/config [typescript|python]',
+    description: 'Preview code or view agent source files',
+  },
   { name: 'setup', usage: '/setup', description: 'Configure providers and the default agent' },
   {
     name: 'export',
     usage: '/export [typescript|python <path.zip>]',
-    description: 'Export the agent as a TypeScript or Python project',
+    description: 'Export a copy of the agent project',
   },
   { name: 'exit', usage: '/exit', description: 'Exit the CLI' },
 ]
@@ -44,11 +54,19 @@ export interface CommandAssistance {
   readonly completions: readonly LocalCommandSpec[]
 }
 
-export function commandAssistance(input: string, actionableCommandToken?: string): CommandAssistance | undefined {
+export function commandAssistance(
+  input: string,
+  actionableCommandToken?: string,
+  additionalCommands: readonly LocalCommandSpec[] = []
+): CommandAssistance | undefined {
   const match = input.match(/^\/([^\s]*)(?:\s([\s\S]*))?$/)
   if (!match) {
     return undefined
   }
+  const commands = [
+    ...LOCAL_COMMANDS,
+    ...additionalCommands.filter((command) => !LOCAL_COMMAND_NAMES.has(command.name.toLowerCase())),
+  ]
   const name = (match[1] ?? '').toLowerCase()
   const argument = match[2]
   if (name === 'frog' || name === 'strands' || name === 'party') {
@@ -56,11 +74,11 @@ export function commandAssistance(input: string, actionableCommandToken?: string
   }
   const unknownCommand = actionableCommandToken ? undefined : { message: 'not found', completions: [] }
   if (argument === undefined) {
-    const completions = LOCAL_COMMANDS.filter((command) => command.name.startsWith(name))
+    const completions = commands.filter((command) => command.name.toLowerCase().startsWith(name))
     return completions.length > 0 ? { completions } : unknownCommand
   }
 
-  const command = LOCAL_COMMANDS.find((candidate) => candidate.name === name)
+  const command = commands.find((candidate) => candidate.name.toLowerCase() === name)
   if (!command) {
     return unknownCommand
   }
@@ -105,6 +123,13 @@ function argumentCompletions(command: string, argument: string): readonly LocalC
       ])
     case 'sessions':
       return valueCompletions(command, argument, [['rename', 'Rename the current saved session']])
+    case 'config':
+      return valueCompletions(command, argument, [
+        ['typescript', 'View the TypeScript createHarness source'],
+        ['python', 'View the Python create_harness source'],
+      ])
+    case 'file':
+      return valueCompletions(command, argument, [['clear', 'Remove all attached files']])
     default:
       return []
   }
@@ -116,6 +141,9 @@ function valueCompletions(
   values: readonly (readonly [value: string, description: string])[]
 ): readonly LocalCommandSpec[] {
   const prefix = argument.trim().toLowerCase()
+  if (!prefix) {
+    return []
+  }
   return values
     .filter(([value]) => value.startsWith(prefix))
     .map(([value, description]) => ({

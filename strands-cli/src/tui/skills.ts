@@ -6,6 +6,7 @@ import type { Agent, ToolResultContent } from '@strands-agents/sdk'
 import { Skill, type AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { sanitizeTerminalText } from './terminal/sanitize.js'
+import { isRecord } from './values.js'
 
 export interface SkillInfo {
   name: string
@@ -18,10 +19,15 @@ export interface SkillInfo {
   compatibility?: string
 }
 
+export interface SkillActivation {
+  skill: SkillInfo
+  content: string
+}
+
 export interface ChatSkillsRuntime {
   readonly paths?: readonly string[]
   list(): Promise<readonly SkillInfo[]>
-  activate(name: string): Promise<SkillInfo | undefined>
+  activate(name: string): Promise<SkillActivation | undefined>
 }
 
 export class FileSkillsRuntime implements ChatSkillsRuntime {
@@ -48,7 +54,7 @@ export class FileSkillsRuntime implements ChatSkillsRuntime {
     }))
   }
 
-  async activate(name: string): Promise<SkillInfo | undefined> {
+  async activate(name: string): Promise<SkillActivation | undefined> {
     const skill = (await this.list()).find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
     if (!skill) {
       return undefined
@@ -60,12 +66,15 @@ export class FileSkillsRuntime implements ChatSkillsRuntime {
     if (result.status === 'error') {
       throw result.error ?? new Error(toolResultText(result.content) || `Failed to activate skill ${skill.name}.`)
     }
-    return { ...skill, active: true }
+    return {
+      skill: { ...skill, active: true },
+      content: toolResultText(result.content) || skill.instructions,
+    }
   }
 }
 
 export function defaultSkillPaths(cwd = process.cwd(), home = homedir()): string[] {
-  const userPaths = ['.agents', '.claude', '.codex', '.strands/cli'].map((directory) => join(home, directory, 'skills'))
+  const userPaths = ['.agents', '.claude', '.codex', '.strands'].map((directory) => join(home, directory, 'skills'))
   const projectPaths = workspaceAncestors(cwd).flatMap((directory) =>
     ['.agents', '.claude', '.codex', '.agent', '.strands'].map((name) => join(directory, name, 'skills'))
   )
@@ -150,7 +159,7 @@ function workspaceAncestors(cwd: string): string[] {
 
 function activatedSkills(agent: Agent): Set<string> {
   const state = agent.appState.get('agent_skills')
-  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+  if (!isRecord(state)) {
     return new Set()
   }
   const names = state.activatedSkills

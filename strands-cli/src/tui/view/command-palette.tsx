@@ -3,6 +3,7 @@ import type { DOMElement } from 'ink'
 import stringWidth from 'string-width'
 
 import type { CommandAssistance, LocalCommandSpec } from '../chat/commands.js'
+import { trailingWindowStart } from './interaction.js'
 import { PanelItemHeader } from './panel-components.js'
 import { Box, Text, useTheme } from './theme.js'
 
@@ -26,13 +27,20 @@ export function CommandPalette({
   onRowElement?: (index: number, element: DOMElement | null) => void
 }): ReactElement {
   const theme = useTheme()
-  const start = Math.max(0, Math.min(selected - capacity + 1, commands.length - capacity))
+  const start = trailingWindowStart(selected, capacity, commands.length)
   const usageWidth = Math.max(
     1,
     Math.min(Math.max(0, ...commands.map((command) => stringWidth(command.usage))) + 2, Math.floor((width - 3) / 2))
   )
   return (
-    <Box width={width} backgroundColor={theme.surface} flexDirection="column" flexShrink={0} overflow="hidden">
+    <Box
+      width={width}
+      borderStyle="single"
+      borderColor={theme.accent}
+      flexDirection="column"
+      flexShrink={0}
+      overflow="hidden"
+    >
       {assistance.message ? (
         <Box height={1} paddingX={1} flexShrink={0}>
           <Text dimColor wrap="truncate-end">
@@ -57,7 +65,7 @@ export function CommandPalette({
             height={1}
             flexShrink={0}
             paddingX={1}
-            backgroundColor={index === hovered || pressedRow || index === selected ? theme.selection : undefined}
+            backgroundColor={index === hovered || pressedRow ? theme.selection : undefined}
           >
             <Box width={usageWidth} marginRight={1} flexShrink={0} overflow="hidden">
               <PanelItemHeader label={command.usage} active={index === selected} pressed={pressedRow} clickable />
@@ -68,11 +76,6 @@ export function CommandPalette({
           </Box>
         )
       })}
-      <Box height={1} paddingX={1} flexShrink={0}>
-        <Text dimColor wrap="truncate-end">
-          {'─'.repeat(Math.max(0, width - 2))}
-        </Text>
-      </Box>
     </Box>
   )
 }

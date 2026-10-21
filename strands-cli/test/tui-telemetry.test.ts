@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { URL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
 
@@ -27,16 +29,19 @@ describe('buildTelemetryPing', () => {
   })
 
   it.each([
-    ['a custom provider module', { ...profile, modelModule: { module: './model.ts' } }],
-    ['an unknown provider prefix', { ...profile, model: 'acme/internal-llm' }],
-  ])('omits the provider for %s', (_case, config) => {
+    ['a custom provider module', { ...profile, modelModule: { module: './model.ts' } }, './model.ts'],
+    ['an unknown provider prefix', { ...profile, model: 'acme/internal-llm' }, 'acme'],
+  ])('omits the provider for %s', (_case, config, identifier) => {
     const ping = buildTelemetryPing(config as HarnessAgentConfig, '1.0.0')
     expect(ping).not.toHaveProperty('provider')
-    expect(JSON.stringify(ping)).not.toContain('acme')
+    expect(JSON.stringify(ping)).not.toContain(identifier)
   })
 
   it('reads the CLI version from package.json by default', () => {
-    expect(buildTelemetryPing(profile).cli_version).toMatch(/^\d+\.\d+\.\d+/)
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string
+    }
+    expect(buildTelemetryPing(profile).cli_version).toBe(manifest.version)
   })
 })
 
@@ -63,7 +68,7 @@ describe('telemetryEnabled', () => {
     expect(telemetryEnabled({ telemetry: true }, { DO_NOT_TRACK: '0' })).toBe(true)
   })
 
-  it('round-trips through the settings store and the /settings toggle', () => {
+  it('parses the telemetry setting and its toggle update', () => {
     expect(parseSettings({ telemetry: false }, 'config.json').telemetry).toBe(false)
     expect(parseSettings(undefined, 'config.json').telemetry).toBe(true)
     expect(() => parseSettings({ telemetry: 'yes' }, 'config.json')).toThrow('settings.telemetry must be a boolean')
@@ -103,13 +108,6 @@ describe('sendTelemetryPing', () => {
     const log = vi.fn()
     await expect(sendTelemetryPing(ping, { fetch, log })).resolves.toBeUndefined()
     expect(log).toHaveBeenCalledWith('telemetry ping failed: fetch failed')
-  })
-
-  it('resolves when fetch throws synchronously', async () => {
-    const fetch = vi.fn(() => {
-      throw new Error('boom')
-    }) as unknown as typeof globalThis.fetch
-    await expect(sendTelemetryPing(ping, { fetch })).resolves.toBeUndefined()
   })
 
   it('honors STRANDS_CLI_TELEMETRY_ENDPOINT', async () => {

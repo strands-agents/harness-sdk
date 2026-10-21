@@ -77,10 +77,11 @@ describe('main', () => {
   })
 
   it('reports a construction error cleanly', async () => {
-    createHarness.mockRejectedValue(new Error("Thinking level 'bogus' is not supported by this provider."))
-    await main(['-p', 'hi', '--effort', 'bogus'])
+    createHarness.mockRejectedValue(new Error('Provider unavailable'))
+    await main(['-p', 'hi', '--effort', 'high'])
     expect(process.exitCode).toBe(1)
-    expect(errWrites.join('')).toContain('effort must be one of')
+    expect(createHarness).toHaveBeenCalledOnce()
+    expect(errWrites.join('')).toContain('error: Provider unavailable')
   })
 
   it('honors commander exit for --help without treating it as an error', async () => {

@@ -27,7 +27,7 @@ describe('skill discovery', () => {
         join(home, '.agents', 'skills'),
         join(home, '.claude', 'skills'),
         join(home, '.codex', 'skills'),
-        join(home, '.strands', 'cli', 'skills'),
+        join(home, '.strands', 'skills'),
       ])
       expect(paths).toContain(join(repository, '.agents', 'skills'))
       expect(paths).toContain(join(repository, '.claude', 'skills'))
@@ -52,9 +52,6 @@ describe('skill discovery', () => {
       expect(resolveSkillPaths(null, cwd)).toEqual([])
       expect(resolveSkillPaths([], cwd)).toEqual([])
       expect(configuredSkillPaths(undefined, cwd)).toEqual([])
-      expect(configuredSkillPaths('./custom/skills', cwd)).toEqual([configured])
-      // HTTPS skill sources stay URLs through CLI discovery (#4574).
-      expect(configuredSkillPaths('https://example.com/SKILL.md', cwd)).toEqual(['https://example.com/SKILL.md'])
       expect(configuredSkillPaths(['./custom/skills', 'https://example.com/SKILL.md'], cwd)).toEqual([
         configured,
         'https://example.com/SKILL.md',
@@ -92,10 +89,13 @@ describe('skill discovery', () => {
     }
   })
 
-  it('activates a discovered skill through the SDK tool without adding synthetic tool messages', async () => {
+  it('returns the SDK activation payload without adding synthetic tool messages', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-skills-activation-'))
     await writeSkill(directory, 'Project review')
-    const invoke = vi.fn(async () => ({ status: 'success' as const, content: [] }))
+    const invoke = vi.fn(async () => ({
+      status: 'success' as const,
+      content: [{ type: 'textBlock' as const, text: 'Loaded review instructions.' }],
+    }))
     const agent = {
       appState: { get: () => undefined },
       tool: { skills: { invoke } },
@@ -103,7 +103,10 @@ describe('skill discovery', () => {
     const runtime = new FileSkillsRuntime([directory], () => agent)
 
     try {
-      await expect(runtime.activate('REVIEW')).resolves.toMatchObject({ name: 'review', active: true })
+      await expect(runtime.activate('REVIEW')).resolves.toMatchObject({
+        skill: { name: 'review', active: true },
+        content: 'Loaded review instructions.',
+      })
       expect(invoke).toHaveBeenCalledWith({ skill_name: 'review' }, { recordDirectToolCall: false })
       await expect(runtime.activate('missing')).resolves.toBeUndefined()
     } finally {

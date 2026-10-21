@@ -1,10 +1,11 @@
-import { homedir } from 'node:os'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { setImmediate } from 'node:timers'
 
 import {
-  clonePanel,
   effortSlider,
+  permissionChoosesScope,
   permissionRequestRows,
+  type PermissionStage,
   formatPermissionPanelBody,
   formatTaskActivity,
   modelFilters,
@@ -16,16 +17,26 @@ import {
   sanitizeRows,
   makePanel,
   modelRows,
+  sessionFilters,
   sessionRows,
   skillRows,
   skillDetailRows,
+  permissionPreset,
   permissionSettingsRows,
+  permissionSettingsSlider,
   builtinToolRows,
   mcpRows,
   mcpOptions,
   BACKGROUND_TASK_WAIT_TOGGLE,
+  SETTINGS_SETUP_ACTION,
 } from './panels.js'
-import { LOCAL_COMMAND_NAMES, parseCommandInvocation } from './commands.js'
+import {
+  commandAssistance as resolveCommandAssistance,
+  LOCAL_COMMAND_NAMES,
+  parseCommandInvocation,
+  type CommandAssistance,
+  type LocalCommandSpec,
+} from './commands.js'
 import { helpRows } from './help.js'
 import {
   DEFAULT_CHAT_SETTINGS,
@@ -34,20 +45,27 @@ import {
   parseSettingUpdate,
 } from '../settings.js'
 import { agentLaunchCommand } from '../project/import.js'
+import { exportDirectoryName, type AgentProjectOutput } from '../project/export.js'
 import { type ChatSessionRuntime, type SessionTarget } from '../session/sessions.js'
+import { sessionResumeCommand, type ResumeSession } from '../session/resume.js'
 import { unquote } from '../session/conversation-helpers.js'
-import type { ChatSkillsRuntime, SkillInfo } from '../skills.js'
-import type { LoadedMcp } from '../mcp.js'
+import type { ChatSkillsRuntime, SkillActivation, SkillInfo } from '../skills.js'
+import type { LoadedMcp, McpServerInfo } from '../mcp.js'
+import { mcpFailure } from '../mcp/diagnostics.js'
 import { type PeerMessage } from '../messaging.js'
 import { modelDisplayName } from '../model/display.js'
 import { modelControlErrorMessage } from '../model/selection.js'
 import { presentChatStream, type StreamPresentationOptions } from '../stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
-import { canChooseDirectory } from '../terminal/directory-picker.js'
+import { canUseNativePicker, chooseDirectory } from '../terminal/directory-picker.js'
 import { copyTerminalText } from '../terminal/terminal.js'
+import { expandHome, strandsUserPath } from '../paths.js'
+import { attachmentContent } from '../attachments.js'
+import { configurationDiffs, sanitizeConfigurationSource } from '../configuration-source.js'
 import {
   cloneRuntime,
   cloneTask,
+  isConfigurationTool,
   isUnresolvedBackgroundTask,
   readTaskValue,
   readyBackgroundGeneration,
@@ -55,44 +73,59 @@ import {
 import { TurnProjector, projectMessages } from './projector.js'
 import {
   type ChatBackend,
+  type ChatAttachment,
+  type ChatInput,
+  type ChatInputWithAttachments,
   type ChatContextUsage,
   type ChatControllerApi,
   type ChatConversation,
+  type ChatConfigurationBaseline,
+  type ChatConfigurationDiffs,
+  type ChatConfigurationLanguage,
+  type ChatConfigurationSource,
   type ChatControllerOptions,
   type ChatEvent,
   type ChatNotice,
   type ChatPanel,
-  type ChatPanelOptions,
   type ChatPanelRow,
   type ChatPermissionMode,
   type ChatPermissionRequest,
   type ChatRunResult,
+  type ChatMcpStartup,
   type ChatRuntimeInfo,
   type ChatSettings,
   type ChatSnapshot,
   type ChatTask,
   type ChatTurn,
+  type NewChatPanel,
+  type ChatPermissionPreset,
 } from './types.js'
 
 export * from './types.js'
 
-const EXIT_WORDS = new Set(['exit', 'quit'])
+const EXIT_WORDS = new Set(['exit', 'quit', '/exit'])
+const LIVE_LOCAL_COMMAND_NAMES = new Set(['help', 'settings', 'context', 'model', 'config', 'permissions'])
 const MAX_PENDING_PEER_MESSAGES = 32
 const TOOL_OUTPUT_EMIT_INTERVAL_MS = 32
+const RESPONSE_DELAY_NOTICE_MS = 30_000
 
 const EXPORT_PYTHON = 'export:python'
 const EXPORT_TYPESCRIPT = 'export:typescript'
+const EXPORT_NAME_PREFIX = 'export:name:'
+const EXPORT_SAVE_DEFAULT_PREFIX = 'export:save-default:'
+const EXPORT_SAVE_CUSTOM_PREFIX = 'export:save-custom:'
 
 type SessionList = Awaited<ReturnType<ChatSessionRuntime['list']>>
 
 interface PendingUserSubmission {
   kind: 'user'
   id: string
-  prompt: string
+  input: ChatInputWithAttachments
   resolve: (turn: ChatTurn | undefined) => void
 }
 
 type PendingSubmission = PendingUserSubmission | { kind: 'peer'; id: string; message: PeerMessage }
+type PendingSteering = { prompt: string }
 
 export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
@@ -105,9 +138,15 @@ export class ChatController implements ChatControllerApi {
   private _sessionCache: SessionList | undefined
   private _sessionRefresh: Promise<SessionList> | undefined
   private _sessionGeneration = 0
+  private _sessionNaming: AbortController | undefined
+  private _sessionRename: Promise<unknown> = Promise.resolve()
   private readonly _skills: ChatSkillsRuntime | undefined
+  private _skillRefresh: Promise<readonly SkillInfo[]> | undefined
   private readonly _skillNames = new Set<string>()
   private readonly _mcp: LoadedMcp | undefined
+  private readonly _mcpDetails = new Map<string, McpServerInfo>()
+  private _mcpStartup: ChatMcpStartup | undefined
+  private _stopWatchingMcpStartup: (() => void) | undefined
   private _settings: ChatSettings
   private readonly _streamPresentation: StreamPresentationOptions | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
@@ -115,15 +154,22 @@ export class ChatController implements ChatControllerApi {
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
   private readonly _exportAgentProject: ChatControllerOptions['exportAgentProject']
+  private readonly _useExportedProject: ChatControllerOptions['useExportedProject']
+  private readonly _configurationSource: ChatControllerOptions['configurationSource']
   private readonly _project: ChatControllerOptions['project']
   private readonly _copyText: (text: string) => Promise<boolean>
   private _exportedPath: string | undefined
+  private _configuration: ChatConfigurationSource | undefined
+  private _configurationDiffs: ChatConfigurationDiffs | undefined
+  /** The configuration before the first change of a turn; diffs accumulate against it for the rest of that turn. */
+  private _configurationBaseline: ChatConfigurationBaseline | undefined
 
   private readonly _backend: ChatBackend
   private _activeProjector: TurnProjector | undefined
   private _drainingProjector: TurnProjector | undefined
   private _presentationAbort: AbortController | undefined
   private readonly _pendingSubmissions: PendingSubmission[] = []
+  private readonly _pendingSteering: PendingSteering[] = []
   private _pendingSubmissionRun: Promise<void> | undefined
   private _stopWatchingTasks: (() => void) | undefined
   private _stopWatchingPermissions: (() => void) | undefined
@@ -153,6 +199,8 @@ export class ChatController implements ChatControllerApi {
   private _nextPanel = 1
   private _nextSubmission = 1
   private _runtime: ChatRuntimeInfo
+  private _permissionMode: ChatPermissionMode | undefined
+  private _permissionPreset: ChatPermissionPreset | undefined
   private _snapshot: ChatSnapshot
 
   constructor(backend: ChatBackend, options: ChatControllerOptions = {}) {
@@ -164,15 +212,21 @@ export class ChatController implements ChatControllerApi {
       this._skillNames.add(name.toLowerCase())
     }
     this._mcp = options.mcp
+    this._watchMcpStartup()
     this._settings = globalThis.structuredClone({ ...DEFAULT_CHAT_SETTINGS, ...options.settings })
     this._streamPresentation = options.streamPresentation
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
+    this._useExportedProject = options.useExportedProject
+    this._configurationSource = options.configurationSource
     this._project = options.project
     this._copyText = options.copyText ?? copyTerminalText
     const info = backend.info?.()
+    const permissionStatus = backend.permissionStatus?.()
+    this._permissionMode = permissionStatus?.mode
+    this._permissionPreset = permissionStatus ? permissionPreset(permissionStatus) : undefined
     this._runtime = {
       agent: backend.name,
       version: 'development',
@@ -192,6 +246,11 @@ export class ChatController implements ChatControllerApi {
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
+    this._refreshConfiguration()
+    if (options.initialConfigurationBaseline && this._configuration) {
+      this._configurationBaseline = options.initialConfigurationBaseline
+      this._configurationDiffs = configurationDiffs(options.initialConfigurationBaseline.source, this._configuration)
+    }
     this._snapshot = this._createSnapshot()
     this._stopWatchingTasks = this._backend.watchTasks?.((tasks) => {
       if (this._closed) {
@@ -236,6 +295,7 @@ export class ChatController implements ChatControllerApi {
     return {
       snapshot: await this._backend.captureConversation(),
       completedTurns: [...this._completedTurns],
+      ...(this._configurationBaseline ? { configurationBaseline: this._configurationBaseline } : {}),
       model: this._runtime.model,
       ...(session ? { session } : {}),
       ...(sourceSelection ? { sourceSelection } : {}),
@@ -264,6 +324,17 @@ export class ChatController implements ChatControllerApi {
     return this._hardExitCode
   }
 
+  get resumeSession(): ResumeSession | undefined {
+    const session = this._sessions?.currentTarget ?? this._backend.sessionIdentity
+    if (!session?.sessionId) return undefined
+    return {
+      sessionId: session.sessionId,
+      sessionDirectory: session.sessionDirectory,
+      workspace: session.workspace,
+      ...(this._project ? { agentProject: this._project.entrypoint } : {}),
+    }
+  }
+
   actionableCommandToken(input: string): string | undefined {
     if (input.startsWith('!')) {
       return '!'
@@ -280,7 +351,16 @@ export class ChatController implements ChatControllerApi {
       : undefined
   }
 
+  commandAssistance(input: string): CommandAssistance | undefined {
+    // Runs per render; skip the skill-command materialization for the common non-command input.
+    if (!input.startsWith('/')) {
+      return undefined
+    }
+    return resolveCommandAssistance(input, this.actionableCommandToken(input), this._skillCommands())
+  }
+
   async start(firstRequest?: string): Promise<void> {
+    setImmediate(() => void this._discoverSkillNames())
     if (firstRequest) {
       const prompt = firstRequest.trim()
       if (prompt.startsWith('!')) {
@@ -291,16 +371,70 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  async submit(input: string): Promise<ChatTurn | undefined> {
-    const prompt = input.trim()
-    if (!prompt || this._closed) {
+  private async _discoverSkillNames(): Promise<void> {
+    if (!this._skills || this._backend.protocol !== 'strands') {
+      return
+    }
+    try {
+      this._rememberSkills(await this._listSkills())
+      this._emit()
+    } catch {
+      // /skills reports discovery failures when the user opens it.
+    }
+  }
+
+  private _listSkills(): Promise<readonly SkillInfo[]> {
+    if (this._skillRefresh) {
+      return this._skillRefresh
+    }
+    const refresh = this._skills!.list()
+    this._skillRefresh = refresh
+    const clearRefresh = (): void => {
+      if (this._skillRefresh === refresh) {
+        this._skillRefresh = undefined
+      }
+    }
+    void refresh.then(clearRefresh, clearRefresh)
+    return refresh
+  }
+
+  private _rememberSkills(skills: readonly SkillInfo[]): void {
+    this._skillDetails.clear()
+    for (const skill of skills) {
+      this._skillDetails.set(skill.name, skill)
+      this._skillNames.add(skill.name.toLowerCase())
+    }
+  }
+
+  private _skillCommands(): LocalCommandSpec[] {
+    return [...this._skillDetails.values()].map((skill) => ({
+      name: skill.name,
+      usage: `/${skill.name} [request]`,
+      description: skill.description,
+    }))
+  }
+
+  async submit(input: ChatInput): Promise<ChatTurn | undefined> {
+    const submission = normalizeChatInput(input)
+    const { text: prompt, attachments } = submission
+    if ((!prompt && attachments.length === 0) || this._closed) {
       return undefined
     }
-    if (EXIT_WORDS.has(prompt.toLowerCase())) {
+    // The failure reminder has been on screen while the user typed; any submission counts as seen.
+    if (this._mcpStartup?.settled) {
+      this._mcpStartup = undefined
+    }
+    if (attachments.length === 0 && EXIT_WORDS.has(prompt.toLowerCase())) {
       this.close()
       return undefined
     }
-    if (/^\/help(?:\s|$)/iu.test(prompt) && !this._resourceChanging && this._panel?.kind !== 'permission') {
+    if (
+      attachments.length === 0 &&
+      isLiveLocalCommand(prompt) &&
+      !this._resourceChanging &&
+      (this._panel?.kind !== 'permission' ||
+        ['settings', 'permissions'].includes(parseCommandInvocation(prompt)?.name.toLowerCase() ?? ''))
+    ) {
       return this._executeSubmission(prompt)
     }
     if (
@@ -309,12 +443,12 @@ export class ChatController implements ChatControllerApi {
       this._pendingSubmissionRun ||
       this._pendingSubmissions.length > 0
     ) {
-      return this._enqueueSubmission(prompt)
+      return this._enqueueSubmission(submission)
     }
     if (this._resourceChanging) {
       return undefined
     }
-    return this._executeSubmission(prompt)
+    return this._executeSubmission(submission)
   }
 
   enqueuePeerMessage(message: PeerMessage): boolean {
@@ -360,43 +494,12 @@ export class ChatController implements ChatControllerApi {
     if (!this.busy) {
       return this._executeSubmission(prompt)
     }
-    if (this._activeProjector && this._backend.queueSteering) {
-      if (this._backend.queueSteering(prompt)) {
-        return undefined
-      }
+    if (this._queueLiveSteering(prompt)) {
+      return undefined
     }
     const pending = this._enqueueSubmission(prompt, true)
     this.cancel()
     return pending
-  }
-
-  steerQueued(id = this._pendingSubmissions.find((pending) => pending.kind === 'user')?.id): boolean {
-    if (!id || this._closed) {
-      return false
-    }
-    const index = this._pendingSubmissions.findIndex((pending) => pending.id === id)
-    if (index < 0) {
-      return false
-    }
-    const pending = this._pendingSubmissions[index]!
-    if (pending.kind !== 'user') {
-      return false
-    }
-    if (!pending.prompt.startsWith('!') && this._activeProjector && this._backend.queueSteering) {
-      if (this._backend.queueSteering(pending.prompt)) {
-        this._pendingSubmissions.splice(index, 1)
-        pending.resolve(undefined)
-        this._emit()
-        return true
-      }
-    }
-    if (index > 0) {
-      this._pendingSubmissions.splice(index, 1)
-      this._pendingSubmissions.unshift(pending)
-    }
-    this.cancel()
-    this._emit()
-    return true
   }
 
   updateQueuedPrompt(id: string, prompt: string): boolean {
@@ -404,10 +507,10 @@ export class ChatController implements ChatControllerApi {
     const pending = this._pendingSubmissions.find(
       (candidate): candidate is PendingUserSubmission => candidate.kind === 'user' && candidate.id === id
     )
-    if (!pending || !normalized) {
+    if (!pending || (!normalized && pending.input.attachments.length === 0)) {
       return false
     }
-    pending.prompt = normalized
+    pending.input = { ...pending.input, text: normalized }
     this._emit()
     return true
   }
@@ -427,13 +530,18 @@ export class ChatController implements ChatControllerApi {
     return true
   }
 
-  private async _executeSubmission(prompt: string): Promise<ChatTurn | undefined> {
+  private async _executeSubmission(input: ChatInput): Promise<ChatTurn | undefined> {
+    const submission = normalizeChatInput(input)
+    const { text: prompt, attachments } = submission
+    if (attachments.length > 0) {
+      return this._runPrompt(submission)
+    }
     if (prompt.startsWith('!')) {
       return this._runShellCommand(prompt)
     }
     const directSkill = prompt.startsWith('$') ? parseCommandInvocation(prompt) : undefined
     if (directSkill) {
-      const turn = await this._activateSkillAndRun(directSkill.name, directSkill.argument)
+      const turn = await this._activateSkillAndRun(directSkill.name, prompt)
       if (turn === null) {
         this._openError('unknown skill', `$${directSkill.name}`, 'Use /skills to list available skills.')
         return undefined
@@ -463,16 +571,26 @@ export class ChatController implements ChatControllerApi {
     }
     this._panel = undefined
     this._panelStack.length = 0
-    return this._runStream(prompt, this._backend.streamShell(command))
+    return this._runStream(prompt, this._backend.streamShell(command), 'shell')
   }
 
-  private async _runPrompt(prompt: string): Promise<ChatTurn | undefined> {
+  private async _runPrompt(input: ChatInput, displayPrompt?: string): Promise<ChatTurn | undefined> {
     if (this._closed || this._activeProjector || this._drainingProjector || this._resourceChanging) {
       return undefined
     }
+    const submission = normalizeChatInput(input)
     this._panel = undefined
     this._panelStack.length = 0
-    return this._runStream(prompt, this._backend.stream(prompt))
+    const prompt =
+      submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
+    return this._runStream(
+      displayPrompt ?? submission.text,
+      this._backend.stream(prompt),
+      'model',
+      undefined,
+      undefined,
+      submission.attachments
+    )
   }
 
   private async _runPeerMessage(message: PeerMessage): Promise<ChatTurn | undefined> {
@@ -487,7 +605,7 @@ export class ChatController implements ChatControllerApi {
     }
     this._panel = undefined
     this._panelStack.length = 0
-    return this._runStream(message.body, this._backend.streamPeer(message), 'peer', message.from)
+    return this._runStream(message.body, this._backend.streamPeer(message), 'model', 'peer', message.from)
   }
 
   private async _runBackgroundContinuation(): Promise<void> {
@@ -503,20 +621,37 @@ export class ChatController implements ChatControllerApi {
     ) {
       return
     }
-    await this._runStream('', this._backend.streamBackgroundResults(), 'background')
+    await this._runStream('', this._backend.streamBackgroundResults(), 'model', 'background')
   }
 
   private async _runStream(
     prompt: string,
     source: AsyncGenerator<ChatEvent, ChatRunResult, undefined>,
+    mode: 'model' | 'shell',
     turnSource?: ChatTurn['source'],
-    peer?: ChatTurn['peer']
+    peer?: ChatTurn['peer'],
+    attachments?: readonly ChatAttachment[]
   ): Promise<ChatTurn> {
     const turnId = `turn-${this._nextTurn++}`
-    const projector = new TurnProjector(turnId, prompt, this._backend.name, turnSource, peer)
+    const projector = new TurnProjector(turnId, prompt, this._backend.name, turnSource, peer, attachments)
     const usageGeneration = this._usageGeneration
     const presentationAbort = new AbortController()
     let toolOutputEmitTimer: ReturnType<typeof setTimeout> | undefined
+    let responseDelayTimer: ReturnType<typeof setTimeout> | undefined
+    const runningTools = new Set<string>()
+    const resetResponseDelay = (event?: ChatEvent): void => {
+      if (event?.type === 'tasks') return
+      clearTimeout(responseDelayTimer)
+      projector.setResponseDelayed(false)
+      if (event?.type === 'toolStart' && !event.background) runningTools.add(event.toolUseId)
+      if (event?.type === 'toolResult') runningTools.delete(event.toolUseId)
+      if (mode === 'shell' || runningTools.size > 0 || event?.type === 'permission') return
+      responseDelayTimer = setTimeout(() => {
+        if (this._activeProjector !== projector) return
+        projector.setResponseDelayed(true)
+        this._emit()
+      }, RESPONSE_DELAY_NOTICE_MS)
+    }
     const emitStreamEvent = (event: ChatEvent): void => {
       if (event.type !== 'toolOutputDelta') {
         clearTimeout(toolOutputEmitTimer)
@@ -531,6 +666,7 @@ export class ChatController implements ChatControllerApi {
     }
     this._activeProjector = projector
     this._presentationAbort = presentationAbort
+    resetResponseDelay()
     this._emit()
 
     const contextBeforeTurn = { ...this._context }
@@ -542,6 +678,7 @@ export class ChatController implements ChatControllerApi {
       let next = await stream.next()
       while (!next.done) {
         this._handleEvent(projector, next.value, turnContext)
+        resetResponseDelay(next.value)
         emitStreamEvent(next.value)
         next = await stream.next()
       }
@@ -554,9 +691,12 @@ export class ChatController implements ChatControllerApi {
       }
     } catch (error) {
       this._context = contextBeforeTurn
-      projector.fail(error)
+      const recovery = mode === 'shell' ? undefined : this._failureRecoveryHint(error)
+      projector.fail(error, recovery)
     } finally {
       clearTimeout(toolOutputEmitTimer)
+      clearTimeout(responseDelayTimer)
+      this._queueUndeliveredSteering(this._backend.drainSteering?.() ?? [])
       const wasDetachedByCancellation = this._drainingProjector === projector
       if (!wasDetachedByCancellation) {
         this._completedTurns.push(projector.snapshot())
@@ -580,6 +720,16 @@ export class ChatController implements ChatControllerApi {
     }
 
     return projector.snapshot()
+  }
+
+  private _failureRecoveryHint(error: unknown): string {
+    const message = errorMessage(error)
+    const credentials = /credentials?|expiredtoken|security token|sso.*expired/i.test(message)
+    const guidance = credentials
+      ? 'Refresh your credentials, then resend your message.'
+      : 'Check your connection and provider, then resend your message.'
+    const session = this.resumeSession
+    return session ? `${guidance}\nTo resume after restarting: ${sessionResumeCommand(session)}` : guidance
   }
 
   private _watchTurnUsage(
@@ -611,11 +761,12 @@ export class ChatController implements ChatControllerApi {
         this._activeProjector === projector ||
         (!this._activeProjector && this._completedTurns.at(-1)?.id === turnId)
       ) {
-        const { currentTokens, projectedTokens, contextWindow } = this._context
+        const { currentTokens, projectedTokens, contextWindow, breakdown } = this._context
         this._context = {
           ...(currentTokens !== undefined ? { currentTokens } : {}),
           ...(projectedTokens !== undefined ? { projectedTokens } : {}),
           ...(contextWindow !== undefined ? { contextWindow } : {}),
+          ...(breakdown ? { breakdown } : {}),
           ...usage,
         }
       }
@@ -637,6 +788,7 @@ export class ChatController implements ChatControllerApi {
 
   cancel(): boolean {
     if (this._activeProjector) {
+      const undeliveredSteering = this._backend.drainSteering?.() ?? []
       const projector = this._activeProjector
       projector.markCancelled()
       this._completedTurns.push(projector.snapshot())
@@ -644,6 +796,7 @@ export class ChatController implements ChatControllerApi {
       this._drainingProjector = projector
       this._presentationAbort?.abort()
       this._backend.cancel()
+      this._queueUndeliveredSteering(undeliveredSteering)
       this._emit()
       return true
     }
@@ -660,6 +813,7 @@ export class ChatController implements ChatControllerApi {
       return
     }
     this._closed = true
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._activeProjector !== undefined || this._drainingProjector !== undefined
@@ -668,6 +822,8 @@ export class ChatController implements ChatControllerApi {
       this._hardExitCode = this._exitCode
       this._activeProjector?.markCancelled()
       this._presentationAbort?.abort()
+      this._backend.drainSteering?.()
+      this._pendingSteering.length = 0
       this._backend.cancel()
     }
     this._resolvePendingSubmissions()
@@ -675,12 +831,17 @@ export class ChatController implements ChatControllerApi {
   }
 
   async dispose(): Promise<void> {
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     if (this._activeProjector || this._drainingProjector) {
       this._presentationAbort?.abort()
+      this._backend.drainSteering?.()
+      this._pendingSteering.length = 0
       this._backend.cancel()
     }
     this._resolvePendingSubmissions()
+    this._stopWatchingMcpStartup?.()
+    this._stopWatchingMcpStartup = undefined
     this._stopWatchingTasks?.()
     this._stopWatchingTasks = undefined
     this._stopWatchingPermissions?.()
@@ -690,12 +851,12 @@ export class ChatController implements ChatControllerApi {
     await Promise.allSettled([Promise.resolve().then(() => this._backend.dispose?.()), this._mcp?.dispose()])
   }
 
-  private _enqueueSubmission(prompt: string, priority = false): Promise<ChatTurn | undefined> {
+  private _enqueueSubmission(input: ChatInput, priority = false): Promise<ChatTurn | undefined> {
     return new Promise((resolve) => {
       const pending: PendingUserSubmission = {
         kind: 'user',
         id: `queued-${this._nextSubmission++}`,
-        prompt,
+        input: normalizeChatInput(input),
         resolve,
       }
       if (priority) {
@@ -706,6 +867,51 @@ export class ChatController implements ChatControllerApi {
       this._emit()
       this._startPendingSubmissions()
     })
+  }
+
+  private _queueLiveSteering(prompt: string): boolean {
+    if (!this._activeProjector || !this._backend.queueSteering) {
+      return false
+    }
+    const projector = this._activeProjector
+    let receipt: PendingSteering | undefined
+    let consumed = false
+    const queued = this._backend.queueSteering(prompt, () => {
+      if (consumed) {
+        return
+      }
+      consumed = true
+      projector.appendUserMessage(prompt)
+      if (receipt) {
+        const index = this._pendingSteering.indexOf(receipt)
+        if (index >= 0) {
+          this._pendingSteering.splice(index, 1)
+        }
+      }
+      this._emit()
+    })
+    if (!queued) {
+      return false
+    }
+    if (consumed) {
+      return true
+    }
+    receipt = { prompt }
+    this._pendingSteering.push(receipt)
+    this._emit()
+    return true
+  }
+
+  private _queueUndeliveredSteering(prompts: readonly string[]): void {
+    for (const prompt of prompts) {
+      const index = this._pendingSteering.findIndex((pending) => pending.prompt === prompt)
+      if (index >= 0) {
+        this._pendingSteering.splice(index, 1)
+      }
+    }
+    for (const prompt of [...prompts].reverse()) {
+      void this._enqueueSubmission(prompt, true)
+    }
   }
 
   private _startPendingSubmissions(): void {
@@ -749,7 +955,7 @@ export class ChatController implements ChatControllerApi {
       if (pending.kind === 'peer') {
         await this._runPeerMessage(pending.message)
       } else {
-        const turn = await this._executeSubmission(pending.prompt)
+        const turn = await this._executeSubmission(pending.input)
         pending.resolve(turn)
       }
     }
@@ -776,6 +982,10 @@ export class ChatController implements ChatControllerApi {
     return true
   }
 
+  async setSettings(settings: Partial<ChatSettings>): Promise<boolean> {
+    return this._applySettings(settings, 'settings')
+  }
+
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
     if (!this._panel || !row.value || this._resourceChanging) {
       return false
@@ -789,7 +999,7 @@ export class ChatController implements ChatControllerApi {
         if (row.value.startsWith('help:command:')) {
           await this.submit(`/${row.value.slice('help:command:'.length)}`)
         } else {
-          this._pushPanel('detail', selected.label, [], { body: selected.description })
+          this._pushPanel({ kind: 'help-detail', title: selected.label, rows: [], body: selected.description })
         }
         return true
       }
@@ -798,9 +1008,6 @@ export class ChatController implements ChatControllerApi {
         return row.value.startsWith('effort:')
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
-      case 'skills':
-        await this.submit(`$${row.value}`)
-        return true
       case 'tasks':
         return row.value === BACKGROUND_TASK_WAIT_TOGGLE
           ? this._toggleBackgroundTaskWaitMode()
@@ -809,7 +1016,16 @@ export class ChatController implements ChatControllerApi {
         return this._updatePermissions(row.value)
       case 'tools':
         return this._toggleBuiltinTool(row.value)
+      case 'mcp':
+        return row.value.startsWith('mcp:toggle:') ? this._toggleMcpServer(row.value) : false
       case 'settings':
+        if (row.value === SETTINGS_SETUP_ACTION) {
+          if (!this._requestSetup) {
+            return false
+          }
+          this._requestSetup()
+          return true
+        }
         return row.value.startsWith('settings:')
           ? this._openSettingsCategory(row.value)
           : this._updateSetting(row.value)
@@ -817,11 +1033,37 @@ export class ChatController implements ChatControllerApi {
         if (row.value === 'export:copy-path' || row.value === 'export:copy-command') {
           return this._copyExport(row.value)
         }
-        return row.value === EXPORT_TYPESCRIPT
-          ? this._exportAgent('typescript')
-          : row.value === EXPORT_PYTHON
-            ? this._exportAgent('python')
-            : false
+        if (row.value === 'export:use-project') {
+          return this._useExported()
+        }
+        if (row.value === EXPORT_TYPESCRIPT || row.value === EXPORT_PYTHON) {
+          this._openExportNamePanel(row.value === EXPORT_TYPESCRIPT ? 'typescript' : 'python')
+          return true
+        }
+        if (row.value.startsWith(EXPORT_NAME_PREFIX)) {
+          const [language, encodedName = ''] = row.value.slice(EXPORT_NAME_PREFIX.length).split(':')
+          if (language !== 'typescript' && language !== 'python') {
+            return false
+          }
+          this._openExportDestinationPanel(language, exportDirectoryName(decodeURIComponent(encodedName)))
+          return true
+        }
+        if (row.value.startsWith(EXPORT_SAVE_DEFAULT_PREFIX) || row.value.startsWith(EXPORT_SAVE_CUSTOM_PREFIX)) {
+          const custom = row.value.startsWith(EXPORT_SAVE_CUSTOM_PREFIX)
+          const [language, encodedName] = row.value
+            .slice((custom ? EXPORT_SAVE_CUSTOM_PREFIX : EXPORT_SAVE_DEFAULT_PREFIX).length)
+            .split(':')
+          if ((language !== 'typescript' && language !== 'python') || !encodedName) {
+            return false
+          }
+          const name = decodeURIComponent(encodedName)
+          if (!custom) {
+            return this._exportAgent(language, strandsUserPath('harnesses', name), 'directory')
+          }
+          const parent = await chooseDirectory(`Choose where to save ${name}`)
+          return parent ? this._exportAgent(language, join(parent, name), 'directory') : true
+        }
+        return false
       case 'permission':
         return this._respondPermission(row.value)
       default:
@@ -830,7 +1072,16 @@ export class ChatController implements ChatControllerApi {
   }
 
   openContextPanel(): void {
-    this._openPanel('context', 'Context usage', [])
+    this._openPanel({ kind: 'context', title: 'Context usage', rows: [] })
+  }
+
+  refreshConfiguration(resetDiff = false): void {
+    if (resetDiff) {
+      this._configurationBaseline = undefined
+      this._configurationDiffs = undefined
+    }
+    this._refreshConfiguration(!resetDiff)
+    this._emit()
   }
 
   sessionTarget(reference: string): Promise<SessionTarget | undefined> {
@@ -877,6 +1128,7 @@ export class ChatController implements ChatControllerApi {
       this._context = {}
       this._refreshRuntime(typeof selected === 'string' ? selected : modelId)
       this._updateOpenModelPanel(modelId)
+      this._openEffortPanelIfAvailable()
       this._emit()
       return true
     } catch (error) {
@@ -903,6 +1155,41 @@ export class ChatController implements ChatControllerApi {
       return
     }
     projector.handle(event)
+    if (event.type === 'toolStart' && isConfigurationTool(event.name)) {
+      if (!this._configurationBaseline || this._configurationBaseline.turnId !== this._configurationTurnId()) {
+        this._configurationDiffs = undefined
+      }
+      this._refreshConfiguration()
+    } else if (event.type === 'toolResult' && projector.hasTool(isConfigurationTool)) {
+      this._refreshConfiguration(true)
+    }
+  }
+
+  /** Mirrors background MCP connection progress into the snapshot; failures stay visible until /mcp opens. */
+  private _watchMcpStartup(): void {
+    const startup = this._mcp?.startup
+    if (!startup) {
+      return
+    }
+    const refresh = (): void => {
+      const progress = startup.progress()
+      const settled = progress.connected + progress.failed >= progress.total
+      if (!settled) {
+        this._mcpStartup = { ...progress, settled: false }
+        return
+      }
+      this._mcpStartup = progress.failed > 0 ? { ...progress, settled: true } : undefined
+      this._stopWatchingMcpStartup?.()
+      this._stopWatchingMcpStartup = undefined
+    }
+    refresh()
+    if (!this._mcpStartup || this._mcpStartup.settled) {
+      return
+    }
+    this._stopWatchingMcpStartup = startup.subscribe(() => {
+      refresh()
+      this._emit()
+    })
   }
 
   private _createSnapshot(): ChatSnapshot {
@@ -910,9 +1197,19 @@ export class ChatController implements ChatControllerApi {
     return {
       completedTurns: [...this._completedTurns],
       ...(activeTurn ? { activeTurn } : {}),
+      pendingSteering: this._pendingSteering.map(({ prompt }) => sanitizeTerminalText(prompt)),
       queuedPrompts: this._pendingSubmissions.map((pending) => ({
         id: pending.id,
-        prompt: sanitizeTerminalText(pending.kind === 'peer' ? pending.message.body : pending.prompt),
+        prompt: sanitizeTerminalText(pending.kind === 'peer' ? pending.message.body : pending.input.text),
+        ...(pending.kind === 'user' && pending.input.attachments.length > 0
+          ? {
+              attachments: pending.input.attachments.map(({ name, size, kind }) => ({
+                name: sanitizeTerminalText(name),
+                size,
+                kind,
+              })),
+            }
+          : {}),
         ...(pending.kind === 'peer'
           ? {
               source: 'peer' as const,
@@ -924,9 +1221,14 @@ export class ChatController implements ChatControllerApi {
       tasks: this._tasks.map(cloneTask),
       context: { ...this._context },
       status: this._closed ? 'closed' : activeTurn ? 'running' : this._drainingProjector ? 'interrupting' : 'idle',
+      ...(this._mcpStartup ? { mcpStartup: { ...this._mcpStartup } } : {}),
       ...(this._composerStatus ? { composerStatus: this._composerStatus } : {}),
-      ...(this._panel ? { panel: clonePanel(this._panel) } : {}),
+      ...(this._panel ? { panel: makePanel(this._panel.id, this._panel) } : {}),
+      ...(this._configuration ? { configuration: this._configuration } : {}),
+      ...(this._configurationDiffs ? { configurationDiffs: this._configurationDiffs } : {}),
       runtime: cloneRuntime(this._runtime),
+      ...(this._permissionMode ? { permissionMode: this._permissionMode } : {}),
+      ...(this._permissionPreset ? { permissionPreset: this._permissionPreset } : {}),
       settings: globalThis.structuredClone(this._settings),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),
     }
@@ -944,27 +1246,26 @@ export class ChatController implements ChatControllerApi {
     const argument = rest.join(' ')
     switch (command.toLowerCase()) {
       case 'help':
-        this._openPanel(
-          'help',
-          'Help',
-          helpRows(this._backend, {
+        this._openPanel({
+          kind: 'help',
+          title: 'Help',
+          rows: helpRows(this._backend, {
             sessions: this._sessions !== undefined,
             skills: this._skills !== undefined,
             mcp: this._mcp !== undefined,
             setup: this._requestSetup !== undefined,
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
+            config: this._configurationSource !== undefined,
           }),
-          {
-            searchable: true,
-            filters: [
-              { id: 'controls', label: 'Shortcuts' },
-              { id: 'commands', label: 'Commands' },
-              { id: 'tools', label: 'Tools' },
-              { id: 'all', label: 'All' },
-            ],
-          }
-        )
+          searchable: true,
+          filters: [
+            { id: 'controls', label: 'Controls' },
+            { id: 'commands', label: 'Commands' },
+            { id: 'tools', label: 'Tools' },
+            { id: 'all', label: 'All' },
+          ],
+        })
         break
       case 'context':
         this.openContextPanel()
@@ -991,6 +1292,9 @@ export class ChatController implements ChatControllerApi {
       case 'sessions':
         await (argument ? this._handleSessionsCommand(argument) : this._openSessionsPanel())
         break
+      case 'rename':
+        await this._handleSessionsCommand(`rename${argument ? ` ${argument}` : ''}`)
+        break
       case 'skills':
         await this._openSkillsPanel()
         break
@@ -1002,6 +1306,9 @@ export class ChatController implements ChatControllerApi {
         break
       case 'settings':
         this._openSettingsCategory(`settings:${DEFAULT_SETTINGS_CATEGORY}`, true)
+        break
+      case 'config':
+        this._openConfigurationPanel(argument)
         break
       case 'setup':
         this._requestSetup?.()
@@ -1016,7 +1323,7 @@ export class ChatController implements ChatControllerApi {
         this.close()
         break
       default: {
-        const turn = await this._activateSkillAndRun(command, argument)
+        const turn = await this._activateSkillAndRun(command, prompt)
         if (turn === null) {
           this._openError('unknown command', `/${command}`, 'Type / to browse commands or use /skills to list skills.')
         }
@@ -1038,7 +1345,36 @@ export class ChatController implements ChatControllerApi {
     }
     const choices = this._builtinTools.choices()
     this._builtinToolSelection = new Set(choices.filter((choice) => choice.enabled).map((choice) => choice.name))
-    this._openPanel('tools', 'tools', builtinToolRows(choices, this._builtinToolSelection))
+    this._openPanel({ kind: 'tools', title: 'Tools', rows: builtinToolRows(choices, this._builtinToolSelection) })
+  }
+
+  private _openConfigurationPanel(argument: string): void {
+    const requested = argument.toLowerCase()
+    if (requested && requested !== 'typescript' && requested !== 'python') {
+      this._openError('unknown configuration language', argument, 'Use /config, /config typescript, or /config python.')
+      return
+    }
+    this._refreshConfiguration()
+    if (!this._configuration) {
+      this._openError(
+        'configuration unavailable',
+        '/config',
+        'This connection does not expose editable agent configuration.'
+      )
+      return
+    }
+    const language = (requested || this._configuration.preferredLanguage) as ChatConfigurationLanguage
+    this._openPanel({
+      kind: 'config',
+      title: 'Configuration',
+      rows: [],
+      filters: [
+        { id: 'typescript', label: 'TypeScript' },
+        { id: 'python', label: 'Python' },
+      ],
+      configuration: this._configuration,
+      language,
+    })
   }
 
   private _toggleBuiltinTool(value: string): boolean {
@@ -1051,7 +1387,7 @@ export class ChatController implements ChatControllerApi {
     }
     // Keeping the panel id keeps the cursor on the toggled row.
     const rows = builtinToolRows(this._builtinTools.choices(), this._builtinToolSelection)
-    this._panel = makePanel(this._panel.id, 'tools', 'tools', rows, {})
+    this._panel = makePanel(this._panel.id, { kind: 'tools', title: 'Tools', rows })
     this._emit()
     return true
   }
@@ -1071,11 +1407,15 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openTasksPanel(): void {
-    this._openPanel(
-      'tasks',
-      `tasks (${this._tasks.length})`,
-      taskRows(this._tasks, this._backend.backgroundTasksWaitForCompletion?.())
-    )
+    const waitForCompletion = this._backend.backgroundTasksWaitForCompletion?.()
+    const tasks = taskRows(this._tasks)
+    this._openPanel({
+      kind: 'tasks',
+      title: `Tasks (${tasks.length})`,
+      rows: tasks,
+      searchable: true,
+      ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
+    })
   }
 
   private async _toggleBackgroundTaskWaitMode(): Promise<boolean> {
@@ -1094,12 +1434,12 @@ export class ChatController implements ChatControllerApi {
 
     const next = !current
     this._resourceChanging = true
-    this._openPanel('tasks', 'updating background behavior', [
-      {
-        label: 'Wait for completion',
-        description: `Rebuilding the agent with wait for completion ${next ? 'on' : 'off'}.`,
-      },
-    ])
+    this._openPanel({
+      kind: 'tasks',
+      title: 'Updating background behavior',
+      rows: [],
+      waitForCompletion: next,
+    })
     try {
       await this._backend.setBackgroundTasksWaitForCompletion(next)
       this._context = {}
@@ -1115,15 +1455,25 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openEffortPanel(): void {
-    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
-    if (!slider || slider.disabled) {
-      this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+    if (this._openEffortPanelIfAvailable()) {
       return
     }
-    this._openPanel('effort', 'effort', [], {
-      slider: { ...slider, focused: true },
+    this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+  }
+
+  private _openEffortPanelIfAvailable(): boolean {
+    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
+    if (!slider || slider.disabled) {
+      return false
+    }
+    this._openPanel({
+      kind: 'effort',
+      title: 'Effort',
+      rows: [],
+      slider,
       body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
     })
+    return true
   }
 
   async openModelPanel(): Promise<void> {
@@ -1131,21 +1481,21 @@ export class ChatController implements ChatControllerApi {
       this._openError('models unavailable', this._runtime.model, 'This backend does not expose model selection.')
       return
     }
-    const loading = this._openPanel('models', 'models', [{ label: 'loading', description: 'Discovering models.' }])
+    const loading = this._openPanel({ kind: 'models', title: 'Models', rows: [], loading: true })
     try {
       const models = await this._backend.listModels()
       if (this._panel?.id !== loading.id) {
         return
       }
-      const efforts = this._backend.listEfforts?.() ?? []
-      const slider = effortSlider(efforts)
-      this._openPanel('models', `models (${models.length})`, modelRows(models, this._runtime.model), {
+      this._openPanel({
+        kind: 'models',
+        title: `Models (${models.length})`,
+        rows: modelRows(models, this._runtime.model),
         searchable: true,
         filters: modelFilters(
           models.map((model) => model.catalog).filter((catalog): catalog is string => !!catalog),
           this._backend.protocol
         ),
-        ...(slider ? { slider } : {}),
         body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
       })
     } catch (error) {
@@ -1187,6 +1537,7 @@ export class ChatController implements ChatControllerApi {
         this._addNotice('delivered', `Model updated for the next model call: ${modelDisplayName(modelId)}`)
       }
       this._updateOpenModelPanel(modelId)
+      this._openEffortPanelIfAvailable()
       this._emit()
       return true
     } catch (error) {
@@ -1215,7 +1566,7 @@ export class ChatController implements ChatControllerApi {
       const selected = await this._backend.setEffort(effort)
       this._context = {}
       this._refreshRuntime()
-      if ((this._panel?.kind === 'models' || this._panel?.kind === 'effort') && this._panel.slider) {
+      if (this._panel?.kind === 'effort') {
         this._panel = {
           ...this._panel,
           slider: {
@@ -1248,9 +1599,13 @@ export class ChatController implements ChatControllerApi {
       void this._refreshSessionsPanel(sessionsRuntime, panel.id)
       return
     }
-    const loading = this._openPanel('sessions', 'sessions', [
-      { label: 'loading', description: `Reading ${sessionsRuntime.directory}` },
-    ])
+    const loading = this._openPanel({
+      kind: 'sessions',
+      title: 'Sessions',
+      rows: [{ label: 'loading', description: `Reading ${sessionsRuntime.directory}` }],
+      filters: [{ id: 'all', label: 'All' }],
+      loading: true,
+    })
     await this._refreshSessionsPanel(sessionsRuntime, loading.id)
   }
 
@@ -1291,11 +1646,24 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _showSessionsPanel(sessionsRuntime: ChatSessionRuntime, sessions: SessionList, panelId?: string): ChatPanel {
-    const rows = sessionRows(sessions, sessionsRuntime.directory)
+    const rows = sessionRows(sessions)
+    const filters = sessionFilters(sessions)
     if (!panelId) {
-      return this._openPanel('sessions', `sessions (${sessions.length})`, rows, { searchable: true })
+      return this._openPanel({
+        kind: 'sessions',
+        title: `Sessions (${sessions.length})`,
+        rows,
+        searchable: true,
+        filters,
+      })
     }
-    const panel = this._makePanel('sessions', `sessions (${sessions.length})`, rows, { searchable: true })
+    const panel = this._makePanel({
+      kind: 'sessions',
+      title: `Sessions (${sessions.length})`,
+      rows,
+      searchable: true,
+      filters,
+    })
     this._panel = { ...panel, id: panelId }
     this._emit()
     return this._panel
@@ -1309,22 +1677,24 @@ export class ChatController implements ChatControllerApi {
   private async _handleSessionsCommand(argument: string): Promise<void> {
     const rename = /^rename(?:\s+([\s\S]+))?$/i.exec(argument)
     if (!rename) {
-      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename <name>.')
+      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename [name].')
       return
     }
     const name = rename[1] ?? ''
-    if (!name) {
-      this._openError('session rename failed', '/sessions rename', 'Use /sessions rename <name>.')
-      return
-    }
     if (!this._sessions?.renameCurrent || this._backend.protocol !== 'strands') {
       this._openError('session rename unavailable', name, 'The current backend does not expose a file-backed session.')
       return
     }
+    this._sessionNaming?.abort()
+    if (!name) {
+      void this._generateSessionName()
+      return
+    }
     this._resourceChanging = true
     try {
-      const renamed = await this._sessions.renameCurrent(name)
+      const renamed = await this._renameSession(name, this._sessions.current)
       this._runtime.session = renamed.name
+      this._runtime.sessionName = renamed.name
       this._invalidateSessions()
       this._sessionCache = this._sessionCache?.map((session) =>
         session.active ? { ...session, name: renamed.name } : session
@@ -1337,25 +1707,84 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
+  private async _generateSessionName(): Promise<void> {
+    if (!this._backend.generateSessionName || !this._sessions?.current) {
+      this._openError('session rename unavailable', '/sessions rename', 'Use /sessions rename <name> on this backend.')
+      return
+    }
+    const sessionId = this._sessions.current
+    const request = new AbortController()
+    this._sessionNaming = request
+    const notice = this._addNotice('running', 'Generating session name')
+    this._emit()
+    try {
+      const name = await this._backend.generateSessionName(request.signal)
+      request.signal.throwIfAborted()
+      const renamed = await this._renameSession(name, sessionId, request.signal)
+      request.signal.throwIfAborted()
+      this._runtime.session = renamed.name
+      this._runtime.sessionName = renamed.name
+      this._invalidateSessions()
+      this._sessionCache = undefined
+      notice.status = 'success'
+      notice.text = `Session renamed: ${renamed.name}`
+      if (this._panel?.kind === 'sessions') {
+        await this._openSessionsPanel()
+      }
+    } catch (error) {
+      notice.status = request.signal.aborted ? 'delivered' : 'error'
+      notice.text = request.signal.aborted
+        ? 'Session naming cancelled'
+        : `Session rename failed: ${errorMessage(error)}`
+    } finally {
+      if (this._sessionNaming === request) {
+        this._sessionNaming = undefined
+      }
+      this._emit()
+    }
+  }
+
+  private _renameSession(
+    name: string,
+    sessionId: string | undefined,
+    signal?: AbortSignal
+  ): Promise<{ sessionId: string; name: string }> {
+    const sessions = this._sessions
+    const renameCurrent = sessions?.renameCurrent?.bind(sessions)
+    if (!sessions || !renameCurrent) {
+      return Promise.reject(new Error('The current backend does not expose a file-backed session.'))
+    }
+    const renamed = this._sessionRename.then(() => {
+      signal?.throwIfAborted()
+      if (sessions.current !== sessionId) {
+        throw new Error('The active session changed before it could be renamed.')
+      }
+      return renameCurrent(name)
+    })
+    this._sessionRename = renamed.catch(() => undefined)
+    return renamed
+  }
+
   private async _openSkillsPanel(): Promise<void> {
     if (!this._skills || this._backend.protocol !== 'strands') {
       this._openError('skills unavailable', 'skills', 'No skills runtime is configured for this backend.')
       return
     }
-    const loading = this._openPanel('skills', 'skills', [
-      { label: 'loading', description: 'Parsing configured skills with the Strands SDK.' },
-    ])
+    const loading = this._openPanel({
+      kind: 'skills',
+      title: 'Skills',
+      rows: [{ label: 'loading', description: 'Parsing configured skills with the Strands SDK.' }],
+    })
     try {
-      const skills = await this._skills.list()
+      const skills = await this._listSkills()
       if (this._panel?.id !== loading.id) {
         return
       }
-      this._skillDetails.clear()
-      for (const skill of skills) {
-        this._skillDetails.set(skill.name, skill)
-        this._skillNames.add(skill.name.toLowerCase())
-      }
-      this._openPanel('skills', `skills (${skills.length})`, skillRows(skills), {
+      this._rememberSkills(skills)
+      this._openPanel({
+        kind: 'skills',
+        title: `Skills (${skills.length})`,
+        rows: skillRows(skills),
         searchable: true,
         ...(this._skills.paths?.length ? { body: `Checked: ${this._skills.paths.join(', ')}` } : {}),
       })
@@ -1366,26 +1795,27 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  private async _activateSkillAndRun(name: string, argument: string): Promise<ChatTurn | null | undefined> {
+  private async _activateSkillAndRun(name: string, displayPrompt: string): Promise<ChatTurn | null | undefined> {
     if (!this._skills || this._backend.protocol !== 'strands') {
       return null
     }
     this._resourceChanging = true
-    let skill: SkillInfo | undefined
+    let activation: SkillActivation | undefined
     try {
-      skill = await this._skills.activate(name)
+      activation = await this._skills.activate(name)
     } catch (error) {
       this._openError('skill activation failed', name, errorMessage(error))
       return undefined
     } finally {
       this._resourceChanging = false
     }
-    if (!skill) {
+    if (!activation) {
       return null
     }
+    const { skill } = activation
     this._skillNames.add(skill.name.toLowerCase())
     this._skillDetails.set(skill.name, skill)
-    return this._runPrompt(argument || `Use the ${skill.name} skill.`)
+    return this._runPrompt(skillInvocationPrompt(activation, displayPrompt), displayPrompt)
   }
 
   private async _compactConversation(): Promise<void> {
@@ -1436,10 +1866,12 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
+    this._sessionNaming?.abort()
     this._resourceChanging = true
-    this._openPanel('progress', 'starting fresh conversation', [
-      { label: this._backend.name, description: 'Rebuilding through createHarness() without restoring context.' },
-    ])
+    this._composerStatus = 'Starting fresh conversation...'
+    this._panel = undefined
+    this._panelStack.length = 0
+    this._emit()
     try {
       await this._backend.clear()
       this._stopWatchingUsage()
@@ -1455,6 +1887,7 @@ export class ChatController implements ChatControllerApi {
       this._stopTaskActivity()
       this._skillDetails.clear()
       this._runtime.session = this._backend.info?.().sessionId ?? 'in-memory'
+      delete this._runtime.sessionName
       this._invalidateSessions()
       this._sessionCache = undefined
       this._refreshRuntime()
@@ -1465,6 +1898,8 @@ export class ChatController implements ChatControllerApi {
       this._openError('clear failed', 'clear', errorMessage(error))
     } finally {
       this._resourceChanging = false
+      this._composerStatus = undefined
+      this._emit()
     }
   }
 
@@ -1473,10 +1908,85 @@ export class ChatController implements ChatControllerApi {
     if (!skill) {
       return false
     }
-    this._pushPanel('detail', `skill: ${skill.name}`, skillDetailRows(skill), {
+    this._pushPanel({
+      kind: 'detail',
+      title: `Skill: ${skill.name}`,
+      rows: skillDetailRows(skill),
       body: skill.instructions || '(No instructions.)',
     })
     return true
+  }
+
+  openMcpDetail(name: string): boolean {
+    const server = this._mcpDetails.get(name)
+    if (!server || this._resourceChanging || this._closed) {
+      return false
+    }
+    const failure =
+      server.state === 'failed'
+        ? mcpFailure({ ...server, canRetry: this._mcp?.setEnabled !== undefined && server.canRetry !== false })
+        : undefined
+    this._pushPanel({
+      kind: 'detail',
+      title: `MCP: ${server.name}`,
+      rows: [
+        ...(failure
+          ? [
+              { label: 'Problem', description: failure.summary },
+              { label: 'Next step', description: failure.guidance },
+              ...(this._mcp?.setEnabled && server.canRetry !== false
+                ? [
+                    {
+                      label: 'Retry',
+                      description:
+                        'Esc back, then R retries with the loaded settings. It does not reread configuration.',
+                    },
+                  ]
+                : []),
+            ]
+          : [{ label: 'Status', description: server.state }]),
+        ...(server.source ? [{ label: 'Source', description: server.source }] : []),
+        { label: 'Transport', description: server.transport },
+        { label: 'Target', description: server.target },
+      ],
+      body: [
+        ...(server.error ? [`Full error\n${server.error}`] : []),
+        ...(this._mcp?.warnings.length ? [`Configuration warnings\n${this._mcp.warnings.join('\n')}`] : []),
+      ].join('\n\n'),
+    })
+    return true
+  }
+
+  async retryMcpServer(name: string): Promise<boolean> {
+    const server = this._mcpDetails.get(name)
+    if (
+      !server ||
+      server.canRetry === false ||
+      (server.state !== 'failed' && server.state !== 'disconnected') ||
+      this._panel?.kind !== 'mcp'
+    ) {
+      return false
+    }
+    return this._setMcpServerEnabled(name, true, false)
+  }
+
+  private _mcpPanel(servers: readonly McpServerInfo[]): Extract<NewChatPanel, { kind: 'mcp' }> {
+    this._mcpDetails.clear()
+    for (const server of servers) {
+      this._mcpDetails.set(server.name, server)
+    }
+    const toggles = this._mcp?.setEnabled !== undefined
+    return {
+      kind: 'mcp',
+      title: `MCP servers (${servers.length})`,
+      rows: mcpRows(servers, toggles),
+      canRetry:
+        toggles &&
+        servers.some(
+          (server) => server.canRetry !== false && (server.state === 'failed' || server.state === 'disconnected')
+        ),
+      ...mcpOptions(servers, this._mcp?.paths ?? [], this._mcp?.warnings ?? []),
+    }
   }
 
   private async _openMcpPanel(): Promise<void> {
@@ -1484,25 +1994,72 @@ export class ChatController implements ChatControllerApi {
       this._openError('MCP unavailable', 'mcp', 'No MCP runtime is configured.')
       return
     }
-    const loading = this._openPanel('mcp', 'MCP servers', [
-      { label: 'loading', description: 'Checking server connections and tools.' },
-    ])
+    // The panel shows every failure, so the composer reminder is done.
+    if (this._mcpStartup?.settled) {
+      this._mcpStartup = undefined
+    }
+    const loading = this._openPanel({
+      kind: 'mcp',
+      title: 'MCP servers',
+      rows: [{ label: 'loading', description: 'Checking server connections and tools.' }],
+    })
     try {
       const servers = await this._mcp.list(true)
       if (this._panel?.id !== loading.id) {
         return
       }
-      this._openPanel(
-        'mcp',
-        `MCP servers (${servers.length})`,
-        mcpRows(servers),
-        mcpOptions(servers, this._mcp.paths, this._mcp.warnings)
-      )
+      this._openPanel(this._mcpPanel(servers))
     } catch (error) {
       if (this._panel?.id === loading.id) {
         this._openError('MCP connection failed', 'mcp', errorMessage(error))
       }
     }
+  }
+
+  private async _toggleMcpServer(value: string): Promise<boolean> {
+    const name = decodeURIComponent(value.slice('mcp:toggle:'.length))
+    const server = this._mcpDetails.get(name)
+    if (!server) {
+      return false
+    }
+    return this._setMcpServerEnabled(name, server.state === 'disabled', true)
+  }
+
+  private async _setMcpServerEnabled(name: string, enable: boolean, persist: boolean): Promise<boolean> {
+    if (!this._mcp?.setEnabled || this.busy || this._closed) {
+      return false
+    }
+    const panelId = this._panel?.id
+    this._resourceChanging = true
+    this._composerStatus = enable ? `Connecting ${name}...` : `Disconnecting ${name}...`
+    this._emit()
+    try {
+      const failure = await this._mcp.setEnabled(name, enable)
+      if (persist) {
+        const disabled = new Set(this._settings.disabledMcpServers)
+        if (enable) {
+          disabled.delete(name)
+        } else {
+          disabled.add(name)
+        }
+        this._settings = { ...this._settings, disabledMcpServers: [...disabled] }
+        await this._setSettings?.({ disabledMcpServers: [...disabled] })
+      }
+      if (failure) {
+        this._addNotice('error', `${name}: ${failure}`)
+      }
+      const servers = await this._mcp.list(true)
+      if (this._panel?.kind === 'mcp' && this._panel.id === panelId && !this._closed) {
+        this._panel = makePanel(this._panel.id, this._mcpPanel(servers))
+      }
+    } catch (error) {
+      this._addNotice('error', `${name}: ${errorMessage(error)}`)
+    } finally {
+      this._resourceChanging = false
+      this._composerStatus = undefined
+    }
+    this._emit()
+    return true
   }
 
   private async _handlePermissionsCommand(argument: string): Promise<void> {
@@ -1537,21 +2094,24 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
-    const options: ChatPanelOptions = {
-      ...(status.mode === 'bypassPermissions'
-        ? { body: 'WARNING: Permission checks are bypassed. Configured interventions and sandboxing still apply.' }
-        : {}),
+    this._permissionMode = status.mode
+    if (!refresh || !this._permissionPreset) {
+      this._permissionPreset = permissionPreset(status)
     }
+    const panel = {
+      kind: 'permissions',
+      title: 'Permissions',
+      searchable: true,
+      rows: permissionSettingsRows(status, this._runtime.tools, this._permissionPreset),
+      slider: permissionSettingsSlider(this._permissionPreset),
+    } satisfies NewChatPanel
     if (refresh && this._panel?.kind === 'permissions') {
       const currentId = this._panel.id
-      this._panel = {
-        ...this._makePanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), options),
-        id: currentId,
-      }
+      this._panel = { ...this._makePanel(panel), id: currentId }
       this._emit()
       return
     }
-    this._openPanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), options)
+    this._openPanel(panel)
   }
 
   private async _updatePermissions(value: string): Promise<boolean> {
@@ -1559,8 +2119,11 @@ export class ChatController implements ChatControllerApi {
     if (prefix !== 'permissions' || !action || !encodedValue) {
       return false
     }
-    if (action === 'mode' && (encodedValue === 'default' || encodedValue === 'bypassPermissions')) {
-      return this._setPermissionMode(encodedValue)
+    if (action === 'preset' && (encodedValue === 'ask' || encodedValue === 'bypass' || encodedValue === 'custom')) {
+      return this._setPermissionPreset(encodedValue)
+    }
+    if (action === 'deny') {
+      return this._removeDeniedPermission(decodeURIComponent(encodedValue))
     }
     if (
       action !== 'tool' ||
@@ -1578,10 +2141,53 @@ export class ChatController implements ChatControllerApi {
       } else {
         await this._backend.allowPermission(toolName)
       }
+      this._permissionPreset = 'custom'
       this._openPermissionsPanel(true)
       return true
     } catch (error) {
       this._openError('permission update failed', toolName, errorMessage(error))
+      return false
+    }
+  }
+
+  private async _removeDeniedPermission(rule: string): Promise<boolean> {
+    if (!this._backend.removeDeniedPermission) {
+      return false
+    }
+    try {
+      await this._backend.removeDeniedPermission(rule)
+      this._openPermissionsPanel(true)
+      return true
+    } catch (error) {
+      this._openError('permission update failed', rule, errorMessage(error))
+      return false
+    }
+  }
+
+  private async _setPermissionPreset(preset: ChatPermissionPreset): Promise<boolean> {
+    const status = this._backend.permissionStatus?.()
+    if (!status || !this._backend.setPermissionMode || !this._backend.removeAllowedPermission) {
+      this._openError(
+        'permissions unavailable',
+        this._backend.name,
+        'Permission configuration is available only for the built-in Strands backend.'
+      )
+      return false
+    }
+    try {
+      if (preset === 'ask') {
+        for (const toolName of status.allowedTools) {
+          await this._backend.removeAllowedPermission(toolName)
+        }
+      }
+      const mode = preset === 'bypass' ? 'bypassPermissions' : 'default'
+      await this._backend.setPermissionMode(mode)
+      this._permissionMode = mode
+      this._permissionPreset = preset
+      this._openPermissionsPanel(true)
+      return true
+    } catch (error) {
+      this._openError('permission update failed', preset, errorMessage(error))
       return false
     }
   }
@@ -1597,6 +2203,9 @@ export class ChatController implements ChatControllerApi {
     }
     try {
       await this._backend.setPermissionMode(mode)
+      this._permissionMode = mode
+      const status = this._backend.permissionStatus?.()
+      this._permissionPreset = status ? permissionPreset(status) : mode === 'default' ? 'ask' : 'bypass'
       this._openPermissionsPanel(true)
       return true
     } catch (error) {
@@ -1617,8 +2226,7 @@ export class ChatController implements ChatControllerApi {
       this._openError('Export arguments required', '/export', 'Usage: /export <typescript|python> <path.zip>')
       return
     }
-    const path = destination.startsWith('~/') ? resolve(homedir(), destination.slice(2)) : destination
-    await this._exportAgent(language, resolve(this._runtime.cwd, path))
+    await this._exportAgent(language, resolve(this._runtime.cwd, expandHome(destination)))
   }
 
   private _openExportPanel(): void {
@@ -1627,38 +2235,65 @@ export class ChatController implements ChatControllerApi {
       return
     }
     this._exportedPath = undefined
-    this._openPanel(
-      'export',
-      `Export · ${this._backend.name}`,
-      [
-        {
-          label: 'TypeScript',
-          description: 'Runnable @strands-agents/harness project',
-          value: EXPORT_TYPESCRIPT,
-        },
+    this._openPanel({
+      kind: 'export',
+      title: `Export ${this._backend.name}`,
+      rows: [
         {
           label: 'Python',
-          description: 'Runnable strands-harness project',
+          description: 'strands-harness project',
           value: EXPORT_PYTHON,
         },
+        {
+          label: 'TypeScript',
+          description: '@strands-agents/harness project',
+          value: EXPORT_TYPESCRIPT,
+        },
       ].filter((row) => !this._project || row.value === `export:${this._project.language}`),
-      {
-        body: [
-          `Agent: ${this._backend.name}`,
-          `Source: ${this._project?.entrypoint ?? 'Current agent configuration'}`,
-          `Location: ${this._project?.root ?? this._runtime.cwd}`,
-          this._project
-            ? `Language: ${this._project.language === 'typescript' ? 'TypeScript' : 'Python'} · preserves authored source`
-            : 'Choose a language, then choose where to save the ZIP.',
-          ...(!canChooseDirectory()
-            ? [`Save with /export ${this._project?.language ?? '<typescript|python>'} <path.zip>.`]
-            : []),
-        ].join('\n'),
-      }
-    )
+      body: this._project
+        ? 'Export a separate copy of these source files.'
+        : 'Export a copy, including pending agent changes.',
+    })
   }
 
-  private async _exportAgent(language: 'typescript' | 'python', destination?: string): Promise<boolean> {
+  private _openExportNamePanel(language: ChatConfigurationLanguage): void {
+    const defaultName = exportDirectoryName(this._backend.name)
+    this._pushPanel({
+      kind: 'export',
+      title: 'Name exported folder',
+      rows: [],
+      searchable: true,
+      nameInput: { language, defaultName },
+      body: 'Choose a folder name for this copy.',
+    })
+  }
+
+  private _openExportDestinationPanel(language: ChatConfigurationLanguage, name: string): void {
+    const encodedName = encodeURIComponent(name)
+    this._pushPanel({
+      kind: 'export',
+      title: `Save ${language === 'typescript' ? 'TypeScript' : 'Python'} copy`,
+      rows: [
+        {
+          label: 'Default folder',
+          description: `~/.strands/harnesses/${name}`,
+          value: `${EXPORT_SAVE_DEFAULT_PREFIX}${language}:${encodedName}`,
+        },
+        {
+          label: canUseNativePicker() ? 'Choose parent folder' : 'Custom path',
+          description: canUseNativePicker() ? `Browse and save as ${name}` : `/export ${language} <path.zip>`,
+          ...(canUseNativePicker() ? { value: `${EXPORT_SAVE_CUSTOM_PREFIX}${language}:${encodedName}` } : {}),
+        },
+      ],
+      body: 'Choose where to save this copy.',
+    })
+  }
+
+  private async _exportAgent(
+    language: ChatConfigurationLanguage,
+    destination?: string,
+    output: AgentProjectOutput = 'zip'
+  ): Promise<boolean> {
     if (!this._exportAgentProject) {
       return false
     }
@@ -1672,26 +2307,32 @@ export class ChatController implements ChatControllerApi {
     }
     this._resourceChanging = true
     try {
-      const path = await this._exportAgentProject(language, destination)
+      const path =
+        output === 'zip'
+          ? await this._exportAgentProject(language, destination)
+          : await this._exportAgentProject(language, destination, output)
       if (path) {
         this._exportedPath = path
-        this._openPanel(
-          'export',
-          'Export complete',
-          [
+        const switchable = output === 'directory' && this._useExportedProject !== undefined
+        this._openPanel({
+          kind: 'export',
+          title: 'Export complete',
+          rows: [
+            ...(switchable
+              ? [
+                  {
+                    label: 'Use for this session',
+                    description: 'Edits reload this session',
+                    value: 'export:use-project',
+                  },
+                ]
+              : []),
             { label: 'Copy path', description: path, value: 'export:copy-path' },
             { label: 'Copy launch command', description: agentLaunchCommand(path), value: 'export:copy-command' },
           ],
-          {
-            body: [
-              `Agent: ${this._backend.name}`,
-              `Source: ${this._project?.entrypoint ?? 'Current agent configuration'}`,
-              `Language: ${language === 'typescript' ? 'TypeScript' : 'Python'}`,
-              `Saved to: ${path}`,
-            ].join('\n'),
-          }
-        )
-      } else if (destination === undefined && !canChooseDirectory()) {
+          body: 'Saved a copy. No automatic updates.',
+        })
+      } else if (destination === undefined && output === 'zip') {
         this._openError('Export path required', '/export', `Use /export ${language} <path.zip> to save this agent.`)
       }
       return path !== undefined
@@ -1701,6 +2342,18 @@ export class ChatController implements ChatControllerApi {
     } finally {
       this._resourceChanging = false
     }
+  }
+
+  private _useExported(): boolean {
+    if (!this._exportedPath || !this._useExportedProject || this._panel?.kind !== 'export') {
+      return false
+    }
+    if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+      this._openError('switch failed', this._exportedPath, 'Finish or cancel running work before switching projects.')
+      return true
+    }
+    this._useExportedProject(this._exportedPath)
+    return true
   }
 
   private async _copyExport(action: 'export:copy-path' | 'export:copy-command'): Promise<boolean> {
@@ -1741,19 +2394,31 @@ export class ChatController implements ChatControllerApi {
     if (!update) {
       return false
     }
+    return this._applySettings(update, setting.split('=')[0]!)
+  }
+
+  private async _applySettings(update: Partial<ChatSettings>, setting: string): Promise<boolean> {
     this._resourceChanging = true
     try {
       await this._setSettings?.(update)
     } catch (error) {
-      this._openError('setting update failed', setting.split('=')[0]!, errorMessage(error))
+      this._openError('setting update failed', setting, errorMessage(error))
       return false
     } finally {
       this._resourceChanging = false
     }
     this._settings = globalThis.structuredClone({ ...this._settings, ...update })
-    this._panel = {
-      ...this._panel,
-      rows: sanitizeRows(settingsRows(this._settings, this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
+    if (this._panel?.kind === 'settings') {
+      this._panel = {
+        ...this._panel,
+        rows: sanitizeRows(
+          settingsRows(
+            this._settings,
+            this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY,
+            this._requestSetup !== undefined
+          )
+        ),
+      }
     }
     this._emit()
     return true
@@ -1764,31 +2429,51 @@ export class ChatController implements ChatControllerApi {
     if (!category) {
       return false
     }
-    const rows = settingsRows(this._settings, category.id)
-    const options: ChatPanelOptions = {
+    const rows = settingsRows(this._settings, category.id, this._requestSetup !== undefined)
+    const panel = {
+      kind: 'settings',
+      title: category.label,
+      rows,
       filters: settingsCategoryFilters(),
       settingsCategory: category.id,
-      settingsCategories: SETTINGS_CATEGORIES,
-    }
+    } satisfies NewChatPanel
     if (replace) {
-      this._openPanel('settings', category.label, rows, options)
+      this._openPanel(panel)
     } else if (this._panel?.kind === 'settings') {
-      this._panel = this._makePanel('settings', category.label, rows, options)
+      this._panel = this._makePanel(panel)
       this._emit()
     } else {
-      this._pushPanel('settings', category.label, rows, options)
+      this._pushPanel(panel)
     }
     return true
   }
 
   private _respondPermission(value: string): boolean {
-    const [prefix, encodedRequestId, encodedOptionId] = value.split(':')
-    if (prefix !== 'permission' || !encodedRequestId || !encodedOptionId) {
+    const [prefix, encodedRequestId, encodedOptionId, encodedRule] = value.split(':')
+    if (prefix !== 'permission' || !encodedRequestId || !encodedOptionId || this._panel?.kind !== 'permission') {
       return false
     }
+    const request = this._panel.request
     const requestId = decodeURIComponent(encodedRequestId)
     const optionId = decodeURIComponent(encodedOptionId)
-    if (!this._backend.respondPermission?.(requestId, optionId)) {
+    if (request.id !== requestId) {
+      return false
+    }
+    if (optionId === 'back' && this._panel.stage) {
+      const stage = this._panel.stage
+      this._showPermissionPanel(
+        request,
+        undefined,
+        request.options.findIndex((option) => option.id === stage)
+      )
+      return true
+    }
+    if (encodedRule === undefined && permissionChoosesScope(request, optionId)) {
+      this._showPermissionPanel(request, optionId === 'allow-always' ? 'allow-always' : 'deny-always')
+      return true
+    }
+    const rule = encodedRule === undefined ? undefined : decodeURIComponent(encodedRule)
+    if (!this._backend.respondPermission?.(requestId, optionId, rule)) {
       return false
     }
     this._closePermissionPanel()
@@ -1796,10 +2481,29 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openPermissionPanel(request: ChatPermissionRequest): void {
-    this._pushPanel('permission', `Allow ${request.toolName}?`, permissionRequestRows(request), {
+    this._pushPanel(this._permissionPanel(request))
+  }
+
+  private _showPermissionPanel(request: ChatPermissionRequest, stage?: PermissionStage, selected?: number): void {
+    this._panel = this._makePanel(this._permissionPanel(request, stage, selected))
+    this._emit()
+  }
+
+  private _permissionPanel(request: ChatPermissionRequest, stage?: PermissionStage, selected?: number): NewChatPanel {
+    return {
+      kind: 'permission',
+      title:
+        stage === 'allow-always'
+          ? `Always allow ${request.toolName} for…`
+          : stage === 'deny-always'
+            ? `Always deny ${request.toolName} for…`
+            : 'Allow tool call?',
+      rows: permissionRequestRows(request, stage),
       body: formatPermissionPanelBody(request),
-      ...(request.diff ? { diff: request.diff } : {}),
-    })
+      request,
+      ...(stage ? { stage } : {}),
+      ...(selected !== undefined && selected > 0 ? { selected } : {}),
+    }
   }
 
   private _refreshRuntime(model?: string): void {
@@ -1823,13 +2527,45 @@ export class ChatController implements ChatControllerApi {
       delete runtime.effort
     }
     this._runtime = runtime
+    this._refreshConfiguration()
+  }
+
+  private _refreshConfiguration(trackChanges = false): void {
+    if (!this._configurationSource) {
+      return
+    }
+    try {
+      const previous = this._configuration
+      const configuration = sanitizeConfigurationSource(this._configurationSource())
+      if (trackChanges && previous) {
+        const turnId = this._configurationTurnId()
+        const current = this._configurationBaseline
+        const baseline = current && current.turnId === turnId ? current : { turnId, source: previous }
+        this._configurationBaseline = baseline
+        this._configurationDiffs = configurationDiffs(baseline.source, configuration)
+      }
+      this._configuration = configuration
+      if (this._panel?.kind === 'config') {
+        this._panel = { ...this._panel, configuration: this._configuration }
+      }
+    } catch {
+      // Keep the last readable configuration while the source is being replaced.
+    }
+  }
+
+  private _configurationTurnId(): string | undefined {
+    return this._activeProjector?.snapshot().id ?? this._completedTurns.at(-1)?.id
   }
 
   private _closePermissionPanel(): void {
-    if (this._panel?.kind !== 'permission') {
+    const panels = this._panelStack.filter((panel) => panel.kind !== 'permission')
+    const removed = panels.length !== this._panelStack.length
+    this._panelStack.splice(0, this._panelStack.length, ...panels)
+    if (this._panel?.kind === 'permission') {
+      this._panel = this._panelStack.pop()
+    } else if (!removed) {
       return
     }
-    this._panel = this._panelStack.pop()
     this._emit()
   }
 
@@ -1842,10 +2578,13 @@ export class ChatController implements ChatControllerApi {
       this._taskBaselineReady = true
     }
     if (this._panel?.kind === 'tasks') {
+      const waitForCompletion = this._backend.backgroundTasksWaitForCompletion?.()
+      const rows = taskRows(this._tasks)
       this._panel = {
         ...this._panel,
-        title: `tasks (${this._tasks.length})`,
-        rows: sanitizeRows(taskRows(this._tasks, this._backend.backgroundTasksWaitForCompletion?.())),
+        title: `Tasks (${rows.length})`,
+        rows: sanitizeRows(rows),
+        ...(waitForCompletion !== undefined ? { waitForCompletion } : {}),
       }
     }
     if (this._openTaskDetailId) {
@@ -1911,7 +2650,10 @@ export class ChatController implements ChatControllerApi {
     this._stopTaskActivity()
     this._openTaskDetailId = task.id
     const activity = this._backend.getTaskActivity?.(task.id)
-    this._pushPanel('detail', taskDetailTitle(task, activity), taskDetailRows(task, activity), {
+    this._pushPanel({
+      kind: 'detail',
+      title: taskDetailTitle(task, activity),
+      rows: taskDetailRows(task, activity),
       body: activity ? '' : formatTaskActivity(task),
       followTail: true,
       ...(activity ? { activity } : {}),
@@ -2040,6 +2782,7 @@ export class ChatController implements ChatControllerApi {
         notice.status = 'delivered'
         notice.text = `Model changed to ${modelDisplayName(modelId)}`
       }
+      this._openEffortPanelIfAvailable()
     } catch (error) {
       if (notice) {
         notice.status = 'error'
@@ -2072,54 +2815,69 @@ export class ChatController implements ChatControllerApi {
           }
         : next
     })
-    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
-    const updated = this._makePanel('models', panel.title, rows, {
+    const updated = this._makePanel({
+      kind: 'models',
+      title: panel.title,
+      rows,
       ...(panel.searchable !== undefined ? { searchable: panel.searchable } : {}),
       ...(panel.filters ? { filters: panel.filters } : {}),
-      ...(slider ? { slider } : {}),
       body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
     })
     this._panel = { ...updated, id: panel.id }
   }
 
-  private _openPanel(
-    kind: ChatPanel['kind'],
-    title: string,
-    rows: ChatPanel['rows'],
-    options: ChatPanelOptions = {}
-  ): ChatPanel {
-    this._panelStack.length = 0
-    const panel = this._makePanel(kind, title, rows, options)
+  private _openPanel(input: NewChatPanel): ChatPanel {
+    if (this._panel?.kind === 'permission') {
+      return this._pushPanel(input)
+    }
+    this._panelStack.length = this._panelStack.findIndex((panel) => panel.kind === 'permission') + 1
+    const panel = this._makePanel(input)
     this._panel = panel
     this._emit()
     return panel
   }
 
-  private _pushPanel(
-    kind: ChatPanel['kind'],
-    title: string,
-    rows: ChatPanel['rows'],
-    options: ChatPanelOptions
-  ): ChatPanel {
+  private _pushPanel(input: NewChatPanel): ChatPanel {
     if (this._panel) {
       this._panelStack.push(this._panel)
     }
-    const panel = this._makePanel(kind, title, rows, options)
+    const panel = this._makePanel(input)
     this._panel = panel
     this._emit()
     return panel
   }
 
-  private _makePanel(
-    kind: ChatPanel['kind'],
-    title: string,
-    rows: ChatPanel['rows'],
-    options: ChatPanelOptions
-  ): ChatPanel {
-    return makePanel(`panel-${this._nextPanel++}`, kind, title, rows, options)
+  private _makePanel(input: NewChatPanel): ChatPanel {
+    return makePanel(`panel-${this._nextPanel++}`, input)
   }
 
   private _openError(title: string, label: string, description: string): void {
-    this._openPanel('error', title, [{ label, description, tone: 'danger' }])
+    this._openPanel({ kind: 'error', title, rows: [{ label, description, tone: 'danger' }] })
   }
+}
+
+function skillInvocationPrompt(activation: SkillActivation, displayPrompt: string): string {
+  return [
+    '<strands_skill_activation>',
+    `The user explicitly invoked the ${activation.skill.name} skill. It is already activated; do not call the skills tool again.`,
+    'Follow the activated instructions below. Treat text after the leading skill command as the request; if there is none, apply the skill to the current conversation.',
+    '',
+    '<skill_instructions>',
+    activation.content,
+    '</skill_instructions>',
+    '</strands_skill_activation>',
+    '',
+    displayPrompt,
+  ].join('\n')
+}
+
+function isLiveLocalCommand(prompt: string): boolean {
+  const invocation = parseCommandInvocation(prompt)
+  return invocation?.prefix === '/' && LIVE_LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase())
+}
+
+function normalizeChatInput(input: ChatInput): ChatInputWithAttachments {
+  return typeof input === 'string'
+    ? { text: input.trim(), attachments: [] }
+    : { text: input.text.trim(), attachments: [...input.attachments] }
 }

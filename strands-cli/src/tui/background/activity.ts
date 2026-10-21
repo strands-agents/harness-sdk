@@ -3,6 +3,7 @@ import type { AgentStreamEvent, Tool, ToolContext, ToolResultContent, ToolStream
 import type { BackgroundAgentInbox } from './inbox.js'
 import type { ChatEntry } from '../chat/types.js'
 import { sanitizeTerminalText, sanitizeTerminalValue } from '../terminal/sanitize.js'
+import { isRecord } from '../values.js'
 
 type BackgroundTextEntry = Omit<Extract<ChatEntry, { type: 'reasoning' | 'assistant' }>, 'id'>
 
@@ -160,10 +161,7 @@ export function observeSubagentActivity(subagentTool: Tool, observer: Background
   const wrappedStream = async function* (this: Tool, context: ToolContext): ToolStreamGenerator {
     const toolUseId = context.toolUse.toolUseId
     const input = context.toolUse.input
-    const task =
-      input !== null && typeof input === 'object' && !Array.isArray(input) && typeof input.task === 'string'
-        ? input.task
-        : ''
+    const task = isRecord(input) && typeof input.task === 'string' ? input.task : ''
     observer.onStart({ name: 'subagent', task, toolUseId })
 
     try {
