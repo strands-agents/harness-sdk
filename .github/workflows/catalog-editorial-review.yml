@@ -104,24 +104,76 @@ jobs:
               return comments.find(c => c.body && c.body.includes(marker));
             }
 
-            async function removeEditorialLabel() {
+            // addLabels 422s on a label the repo doesn't have, so every
+            // label is created on first use. A 422 from createLabel means a
+            // concurrent run created it first — the label exists, move on.
+            async function ensureLabel({ name, color, description }) {
               try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                });
+                return;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                  color,
+                  description,
+                });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            // Make the PR's label state match `shouldHave`. Removing a label
+            // the PR doesn't carry 404s — that is already the desired state.
+            // Any other failure is logged, never thrown: a label problem must
+            // not block the sticky comment, which is the primary signal.
+            async function syncLabel(name, shouldHave, meta) {
+              try {
+                if (shouldHave) {
+                  await ensureLabel({ name, ...meta });
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    labels: [name],
+                  });
+                  return;
+                }
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: pr.number,
-                  name: label,
+                  name,
                 });
               } catch (error) {
-                if (error.status !== 404) throw error;
+                if (!shouldHave && error.status === 404) return;
+                console.log(`Syncing label "${name}" failed (${error.message}) — continuing.`);
               }
             }
+
+            const areaLabelMeta = {
+              color: '0e8a16',
+              // Keep in sync with .github/labelers/area.yml.
+              description: 'Integrations catalog: entries under site/src/content/catalog, catalog submission process, catalog site pages',
+            };
+            const editorialLabelMeta = {
+              color: 'fbca04',
+              description: 'Editorial catalog fields changed by a non-maintainer',
+            };
 
             // A previous push may have flagged this PR; clear the stale
             // label and comment so reviewers aren't misled.
             async function clearStaleFlag() {
               if (!(await headStillCurrent())) return;
-              await removeEditorialLabel();
+              await syncLabel(label, false);
               const stale = await findStickyComment();
               if (stale) {
                 await github.rest.issues.updateComment({
@@ -157,50 +209,13 @@ jobs:
             // editorial-state checks below, for every author. A rename out
             // of the catalog counts too (previous_filename), so the label
             // is set on any PR a catalog reviewer should see; it is removed
-            // when a later push drops every catalog change. Failures are
-            // logged, never thrown — the editorial logic below must still run.
+            // when a later push drops every catalog change. Label failures
+            // are logged, never thrown — the editorial logic below must
+            // still run.
             const inCatalog = p => typeof p === 'string' && p.startsWith('site/src/content/catalog/');
             const touchesCatalog = files.some(f => inCatalog(f.filename) || inCatalog(f.previous_filename));
-            try {
-              if (await headStillCurrent()) {
-                if (touchesCatalog) {
-                  try {
-                    await github.rest.issues.getLabel({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      name: areaLabel,
-                    });
-                  } catch (error) {
-                    if (error.status !== 404) throw error;
-                    await github.rest.issues.createLabel({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      name: areaLabel,
-                      color: '0e8a16',
-                      description: 'Integrations catalog entries under site/src/content/catalog',
-                    });
-                  }
-                  await github.rest.issues.addLabels({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: pr.number,
-                    labels: [areaLabel],
-                  });
-                } else {
-                  try {
-                    await github.rest.issues.removeLabel({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      issue_number: pr.number,
-                      name: areaLabel,
-                    });
-                  } catch (error) {
-                    if (error.status !== 404) throw error;
-                  }
-                }
-              }
-            } catch (error) {
-              console.log(`Syncing label "${areaLabel}" failed (${error.message}) — continuing with the editorial check.`);
+            if (await headStillCurrent()) {
+              await syncLabel(areaLabel, touchesCatalog, areaLabelMeta);
             }
 
             if (catalogFiles.length === 0) {
@@ -417,42 +432,11 @@ jobs:
 
             // --- Label ----------------------------------------------------
             // The label marks editorial-field changes only; a provenance
-            // flag is comment-only. addLabels 422s on a label that doesn't
-            // exist in the repo, so create it on first use. A label failure
-            // must not prevent the sticky comment below — the comment is the
-            // primary signal.
-            if (flagged.length > 0 || partnerFlagged.length > 0) {
-              try {
-                try {
-                  await github.rest.issues.getLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: label,
-                  });
-                } catch (error) {
-                  if (error.status !== 404) throw error;
-                  await github.rest.issues.createLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: label,
-                    color: 'fbca04',
-                    description: 'Editorial catalog fields changed by a non-maintainer',
-                  });
-                }
-                await github.rest.issues.addLabels({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: pr.number,
-                  labels: [label],
-                });
-              } catch (error) {
-                console.log(`Applying label "${label}" failed (${error.message}) — continuing with the comment.`);
-              }
-            } else {
-              // A previous push may have set the label for an editorial
-              // change this push removed.
-              await removeEditorialLabel();
-            }
+            // flag is comment-only. Synced in both directions: a previous
+            // push may have set the label for an editorial change this push
+            // removed. A label failure must not prevent the sticky comment
+            // below — the comment is the primary signal.
+            await syncLabel(label, flagged.length > 0 || partnerFlagged.length > 0, editorialLabelMeta);
 
             // --- Sticky comment: update in place so pushes don't spam -----
             const sections = [marker, '### Catalog review flags'];
