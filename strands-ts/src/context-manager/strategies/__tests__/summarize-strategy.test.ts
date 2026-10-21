@@ -3,7 +3,7 @@ import { Offload } from '../offload/index.js'
 import { summarizeContent } from '../../methods/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
-import { ImageBlock } from '../../../types/media.js'
+import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
@@ -273,6 +273,41 @@ describe('Offload.summarize', () => {
 
 describe('summarizer errors', () => {
   // guards against summarizer failures being hidden by a lossy retry (#5291)
+  it('keeps a block and continues the pass when its summarization fails', async () => {
+    vi.mocked(summarizeContent).mockRejectedValueOnce(new Error('rejected'))
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const largeText = 'x'.repeat(2500 * 4 + 100)
+    const messages = [makeToolResultMessage(largeText, 'call_1'), makeToolResultMessage(largeText, 'call_2')]
+    const strategy = Offload.summarize('toolResults')
+
+    const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+
+    expect(result).toBe(true)
+    expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toBe(largeText)
+    expect(((messages[1]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toContain('[Summarized:')
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<rejected>'))
+    warnSpy.mockRestore()
+  })
+
+  it('offloads a video block without summarizing it', async () => {
+    vi.mocked(summarizeContent).mockClear()
+    const messages = [
+      new Message({
+        role: 'user',
+        content: [new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array(4000) } })],
+      }),
+    ]
+    const strategy = Offload.summarize('*', { model: new MockMessageModel() }).when({ threshold: 10 })
+
+    const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+
+    expect(result).toBe(true)
+    expect(messages[0]!.content).toEqual([
+      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+    ])
+    expect(summarizeContent).not.toHaveBeenCalled()
+  })
+
   it('offloads a media block when its summarization fails', async () => {
     vi.mocked(summarizeContent).mockRejectedValueOnce(new Error('images unsupported'))
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})

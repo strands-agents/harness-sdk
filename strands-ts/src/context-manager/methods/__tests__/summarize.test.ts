@@ -1,8 +1,18 @@
 import { describe, it, expect, vi } from 'vitest'
 import { flattenMessagesToContent, summarizeContent } from '../summarize.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
-import { ImageBlock } from '../../../types/media.js'
-import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { AudioBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
+import { CitationsBlock } from '../../../types/citations.js'
+import {
+  CachePointBlock,
+  GuardContentBlock,
+  JsonBlock,
+  Message,
+  ReasoningBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../../types/messages.js'
 
 describe('flattenMessagesToContent', () => {
   it('excludes reasoning blocks', () => {
@@ -22,6 +32,45 @@ describe('flattenMessagesToContent', () => {
     ]
 
     expect(flattenMessagesToContent(messages)).toEqual([new TextBlock('\n---\n[user]'), new TextBlock('next')])
+  })
+
+  it('passes only text, images, and documents through and renders other blocks as text', () => {
+    const bytes = new Uint8Array([1])
+    const image = new ImageBlock({ format: 'png', source: { bytes } })
+    const messages = [
+      new Message({
+        role: 'user',
+        content: [
+          new GuardContentBlock({ text: { text: 'guarded text', qualifiers: [] } }),
+          new VideoBlock({ format: 'mp4', source: { bytes } }),
+          new AudioBlock({ format: 'mp3', source: { bytes } }),
+          image,
+          new CachePointBlock({ cacheType: 'default' }),
+          new ToolResultBlock({
+            toolUseId: 'call_1',
+            status: 'success',
+            content: [new JsonBlock({ json: { ok: true } }), new VideoBlock({ format: 'mp4', source: { bytes } })],
+          }),
+        ],
+      }),
+      new Message({
+        role: 'assistant',
+        content: [new CitationsBlock({ citations: [], content: [{ text: 'cited answer' }] })],
+      }),
+    ]
+
+    expect(flattenMessagesToContent(messages)).toEqual([
+      new TextBlock('\n---\n[user]'),
+      new TextBlock('guarded text'),
+      new TextBlock('[video omitted]'),
+      new TextBlock('[audio omitted]'),
+      image,
+      new TextBlock('[tool result]'),
+      new TextBlock(JSON.stringify({ ok: true }, null, 2)),
+      new TextBlock('[video omitted]'),
+      new TextBlock('\n---\n[assistant]'),
+      new TextBlock('cited answer'),
+    ])
   })
 
   describe('with tool calls', () => {

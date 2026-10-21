@@ -9,7 +9,16 @@
 import type { Model } from '../../models/model.js'
 import { ModelProxy } from '../../models/model-proxy.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
-import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import {
+  GuardContentBlock,
+  JsonBlock,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../types/messages.js'
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import { CitationsBlock } from '../../types/citations.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
@@ -99,16 +108,26 @@ export async function summarizeContent(
 }
 
 /**
- * Converts ToolResultContent[] to ContentBlock[] for model consumption.
- * JsonBlock is not a valid ContentBlock, so it's serialized to a TextBlock.
+ * Converts a block to what the summarizer accepts in a user turn: text, images, and documents pass
+ * through, other content is rendered as text or a placeholder, and the rest is left out.
+ */
+function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlock[] {
+  if (block instanceof TextBlock || block instanceof ImageBlock || block instanceof DocumentBlock) return [block]
+  if (block instanceof JsonBlock) return [new TextBlock(JSON.stringify(block.json, null, 2))]
+  if (block instanceof CitationsBlock) return block.content.map((content) => new TextBlock(content.text))
+  if (block instanceof GuardContentBlock) {
+    return [new TextBlock(block.text ? block.text.text : '[image omitted]')]
+  }
+  if (block instanceof VideoBlock) return [new TextBlock('[video omitted]')]
+  if (block instanceof AudioBlock) return [new TextBlock('[audio omitted]')]
+  return []
+}
+
+/**
+ * Converts ToolResultContent[] to ContentBlock[] the summarizer accepts.
  */
 export function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[] {
-  return content.map((block) => {
-    if (block instanceof JsonBlock) {
-      return new TextBlock(JSON.stringify(block.json, null, 2))
-    }
-    return block as ContentBlock
-  })
+  return content.flatMap(toSummarizerBlocks)
 }
 
 function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, string>): string {
@@ -119,7 +138,7 @@ function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, st
 
 /**
  * Converts a message's content to ContentBlocks for the summarizer, rendering tool calls and tool result
- * labels as text and leaving out reasoning.
+ * labels as text.
  */
 function messageToContentBlocks(message: Message, toolNames: Map<string, string>): ContentBlock[] {
   const blocks: ContentBlock[] = []
@@ -128,8 +147,8 @@ function messageToContentBlocks(message: Message, toolNames: Map<string, string>
       blocks.push(new TextBlock(formatToolResultLabel(block, toolNames)), ...toolResultToContentBlocks(block.content))
     } else if (block instanceof ToolUseBlock) {
       blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
-    } else if (!(block instanceof ReasoningBlock)) {
-      blocks.push(block)
+    } else {
+      blocks.push(...toSummarizerBlocks(block))
     }
   }
   return blocks
