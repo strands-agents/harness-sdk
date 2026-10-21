@@ -127,25 +127,34 @@ store = FileMemoryStore(
 </Tab>
 </Tabs>
 
-The store writes its files under `memory/<name>/` on the
-backend you pass:
+The store scopes everything it reads and writes to the
+`memory/<name>/` path prefix on the backend you pass. The
+prefix, not the name, is what keeps stores apart: the
+store lists and searches every file under it, subfolders
+included.
 
-- Stores with different names on the same backend are
-  isolated from each other.
+- Give each store a distinct name without `/`. A store
+  named `team` reads and searches the files of a store
+  named `team/alice`, because they sit under its prefix.
 - Stores with the same name on the same backend read and
   write the same files.
-- An empty `name` is accepted but scopes the store to
-  `memory/` itself. Listing is recursive, so an unnamed
-  store reads and searches every named store's files on
-  that backend. Give each store a name.
+- Don't use an empty `name`. It scopes the store to
+  `memory/` itself, so it reads and searches every named
+  store's files on that backend.
 
 The exception is a view you have already scoped with a
 built-in backend's `namespace(...)`. The store uses that
-view as-is and does **not** add
-`memory/<name>/`, so its files land directly under your
-prefix. Every store you hand that same view shares its
-files regardless of `name`; give each store its own
-namespaced view to keep them separate.
+view as-is and does **not** add `memory/<name>/`, so its
+files land directly under your prefix. Every store you
+hand that same view shares its files regardless of
+`name`, so give each store its own namespaced view.
+
+:::caution
+Don't pass a view from `namespace("")`. An empty prefix
+scopes nothing: the store works at the root of the
+backend and reads and searches every key there, including
+other subsystems' data such as sessions.
+:::
 
 ## Search
 
