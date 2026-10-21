@@ -54,13 +54,16 @@ agent = Agent(
 </Tab>
 </Tabs>
 
-The agent can recall from the store right away. The store
-is writable by default, but writing is opt-in: pass
+The agent can recall from the store right away, but
+nothing writes to it until you turn on a way to add
+memories. Pass
 <Syntax py="add_tool_config=True" ts="addToolConfig: true" />
 to the `MemoryManager` to give the agent the
-[`add_memory` tool](./managing-memory#memory-tools), and set
-`extraction` on the store to turn on
-[automatic extraction](#extraction).
+[`add_memory` tool](./managing-memory#memory-tools), or set
+`extraction` on the store to capture memories
+[automatically](#extraction). You don't need to set
+`writable`: it defaults to `true`, so the store accepts
+writes as soon as either is on.
 
 ## How It Works
 
