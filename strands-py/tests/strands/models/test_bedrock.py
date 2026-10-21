@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import logging
 import os
 import sys
@@ -27,6 +28,7 @@ from strands.models.bedrock import (
     _next_stream_event,
     _suppress_task_exception,
 )
+from strands.tools import convert_pydantic_to_tool_spec
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from strands.types.tools import ToolSpec
 
@@ -2273,18 +2275,29 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
     bedrock_client.converse_stream.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_structured_output(bedrock_client, model, test_output_model_cls, alist):
-    messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
-
-    bedrock_client.converse_stream.return_value = {
-        "stream": [
-            {"messageStart": {"role": "assistant"}},
+@pytest.mark.parametrize(
+    "content_events",
+    [
+        [
             {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "TestOutputModel"}}}},
             {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "John", "age": 30}'}}}},
             {"contentBlockStop": {}},
             {"messageStop": {"stopReason": "tool_use"}},
-        ]
+        ],
+        [
+            {"contentBlockDelta": {"delta": {"text": '{"name": "John", "age": 30}'}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ],
+    ],
+    ids=["tool_use", "native_json_text"],
+)
+@pytest.mark.asyncio
+async def test_structured_output(native_output_client, model, test_output_model_cls, alist, content_events):
+    messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
+
+    native_output_client.converse_stream.return_value = {
+        "stream": [{"messageStart": {"role": "assistant"}}, *content_events]
     }
 
     stream = model.structured_output(test_output_model_cls, messages)
@@ -2293,6 +2306,188 @@ async def test_structured_output(bedrock_client, model, test_output_model_cls, a
     tru_output = events[-1]
     exp_output = {"output": test_output_model_cls(name="John", age=30)}
     assert tru_output == exp_output
+
+
+FORCED_TOOL_CHOICE_REJECTION = "This model doesn't support the toolConfig.toolChoice.tool field."
+NATIVE_OUTPUT_REJECTION = "This model doesn't support the outputConfig field."
+
+
+class Scores(pydantic.BaseModel):
+    scores: dict[str, int]
+
+
+def _validation_error(message):
+    return ClientError({"Error": {"Code": "ValidationException", "Message": message}}, "ConverseStream")
+
+
+def _mechanism(request):
+    """The structured output mechanism a sent Converse request uses."""
+    if "tool" in request["toolConfig"]["toolChoice"]:
+        return "forced"
+    return "native" if "outputConfig" in request else "auto"
+
+
+@pytest.fixture
+def native_output_client(bedrock_client):
+    """A client whose botocore accepts the Converse outputConfig field."""
+    bedrock_client.meta.service_model.operation_model.return_value.input_shape.members = {"outputConfig": {}}
+    return bedrock_client
+
+
+@pytest.fixture
+def stream_structured_output(model, test_output_model_cls, alist):
+    async def stream_structured_output(messages, output_model=None):
+        output_model = output_model or test_output_model_cls
+        tool_spec = convert_pydantic_to_tool_spec(output_model)
+        await alist(
+            model.stream(
+                messages,
+                [tool_spec],
+                tool_choice={"tool": {"name": tool_spec["name"]}},
+                structured_output_model=output_model,
+            )
+        )
+
+    return stream_structured_output
+
+
+@pytest.mark.parametrize(
+    ("rejections", "exp_mechanisms"),
+    [
+        ([], ["forced"]),
+        ([FORCED_TOOL_CHOICE_REJECTION], ["forced", "native"]),
+        ([FORCED_TOOL_CHOICE_REJECTION, NATIVE_OUTPUT_REJECTION], ["forced", "native", "auto"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_structured_output_falls_back_to_next_mechanism(
+    native_output_client, stream_structured_output, messages, rejections, exp_mechanisms
+):
+    native_output_client.converse_stream.side_effect = [*map(_validation_error, rejections), {"stream": []}]
+
+    await stream_structured_output(messages)
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in native_output_client.converse_stream.call_args_list]
+    assert tru_mechanisms == exp_mechanisms
+
+    native_output_client.converse_stream.reset_mock(side_effect=True)
+    native_output_client.converse_stream.return_value = {"stream": []}
+
+    await stream_structured_output(messages)
+
+    native_output_client.converse_stream.assert_called_once()
+    assert _mechanism(native_output_client.converse_stream.call_args.kwargs) == exp_mechanisms[-1]
+
+
+@pytest.mark.parametrize(
+    ("supports_native_output", "output_model", "exp_warning"),
+    [
+        (True, Scores, r"cannot represent Scores \(dict fields\)"),
+        (False, None, r"requires botocore>=1\.42\.42"),
+    ],
+    ids=["unrepresentable_schema", "old_botocore"],
+)
+@pytest.mark.asyncio
+async def test_stream_structured_output_skips_native(
+    bedrock_client, stream_structured_output, messages, supports_native_output, output_model, exp_warning
+):
+    members = {"outputConfig": {}} if supports_native_output else {}
+    bedrock_client.meta.service_model.operation_model.return_value.input_shape.members = members
+    bedrock_client.converse_stream.side_effect = [_validation_error(FORCED_TOOL_CHOICE_REJECTION), {"stream": []}]
+
+    with pytest.warns(UserWarning, match=exp_warning):
+        await stream_structured_output(messages, output_model)
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in bedrock_client.converse_stream.call_args_list]
+    assert tru_mechanisms == ["forced", "auto"]
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_surfaces_unrelated_error(
+    native_output_client, stream_structured_output, messages
+):
+    native_output_client.converse_stream.side_effect = _validation_error("Malformed input request")
+
+    with pytest.raises(ClientError, match="Malformed input request"):
+        await stream_structured_output(messages)
+
+    native_output_client.converse_stream.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_separates_tool_result_turns(
+    native_output_client, stream_structured_output, tool_result_turn_messages, separated_tool_result_turn_messages
+):
+    native_output_client.converse_stream.side_effect = [
+        _validation_error("Conversation blocks and tool result blocks cannot be provided in the same turn."),
+        _validation_error(FORCED_TOOL_CHOICE_REJECTION),
+        {"stream": []},
+    ]
+
+    await stream_structured_output(tool_result_turn_messages)
+
+    tru_requests = [
+        (_mechanism(call.kwargs), call.kwargs["messages"])
+        for call in native_output_client.converse_stream.call_args_list
+    ]
+    exp_requests = [
+        ("forced", tool_result_turn_messages),
+        ("forced", separated_tool_result_turn_messages),
+        ("native", separated_tool_result_turn_messages),
+    ]
+    assert tru_requests == exp_requests
+
+
+@pytest.mark.parametrize(
+    ("config", "exp_request_fields"),
+    [
+        ({"additional_request_fields": {"thinking": THINKING}}, {"thinking": THINKING}),
+        (
+            {
+                "additional_request_fields": {"thinking": THINKING},
+                "additional_args": {"additionalModelRequestFields": {"user": 1}},
+            },
+            {"user": 1},
+        ),
+    ],
+    ids=["thinking_restored", "additional_args_wins"],
+)
+@pytest.mark.parametrize("mechanism", ["native", "auto"])
+def test_structured_output_request_rebuilds_request_fields_for_auto_tool_choice(
+    bedrock_client, messages, test_output_model_cls, config, exp_request_fields, mechanism
+):
+    model = BedrockModel(model_id="m1", **config)
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+    forced_request = model.format_request(messages, [tool_spec], tool_choice={"tool": {"name": tool_spec["name"]}})
+
+    tru_request = model._structured_output_request(forced_request, mechanism, test_output_model_cls)
+
+    assert tru_request["toolConfig"]["toolChoice"] == {"auto": {}}
+    assert tru_request["additionalModelRequestFields"] == exp_request_fields
+
+
+def test_structured_output_request_native_keeps_output_config(bedrock_client, messages, test_output_model_cls):
+    model = BedrockModel(model_id="m1", additional_args={"outputConfig": {"effort": "high"}})
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+    forced_request = model.format_request(messages, [tool_spec], tool_choice={"tool": {"name": tool_spec["name"]}})
+
+    tru_output_config = model._structured_output_request(forced_request, "native", test_output_model_cls)[
+        "outputConfig"
+    ]
+    tru_schema = json.loads(tru_output_config["textFormat"]["structure"]["jsonSchema"].pop("schema"))
+    exp_output_config = {
+        "effort": "high",
+        "textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"name": "TestOutputModel"}}},
+    }
+    exp_schema = {
+        "type": "object",
+        "title": "TestOutputModel",
+        "properties": {"name": {"type": "string", "title": "Name"}, "age": {"type": "integer", "title": "Age"}},
+        "additionalProperties": False,
+        "required": ["name", "age"],
+    }
+    assert tru_output_config == exp_output_config
+    assert tru_schema == exp_schema
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="This test requires Python 3.11 or higher (need add_note)")

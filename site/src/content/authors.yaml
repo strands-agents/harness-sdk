@@ -260,5 +260,25 @@
 
 - id: spencer-romo
   name: Spencer Romo
-  role: "Stickler maintainer, AWS"
-  bio: Spencer Romo maintains Stickler, the open source AWS library for field-level evaluation of structured output, and built the StructuredOutputSimilarity evaluator in Strands Evals on top of it.
+  role: "Senior Data Scientist, AWS"
+  bio: Spencer Romo is a Senior Data Scientist in AWS Forward Deployed Engineering. He maintains Stickler, the open source AWS library for field-level evaluation of structured output, and built the StructuredOutputSimilarity evaluator in Strands Evals on top of it.
+
+- id: vincil-bishop
+  name: Vincil Bishop
+  role: "Senior Deep Learning Architect, AWS"
+  bio: Vincil Bishop is a Senior Deep Learning Architect in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: diego-galaviz
+  name: Diego Galavíz
+  role: "Deep Learning Architect, AWS"
+  bio: Diego Galavíz is a Deep Learning Architect in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: harry-cavanagh
+  name: Harry Cavanagh
+  role: "Data Scientist, AWS"
+  bio: Harry Cavanagh is a Data Scientist in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: hayley-park
+  name: Hayley Park
+  role: "Applied Scientist, AWS"
+  bio: Hayley Park is an Applied Scientist in AWS Forward Deployed Engineering.

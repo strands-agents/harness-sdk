@@ -7,12 +7,13 @@
  */
 
 import type { Agent } from './agent.js'
+import type { InvokeOptions } from '../types/agent.js'
 import type { Snapshot } from '../types/snapshot.js'
 import { Interrupt, InterruptError, InterruptState, type InterruptStateData } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
 import { InterruptResponseContent } from '../types/interrupt.js'
 import { deepCopy, type JSONValue } from '../types/json.js'
-import { JsonBlock, TextBlock, ToolResultBlock } from '../types/messages.js'
+import { JsonBlock, LIMIT_STOP_REASONS, limitStopMessage, TextBlock, ToolResultBlock } from '../types/messages.js'
 import { createErrorResult, Tool, ToolStreamEvent } from '../tools/tool.js'
 import type { ToolContext, ToolStreamGenerator } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
@@ -193,7 +194,7 @@ export class AgentAsTool extends Tool {
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
     const toolUseId = toolUse.toolUseId
 
     // Concurrency guard: loadSnapshot + agent.stream() must not overlap.
@@ -226,10 +227,12 @@ export class AgentAsTool extends Tool {
       // Stream the sub-agent, forwarding the outer invocation's state so
       // mutations in the inner agent's hooks/tools are visible to the outer
       // agent's downstream callbacks and final AgentResult.
-      const gen = this._agent.stream(input, {
+      const invokeOptions: InvokeOptions = {
         invocationState,
         cancelSignal,
-      })
+        ...(invocationContext && { invocationContext }),
+      }
+      const gen = this._agent.stream(input, invokeOptions)
       let next = await gen.next()
       while (!next.done) {
         const event = next.value
@@ -260,6 +263,10 @@ export class AgentAsTool extends Tool {
 
       if (result.stopReason === 'cancelled') {
         return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
+      }
+
+      if (LIMIT_STOP_REASONS.has(result.stopReason)) {
+        return createErrorResult(limitStopMessage(this.name, result.stopReason), toolUseId)
       }
 
       // Build the tool result

@@ -13,7 +13,7 @@ import logging
 import uuid
 import warnings
 from collections.abc import AsyncGenerator, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import trace as trace_api
 
@@ -49,7 +49,7 @@ from ..types.exceptions import (
     StructuredOutputException,
 )
 from ..types.streaming import StopReason
-from ..types.tools import ToolResult, ToolUse
+from ..types.tools import ToolChoiceToolDict, ToolResult, ToolSpec, ToolUse
 from ._recover_message_on_max_tokens_reached import recover_message_on_max_tokens_reached
 from ._retry import ModelRetryStrategy
 from .streaming import stream_messages
@@ -370,12 +370,22 @@ async def event_loop_cycle(
             # End the cycle and return results
             agent.event_loop_metrics.end_cycle(cycle_start_time, cycle_trace, attributes)
 
+            # The forced retry may end in JSON text when the provider could not force the tool
+            if structured_output_context.force_attempted and stop_reason == "end_turn":
+                structured_output = structured_output_context.result_from_text(message)
+                yield StructuredOutputEvent(structured_output=structured_output)
+                tracer.end_event_loop_cycle_span(cycle_span, message)
+                yield EventLoopStopEvent(
+                    stop_reason,
+                    message,
+                    agent.event_loop_metrics,
+                    invocation_state["request_state"],
+                    structured_output=structured_output,
+                )
+                return
+
             # Force structured output tool call if LLM didn't use it automatically
             if structured_output_context.is_enabled and stop_reason == "end_turn":
-                if structured_output_context.force_attempted:
-                    raise StructuredOutputException(
-                        "The model failed to invoke the structured output tool even after it was forced."
-                    )
                 tool_spec = structured_output_context.get_tool_spec()
                 structured_output_context.set_forced_mode({"tool": {"name": tool_spec["name"]}} if tool_spec else None)
                 logger.debug("Forcing structured output tool")
@@ -577,11 +587,7 @@ async def _handle_model_execution(
                         error,
                     )
 
-            if structured_output_context.forced_mode:
-                tool_spec = structured_output_context.get_tool_spec()
-                tool_specs = [tool_spec] if tool_spec else []
-            else:
-                tool_specs = agent.tool_registry.get_all_tool_specs()
+            tool_specs = agent.tool_registry.get_all_tool_specs()
 
             # Build middleware context with defensive copies to prevent accidental mutation.
             # invocation_state is intentionally shared by reference (hooks/tools write to it).
@@ -600,6 +606,9 @@ async def _handle_model_execution(
                 invocation_state=invocation_state,
                 model=agent.model,
                 projected_input_tokens=projected_input_tokens,
+                structured_output_model=(
+                    structured_output_context.structured_output_model if structured_output_context.forced_mode else None
+                ),
             )
 
             # Snapshot model state before the chain so middleware mutations to
@@ -724,6 +733,20 @@ async def _handle_model_execution(
         raise EventLoopException(e, invocation_state["request_state"]) from e
 
 
+def _structured_output_request(ctx: InvokeModelContext) -> "tuple[list[ToolSpec], type[BaseModel] | None]":
+    """The tool specs and structured output model to send to the model serving this call.
+
+    On the structured output retry, a provider that enforces structured output itself receives the full tool list.
+    Any other provider receives only the forced tool, since it may ignore ``tool_choice``.
+    """
+    if ctx.structured_output_model is None or getattr(ctx.model, "_supports_structured_output", False) is True:
+        return ctx.tool_specs, ctx.structured_output_model
+    if not ctx.tool_choice or "tool" not in ctx.tool_choice:
+        return ctx.tool_specs, None
+    forced_tool = cast(ToolChoiceToolDict, ctx.tool_choice)["tool"]["name"]
+    return [tool_spec for tool_spec in ctx.tool_specs if tool_spec["name"] == forced_tool], None
+
+
 def _make_invoke_model_terminal(
     agent: "Agent", cycle_span: Any, tracer: Tracer, model_state: dict[str, Any]
 ) -> "Callable[[InvokeModelContext], AsyncGenerator[Any, None]]":
@@ -740,6 +763,7 @@ def _make_invoke_model_terminal(
         agent._observe_cancellation()
 
         system_prompt_str, system_prompt_content = split_system_prompt(ctx.system_prompt)
+        tool_specs, structured_output_model = _structured_output_request(ctx)
 
         model_id = ctx.model.config.get("model_id") if hasattr(ctx.model, "config") else None
         model_invoke_span = tracer.start_model_invoke_span(
@@ -756,7 +780,7 @@ def _make_invoke_model_terminal(
                     ctx.model,
                     system_prompt_str,
                     ctx.messages,
-                    ctx.tool_specs,
+                    tool_specs,
                     system_prompt_content=system_prompt_content,
                     tool_choice=ctx.tool_choice,
                     invocation_state=ctx.invocation_state,
@@ -764,6 +788,7 @@ def _make_invoke_model_terminal(
                     dynamic_trailing_blocks=ctx.dynamic_trailing_blocks,
                     cancel_signal=agent._cancel_signal,
                     agent_metadata=agent._metadata,
+                    structured_output_model=structured_output_model,
                 ):
                     yield event
 

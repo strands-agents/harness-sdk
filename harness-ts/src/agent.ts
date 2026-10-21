@@ -173,7 +173,7 @@ export interface HarnessAgentOptions extends Omit<
   skills?: boolean | SkillSource | SkillSource[] | AgentSkills | null
   /**
    * File-based long-term memory, on by default. `true` distills durable facts into markdown files
-   * under `./.agent/memory`, searches them before each turn, and folds the top matches into
+   * under `./.agent/memory`, searches them before each user turn, and folds the top matches into
    * context; memory is independent of any session, so it survives across sessions. `{ dir,
    * stores }` moves the directory or swaps the backend (one or more stores under the harness's memory
    * policy: injection on, `search_memory` on, no `add_memory` tool; the `subagent` delegate shares

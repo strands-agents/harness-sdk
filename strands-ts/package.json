@@ -108,6 +108,10 @@
       "types": "./dist/src/vended-tools/subagent/index.d.ts",
       "default": "./dist/src/vended-tools/subagent/index.js"
     },
+    "./vended-tools/swarm": {
+      "types": "./dist/src/vended-tools/swarm/index.d.ts",
+      "default": "./dist/src/vended-tools/swarm/index.js"
+    },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
       "default": "./dist/src/a2a/index.js"

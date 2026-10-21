@@ -130,6 +130,9 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
 
   // Bedrock Z.AI
   'zai.glm-4.7': 203_000,
+  'zai.glm-4.7-flash': 203_000,
+  'zai.glm-5': 200_000,
+  'zai.glm-5.3': 1_000_000,
 
   // OpenAI
   'gpt-6-astra': 1_050_000,

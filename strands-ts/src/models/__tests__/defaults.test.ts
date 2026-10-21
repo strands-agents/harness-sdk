@@ -13,6 +13,13 @@ describe('getContextWindowLimit', () => {
     // Bedrock Amazon Nova
     expect(getContextWindowLimit('amazon.nova-pro-v1:0')).toBe(300_000)
     expect(getContextWindowLimit('amazon.nova-micro-v1:0')).toBe(128_000)
+    // Bedrock Z.AI (GLM-5.3 resolves to its 1M window, not the 200K default: #5300)
+    expect(getContextWindowLimit('zai.glm-4.7')).toBe(203_000)
+    expect(getContextWindowLimit('zai.glm-4.7-flash')).toBe(203_000)
+    expect(getContextWindowLimit('zai.glm-5')).toBe(200_000)
+    expect(getContextWindowLimit('zai.glm-5.3')).toBe(1_000_000)
+    expect(getContextWindowLimit('us.zai.glm-5.3')).toBe(1_000_000)
+    expect(getContextWindowLimit('global.zai.glm-5.3')).toBe(1_000_000)
     // OpenAI
     expect(getContextWindowLimit('gpt-6-astra')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6.1-sol')).toBe(1_050_000)

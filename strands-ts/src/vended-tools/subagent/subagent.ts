@@ -13,7 +13,8 @@ import { Interrupt, InterruptError, type InterruptState } from '../../interrupt.
 import { logger } from '../../logging/logger.js'
 import {
   _defaultBuilder,
-  _resolveSpec,
+  _resolveSpecs,
+  _toSchemaProperties,
   Choice,
   Fixed,
   Inherit,
@@ -28,7 +29,7 @@ import type { ToolSpec } from '../../tools/types.js'
 import type { AgentResult, InvokeArgs } from '../../types/agent.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import type { JSONSchema } from '../../types/json.js'
-import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { LIMIT_STOP_REASONS, limitStopMessage, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { DEFAULT_SUBAGENT_DESCRIPTION, DEFAULT_SUBAGENT_MAX_DEPTH, GENERALIST } from './types.js'
 
@@ -63,8 +64,6 @@ export interface MakeSubagentOptions {
   instructions?: Open | Choice | Fixed
   /** Policy for the child's tools. A `Choice` must be `multiple`. @defaultValue `new Inherit()` */
   tools?: Choice | Fixed | Inherit
-  /** Policy for the child's MCP servers. A `Choice` must be `multiple`. @defaultValue `new Inherit()` */
-  mcpServers?: Choice | Fixed | Inherit
   /** Policy for the child's model. @defaultValue `new Inherit()` */
   model?: Inherit | Choice | Fixed
   /** Policy for how much parent conversation the child sees. @defaultValue `new Fixed('none')` */
@@ -73,10 +72,7 @@ export interface MakeSubagentOptions {
   maxDepth?: number
   /** Tool name exposed to the model. @defaultValue `'subagent'` */
   name?: string
-  /**
-   * Tool description shown to the model. The available presets are appended to it.
-   * @defaultValue {@link DEFAULT_SUBAGENT_DESCRIPTION}
-   */
+  /** Tool description shown to the model. @defaultValue {@link DEFAULT_SUBAGENT_DESCRIPTION} */
   description?: string
 }
 
@@ -89,7 +85,7 @@ export interface MakeSubagentOptions {
  * @param options - Configuration options.
  * @returns A tool that delegates a task to a freshly built child agent.
  * @throws Error if `maxDepth` is not a positive integer, `name` or `description` is empty, or a `Choice` axis
- * violates its constraints (no options, or not `multiple` for tools / MCP servers).
+ * violates its constraints (no options, or not `multiple` for tools).
  *
  * @example
  * ```typescript
@@ -124,30 +120,7 @@ export function makeSubagent(options: MakeSubagentOptions = {}): Tool {
     throw new Error(`defaultPreset '${defaultPreset}' is not one of the presets: ${Object.keys(presets).join(', ')}.`)
   }
 
-  // A tools Choice must be multiple.
   const tools = options.tools ?? new Inherit()
-  if (tools instanceof Choice) {
-    if (tools.options.length === 0) {
-      throw new Error(
-        'tools: new Choice([]) offers no options; use new Fixed([]) for a toolless child, or new Inherit().'
-      )
-    }
-    if (!tools.multiple) {
-      throw new Error('tools: new Choice(...) must set multiple to true; a subagent selects a subset of tools.')
-    }
-  }
-
-  const mcpServers = options.mcpServers ?? new Inherit()
-  if (mcpServers instanceof Choice) {
-    if (mcpServers.options.length === 0) {
-      throw new Error(
-        'mcpServers: new Choice([]) offers no options; use new Fixed([]) for no servers, or new Inherit().'
-      )
-    }
-    if (!mcpServers.multiple) {
-      throw new Error('mcpServers: new Choice(...) must set multiple to true; a subagent selects a subset of servers.')
-    }
-  }
 
   const contextModes =
     context instanceof Choice ? context.normalized().map((o) => context.valueFor(o.name)) : [context.value]
@@ -159,30 +132,15 @@ export function makeSubagent(options: MakeSubagentOptions = {}): Tool {
 
   const toolSpec: ToolSpec = {
     name,
-    description: buildDescription(description, presets),
-    inputSchema: buildSchema({ presets, defaultPreset, instructions, tools, mcpServers, model, context }),
+    description,
+    inputSchema: buildSchema({ presets, defaultPreset, instructions, tools, model, context }),
   }
 
+  // The schema has no name field; the child takes the tool's name.
   const resolve = (raw: Record<string, unknown>): AgentSpec =>
-    _resolveSpec(raw, { presets, defaultPreset, instructions, tools, mcpServers, model })
+    _resolveSpecs([{ ...raw, name }], { presets, defaultPreset, instructions, tools, model })[0]!
 
   return new SubagentTool({ name, toolSpec, resolve, context, builder: options.builder, maxDepth })
-}
-
-/**
- * Appends the available presets to the base description.
- *
- * @param base - The base tool description.
- * @param presets - Presets the model can select.
- * @returns The description shown to the model.
- */
-function buildDescription(base: string, presets: Record<string, Preset>): string {
-  const entries = Object.entries(presets)
-  if (entries.length === 0) {
-    return base
-  }
-  const roles = entries.map(([presetName, preset]) => `- ${presetName}: ${preset.description || presetName}`)
-  return `${base}\n\nAvailable subagents (agent_type):\n${roles.join('\n')}`
 }
 
 /**
@@ -196,61 +154,34 @@ function buildSchema(axes: {
   defaultPreset: string | undefined
   instructions: Open | Choice | Fixed
   tools: Choice | Fixed | Inherit
-  mcpServers: Choice | Fixed | Inherit
   model: Inherit | Choice | Fixed
   context: Fixed | Choice
 }): JSONSchema {
-  const { presets, defaultPreset, instructions, tools, mcpServers, model, context } = axes
+  const { context, ...schemaAxes } = axes
   const properties: Record<string, unknown> = {
     task: {
       type: 'string',
       description:
         'The self-contained task, including all context the subagent needs. It cannot ask follow-up questions.',
     },
-  }
-
-  if (Object.keys(presets).length > 0) {
-    properties['agent_type'] = {
-      type: 'string',
-      enum: Object.keys(presets),
-      description: `Which subagent role to use. Omit to use the default ('${defaultPreset}').`,
-    }
-  }
-
-  const instructionsDescription = "A system prompt defining the subagent's role."
-  if (instructions instanceof Open) {
-    properties['instructions'] = { type: 'string', description: instructionsDescription }
-  } else if (instructions instanceof Choice) {
-    properties['instructions'] = instructions.toSchemaProperty(instructionsDescription)
-  }
-
-  if (tools instanceof Choice) {
-    properties['tools'] = tools.toSchemaProperty(
-      'Subset of tools to grant the subagent. Fewer is safer; it cannot exceed your own. ' +
-        'Omit to grant all inherited tools.'
-    )
-  }
-
-  if (mcpServers instanceof Choice) {
-    properties['mcp_servers'] = mcpServers.toSchemaProperty(
-      'Subset of MCP servers whose tools to grant the subagent. Fewer is safer; it cannot ' +
-        'exceed your own. Omit to grant all of them.'
-    )
-  }
-
-  if (model instanceof Choice) {
-    properties['model'] = model.toSchemaProperty(
-      "Which model the subagent runs on. Omit to inherit the parent's model."
-    )
+    ..._toSchemaProperties(schemaAxes),
   }
 
   if (context instanceof Choice) {
-    properties['context'] = context.toSchemaProperty(
-      "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full " +
+    const options = context.normalized()
+    const lines = options
+      .filter((option) => option.description)
+      .map((option) => `- ${option.name}: ${option.description}`)
+    properties['context'] = {
+      type: 'string',
+      enum: options.map((option) => option.name),
+      description:
+        "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full " +
         "history including tool calls and their results — can be large), 'no_tools' (text turns " +
-        'only — tool calls and their results removed). More context costs more tokens.'
-    )
-    if (context.normalized().some((option) => String(option.value) !== 'none')) {
+        'only — tool calls and their results removed). More context costs more tokens.' +
+        (lines.length > 0 ? `\nOptions:\n${lines.join('\n')}` : ''),
+    }
+    if (options.some((option) => String(option.value) !== 'none')) {
       properties['last_messages'] = {
         type: 'integer',
         description:
@@ -310,7 +241,7 @@ class SubagentTool extends Tool {
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
     const toolUseId = toolUse.toolUseId
     const input = toolUse.input
     const raw = (input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<
@@ -329,7 +260,11 @@ class SubagentTool extends Tool {
       }
       const { child, prompt } = prepared
 
-      const gen = child.stream(prompt, { invocationState: { ...invocationState }, cancelSignal })
+      const gen = child.stream(prompt, {
+        invocationState: { ...invocationState },
+        cancelSignal,
+        ...(invocationContext && { invocationContext }),
+      })
       let next = await gen.next()
       while (!next.done) {
         const event = next.value
@@ -493,6 +428,9 @@ class SubagentTool extends Tool {
     this._pending.delete(toolUseId)
     if (result.stopReason === 'cancelled') {
       return this._errorResult(toolUseId, 'Subagent was cancelled.')
+    }
+    if (LIMIT_STOP_REASONS.has(result.stopReason)) {
+      return this._errorResult(toolUseId, limitStopMessage(this.name, result.stopReason))
     }
     return new ToolResultBlock({
       toolUseId,
