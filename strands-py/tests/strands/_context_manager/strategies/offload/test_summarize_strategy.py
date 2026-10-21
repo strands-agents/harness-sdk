@@ -1,5 +1,6 @@
 """Tests for the SummarizeStrategy."""
 
+import logging
 import unittest.mock
 
 import pytest
@@ -168,6 +169,67 @@ class TestSummarizeStrategyPerBlock:
         assert await strategy.apply(context) is True
         assert "[Offloaded:" in messages[1]["content"][0]["text"]
 
+    @pytest.mark.asyncio
+    async def test_keeps_block_and_continues_pass_when_summarization_fails(self, mock_agent, caplog):
+        summary_stream = _make_stream_events("Summary of content.")
+        calls = iter([RuntimeError("rejected"), None])
+
+        def stream(*args, **kwargs):
+            error = next(calls)
+            if error:
+                raise error
+            return summary_stream(*args, **kwargs)
+
+        mock_agent.model.stream = stream
+        strategy = Offload.summarize("tool_results").when(threshold=100)
+
+        def tool_result_message(tool_use_id: str) -> Message:
+            tool_result = ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": "x" * 10000}])
+            return Message(role="user", content=[ContentBlock(toolResult=tool_result)])
+
+        messages: Messages = [tool_result_message("call_1"), tool_result_message("call_2")]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(context) is True
+        assert messages[0]["content"][0]["toolResult"]["content"][0]["text"] == "x" * 10000
+        assert "[Summarized:" in messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+        assert "error=<rejected>" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_offloads_video_block_without_summarizing(self, mock_agent):
+        mock_agent.model.stream = unittest.mock.Mock()
+        strategy = Offload.summarize("*").when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(video={"format": "mp4", "source": {"bytes": b"video"}})]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        assert await strategy.apply(context) is True
+        assert messages[0]["content"][0]["text"].startswith("[Offloaded:")
+        mock_agent.model.stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
+        # guards against summarizer failures being hidden by a lossy retry (#5291)
+        mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
+        strategy = Offload.summarize("*").when(threshold=100)
+        messages: Messages = [
+            Message(
+                role="user",
+                content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
+            ),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(context) is True
+        assert "[Offloaded:" in messages[0]["content"][0]["text"]
+        assert "error=<images unsupported>" in caplog.text
+
 
 class TestSummarizeStrategyMessageLevel:
     """Tests for message-level summarization — only tests unique to SummarizeStrategy."""
@@ -281,3 +343,48 @@ class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
         )
         summaries = [b for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Summarized:")]
         assert len(summaries) == 1
+
+
+class TestSummarizationWithToolCalls:
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5291."""
+
+    @pytest.mark.asyncio
+    async def test_summarizes_tool_calls_as_text_in_a_single_model_call(self, mock_agent):
+        tru_calls: list[Messages] = []
+        summary_stream = _make_stream_events("Listed the files")
+
+        def recording_stream(messages, *args, **kwargs):
+            tru_calls.append(messages)
+            return summary_stream(messages, *args, **kwargs)
+
+        mock_agent.model.stream = recording_stream
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=2)
+        tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
+        tool_result = ToolResult(toolUseId="call_1", status="success", content=[{"text": "a.ts b.ts"}])
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="fix the build")]),
+            Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
+            Message(role="user", content=[ContentBlock(toolResult=tool_result)]),
+            Message(role="assistant", content=[ContentBlock(text="done")]),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+        mock_agent.messages = messages
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+        exp_calls = [
+            [
+                Message(
+                    role="user",
+                    content=[
+                        ContentBlock(text="<content>"),
+                        ContentBlock(text="\n---\n[assistant]"),
+                        ContentBlock(text='[tool call: shell] {"command":"ls"}'),
+                        ContentBlock(text="\n---\n[user]"),
+                        ContentBlock(text="[tool result: shell]"),
+                        ContentBlock(text="a.ts b.ts"),
+                        ContentBlock(text="</content>"),
+                    ],
+                )
+            ]
+        ]
+        assert tru_calls == exp_calls

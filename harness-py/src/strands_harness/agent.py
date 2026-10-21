@@ -360,7 +360,7 @@ def create_harness(
             used verbatim; ``False``/``None`` disables skills. Filesystem sources are read through the
             agent's sandbox when there is one. An ``AgentSkills`` in ``plugins`` wins.
         memory: File-backed long-term memory, on by default. When enabled, the agent distills durable
-            facts into markdown files, searches them before each turn, and folds the top matches into
+            facts into markdown files, searches them before each user turn, and folds the top matches into
             context; persistence is independent of any session, so memory survives across sessions.
             ``True`` (or ``{}``) uses a file store under ``./.agent/memory``; ``{"dir": ...}`` moves it;
             ``{"stores": [...]}`` swaps in your own store(s) under the harness's memory policy (injection on,

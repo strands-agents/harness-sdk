@@ -91,6 +91,26 @@ class TestContextManagerRunStrategies:
         assert event.retry is True
 
     @pytest.mark.asyncio
+    async def test_overflow_truncates_when_a_strategy_raises(self, mock_agent):
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "failing-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(side_effect=RuntimeError("summarizer rejected"))
+        mock_agent.messages = [
+            Message(role="user" if i % 2 == 0 else "assistant", content=[ContentBlock(text=f"msg {i}")])
+            for i in range(10)
+        ]
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=1.5)
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        event = AfterModelCallEvent(agent=mock_agent, exception=ContextWindowOverflowException("overflow"))
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert len(mock_agent.messages) < 10
+        assert event.retry is True
+
+    @pytest.mark.asyncio
     async def test_overflow_retry_cap_at_three(self, mock_agent):
         strategy = unittest.mock.AsyncMock()
         strategy.name = "mock-strategy"

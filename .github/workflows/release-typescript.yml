@@ -456,8 +456,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
         run: |
-          gh workflow run changelog-sync.yml -f tag="$NEW_TAG" \
+          gh workflow run changelog-sync.yml \
             || echo "::warning::Failed to dispatch changelog sync for $NEW_TAG; the daily cron will backstop."
+          {
+            echo "### Next steps"
+            echo "1. Merge the [changelog PR](https://github.com/strands-agents/harness-sdk/pulls?q=is%3Apr+is%3Aopen+head%3Achangelog%2Fsync) once the sync opens or updates it (a few minutes)."
+            echo "2. Run **Docs: Deploy to GitHub Pages**. It fails until step 1 is done."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Publish to npm ─────────────────────────────────────────────────────
   # Last step. On a fork this fails at the OIDC step — by design.

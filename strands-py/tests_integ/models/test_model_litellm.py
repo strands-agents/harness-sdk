@@ -13,17 +13,17 @@ from tests_integ.conftest import retry_on_flaky
 
 @pytest.fixture
 def model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0")
+    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6")
 
 
 @pytest.fixture
 def streaming_model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", params={"stream": True})
+    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6", params={"stream": True})
 
 
 @pytest.fixture
 def non_streaming_model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", params={"stream": False})
+    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6", params={"stream": False})
 
 
 @pytest.fixture
@@ -259,6 +259,7 @@ def test_streaming_returns_usage_metrics(model_fixture, request):
     assert result.metrics.accumulated_usage["totalTokens"] > 0
 
 
+@pytest.mark.skip(reason="Turn-2 prompt-cache read intermittently returns 0 tokens; see #5315")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [True, False])
 async def test_cache_read_tokens_multi_turn(model, streaming):

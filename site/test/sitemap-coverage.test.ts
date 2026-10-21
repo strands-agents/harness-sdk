@@ -7,7 +7,7 @@ import { resolveRedirectFromUrl } from '../src/util/redirect'
 import { buildRedirectFromMap } from '../src/util/redirect.build'
 import { tagToSlug, getAllTags, getPublishedPosts } from '../src/util/blog'
 
-const KNOWN_ROUTES_PATH = path.resolve('test/known-routes.json')
+const KNOWN_ROUTES_PATH = path.resolve('src/config/legacy-routes.json')
 const SITEMAP_URL = 'https://strandsagents.com/sitemap-index.xml'
 const CACHE_PATH = path.resolve('.build/sitemap-cache.json')
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000 // 4 hours
@@ -20,8 +20,7 @@ const API_REFERENCE_URL = /\/docs\/api\/(python|typescript)\//
  * Returns full URLs (e.g. "https://strandsagents.com/1.x/documentation/docs/user-guide/quickstart/").
  */
 async function fetchSitemapUrls(): Promise<string[]> {
-  const cacheValid =
-    fs.existsSync(CACHE_PATH) && Date.now() - fs.statSync(CACHE_PATH).mtimeMs < CACHE_TTL_MS
+  const cacheValid = fs.existsSync(CACHE_PATH) && Date.now() - fs.statSync(CACHE_PATH).mtimeMs < CACHE_TTL_MS
 
   let allUrls: string[]
 
@@ -151,9 +150,9 @@ describe('Sitemap Coverage', { skip: !VERIFY_LIVE_SITEMAP }, () => {
 })
 
 describe('Known Routes', () => {
-  // test/known-routes.json is an append-only registry of paths that must always resolve.
+  // src/config/legacy-routes.json is an append-only registry of paths that must always resolve.
   // Add new entries from the live sitemap with: npm run routes:update
-  it('every redirectFrom source slug has a corresponding entry in known-routes.json', async () => {
+  it('every redirectFrom source slug has a corresponding entry in legacy-routes.json', async () => {
     const knownRoutes = new Set<string>(JSON.parse(fs.readFileSync(KNOWN_ROUTES_PATH, 'utf-8')))
     const knownRedirects = Object.entries(await buildRedirectFromMap()).map(([redirect, page]) => ({
       page,
@@ -165,8 +164,8 @@ describe('Known Routes', () => {
     const entries = missing.map((it) => `  "/${it.redirect}/"`)
     expect(
       missing,
-      `${missing.length} redirectFrom slug(s) are missing from known-routes.json.\n` +
-        `Add these entries to test/known-routes.json:\n` +
+      `${missing.length} redirectFrom slug(s) are missing from legacy-routes.json.\n` +
+        `Add these entries to src/config/legacy-routes.json:\n` +
         entries.join(',\n')
     ).toEqual([])
   })
@@ -217,7 +216,7 @@ describe('Known Routes', () => {
         console.log(`  ${url}\n    -> ${resolved} (NOT FOUND)`)
       }
       console.log('\nIf these pages moved, add a redirect rule in src/util/redirect.ts.')
-      console.log('To sync known-routes.json with the live sitemap, run: npm run routes:update')
+      console.log('To sync legacy-routes.json with the live sitemap, run: npm run routes:update')
     }
 
     expect(broken).toEqual([])

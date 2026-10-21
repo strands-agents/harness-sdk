@@ -550,9 +550,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                         ? [{ text: accumulatedText }]
                         : [],
                 })
+                accumulatedText = ''
                 accumulatedCitations.reset()
               } else {
                 block = new TextBlock(accumulatedText)
+                accumulatedText = ''
               }
               contentBlocks.push(block)
               yield block

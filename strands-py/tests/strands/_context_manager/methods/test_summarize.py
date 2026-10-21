@@ -1,5 +1,6 @@
 """Tests for the summarize method module."""
 
+import json
 import unittest.mock
 
 import pytest
@@ -9,7 +10,8 @@ from strands._context_manager.methods.summarize import (
     _summarize_content,
     _tool_result_to_content_blocks,
 )
-from strands.types.content import ContentBlock, Message
+from strands.types.content import ContentBlock, Message, Messages
+from strands.types.tools import ToolResult, ToolUse
 
 
 @pytest.fixture
@@ -88,8 +90,127 @@ class TestFlattenMessagesToContent:
             ),
         ]
         tru_result = _flatten_messages_to_content(messages)
-        assert tru_result[0] == ContentBlock(text="\n---\n[user]")
-        assert tru_result[1] == ContentBlock(text="result data")
+        exp_result = [
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="[tool result]"),
+            ContentBlock(text="result data"),
+        ]
+        assert tru_result == exp_result
+
+    def test_excludes_reasoning(self):
+        messages = [
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlock(reasoningContent={"reasoningText": {"text": "plan", "signature": "sig"}}),
+                    ContentBlock(text="hi"),
+                ],
+            ),
+        ]
+        tru_result = _flatten_messages_to_content(messages)
+        assert tru_result == [ContentBlock(text="\n---\n[assistant]"), ContentBlock(text="hi")]
+
+    def test_skips_marker_for_reasoning_only_message(self):
+        messages = [
+            Message(
+                role="assistant",
+                content=[ContentBlock(reasoningContent={"reasoningText": {"text": "plan", "signature": "sig"}})],
+            ),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+        tru_result = _flatten_messages_to_content(messages)
+        assert tru_result == [ContentBlock(text="\n---\n[user]"), ContentBlock(text="next")]
+
+    def test_passes_only_text_images_and_documents_and_renders_other_blocks_as_text(self):
+        image = ContentBlock(image={"format": "png", "source": {"bytes": b"\x01"}})
+        tool_result = ToolResult(
+            toolUseId="call_1",
+            status="success",
+            content=[{"json": {"ok": True}}, {"video": {"format": "mp4", "source": {"bytes": b"\x01"}}}],
+        )
+        messages: Messages = [
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(guardContent={"text": {"text": "guarded text", "qualifiers": []}}),
+                    ContentBlock(video={"format": "mp4", "source": {"bytes": b"\x01"}}),
+                    ContentBlock(audio={"format": "mp3", "source": {"bytes": b"\x01"}}),
+                    image,
+                    ContentBlock(cachePoint={"type": "default"}),
+                    ContentBlock(toolResult=tool_result),
+                ],
+            ),
+            Message(
+                role="assistant",
+                content=[ContentBlock(citationsContent={"citations": [], "content": [{"text": "cited answer"}]})],
+            ),
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+        exp_result = [
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="guarded text"),
+            ContentBlock(text="[video omitted]"),
+            ContentBlock(text="[audio omitted]"),
+            image,
+            ContentBlock(text="[tool result]"),
+            ContentBlock(text=json.dumps({"ok": True}, indent=2)),
+            ContentBlock(text="[video omitted]"),
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text="cited answer"),
+        ]
+        assert tru_result == exp_result
+
+    def test_renders_tool_calls_and_their_results_as_labeled_text(self):
+        # guards against tool-use blocks reaching the summarizer in a user turn (#5291)
+        tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
+        tool_result = ToolResult(toolUseId="call_1", status="success", content=[{"text": "a.ts b.ts"}])
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="fix the build")]),
+            Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
+            Message(role="user", content=[ContentBlock(toolResult=tool_result)]),
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+        exp_result = [
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="fix the build"),
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text='[tool call: shell] {"command":"ls"}'),
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="[tool result: shell]"),
+            ContentBlock(text="a.ts b.ts"),
+        ]
+        assert tru_result == exp_result
+
+    def test_labels_error_results_and_results_without_a_matching_call(self):
+        tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
+        unmatched_error = ToolResult(toolUseId="call_2", status="error", content=[{"text": "not found"}])
+        unmatched_success = ToolResult(toolUseId="call_3", status="success", content=[{"text": "ok"}])
+        failed = ToolResult(toolUseId="call_1", status="error", content=[{"text": "denied"}])
+        messages: Messages = [
+            Message(
+                role="user",
+                content=[ContentBlock(toolResult=unmatched_error), ContentBlock(toolResult=unmatched_success)],
+            ),
+            Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
+            Message(role="user", content=[ContentBlock(toolResult=failed)]),
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+        exp_result = [
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="[tool result (error)]"),
+            ContentBlock(text="not found"),
+            ContentBlock(text="[tool result]"),
+            ContentBlock(text="ok"),
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text='[tool call: shell] {"command":"ls"}'),
+            ContentBlock(text="\n---\n[user]"),
+            ContentBlock(text="[tool result: shell (error)]"),
+            ContentBlock(text="denied"),
+        ]
+        assert tru_result == exp_result
 
 
 class TestSummarizeContent:
@@ -121,54 +242,17 @@ class TestSummarizeContent:
         assert tru_result == "custom summary"
 
     @pytest.mark.asyncio
-    async def test_text_only_fallback_on_exception(self, mock_model):
-        """When the first call throws, retries with text-only blocks."""
-        call_count = 0
-
-        def stream_side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("model error")
-            return _make_stream_events("Fallback summary.")(*args, **kwargs)
-
-        mock_model.stream = stream_side_effect
+    async def test_propagates_model_error_without_retrying(self, mock_model):
+        # guards against summarizer failures being hidden by a lossy retry (#5291)
+        mock_model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
         content_blocks = [
             ContentBlock(text="some text"),
-            ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
+            ContentBlock(image={"format": "png", "source": {"bytes": b"\x01"}}),
         ]
 
-        tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result == "Fallback summary."
-        assert call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_text_only_fallback_skipped_when_all_text(self, mock_model):
-        """When all blocks are already text-only, no fallback retry happens."""
-
-        def stream_side_effect(*args, **kwargs):
-            raise RuntimeError("model error")
-
-        mock_model.stream = stream_side_effect
-        content_blocks = [ContentBlock(text="only text")]
-
-        tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result is None
-
-    @pytest.mark.asyncio
-    async def test_text_only_fallback_skipped_when_no_text_blocks(self, mock_model):
-        """When there are no text blocks at all, no fallback retry happens."""
-
-        def stream_side_effect(*args, **kwargs):
-            raise RuntimeError("model error")
-
-        mock_model.stream = stream_side_effect
-        content_blocks = [
-            ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
-        ]
-
-        tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result is None
+        with pytest.raises(RuntimeError, match="images unsupported"):
+            await _summarize_content(content_blocks, mock_model, {})
+        assert mock_model.stream.call_count == 1
 
     @pytest.mark.asyncio
     async def test_call_summarizer_no_text_in_response(self, mock_model):

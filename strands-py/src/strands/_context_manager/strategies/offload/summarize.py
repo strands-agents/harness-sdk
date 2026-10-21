@@ -132,7 +132,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if "toolResult" in block:
             tool_result = block["toolResult"]
             content_blocks = _tool_result_to_content_blocks(tool_result["content"])
-            summary = await _summarize_content(content_blocks, model, self._config)
+            summary = await self._try_summarize(content_blocks, model, message)
             if not summary:
                 return None
 
@@ -147,24 +147,36 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 )
             )
 
-        if "text" not in block:
-            summary = await _summarize_content([block], model, self._config)
+        if "text" in block:
+            summary = await self._try_summarize([ContentBlock(text=block["text"])], model, message)
+            if not summary:
+                return None
+
+            logger.debug("tracking_id=<%s>, tokens=<%s> | summarized text block", message.get("tracking_id"), tokens)
+            marker = _format_summarized("text block", tokens, summary) + refs
+            return ContentBlock(text=marker)
+
+        if "image" in block or "document" in block:
+            summary = await self._try_summarize([block], model, message)
             if summary:
                 logger.debug(
                     "tracking_id=<%s>, tokens=<%s> | summarized media block", message.get("tracking_id"), tokens
                 )
                 marker = _format_summarized("media block", tokens, summary) + refs
                 return ContentBlock(text=marker)
-            logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-            return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
 
-        summary = await _summarize_content([ContentBlock(text=block["text"])], model, self._config)
-        if not summary:
+        logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
+        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
+
+    async def _try_summarize(self, content: list[ContentBlock], model: Model, message: Message) -> str | None:
+        """Summarize one block; a failure is logged and leaves the block unsummarized so the pass continues."""
+        try:
+            return await _summarize_content(content, model, self._config)
+        except Exception as error:
+            logger.warning(
+                "tracking_id=<%s>, error=<%s> | block summarization failed", message.get("tracking_id"), error
+            )
             return None
-
-        logger.debug("tracking_id=<%s>, tokens=<%s> | summarized text block", message.get("tracking_id"), tokens)
-        marker = _format_summarized("text block", tokens, summary) + refs
-        return ContentBlock(text=marker)
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model
