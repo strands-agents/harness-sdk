@@ -15,7 +15,6 @@ from typing_extensions import TypedDict
 from ...event_loop.streaming import process_stream
 from ...types.content import ContentBlock, Message, Messages
 from ...types.tools import ToolResult, ToolResultContent
-from ..types import is_text_block
 
 if TYPE_CHECKING:
     from ...models.model import Model
@@ -63,20 +62,33 @@ async def _summarize_content(
     model: Model,
     config: SummarizeConfig | None = None,
 ) -> str | None:
-    """Summarize content blocks via an LLM call, falling back to text-only on failure."""
-    result, error = await _call_summarizer(content, model, config)
-    if error is None:
-        return result
+    """Summarize content blocks via an LLM call. Model errors propagate to the caller."""
+    system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
 
-    text_only = [block for block in content if is_text_block(block)]
-    if not text_only or len(text_only) == len(content):
-        logger.warning("error=<%s> | summarization failed", error)
+    messages: Messages = [
+        Message(
+            role="user",
+            content=[ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")],
+        )
+    ]
+
+    chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
+
+    result_message: Message | None = None
+    async for event in process_stream(chunks):
+        if "stop" in event:
+            _, result_message, _, _ = event["stop"]
+
+    if result_message is None:
+        logger.warning("result=<empty> | summarization produced no response")
         return None
 
-    fallback_result, fallback_error = await _call_summarizer(text_only, model, config)
-    if fallback_error is not None:
-        logger.warning("error=<%s> | summarization failed after text-only retry", fallback_error)
-    return fallback_result
+    parts: list[str] = []
+    for block in result_message.get("content", []):
+        if "text" in block:
+            parts.append(block["text"])
+
+    return "\n".join(parts).strip() or None
 
 
 def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[ContentBlock]:
@@ -138,42 +150,3 @@ def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
             blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
             blocks.extend(content)
     return blocks
-
-
-async def _call_summarizer(
-    content: list[ContentBlock],
-    model: Model,
-    config: SummarizeConfig | None = None,
-) -> tuple[str | None, Exception | None]:
-    """Call the model to generate a summary. Returns (text, error), with error set when the call raised."""
-    system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-
-    messages: Messages = [
-        Message(
-            role="user",
-            content=[ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")],
-        )
-    ]
-
-    try:
-        chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
-
-        result_message: Message | None = None
-        async for event in process_stream(chunks):
-            if "stop" in event:
-                _, result_message, _, _ = event["stop"]
-
-        if result_message is None:
-            logger.warning("result=<empty> | summarization produced no response")
-            return None, None
-
-        parts: list[str] = []
-        for block in result_message.get("content", []):
-            if "text" in block:
-                parts.append(block["text"])
-
-        return "\n".join(parts).strip() or None, None
-
-    except Exception as error:
-        logger.debug("error=<%s> | summarization attempt failed", error)
-        return None, error

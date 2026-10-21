@@ -148,7 +148,15 @@ class SummarizeStrategy(BaseOffloadStrategy):
             )
 
         if "text" not in block:
-            summary = await _summarize_content([block], model, self._config)
+            summary = None
+            try:
+                summary = await _summarize_content([block], model, self._config)
+            except Exception as error:
+                logger.warning(
+                    "tracking_id=<%s>, error=<%s> | media block summarization failed, offloading",
+                    message.get("tracking_id"),
+                    error,
+                )
             if summary:
                 logger.debug(
                     "tracking_id=<%s>, tokens=<%s> | summarized media block", message.get("tracking_id"), tokens

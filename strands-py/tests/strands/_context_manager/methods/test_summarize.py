@@ -1,6 +1,5 @@
 """Tests for the summarize method module."""
 
-import logging
 import unittest.mock
 
 import pytest
@@ -12,8 +11,6 @@ from strands._context_manager.methods.summarize import (
 )
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
-
-SUMMARIZE_LOGGER = "strands._context_manager.methods.summarize"
 
 
 @pytest.fixture
@@ -204,78 +201,17 @@ class TestSummarizeContent:
         assert tru_result == "custom summary"
 
     @pytest.mark.asyncio
-    async def test_text_only_fallback_on_exception(self, mock_model, caplog):
-        """When the first call throws, retries with text-only blocks."""
-        call_count = 0
-
-        def stream_side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("model error")
-            return _make_stream_events("Fallback summary.")(*args, **kwargs)
-
-        mock_model.stream = stream_side_effect
+    async def test_propagates_model_error_without_retrying(self, mock_model):
+        # guards against summarizer failures being hidden by a lossy retry (#5291)
+        mock_model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
         content_blocks = [
             ContentBlock(text="some text"),
-            ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
+            ContentBlock(image={"format": "png", "source": {"bytes": b"\x01"}}),
         ]
 
-        with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
-            tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result == "Fallback summary."
-        assert call_count == 2
-        assert caplog.records == []
-
-    @pytest.mark.asyncio
-    async def test_warns_when_text_only_fallback_also_fails(self, mock_model, caplog):
-        errors = iter([RuntimeError("images unsupported"), RuntimeError("unavailable")])
-
-        def stream_side_effect(*args, **kwargs):
-            raise next(errors)
-
-        mock_model.stream = stream_side_effect
-        content_blocks = [
-            ContentBlock(text="some text"),
-            ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
-        ]
-
-        with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
-            tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result is None
-        assert [record.getMessage() for record in caplog.records] == [
-            "error=<unavailable> | summarization failed after text-only retry"
-        ]
-
-    @pytest.mark.asyncio
-    async def test_text_only_fallback_skipped_when_all_text(self, mock_model, caplog):
-        """When all blocks are already text-only, no fallback retry happens."""
-
-        def stream_side_effect(*args, **kwargs):
-            raise RuntimeError("model error")
-
-        mock_model.stream = stream_side_effect
-        content_blocks = [ContentBlock(text="only text")]
-
-        with caplog.at_level(logging.WARNING, logger=SUMMARIZE_LOGGER):
-            tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result is None
-        assert [record.getMessage() for record in caplog.records] == ["error=<model error> | summarization failed"]
-
-    @pytest.mark.asyncio
-    async def test_text_only_fallback_skipped_when_no_text_blocks(self, mock_model):
-        """When there are no text blocks at all, no fallback retry happens."""
-
-        def stream_side_effect(*args, **kwargs):
-            raise RuntimeError("model error")
-
-        mock_model.stream = stream_side_effect
-        content_blocks = [
-            ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "result"}]}),
-        ]
-
-        tru_result = await _summarize_content(content_blocks, mock_model, {})
-        assert tru_result is None
+        with pytest.raises(RuntimeError, match="images unsupported"):
+            await _summarize_content(content_blocks, mock_model, {})
+        assert mock_model.stream.call_count == 1
 
     @pytest.mark.asyncio
     async def test_call_summarizer_no_text_in_response(self, mock_model):

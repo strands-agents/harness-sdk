@@ -1,5 +1,6 @@
 """Tests for the SummarizeStrategy."""
 
+import logging
 import unittest.mock
 
 import pytest
@@ -167,6 +168,25 @@ class TestSummarizeStrategyPerBlock:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         assert await strategy.apply(context) is True
         assert "[Offloaded:" in messages[1]["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
+        # guards against summarizer failures being hidden by a lossy retry (#5291)
+        mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
+        strategy = Offload.summarize("*").when(threshold=100)
+        messages: Messages = [
+            Message(
+                role="user",
+                content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
+            ),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(context) is True
+        assert "[Offloaded:" in messages[0]["content"][0]["text"]
+        assert "error=<images unsupported>" in caplog.text
 
 
 class TestSummarizeStrategyMessageLevel:
