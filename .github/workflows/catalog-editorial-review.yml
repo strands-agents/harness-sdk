@@ -2,7 +2,9 @@ name: "Catalog: Editorial Review Flag"
 
 # No paths filter: a push that removes every catalog change must still run so
 # the stale label/comment from an earlier push gets cleared. The script
-# early-exits cheaply when the PR touches no catalog files.
+# early-exits cheaply when the PR touches no catalog files. The same job also
+# keeps the `area-catalog` label in sync with whether the PR touches the
+# catalog at all.
 on:
   pull_request_target:
     branches: [main]
@@ -39,6 +41,9 @@ jobs:
         uses: actions/github-script@v9
         env:
           EDITORIAL_LABEL: 'catalog: editorial-review'
+          # Deterministic "this PR touches the catalog" marker, independent of
+          # author role and of which fields changed.
+          AREA_LABEL: 'area-catalog'
           # Roles that may grant featured/badges. Matches the collaborator
           # permission model used by bot-pr-review-gate.yml.
           MAINTAINER_ROLES: 'write,maintain,admin'
@@ -71,6 +76,7 @@ jobs:
 
             const pr = context.payload.pull_request;
             const label = process.env.EDITORIAL_LABEL;
+            const areaLabel = process.env.AREA_LABEL;
             const marker = '<!-- catalog-editorial-review -->';
             const maintainerRoles = process.env.MAINTAINER_ROLES
               .split(',').map(r => r.trim()).filter(Boolean);
@@ -141,6 +147,62 @@ jobs:
 
             const catalogFiles = files.filter(f =>
               f.filename.startsWith('site/src/content/catalog/') && /\.ya?ml$/.test(f.filename));
+
+            // --- Area label: does the PR touch the catalog at all? --------
+            // `area-catalog` is the deterministic "touches the catalog"
+            // marker (the team dashboard consumes it to build the catalog
+            // editorial-review queue). It is distinct from EDITORIAL_LABEL,
+            // which flags specific editorial-field changes by non-maintainers
+            // — so it is applied here, before the author-role and
+            // editorial-state checks below, for every author. A rename out
+            // of the catalog counts too (previous_filename), so the label
+            // is set on any PR a catalog reviewer should see; it is removed
+            // when a later push drops every catalog change. Failures are
+            // logged, never thrown — the editorial logic below must still run.
+            const inCatalog = p => typeof p === 'string' && p.startsWith('site/src/content/catalog/');
+            const touchesCatalog = files.some(f => inCatalog(f.filename) || inCatalog(f.previous_filename));
+            try {
+              if (await headStillCurrent()) {
+                if (touchesCatalog) {
+                  try {
+                    await github.rest.issues.getLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      name: areaLabel,
+                    });
+                  } catch (error) {
+                    if (error.status !== 404) throw error;
+                    await github.rest.issues.createLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      name: areaLabel,
+                      color: '0e8a16',
+                      description: 'Integrations catalog entries under site/src/content/catalog',
+                    });
+                  }
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    labels: [areaLabel],
+                  });
+                } else {
+                  try {
+                    await github.rest.issues.removeLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: pr.number,
+                      name: areaLabel,
+                    });
+                  } catch (error) {
+                    if (error.status !== 404) throw error;
+                  }
+                }
+              }
+            } catch (error) {
+              console.log(`Syncing label "${areaLabel}" failed (${error.message}) — continuing with the editorial check.`);
+            }
+
             if (catalogFiles.length === 0) {
               console.log('PR touches no catalog files — clearing any stale flag.');
               await clearStaleFlag();
