@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _SessionState:
+class _LiveSessionState:
     """Lifecycle and event state for one Live session.
 
     Attributes:
@@ -89,7 +89,7 @@ class _SessionState:
         response_id: Active Strands response ID.
         audio_id: Active Strands audio content ID.
         delegations: Active delegated responses keyed by delegation ID.
-        pending_tools: Tool call IDs awaiting results.
+        pending_tools: Tool call IDs awaiting results, retained across session forks.
         closed: Whether the session or connection has closed.
     """
 
@@ -163,7 +163,7 @@ class OpenAILiveModel(BidiModel, AudioCapable, Restartable):
 
         self._client = AsyncOpenAI(**self._client_args)
         self._connection: AsyncLiveConnection | AsyncForksConnection | None = None
-        self._state = _SessionState()
+        self._state = _LiveSessionState()
         self._started = False
 
     @override
@@ -219,7 +219,7 @@ class OpenAILiveModel(BidiModel, AudioCapable, Restartable):
         self._connection = await self._client.live.connect(max_retries=0).enter()
         await self._connection.session.start(session=session_config)
 
-        self._state = _SessionState()
+        self._state = _LiveSessionState()
         self._started = True
 
     @override
@@ -255,7 +255,7 @@ class OpenAILiveModel(BidiModel, AudioCapable, Restartable):
         ).enter()
         await self._connection.session.start(session=session_config)
 
-        self._state = _SessionState()
+        self._state = _LiveSessionState(pending_tools=self._state.pending_tools.copy())
         self._started = True
 
     @override

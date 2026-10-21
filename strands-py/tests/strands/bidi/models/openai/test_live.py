@@ -276,6 +276,47 @@ async def test_restart_forks_saved_session(started_model, client, connection):
 
 
 @pytest.mark.asyncio
+async def test_restart_sends_pending_tool_results_to_fork(started_model, client, connection, alist):
+    started_model._state.pending_tools.update({"call_a", "call_b", "call_c"})
+    await started_model.send(BidiMessage([ToolResultBlock("call_a", "success", [{"text": "call_a"}])]))
+    previous_state = started_model._state
+
+    fork = AsyncMock()
+    client.live.forks.connect.return_value.enter.return_value = fork
+    await started_model.restart()
+    fork.recv.return_value = server_event("session.started", session={"id": "session_fork", "model": "live-model"})
+    await alist(started_model._receive())
+
+    for call_id in ("call_b", "call_c"):
+        fork.response.create.assert_not_awaited()
+        await started_model.send(BidiMessage([ToolResultBlock(call_id, "success", [{"text": call_id}])]))
+
+    tru_calls = fork.response.mock_calls
+    exp_calls = [
+        call.item.create(
+            item={
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": [
+                    {"type": "input_text", "text": '{"status": "success"}'},
+                    {"type": "input_text", "text": call_id},
+                ],
+            }
+        )
+        for call_id in ("call_b", "call_c")
+    ]
+    exp_calls.append(call.create())
+    assert tru_calls == exp_calls
+    assert not started_model._state.pending_tools
+
+    tru_pending = previous_state.pending_tools
+    exp_pending = {"call_b", "call_c"}
+    assert tru_pending == exp_pending
+    connection.response.item.create.assert_awaited_once()
+    connection.response.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_restart_requires_session_id(model, client):
     with pytest.raises(RuntimeError, match="session ID"):
         await model.restart()
