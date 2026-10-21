@@ -12,10 +12,12 @@ import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
 import { getProductNav } from '../util/product-nav';
+import { getSampleGuideMobileNav } from '../util/sample-guides';
 import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
 const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
+const isExamplesPage = /\/examples(?:\/|$)/.test(currentPath);
 
 // The "Projects" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
@@ -51,6 +53,7 @@ const learnCategories = [
     title: 'Examples',
     description: 'Runnable samples you can drop into your own project.',
     href: pathWithBase('/examples/'),
+    nav: isExamplesPage ? await getSampleGuideMobileNav() : undefined,
   },
 ];
 

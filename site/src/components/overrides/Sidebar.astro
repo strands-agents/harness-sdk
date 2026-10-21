@@ -16,7 +16,7 @@ const product = currentProduct(Astro.url.pathname)
 // Learning (courses) and Examples aren't products, but their sidebars lead
 // with the same bordered slug box so they match the product pages.
 const isLearning = !product && Astro.url.pathname.includes('/docs/learning/')
-const isExamples = !product && /\/examples\/?$/.test(Astro.url.pathname)
+const isExamples = !product && /\/examples(?:\/|$)/.test(Astro.url.pathname)
 // The catalog landing and the "Add your integration" page share the /integrations slug.
 const isIntegrations =
   !product &&

@@ -1,0 +1,46 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import { render } from 'astro:content'
+import {
+  buildSampleGuideSidebar,
+  findDefaultSampleGuide,
+  sampleSourceUrl,
+  type SampleGuideEntry,
+} from '../../util/sample-guides'
+
+interface Props {
+  guide: SampleGuideEntry
+  guides: SampleGuideEntry[]
+}
+
+const { guide, guides } = Astro.props
+const defaultGuide = findDefaultSampleGuide(guides)
+const sidebar = buildSampleGuideSidebar(guides, defaultGuide)
+const sourceUrl = sampleSourceUrl(guide)
+const { Content, headings } = await render(guide)
+---
+
+<StarlightPage
+  frontmatter={{
+    title: guide.data.title,
+    description: guide.data.description,
+    editUrl: false,
+  }}
+  headings={headings}
+  sidebar={sidebar}
+>
+  <p>{guide.data.description}</p>
+  <p class="sample-guide__source">
+    <a href={sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
+    <span aria-hidden="true"> · </span>
+    <code>{guide.data.sourceCommit.slice(0, 7)}</code>
+  </p>
+  <Content />
+</StarlightPage>
+
+<style>
+  .sample-guide__source {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+</style>

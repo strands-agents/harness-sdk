@@ -184,6 +184,12 @@ export const onRequest = defineRouteMiddleware(async (context) => {
     return
   }
 
+  // Generated sample guides supply their own language/category sidebar.
+  if (currentPath === pathWithBase('/examples/') || currentPath.startsWith(pathWithBase('/examples/'))) {
+    starlightRoute.sidebar = sidebar
+    return
+  }
+
   // The /integrations/ catalog page supplies its own sidebar: a single group of
   // type filters. Keep that group intact (skipping the base-path filter that
   // would otherwise unwrap a lone top-level group into headerless links) so it
