@@ -1,7 +1,6 @@
-import { afterEach, describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { flattenMessagesToContent, summarizeContent } from '../summarize.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
-import { logger } from '../../../logging/logger.js'
 import { ImageBlock } from '../../../types/media.js'
 import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 
@@ -89,35 +88,15 @@ describe('flattenMessagesToContent', () => {
 })
 
 describe('summarizeContent', () => {
-  const content = [new TextBlock('notes'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })]
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('does not warn when the text-only retry succeeds', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+  // guards against summarizer failures being hidden by a lossy retry (#5291)
+  it('propagates a model error without retrying', async () => {
+    const content = [new TextBlock('notes'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })]
     const model = new MockMessageModel()
       .addTurn(new Error('images unsupported'))
       .addTurn({ type: 'textBlock', text: 'summary' })
+    const streamSpy = vi.spyOn(model, 'stream')
 
-    expect(await summarizeContent(content, model)).toBe('summary')
-    expect(warnSpy).not.toHaveBeenCalled()
-  })
-
-  it('warns when the text-only retry also fails', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const model = new MockMessageModel().addTurn(new Error('images unsupported')).addTurn(new Error('unavailable'))
-
-    expect(await summarizeContent(content, model)).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('error=<unavailable> | summarization failed after text-only retry')
-  })
-
-  it('warns when text-only content fails', async () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const model = new MockMessageModel().addTurn(new Error('unavailable'))
-
-    expect(await summarizeContent([new TextBlock('notes')], model)).toBeNull()
-    expect(warnSpy).toHaveBeenCalledWith('error=<unavailable> | summarization failed')
+    await expect(summarizeContent(content, model)).rejects.toThrow('images unsupported')
+    expect(streamSpy).toHaveBeenCalledTimes(1)
   })
 })

@@ -12,7 +12,6 @@ import type { InvocationContext } from '../../agent/invocation-context.js'
 import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
-import { normalizeError } from '../../errors.js'
 
 export const SUMMARIZED_PREFIX = '[Summarized:'
 
@@ -55,9 +54,9 @@ export interface SummarizeConfig {
 /**
  * Summarizes content (text, images, JSON, etc.) via an LLM call.
  * Passes content blocks directly to the model so it can reason about all modalities.
- * If the model doesn't support multimodal input, retries with text-only blocks.
+ * Model errors propagate to the caller.
  *
- * @returns The summarized text, or null if summarization failed.
+ * @returns The summarized text, or null if the model returned no text.
  */
 export async function summarizeContent(
   content: ContentBlock[],
@@ -65,19 +64,38 @@ export async function summarizeContent(
   config?: SummarizeConfig,
   invocationContext?: InvocationContext
 ): Promise<string | null> {
-  const result = await callSummarizer(content, model, config, invocationContext)
-  if (!(result instanceof Error)) return result
+  const messages = [
+    new Message({
+      role: 'user',
+      content: [new TextBlock('<content>'), ...content, new TextBlock('</content>')] as ContentBlock[],
+    }),
+  ]
 
-  const textOnly = content.filter((block) => block instanceof TextBlock)
-  if (textOnly.length === 0 || textOnly.length === content.length) {
-    logger.warn(`error=<${result.message}> | summarization failed`)
+  const stream = new ModelProxy(model).streamAggregated(
+    messages,
+    { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+    invocationContext
+  )
+
+  let result: Awaited<ReturnType<typeof stream.next>> | undefined
+  for (;;) {
+    result = await stream.next()
+    if (result.done) break
+  }
+
+  if (!result?.done || !result.value) {
+    logger.warn('summarization produced no response')
     return null
   }
 
-  const textResult = await callSummarizer(textOnly, model, config, invocationContext)
-  if (!(textResult instanceof Error)) return textResult
-  logger.warn(`error=<${textResult.message}> | summarization failed after text-only retry`)
-  return null
+  const parts: string[] = []
+  for (const block of result.value.message.content) {
+    if (block instanceof TextBlock) {
+      parts.push(block.text)
+    }
+  }
+
+  return parts.join('\n') || null
 }
 
 /**
@@ -137,51 +155,4 @@ export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
     blocks.push(new TextBlock(`\n---\n[${message.role}]`), ...content)
   }
   return blocks
-}
-
-async function callSummarizer(
-  content: ContentBlock[],
-  model: Model,
-  config?: SummarizeConfig,
-  invocationContext?: InvocationContext
-): Promise<string | null | Error> {
-  const messages = [
-    new Message({
-      role: 'user',
-      content: [new TextBlock('<content>'), ...content, new TextBlock('</content>')] as ContentBlock[],
-    }),
-  ]
-
-  try {
-    const stream = new ModelProxy(model).streamAggregated(
-      messages,
-      { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
-      invocationContext
-    )
-
-    let result: Awaited<ReturnType<typeof stream.next>> | undefined
-    for (;;) {
-      result = await stream.next()
-      if (result.done) break
-    }
-
-    if (!result?.done || !result.value) {
-      logger.warn('summarization produced no response')
-      return null
-    }
-
-    const outputBlocks = result.value.message.content
-    const parts: string[] = []
-    for (const block of outputBlocks) {
-      if (block instanceof TextBlock) {
-        parts.push(block.text)
-      }
-    }
-
-    return parts.join('\n') || null
-  } catch (error) {
-    const normalized = normalizeError(error)
-    logger.debug(`error=<${normalized.message}> | summarization attempt failed`)
-    return normalized
-  }
 }

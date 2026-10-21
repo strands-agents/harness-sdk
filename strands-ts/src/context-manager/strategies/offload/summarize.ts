@@ -5,6 +5,7 @@
  */
 
 import { logger } from '../../../logging/logger.js'
+import { normalizeError } from '../../../errors.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { Model } from '../../../models/model.js'
@@ -122,7 +123,14 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       return new TextBlock(`${formatSummarized('text block', tokens, summary)}${formatStashRefs(stashRefs)}`)
     }
 
-    const summary = await summarizeContent([block], model, this._config, invocationContext)
+    let summary: string | null = null
+    try {
+      summary = await summarizeContent([block], model, this._config, invocationContext)
+    } catch (error) {
+      logger.warn(
+        `trackingId=<${message.trackingId}>, error=<${normalizeError(error).message}> | media block summarization failed, offloading`
+      )
+    }
     if (summary) {
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
       return new TextBlock(`${formatSummarized('media block', tokens, summary)}${formatStashRefs(stashRefs)}`)
