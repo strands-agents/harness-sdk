@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -20,6 +21,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._validation import (
     _has_location_source,
+    _log_skipped_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -231,6 +233,7 @@ class WriterModel(Model):
         """
         formatted_messages: list[dict[str, Any]]
         formatted_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        skipped: Counter[str] = Counter()
 
         for message in messages:
             contents = message["content"]
@@ -239,7 +242,7 @@ class WriterModel(Model):
             filtered_contents = []
             for content in contents:
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Writer | skipping content block")
+                    skipped["Location sources are not supported by Writer | skipping content block"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -272,6 +275,7 @@ class WriterModel(Model):
             }
             formatted_messages.append(formatted_message)
 
+        _log_skipped_blocks(logger, skipped)
         return [message for message in formatted_messages if message["content"] or "tool_calls" in message]
 
     def format_request(

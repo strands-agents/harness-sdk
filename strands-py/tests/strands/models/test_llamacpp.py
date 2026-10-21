@@ -1109,3 +1109,18 @@ class TestCountTokens:
         model.client.post.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.llamacpp")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    LlamaCppModel()._format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by llama.cpp" in messages_logged[0]

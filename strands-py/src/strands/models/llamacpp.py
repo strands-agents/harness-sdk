@@ -14,6 +14,7 @@ import json
 import logging
 import mimetypes
 import time
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import (
     Any,
@@ -32,6 +33,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._validation import (
     _has_location_source,
+    _log_skipped_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -341,6 +343,7 @@ class LlamaCppModel(Model):
             Formatted messages array compatible with llama.cpp.
         """
         formatted_messages: list[dict[str, Any]] = []
+        skipped: Counter[str] = Counter()
 
         # Add system prompt if provided
         if system_prompt:
@@ -355,7 +358,7 @@ class LlamaCppModel(Model):
                 if any(block_type in content for block_type in ["toolResult", "toolUse"]):
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by llama.cpp | skipping content block")
+                    skipped["Location sources are not supported by llama.cpp | skipping content block"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -392,6 +395,7 @@ class LlamaCppModel(Model):
             }
             formatted_messages.append(formatted_message)
 
+        _log_skipped_blocks(logger, skipped)
         return [message for message in formatted_messages if message["content"] or "tool_calls" in message]
 
     def _format_request(

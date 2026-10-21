@@ -1963,3 +1963,19 @@ async def test_stream_response_empty_usage_metadata_is_preserved(gemini_client, 
             "metrics": {"latencyMs": 0},
         }
     }
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model._format_request(messages, None, None, None)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by Gemini" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by Gemini" in messages_logged[1]

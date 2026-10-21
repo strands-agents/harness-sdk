@@ -1025,3 +1025,19 @@ def test_format_request_filters_location_source_document(model, caplog):
     user_content = formatted_messages[0]["content"]
     assert user_content == "analyze this document"
     assert "Location sources are not supported by Mistral" in caplog.text
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.mistral")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by Mistral" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by Mistral" in messages_logged[1]

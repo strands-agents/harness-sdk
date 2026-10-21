@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Protocol, TypeVar, cast
@@ -26,7 +27,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
-from ._validation import _has_location_source, validate_config_keys
+from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -403,6 +404,7 @@ class OpenAIModel(Model):
             List of formatted messages.
         """
         formatted_messages = []
+        skipped: Counter[str] = Counter()
 
         if any("reasoningContent" in content for message in messages for content in message["content"]):
             logger.warning(
@@ -418,10 +420,10 @@ class OpenAIModel(Model):
                 if any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"]):
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by OpenAI | skipping content block")
+                    skipped["Location sources are not supported by OpenAI | skipping content block"] += 1
                     continue
                 if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by OpenAI | skipping")
+                    skipped["cachePoint content block is not supported by OpenAI | skipping"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -454,6 +456,7 @@ class OpenAIModel(Model):
             }
             formatted_messages.append(formatted_message)
 
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     @classmethod
