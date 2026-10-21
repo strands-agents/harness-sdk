@@ -406,18 +406,18 @@ class OpenAIModel(Model):
         formatted_messages = []
         skipped: Counter[str] = Counter()
 
-        if any("reasoningContent" in content for message in messages for content in message["content"]):
-            logger.warning(
-                "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
-            )
-
         for message in messages:
             contents = message["content"]
 
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
             for content in contents:
-                if any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"]):
+                if "reasoningContent" in content:
+                    skipped[
+                        "reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+                    ] += 1
+                    continue
+                if "toolResult" in content or "toolUse" in content:
                     continue
                 if _has_location_source(content):
                     skipped["Location sources are not supported by OpenAI | skipping content block"] += 1

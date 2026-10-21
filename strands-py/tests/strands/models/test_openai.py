@@ -1564,9 +1564,13 @@ def test_format_request_warns_once_for_reasoning_content_across_history(model, c
 
     model.format_request(messages)
 
-    tru_count = sum("reasoningContent is not supported" in record.getMessage() for record in caplog.records)
-    exp_count = 1
-    assert tru_count == exp_count
+    tru_messages = [
+        record.getMessage() for record in caplog.records if "reasoningContent is not supported" in record.getMessage()
+    ]
+    exp_messages = [
+        "count=<3> | reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+    ]
+    assert tru_messages == exp_messages
 
 
 def test_format_request_does_not_warn_without_reasoning_content(model, messages, caplog):
