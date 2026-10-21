@@ -161,8 +161,9 @@ jobs:
 
             const areaLabelMeta = {
               color: '0e8a16',
-              // Keep in sync with .github/labelers/area.yml.
-              description: 'Integrations catalog: entries under site/src/content/catalog, catalog submission process, catalog site pages',
+              // Keep in sync with .github/labelers/area.yml. GitHub caps
+              // label descriptions at 100 characters.
+              description: 'Integrations catalog: entries under site/src/content/catalog, submission process, catalog site pages',
             };
             const editorialLabelMeta = {
               color: 'fbca04',

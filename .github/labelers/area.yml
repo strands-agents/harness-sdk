@@ -28,7 +28,7 @@ labels:
   area-bidirectional-streaming:
     description: "Bidirectional streaming, BidiAgent, real-time audio/video, WebRTC, WebSocket, Bedrock Nova Sonic, Google Gemini Live, OpenAI Realtime, voice agents"
   area-catalog:
-    description: "Integrations catalog: entries under site/src/content/catalog, catalog submission process, catalog site pages"
+    description: "Integrations catalog: entries under site/src/content/catalog, submission process, catalog site pages"
   area-community:
     description: "Repo health, governance, contributor guides, release process, and CI dependency bumps. Not a fallback for issues that fit no other area."
   area-config:
