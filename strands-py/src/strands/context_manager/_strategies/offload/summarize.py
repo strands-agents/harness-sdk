@@ -7,15 +7,15 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
-from ...methods.summarize import (
+from ..._methods.summarize import (
     SummarizeConfig,
     _flatten_messages_to_content,
     _format_summarized,
     _summarize_content,
     _tool_result_to_content_blocks,
 )
-from ...stash import _format_stash_refs
-from ...types import ContextState
+from ..._stash import _format_stash_refs
+from ..._types import ContextState
 from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
@@ -48,6 +48,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         config: SummarizeConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            config: Summarization options.
+            conditions: Conditions that determine when the strategy fires.
+        """
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
 

@@ -9,8 +9,8 @@ from .summarize import SummarizeStrategy
 from .truncate import TruncateStrategy
 
 if TYPE_CHECKING:
-    from ...methods.summarize import SummarizeConfig
-    from ...methods.truncate import TruncateConfig
+    from ..._methods.summarize import SummarizeConfig
+    from ..._methods.truncate import TruncateConfig
     from .base import OffloadTarget
 
 
@@ -60,3 +60,7 @@ class _OffloadNamespace:
 
 
 Offload = _OffloadNamespace()
+"""Builds offload strategies with ``Offload.drop``, ``Offload.truncate``, and ``Offload.summarize``.
+
+Each takes a target and returns a strategy usable directly or gated with ``.when(...)``.
+"""

@@ -14,12 +14,12 @@ from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
-from .presets import _resolve_strategies
-from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
-from .stash import Stash
-from .strategies.offload import Offload
-from .strategies.offload.truncate import EmergencyTruncateStrategy
-from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
+from ._presets import _resolve_strategies
+from ._retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
+from ._stash import Stash
+from ._strategies.offload import Offload
+from ._strategies.offload.truncate import EmergencyTruncateStrategy
+from ._types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -39,8 +39,8 @@ ContextManagerStrategy = Literal["auto", "agentic"]
 """Supported preset strings for the ``context_manager`` parameter.
 
 - ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
-- ``"agentic"``: Model-driven context management via injected tools, with a higher
-  truncation threshold and summarization only on overflow.
+- ``"agentic"``: (Experimental) Model-driven context management via injected tools, with a higher
+  truncation threshold and summarization only on overflow. May change in future versions.
 """
 
 
@@ -52,7 +52,7 @@ class ContextManager(Plugin):
     utilization and only fires if the window is still overflowing after user strategies.
 
     Configured through the Agent's ``context_manager`` parameter — pass a preset
-    string (``'auto'``, ``'agentic'``) or a :class:`ContextManagerConfig`; the Agent
+    string (``'auto'``) or a :class:`ContextManagerConfig`; the Agent
     constructs and registers the manager. When present, it owns overflow
     recovery and proactive compression — no separate ConversationManager is needed.
     """
@@ -102,21 +102,8 @@ class ContextManager(Plugin):
 
         super().__init__()
 
-    @property
-    def stash(self) -> Stash | None:
-        """The L1 stash instance, if stash is enabled and the agent has been initialized."""
-        return self._stash
-
-    @property
-    def stash_is_durable(self) -> bool:
-        """Whether the stash is backed by durable storage that survives process restarts.
-
-        When True, stash data does not need to be embedded in session snapshots.
-        """
-        return self._stash_is_durable
-
     @staticmethod
-    def from_strategy(
+    def _from_strategy(
         strategy: ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None,
     ) -> ContextManager | None:
         """Resolve a ``context_manager`` parameter value into a ContextManager instance.
@@ -158,7 +145,7 @@ class ContextManager(Plugin):
         )
 
     @staticmethod
-    def resolve_conversation_manager(
+    def _resolve_conversation_manager(
         context_manager: ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None,
         conversation_manager: ConversationManager | None,
     ) -> ConversationManager:

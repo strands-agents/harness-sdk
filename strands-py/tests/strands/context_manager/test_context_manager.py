@@ -4,9 +4,9 @@ import unittest.mock
 
 import pytest
 
-from strands._context_manager.context_manager import ContextManager
-from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands.context_manager._context_manager import ContextManager
+from strands.context_manager._strategies.offload import Offload
+from strands.context_manager._strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.storage.in_memory_storage import InMemoryStorage
@@ -213,65 +213,65 @@ class TestContextManagerRunStrategies:
 
 
 class TestFromStrategy:
-    """Tests for ContextManager.from_strategy() factory."""
+    """Tests for ContextManager._from_strategy() factory."""
 
     def test_none_returns_none(self):
-        assert ContextManager.from_strategy(None) is None
+        assert ContextManager._from_strategy(None) is None
 
     def test_false_returns_none(self):
-        assert ContextManager.from_strategy(False) is None
+        assert ContextManager._from_strategy(False) is None
 
     def test_auto_returns_context_manager(self):
-        result = ContextManager.from_strategy("auto")
+        result = ContextManager._from_strategy("auto")
         assert isinstance(result, ContextManager)
 
     def test_agentic_returns_context_manager(self):
-        result = ContextManager.from_strategy("agentic")
+        result = ContextManager._from_strategy("agentic")
         assert isinstance(result, ContextManager)
 
     def test_instance_returns_itself(self):
         cm = ContextManager()
-        assert ContextManager.from_strategy(cm) is cm
+        assert ContextManager._from_strategy(cm) is cm
 
     def test_dict_config_returns_context_manager(self):
-        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
+        result = ContextManager._from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
         assert isinstance(result, ContextManager)
 
     def test_unknown_string_raises(self):
         with pytest.raises(ValueError, match="Unknown context_manager preset"):
-            ContextManager.from_strategy("manual")
+            ContextManager._from_strategy("manual")
 
     def test_unsupported_type_raises(self):
         with pytest.raises(ValueError, match="Unsupported context_manager value"):
-            ContextManager.from_strategy(42)  # type: ignore[arg-type]
+            ContextManager._from_strategy(42)  # type: ignore[arg-type]
 
 
 class TestResolveConversationManager:
-    """Tests for ContextManager.resolve_conversation_manager()."""
+    """Tests for ContextManager._resolve_conversation_manager()."""
 
     def test_none_returns_sliding_window(self):
         from strands.agent.conversation_manager import SlidingWindowConversationManager
 
-        result = ContextManager.resolve_conversation_manager(None, None)
+        result = ContextManager._resolve_conversation_manager(None, None)
         assert isinstance(result, SlidingWindowConversationManager)
 
     def test_none_with_user_cm_returns_user_cm(self):
         from strands.agent.conversation_manager import SlidingWindowConversationManager
 
         user_cm = SlidingWindowConversationManager(window_size=20)
-        result = ContextManager.resolve_conversation_manager(None, user_cm)
+        result = ContextManager._resolve_conversation_manager(None, user_cm)
         assert result is user_cm
 
     def test_false_returns_null(self):
         from strands.agent.conversation_manager import NullConversationManager
 
-        result = ContextManager.resolve_conversation_manager(False, None)
+        result = ContextManager._resolve_conversation_manager(False, None)
         assert isinstance(result, NullConversationManager)
 
     def test_auto_returns_null(self):
         from strands.agent.conversation_manager import NullConversationManager
 
-        result = ContextManager.resolve_conversation_manager("auto", None)
+        result = ContextManager._resolve_conversation_manager("auto", None)
         assert isinstance(result, NullConversationManager)
 
     def test_auto_with_user_cm_warns(self):
@@ -282,7 +282,7 @@ class TestResolveConversationManager:
         user_cm = SlidingWindowConversationManager(window_size=20)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = ContextManager.resolve_conversation_manager("auto", user_cm)
+            result = ContextManager._resolve_conversation_manager("auto", user_cm)
         assert isinstance(result, NullConversationManager)
         assert any("ignoring co-provided conversation_manager" in str(w.message) for w in caught)
 
@@ -384,13 +384,13 @@ class TestStashBackfill:
         ]
         cm = ContextManager(strategies=[], stash=True)
         cm.init_agent(mock_agent)
-        await cm.stash.load_snapshot({"pre-tu-1_0": {"text": "original full result"}})
+        await cm._stash.load_snapshot({"pre-tu-1_0": {"text": "original full result"}})
 
         event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
         await mock_agent.hooks.invoke_callbacks_async(event)
 
-        assert await cm.stash.retrieve("pre-tu-1_0") == {"text": "original full result"}
-        assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
+        assert await cm._stash.retrieve("pre-tu-1_0") == {"text": "original full result"}
+        assert await cm._stash.retrieve("seed_0") == {"text": "seed message"}
 
     @pytest.mark.asyncio
     async def test_backfill_runs_only_once(self):
@@ -466,30 +466,30 @@ class TestStashProperty:
 
     def test_stash_is_none_before_init(self):
         context_manager = ContextManager()
-        assert context_manager.stash is None
+        assert context_manager._stash is None
 
     def test_stash_is_set_after_init(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         context_manager = ContextManager()
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash is not None
+        assert context_manager._stash is not None
 
     def test_stash_is_none_when_disabled(self, mock_agent):
         context_manager = ContextManager(stash=False)
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash is None
+        assert context_manager._stash is None
 
 
 class TestStashIsDurable:
-    """Tests for the stash_is_durable property."""
+    """Tests for the _stash_is_durable flag."""
 
     def test_false_with_in_memory_storage(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         context_manager = ContextManager()
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash_is_durable is False
+        assert context_manager._stash_is_durable is False
 
     def test_true_with_non_in_memory_storage(self, mock_agent):
         from strands.storage.local_file_storage import LocalFileStorage
@@ -498,7 +498,7 @@ class TestStashIsDurable:
         mock_agent.storage = LocalFileStorage(base_dir="/tmp/test-stash-durable")
         context_manager = ContextManager(stash=True)
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash_is_durable is True
+        assert context_manager._stash_is_durable is True
 
     def test_false_with_namespaced_in_memory_storage(self, mock_agent):
         from strands.storage.in_memory_storage import InMemoryStorage
@@ -508,11 +508,11 @@ class TestStashIsDurable:
         mock_agent.storage = _NamespacedStorage(InMemoryStorage(), "tenant")
         context_manager = ContextManager(stash=True)
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash_is_durable is False
+        assert context_manager._stash_is_durable is False
 
     def test_false_before_init(self):
         context_manager = ContextManager()
-        assert context_manager.stash_is_durable is False
+        assert context_manager._stash_is_durable is False
 
 
 class TestStashRoot:
@@ -524,7 +524,7 @@ class TestStashRoot:
         storage = InMemoryStorage()
         context_manager = ContextManager(stash={"storage": storage.namespace("team")})
         context_manager.init_agent(mock_agent)
-        await context_manager.stash.store("tool-1", 0, b"{}")
+        await context_manager._stash.store("tool-1", 0, b"{}")
 
         assert await storage.list("") == ["team/tool-1_0"]
 
@@ -535,6 +535,6 @@ class TestStashRoot:
         mock_agent.storage = storage.namespace("tenant")
         context_manager = ContextManager()
         context_manager.init_agent(mock_agent)
-        await context_manager.stash.store("tool-1", 0, b"{}")
+        await context_manager._stash.store("tool-1", 0, b"{}")
 
         assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]

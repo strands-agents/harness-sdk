@@ -39,7 +39,7 @@ It breaks down into four categories:
 
 The video uses `SummarizingConversationManager` and `ContextOffloader`. The
 updated starting point is `context_manager="auto"`. For custom behavior, use
-`ContextManager` and `Offload` from `strands.experimental.context_manager`, as
+`ContextManager` and `Offload` from `strands.context_manager`, as
 shown below. Truncation keeps previews; it does not simply drop whole messages.
 
 </CourseNotice>
@@ -60,7 +60,7 @@ This single parameter enables:
 
 The effect on cost and answer quality depends on the workload. Measure both with your own evaluation cases.
 
-For agents that need to protect specific context across long conversations, use `context_manager="agentic"`. The model gets tools to summarize, truncate, or pin messages itself, trading some tokens for judgment.
+For agents that need to protect specific context across long conversations, use the experimental `context_manager="agentic"` mode. The model gets tools to summarize, truncate, or pin messages itself, trading some tokens for judgment.
 
 ## Context injector
 
@@ -90,10 +90,6 @@ Control when injection fires:
 
 The `ContextManager` is the engine behind `context_manager="auto"`. When you need custom control over how context is managed, build your own strategy pipeline using `Offload` strategies.
 
-:::caution[Experimental]
-`ContextManager` and `Offload` are currently exported from `strands.experimental.context_manager`. They are fully functional and will move to the main namespace in an upcoming release.
-:::
-
 There are three types of Offload strategies:
 
 | Strategy | What stays in context |
@@ -105,7 +101,7 @@ There are three types of Offload strategies:
 Each strategy takes a **target** that controls what content it operates on:
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.summarize("*")                   # everything: all message types
 Offload.truncate("tool_results")         # only successful tool results
@@ -127,7 +123,7 @@ Truncate matching content to head/tail previews when context gets full:
 
 ```python
 from strands import Agent
-from strands.experimental.context_manager import ContextManager, Offload
+from strands.context_manager import ContextManager, Offload
 
 agent = Agent(
     context_manager=ContextManager(
@@ -147,7 +143,7 @@ Instead of dropping old messages, compress them into summaries. Preserves more i
 
 ```python
 from strands import Agent
-from strands.experimental.context_manager import ContextManager, Offload
+from strands.context_manager import ContextManager, Offload
 
 agent = Agent(
     context_manager=ContextManager(
@@ -168,7 +164,7 @@ Summarizing history doesn't require your most capable model. Pass a cheaper one,
 ```python
 from strands import Agent
 from strands.models import BedrockModel
-from strands.experimental.context_manager import ContextManager, Offload
+from strands.context_manager import ContextManager, Offload
 
 summarizer_model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
@@ -198,7 +194,7 @@ agent = Agent(
 | Strategy | Tradeoff |
 | --- | --- |
 | `context_manager="auto"` | Best default. Offloading + summarization + proactive compression |
-| `context_manager="agentic"` | Model self-manages context. Trades tokens for judgment |
+| `context_manager="agentic"` | Experimental. Model self-manages context. Trades tokens for judgment |
 | `Offload.truncate(...)` | Keeps a preview; originals remain recoverable when stash is enabled |
 | `Offload.summarize(...)` | Preserves more info. Lossy compression, costs an LLM call |
 | `Offload.drop(...)` | Most aggressive. Content goes to stash only |

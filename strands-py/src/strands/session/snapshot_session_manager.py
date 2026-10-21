@@ -51,7 +51,7 @@ from ..types.session import decode_bytes_values, encode_bytes_values
 from .session_manager import SessionManager
 
 if TYPE_CHECKING:
-    from .._context_manager.stash import Stash
+    from ..context_manager._stash import Stash
     from ..multiagent.base import MultiAgentBase
 
 logger = logging.getLogger(__name__)
@@ -428,7 +428,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             self._raw_storage = raw
             self._storage = _resolve_storage(raw)
         if agent.context_manager is not None:
-            self._agent_stash = agent.context_manager.stash
+            self._agent_stash = agent.context_manager._stash
         run_async(lambda: self._initialize_async(agent))
 
     def sync_agent(self, agent: LocalAgent, **kwargs: Any) -> None:
@@ -703,17 +703,17 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         while the agent messages still carry ``[ref: ...]`` placeholders.
         """
         context_manager = agent.context_manager
-        if context_manager is None or context_manager.stash is None:
+        if context_manager is None or context_manager._stash is None:
             return
 
-        if context_manager.stash_is_durable:
+        if context_manager._stash_is_durable:
             snapshot.data["stash"] = {
                 "location": "external",
-                "storage_type": context_manager.stash.storage_type_name,
+                "storage_type": context_manager._stash.storage_type_name,
             }
             return
 
-        entries = await context_manager.stash.take_snapshot()
+        entries = await context_manager._stash.take_snapshot()
         if entries:
             snapshot.data["stash"] = {
                 "location": "inline",
@@ -730,26 +730,26 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             return
 
         context_manager = agent.context_manager
-        if context_manager is None or context_manager.stash is None:
+        if context_manager is None or context_manager._stash is None:
             return
 
         try:
             location = stash_data.get("location")
             if location == "external":
                 snapshot_type = stash_data.get("storage_type", "")
-                if snapshot_type and snapshot_type != context_manager.stash.storage_type_name:
+                if snapshot_type and snapshot_type != context_manager._stash.storage_type_name:
                     logger.warning(
                         "session_id=<%s>, snapshot_storage=<%s>, current_storage=<%s> | "
                         "stash storage type changed since snapshot was created, stash data may be inaccessible",
                         self.session_id,
                         snapshot_type,
-                        context_manager.stash.storage_type_name,
+                        context_manager._stash.storage_type_name,
                     )
                 return
 
             if location == "inline":
                 entries = stash_data.get("entries", {})
-                await context_manager.stash.load_snapshot(entries)
+                await context_manager._stash.load_snapshot(entries)
         except Exception:
             logger.warning(
                 "session_id=<%s> | failed to restore stash data from snapshot, continuing without stash",
@@ -771,7 +771,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             if self._agent_stash is not None:
                 await self._agent_stash.clear_session()
             elif self._raw_storage is not None:
-                from .._context_manager.stash import STASH_PREFIX
+                from ..context_manager._stash import STASH_PREFIX
 
                 prefix = f"{STASH_PREFIX}/{self.session_id}/"
                 keys = await self._raw_storage.list(prefix)

@@ -15,7 +15,7 @@ from typing_extensions import TypedDict
 from ...event_loop.streaming import process_stream
 from ...types.content import ContentBlock, Message, Messages
 from ...types.tools import ToolResultContent
-from ..types import is_text_block
+from .._types import is_text_block
 
 if TYPE_CHECKING:
     from ...models.model import Model

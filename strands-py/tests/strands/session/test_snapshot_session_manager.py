@@ -5,13 +5,13 @@ import json
 import logging
 import tempfile
 import uuid
+import warnings
 from functools import partial
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from strands import tool
-from strands._context_manager.context_manager import ContextManager
 from strands.agent import AgentResult
 from strands.agent.agent import Agent
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
@@ -23,6 +23,7 @@ from strands.bidi.hooks import (
     BidiResponseStopEvent,
 )
 from strands.bidi.models import BidiModel, ConnectionTimeoutError
+from strands.context_manager._context_manager import ContextManager
 from strands.hooks.events import (
     AfterMultiAgentInvocationEvent,
     AfterNodeCallEvent,
@@ -731,6 +732,12 @@ def test_restore_across_instances(storage):
     assert "The answer is 42." in tru_texts
 
 
+def test_context_manager_does_not_warn(storage):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*does not persist its context reductions")
+        Agent(context_manager="auto", session_manager=SnapshotSessionManager("s1", storage=storage))
+
+
 def test_restore_warns_on_overwrite(storage, caplog):
     """Restoring over an agent that already had messages logs a warning."""
     manager = SnapshotSessionManager("s1", storage=storage)
@@ -1377,7 +1384,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.load_snapshot({"ref-1": {"text": "stashed content"}})
+        await context_manager._stash.load_snapshot({"ref-1": {"text": "stashed content"}})
         manager.sync_agent(agent)
 
         # Restore into a new agent and verify stash round-trips
@@ -1385,7 +1392,7 @@ class TestSnapshotStashIntegration:
         manager2 = SnapshotSessionManager("s1", storage=storage)
         Agent(model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1")
 
-        result = await restored_context_manager.stash.retrieve("ref-1")
+        result = await restored_context_manager._stash.retrieve("ref-1")
         assert result == {"text": "stashed content"}
 
     @pytest.mark.asyncio
@@ -1398,7 +1405,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.load_snapshot({"ref-1": {"text": "durable"}})
+        await context_manager._stash.load_snapshot({"ref-1": {"text": "durable"}})
         manager.sync_agent(agent)
 
         # Read the raw snapshot and verify it has an external ref
@@ -1430,7 +1437,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.clear()
+        await context_manager._stash.clear()
         manager.sync_agent(agent)
 
         key = _on_disk_key("s1", "a1")
@@ -1470,12 +1477,12 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.load_snapshot({"ref-1": {"text": "data"}})
-        assert await context_manager.stash.list() != []
+        await context_manager._stash.load_snapshot({"ref-1": {"text": "data"}})
+        assert await context_manager._stash.list() != []
 
         await manager.delete_session()
 
-        assert await context_manager.stash.list() == []
+        assert await context_manager._stash.list() == []
 
     @pytest.mark.asyncio
     async def test_delete_session_without_initialize_clears_stash(self, temp_dir):
@@ -1486,7 +1493,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.load_snapshot({"ref-1": {"text": "orphan"}})
+        await context_manager._stash.load_snapshot({"ref-1": {"text": "orphan"}})
         assert await shared_storage.list("context/s1/") != []
 
         bare_manager = SnapshotSessionManager("s1", storage=shared_storage)
@@ -1546,7 +1553,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        asyncio.run(context_manager.stash.load_snapshot({"ref-1": {"text": "data"}}))
+        asyncio.run(context_manager._stash.load_snapshot({"ref-1": {"text": "data"}}))
         manager.sync_agent(agent)
 
         restored_context_manager = ContextManager(stash={"storage": InMemoryStorage()})
@@ -1568,7 +1575,7 @@ class TestSnapshotStashIntegration:
         manager = SnapshotSessionManager("s1", storage=session_storage, snapshot_trigger=lambda **_: True)
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
 
-        await context_manager.stash.load_snapshot({"ref-1": {"text": "immutable data"}})
+        await context_manager._stash.load_snapshot({"ref-1": {"text": "immutable data"}})
         agent("go")
 
         immutable_prefix = f"session/{_session_prefix('s1')}scopes/agent/a1/snapshots/immutable_history/"
@@ -1591,7 +1598,7 @@ class TestSnapshotStashIntegration:
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
         agent("go")
 
-        await context_manager.stash.load_snapshot({"ref-1": {"text": "wrapped ephemeral"}})
+        await context_manager._stash.load_snapshot({"ref-1": {"text": "wrapped ephemeral"}})
         manager.sync_agent(agent)
 
         key = _on_disk_key("s1", "a1")
@@ -1657,7 +1664,7 @@ class TestSnapshotStashIntegration:
         resumed_agent("read it in full")
 
         assert json.loads(_tool_result_text(resumed_agent, "tu-2")) == {"text": full_result}
-        assert asyncio.run(resumed_agent.context_manager.stash.retrieve("tu-1_0")) == {"text": full_result}
+        assert asyncio.run(resumed_agent.context_manager._stash.retrieve("tu-1_0")) == {"text": full_result}
 
 
 # ---------------------------------------------------------------------------

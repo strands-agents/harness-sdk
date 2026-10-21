@@ -7,9 +7,9 @@ import math
 from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
-from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
-from ...stash import Stash, _format_stash_refs
-from ...types import is_text_block
+from ..._methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
+from ..._stash import Stash, _format_stash_refs
+from ..._types import is_text_block
 from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
@@ -23,7 +23,7 @@ from .base import (
 if TYPE_CHECKING:
     from ....agent.agent import Agent
 
-from ...types import ContextState
+from ..._types import ContextState
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,13 @@ class TruncateStrategy(BaseOffloadStrategy):
         config: TruncateConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            config: Truncation options.
+            conditions: Conditions that determine when the strategy fires.
+        """
         super().__init__(target, conditions)
         self._truncate_config: TruncateConfig = config or {}
 
@@ -130,6 +137,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         return "offload:emergency-truncate"
 
     def __init__(self) -> None:
+        """Initialize the strategy over all messages."""
         super().__init__("*", {"preview": "tail"})
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:

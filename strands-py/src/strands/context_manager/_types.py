@@ -12,7 +12,7 @@ from ..types.content import ContentBlock, Messages
 if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..storage.storage import Storage
-    from .stash import Stash
+    from ._stash import Stash
 
 
 def is_tool_result_block(block: ContentBlock) -> bool:
@@ -77,7 +77,7 @@ class StashConfig(TypedDict, total=False):
     stash in place.
 
     Attributes:
-        storage: Storage backend. Defaults to InMemoryStorage when omitted.
+        storage: Storage backend. Defaults to the agent's ``storage``, then InMemoryStorage, when omitted.
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
 
     Example:

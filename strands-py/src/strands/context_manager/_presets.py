@@ -8,8 +8,8 @@ you need a specific, pinned configuration.
 
 from __future__ import annotations
 
-from .strategies.offload import Offload
-from .types import ContextStrategy
+from ._strategies.offload import Offload
+from ._types import ContextStrategy
 
 StrategyPresetName = str
 """Known preset name strings accepted in the strategies array.

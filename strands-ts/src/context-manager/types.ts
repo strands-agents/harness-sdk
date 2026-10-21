@@ -15,8 +15,6 @@ import type { InvocationContext } from '../agent/invocation-context.js'
  *
  * Strategies are applied in order during `apply()`. Each decides whether
  * to act based on the current context state (utilization, message count, etc.).
- *
- * @experimental
  */
 export interface ContextStrategy {
   /** Stable identifier for logging and observability. */
@@ -37,8 +35,6 @@ export interface ContextStrategy {
 
 /**
  * State passed to strategies during apply().
- *
- * @experimental
  */
 export interface ContextState {
   /** The agent's current message array (the context window). Strategies mutate this in place. */
@@ -88,8 +84,6 @@ export interface ContextState {
  * // stashes at "team/context/<sessionId>/scopes/agent/<agentId>/".
  * new Agent({ storage: storage.namespace('team'), contextManager: new ContextManager() })
  * ```
- *
- * @experimental
  */
 export interface StashConfig {
   /** Storage backend. Defaults to the agent's `storage`, then InMemoryStorage, when omitted. */
@@ -105,8 +99,6 @@ export interface StashConfig {
 
 /**
  * Full configuration for a ContextManager instance.
- *
- * @experimental
  */
 export interface ContextManagerConfig {
   /**
@@ -115,7 +107,7 @@ export interface ContextManagerConfig {
    * target the same content, the first one to shrink it below the next strategy's
    * threshold wins. When omitted, uses the default pipeline.
    *
-   * Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffloading'`),
+   * Accepts strategies built with `Offload`, preset name strings (e.g. `'largeToolOffloading'`),
    * or a mix of both. Preset strings are resolved to their default strategy configurations.
    */
   strategies?: (ContextStrategy | StrategyPresetName)[]

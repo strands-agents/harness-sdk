@@ -69,6 +69,14 @@ class Stash:
     def __init__(
         self, storage: Storage, session_id: str, agent_id: str, *, custom_stash_namespace: bool = False
     ) -> None:
+        """Initialize the stash.
+
+        Args:
+            storage: Backing storage.
+            session_id: Session the stash belongs to.
+            agent_id: Agent the stash belongs to.
+            custom_stash_namespace: Use ``storage`` as the exact stash root when it is a namespaced view.
+        """
         self._base_storage = storage
         self._session_id = session_id
         self._storage = _resolve_stash_namespace(

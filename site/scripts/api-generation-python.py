@@ -30,6 +30,11 @@ from pydoc_markdown.contrib.source_linkers.git import GitSourceLinker
 BIDI_PACKAGE = "strands.bidi"
 BIDI_PUBLIC_MODULES = ("agent", "hooks", "io", "models", "types")
 DEPRECATED_BIDI_PACKAGE = "strands.experimental.bidi"
+# Public packages whose symbols are defined in private modules; each is documented from its __all__.
+ALL_EXPORT_PACKAGES = (
+    *(f"{BIDI_PACKAGE}.{owner_name}" for owner_name in BIDI_PUBLIC_MODULES),
+    "strands.context_manager",
+)
 
 
 def _read_module_tree(source_root: Path, module_name: str) -> ast.Module:
@@ -114,11 +119,8 @@ def _read_public_sources(source_root: Path, module_name: str) -> dict[str, set[s
     return public_sources
 
 
-def _read_bidi_public_api(source_root: Path) -> dict[str, dict[str, set[str]]]:
-    return {
-        f"{BIDI_PACKAGE}.{owner_name}": _read_public_sources(source_root, f"{BIDI_PACKAGE}.{owner_name}")
-        for owner_name in BIDI_PUBLIC_MODULES
-    }
+def _read_public_api(source_root: Path) -> dict[str, dict[str, set[str]]]:
+    return {package: _read_public_sources(source_root, package) for package in ALL_EXPORT_PACKAGES}
 
 
 class CustomGitSourceLinker(GitSourceLinker):
@@ -188,10 +190,10 @@ def generate_docs():
     # Load and process modules
     modules = session.load_modules()
     session.process(modules)
-    bidi_public_api = _read_bidi_public_api(input_path)
-    bidi_public_sources = {
+    public_api = _read_public_api(input_path)
+    public_sources = {
         source_module: (public_module, symbols)
-        for public_module, source_modules in bidi_public_api.items()
+        for public_module, source_modules in public_api.items()
         for source_module, symbols in source_modules.items()
     }
 
@@ -202,7 +204,7 @@ def generate_docs():
 
     # Generate index file
     module_files = []
-    bidi_public_sections = {module_name: [] for module_name in bidi_public_api}
+    public_sections = {module_name: [] for module_name in public_api}
 
     # Write each module to a separate file
     for module in modules:
@@ -211,14 +213,14 @@ def generate_docs():
         if module_name == DEPRECATED_BIDI_PACKAGE or module_name.startswith(f"{DEPRECATED_BIDI_PACKAGE}."):
             continue
 
-        if module_name in bidi_public_api:
+        if module_name in public_api:
             continue
 
         if module_name == BIDI_PACKAGE:
             continue
 
-        if module_name in bidi_public_sources:
-            public_module, public_symbols = bidi_public_sources[module_name]
+        if module_name in public_sources:
+            public_module, public_symbols = public_sources[module_name]
             available_symbols = {member.name for member in module.members}
             missing_symbols = public_symbols - available_symbols
             if missing_symbols:
@@ -227,7 +229,7 @@ def generate_docs():
             module.members = [member for member in module.members if member.name in public_symbols]
             rendered = renderer.render_to_string([module]).replace(module_name, public_module)
             if rendered.strip():
-                bidi_public_sections[public_module].append(rendered)
+                public_sections[public_module].append(rendered)
             continue
 
         if module_name.startswith(f"{BIDI_PACKAGE}."):
@@ -268,7 +270,7 @@ editUrl: false
             module_files.append((module_name, str(filepath.relative_to(output_dir))))
             print(f"Generated: {filepath}")
 
-    for module_name, sections in bidi_public_sections.items():
+    for module_name, sections in public_sections.items():
         if not sections:
             continue
 

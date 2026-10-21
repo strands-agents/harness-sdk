@@ -283,9 +283,9 @@ export {
   type RetryDecision,
 } from './retry/index.js'
 
-// Context Manager (experimental)
-export type { ContextManagerStrategy } from './context-manager/context-manager.js'
-export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
+// Context Manager
+export { ContextManager, type ContextManagerStrategy } from './context-manager/context-manager.js'
+export type { ContextManagerConfig, StashConfig } from './context-manager/types.js'
 export { Offload } from './context-manager/strategies/offload/index.js'
 export type {
   OffloadTarget,

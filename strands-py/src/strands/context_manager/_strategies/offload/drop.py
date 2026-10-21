@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
-from ...stash import _format_stash_refs
+from ..._stash import _format_stash_refs
 from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_conditions
 
 if TYPE_CHECKING:
@@ -27,6 +27,12 @@ class DropStrategy(BaseOffloadStrategy):
         return "offload:drop"
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: Content the strategy applies to.
+            conditions: Conditions that determine when the strategy fires.
+        """
         super().__init__(target, conditions)
 
     def when(

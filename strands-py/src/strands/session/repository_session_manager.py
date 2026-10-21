@@ -221,6 +221,14 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
                 " SnapshotSessionManager for unified storage integration",
                 stacklevel=1,
             )
+        if isinstance(agent, Agent) and agent.context_manager is not None:
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                "context_manager is set, but RepositorySessionManager does not persist its context reductions;"
+                " restored agents reload the full history and re-run reduction. Use SnapshotSessionManager"
+                " with context_manager",
+                stacklevel=1,
+            )
         if agent.agent_id in self._latest_agent_message:
             raise SessionException("The `agent_id` of an agent must be unique in a session.")
         self._latest_agent_message[agent.agent_id] = None

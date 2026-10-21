@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING, Any
 from ..tools.tools import PythonAgentTool
 from ..types.tools import ToolResult, ToolResultContent, ToolSpec
 from ..vended_plugins.context_offloader.search import _search_content
-from .methods.truncate import CHARS_PER_TOKEN
+from ._methods.truncate import CHARS_PER_TOKEN
 
 if TYPE_CHECKING:
     from ..types.content import Message
-    from .stash import Stash
+    from ._stash import Stash
 
 logger = logging.getLogger(__name__)
 
