@@ -16,6 +16,9 @@ describe('context window limits', () => {
     ['openai.gpt-6-astra', 1_050_000],
     ['global.openai.gpt-6-astra', 1_050_000],
     ['us.openai.gpt-6-astra', 1_050_000],
+    ['us.openai.gpt-6-sol', 1_050_000],
+    ['global.openai.gpt-6-luna', 1_050_000],
+    ['us.openai.gpt-6.1-sol', 1_050_000],
     ['zai.glm-4.7', 203_000],
   ])('uses the documented Bedrock context window for %s', (modelId, limit) => {
     expect(contextWindowLimit(new BedrockModel({ modelId }))).toBe(limit)
@@ -31,9 +34,9 @@ describe('context window limits', () => {
 
   it('prefers provider metadata over SDK defaults and caches it per model', async () => {
     const discover = vi.fn().mockResolvedValue(1_000_000)
-    const model = new AnthropicModel({ modelId: 'claude-sonnet-4-20250514', apiKey: 'test-key' })
+    const model = new AnthropicModel({ modelId: 'claude-sonnet-4-6', apiKey: 'test-key' })
     const runtime = new AgentModelRuntime({ model } as unknown as Agent, {
-      initialModel: 'anthropic/claude-sonnet-4-20250514',
+      initialModel: 'anthropic/claude-sonnet-4-6',
       discoverContextWindow: discover,
     })
 

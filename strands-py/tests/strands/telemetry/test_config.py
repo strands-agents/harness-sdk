@@ -8,7 +8,7 @@ from strands.telemetry import StrandsTelemetry
 
 
 @pytest.fixture
-def mock_tracer_provider():
+def mock_tracer_provider(mock_set_tracer_provider):
     with mock.patch("strands.telemetry.config.SDKTracerProvider") as mock_provider:
         yield mock_provider
 

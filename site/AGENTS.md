@@ -36,6 +36,7 @@ On Windows, these symlinks require Developer Mode or `git config core.symlinks t
 │   ├── docs-writer/      # Draft or rewrite doc pages
 │   ├── docs-reviewer/    # Review drafts before PR submission
 │   ├── docs-audit/       # Assess published pages for quality
+│   ├── docs-verifier/    # Verify every claim and example against source
 │   └── docs-planner/     # Prioritize the docs backlog
 └── references/
     ├── voice-guide.md       # Five-layer voice stack
@@ -49,6 +50,7 @@ On Windows, these symlinks require Developer Mode or `git config core.symlinks t
 | `docs-writer`   | Draft or rewrite doc pages          | "write a doc", "draft a page", "rewrite the quickstart" |
 | `docs-reviewer` | Review drafts before PR submission  | "review this draft", "is this ready to ship" |
 | `docs-audit`    | Assess published pages for quality  | "audit this page", "check docs quality" |
+| `docs-verifier` | Verify every claim and example against source | "verify this page", "fact-check the docs" |
 | `docs-planner`  | Prioritize the docs backlog         | "plan docs work", "what docs need writing" |
 
 When authoring or reviewing documentation pages, follow the voice guide and the terminology lock. When verifying code examples in docs, follow the tiered procedure in `.agents/references/code-verification.md`.

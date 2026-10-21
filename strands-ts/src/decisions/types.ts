@@ -4,6 +4,7 @@
  * See `team/designs/0020-decision-models.md` for the design rationale.
  */
 
+import type { InvocationContext } from '../agent/invocation-context.js'
 import type { ContentBlock, Message } from '../types/messages.js'
 
 /**
@@ -13,6 +14,12 @@ import type { ContentBlock, Message } from '../types/messages.js'
  * question, a single-turn content list (multimodal), or a full message history.
  */
 export type DecisionInput = string | ContentBlock[] | Message[]
+
+/** Per-call options for {@link DecisionModel.ask}. */
+export interface AskOptions {
+  /** The request to add this decision's token usage to, such as a hook event's or tool context's `invocationContext`; the request's limits don't apply to the decision. */
+  invocationContext?: InvocationContext
+}
 
 /**
  * Identity helper that preserves the literal types of an inline question map

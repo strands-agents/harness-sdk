@@ -9,6 +9,8 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any
 
+from pydantic import BaseModel
+
 from ..agent.agent_metadata import AgentMetadata
 from ..models.model import Model
 from ..tools import InvalidToolUseNameException
@@ -524,6 +526,7 @@ async def stream_messages(
     dynamic_trailing_blocks: int = 0,
     cancel_signal: threading.Event | None = None,
     agent_metadata: AgentMetadata | None = None,
+    structured_output_model: type[BaseModel] | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Streams messages to the model and processes the response.
@@ -543,6 +546,8 @@ async def stream_messages(
         cancel_signal: Optional threading.Event to check for cancellation during streaming. Also
             forwarded to the model so a provider can abort an in-flight request.
         agent_metadata: Metadata of the invoking agent, forwarded to the model.
+        structured_output_model: Output model this call must produce, forwarded to the model so the provider can
+            choose how to enforce it.
         **kwargs: Additional keyword arguments for future extensibility.
 
     Yields:
@@ -556,6 +561,13 @@ async def stream_messages(
     messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
     start_time = time.time()
 
+    # Omitted when unset, so an ordinary call's arguments are unchanged.
+    optional_kwargs: dict[str, Any] = {}
+    if dynamic_trailing_blocks:
+        optional_kwargs["dynamic_trailing_blocks"] = dynamic_trailing_blocks
+    if structured_output_model:
+        optional_kwargs["structured_output_model"] = structured_output_model
+
     chunks = model.stream(
         messages,
         tool_specs if tool_specs else None,
@@ -566,8 +578,7 @@ async def stream_messages(
         model_state=model_state,
         cancel_signal=cancel_signal,
         agent_metadata=agent_metadata,
-        # Omitted when zero, so an ordinary call's arguments are unchanged.
-        **({"dynamic_trailing_blocks": dynamic_trailing_blocks} if dynamic_trailing_blocks else {}),
+        **optional_kwargs,
     )
 
     async for event in process_stream(chunks, start_time, cancel_signal):

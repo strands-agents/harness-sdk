@@ -9,23 +9,18 @@
  * - {@link Inherit} — value taken from the parent agent; hidden from the model.
  * - {@link Open}    — model supplies a free-form value.
  * - {@link Choice}  — model picks from a developer-supplied set.
- *
- * {@link _resolveSpec} merges model-supplied arguments, preset defaults, and axis policies
- * into a fully resolved {@link AgentSpec} used to build child agents.  {@link Inherit} axes
- * resolve to `undefined` (meaning "inherit all"); the class is a self-documenting marker.
  */
 
 import type { Model } from '../models/model.js'
 import type { ModelRouter } from '../models/routing/router.js'
 import { Agent } from '../agent/agent.js'
-import type { McpClient } from '../mcp/index.js'
 import type { Tool } from '../tools/tool.js'
-import { McpTool } from '../tools/mcp-tool.js'
 import { logger } from '../logging/logger.js'
 import type { Sandbox } from '../sandbox/base.js'
 import type { Printer } from '../agent/printer.js'
 import type { Tracer } from '../telemetry/tracer.js'
 import type { AttributeValue } from '@opentelemetry/api'
+import type { InterventionRegistry } from '../interventions/registry.js'
 
 /** Turns a resolved spec into a child agent, built the way the parent was. */
 export type AgentBuilder = (spec: AgentSpec) => Agent
@@ -36,6 +31,20 @@ export type AgentBuilder = (spec: AgentSpec) => Agent
  * @internal
  */
 export const UNSET: unique symbol = Symbol('UNSET')
+
+/**
+ * Model-facing description of each axis property.
+ *
+ * @internal
+ */
+export const AXIS_DESCRIPTIONS = {
+  agent_type: 'Role to assign this agent.',
+  instructions: "A system prompt defining this agent's role.",
+  tools:
+    'Subset of tools to grant this agent. Fewer is safer; it cannot exceed your own. ' +
+    'Omit to grant all inherited tools.',
+  model: "Which model this agent runs on. Omit to inherit the parent's model.",
+} as const
 
 /** The developer pins the value; the axis contributes no model-facing parameter. */
 export class Fixed {
@@ -114,35 +123,6 @@ export class Choice {
   }
 
   /**
-   * Renders this axis as a JSON Schema property for a tool's `inputSchema`.
-   *
-   * Produces a `string` enum (or `array` of enum when `multiple`), with per-option
-   * descriptions folded into the property's `description`.
-   *
-   * @param description - Base description prepended before any per-option detail.
-   * @returns A JSON Schema property object.
-   */
-  toSchemaProperty(description: string = ''): Record<string, unknown> {
-    const options = this.normalized()
-    const values = options.map((option) => option.name)
-    const lines = options
-      .filter((option) => option.description)
-      .map((option) => `- ${option.name}: ${option.description}`)
-    let desc = description
-    if (lines.length > 0) {
-      const block = 'Options:\n' + lines.join('\n')
-      desc = description ? `${description}\n${block}` : block
-    }
-    const prop: Record<string, unknown> = this.multiple
-      ? { type: 'array', items: { type: 'string', enum: values } }
-      : { type: 'string', enum: values }
-    if (desc) {
-      prop['description'] = desc
-    }
-    return prop
-  }
-
-  /**
    * Returns the resolved value behind `name`, or `name` itself if unknown (passthrough).
    *
    * @param name - The option name selected by the model.
@@ -157,6 +137,9 @@ export class Choice {
     return name
   }
 }
+
+/** Any authority mode an axis can take. */
+export type Axis = Fixed | Inherit | Open | Choice
 
 /** Options for constructing a {@link Preset}. */
 export interface PresetOptions {
@@ -195,7 +178,6 @@ export class AgentSpec {
   agentType: string | undefined
   instructions: string | undefined
   tools: string[] | undefined
-  mcpServers: string[] | undefined
   model: Model | ModelRouter | string | undefined
 
   /**
@@ -206,9 +188,91 @@ export class AgentSpec {
     this.agentType = data.agentType
     this.instructions = data.instructions
     this.tools = data.tools
-    this.mcpServers = data.mcpServers
     this.model = data.model
   }
+}
+
+/**
+ * Axes passed to {@link _toSchemaProperties}; omitted axes are hidden from the model.
+ * @internal Not part of the public API.
+ */
+export interface SchemaAxes {
+  presets: Record<string, Preset>
+  defaultPreset: string | undefined
+  instructions?: Axis | undefined
+  tools?: Axis | undefined
+  model?: Axis | undefined
+}
+
+/**
+ * Renders each model-visible axis, plus an `agent_type` choice over the presets, as JSON Schema properties.
+ *
+ * @param axes - Presets and axis policies.
+ * @returns JSON Schema properties keyed by axis name.
+ * @throws Error if a {@link Choice} axis has no options, or a `tools` {@link Choice} is not `multiple`.
+ * @internal Not part of the public API.
+ */
+export function _toSchemaProperties(axes: SchemaAxes): Record<string, unknown> {
+  const { presets, defaultPreset } = axes
+  const presetEntries = Object.entries(presets)
+  const agentType =
+    presetEntries.length > 0
+      ? new Choice(presetEntries.map(([name, preset]) => new Option(name, UNSET, describePreset(preset))))
+      : undefined
+  const entries: [keyof typeof AXIS_DESCRIPTIONS, Axis | undefined][] = [
+    ['agent_type', agentType],
+    ['instructions', axes.instructions],
+    ['tools', axes.tools],
+    ['model', axes.model],
+  ]
+  const properties: Record<string, unknown> = {}
+  for (const [key, axis] of entries) {
+    let description: string = AXIS_DESCRIPTIONS[key]
+    if (key === 'agent_type' && defaultPreset !== undefined) {
+      description = `${description} Omit to use the default ('${defaultPreset}').`
+    }
+    if (axis instanceof Open) {
+      properties[key] = { type: 'string', description }
+      continue
+    }
+    if (!(axis instanceof Choice)) {
+      continue
+    }
+    const options = axis.normalized()
+    if (options.length === 0) {
+      throw new Error(
+        `${key}: new Choice([]) offers no options; use new Fixed(...), or omit ${key} to use its default.`
+      )
+    }
+    if (key === 'tools' && !axis.multiple) {
+      throw new Error(`${key}: new Choice(...) must set multiple to true; a child agent selects a subset of ${key}.`)
+    }
+    const values = options.map((option) => option.name)
+    const lines = options
+      .filter((option) => option.description)
+      .map((option) => `- ${option.name}: ${option.description}`)
+    if (lines.length > 0) {
+      description = `${description}\nOptions:\n${lines.join('\n')}`
+    }
+    properties[key] = axis.multiple
+      ? { type: 'array', items: { type: 'string', enum: values }, description }
+      : { type: 'string', enum: values, description }
+  }
+  return properties
+}
+
+/**
+ * Describes a preset by its description plus which fields it sets, omitting instruction text to keep the schema
+ * small.
+ */
+function describePreset(preset: Preset): string {
+  const parts: string[] = []
+  if (preset.instructions !== undefined) parts.push('instructions')
+  if (preset.tools !== undefined) parts.push(`tools: ${preset.tools.join(', ') || 'none'}`)
+  if (preset.model !== undefined) parts.push(typeof preset.model === 'string' ? `model: ${preset.model}` : 'model')
+  if (parts.length === 0) return preset.description
+  const sets = `sets ${parts.join('; ')}`
+  return preset.description ? `${preset.description} (${sets})` : sets
 }
 
 /**
@@ -288,89 +352,104 @@ function resolveList(
   return undefined
 }
 
-/** Axes passed to {@link _resolveSpec}. */
+/**
+ * Axes passed to {@link _resolveSpecs}.
+ * @internal Not part of the public API.
+ */
 export interface ResolveSpecAxes {
   presets: Record<string, Preset>
   defaultPreset: string | undefined
   instructions: Open | Choice | Fixed
   /** Defaults to {@link Inherit} when omitted. */
-  tools?: Choice | Fixed | Inherit
+  tools?: Choice | Fixed | Inherit | undefined
   /** Defaults to {@link Inherit} when omitted. */
-  mcpServers?: Choice | Fixed | Inherit
-  /** Defaults to {@link Inherit} when omitted. */
-  model?: Inherit | Choice | Fixed
+  model?: Inherit | Choice | Fixed | undefined
 }
 
 /**
- * Combines the model's arguments, the selected preset, and the fixed axes into a spec.
+ * Combines each model-supplied agent input with the axis policies into a spec.
  *
  * Precedence per axis: a model-supplied argument wins, then the preset's value, then the axis
  * default ({@link Fixed}/{@link Inherit}). An omitted `agent_type` falls back to the default
  * preset, so a bare model input behaves like the default role.
  *
- * @param modelInput - Key/value pairs supplied by the model's tool call.
+ * @param modelInputs - The model-supplied arguments, one object per agent.
  * @param axes - Axis policies, presets, and the default preset name.
- * @returns The resolved {@link AgentSpec}.
- * @throws Error if `agent_type` is provided but not found in `axes.presets`.
+ * @returns The resolved {@link AgentSpec} for each input, in order.
+ * @throws Error if `modelInputs` is not an array, an input is not an object, a name is missing, empty, or
+ * duplicated, or an `agent_type` is not found in `axes.presets`.
  * @internal Not part of the public API.
  */
-export function _resolveSpec(modelInput: Record<string, unknown>, axes: ResolveSpecAxes): AgentSpec {
+export function _resolveSpecs(modelInputs: unknown, axes: ResolveSpecAxes): AgentSpec[] {
   const { presets, defaultPreset, instructions } = axes
   const tools = axes.tools ?? new Inherit()
-  const mcpServers = axes.mcpServers ?? new Inherit()
   const model = axes.model ?? new Inherit()
 
-  const name = modelInput['name'] as string | undefined
-
-  // agent_type is a closed enum: a provided value must be an exact preset name.
-  const modelAgentType = modelInput['agent_type']
-  const isKnownPreset = typeof modelAgentType === 'string' && Object.hasOwn(presets, modelAgentType)
-  if (modelAgentType != null && !isKnownPreset) {
-    throw new Error(
-      `Unknown agent_type ${JSON.stringify(modelAgentType)}; valid values: ${Object.keys(presets).sort().join(', ')}.`
-    )
+  if (!Array.isArray(modelInputs)) {
+    throw new Error('agents must be an array')
   }
 
-  // Ad-hoc instructions (only possible when the axis exposes one) override the default preset.
-  const overridingInstructions =
-    (instructions instanceof Open || instructions instanceof Choice) && 'instructions' in modelInput
+  const seenNames = new Set<string>()
+  const specs: AgentSpec[] = []
+  for (const [index, input] of (modelInputs as unknown[]).entries()) {
+    if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error(`Agent at index ${index} must be an object`)
+    }
+    const modelInput = input as Record<string, unknown>
 
-  let agentType: string | undefined
-  if (isKnownPreset) {
-    agentType = modelAgentType as string
-  } else if (!overridingInstructions) {
-    agentType = defaultPreset
+    const rawName = modelInput['name']
+    if (typeof rawName !== 'string' || !rawName.trim()) {
+      throw new Error(`Agent at index ${index} must have a non-empty 'name' string`)
+    }
+    const name = rawName.trim()
+    if (seenNames.has(name)) {
+      throw new Error(`Duplicate agent name ${JSON.stringify(name)} at index ${index}`)
+    }
+    seenNames.add(name)
+
+    // agent_type is a closed enum: a provided value must be an exact preset name.
+    const modelAgentType = modelInput['agent_type']
+    const isKnownPreset = typeof modelAgentType === 'string' && Object.hasOwn(presets, modelAgentType)
+    if (modelAgentType != null && !isKnownPreset) {
+      throw new Error(
+        `Unknown agent_type ${JSON.stringify(modelAgentType)}; valid values: ${Object.keys(presets).sort().join(', ')}.`
+      )
+    }
+    // Ad-hoc instructions (only possible when the axis exposes one) override the default preset.
+    const overridingInstructions =
+      (instructions instanceof Open || instructions instanceof Choice) && 'instructions' in modelInput
+
+    let agentType: string | undefined
+    if (isKnownPreset) {
+      agentType = modelAgentType as string
+    } else if (!overridingInstructions) {
+      agentType = defaultPreset
+    }
+    const preset = agentType ? presets[agentType] : undefined
+
+    const spec = new AgentSpec({ name, agentType })
+    spec.instructions = resolveScalar(modelInput['instructions'] ?? UNSET, instructions, preset?.instructions) as
+      string | undefined
+    spec.tools = resolveList(modelInput['tools'] ?? UNSET, tools, preset?.tools)
+    spec.model = resolveScalar(modelInput['model'] ?? UNSET, model, preset?.model) as
+      Model | ModelRouter | string | undefined
+    specs.push(spec)
   }
 
-  const preset = agentType ? presets[agentType] : undefined
-
-  const spec = new AgentSpec({
-    name: name !== undefined ? String(name) : undefined,
-    agentType,
-  })
-
-  spec.instructions = resolveScalar(modelInput['instructions'] ?? UNSET, instructions, preset?.instructions) as
-    string | undefined
-
-  spec.tools = resolveList(modelInput['tools'] ?? UNSET, tools, preset?.tools)
-
-  spec.mcpServers = resolveList(modelInput['mcp_servers'] ?? UNSET, mcpServers)
-
-  spec.model = resolveScalar(modelInput['model'] ?? UNSET, model, preset?.model) as
-    Model | ModelRouter | string | undefined
-
-  return spec
+  return specs
 }
 
 /**
  * Creates a builder that produces child agents inheriting the parent's model, tools, and
- * MCP servers.
+ * interventions.
  *
  * Used by the vended multi-agent tools when no custom builder is supplied.
- * Resolves `spec.tools` against the parent's tool registry and `spec.mcpServers`
- * against the parent's MCP clients (by `clientName`), skipping (with a warning) names the
- * parent does not own. Children also inherit the parent's sandbox, printer setting, and trace
- * attributes, and get `contextManager: 'auto'` unless their model is stateful.
+ * Resolves `spec.tools` against the parent's tool registry, including MCP tools, which keep
+ * calling through the parent's MCP client, skipping (with a warning) names the parent does
+ * not own. `spec.name` becomes the child's name and id. Children also inherit the parent's sandbox, printer setting, and trace
+ * attributes, and get `contextManager: 'auto'` unless their model is stateful. Children share
+ * the parent's intervention handler instances, so tool calls made by a child are subject to
+ * the same approval and authorization checks as the parent's.
  *
  * @param parent - The parent agent whose resources child agents inherit.
  * @returns An {@link AgentBuilder} that creates configured child agents from a spec.
@@ -379,27 +458,16 @@ export function _resolveSpec(modelInput: Record<string, unknown>, axes: ResolveS
 export function _defaultBuilder(parent: Agent): AgentBuilder {
   return (spec: AgentSpec): Agent => {
     const parentTools: Map<string, Tool> = new Map()
-    const mcpClients: Map<string, McpClient> = new Map()
     // The child's own context manager registers its tools (e.g. retrieve_context); skip the parent's.
     const managedTools = new Set(parent.contextManager?.getTools() ?? [])
     for (const tool of parent.toolRegistry.list()) {
-      if (managedTools.has(tool)) {
-        continue
-      }
-      if (tool instanceof McpTool) {
-        // MCP tools flow through mcpServers to avoid duplicates with their client.
-        const client = tool.mcpClient
-        if (client.clientName) {
-          mcpClients.set(client.clientName, client)
-        }
-      } else {
-        // Plain tools are selected by name via spec.tools.
+      if (!managedTools.has(tool)) {
         parentTools.set(tool.name, tool)
       }
     }
 
     // tools=undefined means inherit all; a list means only those.
-    const childTools: (Tool | McpClient)[] = spec.tools === undefined ? [...parentTools.values()] : []
+    const childTools: Tool[] = spec.tools === undefined ? [...parentTools.values()] : []
     for (const toolName of spec.tools ?? []) {
       const tool = parentTools.get(toolName)
       if (tool) {
@@ -409,37 +477,24 @@ export function _defaultBuilder(parent: Agent): AgentBuilder {
       }
     }
 
-    // mcpServers=undefined means inherit all; a list means only those.
-    if (spec.mcpServers === undefined) {
-      childTools.push(...mcpClients.values())
-    } else {
-      for (const clientName of spec.mcpServers) {
-        const client = mcpClients.get(clientName)
-        if (client) {
-          childTools.push(client)
-        } else {
-          logger.warn(
-            `server_name=<${clientName}> | subagent requested MCP server but parent does not own it, skipping`
-          )
-        }
-      }
-    }
-
     const childModel = (spec.model as Model | ModelRouter | string | undefined) ?? parent.model
     const stateful = typeof childModel === 'object' && 'stateful' in childModel && childModel.stateful
     const sandbox = (parent as unknown as { _sandbox?: Sandbox | false })._sandbox
     const printer = (parent as unknown as { _printer?: Printer })._printer
     const tracer = (parent as unknown as { _tracer: Tracer })._tracer
     const traceAttributes = (tracer as unknown as { _traceAttributes: Record<string, AttributeValue> })._traceAttributes
+    const interventionRegistry = (parent as unknown as { _interventionRegistry: InterventionRegistry })
+      ._interventionRegistry
     return new Agent({
       systemPrompt: spec.instructions ?? '',
       tools: childTools,
       model: childModel,
-      ...(spec.name !== undefined && { name: spec.name }),
+      ...(spec.name !== undefined && { name: spec.name, id: spec.name }),
       ...(!stateful && { contextManager: 'auto' }),
       ...(sandbox !== undefined && { sandbox }),
       printer: printer !== undefined,
       traceAttributes: { ...traceAttributes },
+      interventions: [...interventionRegistry.handlers],
     })
   }
 }

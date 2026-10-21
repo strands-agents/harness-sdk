@@ -3775,3 +3775,116 @@ class TestResumeInFlightSibling:
         join_input_text = " ".join(str(block) for block in join_input)
         assert "From left:" in join_input_text
         assert "From right:" in join_input_text
+
+
+class TestResumeDispatchedSibling:
+    """Verify a fan-in node is not marked ready while a dispatched sibling has not yet started."""
+
+    def test_dispatched_sibling_excluded_from_resume_frontier(self):
+        """join is excluded and right included when right is dispatched but not yet executing."""
+        builder = GraphBuilder()
+        builder.add_node(create_mock_agent("left"), "left")
+        builder.add_node(create_mock_agent("right"), "right")
+        builder.add_node(create_mock_agent("join"), "join")
+        builder.set_entry_point("left")
+        builder.set_entry_point("right")
+        builder.add_edge("left", "join")
+        builder.add_edge("right", "join")
+        graph = builder.build()
+
+        node_left = graph.nodes["left"]
+        node_right = graph.nodes["right"]
+
+        # left completed; right dispatched but not yet executing (crashed before EXECUTING), in
+        # none of the terminal sets and with no completed ancestor to reach it from forward
+        # reachability alone.
+        node_left.execution_status = Status.COMPLETED
+        node_right.execution_status = Status.DISPATCHED
+
+        graph.state.status = Status.EXECUTING
+        graph.state.completed_nodes = {node_left}
+
+        payload = graph.serialize_state()
+
+        assert "join" not in payload["next_nodes_to_execute"], (
+            f"join must not be ready while dispatched sibling right is outstanding, "
+            f"got {payload['next_nodes_to_execute']}"
+        )
+        assert "right" in payload["next_nodes_to_execute"]
+
+        ready_ids = {node.node_id for node in graph._compute_ready_nodes_for_resume()}
+        assert ready_ids == {"right"}
+
+    @pytest.mark.asyncio
+    async def test_resume_runs_fan_in_once_for_dispatched_sibling(self):
+        """A restore from a dispatched-but-not-started snapshot runs the fan-in exactly once."""
+        release_right = asyncio.Event()
+
+        agent_left = create_mock_agent("left", "left done")
+        agent_right = create_mock_agent("right", "right done")
+
+        builder = GraphBuilder()
+        builder.add_node(agent_left, "left")
+        builder.add_node(agent_right, "right")
+        builder.add_node(create_mock_agent("join", "join done"), "join")
+        builder.set_entry_point("left")
+        builder.set_entry_point("right")
+        builder.add_edge("left", "join")
+        builder.add_edge("right", "join")
+        graph = builder.build()
+
+        # Capture the real implementation before patching so the wrapper can delegate to it.
+        real_stream_node_to_queue = graph._stream_node_to_queue
+
+        async def blocking_right_dispatch(node, event_queue, invocation_state):
+            # Hold right in the DISPATCHED window until left's AfterNodeCallEvent has captured the state.
+            if node.node_id == "right":
+                await release_right.wait()
+            await real_stream_node_to_queue(node, event_queue, invocation_state)
+
+        graph._stream_node_to_queue = blocking_right_dispatch  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        def capture_on_left(event):
+            # left completes while right is still DISPATCHED — snapshot the live-sibling state,
+            # then release right so the first graph can finish.
+            if event.node_id == "left" and "payload" not in captured:
+                captured["payload"] = event.source.serialize_state()
+                release_right.set()
+
+        graph.add_hook(capture_on_left, AfterNodeCallEvent)
+
+        await graph.invoke_async("two entry points")
+
+        assert "payload" in captured, "left's AfterNodeCallEvent should fire while right is DISPATCHED"
+        assert "right" in captured["payload"]["next_nodes_to_execute"]
+        assert "join" not in captured["payload"]["next_nodes_to_execute"]
+
+        # Resume into a fresh graph with independent executor mocks, since the call-count and
+        # input assertions target the resumed graph's nodes.
+        builder2 = GraphBuilder()
+        builder2.add_node(create_mock_agent("left", "left done"), "left")
+        builder2.add_node(create_mock_agent("right", "right done"), "right")
+        agent_join2 = create_mock_agent("join", "join done")
+        builder2.add_node(agent_join2, "join")
+        builder2.set_entry_point("left")
+        builder2.set_entry_point("right")
+        builder2.add_edge("left", "join")
+        builder2.add_edge("right", "join")
+        graph2 = builder2.build()
+
+        graph2.deserialize_state(captured["payload"])
+        result = await graph2.invoke_async("two entry points")
+
+        # join runs exactly once — a stale frontier including join would double-run it.
+        assert agent_join2.stream_async.call_count == 1
+        assert result.status == Status.COMPLETED
+        assert "join" in result.results
+
+        # join's single run sees both parents' outputs (left restored from the snapshot, right
+        # re-run on resume).
+        join_input = agent_join2.stream_async.call_args.args[0]
+        join_input_text = " ".join(str(block) for block in join_input)
+        assert "From left:" in join_input_text
+        assert "From right:" in join_input_text

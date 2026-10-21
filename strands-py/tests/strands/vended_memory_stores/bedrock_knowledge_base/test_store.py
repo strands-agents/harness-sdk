@@ -17,8 +17,9 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import threading
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -1175,3 +1176,78 @@ class TestExtractionViaMemoryManager:
         assert agent_client.ingest_knowledge_base_documents.call_count == 1
         document = agent_client.ingest_knowledge_base_documents.call_args.kwargs["documents"][0]
         assert document["content"]["custom"]["inlineContent"]["textContent"]["data"] == "user prefers dark mode"
+
+
+# --------------------------------------------------------------------------- #
+# The boto3 clients are synchronous, so every call has to leave the event loop
+# --------------------------------------------------------------------------- #
+
+
+def _record_threads(client_method: MagicMock) -> list[int]:
+    """Program ``client_method`` to record the thread it runs on, keeping the result it already returns."""
+    return_value = client_method.return_value
+    threads: list[int] = []
+
+    def _record(*_args: Any, **_kwargs: Any) -> Any:
+        threads.append(threading.get_ident())
+        return return_value
+
+    client_method.side_effect = _record
+    return threads
+
+
+class TestBlockingCallsRunOffTheEventLoop:
+    """Every AWS call the store makes is synchronous, so none of them may run on the loop's thread."""
+
+    @pytest.mark.asyncio
+    async def test_search_runs_retrieve_off_the_event_loop(self, make_store):
+        store, runtime, _agent = make_store(config_overrides={"knowledge_base_type": "VECTOR"})
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(runtime.retrieve)
+
+        await store.search("q")
+
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads
+
+    @pytest.mark.asyncio
+    async def test_initialize_runs_type_detection_off_the_event_loop(self, make_store):
+        store, _runtime, agent = make_store()
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(agent.get_knowledge_base)
+
+        await store.initialize()
+
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads
+
+    @pytest.mark.asyncio
+    async def test_add_runs_ingestion_off_the_event_loop(self, make_custom_store):
+        store, agent = make_custom_store()
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(agent.ingest_knowledge_base_documents)
+
+        await store.add("user prefers dark mode")
+
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads
+
+    @pytest.mark.asyncio
+    async def test_add_s3_runs_object_uploads_off_the_event_loop(self, make_s3_store):
+        store, _agent, s3 = make_s3_store()
+        loop_thread = threading.get_ident()
+        call_threads = _record_threads(s3.put_object)
+
+        await store.add("user prefers dark mode", {"scope": "user"})
+
+        # The content object and its metadata sidecar are two separate uploads.
+        tru_call_threads = call_threads
+        exp_call_threads = [ANY, ANY]
+        assert tru_call_threads == exp_call_threads
+        assert loop_thread not in tru_call_threads

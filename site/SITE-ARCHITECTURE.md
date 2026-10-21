@@ -692,16 +692,17 @@ These scripts assist with documentation maintenance:
 
 ## URL Redirects (Old MkDocs URLs → New CMS URLs)
 
-The old MkDocs site used versioned URLs like `/latest/documentation/docs/<path>/` and `/1.x/documentation/docs/<path>/`. The new CMS uses clean paths like `/docs/<path>/`. Some pages also moved or were renamed. The redirect system handles both cases client-side via the 404 page.
+The old MkDocs site used versioned URLs like `/latest/documentation/docs/<path>/` and `/1.x/documentation/docs/<path>/`. The new CMS uses clean paths like `/docs/<path>/`. Some pages also moved or were renamed. The redirect system serves registered legacy URLs statically and keeps a client-side 404 fallback for unregistered paths.
 
 ### How It Works
 
-1. **404 page** (`src/content/404.mdx`) renders `Redirect404.astro`, which runs a client-side script on every 404.
-2. **`Redirect404.astro`** (`src/components/Redirect404.astro`) builds a `redirectFromMap` at build time (via `src/util/redirect.build.ts`) and passes it to the client-side script, which calls `resolveRedirectFromUrl()` with the current URL and map. If a target is found, `window.location.replace()` fires without adding a history entry.
-3. **`src/util/redirect.ts`** contains the redirect logic:
-   - `resolveRedirectFromUrl(url, redirectFromMap?)` — strips the version prefix (`/latest/`, `/1.x/`, `/1.5.x/`, etc.) and the `/documentation/` segment, then delegates to `resolveRedirect()`.
-   - `resolveRedirect(slug, redirectFromMap?)` — checks `SLUG_RULES` first (highest priority), then falls back to `redirectFromMap` for frontmatter-based redirects.
-4. **`src/util/redirect.build.ts`** — shared helper that calls `getCollection('docs')` and builds the `redirectFromMap` from all `redirectFrom` frontmatter arrays. Used by both `Redirect404.astro` and the sitemap coverage test.
+1. **Published route registry** (`src/config/legacy-routes.json`) records the documentation paths preserved by the redirect compatibility layer. `scripts/update-known-routes.ts` appends routes from the live sitemap.
+2. **Static route builder** (`src/util/redirect.static.ts`) combines the registry with exact rename rules and page-level `redirectFrom` metadata. It resolves versioned paths at build time and supplies the result to Astro's `redirects` configuration.
+3. **Readable redirect pages** (`src/plugins/legacy-redirect-pages.ts`) replace Astro's internal redirect stubs with a copy of the destination page's rendered HTML. The copy adds an early base element, redirect tag, and script, so relative links stay anchored to the destination and browsers move to the canonical URL while `curl`, agent fetch tools, and browsers without JavaScript can read the guide at the old URL. External redirects keep Astro's normal link stub.
+4. **404 fallback** (`src/content/404.mdx` and `src/components/Redirect404.astro`) handles recognizable paths that are not in the published registry. It builds a `redirectFromMap` via `src/util/redirect.build.ts` and redirects in the browser.
+5. **`src/util/redirect.ts`** contains the shared redirect logic:
+   - `resolveRedirectFromUrl(url, redirectFromMap?)` strips the version prefix (`/latest/`, `/1.x/`, `/1.5.x/`, etc.) and the `/documentation/` segment, then delegates to `resolveRedirect()`.
+   - `resolveRedirect(slug, redirectFromMap?)` checks `SLUG_RULES` first (highest priority), then falls back to `redirectFromMap` for frontmatter-based redirects.
 
 ### Page-Level Redirects (`redirectFrom` frontmatter)
 
@@ -715,7 +716,7 @@ redirectFrom:
 ---
 ```
 
-This is useful when a page moves to a new URL. The `redirectFrom` slugs are collected at build time into a map and passed to the client-side redirect script. They must also be registered in `test/known-routes.json` — the sitemap coverage test enforces this.
+This is useful when a page moves to a new URL. The `redirectFrom` slugs are collected at build time into a map and passed to the client-side redirect script. They must also be registered in `src/config/legacy-routes.json`; the sitemap coverage test enforces this.
 
 ### Adding New Redirect Rules
 
@@ -735,9 +736,11 @@ Helper builders from `src/util/regex.ts`:
 
 ### Testing
 
-- **`test/redirect.test.ts`** — unit tests for `resolveRedirect` and `resolveRedirectFromUrl` covering slug transforms, URL normalisation, trailing-slash preservation, and `redirectFromMap` priority rules.
-- **`test/sitemap-coverage.test.ts`** — integration tests including:
-  - Every `redirectFrom` slug declared in frontmatter has a corresponding entry in `test/known-routes.json` (fails with copy-paste-ready JSON if missing).
+- **`test/redirect.test.ts`**: unit tests for `resolveRedirect` and `resolveRedirectFromUrl` covering slug transforms, URL normalisation, trailing-slash preservation, and `redirectFromMap` priority rules.
+- **`test/redirect-static.test.ts`**: build-time route generation tests, including published versioned paths.
+- **`test/legacy-redirect-pages.test.ts`**: verifies that internal legacy routes contain the destination HTML and retain browser redirect behavior.
+- **`test/sitemap-coverage.test.ts`**: integration tests including:
+  - Every `redirectFrom` slug declared in frontmatter has a corresponding entry in `src/config/legacy-routes.json` (fails with copy-paste-ready JSON if missing).
   - Every known route resolves to a valid CMS entry (uses `buildRedirectFromMap()` so frontmatter-based redirects are honoured).
   - Live sitemap coverage (controlled by `VERIFY_LIVE_SITEMAP=true`, skipped locally).
 

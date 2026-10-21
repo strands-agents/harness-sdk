@@ -7,7 +7,18 @@
  */
 
 import type { Model } from '../../models/model.js'
-import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { ModelProxy } from '../../models/model-proxy.js'
+import type { InvocationContext } from '../../agent/invocation-context.js'
+import {
+  GuardContentBlock,
+  JsonBlock,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../types/messages.js'
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import { CitationsBlock } from '../../types/citations.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
@@ -52,48 +63,92 @@ export interface SummarizeConfig {
 /**
  * Summarizes content (text, images, JSON, etc.) via an LLM call.
  * Passes content blocks directly to the model so it can reason about all modalities.
- * If the model doesn't support multimodal input, retries with text-only blocks.
+ * Model errors propagate to the caller.
  *
- * @returns The summarized text, or null if summarization failed.
+ * @returns The summarized text, or null if the model returned no text.
  */
 export async function summarizeContent(
   content: ContentBlock[],
   model: Model,
-  config?: SummarizeConfig
+  config?: SummarizeConfig,
+  invocationContext?: InvocationContext
 ): Promise<string | null> {
-  const result = await callSummarizer(content, model, config)
-  if (result !== undefined) return result
+  const messages = [
+    new Message({
+      role: 'user',
+      content: [new TextBlock('<content>'), ...content, new TextBlock('</content>')] as ContentBlock[],
+    }),
+  ]
 
-  const textOnly = content.filter((block) => block instanceof TextBlock)
-  if (textOnly.length === 0 || textOnly.length === content.length) return null
+  const stream = new ModelProxy(model).streamAggregated(
+    messages,
+    { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+    invocationContext
+  )
 
-  const textResult = await callSummarizer(textOnly, model, config)
-  return textResult ?? null
+  let result: Awaited<ReturnType<typeof stream.next>> | undefined
+  for (;;) {
+    result = await stream.next()
+    if (result.done) break
+  }
+
+  if (!result?.done || !result.value) {
+    logger.warn('summarization produced no response')
+    return null
+  }
+
+  const parts: string[] = []
+  for (const block of result.value.message.content) {
+    if (block instanceof TextBlock) {
+      parts.push(block.text)
+    }
+  }
+
+  return parts.join('\n') || null
 }
 
 /**
- * Converts ToolResultContent[] to ContentBlock[] for model consumption.
- * JsonBlock is not a valid ContentBlock, so it's serialized to a TextBlock.
+ * Converts a block to what the summarizer accepts in a user turn: text, images, and documents pass
+ * through, other content is rendered as text or a placeholder, and the rest is left out.
+ */
+function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlock[] {
+  if (block instanceof TextBlock || block instanceof ImageBlock || block instanceof DocumentBlock) return [block]
+  if (block instanceof JsonBlock) return [new TextBlock(JSON.stringify(block.json, null, 2))]
+  if (block instanceof CitationsBlock) return block.content.map((content) => new TextBlock(content.text))
+  if (block instanceof GuardContentBlock) {
+    return [new TextBlock(block.text ? block.text.text : '[image omitted]')]
+  }
+  if (block instanceof VideoBlock) return [new TextBlock('[video omitted]')]
+  if (block instanceof AudioBlock) return [new TextBlock('[audio omitted]')]
+  return []
+}
+
+/**
+ * Converts ToolResultContent[] to ContentBlock[] the summarizer accepts.
  */
 export function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[] {
-  return content.map((block) => {
-    if (block instanceof JsonBlock) {
-      return new TextBlock(JSON.stringify(block.json, null, 2))
-    }
-    return block as ContentBlock
-  })
+  return content.flatMap(toSummarizerBlocks)
+}
+
+function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, string>): string {
+  const name = toolNames.get(block.toolUseId)
+  const status = block.status === 'error' ? ' (error)' : ''
+  return name ? `[tool result: ${name}${status}]` : `[tool result${status}]`
 }
 
 /**
- * Converts a message's content to ContentBlocks for the summarizer, leaving out reasoning.
+ * Converts a message's content to ContentBlocks for the summarizer, rendering tool calls and tool result
+ * labels as text.
  */
-function messageToContentBlocks(message: Message): ContentBlock[] {
+function messageToContentBlocks(message: Message, toolNames: Map<string, string>): ContentBlock[] {
   const blocks: ContentBlock[] = []
   for (const block of message.content) {
     if (block instanceof ToolResultBlock) {
-      blocks.push(...toolResultToContentBlocks(block.content))
-    } else if (!(block instanceof ReasoningBlock)) {
-      blocks.push(block)
+      blocks.push(new TextBlock(formatToolResultLabel(block, toolNames)), ...toolResultToContentBlocks(block.content))
+    } else if (block instanceof ToolUseBlock) {
+      blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
+    } else {
+      blocks.push(...toSummarizerBlocks(block))
     }
   }
   return blocks
@@ -106,54 +161,17 @@ function messageToContentBlocks(message: Message): ContentBlock[] {
  * conversation that produced them. Messages with nothing left get no role marker.
  */
 export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
+  const toolNames = new Map<string, string>()
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block instanceof ToolUseBlock) toolNames.set(block.toolUseId, block.name)
+    }
+  }
   const blocks: ContentBlock[] = []
   for (const message of messages) {
-    const content = messageToContentBlocks(message)
+    const content = messageToContentBlocks(message, toolNames)
     if (content.length === 0) continue
     blocks.push(new TextBlock(`\n---\n[${message.role}]`), ...content)
   }
   return blocks
-}
-
-async function callSummarizer(
-  content: ContentBlock[],
-  model: Model,
-  config?: SummarizeConfig
-): Promise<string | null | undefined> {
-  const messages = [
-    new Message({
-      role: 'user',
-      content: [new TextBlock('<content>'), ...content, new TextBlock('</content>')] as ContentBlock[],
-    }),
-  ]
-
-  try {
-    const stream = model.streamAggregated(messages, {
-      systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    })
-
-    let result: Awaited<ReturnType<typeof stream.next>> | undefined
-    for (;;) {
-      result = await stream.next()
-      if (result.done) break
-    }
-
-    if (!result?.done || !result.value) {
-      logger.warn('summarization produced no response')
-      return null
-    }
-
-    const outputBlocks = result.value.message.content
-    const parts: string[] = []
-    for (const block of outputBlocks) {
-      if (block instanceof TextBlock) {
-        parts.push(block.text)
-      }
-    }
-
-    return parts.join('\n') || null
-  } catch (error) {
-    logger.debug(`error=<${error instanceof Error ? error.message : String(error)}> | summarization failed`)
-    return undefined
-  }
 }

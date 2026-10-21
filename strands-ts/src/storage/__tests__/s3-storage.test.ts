@@ -19,6 +19,8 @@ vi.mock('@aws-sdk/client-s3', () => ({
 }))
 
 import { S3Storage } from '../s3-storage.js'
+import { NAMESPACED } from '../storage.js'
+import type { StorageSearchResult } from '../storage.js'
 
 describe('S3Storage', () => {
   beforeEach(() => {
@@ -154,6 +156,78 @@ describe('S3Storage', () => {
       const storage = new S3Storage('my-bucket')
 
       await expect(storage.list('prefix/')).rejects.toThrow(StorageError)
+    })
+  })
+
+  describe('namespace', () => {
+    it('returns a scoped S3Storage that writes under the combined prefix', async () => {
+      mockSend.mockResolvedValue({})
+      const scoped = new S3Storage('my-bucket', { prefix: 'agents/' }).namespace('memory/agent')
+      const data = new TextEncoder().encode('payload')
+
+      await scoped.write('notes.md', data)
+
+      expect(scoped).toBeInstanceOf(S3Storage)
+      expect(NAMESPACED in scoped).toBe(true)
+      expect(mockPutObjectCommand).toHaveBeenCalledWith({
+        Bucket: 'my-bucket',
+        Key: 'agents/memory/agent/notes.md',
+        Body: data,
+      })
+    })
+
+    it('lists only under the combined prefix and strips it', async () => {
+      mockSend.mockResolvedValue({ Contents: [{ Key: 'agents/memory/agent/notes.md' }], IsTruncated: false })
+      const scoped = new S3Storage('my-bucket', { prefix: 'agents' }).namespace('memory/agent/')
+
+      const keys = await scoped.list('')
+
+      expect(mockListObjectsV2Command).toHaveBeenCalledWith(
+        expect.objectContaining({ Bucket: 'my-bucket', Prefix: 'agents/memory/agent/' })
+      )
+      expect(keys).toEqual(['notes.md'])
+    })
+
+    it('shares the parent S3 client', async () => {
+      mockSend.mockResolvedValue({})
+      const storage = new S3Storage('my-bucket')
+      const scoped = storage.namespace('a').namespace('b')
+
+      await scoped.write('k', new Uint8Array([1]))
+      await storage.write('k', new Uint8Array([1]))
+
+      expect(mockS3Client).toHaveBeenCalledTimes(1)
+      expect(mockPutObjectCommand).toHaveBeenCalledWith(expect.objectContaining({ Key: 'a/b/k' }))
+    })
+
+    it("keeps a subclass's overrides on the scoped instance and builds the client from the parent", async () => {
+      mockSend.mockResolvedValue({})
+      class TaggedStorage extends S3Storage {
+        override async search(query: string): Promise<StorageSearchResult[]> {
+          return [{ key: `custom:${query}`, score: 1 }]
+        }
+      }
+      const scoped = new TaggedStorage('my-bucket', { region: 'us-west-2' }).namespace('memory')
+
+      await scoped.write('k', new Uint8Array([1]))
+
+      expect(scoped).toBeInstanceOf(TaggedStorage)
+      expect(await scoped.search('q')).toEqual([{ key: 'custom:q', score: 1 }])
+      expect(mockS3Client).toHaveBeenCalledTimes(1)
+      expect(mockS3Client).toHaveBeenCalledWith({ region: 'us-west-2' })
+      expect(mockPutObjectCommand).toHaveBeenCalledWith(expect.objectContaining({ Key: 'memory/k' }))
+    })
+
+    it('passes the scoped instance and relative keys to the search strategy', async () => {
+      mockSend.mockResolvedValue({})
+      const strategy = { index: vi.fn(), search: vi.fn().mockResolvedValue([]) }
+      const scoped = new S3Storage('my-bucket', { searchStrategy: strategy }).namespace('memory')
+
+      await scoped.write('deploy.md', new Uint8Array([1]))
+      await scoped.search('query')
+
+      expect(strategy.index).toHaveBeenCalledWith(scoped, 'deploy.md', expect.any(Uint8Array))
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'query')
     })
   })
 })

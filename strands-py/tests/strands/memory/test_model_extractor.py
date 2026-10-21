@@ -45,9 +45,11 @@ class _RecordingModel(MockedModelProvider):
     def __init__(self, agent_responses: Any) -> None:
         super().__init__(agent_responses)
         self.stream_calls = 0
+        self.system_prompts: list[str | None] = []
 
     async def stream(self, *args: Any, **kwargs: Any):  # type: ignore[override]
         self.stream_calls += 1
+        self.system_prompts.append(args[2] if len(args) > 2 else kwargs.get("system_prompt"))
         async for event in super().stream(*args, **kwargs):
             yield event
 
@@ -118,6 +120,36 @@ async def test_returns_empty_for_an_empty_message_batch_without_calling_the_mode
 
     assert entries == []
     assert model.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_appends_the_output_format_to_the_default_system_prompt():
+    model = _RecordingModel([_assistant_text("[]")])
+
+    await ModelExtractor(model=model).extract([_user_turn("x")])
+
+    system_prompt = model.system_prompts[0]
+    assert system_prompt is not None
+    assert system_prompt.startswith("You extract durable facts")
+    assert system_prompt.endswith(
+        'Return ONLY a JSON array of objects, each: {"content": string}. '
+        "If there is nothing worth remembering, return []."
+    )
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_output_format_when_a_custom_system_prompt_replaces_the_default():
+    model = _RecordingModel([_assistant_text('[{"content": "Prefers aisle seats"}]')])
+    extractor = ModelExtractor(model=model, system_prompt="Extract user preferences.")
+
+    entries = await extractor.extract([_user_turn("I like aisle seats")])
+
+    system_prompt = model.system_prompts[0]
+    assert system_prompt is not None
+    assert system_prompt.startswith("Extract user preferences.\n\n")
+    assert "You extract durable facts" not in system_prompt
+    assert 'Return ONLY a JSON array of objects, each: {"content": string}.' in system_prompt
+    assert entries == [ExtractionResult(content="Prefers aisle seats")]
 
 
 @pytest.mark.asyncio
