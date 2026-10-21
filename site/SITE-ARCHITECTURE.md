@@ -38,7 +38,19 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 **Pagination pruning for regular pages:** Starlight pre-computes prev/next links from the full sidebar before middleware runs. The middleware now prunes any links that fall outside the current nav section and overrides labels with actual page titles.
 
-### 3. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
+### 3. Generated Sample Guides (`scripts/samples/`, `src/pages/examples/`)
+
+**What it does:** Imports the samples repository's `samples.json` catalog and each sample's root README or configured notebook into `.build/samples/pages`. A separate `sampleGuides` content collection renders the generated Markdown with Starlight's native page layout, heading links, and Expressive Code blocks.
+
+**Build ownership:** The samples repository owns sample code, guide content, and catalog metadata. This site owns the importer, routes, navigation, and presentation. CI, preview, and production builds check out `strands-agents/samples` and set `SAMPLES_SOURCE_DIR`, so a later site build automatically includes merged sample changes. The samples repository is a build input only and does not run in production.
+
+**Reproducibility and safety:** The importer requires a clean Git checkout, records its exact commit in every generated page, rejects paths outside the checkout, ignores notebook outputs and raw cells, converts safe HTML content and media to Markdown, rejects unsafe URL schemes, and rewrites relative links and images to commit-pinned GitHub URLs. Missing file links emit a warning so a stale reference does not block publishing; missing images fail the build because they would visibly break the guide.
+
+**Local development:** Run `npm run samples:sync -- --source /path/to/samples` to import a local clean checkout. Without a source, development retains existing generated pages or uses the committed one-page fallback. Deployment workflows set `SAMPLES_REQUIRE_SOURCE=1`, so production cannot silently use the fallback.
+
+**Routes and navigation:** `/examples/` renders the preferred TypeScript first-agent guide. Other entries use `/examples/{sample-slug}/`. Every page receives the same language and category sidebar, and the route middleware preserves that generated sidebar instead of applying the regular product filter.
+
+### 4. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
 
 **What it does:** Processes MkDocs-style code snippet references in markdown files.
 
@@ -58,7 +70,7 @@ const example = "This code will be included"
 // --8<-- [end:section_name]
 ```
 
-### 4. Relative Link Resolution (`src/util/links.ts`, `src/components/PageLink.astro`)
+### 5. Relative Link Resolution (`src/util/links.ts`, `src/components/PageLink.astro`)
 
 **What it does:** Converts MkDocs-style relative file links to Astro slug-based URLs at render time.
 
@@ -83,7 +95,7 @@ From page `user-guide/concepts/agents/state.mdx`:
 
 The collection base is `src/content` (not `src/content/docs`), so all doc slugs include a `docs/` prefix (e.g., `docs/user-guide/concepts/agents/state`). The `generateId` function strips this prefix from path-based slugs so that URLs remain clean (e.g., `/docs/user-guide/...`). Files with an explicit `slug` frontmatter field (such as generated API docs) use that value directly and must include the `docs/` prefix themselves.
 
-### 5. API Reference Links (`@api` shorthand)
+### 6. API Reference Links (`@api` shorthand)
 
 **What it does:** Provides a shorthand format for linking to API reference pages that's cleaner than relative paths.
 

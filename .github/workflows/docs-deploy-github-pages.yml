@@ -25,6 +25,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          repository: strands-agents/samples
+          path: samples-source
+          persist-credentials: false
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -57,6 +64,8 @@ jobs:
       - name: Build CMS
         run: npm run cms:build
         env:
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
           SITE_DOMAIN: https://strandsagents.com
 
       - name: Create latest/ symlinks for llms.txt files

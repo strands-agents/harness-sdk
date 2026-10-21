@@ -62,11 +62,15 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
+├── .build/
+│   ├── api-docs/                 # Generated Python and TypeScript API reference
+│   └── samples/pages/            # Generated sample guides (not committed)
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
+│   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
 │   │   └── ...
 │   ├── config/                   # Site configuration
 │   ├── content/                  # Content collections
@@ -87,10 +91,10 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── labs/
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
-│   ├── data/                     # Bot-maintained data (catalog-stats.json — updated by the
-│   │                             #   catalog-stats workflow; do not hand-edit)
+│   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
+│   │                             #   plus the local sample-guide fallback
 │   ├── layouts/                  # Custom layouts
-│   ├── pages/                    # Astro pages (incl. integrations.astro — the /integrations page)
+│   ├── pages/                    # Astro pages, including generated /examples routes
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions
@@ -101,8 +105,9 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── NOTICE
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
-├── scripts/                      # Build and utility scripts (scripts/catalog/ — stats refresh
-│                                 #   run by the weekly catalog-stats workflow)
+├── scripts/                      # Build and utility scripts
+│   ├── catalog/                  # Catalog stats refresh
+│   └── samples/                  # Import samples metadata and guides at build time
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files
 ```
