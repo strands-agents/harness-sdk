@@ -1,8 +1,8 @@
 ---
 title: File Memory Store
-description: "A file-based memory store backed by the Storage
-  interface: markdown files with keyword search and
-  topic-aware extraction."
+description: "Persist agent memories as markdown files on any
+  Storage backend (local, S3, or custom): one file per topic,
+  pluggable search, and topic-aware extraction."
 tags: [memory]
 sourceLinks:
   - path: strands-py/src/strands/vended_memory_stores/file_memory_store/store.py
@@ -13,7 +13,7 @@ sidebar:
 ---
 
 `FileMemoryStore` is a [`MemoryStore`](./managing-memory#stores)
-that persists knowledge as markdown files through the SDK's
+that persists memories as markdown files through the SDK's
 unified [`Storage`](../storage) interface. Each topic gets
 its own `.md` file, and repeated writes to the same topic
 append rather than overwrite, so related facts accumulate
@@ -60,8 +60,8 @@ memories. Pass
 <Syntax py="add_tool_config=True" ts="addToolConfig: true" />
 to the `MemoryManager` to give the agent the
 [`add_memory` tool](./managing-memory#memory-tools), or set
-`extraction` on the store to capture memories
-[automatically](#extraction). You don't need to set
+`extraction` on the store to turn on
+[automatic extraction](#extraction). You don't need to set
 `writable`: it defaults to `true`, so the store accepts
 writes as soon as either is on.
 
@@ -73,11 +73,11 @@ the first line becomes the filename (slugified, truncated to
 50 characters, lowercased). A heading like
 `# Travel preferences` produces `travel-preferences.md`.
 
-If a file with that slug already exists, the new facts
-(lines after the heading) are appended to the existing file
-rather than overwriting it. This keeps related knowledge
-grouped by topic without the agent needing to know what
-already exists.
+If a file with that slug already exists, the store appends
+the new facts (lines after the heading) to it rather than
+overwriting it. This keeps related memories grouped by
+topic without the agent needing to know what already
+exists.
 
 When the slug has no usable characters (all punctuation,
 for example), the store falls back to a timestamped name
@@ -85,15 +85,17 @@ like `entry-1717459200000.md`.
 
 ## Configuration
 
-`FileMemoryStore` accepts the
+Most stores need only a `name`. To control where the files
+live, pass `storage`, the `Storage` backend for file
+operations. It defaults to `LocalFileStorage` at
+`./.strands/` (see [Storage Backend](#storage-backend)).
+
+The store also accepts the
 [shared `MemoryStore` fields](./managing-memory#stores) (`name`,
 `description`,
 <Syntax py="max_search_results" ts="maxSearchResults" />,
-`writable`, `extraction`) plus one of its own: `storage`,
-the `Storage` backend for file operations. It defaults to
-`LocalFileStorage` at `./.strands/` (see
-[Storage Backend](#storage-backend)). `extraction` is off
-until you set it (see [Extraction](#extraction)).
+`writable`, `extraction`). `extraction` is off until you
+set it (see [Extraction](#extraction)).
 
 ## Storage Backend
 
@@ -101,9 +103,9 @@ The default `LocalFileStorage` writes to `./.strands/`
 relative to the working directory, so a store named
 `agent-memory` lands at `./.strands/memory/agent-memory/`.
 
-Swap the backend to persist elsewhere. Any `Storage`
-implementation works: `S3Storage` for a shared bucket,
-`InMemoryStorage` for ephemeral runs, or a custom backend:
+To persist elsewhere, swap the backend: `S3Storage` for a
+shared bucket, `InMemoryStorage` for ephemeral runs, or a
+custom backend:
 
 <Tabs>
 <Tab label="Python">
@@ -140,7 +142,9 @@ included.
   named `team` reads and searches the files of a store
   named `team/alice`, because they sit under its prefix.
 - Stores with the same name on the same backend read and
-  write the same files.
+  write the same files, and their writes aren't
+  coordinated (see
+  [Scale and Limitations](#scale-and-limitations)).
 - Don't use an empty `name`. It scopes the store to
   `memory/` itself, so it reads and searches every named
   store's files on that backend.
@@ -156,85 +160,15 @@ hand that same view shares its files regardless of
 Don't pass a view from `namespace("")`. An empty prefix
 scopes nothing: the store works at the root of the
 backend and reads and searches every key there, including
-other subsystems' data such as sessions.
+other subsystems' data, such as sessions, stored on the
+same backend.
 :::
-
-## Search
-
-The default search ranks files by keyword token overlap: it
-counts how many distinct words from the query appear in
-each file's name and content, and returns the top scorers.
-Common stop words such as "the" and "is" don't count, and
-neither does the `.md` extension. A query with no usable
-words returns nothing.
-
-:::note
-The default search matches exact words, not meanings.
-"Seats" matches "seats" but not "seat" or "chair." For
-embedding-based semantic search over a managed vector
-store, use the
-[Bedrock Knowledge Base store](./bedrock-knowledge-base).
-:::
-
-The store's `search` delegates to the storage backend's
-pluggable [search strategy](../storage/search-strategies),
-so to change the ranking, give the backend a different
-strategy:
-
-<Tabs>
-<Tab label="Python">
-
-Each `add` is indexed as it is written.
-`Bm25SearchStrategy` ranks with BM25 using the
-built-in `sqlite3` FTS5 module. It only indexes content
-written after it is attached, so attach it before the
-store's first write:
-
-```python
-from strands.storage import LocalFileStorage
-from strands.storage.search import Bm25SearchStrategy
-from strands.vended_memory_stores.file_memory_store import (
-    FileMemoryStore,
-)
-
-strategy = Bm25SearchStrategy()
-store = FileMemoryStore(
-    name="agent-memory",
-    storage=LocalFileStorage(search_strategy=strategy),
-)
-
-# ... use the store ...
-
-await strategy.close()
-```
-
-</Tab>
-<Tab label="TypeScript">
-
-`QmdSearchStrategy` ranks with BM25 using
-[QMD](https://github.com/tobi/qmd) (requires
-`@tobilu/qmd`) and re-indexes the storage directory on
-each search, so existing files are searchable:
-
-```typescript
---8<-- "user-guide/sdk/memory/file-memory-store_imports.ts:custom_search_imports"
-
---8<-- "user-guide/sdk/memory/file-memory-store.ts:custom_search"
-```
-</Tab>
-</Tabs>
-
-See [BM25 search](../storage/search-strategies#bm25-search)
-for setup details, or
-[write a custom strategy](../storage/search-strategies#writing-a-custom-strategy)
-by implementing the `SearchStrategy` interface for your
-own ranking. Keep a reference to the strategy so you can
-call `close()` on it: the store does not close it for you.
 
 ## Writing Memories
 
-`add` stores content and returns the file's key, relative
-to the store's `memory/<name>/` namespace. The heading line
+To write a memory directly, call `add`. It stores the
+content and returns the file's key, relative to the
+store's `memory/<name>/` namespace. The heading line
 drives the filename; subsequent lines are the facts:
 
 <Tabs>
@@ -267,8 +201,80 @@ for entry in results:
 </Tab>
 </Tabs>
 
-Concurrent writes through one store instance are serialized
-so they don't clobber each other.
+The store serializes concurrent writes through one
+instance so they don't clobber each other.
+
+## Search
+
+The default search ranks files by keyword token overlap: it
+counts how many distinct words from the query appear in
+each file's name and content, and returns the top scorers.
+Common stop words such as "the" and "is" don't count, and
+neither does the `.md` extension. A query with no usable
+words returns nothing.
+
+:::note
+The default search matches exact words, not meanings.
+"Seats" matches "seats" but not "seat" or "chair." For
+embedding-based semantic search over a managed vector
+store, use the
+[Bedrock Knowledge Base store](./bedrock-knowledge-base).
+:::
+
+The store's `search` delegates to the storage backend's
+pluggable [search strategy](../storage/search-strategies),
+so to change the ranking, give the backend a different
+strategy:
+
+<Tabs>
+<Tab label="Python">
+
+The backend indexes each write through its strategy.
+`Bm25SearchStrategy` ranks with BM25 using the
+built-in `sqlite3` FTS5 module. It only indexes content
+written after you attach it, so attach it before the
+store's first write:
+
+```python
+from strands.storage import LocalFileStorage
+from strands.storage.search import Bm25SearchStrategy
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+strategy = Bm25SearchStrategy()
+store = FileMemoryStore(
+    name="agent-memory",
+    storage=LocalFileStorage(search_strategy=strategy),
+)
+
+results = await store.search("aisle seats")
+
+await strategy.close()
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+`QmdSearchStrategy` ranks with BM25 using
+[QMD](https://github.com/tobi/qmd) (requires
+`@tobilu/qmd`) and re-indexes the storage directory on
+each search, so existing files are searchable:
+
+```typescript
+--8<-- "user-guide/sdk/memory/file-memory-store_imports.ts:custom_search_imports"
+
+--8<-- "user-guide/sdk/memory/file-memory-store.ts:custom_search"
+```
+</Tab>
+</Tabs>
+
+See [BM25 search](../storage/search-strategies#bm25-search)
+for setup details, or
+[write a custom strategy](../storage/search-strategies#writing-a-custom-strategy)
+by implementing the `SearchStrategy` interface for your
+own ranking. Keep a reference to the strategy so you can
+call `close()` on it: the store does not close it for you.
 
 ## Extraction
 
@@ -305,7 +311,7 @@ the store creates a **key-aware
 extractor** that reads the existing topic filenames from
 storage and injects them into the extraction prompt. The
 model then reuses those headings when new facts belong to
-an existing topic, keeping related knowledge grouped
+an existing topic, keeping related memories grouped
 instead of fragmenting across files.
 
 <Tabs>
@@ -378,20 +384,23 @@ The store implements `add` but not
 <Syntax py="add_messages" ts="addMessages" />, so
 extraction runs client-side: a `ModelExtractor` distills
 facts from the conversation and writes each through `add`.
-To change the cadence or swap the extractor, see
-[Automatic Extraction](./managing-memory#automatic-extraction).
 
 ## Scale and Limitations
 
 The store suits working memory for a single agent or a
-small team: hundreds to low thousands of files. Each
-`add` reads the target file and rewrites it, so throughput
-depends on the storage backend, not the store itself.
+small team: hundreds to low thousands of files. The
+default keyword search lists and reads every file under
+the store's prefix on each search, so search cost grows
+with the number and size of files. Each `add` reads the
+target file and rewrites it, so write throughput depends
+on the storage backend.
 
 Write locking is per store instance. Separate instances
-writing the same storage namespace, whether in one process
-or several, are not coordinated. Avoid pointing two
-instances at the same namespace; the last write wins.
+writing the same files, whether through the same name or
+the same namespaced view, in one process or several, are
+not coordinated, and the last write wins. To share
+memories between agents in one process, hand them the
+same store instance.
 
 ## Related
 
