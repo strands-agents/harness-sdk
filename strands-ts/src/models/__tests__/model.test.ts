@@ -12,7 +12,7 @@ import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-te
 import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
-import type { ModelStreamEvent } from '../streaming.js'
+import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 /**
@@ -692,6 +692,48 @@ describe('Model', () => {
         expect(result.message.content).toEqual([
           new CitationsBlock({ citations: [citation], content: [{ text: 'cited' }] }),
         ])
+      })
+    })
+
+    describe('when content blocks have no start events', () => {
+      it('keeps text and citations scoped to each completed block', async () => {
+        const citation = {
+          location: { type: 'documentChunk' as const, documentIndex: 0, start: 0, end: 1 },
+          source: '',
+          sourceContent: [{ text: 'Project Atlas automates invoice processing.' }],
+          title: 'doc1',
+        }
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'From the document: ' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [] },
+          }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Atlas ' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'automates invoices.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: ' That is the summary.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { items, result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('What is Atlas?')] })])
+        )
+
+        const expectedContent = [
+          new TextBlock('From the document: '),
+          new CitationsBlock({ citations: [citation], content: [{ text: 'Atlas automates invoices.' }] }),
+          new TextBlock(' That is the summary.'),
+        ]
+        expect(items.filter((item) => !isModelStreamEvent(item))).toEqual(expectedContent)
+        expect(result.message.content).toEqual(expectedContent)
       })
     })
 

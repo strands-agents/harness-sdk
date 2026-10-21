@@ -20,12 +20,12 @@ import websockets
 from typing_extensions import Unpack, override
 from websockets import ClientConnection
 
-from ...types.content import Messages, TextBlock
-from ...types.media import ImageBlock
-from ...types.tools import ToolResultBlock, ToolSpec, ToolUse
-from .._async import stop_all
-from ..types.content import BidiContentDelta, BidiMessage
-from ..types.events import (
+from ....types.content import Messages, TextBlock
+from ....types.media import ImageBlock
+from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
+from ..._async import stop_all
+from ...types.content import BidiContentDelta, BidiMessage
+from ...types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
     BidiAudioStopEvent,
@@ -45,8 +45,8 @@ from ..types.events import (
     Role,
     TokenDetails,
 )
-from ..types.media import AudioDelta
-from .configs import (
+from ...types.media import AudioDelta
+from ..configs import (
     AudioConfig,
     AudioStreamConfig,
     ConnectionConfig,
@@ -56,7 +56,7 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, ConnectionTimeoutError
+from ..model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
 

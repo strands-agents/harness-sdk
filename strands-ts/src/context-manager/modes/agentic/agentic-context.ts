@@ -6,6 +6,7 @@
 
 import { z } from 'zod'
 import { Message, TextBlock } from '../../../types/messages.js'
+import { createAuxiliaryInvocationContext } from '../../../agent/invocation-context.js'
 import { tool } from '../../../tools/tool-factory.js'
 import { pinMessage, unpinMessage, isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
@@ -119,7 +120,12 @@ export const summarizeContextTool = tool({
 
     let summaryMessage
     try {
-      summaryMessage = await generateSummary(eligible, agent.auxModel)
+      summaryMessage = await generateSummary(
+        eligible,
+        agent.auxModel,
+        undefined,
+        createAuxiliaryInvocationContext(context?.invocationContext)
+      )
     } catch (err) {
       return `Summarization failed: ${err instanceof Error ? err.message : 'unknown error'}`
     }

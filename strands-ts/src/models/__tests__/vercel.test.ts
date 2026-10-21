@@ -1260,7 +1260,7 @@ describe('VercelModel', () => {
 
     describe('bedrock underlying provider', () => {
       // A Bedrock model id the default 'auto' strategy recognizes as caching-capable, and one it does not.
-      const CACHING_MODEL_ID = 'anthropic.claude-sonnet-4-20250514-v1:0'
+      const CACHING_MODEL_ID = 'anthropic.claude-sonnet-4-6'
       const UNSUPPORTED_MODEL_ID = 'meta.llama3-70b-instruct-v1:0'
 
       /** cachePoint on the system message. */

@@ -1,15 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { NotASandboxLocalEnvironment } from '../not-a-sandbox-local-environment.js'
 import { SandboxPathNotFoundError } from '../errors.js'
 
-const TEST_DIR = '/tmp/strands-test-not-a-sandbox'
+const WINDOWS = process.platform === 'win32'
+const TEST_DIR = path.join(os.tmpdir(), 'strands-test-not-a-sandbox')
 // Written relative (resolved against process.cwd()) to exercise _resolvePath; cleaned up below.
 const REL_NAME = 'strands-not-a-sandbox-rel-probe.txt'
 const REL_ABS = path.join(process.cwd(), REL_NAME)
+// Commands run in `sh` on POSIX and in PowerShell on Windows; each pair means the same thing.
+const PRINT_CWD = WINDOWS ? '(Get-Location).Path' : 'pwd'
+const FAIL_WITH_STDERR = WINDOWS ? "[Console]::Error.WriteLine('oops'); exit 3" : 'echo oops >&2; exit 3'
+const PRINT_GREETING = WINDOWS ? 'echo $env:GREETING' : 'echo "$GREETING"'
+const PYTHON = WINDOWS ? 'python' : 'python3'
+// PowerShell and Windows Python end lines with \r\n.
+const EOL = WINDOWS ? '\r\n' : '\n'
 
-describe.skipIf(process.platform === 'win32')('NotASandboxLocalEnvironment', () => {
+describe('NotASandboxLocalEnvironment', () => {
   let sandbox: NotASandboxLocalEnvironment
 
   beforeEach(() => {
@@ -27,31 +36,32 @@ describe.skipIf(process.platform === 'win32')('NotASandboxLocalEnvironment', () 
     it('runs a command on the host', async () => {
       const result = await sandbox.execute('echo hello')
       expect(result.exitCode).toBe(0)
-      expect(result.stdout).toBe('hello\n')
+      expect(result.stdout).toBe(`hello${EOL}`)
     })
 
     it('respects the cwd option', async () => {
-      const result = await sandbox.execute('pwd', { cwd: TEST_DIR })
-      expect(result.stdout.trim()).toBe(TEST_DIR)
+      const result = await sandbox.execute(PRINT_CWD, { cwd: TEST_DIR })
+      // `.native` expands Windows 8.3 short names (RUNNER~1), which os.tmpdir() may return.
+      expect(fs.realpathSync.native(result.stdout.trim())).toBe(fs.realpathSync.native(TEST_DIR))
     })
 
     it('reports a non-zero exit code and stderr from a failing command', async () => {
-      const result = await sandbox.execute('echo oops >&2; exit 3')
+      const result = await sandbox.execute(FAIL_WITH_STDERR)
       expect(result.exitCode).toBe(3)
-      expect(result.stderr).toBe('oops\n')
+      expect(result.stderr).toBe(`oops${EOL}`)
     })
 
     it('applies the env option', async () => {
-      const result = await sandbox.execute('echo "$GREETING"', { env: { GREETING: 'hi' } })
-      expect(result.stdout).toBe('hi\n')
+      const result = await sandbox.execute(PRINT_GREETING, { env: { GREETING: 'hi' } })
+      expect(result.stdout).toBe(`hi${EOL}`)
     })
   })
 
   describe('executeCode', () => {
     it('runs code through the named interpreter', async () => {
-      const result = await sandbox.executeCode('print(2 + 2)', 'python3', { cwd: TEST_DIR })
+      const result = await sandbox.executeCode('print(2 + 2)', PYTHON, { cwd: TEST_DIR })
       expect(result.exitCode).toBe(0)
-      expect(result.stdout).toBe('4\n')
+      expect(result.stdout).toBe(`4${EOL}`)
     })
 
     it('rejects a language with invalid characters', async () => {
@@ -59,10 +69,68 @@ describe.skipIf(process.platform === 'win32')('NotASandboxLocalEnvironment', () 
     })
 
     it('applies the env option', async () => {
-      const result = await sandbox.executeCode('import os; print(os.environ["GREETING"])', 'python3', {
+      const result = await sandbox.executeCode('import os; print(os.environ["GREETING"])', PYTHON, {
         env: { GREETING: 'hi' },
       })
-      expect(result.stdout).toBe('hi\n')
+      expect(result.stdout).toBe(`hi${EOL}`)
+    })
+
+    it('reports a missing interpreter as exit 127', async () => {
+      // `sh` says "command not found"; the direct spawn on Windows says "Language interpreter not found".
+      const result = await sandbox.executeCode('x', 'strands-definitely-not-an-interpreter')
+      expect(result.exitCode).toBe(127)
+      expect(result.stderr).toMatch(/not found/)
+    })
+  })
+
+  // PowerShell semantics the model relies on: native exit codes propagate, stderr output alone is not a
+  // failure, a failing cmdlet is, a multi-KB command runs, and UTF-8 survives.
+  describe.runIf(WINDOWS)('execute on Windows (PowerShell)', () => {
+    it('propagates a native command exit code', async () => {
+      expect((await sandbox.execute('cmd /c "exit 3"')).exitCode).toBe(3)
+    })
+
+    it('does not treat stderr output from a successful native command as failure', async () => {
+      const result = await sandbox.execute('cmd /c "echo warn 1>&2"')
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toContain('warn')
+    })
+
+    it('reports a failing cmdlet as exit 1 and keeps going after it', async () => {
+      const failed = await sandbox.execute('Get-Item C:\\strands-definitely-missing')
+      expect(failed.exitCode).toBe(1)
+      expect(failed.stderr).not.toBe('')
+      const continued = await sandbox.execute('Get-Item C:\\strands-definitely-missing; Write-Output after')
+      expect(continued.exitCode).toBe(0)
+      expect(continued.stdout).toContain('after')
+    })
+
+    it('runs an 8 KB command', async () => {
+      const result = await sandbox.execute(`Write-Output '${'x'.repeat(8_000)}'`)
+      expect(result.stdout.trim()).toHaveLength(8_000)
+    })
+
+    it('round-trips UTF-8 output', async () => {
+      expect((await sandbox.execute('Write-Output "€"')).stdout).toContain('€')
+    })
+
+    it('overrides a host variable whose name differs only by case', async () => {
+      process.env.Strands_Case_Probe = 'host'
+      try {
+        const result = await sandbox.execute('echo $env:STRANDS_CASE_PROBE', {
+          env: { STRANDS_CASE_PROBE: 'override' },
+        })
+        expect(result.stdout.trim()).toBe('override')
+      } finally {
+        delete process.env.Strands_Case_Probe
+      }
+    })
+  })
+
+  // The POSIX path is unchanged: stdin stays an open pipe, so a command that reads it waits rather than seeing EOF.
+  describe.skipIf(WINDOWS)('execute on POSIX', () => {
+    it('keeps stdin open when no input is given', async () => {
+      await expect(sandbox.execute('cat', { timeout: 1 })).rejects.toThrow(/timed out/i)
     })
   })
 

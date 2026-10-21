@@ -439,6 +439,46 @@ def test_format_request_with_tool_result(model, model_id):
     assert actual_request == exp_request
 
 
+@pytest.mark.parametrize("text_position", [None, "before", "after"])
+def test_format_request_messages_orders_tool_results_before_injected_text(model, text_position):
+    messages = [
+        {"role": "user", "content": [{"text": "What is 2+2?"}]},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "c1", "name": "calculator", "input": {"expression": "2+2"}}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                *([{"text": "Injected context"}] if text_position == "before" else []),
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "4"}]}},
+                *([{"text": "Injected context"}] if text_position == "after" else []),
+            ],
+        },
+    ]
+
+    tru_messages = model._format_request_messages(messages)
+    exp_messages = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {"name": "calculator", "arguments": '{"expression": "2+2"}'},
+                    "id": "c1",
+                    "type": "function",
+                }
+            ],
+        },
+        {"role": "tool", "name": "c1", "content": "4", "tool_call_id": "c1"},
+    ]
+    if text_position:
+        exp_messages.append({"role": "user", "content": "Injected context"})
+
+    assert tru_messages == exp_messages
+
+
 def test_format_request_with_tool_specs(model, messages, model_id):
     tool_specs = [
         {
@@ -985,3 +1025,19 @@ def test_format_request_filters_location_source_document(model, caplog):
     user_content = formatted_messages[0]["content"]
     assert user_content == "analyze this document"
     assert "Location sources are not supported by Mistral" in caplog.text
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.mistral")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by Mistral" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by Mistral" in messages_logged[1]

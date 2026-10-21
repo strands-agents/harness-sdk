@@ -16,23 +16,22 @@ import { exactly, startsWith } from './regex'
  * Exact-match slug renames: old slug → new slug or explicit external URL.
  *
  * Exported so astro.config.mjs (via redirect.static.ts) can enumerate every
- * entry into a build-time redirect stub — a static HTML page with a meta
- * refresh and canonical link. Crawlers don't execute the client-side 404
- * redirect, so these stubs are what preserve backlink equity for renamed pages.
+ * entry as a build-time route. Internal routes serve the destination HTML;
+ * external routes use Astro's redirect stub.
  *
  * Only add enumerable, exact-match renames here. Dynamic rules (regex matches,
- * computed targets) belong in PREFIX_SLUG_RULES below and are handled solely by
- * the client-side 404 fallback.
+ * computed targets) belong in PREFIX_SLUG_RULES below. Registered published
+ * paths are emitted at build time; unregistered paths use the client-side 404
+ * fallback.
  */
 export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
-
   // gemini was renamed to google (concepts/ was later consolidated under harness/)
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
 
   // bidi model providers renamed to match upstream (#3956)
   'docs/user-guide/concepts/bidirectional-streaming/models/nova_sonic': 'docs/user-guide/sdk/bidi/models/bedrock',
   'docs/user-guide/concepts/bidirectional-streaming/models/gemini_live': 'docs/user-guide/sdk/bidi/models/google',
-  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime': 'docs/user-guide/sdk/bidi/models/openai',
+  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime': 'docs/user-guide/sdk/bidi/models/openai/realtime',
 
   // python-tools was renamed to custom-tools
   'docs/user-guide/concepts/tools/python-tools': 'docs/user-guide/sdk/tools/custom-tools',
@@ -316,5 +315,6 @@ export function resolveRedirectFromUrl(path: string, redirectFromMap?: Record<st
   if (/^https?:\/\//i.test(path)) return null
 
   const resolved = resolveRedirect(path, redirectFromMap) ?? path
+  if (/^https?:\/\//i.test(resolved)) return resolved
   return hadTrailingSlash ? `${resolved}/` : resolved
 }

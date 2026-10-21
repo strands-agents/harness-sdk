@@ -8,6 +8,7 @@ during :meth:`~BedrockKnowledgeBaseStore.initialize` and the query is shaped to 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -199,7 +200,8 @@ class BedrockKnowledgeBaseStore(MemoryStore):
             return
 
         try:
-            response = self._get_agent_client().get_knowledge_base(knowledgeBaseId=self._knowledge_base_id)
+            agent_client = self._get_agent_client()
+            response = await asyncio.to_thread(agent_client.get_knowledge_base, knowledgeBaseId=self._knowledge_base_id)
             self._kb_type = response["knowledgeBase"]["knowledgeBaseConfiguration"]["type"]
         except Exception as error:
             logger.error(
@@ -248,7 +250,8 @@ class BedrockKnowledgeBaseStore(MemoryStore):
         retrieval_configuration = {config_key: search_configuration}
 
         try:
-            response = self._runtime_client.retrieve(
+            response = await asyncio.to_thread(
+                self._runtime_client.retrieve,
                 knowledgeBaseId=self._knowledge_base_id,
                 retrievalQuery={"text": query},
                 retrievalConfiguration=cast("KnowledgeBaseRetrievalConfigurationTypeDef", retrieval_configuration),
@@ -322,7 +325,7 @@ class BedrockKnowledgeBaseStore(MemoryStore):
         # way the store mints the document's identifier (CUSTOM: a UUID; S3: the content object's URI)
         # and returns it, so the caller has a stable handle to the document Bedrock now tracks.
         if data_source_type == "S3":
-            content_uri, sidecar_uri = self._upload_s3_objects(content, metadata)
+            content_uri, sidecar_uri = await self._upload_s3_objects(content, metadata)
             document = self._build_s3_document(content_uri, sidecar_uri)
             document_id = content_uri
         else:
@@ -330,7 +333,9 @@ class BedrockKnowledgeBaseStore(MemoryStore):
             document = self._build_custom_document(document_id, content, metadata)
 
         try:
-            self._get_agent_client().ingest_knowledge_base_documents(
+            agent_client = self._get_agent_client()
+            await asyncio.to_thread(
+                agent_client.ingest_knowledge_base_documents,
                 knowledgeBaseId=self._knowledge_base_id,
                 dataSourceId=data_source_id,
                 documents=[cast("KnowledgeBaseDocumentTypeDef", document)],
@@ -369,7 +374,7 @@ class BedrockKnowledgeBaseStore(MemoryStore):
             return False
         return "accesscontrollist" in bedrock_error.get("Message", "").lower()
 
-    def _upload_s3_objects(self, content: str, metadata: Metadata | None) -> tuple[str, str | None]:
+    async def _upload_s3_objects(self, content: str, metadata: Metadata | None) -> tuple[str, str | None]:
         """Upload the objects that back one S3 ingestion and return their ``s3://`` URIs.
 
         A single ``add`` produces up to two objects: the content (always written, as a ``.txt``
@@ -385,7 +390,7 @@ class BedrockKnowledgeBaseStore(MemoryStore):
         prefix = s3["prefix"] if s3["prefix"].endswith("/") else f"{s3['prefix']}/"
         key = f"{prefix}{_new_id()}.txt"
 
-        content_uri = self._put_object(s3, key, content, "text/plain; charset=utf-8")
+        content_uri = await self._put_object(s3, key, content, "text/plain; charset=utf-8")
 
         attributes = self._build_s3_sidecar_attributes(metadata)
         access_control_list = self._build_s3_sidecar_acl()
@@ -400,14 +405,15 @@ class BedrockKnowledgeBaseStore(MemoryStore):
         if access_control_list:
             sidecar_body["accessControlList"] = access_control_list
         sidecar = json.dumps(sidecar_body, separators=(",", ":"))
-        sidecar_uri = self._put_object(s3, f"{key}.metadata.json", sidecar, "application/json")
+        sidecar_uri = await self._put_object(s3, f"{key}.metadata.json", sidecar, "application/json")
         return content_uri, sidecar_uri
 
-    def _put_object(self, s3: BedrockKnowledgeBaseS3Config, key: str, body: str, content_type: str) -> str:
+    async def _put_object(self, s3: BedrockKnowledgeBaseS3Config, key: str, body: str, content_type: str) -> str:
         """Upload a single object to the configured bucket and return its ``s3://`` URI."""
         bucket = s3["bucket"]
         try:
-            self._get_s3_client().put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
+            s3_client = self._get_s3_client()
+            await asyncio.to_thread(s3_client.put_object, Bucket=bucket, Key=key, Body=body, ContentType=content_type)
         except Exception as error:
             logger.error(
                 "store=<%s>, uri=<s3://%s/%s>, error=<%s> | S3 upload failed before ingestion",

@@ -1564,9 +1564,13 @@ def test_format_request_warns_once_for_reasoning_content_across_history(model, c
 
     model.format_request(messages)
 
-    tru_count = sum("reasoningContent is not supported" in record.getMessage() for record in caplog.records)
-    exp_count = 1
-    assert tru_count == exp_count
+    tru_messages = [
+        record.getMessage() for record in caplog.records if "reasoningContent is not supported" in record.getMessage()
+    ]
+    exp_messages = [
+        "count=<3> | reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+    ]
+    assert tru_messages == exp_messages
 
 
 def test_format_request_does_not_warn_without_reasoning_content(model, messages, caplog):
@@ -2526,3 +2530,19 @@ class TestOpenAIModelBedrockMantleConfig:
             with pytest.raises(ValueError, match="Could not resolve an AWS region.*endpoints-region-availability"):
                 model._resolve_client_args()
         mock_provide_token.assert_not_called()
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by OpenAI" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by OpenAI" in messages_logged[1]

@@ -3,7 +3,8 @@ import { HumanInTheLoop } from '../hitl.js'
 import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
-import type { BeforeToolCallEvent } from '../../../hooks/events.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
+import { BeforeToolCallEvent } from '../../../hooks/events.js'
 
 describe('HumanInTheLoop', () => {
   describe('default config (interrupt/resume)', () => {
@@ -618,6 +619,41 @@ describe('HumanInTheLoop', () => {
 
       expect(prompts[0]).toContain('external communication')
       expect(prompts[0]).toContain('sendEmail')
+    })
+
+    describe('request limits', () => {
+      it('adds the classifier usage to the request total and runs it past a spent limit', async () => {
+        const classifierModel = new MockMessageModel().addTurn(
+          {
+            type: 'toolUseBlock',
+            name: 'strands_structured_output',
+            toolUseId: 'inner-1',
+            input: { requiresApproval: false, reason: 'read-only operation' },
+          },
+          { usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } }
+        )
+        const humanInTheLoop = new HumanInTheLoop({ classifier: { model: classifierModel } })
+        const agent = new Agent({ model: new MockMessageModel(), printer: false })
+        const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
+        parentInvocationContext.usage.turnsTaken = 5
+        const event = new BeforeToolCallEvent({
+          agent,
+          toolUse: { name: 'readFile', toolUseId: 'tool-1', input: { path: '/tmp/x' } },
+          tool: undefined,
+          invocationState: {},
+          invocationContext: parentInvocationContext,
+        })
+
+        const action = await humanInTheLoop.beforeToolCall(event)
+
+        expect(action).toEqual({ type: 'proceed' })
+        expect(parentInvocationContext.usage).toEqual({
+          turnsTaken: 5,
+          inputTokens: 12,
+          outputTokens: 3,
+          totalTokens: 15,
+        })
+      })
     })
   })
 })

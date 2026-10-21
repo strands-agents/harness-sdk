@@ -1,21 +1,25 @@
 ---
 title: OpenAI Realtime
-description: "Configure OpenAI Realtime for BidiAgent: set credentials, choose a voice and transcription model, tune turn detection, and manage connection restarts."
+description: >-
+  Configure OpenAI Realtime for BidiAgent: set credentials, choose a voice and
+  transcription model, tune turn detection, and manage connection restarts.
 languages: [python]
 tags: [bidi-streaming]
 sourceLinks:
-  - path: strands-py/src/strands/bidi/models/openai.py
+  - path: strands-py/src/strands/bidi/models/openai/realtime.py
   - path: strands-py/src/strands/bidi/models/configs.py
 redirectFrom:
+  - docs/user-guide/concepts/bidirectional-streaming/models/openai
   - docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime
   - docs/user-guide/sdk/bidirectional-streaming/models/openai
+  - docs/user-guide/sdk/bidi/models/openai
 ---
 
 [OpenAI Realtime][realtime] brings responsive voice conversations to your agents,
 with support for text and images alongside speech. Users can share context,
 interrupt a reply, and ask the agent to take action through tools.
 
-Follow the [quickstart](../quickstart.mdx) to build a voice agent that listens,
+Follow the [quickstart](../../quickstart.mdx) to build a voice agent that listens,
 speaks, and calls tools.
 
 ## Installation
@@ -27,7 +31,7 @@ pip install "strands-agents[bidi-openai]"
 ```
 
 For local audio dependencies and device setup, see
-[Audio I/O](../io.mdx#audio-io).
+[Audio I/O](../../io.mdx#audio-io).
 
 ## Credentials
 
@@ -104,7 +108,7 @@ model = OpenAIRealtimeModel(
 ```
 
 For a complete terminal conversation using this configuration, see
-[Console I/O](../io.mdx#console-io).
+[Console I/O](../../io.mdx#console-io).
 
 ## Connection restarts
 
@@ -117,13 +121,17 @@ completed transcripts, and tool calls and results.
 Set `connection.restart_after_s` to customize the schedule. The `timeout_s` option
 controls the adapter's timeout and defaults to its maximum of 3000 seconds (50 minutes).
 Keep the scheduled restart earlier than that timeout to allow time for the transition.
-See [Connection restarts](../agent.mdx#connection-restarts) for timing and events.
+See [Connection restarts](../../agent.mdx#connection-restarts) for timing and events.
 
 [realtime]: https://developers.openai.com/api/docs/guides/realtime
 [api-keys]: https://platform.openai.com/settings/organization/api-keys
 [transcription-model]: https://developers.openai.com/api/docs/models/gpt-transcribe
-[voices]: https://developers.openai.com/api/docs/guides/realtime-conversations#voice-options
-[session-settings]: https://developers.openai.com/api/reference/resources/realtime/client-events#session.update
+[voices]:
+  https://developers.openai.com/api/docs/guides/realtime-conversations#voice-options
+[session-settings]:
+  https://developers.openai.com/api/reference/resources/realtime/client-events
 [vad]: https://developers.openai.com/api/docs/guides/realtime-vad#server-vad
-[session-lifecycle]: https://developers.openai.com/api/docs/guides/realtime-conversations#session-lifecycle-events
-[model-api]: @api/python/strands.bidi.models#strands.bidi.models.OpenAIRealtimeModel.__init__
+[session-lifecycle]:
+  https://developers.openai.com/api/docs/guides/realtime-conversations
+[model-api]:
+  @api/python/strands.bidi.models#strands.bidi.models.OpenAIRealtimeModel.__init__

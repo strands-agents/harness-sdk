@@ -278,6 +278,7 @@ class TestChildren:
             child.tool_registry.registry["team"] = custom
             child.tool_registry.registry["swarm"] = make_swarm()
             child.tool_registry.registry["keep"] = Mock()
+            child.tool_registry.dynamic_tools["team"] = custom
             children.append(child)
             return child
 
@@ -296,3 +297,4 @@ class TestChildren:
         assert cls.call_args[1].get("entry_point") is (children[1] if entry_point else None)
         for child in children:
             assert list(child.tool_registry.registry) == ["keep"]
+            assert not child.tool_registry.dynamic_tools

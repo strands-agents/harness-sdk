@@ -98,6 +98,9 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
     "amazon.nova-2-pro-preview-20251202-v1:0": 1_000_000,
     # Bedrock Z.AI
     "zai.glm-4.7": 203_000,
+    "zai.glm-4.7-flash": 203_000,
+    "zai.glm-5": 200_000,
+    "zai.glm-5.3": 1_000_000,
     # OpenAI
     "gpt-6-astra": 1_050_000,
     "gpt-6.1-sol": 1_050_000,
