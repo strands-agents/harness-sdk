@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from typing_extensions import TypedDict
 
@@ -91,25 +91,18 @@ async def _summarize_content(
     return "\n".join(parts).strip() or None
 
 
-def _to_summarizer_blocks(block: ContentBlock | ToolResultContent) -> list[ContentBlock]:
+def _to_summarizer_blocks(block: ContentBlock) -> list[ContentBlock]:
     """Convert a block to what the summarizer accepts in a user turn.
 
     Text, images, and documents pass through; other content is rendered as text or a placeholder, and the rest
     is left out.
     """
-    if "text" in block:
-        return [ContentBlock(text=block["text"])]
-    if "image" in block:
-        return [ContentBlock(image=block["image"])]
-    if "document" in block:
-        return [ContentBlock(document=block["document"])]
-    if "json" in block:
-        return [ContentBlock(text=json.dumps(block["json"], indent=2))]
+    if "text" in block or "image" in block or "document" in block:
+        return [block]
     if "citationsContent" in block:
         return [ContentBlock(text=content["text"]) for content in block["citationsContent"].get("content", [])]
     if "guardContent" in block:
-        guard_text = block["guardContent"].get("text")
-        return [ContentBlock(text=guard_text["text"] if guard_text else "[image omitted]")]
+        return [ContentBlock(text=block["guardContent"]["text"]["text"])]
     if "video" in block:
         return [ContentBlock(text="[video omitted]")]
     if "audio" in block:
@@ -119,7 +112,13 @@ def _to_summarizer_blocks(block: ContentBlock | ToolResultContent) -> list[Conte
 
 def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[ContentBlock]:
     """Convert ToolResultContent list to ContentBlocks the summarizer accepts."""
-    return [converted for item in content for converted in _to_summarizer_blocks(item)]
+    blocks: list[ContentBlock] = []
+    for item in content:
+        if "json" in item:
+            blocks.append(ContentBlock(text=json.dumps(item["json"], indent=2)))
+        else:
+            blocks.extend(_to_summarizer_blocks(cast(ContentBlock, item)))
+    return blocks
 
 
 def _format_tool_result_label(tool_result: ToolResult, tool_names: dict[str, str]) -> str:
