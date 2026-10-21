@@ -48,7 +48,10 @@ dependencies = [
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.21.0,<1.0.0"]
 gemini = ["google-genai>=1.68.0,<3.0.0"]
-litellm = ["litellm>=1.75.9,<2.0.0", "openai>=1.68.0,<3.0.0"]
+# Ceiling is the last known-good release rather than the major: 1.107.0 was a compromised
+# build (credential stealer, removed from PyPI 2026-10-21). Given that history the cap moves
+# only via a reviewed Dependabot bump, never an automatic in-range resolve.
+litellm = ["litellm>=1.75.9,<1.107.0", "openai>=1.68.0,<3.0.0"]
 llamaapi = ["llama-api-client>=0.1.0,<1.0.0"]
 mistral = ["mistralai>=2.0.0,<4.0.0"]
 ollama = ["ollama>=0.4.8,<1.0.0"]
