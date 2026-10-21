@@ -48,7 +48,7 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 **Local development:** Run `npm run samples:sync -- --source /path/to/samples` to import a local clean checkout. Without a source, development retains existing generated pages or uses the committed one-page fallback. Deployment workflows set `SAMPLES_REQUIRE_SOURCE=1`, so production cannot silently use the fallback.
 
-**Routes and navigation:** `/examples/` renders the preferred TypeScript first-agent guide. Other entries use `/examples/{sample-slug}/`. Every page receives the same language and category sidebar, and the route middleware preserves that generated sidebar instead of applying the regular product filter.
+**Routes and navigation:** `/examples/` renders the first guide in manifest-derived order. Other entries use `/examples/{sample-slug}/`. Every page receives the same language and category sidebar, and the route middleware preserves that generated sidebar instead of applying the regular product filter.
 
 ### 4. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
 

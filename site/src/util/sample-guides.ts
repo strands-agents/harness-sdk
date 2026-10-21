@@ -29,11 +29,7 @@ export function sortSampleGuides(guides: SampleGuideEntry[]): SampleGuideEntry[]
 }
 
 export function findDefaultSampleGuide(guides: SampleGuideEntry[]): SampleGuideEntry {
-  const sorted = sortSampleGuides(guides)
-  const guide =
-    sorted.find((entry) => entry.data.slug === 'typescript/first-agent') ??
-    sorted.find((entry) => entry.data.language.toLowerCase() === 'typescript') ??
-    sorted[0]
+  const guide = sortSampleGuides(guides)[0]
   if (!guide) throw new Error('The generated sample guide collection is empty')
   return guide
 }
