@@ -45,6 +45,9 @@ def mock_agent():
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.9)
     agent.model.stream = _make_stream_events("Summary of content.")
+    # Explicit, since an AsyncMock attribute is otherwise truthy and would route these
+    # client-side-summarization tests into the native-compaction path instead.
+    agent.model.requires_server_side_compaction = False
     agent.aux_model = agent.model
     agent.messages = []
     return agent
@@ -281,3 +284,110 @@ class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
         )
         summaries = [b for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Summarized:")]
         assert len(summaries) == 1
+
+
+class TestSummarizeStrategyServerSideCompaction:
+    """Tests for routing retroactive summarization through the provider's native compaction."""
+
+    @pytest.mark.asyncio
+    async def test_routes_to_compact_when_retroactive_and_required(self, mock_agent):
+        mock_agent.model.requires_server_side_compaction = True
+        compaction_message = Message(
+            role="assistant", content=[ContentBlock(compaction={"content": "s", "signature": "sig"})]
+        )
+        preserved = Message(role="user", content=[ContentBlock(text="recent")])
+        mock_agent.model.compact = unittest.mock.AsyncMock(return_value=[compaction_message, preserved])
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            Message(role="assistant", content=[ContentBlock(text="old2")]),
+            preserved,
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+
+        assert await strategy.apply(context) is True
+
+        mock_agent.model.compact.assert_called_once()
+        call_args, call_kwargs = mock_agent.model.compact.call_args
+        assert call_args[0] is messages
+        assert call_kwargs["utilization"] == 0.9
+        assert call_kwargs["preserved_messages"] == 1
+        assert messages == [compaction_message, preserved]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_false_when_compact_returns_none(self, mock_agent):
+        mock_agent.model.requires_server_side_compaction = True
+        mock_agent.model.compact = unittest.mock.AsyncMock(return_value=None)
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+
+        assert await strategy.apply(context) is False
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_does_not_route_to_compact_when_not_required(self, mock_agent):
+        """requires_server_side_compaction False (the default) keeps today's client-side path."""
+        mock_agent.model.compact = unittest.mock.AsyncMock()
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            Message(role="assistant", content=[ContentBlock(text="old2")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+
+        assert await strategy.apply(context) is True
+        mock_agent.model.compact.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_route_to_compact_when_not_retroactive(self, mock_agent):
+        """Per-block strategies without preserve_recent are eager/client-side, never retroactive."""
+        mock_agent.model.requires_server_side_compaction = True
+        mock_agent.model.compact = unittest.mock.AsyncMock()
+        strategy = Offload.summarize("tool_results").when(threshold=10)
+        assert strategy._is_retroactive is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_route_to_compact_when_utilization_below_threshold(self, mock_agent):
+        """Regression: the message-level utilization/overflow gate must still apply to the
+        server-side branch -- it must not fire on every apply() call just because the model
+        requires server-side compaction."""
+        mock_agent.model.requires_server_side_compaction = True
+        mock_agent.model.compact = unittest.mock.AsyncMock()
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.2)
+
+        assert await strategy.apply(context) is False
+        mock_agent.model.compact.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_routes_to_compact_on_overflow_even_below_utilization_threshold(self, mock_agent):
+        mock_agent.model.requires_server_side_compaction = True
+        preserved = Message(role="user", content=[ContentBlock(text="recent")])
+        compaction_message = Message(role="assistant", content=[ContentBlock(compaction={"content": "s"})])
+        mock_agent.model.compact = unittest.mock.AsyncMock(return_value=[compaction_message, preserved])
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="old1")]),
+            preserved,
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.2, overflow=True)
+
+        assert await strategy.apply(context) is True
+        mock_agent.model.compact.assert_called_once()

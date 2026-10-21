@@ -44,11 +44,51 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   override async apply(context: ContextState): Promise<boolean> {
-    if (!this._resolveModel(context.agent)) {
+    const model = this._resolveModel(context.agent)
+    // Message-level gating (utilization/overflow) happens here, before the server-side branch,
+    // because that branch bypasses super.apply() -- which is the only place this check otherwise
+    // lives. Per-block strategies (no utilization) have no equivalent gate here; their own
+    // threshold check happens per-block, inside _applyPerBlock.
+    if (this._isMessageLevel && !context.overflow && context.utilization < this._utilizationThreshold!) {
+      return false
+    }
+    if (this._isRetroactive && model?.requiresServerSideCompaction) {
+      return this._applyServerSide(context, model)
+    }
+    if (!model) {
       logger.warn('no model available for summarization')
       return false
     }
     return super.apply(context)
+  }
+
+  /**
+   * Reduces context through the provider's server-side compaction.
+   *
+   * Routed here instead of the client-side path above whenever the strategy is retroactive
+   * (`utilization` is set, or `preserveRecent > 0` on a per-block strategy — see
+   * `BaseOffloadStrategy`'s constructor) and the resolved model's `requiresServerSideCompaction`
+   * is `true`: rewriting messages the model already saw a request over would invalidate any
+   * preserved-thinking block kept after the edit. `utilization`/`preservedMessages` are passed
+   * straight through to `model.compact`, matching the conditions this strategy was configured
+   * with — see `team/designs/0022-server-side-compaction-support.md`.
+   */
+  private async _applyServerSide(context: ContextState, model: Model): Promise<boolean> {
+    const agent = context.agent
+    // The compaction request must carry the same system prompt and tools as the live
+    // conversation -- Anthropic binds a thinking block's signature to the exact prefix (system +
+    // tools + history) that produced it, and rejects a compaction request whose system/tools
+    // differ from what generated the thinking blocks being replayed into it.
+    const compacted = await model.compact(context.messages, {
+      utilization: context.utilization,
+      preservedMessages: this._preserveRecent,
+      ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
+      toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
+    })
+    if (!compacted) return false // provider produced no summary, so leave the history unchanged
+
+    context.messages.splice(0, context.messages.length, ...compacted) // [compaction message, ...preserved]
+    return true
   }
 
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {

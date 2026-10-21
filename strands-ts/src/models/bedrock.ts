@@ -1541,6 +1541,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           throw new Error('guardContent must have either text or image')
         }
       }
+
+      case 'compactionBlock':
+        // Compaction blocks are produced by Model.compact(), which only AnthropicModel implements
+        // today over the Messages API — Bedrock's Converse API has no equivalent block to carry it.
+        throw new Error('CompactionBlock is not supported by the Bedrock provider')
     }
   }
 

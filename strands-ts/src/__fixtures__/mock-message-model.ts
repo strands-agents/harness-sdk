@@ -263,6 +263,11 @@ export class MockMessageModel extends Model<BaseModelConfig> {
         yield { type: 'modelContentBlockStopEvent' }
         break
 
+      case 'compactionBlock':
+        // CompactionBlock is only produced by Model.compact() responses, never streamed back by
+        // the mock model itself.
+        break
+
       case 'toolResultBlock':
         // ToolResultBlock appears in user messages and doesn't generate model events
         // This shouldn't normally be in assistant messages, but we'll handle it gracefully

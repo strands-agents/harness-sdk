@@ -304,6 +304,7 @@ class BaseOffloadStrategy(ABC):
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
     _stash: Stash | None
+    _is_retroactive: bool
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
         if isinstance(target, list) and len(target) == 0:
@@ -320,6 +321,18 @@ class BaseOffloadStrategy(ABC):
         self._preserve_recent = float(preserve) if preserve is not None else 0
 
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
+
+        # Whether this strategy edits content the model has already seen a request over.
+        #
+        # `utilization` makes a strategy message-level (see `_is_message_level` below): it fires
+        # against messages that already went out in a prior request, so rewriting them client-side
+        # invalidates any thinking block bound to that request's prefix. `preserve_recent` has the
+        # same effect for a per-block strategy, since the "preserved" block was already streamed to
+        # the model before this `apply()` call. Computed once here, at construction, rather than
+        # recomputed on every `apply()` through a property, because `conditions` never changes after
+        # `__init__` — see https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/base.ts#L330-L343
+        # for the equivalent TypeScript constructor this mirrors.
+        self._is_retroactive = self._utilization_threshold is not None or self._preserve_recent > 0
 
     @property
     def _is_message_level(self) -> bool:

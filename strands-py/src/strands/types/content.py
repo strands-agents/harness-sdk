@@ -77,12 +77,36 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
+class CompactionContentBlock(TypedDict, total=False):
+    """A provider-generated summary that replaces a prefix of the conversation.
+
+    Produced by ``Model.compact`` (currently only ``AnthropicModel``, see
+    ``team/designs/0022-server-side-compaction-support.md``) for providers whose preserved-thinking
+    blocks are bound to the exact history prefix that produced them, so a client-side summary
+    would invalidate any thinking block kept after it. Strands never edits a block of this type;
+    it is always round-tripped verbatim between a `Model.compact` response and the next request.
+
+    Attributes:
+        content: Provider-generated summary of the conversation prefix this block replaces, or
+            unset/``None`` when the provider reports the compaction attempt failed.
+        signature: Provider signature binding the summary to the history it was generated from.
+            Must be sent back unchanged.
+        encryptedContent: Opaque provider metadata from a prior compaction. Round-tripped
+            verbatim; never inspected.
+    """
+
+    content: NotRequired[str | None]
+    signature: NotRequired[str | None]
+    encryptedContent: NotRequired[str | None]
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
     Attributes:
         audio: Audio to include in the message.
         cachePoint: A cache point configuration to optimize conversation history.
+        compaction: A provider-generated summary that replaces a prefix of the conversation.
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
@@ -96,6 +120,7 @@ class ContentBlock(TypedDict, total=False):
 
     audio: AudioContent
     cachePoint: CachePoint
+    compaction: CompactionContentBlock
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent

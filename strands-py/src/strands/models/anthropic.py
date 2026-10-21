@@ -7,6 +7,7 @@
 import base64
 import json
 import logging
+import math
 import re
 import warnings
 from collections.abc import AsyncGenerator
@@ -28,7 +29,7 @@ from ..types.citations import (
     WebLocation,
     WebLocationDict,
 )
-from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.content import CompactionContentBlock, ContentBlock, Message, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
@@ -90,6 +91,19 @@ _ANTHROPIC_CACHE_TYPE = "ephemeral"
 # The anthropic SDK added the output_config request parameter in 0.77.0, after transform_schema (0.75.0).
 _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (0, 77)
 
+# The anthropic SDK added the beta `compaction` request parameter in 1.6.0.
+_SDK_SUPPORTS_COMPACTION = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (1, 6)
+
+
+def _warn_if_compaction_unsupported(model_config: dict[str, Any], *, stacklevel: int) -> None:
+    """Warn when server-side compaction is enabled on an anthropic SDK that cannot send the request."""
+    if model_config.get("requires_server_side_compaction") and not _SDK_SUPPORTS_COMPACTION:
+        warnings.warn(
+            f"requires_server_side_compaction needs anthropic>=1.6.0 (installed: {anthropic.__version__}); "
+            "native compaction requests will fail and leave the history unchanged",
+            stacklevel=stacklevel,
+        )
+
 
 def _mechanism_tool_choice(
     mechanism: StructuredOutputMechanism | None, tool_choice: ToolChoice | None
@@ -114,6 +128,43 @@ def _with_native_output(
     schema = anthropic.transform_schema(structured_output_model)
     output_config = {**request.get("output_config", {}), "format": {"type": "json_schema", "schema": schema}}
     return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
+
+
+# Beta identifier required to send the top-level `compaction` request parameter.
+# https://platform.claude.com/docs/en/build-with-claude/compaction-keep-recent-turns
+_COMPACT_BETA = "compact-2026-09-04"
+
+
+def _compaction_split(messages: Messages, preserved_messages: int | float) -> int:
+    """Pick the index that starts the preserved tail for `AnthropicModel.compact`.
+
+    Mirrors `OffloadConditions.preserve_recent`'s count-or-ratio shape, then nudges the cut point
+    to a user-turn boundary so a `toolUse` is never separated from its `toolResult`, and never cuts
+    before a pinned message. Returns 0 when the only message before the cut is a prior compaction,
+    since compacting it alone would not reduce the context.
+    """
+    from ..agent.conversation_manager.compression.pin_message import is_pinned
+
+    if not messages:
+        return 0
+
+    preserve = max(0.0, float(preserved_messages))
+    kept = math.ceil(len(messages) * preserve) if 0 < preserve < 1 else int(preserve)
+    cut = max(0, min(len(messages) - kept, len(messages)))
+    end = next((index for index in range(cut) if is_pinned(messages, index)), cut)
+
+    prompt_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if message["role"] == "user" and not any("toolResult" in block for block in message["content"])
+    ]
+    split = max((index for index in prompt_indexes if 0 < index <= end), default=0)
+    if split == 0 and any(0 < index <= cut for index in prompt_indexes):
+        # The compaction block must open the history, so nothing can be kept verbatim ahead of it.
+        logger.warning("pinned_index=<%d> | pinned message precedes every cut point, skipping native compaction", end)
+    if split == 1 and all("compaction" in block for block in messages[0]["content"]):
+        return 0
+    return split
 
 
 class AnthropicModel(Model):
@@ -178,6 +229,7 @@ class AnthropicModel(Model):
         """
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
+        _warn_if_compaction_unsupported(dict(model_config), stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
 
         if "anthropic_tools" in self.config:
@@ -202,6 +254,7 @@ class AnthropicModel(Model):
             self._validate_anthropic_tools(model_config["anthropic_tools"])
 
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
+        _warn_if_compaction_unsupported(dict(model_config), stacklevel=3)
         self.config.update(model_config)
 
     @override
@@ -286,6 +339,17 @@ class AnthropicModel(Model):
 
             # Anthropic rejects reasoning text without a signature, which is how other model families emit it.
             return None
+
+        if "compaction" in content:
+            compaction = content["compaction"]
+            formatted: dict[str, Any] = {"type": "compaction"}
+            if "content" in compaction:
+                formatted["content"] = compaction["content"]
+            if "signature" in compaction:
+                formatted["signature"] = compaction["signature"]
+            if "encryptedContent" in compaction:
+                formatted["encrypted_content"] = compaction["encryptedContent"]
+            return formatted
 
         if "text" in content:
             return {"text": content["text"], "type": "text"}
@@ -950,7 +1014,13 @@ class AnthropicModel(Model):
             count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
-            response = await self.client.messages.count_tokens(**request)
+            # Mirrors stream(): once compaction is possible, history may carry a `compaction`
+            # block, which only the beta endpoint accepts.
+            count_tokens_resource = (
+                self.client.beta.messages if self.requires_server_side_compaction else self.client.messages
+            )
+            beta_kwargs: dict[str, Any] = {"betas": [_COMPACT_BETA]} if self.requires_server_side_compaction else {}
+            response = await count_tokens_resource.count_tokens(**request, **beta_kwargs)
             total_tokens: int = response.input_tokens
 
             logger.debug(
@@ -966,6 +1036,95 @@ class AnthropicModel(Model):
                 e,
             )
             return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
+
+    @override
+    async def compact(
+        self,
+        messages: Messages,
+        *,
+        utilization: float | None = None,
+        preserved_messages: int | float = 0,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+    ) -> Messages | None:
+        """Reduce context through Anthropic's server-side compaction, instead of a client-side summary.
+
+        Preserved-thinking models bind each thinking block's signature to the exact history prefix
+        that produced it, so rewriting that prefix client-side (the ``Offload.summarize`` default)
+        invalidates the thinking blocks kept after the edit, and the next request errors. Anthropic's
+        native compaction API summarizes a prefix of the conversation server-side and returns a signed
+        ``compaction`` block that keeps the remaining thinking blocks valid. See
+        ``team/designs/0022-server-side-compaction-support.md``.
+
+        Named and shaped to match ``OffloadConditions`` field-for-field so callers (``SummarizeStrategy``)
+        pass through the same conditions a customer already configured on ``Offload.summarize(...).when(...)``.
+
+        Args:
+            messages: Full conversation history. The cut point between the compacted prefix and the
+                preserved tail is computed here, from ``preserved_messages``.
+            utilization: The context utilization that triggered this call. Accepted for parity with
+                ``OffloadConditions.utilization`` and for logging; the decision to compact at all was
+                already made by the calling strategy, so it is not re-checked here.
+            preserved_messages: How many of the most recent messages to keep verbatim, in the same
+                count-or-ratio shape as ``OffloadConditions.preserve_recent``: an integer (>= 1) keeps
+                that many trailing messages, a float in (0, 1) keeps that ratio. The split additionally
+                never separates a ``toolUse`` from its ``toolResult`` and never cuts before a pinned
+                message, so it may preserve more than requested.
+            tool_specs: Tool specifications to include in the compaction request, so the summary
+                reflects the tools that were available when the compacted messages were produced.
+            system_prompt: Plain string system prompt to include in the compaction request.
+
+        Returns:
+            ``[compaction message, *preserved messages]``, or ``None`` when there was nothing old
+            enough to compact, or the provider reported the compaction attempt failed.
+        """
+        split = _compaction_split(messages, preserved_messages)
+        if split <= 0:
+            logger.debug(
+                "preserved_messages=<%s>, messages=<%d> | nothing old enough to compact natively",
+                preserved_messages,
+                len(messages),
+            )
+            return None
+
+        older, recent = messages[:split], messages[split:]
+        request = self.format_request(older, tool_specs, system_prompt)
+        request.pop("stream", None)
+        request["compaction"] = {"type": "summarize"}
+        request["betas"] = [_COMPACT_BETA]
+        logger.debug("request=<%s> | native compaction request", request)
+
+        try:
+            response = await self.client.beta.messages.create(**request)
+        except Exception as e:
+            logger.warning(
+                "model_id=<%s>, error=<%s> | native compaction request failed, leaving history unchanged",
+                self.config["model_id"],
+                e,
+            )
+            return None
+
+        block = next((b for b in response.content if getattr(b, "type", None) == "compaction"), None)
+        if block is None or not block.content:
+            logger.debug(
+                "utilization=<%s>, model_id=<%s> | provider produced no summary, leaving history unchanged",
+                utilization,
+                self.config["model_id"],
+            )
+            return None
+
+        compaction_block: CompactionContentBlock = {"content": block.content, "signature": block.signature}
+        if getattr(block, "encrypted_content", None):
+            compaction_block["encryptedContent"] = block.encrypted_content
+
+        summary_message: Message = {"role": "assistant", "content": [{"compaction": compaction_block}]}
+        logger.debug(
+            "model_id=<%s>, compacted=<%d>, preserved=<%d> | native compaction complete",
+            self.config["model_id"],
+            len(older),
+            len(recent),
+        )
+        return [summary_message, *recent]
 
     @override
     async def stream(
@@ -1022,9 +1181,15 @@ class AnthropicModel(Model):
         continuations = 0
         retry_with_drop_block = False
         retry_with_next_mechanism = False
+        # Once a conversation can carry a provider-signed compaction block, every request --
+        # not just the one that created it -- must go through the beta endpoint with the
+        # compaction beta enabled; the non-beta endpoint rejects a `compaction` content block
+        # outright ("Input tag 'compaction' ... does not match any of the expected tags").
+        messages_resource = self.client.beta.messages if self.requires_server_side_compaction else self.client.messages
+        beta_kwargs: dict[str, Any] = {"betas": [_COMPACT_BETA]} if self.requires_server_side_compaction else {}
         try:
             while True:
-                async with self.client.messages.stream(**request) as stream:
+                async with messages_resource.stream(**request, **beta_kwargs) as stream:
                     logger.debug("got response from model")
                     server_tool_block_indexes: set[int] = set()
                     next_block_index = block_index_offset

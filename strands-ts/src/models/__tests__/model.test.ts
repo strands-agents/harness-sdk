@@ -978,6 +978,21 @@ describe('Model.modelId', () => {
   })
 })
 
+describe('Model.requiresServerSideCompaction', () => {
+  it('returns false when not configured', () => {
+    const provider = new TestModelProvider()
+
+    expect(provider.requiresServerSideCompaction).toBe(false)
+  })
+
+  it('returns requiresServerSideCompaction from model config', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ requiresServerSideCompaction: true })
+
+    expect(provider.requiresServerSideCompaction).toBe(true)
+  })
+})
+
 describe('countTokens', () => {
   it('estimates text block tokens using chars/4 heuristic', async () => {
     const provider = new TestModelProvider()

@@ -128,9 +128,14 @@ class BaseModelConfig(TypedDict, total=False):
     Attributes:
         context_window_limit: Maximum context window size in tokens for the model.
             This value represents the total token capacity shared between input and output.
+        requires_server_side_compaction: Whether context reduction must go through the provider's
+            server-side compaction. Set for models whose replayed thinking is bound to the
+            conversation that produced it, so a client-side summary invalidates the remaining
+            thinking blocks. Defaults to False.
     """
 
     context_window_limit: int | None
+    requires_server_side_compaction: bool
 
 
 @dataclass
@@ -213,6 +218,52 @@ class Model(abc.ABC):
             if isinstance(config, dict)
             else getattr(config, "context_window_limit", None)
         )
+
+    @property
+    def requires_server_side_compaction(self) -> bool:
+        """Whether context reduction must go through the provider's server-side compaction."""
+        config = self.get_config()
+        value = (
+            config.get("requires_server_side_compaction")
+            if isinstance(config, dict)
+            else getattr(config, "requires_server_side_compaction", None)
+        )
+        return bool(value)
+
+    async def compact(
+        self,
+        messages: Messages,
+        *,
+        utilization: float | None = None,
+        preserved_messages: int | float = 0,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+    ) -> Messages | None:
+        """Reduce context through the provider's server-side compaction.
+
+        Only implemented by providers whose `requires_server_side_compaction` is `True` —
+        `AnthropicModel` is the only one today, see `team/designs/0022-server-side-compaction-support.md`.
+        Named and shaped to match `OffloadConditions` field-for-field, so a strategy that already
+        resolved `utilization`/`preserve_recent` from its own conditions can pass them straight
+        through unchanged.
+
+        Args:
+            messages: Full conversation history; the provider picks its own cut point from
+                `preserved_messages`.
+            utilization: The context utilization that triggered this call, for providers that use it
+                for logging/diagnostics. The decision to compact at all is made by the caller.
+            preserved_messages: Count (>= 1) or ratio ((0, 1)) of trailing messages to keep verbatim,
+                in the same shape as `OffloadConditions.preserve_recent`.
+            tool_specs: Tool specifications to include in the compaction request.
+            system_prompt: Plain string system prompt to include in the compaction request.
+
+        Returns:
+            `[compaction message, *preserved messages]`, or `None` when there was nothing to compact.
+
+        Raises:
+            NotImplementedError: Always, unless overridden by a provider that supports it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement server-side compaction")
 
     @abc.abstractmethod
     # pragma: no cover

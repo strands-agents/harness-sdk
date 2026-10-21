@@ -209,6 +209,34 @@ def test_context_window_limit_none_when_not_configured(model):
     assert model.context_window_limit is None
 
 
+def test_requires_server_side_compaction_from_dict_config():
+    class DictConfigModel(SAModel):
+        def update_config(self, **model_config):
+            pass
+
+        def get_config(self):
+            return {"requires_server_side_compaction": True}
+
+        async def structured_output(self, output_model, prompt=None, system_prompt=None, **kwargs):
+            yield {}
+
+        async def stream(self, messages, tool_specs=None, system_prompt=None):
+            yield {}
+
+    assert DictConfigModel().requires_server_side_compaction is True
+
+
+def test_requires_server_side_compaction_false_when_not_configured(model):
+    assert model.requires_server_side_compaction is False
+
+
+@pytest.mark.asyncio
+async def test_compact_raises_not_implemented_by_default(model):
+    """`compact` is only implemented by providers that need it (currently just AnthropicModel)."""
+    with pytest.raises(NotImplementedError, match="does not implement server-side compaction"):
+        await model.compact([{"role": "user", "content": [{"text": "hi"}]}])
+
+
 def test_stateful_false(model):
     """Model.stateful defaults to False."""
     assert not model.stateful

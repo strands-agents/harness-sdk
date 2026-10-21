@@ -282,6 +282,26 @@ class TestOffloadBuilder:
             Offload.drop([])
 
 
+class TestIsRetroactive:
+    """Tests for `_is_retroactive`, computed once in `__init__` from the resolved conditions."""
+
+    def test_false_by_default(self):
+        strategy = Offload.drop("*")
+        assert strategy._is_retroactive is False
+
+    def test_true_when_utilization_set(self):
+        strategy = Offload.drop("*").when(utilization=0.85)
+        assert strategy._is_retroactive is True
+
+    def test_true_when_preserve_recent_set_without_utilization(self):
+        strategy = Offload.truncate("tool_results").when(threshold=2000, preserve_recent=2)
+        assert strategy._is_retroactive is True
+
+    def test_false_with_threshold_only(self):
+        strategy = Offload.truncate("tool_results").when(threshold=2000)
+        assert strategy._is_retroactive is False
+
+
 class TestToolMatchesTarget:
     """Tests for tool_matches_target — all branch paths."""
 

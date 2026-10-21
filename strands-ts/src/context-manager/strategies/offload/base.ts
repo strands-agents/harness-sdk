@@ -11,6 +11,7 @@ import {
   ToolUseBlock,
   CachePointBlock,
   ReasoningBlock,
+  CompactionBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
@@ -328,6 +329,18 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
 
+  /**
+   * Whether this strategy edits content the model has already seen a request over.
+   *
+   * `utilization` makes a strategy message-level (see `_isMessageLevel` below): it fires against
+   * messages that already went out in a prior request, so rewriting them client-side invalidates
+   * any thinking block bound to that request's prefix. `preserveRecent` has the same effect for a
+   * per-block strategy, since the "preserved" block was already streamed to the model before this
+   * `apply()` call. Computed once here, in the constructor, rather than recomputed on every
+   * `apply()` through a getter, because `conditions` never changes after construction.
+   */
+  protected readonly _isRetroactive: boolean
+
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     if (Array.isArray(target) && target.length === 0) {
       throw new Error('Empty array target matches nothing — provide at least one target')
@@ -337,6 +350,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     this._threshold = finiteOrUndefined(conditions?.threshold)
     this._utilizationThreshold = finiteOrUndefined(conditions?.utilization)
     this._preserveRecent = finiteOrUndefined(conditions?.preserveRecent) ?? 0
+    this._isRetroactive = this._utilizationThreshold !== undefined || this._preserveRecent > 0
 
     const resolved = resolveToolFilter(target)
     this._includeFilter = resolved.include
@@ -430,6 +444,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof ToolUseBlock) return false
     if (block instanceof CachePointBlock) return false
     if (block instanceof ReasoningBlock) return false
+    if (block instanceof CompactionBlock) return false
     if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false

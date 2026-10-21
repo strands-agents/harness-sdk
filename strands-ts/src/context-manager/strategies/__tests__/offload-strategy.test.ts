@@ -235,6 +235,28 @@ describe('Offload.truncate', () => {
   })
 })
 
+describe('_isRetroactive', () => {
+  function isRetroactive(strategy: unknown): boolean {
+    return (strategy as { _isRetroactive: boolean })._isRetroactive
+  }
+
+  it('is false by default', () => {
+    expect(isRetroactive(Offload.drop('*'))).toBe(false)
+  })
+
+  it('is true when utilization is set', () => {
+    expect(isRetroactive(Offload.drop('*').when({ utilization: 0.85 }))).toBe(true)
+  })
+
+  it('is true when preserveRecent is set without utilization', () => {
+    expect(isRetroactive(Offload.truncate('toolResults').when({ threshold: 2000, preserveRecent: 2 }))).toBe(true)
+  })
+
+  it('is false with threshold only', () => {
+    expect(isRetroactive(Offload.truncate('toolResults').when({ threshold: 2000 }))).toBe(false)
+  })
+})
+
 describe('Offload builder', () => {
   it('Offload.drop() creates a drop strategy', () => {
     const strategy = Offload.drop('toolResults')

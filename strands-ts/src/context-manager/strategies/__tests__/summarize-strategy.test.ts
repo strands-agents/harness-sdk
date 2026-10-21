@@ -199,6 +199,98 @@ describe('Offload.summarize', () => {
     })
   })
 
+  describe('server-side compaction routing', () => {
+    function makeMessages(): Message[] {
+      return [
+        new Message({ role: 'user', content: [new TextBlock('old1')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('old2')] }),
+        new Message({ role: 'user', content: [new TextBlock('recent')] }),
+      ]
+    }
+
+    it('routes to model.compact when retroactive and required', async () => {
+      const preserved = new Message({ role: 'user', content: [new TextBlock('recent')] })
+      const compactionMessage = new Message({ role: 'assistant', content: [] })
+      const compact = vi.fn(async () => [compactionMessage, preserved])
+      const mockModel = { stream: vi.fn(), requiresServerSideCompaction: true, compact }
+      const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+      const messages = makeMessages()
+      const context = makeContext(messages, 0.9, mockModel)
+
+      const result = await strategy.apply(context)
+
+      expect(result).toBe(true)
+      expect(compact).toHaveBeenCalledOnce()
+      expect(compact).toHaveBeenCalledWith(messages, {
+        utilization: 0.9,
+        preservedMessages: 1,
+        toolSpecs: [],
+      })
+      expect(messages).toEqual([compactionMessage, preserved])
+    })
+
+    it('falls back to false when compact returns undefined', async () => {
+      const compact = vi.fn(async () => undefined)
+      const mockModel = { stream: vi.fn(), requiresServerSideCompaction: true, compact }
+      const strategy = Offload.summarize('*').when({ utilization: 0.8 })
+      const messages = makeMessages()
+      const context = makeContext(messages, 0.9, mockModel)
+
+      const result = await strategy.apply(context)
+
+      expect(result).toBe(false)
+    })
+
+    it('does not route to compact when requiresServerSideCompaction is false', async () => {
+      const compact = vi.fn()
+      const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000), compact }
+      const strategy = Offload.summarize('*').when({ utilization: 0.8 })
+      const messages = makeMessages()
+      const context = makeContext(messages, 0.9, mockModel)
+
+      const result = await strategy.apply(context)
+
+      expect(result).toBe(true)
+      expect(compact).not.toHaveBeenCalled()
+    })
+
+    it('does not route to compact when the strategy is not retroactive', () => {
+      const strategy = Offload.summarize('toolResults').when({ threshold: 10 })
+      expect((strategy as unknown as { _isRetroactive: boolean })._isRetroactive).toBe(false)
+    })
+
+    it('does not route to compact when utilization is below threshold', async () => {
+      // Regression: the message-level utilization/overflow gate must still apply to the
+      // server-side branch -- it must not fire on every apply() call just because the model
+      // requires server-side compaction.
+      const compact = vi.fn()
+      const mockModel = { stream: vi.fn(), requiresServerSideCompaction: true, compact }
+      const strategy = Offload.summarize('*').when({ utilization: 0.8 })
+      const messages = makeMessages()
+      const context = makeContext(messages, 0.2, mockModel)
+
+      const result = await strategy.apply(context)
+
+      expect(result).toBe(false)
+      expect(compact).not.toHaveBeenCalled()
+    })
+
+    it('routes to compact on overflow even below the utilization threshold', async () => {
+      const preserved = new Message({ role: 'user', content: [new TextBlock('recent')] })
+      const compactionMessage = new Message({ role: 'assistant', content: [] })
+      const compact = vi.fn(async () => [compactionMessage, preserved])
+      const mockModel = { stream: vi.fn(), requiresServerSideCompaction: true, compact }
+      const strategy = Offload.summarize('*').when({ utilization: 0.8 })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('old1')] }), preserved]
+      const context: ContextState = { ...makeContext(messages, 0.2, mockModel), overflow: true }
+
+      const result = await strategy.apply(context)
+
+      expect(result).toBe(true)
+      expect(compact).toHaveBeenCalledOnce()
+    })
+  })
+
   describe('request limits', () => {
     it('adds the summarizer usage to the request total even when the request limit is used up', async () => {
       const actualSummarize =

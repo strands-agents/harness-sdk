@@ -214,6 +214,16 @@ export interface BaseModelConfig {
    * re-resolved if it was initially auto-populated. Explicitly set values are preserved.
    */
   contextWindowLimit?: number
+
+  /**
+   * Whether context reduction must go through the provider's server-side compaction.
+   *
+   * Set for models whose replayed thinking is bound to the conversation that produced it, so a
+   * client-side summary invalidates the remaining thinking blocks.
+   *
+   * @defaultValue false
+   */
+  requiresServerSideCompaction?: boolean
 }
 
 /**
@@ -346,6 +356,52 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   get stateful(): boolean {
     return false
+  }
+
+  /**
+   * Whether context reduction must go through the provider's server-side compaction.
+   *
+   * @returns The configured `requiresServerSideCompaction`, or `false` when not set
+   */
+  get requiresServerSideCompaction(): boolean {
+    return this.getConfig().requiresServerSideCompaction ?? false
+  }
+
+  /**
+   * Reduces context through the provider's server-side compaction.
+   *
+   * Only implemented by providers whose `requiresServerSideCompaction` is `true` —
+   * `AnthropicModel` is the only one today, see `team/designs/0022-server-side-compaction-support.md`.
+   * Named and shaped to match `OffloadConditions` field-for-field, so a strategy that already
+   * resolved `utilization`/`preserveRecent` from its own conditions can pass them straight
+   * through unchanged.
+   *
+   * @param messages - Full conversation history; the provider picks its own cut point from
+   *   `conditions.preservedMessages`.
+   * @param conditions - `utilization`, the context utilization that triggered this call (for
+   *   providers that use it for logging/diagnostics — the decision to compact at all is made by
+   *   the caller), `preservedMessages`, the count (\>= 1) or ratio ((0, 1)) of trailing
+   *   messages to keep verbatim, in the same shape as `OffloadConditions.preserveRecent`, and
+   *   `systemPrompt`/`toolSpecs`, which the caller MUST pass through unchanged from the live
+   *   conversation: a provider that binds a thinking block's signature to its prefix (system +
+   *   tools + history) rejects the compaction request if either differs from what produced the
+   *   blocks being replayed into it.
+   * @returns `[compaction message, ...preserved messages]`, or `undefined` when there was
+   *   nothing to compact.
+   * @throws Error - Always, unless overridden by a provider that supports it.
+   */
+  async compact(
+    messages: Message[],
+    conditions: {
+      utilization?: number
+      preservedMessages?: number
+      systemPrompt?: SystemPrompt
+      toolSpecs?: ToolSpec[]
+    } = {}
+  ): Promise<Message[] | undefined> {
+    void messages
+    void conditions
+    throw new Error(`${this.constructor.name} does not implement server-side compaction`)
   }
 
   /**

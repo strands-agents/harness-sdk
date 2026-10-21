@@ -10,7 +10,9 @@ import {
   type ResolvedCacheSection,
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
-import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
+import type { ContentBlock, SystemPrompt } from '../types/messages.js'
+import type { ToolSpec } from '../tools/types.js'
+import { Message, CompactionBlock } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
@@ -20,6 +22,7 @@ import { encodeBase64, decodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
+import { isPinned } from '../conversation-manager/compression/pin-message.js'
 
 // Union of overflow phrases observed across Anthropic responses, matched
 // case-insensitively. Kept in lowercase so the comparison is a single
@@ -57,6 +60,52 @@ const MAX_PAUSE_TURN_CONTINUATIONS = 10
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
+
+// Beta identifier required to send the top-level `compaction` request parameter.
+// https://platform.claude.com/docs/en/build-with-claude/compaction-keep-recent-turns
+const COMPACT_BETA = 'compact-2026-09-04'
+
+/**
+ * Picks the index that starts the preserved tail for `AnthropicModel.compact`.
+ *
+ * Mirrors `OffloadConditions.preserveRecent`'s count-or-ratio shape, then nudges the cut point to
+ * a user-turn boundary so a `toolUse` is never separated from its `toolResult`, and never cuts
+ * before a pinned message. Returns 0 when the only message before the cut is a prior compaction,
+ * since compacting it alone would not reduce the context.
+ */
+function compactionSplitIndex(messages: Message[], preservedMessages: number): number {
+  if (messages.length === 0) return 0
+
+  const preserve = Math.max(0, preservedMessages)
+  const kept = preserve > 0 && preserve < 1 ? Math.ceil(messages.length * preserve) : Math.trunc(preserve)
+  const cut = Math.max(0, Math.min(messages.length - kept, messages.length))
+  let end = cut
+  for (let index = 0; index < cut; index++) {
+    if (isPinned(messages, index)) {
+      end = index
+      break
+    }
+  }
+
+  const promptIndexes: number[] = []
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]
+    if (message?.role === 'user' && !message.content.some((block) => block.type === 'toolResultBlock')) {
+      promptIndexes.push(index)
+    }
+  }
+
+  let split = 0
+  for (const index of promptIndexes) {
+    if (index > 0 && index <= end) split = index
+  }
+  if (split === 0 && promptIndexes.some((index) => index > 0 && index <= cut)) {
+    // The compaction block must open the history, so nothing can be kept verbatim ahead of it.
+    logger.warn(`pinned_index=<${end}> | pinned message precedes every cut point, skipping native compaction`)
+  }
+  if (split === 1 && messages[0]!.content.every((block) => block.type === 'compactionBlock')) return 0
+  return split
+}
 
 /**
  * Validates that `anthropicTools` does not contain function tool definitions.
@@ -235,9 +284,16 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       }
 
       const requestOptions = this._buildRequestOptions()
-      const response = requestOptions
-        ? await this._client.messages.countTokens(params, requestOptions)
-        : await this._client.messages.countTokens(params)
+      // Mirrors stream(): once compaction is possible, history may carry a `compaction` block,
+      // which only the beta endpoint accepts.
+      const response = this.requiresServerSideCompaction
+        ? await this._client.beta.messages.countTokens({
+            ...params,
+            betas: this._compactionBetas(),
+          } as unknown as Anthropic.Beta.Messages.MessageCountTokensParams)
+        : requestOptions
+          ? await this._client.messages.countTokens(params, requestOptions)
+          : await this._client.messages.countTokens(params)
 
       logger.debug(`total_tokens=<${response.input_tokens}> | native token count`)
       return response.input_tokens
@@ -245,6 +301,105 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       logger.debug(`error=<${error}> | native token counting failed, falling back to estimation`)
       return super.countTokens(messages, options)
     }
+  }
+
+  /**
+   * Reduces context through Anthropic's server-side compaction, instead of a client-side summary.
+   *
+   * Preserved-thinking models bind each thinking block's signature to the exact history prefix
+   * that produced it, so rewriting that prefix client-side (the `Offload.summarize` default)
+   * invalidates the thinking blocks kept after the edit, and the next request errors. Anthropic's
+   * native compaction API summarizes a prefix of the conversation server-side and returns a signed
+   * `compaction` block that keeps the remaining thinking blocks valid. See
+   * `team/designs/0022-server-side-compaction-support.md`.
+   *
+   * Named and shaped to match `OffloadConditions` field-for-field so callers (`SummarizeStrategy`)
+   * pass through the same conditions a customer already configured on `Offload.summarize(...).when(...)`.
+   *
+   * @param messages - Full conversation history. The cut point between the compacted prefix and
+   *   the preserved tail is computed here, from `conditions.preservedMessages`.
+   * @param conditions - `utilization`, the context utilization that triggered this call (accepted
+   *   for parity with `OffloadConditions.utilization` and for logging; the decision to compact at
+   *   all was already made by the calling strategy, so it is not re-checked here), and
+   *   `preservedMessages`, how many of the most recent messages to keep verbatim, in the same
+   *   count-or-ratio shape as `OffloadConditions.preserveRecent`. The split additionally never
+   *   separates a `toolUse` from its `toolResult` and never cuts before a pinned message, so it
+   *   may preserve more than requested.
+   * @returns `[compaction message, ...preserved messages]`, or `undefined` when there was nothing
+   *   old enough to compact, or the provider reported the compaction attempt failed.
+   */
+  override async compact(
+    messages: Message[],
+    conditions: {
+      utilization?: number
+      preservedMessages?: number
+      systemPrompt?: SystemPrompt
+      toolSpecs?: ToolSpec[]
+    } = {}
+  ): Promise<Message[] | undefined> {
+    const { utilization, preservedMessages = 0, systemPrompt, toolSpecs } = conditions
+    const split = compactionSplitIndex(messages, preservedMessages)
+    if (split <= 0) {
+      logger.debug(
+        `preserved_messages=<${preservedMessages}>, messages=<${messages.length}> | nothing old enough to compact natively`
+      )
+      return undefined
+    }
+
+    const older = messages.slice(0, split)
+    const recent = messages.slice(split)
+    // The request must carry the same system prompt and tools as the live conversation --
+    // Anthropic binds a thinking block's signature to the exact prefix (system + tools + history)
+    // that produced it, and rejects a compaction request whose system/tools differ from what
+    // generated the thinking blocks being replayed into it.
+    const request = this._formatRequest(older, {
+      ...(systemPrompt !== undefined && { systemPrompt }),
+      ...(toolSpecs !== undefined && { toolSpecs }),
+    })
+    delete (request as { stream?: boolean }).stream
+
+    const compactionRequest = {
+      ...request,
+      compaction: { type: 'summarize' },
+      betas: this._compactionBetas(),
+    }
+    logger.debug(`request=<${JSON.stringify(compactionRequest)}> | native compaction request`)
+
+    let response: Anthropic.Beta.Messages.BetaMessage
+    try {
+      response = await this._client.beta.messages.create(
+        compactionRequest as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming
+      )
+    } catch (error) {
+      logger.warn(`model_id=<${this._config.modelId}>, error=<${error}> | native compaction request failed`)
+      return undefined
+    }
+
+    const block = (
+      response.content as Array<{ type: string; content?: string; signature?: string; encrypted_content?: string }>
+    ).find((candidate) => candidate.type === 'compaction')
+    if (!block || !block.content) {
+      logger.debug(
+        `utilization=<${utilization}>, model_id=<${this._config.modelId}> | provider produced no summary, leaving history unchanged`
+      )
+      return undefined
+    }
+
+    const summaryMessage = new Message({
+      role: 'assistant',
+      content: [
+        new CompactionBlock({
+          content: block.content,
+          ...(block.signature !== undefined && { signature: block.signature }),
+          ...(block.encrypted_content !== undefined && { encryptedContent: block.encrypted_content }),
+        }),
+      ],
+    })
+
+    logger.debug(
+      `model_id=<${this._config.modelId}>, compacted=<${older.length}>, preserved=<${recent.length}> | native compaction complete`
+    )
+    return [summaryMessage, ...recent]
   }
 
   /**
@@ -265,11 +420,22 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       thinking = request.thinking
       const requestOptions = this._buildRequestOptions()
       const usage = createEmptyUsage()
+      // Once compaction is possible, history may carry a `compaction` block, which only the
+      // beta endpoint accepts; the non-beta endpoint rejects it outright ("Input tag
+      // 'compaction' ... does not match any of the expected tags"). TS can't resolve the
+      // overloaded `.stream()` signature through a union-typed resource variable, so branch
+      // explicitly instead of picking one `messagesResource` up front.
+      const useBeta = this.requiresServerSideCompaction
 
       while (true) {
-        const stream = requestOptions
-          ? this._client.messages.stream(request, requestOptions)
-          : this._client.messages.stream(request)
+        const stream = useBeta
+          ? this._client.beta.messages.stream({
+              ...request,
+              betas: this._compactionBetas(),
+            } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming)
+          : requestOptions
+            ? this._client.messages.stream(request, requestOptions)
+            : this._client.messages.stream(request)
 
         let stopReason = 'endTurn'
         let messageStopped = false
@@ -414,7 +580,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
           const pausedMessage = await stream.finalMessage()
           request = {
             ...request,
-            messages: [...request.messages, { role: 'assistant', content: pausedMessage.content }],
+            messages: [
+              ...request.messages,
+              { role: 'assistant', content: pausedMessage.content as unknown as Anthropic.MessageParam['content'] },
+            ],
           }
           logger.debug(`continuation=<${continuations}> | resuming paused server-side tool turn`)
           continue
@@ -469,6 +638,18 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       throw error
     }
+  }
+
+  /**
+   * Betas for a beta-endpoint request: the compaction beta plus any configured ones.
+   *
+   * The SDK turns the body's `betas` into an `anthropic-beta` header that replaces the client's,
+   * so configured, client, and thinking-binding betas all go in the body.
+   */
+  private _compactionBetas(): string[] {
+    const betas = new Set([COMPACT_BETA, ...(this._config.betas ?? []), ...this._clientBetas])
+    if (this._dropsStaleThinking()) betas.add(THINKING_BINDING_BETA)
+    return [...betas]
   }
 
   private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
@@ -902,6 +1083,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       case 'cachePointBlock':
         return undefined
+
+      case 'compactionBlock':
+        return {
+          type: 'compaction',
+          ...(block.content !== undefined && { content: block.content }),
+          ...(block.signature !== undefined && { signature: block.signature }),
+          ...(block.encryptedContent !== undefined && { encrypted_content: block.encryptedContent }),
+        } as unknown as Anthropic.ContentBlockParam
 
       default:
         return undefined

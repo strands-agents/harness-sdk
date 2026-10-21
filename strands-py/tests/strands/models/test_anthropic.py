@@ -1036,6 +1036,27 @@ async def test_stream(anthropic_client, model, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_uses_beta_endpoint_when_requires_server_side_compaction(
+    anthropic_client, model_id, max_tokens, alist
+):
+    """Once a conversation can carry a provider-signed `compaction` block, every request --
+    not just the one that creates it -- must go through the beta endpoint with the compaction
+    beta enabled; the non-beta endpoint rejects a `compaction` content block outright."""
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, requires_server_side_compaction=True)
+    anthropic_client.beta.messages.stream.return_value = generate_mock_stream_context(
+        [unittest.mock.Mock(type="message_start", model_dump=lambda: {"type": "message_start"})],
+        final_message=unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {})),
+    )
+
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+    await alist(model.stream(messages, None, None))
+
+    anthropic_client.beta.messages.stream.assert_called_once()
+    assert anthropic_client.beta.messages.stream.call_args.kwargs["betas"] == ["compact-2026-09-04"]
+    anthropic_client.messages.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_stream_early_termination(anthropic_client, model, alist, caplog):
     caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
     mock_event = unittest.mock.Mock(
@@ -1712,6 +1733,149 @@ class TestCountTokens:
         anthropic_client.messages.count_tokens.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
+
+
+class TestCompact:
+    """Tests for AnthropicModel.compact native server-side compaction."""
+
+    @pytest.fixture
+    def model_with_client(self, anthropic_client, model_id, max_tokens):
+        _ = anthropic_client
+        return AnthropicModel(model_id=model_id, max_tokens=max_tokens)
+
+    @pytest.fixture
+    def messages(self):
+        return [
+            {"role": "user", "content": [{"text": "old1"}]},
+            {"role": "assistant", "content": [{"text": "old2"}]},
+            {"role": "user", "content": [{"text": "recent"}]},
+        ]
+
+    @staticmethod
+    def _compaction_response(content="summary", signature="sig", encrypted_content=None):
+        block = unittest.mock.MagicMock()
+        block.type = "compaction"
+        block.content = content
+        block.signature = signature
+        block.encrypted_content = encrypted_content
+        response = unittest.mock.MagicMock()
+        response.content = [block]
+        return response
+
+    @pytest.mark.asyncio
+    async def test_compacts_older_messages_and_preserves_tail(self, model_with_client, anthropic_client, messages):
+        anthropic_client.beta.messages.create = unittest.mock.AsyncMock(return_value=self._compaction_response())
+
+        result = await model_with_client.compact(messages, preserved_messages=1)
+
+        assert result is not None
+        assert result[0] == {
+            "role": "assistant",
+            "content": [{"compaction": {"content": "summary", "signature": "sig"}}],
+        }
+        assert result[1:] == messages[2:]
+
+    @pytest.mark.asyncio
+    async def test_sends_compaction_param_and_beta_header(self, model_with_client, anthropic_client, messages):
+        anthropic_client.beta.messages.create = unittest.mock.AsyncMock(return_value=self._compaction_response())
+
+        await model_with_client.compact(messages, utilization=0.9, preserved_messages=1)
+
+        call_kwargs = anthropic_client.beta.messages.create.call_args[1]
+        assert call_kwargs["compaction"] == {"type": "summarize"}
+        assert call_kwargs["betas"] == ["compact-2026-09-04"]
+        # Only the older half of the conversation is sent -- the preserved tail is kept client-side.
+        assert len(call_kwargs["messages"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_includes_encrypted_content_when_present(self, model_with_client, anthropic_client, messages):
+        anthropic_client.beta.messages.create = unittest.mock.AsyncMock(
+            return_value=self._compaction_response(encrypted_content="opaque")
+        )
+
+        result = await model_with_client.compact(messages, preserved_messages=1)
+
+        assert result[0]["content"][0]["compaction"]["encryptedContent"] == "opaque"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_provider_reports_failed_compaction(
+        self, model_with_client, anthropic_client, messages
+    ):
+        anthropic_client.beta.messages.create = unittest.mock.AsyncMock(
+            return_value=self._compaction_response(content=None)
+        )
+
+        result = await model_with_client.compact(messages, preserved_messages=1)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_nothing_old_enough_to_compact(self, model_with_client, anthropic_client):
+        single_turn = [{"role": "user", "content": [{"text": "hi"}]}]
+
+        result = await model_with_client.compact(single_turn, preserved_messages=1)
+
+        assert result is None
+        anthropic_client.beta.messages.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_only_a_prior_compaction_precedes_the_cut(
+        self, model_with_client, anthropic_client
+    ):
+        compacted_with_tool_turn = [
+            {"role": "assistant", "content": [{"compaction": {"content": "summary", "signature": "sig"}}]},
+            {"role": "user", "content": [{"text": "count words"}]},
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "word_count", "input": {}}}]},
+            {"role": "user", "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": []}}]},
+            {"role": "assistant", "content": [{"text": "9"}]},
+            {"role": "user", "content": [{"text": "next"}]},
+        ]
+
+        result = await model_with_client.compact(compacted_with_tool_turn, preserved_messages=2)
+
+        assert result is None
+        anthropic_client.beta.messages.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_and_warns_when_a_pinned_first_message_blocks_every_cut(
+        self, model_with_client, anthropic_client, messages, caplog
+    ):
+        anthropic_client.beta.messages.create = unittest.mock.AsyncMock()
+        messages[0]["metadata"] = {"custom": {"pinned": True}}
+
+        with caplog.at_level(logging.WARNING, logger="strands.models.anthropic"):
+            result = await model_with_client.compact(messages, preserved_messages=1)
+
+        assert result is None
+        anthropic_client.beta.messages.create.assert_not_called()
+        assert "pinned message precedes every cut point" in caplog.text
+
+    def test_warns_when_compaction_is_enabled_on_an_sdk_without_it(self, anthropic_client, monkeypatch):
+        _ = anthropic_client
+        monkeypatch.setattr(strands.models.anthropic, "_SDK_SUPPORTS_COMPACTION", False)
+
+        with pytest.warns(UserWarning, match=r"anthropic>=1\.6\.0"):
+            model = AnthropicModel(model_id="m", max_tokens=1, requires_server_side_compaction=True)
+        with pytest.warns(UserWarning, match=r"anthropic>=1\.6\.0"):
+            model.update_config(requires_server_side_compaction=True)
+
+    def test_does_not_warn_when_the_sdk_supports_compaction(self, anthropic_client, monkeypatch):
+        _ = anthropic_client
+        monkeypatch.setattr(strands.models.anthropic, "_SDK_SUPPORTS_COMPACTION", True)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            AnthropicModel(model_id="m", max_tokens=1, requires_server_side_compaction=True)
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_request_error(self, model_with_client, anthropic_client, messages, caplog):
+        anthropic_client.beta.messages.create = unittest.mock.AsyncMock(side_effect=RuntimeError("boom"))
+
+        with caplog.at_level(logging.WARNING, logger="strands.models.anthropic"):
+            result = await model_with_client.compact(messages, preserved_messages=1)
+
+        assert result is None
+        assert any("native compaction request failed" in record.message for record in caplog.records)
 
 
 @pytest.mark.filterwarnings("ignore:cache_tools is deprecated:DeprecationWarning")
