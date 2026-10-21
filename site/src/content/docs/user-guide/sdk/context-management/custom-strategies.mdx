@@ -115,7 +115,7 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 ### Summarize
 
-Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
+Replaces content with an LLM-generated summary. Per-block summarization uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default; batch summarization replays the agent's own request on <Syntax py="agent.model" ts="agent.model" /> so it shares the prompt cache.
 
 <Tabs>
 <Tab label="Python">
@@ -146,16 +146,16 @@ Offload.summarize("*").when(
 
 | Parameter | Key | Default |
 |-----------|-----|---------|
-| Model | `model` | `agent.aux_model` |
-| System prompt | `system_prompt` | Built-in |
+| Model | `model` | `agent.aux_model` (per-block), `agent.model` (batch) |
+| System prompt | `system_prompt` | Agent's own prompt and tools for batch summarization; built-in for per-block |
 
 </Tab>
 <Tab label="TypeScript">
 
 | Parameter | Key | Default |
 |-----------|-----|---------|
-| Model | `model` | `agent.auxModel` |
-| System prompt | `systemPrompt` | Built-in |
+| Model | `model` | `agent.auxModel` (per-block), `agent.model` (batch) |
+| System prompt | `systemPrompt` | Agent's own prompt and tools for batch summarization; built-in for per-block |
 
 </Tab>
 </Tabs>

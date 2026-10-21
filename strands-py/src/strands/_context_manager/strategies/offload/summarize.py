@@ -9,9 +9,9 @@ from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
     SummarizeConfig,
-    _flatten_messages_to_content,
     _format_summarized,
     _summarize_content,
+    _summarize_conversation,
     _tool_result_to_content_blocks,
 )
 from ...stash import _format_stash_refs
@@ -73,10 +73,11 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return await super().apply(context)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Summarize oldest eligible messages into a single summary message."""
-        model = self._resolve_model(context.agent)
-        if not model:
-            return False
+        """Summarize oldest eligible messages into a single summary message.
+
+        Uses the agent's main model unless one is configured, so the replayed request shares its prompt cache.
+        """
+        model = self._config.get("model") or context.agent.model
 
         messages = context.messages
         if len(messages) <= 1:
@@ -98,8 +99,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not safe:
             return False
 
-        content_blocks = _flatten_messages_to_content(safe)
-        summary = await _summarize_content(content_blocks, model, self._config)
+        history_end = max(identity_map[id(message)] for message in safe) + 1
+        summary = await _summarize_conversation(messages[:history_end], context.agent, model, self._config)
         if not summary:
             return False
 

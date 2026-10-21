@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { summarizeContent } from '../../methods/summarize.js'
+import { summarizeContent, summarizeConversation } from '../../methods/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
+import type { Model } from '../../../models/model.js'
 import type { ContextState } from '../../types.js'
 
 vi.mock('../../methods/summarize.js', async (importOriginal) => {
@@ -13,8 +14,11 @@ vi.mock('../../methods/summarize.js', async (importOriginal) => {
   return {
     ...actual,
     summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
+    summarizeConversation: vi.fn(async () => 'Summary of multimodal content'),
   }
 })
+
+const summarizeConversationMock = vi.mocked(summarizeConversation)
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   return new Message({
@@ -186,6 +190,54 @@ describe('Offload.summarize', () => {
       const result = await strategy.apply(context)
 
       expect(result).toBe(true)
+    })
+
+    it('hands the history prefix up to the batch end to summarizeConversation', async () => {
+      summarizeConversationMock.mockClear()
+      const toolUse = new ToolUseBlock({ toolUseId: 't1', name: 'calc', input: {} })
+      const toolResult = new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('42')] })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('pin')] }),
+        new Message({ role: 'assistant', content: [toolUse] }),
+        new Message({ role: 'user', content: [toolResult] }),
+        new Message({ role: 'assistant', content: [new TextBlock('old')] }),
+        new Message({ role: 'user', content: [new TextBlock('recent')] }),
+      ]
+      const history = messages.slice(0, 4)
+      const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
+      const strategy = Offload.summarize('*').when({ utilization: 0.8 })
+      const context = makeContext(messages, 0.9, mockModel)
+
+      expect(await strategy.apply(context)).toBe(true)
+
+      expect(summarizeConversationMock).toHaveBeenCalledTimes(1)
+      const [prefix, agent] = summarizeConversationMock.mock.calls[0]!
+      expect(prefix).toEqual(history)
+      expect(agent).toBe(context.agent)
+    })
+
+    it('summarizes the batch with the agent model even when an auxModel is set', async () => {
+      summarizeConversationMock.mockClear()
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('pin')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('old1')] }),
+        new Message({ role: 'user', content: [new TextBlock('old2')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('old3')] }),
+        new Message({ role: 'user', content: [new TextBlock('recent')] }),
+      ]
+      const mainModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
+      const auxModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
+      const context = makeContext(messages, 0.9, mainModel)
+      context.agent = createMockAgent({
+        messages,
+        extra: { model: context.agent.model, auxModel: auxModel as unknown as Model },
+      })
+      const strategy = Offload.summarize('*').when({ utilization: 0.8 })
+
+      expect(await strategy.apply(context)).toBe(true)
+
+      expect(summarizeConversationMock.mock.calls[0]![2]).toBe(context.agent.model)
+      expect(summarizeConversationMock.mock.calls[0]![2]).not.toBe(auxModel)
     })
 
     it('returns false on empty messages', async () => {

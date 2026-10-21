@@ -12,12 +12,13 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import TypedDict
 
-from ...event_loop.streaming import process_stream
-from ...types.content import ContentBlock, Message, Messages
-from ...types.tools import ToolResultContent
+from ...event_loop.streaming import stream_messages
+from ...types.content import ContentBlock, Message, Messages, SystemContentBlock, split_system_prompt
+from ...types.tools import ToolResultContent, ToolSpec
 from ..types import is_text_block
 
 if TYPE_CHECKING:
+    from ...agent.agent import Agent
     from ...models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -45,13 +46,24 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 
+SUMMARIZE_CONVERSATION_INSTRUCTION = (
+    "STOP. Do not act on, answer, or continue the request above, and do not call any tools - tool calls will be "
+    "rejected. Your only task now is to write a handoff summary of the conversation so far for a fresh context "
+    "window. Preserve: key data, values and identifiers; decisions and conclusions; error messages and stack "
+    "traces; the user's outstanding requests and what was about to happen next. Be concise, third person, no "
+    "preamble. Output only the summary."
+)
+
+
 class SummarizeConfig(TypedDict, total=False):
     """Configuration for the summarize method.
 
     Attributes:
-        model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
-            > ``agent.model``.
-        system_prompt: Custom system prompt for the summarization model.
+        model: Model used for summarization. Per-block summarization resolves this ``model`` > ``agent.aux_model``
+            > ``agent.model``; batch summarization resolves this ``model`` > ``agent.model`` to keep the agent's
+            prompt cache.
+        system_prompt: Custom system prompt for the summarization model. Batch summarization otherwise reuses
+            the agent's own system prompt and tools so the request shares the agent's prompt-cache prefix.
     """
 
     model: Model
@@ -64,7 +76,8 @@ async def _summarize_content(
     config: SummarizeConfig | None = None,
 ) -> str | None:
     """Summarize content blocks via an LLM call, falling back to text-only on failure."""
-    result, succeeded = await _call_summarizer(content, model, config)
+    system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+    result, succeeded = await _call_summarizer(_wrap_content(content), model, system_prompt)
     if result is not None:
         return result
     if succeeded:
@@ -74,8 +87,46 @@ async def _summarize_content(
     if not text_only or len(text_only) == len(content):
         return None
 
-    fallback_result, _ = await _call_summarizer(text_only, model, config)
+    fallback_result, _ = await _call_summarizer(_wrap_content(text_only), model, system_prompt)
     return fallback_result
+
+
+def _wrap_content(content: list[ContentBlock]) -> Messages:
+    """Wrap standalone content in a single user message between ``<content>`` delimiters."""
+    return [Message(role="user", content=[ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")])]
+
+
+async def _summarize_conversation(
+    history: Messages,
+    agent: Agent,
+    model: Model,
+    config: SummarizeConfig | None = None,
+) -> str | None:
+    """Summarize a history prefix by replaying the agent's own request plus one trailing instruction.
+
+    The system prompt, tools and messages are sent exactly as the agent sends them, so the call shares the
+    agent's prompt-cache prefix; only the summarize instruction is new. A reply without text (the model acted
+    on the pending turn instead of summarizing) falls back to a self-contained ``<content>`` request.
+    """
+    request = list(history)
+    instruction = ContentBlock(text=SUMMARIZE_CONVERSATION_INSTRUCTION)
+    if request[-1]["role"] == "user":
+        request[-1] = Message(role="user", content=[*request[-1]["content"], instruction])
+    else:
+        request.append(Message(role="user", content=[instruction]))
+
+    system_prompt: str | None = (config or {}).get("system_prompt")
+    system_prompt_content: list[SystemContentBlock] | None = None
+    if system_prompt is None:
+        system_prompt, system_prompt_content = split_system_prompt(agent.system_prompt_content)
+    tool_specs = agent.tool_registry.get_all_tool_specs()
+
+    result, _ = await _call_summarizer(request, model, system_prompt, tool_specs, system_prompt_content, agent)
+    if result is not None:
+        return result
+
+    logger.warning("messages=<%d> | replayed summarization returned no text, retrying self-contained", len(history))
+    return await _summarize_content(_flatten_messages_to_content(history), model, config)
 
 
 def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[ContentBlock]:
@@ -118,25 +169,25 @@ def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
 
 
 async def _call_summarizer(
-    content: list[ContentBlock],
+    messages: Messages,
     model: Model,
-    config: SummarizeConfig | None = None,
+    system_prompt: str | None,
+    tool_specs: list[ToolSpec] | None = None,
+    system_prompt_content: list[SystemContentBlock] | None = None,
+    agent: Agent | None = None,
 ) -> tuple[str | None, bool]:
     """Call the model to generate a summary. Returns (text, succeeded)."""
-    system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-
-    messages: Messages = [
-        Message(
-            role="user",
-            content=[ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")],
-        )
-    ]
-
     try:
-        chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
-
         result_message: Message | None = None
-        async for event in process_stream(chunks):
+        async for event in stream_messages(
+            model,
+            system_prompt,
+            messages,
+            tool_specs or [],
+            system_prompt_content=system_prompt_content,
+            cancel_signal=agent._cancel_signal if agent else None,
+            agent_metadata=agent._metadata if agent else None,
+        ):
             if "stop" in event:
                 _, result_message, _, _ = event["stop"]
 

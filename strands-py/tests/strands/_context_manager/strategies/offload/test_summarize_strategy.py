@@ -4,6 +4,7 @@ import unittest.mock
 
 import pytest
 
+from strands._context_manager.methods.summarize import SUMMARIZE_CONVERSATION_INSTRUCTION
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.types import ContextState
 from strands.types.content import ContentBlock, Message, Messages
@@ -47,6 +48,9 @@ def mock_agent():
     agent.model.stream = _make_stream_events("Summary of content.")
     agent.aux_model = agent.model
     agent.messages = []
+    agent.system_prompt_content = [{"text": "You are the agent."}]
+    agent._cancel_signal = None
+    agent.tool_registry.get_all_tool_specs.return_value = [{"name": "calc", "description": "d", "inputSchema": {}}]
     return agent
 
 
@@ -187,6 +191,58 @@ class TestSummarizeStrategyMessageLevel:
         assert await strategy.apply(context) is True
         all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
         assert "[Summarized:" in all_text
+
+    @pytest.mark.asyncio
+    async def test_replays_history_prefix_with_agent_prompt_and_tools(self, mock_agent):
+        seen: list = []
+
+        def stream(messages, tool_specs, system_prompt, **kwargs):
+            seen.append((messages, tool_specs, system_prompt))
+            return _make_stream_events("Summary of content.")()
+
+        mock_agent.model.stream = stream
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        tool_use = ContentBlock(toolUse=ToolUse(toolUseId="t1", name="calc", input={}))
+        tool_result = ContentBlock(toolResult=ToolResult(toolUseId="t1", status="success", content=[{"text": "42"}]))
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[tool_use]),
+            Message(role="user", content=[tool_result]),
+            Message(role="assistant", content=[ContentBlock(text="old")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        history = [Message(role=m["role"], content=list(m["content"])) for m in messages[:4]]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+        assert await strategy.apply(context) is True
+
+        request, tool_specs, system_prompt = seen[0]
+        assert request == [
+            *history,
+            Message(role="user", content=[ContentBlock(text=SUMMARIZE_CONVERSATION_INSTRUCTION)]),
+        ]
+        assert tool_specs == mock_agent.tool_registry.get_all_tool_specs.return_value
+        assert system_prompt == "You are the agent."
+
+    @pytest.mark.asyncio
+    async def test_batch_uses_agent_model_not_aux_model(self, mock_agent):
+        aux_model = unittest.mock.AsyncMock()
+        aux_model.stream = _make_stream_events("aux summary")
+        mock_agent.aux_model = aux_model
+        strategy = Offload.summarize("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="old1")]),
+            Message(role="user", content=[ContentBlock(text="old2")]),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+        assert await strategy.apply(context) is True
+        all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
+        assert "Summary of content." in all_text
+        assert "aux summary" not in all_text
 
     @pytest.mark.asyncio
     async def test_inserts_summary_and_removes_originals(self, mock_agent):

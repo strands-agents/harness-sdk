@@ -12,9 +12,9 @@ import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import {
-  flattenMessagesToContent,
   formatSummarized,
   summarizeContent,
+  summarizeConversation,
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
@@ -52,8 +52,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const model = this._resolveModel(context.agent)
-    if (!model) return false
+    // The agent's main model unless one is configured, so the replayed request shares its prompt cache.
+    const model = this._config.model ?? context.agent.model
 
     const { messages } = context
     if (messages.length <= 1) return false
@@ -73,8 +73,14 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const safe = messages.filter((message) => safeSet.has(message))
     if (safe.length === 0) return false
 
-    const contentBlocks = flattenMessagesToContent(safe)
-    const summary = await summarizeContent(contentBlocks, model, this._config, context.invocationContext)
+    const historyEnd = Math.max(...safe.map((message) => messages.indexOf(message))) + 1
+    const summary = await summarizeConversation(
+      messages.slice(0, historyEnd),
+      context.agent,
+      model,
+      this._config,
+      context.invocationContext
+    )
     if (!summary) return false
 
     const totalTokens = await model.countTokens(safe)
