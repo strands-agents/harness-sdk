@@ -444,7 +444,8 @@ sidebar:
                     slug: docs/user-guide/sdk/bidi/models
                   - docs/user-guide/sdk/bidi/models/bedrock
                   - docs/user-guide/sdk/bidi/models/google
-                  - docs/user-guide/sdk/bidi/models/openai
+                  - docs/user-guide/sdk/bidi/models/openai/realtime
+                  - docs/user-guide/sdk/bidi/models/openai/live
               - docs/user-guide/sdk/bidi/tools
               - docs/user-guide/sdk/bidi/io
               - docs/user-guide/sdk/bidi/content
@@ -628,6 +629,7 @@ sidebar:
               - docs/user-guide/evals-sdk/red-teaming/quickstart
               - docs/user-guide/evals-sdk/red-teaming/strategies
               - docs/user-guide/evals-sdk/red-teaming/custom_cases
+              - docs/user-guide/evals-sdk/red-teaming/custom_task
               - docs/user-guide/evals-sdk/red-teaming/evaluators
               - docs/user-guide/evals-sdk/red-teaming/reading_the_report
           - docs/user-guide/evals-sdk/chaos_testing

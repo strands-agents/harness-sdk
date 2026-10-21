@@ -32,12 +32,12 @@ _DEFAULT_EXTRACTION_FRAMING = (
     "You extract durable facts worth remembering across future conversations from a transcript."
 )
 
+# Heading-first layout ``add`` slugifies to group facts by topic. ``ModelExtractor`` appends
+# the JSON output format after it.
 _OUTPUT_CONTRACT = (
-    'Return ONLY a JSON array of objects: {"content": string}.\n\n'
     "Group related facts into a single entry. The first line is a markdown heading"
     ' (e.g. "# User preferences", "# Project setup", "# Team conventions").'
-    " Put each fact on its own line below the heading.\n\n"
-    "If there is nothing worth remembering, return []."
+    " Put each fact on its own line below the heading."
 )
 
 _DEFAULT_MAX_SEARCH_RESULTS = 10

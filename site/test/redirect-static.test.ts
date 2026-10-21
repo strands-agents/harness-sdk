@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { buildStaticRedirects } from '../src/util/redirect.static'
+import { buildPublishedRedirects, buildStaticRedirects } from '../src/util/redirect.static'
 import { pathToDocsSlug } from '../src/util/links'
+import legacyRoutes from '../src/config/legacy-routes.json'
 
 /**
  * Each test gets a fresh temp content dir and passes its own static-redirect
@@ -80,22 +81,18 @@ describe('buildStaticRedirects', () => {
     writeDoc(contentDir, 'docs/user-guide/state.mdx', 'title: State')
     writeDoc(contentDir, 'docs/user-guide/other.mdx', 'title: Other\nredirectFrom:\n  - docs/user-guide/state')
 
-    expect(() => buildStaticRedirects(contentDir, '/', {})).toThrow(/collides with an existing content file/)
+    expect(() => buildStaticRedirects(contentDir, '/', {})).toThrow(/collides with an existing page/)
   })
 
   it('throws when duplicate redirectFrom slugs point at different targets', () => {
     writeDoc(contentDir, 'docs/user-guide/dupe-a.mdx', 'title: A\nredirectFrom:\n  - docs/old/dupe')
     writeDoc(contentDir, 'docs/user-guide/dupe-b.mdx', 'title: B\nredirectFrom:\n  - docs/old/dupe')
 
-    expect(() => buildStaticRedirects(contentDir, '/', {})).toThrow(
-      /duplicate redirectFrom slug "docs\/old\/dupe"/
-    )
+    expect(() => buildStaticRedirects(contentDir, '/', {})).toThrow(/duplicate redirectFrom slug "docs\/old\/dupe"/)
   })
 
   it('throws when an internal redirect target has no content file', () => {
-    expect(() => buildStaticRedirects(contentDir, '/', { 'docs/old/page': 'docs/new/missing' })).toThrow(
-      /has no content file/
-    )
+    expect(() => buildStaticRedirects(contentDir, '/', { 'docs/old/page': 'docs/new/missing' })).toThrow(/has no page/)
   })
 
   it('accepts a custom Astro page as a redirect target', () => {
@@ -117,7 +114,7 @@ describe('buildStaticRedirects', () => {
     fs.writeFileSync(path.join(pagesDir, '[...slug]', 'index.astro'), '---\n---\n<html />\n')
 
     expect(() => buildStaticRedirects(contentDir, '/', { 'docs/old/page': 'anything' }, pagesDir)).toThrow(
-      /has no content file/
+      /has no page/
     )
   })
 
@@ -125,9 +122,9 @@ describe('buildStaticRedirects', () => {
     writeDoc(contentDir, 'docs/user-guide/state.mdx', 'title: State\nredirectFrom:\n  - docs/old/page')
     writeDoc(contentDir, 'docs/user-guide/other.mdx', 'title: Other')
 
-    expect(() =>
-      buildStaticRedirects(contentDir, '/', { 'docs/old/page': 'docs/user-guide/other' })
-    ).toThrow(/conflicts with a static rename rule/)
+    expect(() => buildStaticRedirects(contentDir, '/', { 'docs/old/page': 'docs/user-guide/other' })).toThrow(
+      /conflicts with a static rename rule/
+    )
   })
 
   it('allows a redirectFrom entry that agrees with a static rename rule', () => {
@@ -138,11 +135,41 @@ describe('buildStaticRedirects', () => {
     expect(redirects).toEqual({ '/docs/old/page': '/docs/user-guide/state/' })
   })
 
+  it('emits a registered versioned route through the production prefix rules', () => {
+    writeDoc(contentDir, 'docs/user-guide/sdk/agents/state.mdx', 'title: State')
+
+    const redirects = buildStaticRedirects(contentDir, '/', {}, undefined, [
+      '/latest/documentation/docs/user-guide/concepts/agents/state/',
+    ])
+
+    expect(redirects).toEqual({
+      '/latest/documentation/docs/user-guide/concepts/agents/state': '/docs/user-guide/sdk/agents/state/',
+    })
+  })
+
+  it('ignores registered routes that still match their current page URL', () => {
+    writeDoc(contentDir, 'docs/user-guide/state.mdx', 'title: State')
+
+    const redirects = buildStaticRedirects(contentDir, '/', {}, undefined, ['/docs/user-guide/state/'])
+
+    expect(redirects).toEqual({})
+  })
+
+  it('maps the registered version root to the site root', () => {
+    const pagesDir = path.join(contentDir, 'pages')
+    fs.mkdirSync(pagesDir, { recursive: true })
+    fs.writeFileSync(path.join(pagesDir, 'index.astro'), '---\n---\n<html />\n')
+
+    const redirects = buildStaticRedirects(contentDir, '/', {}, pagesDir, ['/latest/'])
+
+    expect(redirects).toEqual({ '/latest': '/' })
+  })
+
   it('validates the production redirect map against the real content dir', () => {
     // The same invocation astro.config.mjs makes — catches a production rename
     // rule whose target page was deleted or moved, without pinning any
     // specific entry.
-    const redirects = buildStaticRedirects(path.resolve(__dirname, '../src/content'))
+    const redirects = buildPublishedRedirects(path.resolve(__dirname, '../src/content'), legacyRoutes)
 
     expect(Object.keys(redirects).length).toBeGreaterThan(0)
   })

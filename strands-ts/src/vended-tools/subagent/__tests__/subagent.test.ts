@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SUBAGENT_DESCRIPTION, GENERALIST, makeSubagent, subagent } from '../index.js'
 import { Agent } from '../../../agent/agent.js'
+import { InvocationContextImpl, type InvocationContext } from '../../../agent/invocation-context.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { textMessage } from '../../../__fixtures__/agent-helpers.js'
@@ -15,7 +16,14 @@ import { AgentResult } from '../../../types/agent.js'
 import type { InvocationState, InvokeArgs } from '../../../types/agent.js'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
 import type { JSONValue } from '../../../types/json.js'
-import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import {
+  limitStopMessage,
+  Message,
+  ReasoningBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../../types/messages.js'
 import type { StopReason } from '../../../types/messages.js'
 
 const DEPTH_STATE_KEY = 'strands.subagent_depth'
@@ -43,7 +51,11 @@ class FakeChild {
   readonly appState = new StateStore()
   readonly _interruptState = { activated: false }
   readonly prompts: InvokeArgs[] = []
-  readonly calls: { invocationState: InvocationState; cancelSignal: AbortSignal }[] = []
+  readonly calls: {
+    invocationState: InvocationState
+    cancelSignal: AbortSignal
+    invocationContext?: InvocationContext
+  }[] = []
   private readonly _results: (AgentResult | undefined)[]
 
   constructor(...results: (AgentResult | undefined)[]) {
@@ -52,7 +64,7 @@ class FakeChild {
 
   async *stream(
     prompt: InvokeArgs,
-    options: { invocationState: InvocationState; cancelSignal: AbortSignal }
+    options: { invocationState: InvocationState; cancelSignal: AbortSignal; invocationContext?: InvocationContext }
   ): AsyncGenerator<{ type: string }, AgentResult | undefined, undefined> {
     this.prompts.push(prompt)
     this.calls.push(options)
@@ -87,13 +99,20 @@ function parentAgent(messages: Message[] = []): Agent {
 
 function createContext(
   input: JSONValue,
-  options: { agent?: Agent; toolUseId?: string; invocationState?: InvocationState; cancelSignal?: AbortSignal } = {}
+  options: {
+    agent?: Agent
+    toolUseId?: string
+    invocationState?: InvocationState
+    cancelSignal?: AbortSignal
+    invocationContext?: InvocationContext
+  } = {}
 ): ToolContext {
   return {
     toolUse: { name: 'subagent', toolUseId: options.toolUseId ?? 't1', input },
     agent: options.agent ?? parentAgent(),
     invocationState: options.invocationState ?? {},
     cancelSignal: options.cancelSignal ?? new AbortController().signal,
+    ...(options.invocationContext && { invocationContext: options.invocationContext }),
     interrupt: (): never => {
       throw new Error('interrupt not available in test context')
     },
@@ -263,6 +282,33 @@ describe('subagent tool', () => {
       expect(child.calls[0]!.invocationState).not.toBe(invocationState)
       expect(child.calls[0]!.invocationState).toEqual({ scratch: 1 })
       expect(child.calls[0]!.cancelSignal).toBe(cancelSignal)
+    })
+
+    it('runs the child in the request of the tool call', async () => {
+      const { builder, child } = capturingBuilder()
+      const invocationContext = new InvocationContextImpl()
+
+      await run(makeSubagent({ builder }), { task: 'x' }, { invocationContext })
+
+      expect(child.calls[0]!.invocationContext).toBe(invocationContext)
+    })
+
+    it("adds the child's model usage to the request's usage", async () => {
+      const child = new Agent({
+        model: new MockMessageModel().addTurn(
+          { type: 'textBlock', text: 'child done' },
+          { usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } }
+        ),
+        printer: false,
+      })
+      const invocationContext = new InvocationContextImpl({ turns: 5 })
+
+      const { result } = await run(makeSubagent({ builder: () => child }), { task: 'x' }, { invocationContext })
+
+      expect({ text: resultText(result), usage: invocationContext.usage }).toEqual({
+        text: 'child done',
+        usage: { turnsTaken: 1, inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      })
     })
 
     it.each([
@@ -474,6 +520,7 @@ describe('subagent tool', () => {
     it.each([
       ['a cancelled child', fakeResult('', 'cancelled'), 'Subagent was cancelled.'],
       ['a missing child result', undefined, 'Subagent produced no result.'],
+      ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
     ])('turns %s into an error result', async (_, childResult, message) => {
       const { builder } = capturingBuilder(new FakeChild(childResult))
 

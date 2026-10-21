@@ -127,7 +127,7 @@ The [Python SDK README](strands-py/) covers tools, model providers, MCP, and bid
 
 ### TypeScript
 
-Requires Node.js 22+:
+To build a Strands agent in TypeScript, install the SDK in a Node.js 22+ ESM project (`"type": "module"`):
 
 ```bash
 npm install @strands-agents/sdk
@@ -141,7 +141,11 @@ const result = await agent.invoke('What is the square root of 1764?')
 console.log(result)
 ```
 
-More in the [TypeScript SDK README](strands-ts/), including Zod-typed tools, structured output, and multi-agent patterns.
+`new Agent()` uses Amazon Bedrock by default, so configure AWS credentials or pass another model.
+Start with the [TypeScript quickstart](https://strandsagents.com/docs/user-guide/sdk/quickstart/typescript/)
+to configure a model provider, run your first agent, and add tools. Use the
+[TypeScript API reference](https://strandsagents.com/docs/api/typescript/) for the full
+SDK surface, or explore more examples in the [TypeScript SDK README](strands-ts/).
 
 ## Documentation
 

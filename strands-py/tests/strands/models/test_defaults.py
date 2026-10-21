@@ -37,6 +37,15 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("amazon.nova-pro-v1:0") == 300_000
         assert get_context_window_limit("amazon.nova-micro-v1:0") == 128_000
 
+    def test_known_bedrock_zai(self):
+        # GLM-5.3 resolves to its 1M window, not the 200K default (#5300).
+        assert get_context_window_limit("zai.glm-4.7") == 203_000
+        assert get_context_window_limit("zai.glm-4.7-flash") == 203_000
+        assert get_context_window_limit("zai.glm-5") == 200_000
+        assert get_context_window_limit("zai.glm-5.3") == 1_000_000
+        assert get_context_window_limit("us.zai.glm-5.3") == 1_000_000
+        assert get_context_window_limit("global.zai.glm-5.3") == 1_000_000
+
     def test_known_openai(self):
         assert get_context_window_limit("gpt-6-astra") == 1_050_000
         assert get_context_window_limit("gpt-6.1-sol") == 1_050_000

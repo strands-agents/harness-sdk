@@ -7,9 +7,11 @@ import remarkMkdocsSnippets from './src/plugins/remark-mkdocs-snippets.ts'
 import sdkSetupPlugin from './src/plugins/vite-plugin-sdk-setup.ts'
 import remarkReadingTime from './src/plugins/remark-reading-time.ts'
 import watchNavigationPlugin from './src/plugins/vite-plugin-watch-navigation.ts'
+import legacyRedirectPages from './src/plugins/legacy-redirect-pages.ts'
+import legacyRoutes from './src/config/legacy-routes.json'
 
 import { loadSidebarFromConfig } from "./src/sidebar.ts"
-import { buildStaticRedirects } from "./src/util/redirect.static.ts"
+import { buildPublishedRedirects } from "./src/util/redirect.static.ts"
 import { sitemapWithLastmod } from "./src/plugins/sitemap-lastmod.ts"
 import AutoImport from './src/plugins/astro-auto-import.ts'
 import astroExpressiveCode from "astro-expressive-code"
@@ -27,11 +29,9 @@ const base = process.env.ASTRO_BASE_PATH || '/'
 // Absolute URLs (canonical, og:image) use this origin, so a preview build points them at its own host.
 const site = (process.env.SITE_DOMAIN || 'https://strandsagents.com').replace(/\/$/, '')
 
-// Static HTML redirect stubs for known legacy MkDocs URLs (meta refresh +
-// canonical link), so crawlers follow renames that the client-side 404
-// fallback only handles for humans. Dynamic legacy URLs (/latest/*, /1.x/*)
-// can't be enumerated and stay with the 404 fallback (Redirect404.astro).
-const redirects = buildStaticRedirects(path.resolve('./src/content'), base)
+// Register published legacy URLs as static routes, then replace internal
+// redirect stubs with the target page HTML after the build.
+const redirects = buildPublishedRedirects(path.resolve('./src/content'), legacyRoutes, base)
 
 // https://astro.build/config
 export default defineConfig({
@@ -147,5 +147,6 @@ export default defineConfig({
         a: './src/components/PageLink.astro'
       }
     }),
+    legacyRedirectPages(redirects, base),
   ],
 })
