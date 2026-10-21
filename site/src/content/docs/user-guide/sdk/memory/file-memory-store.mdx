@@ -324,25 +324,22 @@ store = FileMemoryStore(
                 model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
             ),
             system_prompt=(
-                "Extract durable user preferences. Return ONLY a"
-                ' JSON array of objects: {"content": string}.'
-                " Start each content with a markdown heading"
-                " naming its topic. If nothing, return []."
+                "Extract durable user preferences. Start each"
+                " entry with a markdown heading naming its topic."
             ),
         ),
     ),
 )
 ```
 
-A custom extractor replaces the key-aware one, so the
-store no longer adds its output format or the existing
-topics to the prompt. Your `system_prompt` replaces the
-extractor's default prompt entirely, so it must ask for
-the JSON array of `{"content": string}` objects; otherwise
-nothing parses and nothing is stored. The store names each
-file after the first line of an entry, so to keep facts
-grouped by topic, also have the prompt start each entry
-with a markdown heading naming its topic.
+Your `system_prompt` replaces the extractor's default
+guidance; the extractor still appends the JSON output
+format it parses. A custom extractor replaces the
+key-aware one, though, so the store no longer adds its
+heading layout or the existing topics to the prompt. The
+store names each file after the first line of an entry,
+so to keep facts grouped by topic, have your prompt start
+each entry with a markdown heading naming its topic.
 </Tab>
 <Tab label="TypeScript">
 
@@ -354,7 +351,8 @@ the built-in extractor without replacing it:
   model; set a cheaper one to cut cost.
 - `systemPrompt`: what counts as a durable fact. It
   replaces the default guidance; the store still appends
-  its output format and the existing topics.
+  its heading layout and the existing topics, and the
+  extractor appends the JSON output format.
 
 ```typescript
 --8<-- "user-guide/sdk/memory/file-memory-store_imports.ts:extraction_custom_imports"
