@@ -256,10 +256,12 @@ To cap how much work an agent does in a single invocation, pass
 a `limits` object. You can bound turns (loop iterations), output
 tokens, or total tokens. All three are optional.
 
-No limit applies unless you pass one. Set a turn limit, a
-total-token limit, or both on any long-running or autonomous
-agent. Without them, an agent runs until the model stops
+Set a turn limit, a total-token limit, or both on any
+long-running or autonomous agent. No limit applies unless you
+pass one, so the agent keeps going until the model stops
 requesting tools, and every turn resends the conversation so far.
+Prompt caching makes that resend cheaper, but cached tokens still
+count toward the total-token limit.
 
 <Tabs>
   <Tab label="Python">
@@ -287,9 +289,11 @@ requesting tools, and every turn resends the conversation so far.
   The same parameter works with `invoke_async` and
   `stream_async`. Each cap must be a positive `int`.
 
-  Token limits count only this agent's own model calls. Agents it
-  calls as tools, and summarization calls made by a conversation
-  manager, are not counted and are not bound by these limits.
+  Token limits count only this agent's own model calls. An agent
+  it calls as a tool, and a conversation manager's summarization
+  calls, run outside these limits and do not add to them. To bound
+  an agent used as a tool, call it from a tool you write and pass
+  `limits` to that call.
 
   </Tab>
   <Tab label="TypeScript">
@@ -302,9 +306,12 @@ requesting tools, and every turn resends the conversation so far.
   positive finite number.
 
   Limits cover the whole request. Agents passed as tools share the
-  request's limits and usage. Auxiliary model calls, such as
-  summarization by a conversation manager, add their tokens to the
-  usage but are not bound by the limits.
+  request's limits and usage. An agent that your own tool invokes
+  joins the request only when the tool passes along
+  `context.invocationContext`; otherwise it runs under its own
+  limits. Auxiliary model calls, such as a conversation manager's
+  summarization, add their tokens to the usage but are not bound
+  by the limits.
 
   </Tab>
 </Tabs>
@@ -319,15 +326,12 @@ reinvokable state.
 Limits apply to the current invocation only. A reused agent
 starts each call with fresh counters.
 
-The total-token limit sums each model call's total tokens. On
-Amazon Bedrock, Anthropic, OpenAI, and Google Gemini, that total
-includes prompt-cache reads and writes at full count. Amazon
-Bedrock and Anthropic report cached tokens separately from input
-tokens, so input plus output undercounts a cached call there; the
-total does not. The limit caps tokens, not cost: providers price
-cached tokens differently from uncached input. To shrink what
-each turn sends rather than cap it, see
-[context management](../context-management).
+The total-token limit adds up the total tokens each model call
+reports. On Amazon Bedrock, Anthropic, OpenAI, and Google Gemini,
+that total counts prompt-cache reads and writes in full, so a
+cached turn uses as much of the limit as an uncached one. The
+limit caps tokens, not cost. To send less on each turn instead,
+see [context management](../context-management).
 
 When multiple caps trip simultaneously, the reported stop reason
 follows priority order: turns, then total tokens, then output
