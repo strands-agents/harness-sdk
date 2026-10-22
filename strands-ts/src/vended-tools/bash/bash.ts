@@ -2,6 +2,7 @@ import { tool } from '../../tools/tool-factory.js'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'child_process'
 import { Buffer } from 'buffer'
+import { StringDecoder } from 'string_decoder'
 import type { BashOutput } from './types.js'
 import { BashTimeoutError, BashSessionError } from './types.js'
 
@@ -81,6 +82,8 @@ class BashSession {
     }
 
     const effectiveTimeout = timeout ?? this._timeout
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
     let stdoutData = ''
     let stderrData = ''
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null
@@ -93,12 +96,14 @@ class BashSession {
 
       // Handlers for stdout
       const onStdoutData = (chunk: unknown): void => {
-        const data = Buffer.from(chunk as Parameters<typeof Buffer.from>[0]).toString('utf-8')
+        const data = stdoutDecoder.write(Buffer.from(chunk as Parameters<typeof Buffer.from>[0]))
         stdoutData += data
 
         // Check for sentinel
         if (stdoutData.includes(this._sentinel)) {
           cleanup()
+          stdoutData += stdoutDecoder.end()
+          stderrData += stderrDecoder.end()
 
           // Remove sentinel from output
           const output = stdoutData.replace(this._sentinel, '').trim()
@@ -110,7 +115,7 @@ class BashSession {
 
       // Handlers for stderr
       const onStderrData = (chunk: unknown): void => {
-        stderrData += Buffer.from(chunk as Parameters<typeof Buffer.from>[0]).toString('utf-8')
+        stderrData += stderrDecoder.write(Buffer.from(chunk as Parameters<typeof Buffer.from>[0]))
       }
 
       // Handler for process close
