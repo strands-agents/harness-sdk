@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { setImmediate } from 'node:timers'
+
 import { WorkspaceSandbox } from '../../src/tui/workspace/sandbox.js'
 
 await import('../../dist/src/tui/terminal/ink.js')
@@ -68,6 +70,19 @@ const backend = {
 }
 
 const controller = new ChatController(backend, { settings: { animations: false } })
+const exitMode = process.env.STRANDS_CLI_TEST_EXIT_MODE
+if (exitMode) {
+  controller.close = () => {
+    setImmediate(() => {
+      if (exitMode === 'exit') process.exit(23)
+      if (exitMode === 'rejection') {
+        void Promise.reject(new Error('fixture rejection'))
+        return
+      }
+      throw new Error('fixture crash')
+    })
+  }
+}
 if (process.env.STRANDS_CLI_TEST_SHELL_MODE) {
   let observedShellActivity = false
   controller.subscribe(() => {
