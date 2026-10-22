@@ -72,8 +72,10 @@ export interface HumanInTheLoopConfig {
    * - **Omitted / `false`**: all non-allowed tools require approval (default behavior).
    * - **`true`**: uses the built-in LLM risk classifier with defaults.
    * - **Config object** (`{ systemPrompt?, model? }`): built-in LLM classifier with custom settings.
+   *   Kept for backwards compatibility; prefer the decision model config for new code.
    * - **Decision model config** (`{ decisionModel, question? }`): asks any `DecisionModel` (e.g.
-   *   `LLMDecisionModel`) whether the call requires approval. An `Uncertain` answer requires approval.
+   *   `LLMDecisionModel`) whether the call requires approval. An `Uncertain` answer requires approval
+   *   and carries its reason into the approval prompt; a definite answer carries no reason.
    * - **Custom function**: your own sync or async classification logic.
    */
   classifier?: boolean | LlmClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier

@@ -24,6 +24,8 @@ export type HumanInTheLoopClassifier = (event: BeforeToolCallEvent) => Classifie
 
 /**
  * Configuration for the built-in LLM risk classifier (used when `classifier: true`).
+ *
+ * Kept for backwards compatibility. Prefer {@link DecisionModelClassifierConfig} for new code.
  */
 export interface LlmClassifierConfig {
   /** System prompt describing risk criteria. Defaults to a general-purpose risk prompt. */
