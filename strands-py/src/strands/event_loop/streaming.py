@@ -447,6 +447,8 @@ async def process_stream(
     stop_reason: StopReason = "end_turn"
     saw_message_stop = False
     first_byte_time = None
+    # The callback requires completion on the final data event of a text block.
+    pending_text_event: ModelStreamEvent | None = None
 
     state: dict[str, Any] = {
         "message": {"role": "assistant", "content": []},
@@ -464,6 +466,8 @@ async def process_stream(
         # Check for cancellation during stream processing
         if cancel_signal and cancel_signal.is_set():
             logger.debug("cancellation detected during stream processing")
+            if pending_text_event is not None:
+                yield pending_text_event
             # Return cancelled stop reason with cancellation message
             # The incomplete message in state["message"] is discarded and never added to agent.messages
             yield ModelStopReason(
@@ -485,9 +489,18 @@ async def process_stream(
             state["current_tool_use"] = handle_content_block_start(chunk["contentBlockStart"])
         elif "contentBlockDelta" in chunk:
             state, typed_event = handle_content_block_delta(chunk["contentBlockDelta"], state)
-            yield typed_event
+            if isinstance(typed_event, ModelStreamEvent) and "data" in typed_event:
+                if pending_text_event is not None:
+                    yield pending_text_event
+                pending_text_event = typed_event
+            else:
+                yield typed_event
         elif "contentBlockStop" in chunk:
             state = handle_content_block_stop(state)
+            if pending_text_event is not None:
+                pending_text_event["complete"] = True
+                yield pending_text_event
+                pending_text_event = None
         elif "messageStop" in chunk:
             saw_message_stop = True
             stop_reason = handle_message_stop(chunk["messageStop"], state["message"].get("content", []))
@@ -498,6 +511,9 @@ async def process_stream(
             usage, metrics = extract_usage_metrics(chunk["metadata"], time_to_first_byte_ms)
         elif "redactContent" in chunk:
             handle_redact_content(chunk["redactContent"], state)
+
+    if pending_text_event is not None:
+        yield pending_text_event
 
     # A provider that aborts in flight ends the stream without messageStop; the in-loop check
     # above cannot see it, so report the cancellation here rather than a truncated end_turn.

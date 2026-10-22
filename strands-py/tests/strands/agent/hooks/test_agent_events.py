@@ -115,20 +115,20 @@ async def test_stream_e2e_success(alist):
 
     tru_events = await alist(stream)
     exp_events = [
-        # Cycle 1: Initialize and invoke normal_tool
         {"arg1": 1013, "init_event_loop": True},
         {"start": True},
         {"start_event_loop": True},
         {"event": {"messageStart": {"role": "assistant"}}},
         {"event": {"contentBlockStart": {"start": {}}}},
         {"event": {"contentBlockDelta": {"delta": {"text": "Okay invoking normal tool"}}}},
+        {"event": {"contentBlockStop": {}}},
         {
             **any_props,
             "arg1": 1013,
             "data": "Okay invoking normal tool",
             "delta": {"text": "Okay invoking normal tool"},
+            "complete": True,
         },
-        {"event": {"contentBlockStop": {}}},
         {"event": {"contentBlockStart": {"start": {"toolUse": {"name": "normal_tool", "toolUseId": "123"}}}}},
         {"event": {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}}},
         {
@@ -166,13 +166,13 @@ async def test_stream_e2e_success(alist):
                 "tracking_id": ANY,
             }
         },
-        # Cycle 2: Invoke async_tool
         {"start": True},
         {"start": True},
         {"start_event_loop": True},
         {"event": {"messageStart": {"role": "assistant"}}},
         {"event": {"contentBlockStart": {"start": {}}}},
         {"event": {"contentBlockDelta": {"delta": {"text": "Invoking async tool"}}}},
+        {"event": {"contentBlockStop": {}}},
         {
             **any_props,
             "arg1": 1013,
@@ -183,8 +183,8 @@ async def test_stream_e2e_success(alist):
             "model": ANY,
             "system_prompt": None,
             "tool_config": tool_config,
+            "complete": True,
         },
-        {"event": {"contentBlockStop": {}}},
         {"event": {"contentBlockStart": {"start": {"toolUse": {"name": "async_tool", "toolUseId": "1234"}}}}},
         {"event": {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}}},
         {
@@ -227,13 +227,13 @@ async def test_stream_e2e_success(alist):
                 "tracking_id": ANY,
             }
         },
-        # Cycle 3: Invoke streaming_tool
         {"start": True},
         {"start": True},
         {"start_event_loop": True},
         {"event": {"messageStart": {"role": "assistant"}}},
         {"event": {"contentBlockStart": {"start": {}}}},
         {"event": {"contentBlockDelta": {"delta": {"text": "Invoking streaming tool"}}}},
+        {"event": {"contentBlockStop": {}}},
         {
             **any_props,
             "arg1": 1013,
@@ -244,8 +244,8 @@ async def test_stream_e2e_success(alist):
             "model": ANY,
             "system_prompt": None,
             "tool_config": tool_config,
+            "complete": True,
         },
-        {"event": {"contentBlockStop": {}}},
         {"event": {"contentBlockStart": {"start": {"toolUse": {"name": "streaming_tool", "toolUseId": "12345"}}}}},
         {"event": {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}}},
         {
@@ -296,13 +296,13 @@ async def test_stream_e2e_success(alist):
                 "tracking_id": ANY,
             }
         },
-        # Cycle 4: Final response
         {"start": True},
         {"start": True},
         {"start_event_loop": True},
         {"event": {"messageStart": {"role": "assistant"}}},
         {"event": {"contentBlockStart": {"start": {}}}},
         {"event": {"contentBlockDelta": {"delta": {"text": "I invoked the tools!"}}}},
+        {"event": {"contentBlockStop": {}}},
         {
             **any_props,
             "arg1": 1013,
@@ -313,8 +313,8 @@ async def test_stream_e2e_success(alist):
             "model": ANY,
             "system_prompt": None,
             "tool_config": tool_config,
+            "complete": True,
         },
-        {"event": {"contentBlockStop": {}}},
         {"event": {"messageStop": {"stopReason": "end_turn"}}},
         {
             "message": {
@@ -384,13 +384,8 @@ async def test_stream_e2e_throttle_and_redact(alist, mock_sleep):
         {"event": {"redactContent": {"redactUserContentMessage": "BLOCKED!"}}},
         {"event": {"contentBlockStart": {"start": {}}}},
         {"event": {"contentBlockDelta": {"delta": {"text": "INPUT BLOCKED!"}}}},
-        {
-            **any_props,
-            "arg1": 1013,
-            "data": "INPUT BLOCKED!",
-            "delta": {"text": "INPUT BLOCKED!"},
-        },
         {"event": {"contentBlockStop": {}}},
+        {**any_props, "arg1": 1013, "data": "INPUT BLOCKED!", "delta": {"text": "INPUT BLOCKED!"}, "complete": True},
         {"event": {"messageStop": {"stopReason": "guardrail_intervened"}}},
         {
             "message": {
@@ -461,12 +456,13 @@ async def test_stream_e2e_reasoning_redacted_content(alist):
         {"event": {"contentBlockStop": {}}},
         {"event": {"contentBlockStart": {"start": {}}}},
         {"event": {"contentBlockDelta": {"delta": {"text": "Response with redacted reasoning"}}}},
+        {"event": {"contentBlockStop": {}}},
         {
             **any_props,
             "data": "Response with redacted reasoning",
             "delta": {"text": "Response with redacted reasoning"},
+            "complete": True,
         },
-        {"event": {"contentBlockStop": {}}},
         {"event": {"messageStop": {"stopReason": "end_turn"}}},
         {
             "message": {

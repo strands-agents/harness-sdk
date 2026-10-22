@@ -7,6 +7,7 @@ import pytest
 
 import strands
 import strands.event_loop
+from strands.handlers.callback_handler import PrintingCallbackHandler
 from strands.types._events import ModelStopReason, TypedEvent
 from strands.types.content import Message, Messages
 from strands.types.streaming import (
@@ -998,7 +999,6 @@ def test_extract_usage_metrics_empty_metadata():
                 {"event": {"messageStart": {"role": "assistant"}}},
                 {"event": {"contentBlockStart": {"start": {}}}},
                 {"event": {"contentBlockDelta": {"delta": {"text": "This is cited text"}}}},
-                {"data": "This is cited text", "delta": {"text": "This is cited text"}},
                 {
                     "event": {
                         "contentBlockDelta": {
@@ -1048,6 +1048,7 @@ def test_extract_usage_metrics_empty_metadata():
                     },
                 },
                 {"event": {"contentBlockStop": {}}},
+                {"data": "This is cited text", "delta": {"text": "This is cited text"}, "complete": True},
                 {"event": {"messageStop": {"stopReason": "end_turn"}}},
                 {
                     "event": {
@@ -1162,8 +1163,8 @@ async def test_process_stream(response, exp_events, agenerator, alist):
                 {"event": {"messageStart": {"role": "assistant"}}},
                 {"event": {"contentBlockStart": {"start": {}}}},
                 {"event": {"contentBlockDelta": {"delta": {"text": "Hello!"}}}},
-                {"data": "Hello!", "delta": {"text": "Hello!"}},
                 {"event": {"contentBlockStop": {}}},
+                {"data": "Hello!", "delta": {"text": "Hello!"}, "complete": True},
                 {"event": {"messageStop": {"stopReason": "guardrail_intervened"}}},
                 {
                     "event": {
@@ -1440,15 +1441,16 @@ async def test_stream_messages(agenerator, alist):
             },
         },
         {
+            "event": {
+                "contentBlockStop": {},
+            },
+        },
+        {
             "data": "test",
             "delta": {
                 "text": "test",
             },
-        },
-        {
-            "event": {
-                "contentBlockStop": {},
-            },
+            "complete": True,
         },
         {
             "stop": (
@@ -1760,6 +1762,69 @@ async def test_process_stream_keeps_tool_use_stop_reason_unchanged(agenerator, a
     last_event = cast(ModelStopReason, (await alist(stream))[-1])
 
     assert last_event["stop"][0] == "tool_use"
+
+
+@pytest.mark.asyncio
+async def test_no_complete_event_for_reasoning_block(agenerator, alist):
+    """Test that no complete event is emitted for reasoning content blocks."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thinking..."}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig123"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "answer"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 1},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+
+    stream = strands.event_loop.streaming.process_stream(agenerator(response))
+    events = await alist(stream)
+
+    complete_events = [e for e in events if e.get("complete") is True]
+    assert len(complete_events) == 1, f"Expected 1 complete event (text only), got {len(complete_events)}"
+
+
+@pytest.mark.asyncio
+async def test_complete_event_with_multiple_text_blocks(agenerator, alist, capsys):
+    """Test that complete events are emitted for each text content block."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "first"}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "tool"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "second"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 1},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+
+    stream = strands.event_loop.streaming.process_stream(agenerator(response))
+    events = await alist(stream)
+
+    complete_events = [e for e in events if e.get("complete") is True]
+    assert len(complete_events) == 2, f"Expected 2 complete events (one per text block), got {len(complete_events)}"
+
+    handler = PrintingCallbackHandler(verbose_tool_use=False)
+    for event in events:
+        handler(**event)
+    assert capsys.readouterr().out == "first\n\n\nsecond\n\n\n"
 
 
 def test_handle_content_block_delta_captures_tool_use_id_and_name_from_delta():

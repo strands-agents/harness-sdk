@@ -878,6 +878,7 @@ def test_agent__call__callback(mock_model, agent, callback_handler, agenerator):
         unittest.mock.call(event={"contentBlockStop": {}}),
         unittest.mock.call(event={"contentBlockStart": {"start": {}}}),
         unittest.mock.call(event={"contentBlockDelta": {"delta": {"text": "value"}}}),
+        unittest.mock.call(event={"contentBlockStop": {}}),
         unittest.mock.call(
             agent=agent,
             data="value",
@@ -886,8 +887,8 @@ def test_agent__call__callback(mock_model, agent, callback_handler, agenerator):
             event_loop_cycle_span=unittest.mock.ANY,
             event_loop_cycle_trace=unittest.mock.ANY,
             request_state={},
+            complete=True,
         ),
-        unittest.mock.call(event={"contentBlockStop": {}}),
         unittest.mock.call(
             message={
                 "role": "assistant",
