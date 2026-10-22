@@ -125,3 +125,135 @@ async def test_agent_structured_output_async(non_streaming_agent, weather):
     )
     exp_weather = weather
     assert tru_weather == exp_weather
+
+
+class TestMistralMedium35:
+    """Smoke coverage for mistral-medium-3-5: the context window resolves and a tool-using turn completes."""
+
+    @pytest.fixture()
+    def model(self):
+        return MistralModel(
+            model_id="mistral-medium-3-5",
+            api_key=os.getenv("MISTRAL_API_KEY"),
+            stream=True,
+            temperature=0.7,
+            max_tokens=1000,
+            top_p=0.9,
+        )
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 262_144
+
+    def test_tool_use_turn(self, model, tools, system_prompt):
+        agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
+
+        result = agent("What is the time and weather in New York?")
+
+        text = result.message["content"][0]["text"].lower()
+        assert all(string in text for string in ["12:00", "sunny"])
+
+
+class TestMistralLarge4:
+    """Smoke coverage for mistral-large-4-0: the context window resolves; the tool-using turn is blocked on #5032."""
+
+    @pytest.fixture()
+    def model(self):
+        return MistralModel(
+            model_id="mistral-large-4-0",
+            api_key=os.getenv("MISTRAL_API_KEY"),
+            stream=True,
+            temperature=0.7,
+            max_tokens=1000,
+            top_p=0.9,
+        )
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 1_048_576
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=TypeError,
+        reason="Large 4 returns list content (ThinkChunk/TextChunk) that MistralModel passes through as text: #5032",
+    )
+    def test_tool_use_turn(self, model, tools, system_prompt):
+        agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
+
+        result = agent("What is the time and weather in New York?")
+
+        text = result.message["content"][0]["text"].lower()
+        assert all(string in text for string in ["12:00", "sunny"])
+
+
+class TestMinistral3:
+    """Smoke coverage for ministral-14b-2512: the context window resolves and a tool-using turn completes."""
+
+    @pytest.fixture()
+    def model(self):
+        return MistralModel(
+            model_id="ministral-14b-2512",
+            api_key=os.getenv("MISTRAL_API_KEY"),
+            stream=True,
+            temperature=0.7,
+            max_tokens=1000,
+        )
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 262_144
+
+    def test_tool_use_turn(self, model, tools, system_prompt):
+        agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
+
+        result = agent("What is the time and weather in New York?")
+
+        text = result.message["content"][0]["text"].lower()
+        assert all(string in text for string in ["12:00", "sunny"])
+
+
+class TestMistralSmall4:
+    """Smoke coverage for mistral-small-2603: the context window resolves and a tool-using turn completes."""
+
+    @pytest.fixture()
+    def model(self):
+        return MistralModel(
+            model_id="mistral-small-2603",
+            api_key=os.getenv("MISTRAL_API_KEY"),
+            temperature=0.3,
+        )
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 262_144
+
+    def test_tool_use_turn(self, model, tools, system_prompt):
+        agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
+
+        result = agent("What is the time and weather in New York?")
+
+        text = str(result).lower()
+        assert "12:00" in text
+        assert "sunny" in text
+
+
+class TestCodestral:
+    """Smoke coverage for codestral-2508: the context window resolves and a tool-using turn completes."""
+
+    @pytest.fixture()
+    def model(self):
+        return MistralModel(
+            model_id="codestral-2508",
+            api_key=os.getenv("MISTRAL_API_KEY"),
+            stream=True,
+            temperature=0.7,
+            max_tokens=1000,
+            top_p=0.9,
+        )
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 256_000
+
+    def test_tool_use_turn(self, model, tools, system_prompt):
+        agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
+
+        result = agent("What is the time and weather in New York?")
+
+        text = result.message["content"][0]["text"].lower()
+        assert all(string in text for string in ["12:00", "sunny"])

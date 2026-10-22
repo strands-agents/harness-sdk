@@ -30,7 +30,7 @@ npm run build      # generates static site
 - Use `<Tabs>` / `<Tab label="...">` for Python/TypeScript code tabs (auto-imported)
 - Use `<Syntax py="python_name" ts="tsName" />` for inline language-specific identifiers in prose (auto-imported). Renders as `<code>` by default; pass `plain` for plain text. Reacts live to the global language toggle.
 - Use `--8<-- "path/to/file.ts:snippet_name"` to pull in code snippets from external files
-- Relative file links (e.g. `../tools/index.md`) resolve automatically — no need to use slugs
+- Relative file links (e.g. `../tools/index.md`) resolve automatically: no need to use slugs
 - Link to API reference pages with the `@api` shorthand: `[@api/python/strands.agent.agent](#Class)`
 
 For full details on the Astro setup, custom components, frontmatter fields, and API doc generation, see [Site Architecture](SITE-ARCHITECTURE.md).
@@ -73,9 +73,7 @@ reported the issue. Please try to include as much information as you can. Detail
 ## Finding contributions to work on
 Looking at the existing issues is a great way to find something to contribute to. We label issues that are well-defined and ready for community contributions with the "ready for contribution" label. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
 
-Check our "Ready for Contribution" issues for items you can work on:
-- [SDK Issues](https://github.com/strands-agents/harness-sdk/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22ready%20for%20contribution%22)
-- [Tools Issues](https://github.com/strands-agents/tools/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22ready%20for%20contribution%22)
+Check our ["Ready for Contribution" issues](https://github.com/strands-agents/harness-sdk/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22ready%20for%20contribution%22) for items you can work on.
 
 Before starting work on any issue:
 1. Check if someone is already assigned or working on it

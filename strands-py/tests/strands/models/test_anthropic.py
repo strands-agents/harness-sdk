@@ -3108,3 +3108,18 @@ async def test_stream_logs_server_tool_error(anthropic_client, model, alist, cap
     await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
 
     assert "error_code=<max_uses_exceeded>" in caplog.text
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]

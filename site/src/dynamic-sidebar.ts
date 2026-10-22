@@ -229,7 +229,7 @@ export function buildTypeScriptApiSidebar(docs: DocInfo[], currentSlug: string):
 export function buildCourseSidebar(
   docs: DocInfo[],
   currentSlug: string,
-  course: { title: string; lessonIds: string[] },
+  course: { title: string; lessonIds: string[] }
 ): SidebarEntry[] {
   const docById = new Map(docs.map((d) => [d.id, d]))
 

@@ -15,10 +15,10 @@ import { resolveLanguage, languageLabel, sourceLinkUrl } from './source-links'
  */
 async function renderRelatedPages(
   entry: CollectionEntry<'docs'> | CollectionEntry<'blog'>,
-  allDocs?: readonly CollectionEntry<'docs'>[],
+  allDocs?: readonly CollectionEntry<'docs'>[]
 ): Promise<string> {
   if (entry.collection !== 'docs') return ''
-  const docs = allDocs ?? await getCollection('docs')
+  const docs = allDocs ?? (await getCollection('docs'))
   const related = relatedUserGuideFor(entry, docs)
   if (related.length === 0) return ''
   const items = related.map((r) => {
@@ -71,8 +71,8 @@ export function renderImplementation(entry: CollectionEntry<'docs'> | Collection
 export async function renderEntryToMarkdown(
   entry: CollectionEntry<'docs'> | CollectionEntry<'blog'>,
   basePath?: string,
-  allDocs?: readonly CollectionEntry<'docs'>[],
-): Promise<{ markdown: string, html: string }> {
+  allDocs?: readonly CollectionEntry<'docs'>[]
+): Promise<{ markdown: string; html: string }> {
   const data = await render(entry)
   const { Content } = data
 

@@ -5,10 +5,7 @@ async function usingPresets() {
   // --8<-- [start:using_presets]
   const agent = new Agent({
     contextManager: {
-      strategies: [
-        'proactiveSummarization',
-        'largeToolOffloading',
-      ],
+      strategies: ['proactiveSummarization', 'largeToolOffloading'],
     },
   })
   // --8<-- [end:using_presets]

@@ -6,6 +6,7 @@
 import base64
 import json
 import logging
+from collections import Counter
 from collections.abc import AsyncGenerator, Iterable
 from typing import Any, TypeVar
 
@@ -22,6 +23,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_cache import _resolve_cache_key
 from ._validation import (
     _has_location_source,
+    _log_skipped_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -242,6 +244,7 @@ class MistralModel(Model):
             A Mistral compatible messages array.
         """
         formatted_messages: list[dict[str, Any]] = []
+        skipped: Counter[str] = Counter()
 
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
@@ -257,11 +260,11 @@ class MistralModel(Model):
             for content in contents:
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Mistral | skipping content block")
+                    skipped["Location sources are not supported by Mistral | skipping content block"] += 1
                     continue
 
                 if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by Mistral | skipping")
+                    skipped["cachePoint content block is not supported by Mistral | skipping"] += 1
                     continue
 
                 if "text" in content or "image" in content:
@@ -293,6 +296,7 @@ class MistralModel(Model):
 
                 formatted_messages.append(formatted_message)
 
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     def format_request(

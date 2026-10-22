@@ -209,4 +209,35 @@ describe.skipIf(openai.skip)('OpenAIModel Integration Tests', () => {
       expect(messageStopEvent?.stopReason).toBe('toolUse')
     })
   })
+
+  describe('chat-latest', () => {
+    it.concurrent('resolves the context window and completes a tool-using turn', async () => {
+      const provider = openai.createModel({ modelId: 'chat-latest' })
+      expect(provider.getConfig().contextWindowLimit).toBe(272_000)
+
+      const weatherTool: ToolSpec = {
+        name: 'tool_weather',
+        description: 'Get the current weather for a city.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            city: { type: 'string', description: 'The city to get the weather for' },
+          },
+          required: ['city'],
+        },
+      }
+
+      const messages: Message[] = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('What is the weather in New York?')],
+        }),
+      ]
+
+      const events = await collectIterator(provider.stream(messages, { toolSpecs: [weatherTool] }))
+
+      const messageStopEvent = events.find((e) => e.type === 'modelMessageStopEvent')
+      expect(messageStopEvent?.stopReason).toBe('toolUse')
+    })
+  })
 })

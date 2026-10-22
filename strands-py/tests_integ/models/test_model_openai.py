@@ -428,3 +428,25 @@ class TestOpenAIResponsesCountTokens:
         without = await model.count_tokens(messages=messages)
         with_tools = await model.count_tokens(messages=messages, tool_specs=tool_specs, system_prompt="Be helpful.")
         assert with_tools > without
+
+
+class TestChatLatest:
+    """Smoke coverage for chat-latest: the context window resolves and a tool-using turn completes."""
+
+    @pytest.fixture
+    def model(self):
+        return OpenAIModel(
+            client_args={"api_key": os.getenv("OPENAI_API_KEY")},
+            model_id="chat-latest",
+        )
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 272_000
+
+    def test_tool_use_turn(self, model, tools):
+        agent = Agent(model=model, tools=tools)
+
+        result = agent("What is the time and weather in New York?")
+
+        text = result.message["content"][0]["text"].lower()
+        assert all(string in text for string in ["12:00", "sunny"])

@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import warnings
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
@@ -41,7 +42,12 @@ from ._native_output import (
     unsupported_mechanisms,
 )
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
-from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    _warn_on_deprecated_cache_tools,
+    validate_config_keys,
+)
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -340,6 +346,7 @@ class AnthropicModel(Model):
         configured_ttl = cache_config.ttl if cache_config else None
         formatted_messages = []
         dropped_unsigned_reasoning = False
+        skipped: Counter[str] = Counter()
 
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
@@ -365,7 +372,7 @@ class AnthropicModel(Model):
 
                 # Check for location sources in image, document, or video content
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Anthropic | skipping content block")
+                    skipped["Location sources are not supported by Anthropic | skipping content block"] += 1
                     continue
 
                 formatted_content = self._format_request_message_content(content)
@@ -390,6 +397,7 @@ class AnthropicModel(Model):
         if dropped_unsigned_reasoning:
             logger.warning("Unsigned reasoning content is not supported by Anthropic | skipped content blocks")
 
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     @classmethod

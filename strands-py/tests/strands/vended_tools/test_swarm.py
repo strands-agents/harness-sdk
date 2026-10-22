@@ -16,14 +16,15 @@ from strands import Agent
 from strands.agent import AgentResult
 from strands.agent.state import AgentState
 from strands.experimental.tools import stop
+from strands.interrupt import Interrupt, _InterruptState
 from strands.multiagent.base import NodeResult, Status
 from strands.multiagent.spec import Fixed, Open, Preset
 from strands.multiagent.swarm import SwarmResult
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.tools.registry import ToolRegistry
-from strands.types._events import ToolResultEvent, ToolStreamEvent
+from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
 from strands.types.tools import ToolContext
-from strands.vended_tools.handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user
+from strands.vended_tools.handoff_to_user import handoff_to_user
 from strands.vended_tools.swarm import make_swarm, swarm
 from strands.vended_tools.swarm.swarm import (
     _DEFAULT_MAX_AGENTS,
@@ -43,6 +44,7 @@ def _mock_parent() -> SimpleNamespace:
         callback_handler=None,
         trace_attributes=None,
         state=AgentState(),
+        _interrupt_state=_InterruptState(),
     )
 
 
@@ -211,8 +213,51 @@ class TestSwarmToolExecution:
                 yield {"type": "multiagent_node_start", "node_id": "a", "node_type": "agent"}
 
             cls.return_value.stream_async = Mock(side_effect=_no_result)
-            with pytest.raises(RuntimeError, match="without producing a result"):
+            with pytest.raises(RuntimeError, match="did not produce a result"):
                 await _run(swarm, task="t", agents=[_spec("a", instructions="Do.")], tool_context=_ctx())
+
+    @pytest.mark.asyncio
+    async def test_persists_interrupted_swarm_with_stable_id(self):
+        parent = _mock_parent()
+        interrupted = _result(status=Status.INTERRUPTED)
+        interrupted.interrupts = [Interrupt("approval", "confirm")]
+        with _patch(interrupted) as cls:
+            tool_use = {
+                "toolUseId": "id",
+                "name": "swarm",
+                "input": {"task": "t", "agents": [_spec("a", instructions="Do.")]},
+            }
+            events = [event async for event in swarm.stream(tool_use, {"agent": parent})]
+
+        assert isinstance(events[-1], ToolInterruptEvent)
+        assert events[-1].interrupts == [Interrupt("v1:swarm:id:approval", "confirm")]
+        assert cls.call_args.kwargs["id"] == "v1:swarm:id"
+        assert "id" in parent._interrupt_state.context["sub_agent_interrupted_turns"]
+
+    @pytest.mark.asyncio
+    async def test_builder_failure_on_resume_raises_the_interrupt_again_and_keeps_the_turn(self):
+        def _failing_builder(spec):
+            raise ConnectionError("model endpoint unavailable")
+
+        answered = Interrupt("v1:swarm:id:approval", "confirm", response="yes")
+        awaited = _InterruptState(interrupts={"approval": Interrupt("approval", "confirm")}, activated=True)
+        turn = {"scope": "multiAgent", "data": {"state": {"_internal_state": {"interrupt_state": awaited.to_dict()}}}}
+        parent = _mock_parent()
+        parent._interrupt_state = _InterruptState(
+            interrupts={answered.id: answered},
+            context={"sub_agent_interrupted_turns": {"id": turn}},
+            activated=True,
+        )
+        tool_use = {
+            "toolUseId": "id",
+            "name": "swarm",
+            "input": {"task": "t", "agents": [_spec("a", instructions="Do.")]},
+        }
+
+        events = [event async for event in make_swarm(builder=_failing_builder).stream(tool_use, {"agent": parent})]
+
+        assert events[-1] == ToolInterruptEvent(tool_use, [Interrupt(answered.id, "confirm")])
+        assert parent._interrupt_state.context["sub_agent_interrupted_turns"] == {"id": turn}
 
 
 def _tool_use(name, tool_input, tool_use_id):
@@ -255,10 +300,7 @@ class TestEndToEnd:
             reasons.append(interrupt.reason)
             result = agent([{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}])
 
-        assert reasons == [
-            {"name": HANDOFF_INTERRUPT_NAME, "reason": "A"},
-            {"name": HANDOFF_INTERRUPT_NAME, "reason": "B"},
-        ]
+        assert reasons == ["A", "B"]
         assert str(result).strip() == "parent final"
 
 

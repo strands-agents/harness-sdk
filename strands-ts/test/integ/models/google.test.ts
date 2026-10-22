@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
+import { Agent, Message, TextBlock, ToolResultBlock, ToolUseBlock, tool } from '@strands-agents/sdk'
+import { z } from 'zod'
 import type { ModelStreamEvent } from '$/sdk/models/streaming.js'
 
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
@@ -188,6 +189,48 @@ describe.skipIf(gemini.skip)('GoogleModel Integration Tests', () => {
       const without = await model.countTokens(messages)
       const withTools = await model.countTokens(messages, { toolSpecs, systemPrompt: 'Be helpful.' })
       expect(withTools).toBeGreaterThan(without)
+    })
+  })
+
+  describe('gemini-3.8-flash', () => {
+    it.concurrent('resolves the context window and completes a tool-using turn', async () => {
+      const model = gemini.createModel({ modelId: 'gemini-3.8-flash' })
+      expect(model.getConfig().contextWindowLimit).toBe(1_048_576)
+
+      const weather = tool({
+        name: 'tool_weather',
+        description: 'Get the weather for a city',
+        inputSchema: z.object({ city: z.string() }),
+        callback: async () => 'sunny',
+      })
+      const agent = new Agent({ model, tools: [weather], printer: false })
+
+      const result = await agent.invoke('What is the weather in New York?')
+
+      const text = result.lastMessage.content.find((block) => block.type === 'textBlock')
+      expect(text).toBeDefined()
+      expect(text?.text.toLowerCase()).toContain('sunny')
+    })
+  })
+
+  describe('gemini-4-argon', () => {
+    it.concurrent('resolves the context window and completes a tool-using turn', async () => {
+      const model = gemini.createModel({ modelId: 'gemini-4-argon' })
+      expect(model.getConfig().contextWindowLimit).toBe(1_048_576)
+
+      const weather = tool({
+        name: 'tool_weather',
+        description: 'Get the weather for a city',
+        inputSchema: z.object({ city: z.string() }),
+        callback: async () => 'sunny',
+      })
+      const agent = new Agent({ model, tools: [weather], printer: false })
+
+      const result = await agent.invoke('What is the weather in New York?')
+
+      const text = result.lastMessage.content.find((block) => block.type === 'textBlock')
+      expect(text).toBeDefined()
+      expect(text?.text.toLowerCase()).toContain('sunny')
     })
   })
 })

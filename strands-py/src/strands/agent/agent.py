@@ -194,6 +194,20 @@ def _resolve_aux_model(aux_model: Model | str | None) -> Model | None:
     raise TypeError(f"aux_model must be a Model, a Bedrock model id, or None, got {type(aux_model).__name__}")
 
 
+def _is_blank_text_block(block: ContentBlock) -> bool:
+    return set(block) == {"text"} and not (block["text"] or "").strip()
+
+
+def _raise_if_blank_user_message(messages: Messages) -> None:
+    """Reject a user message with no content before it enters the conversation.
+
+    Most providers reject a blank user turn, and once it is in history every later call fails too.
+    """
+    for message in messages:
+        if message["role"] == "user" and all(_is_blank_text_block(block) for block in message["content"]):
+            raise ValueError("Input prompt is blank. Provide non-blank text or at least one non-text content block.")
+
+
 class Agent(AgentBase, LocalAgent):
     """Core Agent implementation.
 
@@ -2004,6 +2018,7 @@ class Agent(AgentBase, LocalAgent):
             messages = []
         if messages is None:
             raise ValueError("Input prompt must be of type: `str | list[Contentblock] | Messages | None`.")
+        _raise_if_blank_user_message(messages)
         return messages
 
     def _start_agent_trace_span(self, messages: Messages) -> trace_api.Span:

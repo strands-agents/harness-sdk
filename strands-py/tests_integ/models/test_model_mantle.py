@@ -8,6 +8,7 @@ ambient AWS credential chain; no explicit API key is passed by the user.
 
 import pytest
 
+import strands
 from strands import Agent
 from strands.models.openai import OpenAIModel
 from strands.models.openai_responses import OpenAIResponsesModel
@@ -34,6 +35,12 @@ def model(bedrock_mantle_config):
 @pytest.fixture
 def stateful_model(bedrock_mantle_config):
     return OpenAIResponsesModel(model_id=_MODEL_ID, stateful=True, bedrock_mantle_config=bedrock_mantle_config)
+
+
+def test_context_window_limit_resolves(chat_completions_model, model):
+    """Both Mantle pathways resolve the Bedrock-published 128K window for gpt-oss-120b."""
+    assert chat_completions_model.context_window_limit == 128_000
+    assert model.context_window_limit == 128_000
 
 
 def test_chat_completions_agent_invoke(chat_completions_model):
@@ -103,3 +110,36 @@ def test_reasoning_content_multi_turn(bedrock_mantle_config):
 
     # Second turn should not raise despite reasoningContent in message history
     agent("What about 3+3?")
+
+
+class TestGemma4:
+    """Smoke coverage for Gemma 4 on Mantle: the context window resolves and a tool-using turn completes."""
+
+    @pytest.fixture
+    def model(self, bedrock_mantle_config):
+        return OpenAIModel(model_id="google.gemma-4-31b", bedrock_mantle_config=bedrock_mantle_config)
+
+    def test_context_window_limit_resolves(self, model):
+        assert model.get_config()["context_window_limit"] == 256_000
+
+    def test_tool_use_turn(self, model):
+        tool_was_called = False
+
+        @strands.tool
+        def tool_weather(city: str) -> str:
+            """Get the weather for a city."""
+            nonlocal tool_was_called
+            tool_was_called = True
+            return "sunny"
+
+        agent = Agent(
+            model=model,
+            tools=[tool_weather],
+            system_prompt="Reply in one short sentence.",
+            callback_handler=None,
+        )
+
+        result = agent("What is the weather in New York?")
+
+        assert tool_was_called
+        assert "sunny" in str(result).lower()

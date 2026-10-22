@@ -1071,4 +1071,46 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
       expect(response.toString().toLowerCase()).toContain('pineapple')
     }, 30000)
   })
+
+  describe('mistral.mistral-large-3-675b-instruct', () => {
+    it.concurrent('resolves the context window and completes a tool-using turn', async () => {
+      const model = bedrock.createModel({ modelId: 'mistral.mistral-large-3-675b-instruct', region: 'us-east-1' })
+      expect(model.getConfig().contextWindowLimit).toBe(256_000)
+
+      const echo = new FunctionTool({
+        name: 'echo',
+        description: 'Echo the given value back',
+        inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+        callback: (input): string => String((input as { value: string }).value),
+      })
+      const agent = new Agent({ model, tools: [echo], printer: false })
+
+      const result = await agent.invoke("Use the echo tool to echo the value 'pineapple'.")
+
+      expect(result.stopReason).toBe('endTurn')
+      const toolUse = agent.messages.find((msg) => msg.content.some((block) => block.type === 'toolUseBlock'))
+      expect(toolUse).toBeDefined()
+    })
+  })
+
+  describe('xai.grok-4.7', () => {
+    it.concurrent('resolves the context window and completes a tool-using turn', async () => {
+      const model = bedrock.createModel({ modelId: 'us.xai.grok-4.7', region: 'us-east-1' })
+      expect(model.getConfig().contextWindowLimit).toBe(524_288)
+
+      const echo = new FunctionTool({
+        name: 'echo',
+        description: 'Echo the given value back',
+        inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+        callback: (input): string => String((input as { value: string }).value),
+      })
+      const agent = new Agent({ model, tools: [echo], printer: false })
+
+      const result = await agent.invoke("Use the echo tool to echo the value 'pineapple'.")
+
+      expect(result.stopReason).toBe('endTurn')
+      const toolUse = agent.messages.find((msg) => msg.content.some((block) => block.type === 'toolUseBlock'))
+      expect(toolUse).toBeDefined()
+    })
+  })
 })
