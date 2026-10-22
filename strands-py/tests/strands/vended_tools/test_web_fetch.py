@@ -402,10 +402,21 @@ class TestHtmlToMarkdown:
         assert "javascript:" not in md
         assert "click" in md
 
+    @pytest.mark.parametrize("href", ["VBScript:msgbox(1)", "data:text/html,<script>alert(1)</script>"])
+    def test_vbscript_and_data_hrefs_are_dropped(self, href):
+        md = html_to_markdown(f'<a href="{href}">click</a>')
+        assert "vbscript:" not in md.lower()
+        assert "data:" not in md
+        assert "click" in md
+
     def test_javascript_img_src_is_dropped(self):
         html = '<img src="javascript:alert(1)" alt="x">'
         md = html_to_markdown(html)
         assert "javascript:" not in md
+
+    def test_vbscript_img_src_is_dropped(self):
+        md = html_to_markdown('<img src="VBScript:msgbox(1)" alt="x">')
+        assert "vbscript:" not in md.lower()
 
     @pytest.mark.parametrize("prefix", [" ", "\u200b", "\ufeff"])
     def test_javascript_img_src_with_invisible_prefix_is_dropped(self, prefix):
