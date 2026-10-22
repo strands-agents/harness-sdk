@@ -42,6 +42,31 @@ async def test_captures_stdout_stderr_and_exit_code():
 
 
 @pytest.mark.asyncio
+async def test_multibyte_utf8_survives_read_boundaries():
+    # 65536 is not a multiple of 3, so a 3-byte glyph emitted past _READ_CHUNK_SIZE leaves
+    # every pipe read boundary splitting a character in half (#4461).
+    glyph_count = 100_000
+    program = f"import sys; sys.stdout.buffer.write(('☕' * {glyph_count}).encode())"
+
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", program]))
+
+    assert result.stdout == "☕" * glyph_count
+    assert "".join(chunk.data for chunk in chunks) == "☕" * glyph_count
+
+
+@pytest.mark.asyncio
+async def test_trailing_partial_multibyte_sequence_yields_one_replacement_char():
+    # A child that exits mid-character leaves a truncated sequence, which renders as a single
+    # replacement character rather than the empty output a strict decoder would report.
+    program = r"import sys; sys.stdout.buffer.write(b'ok\xc3')"
+
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", program]))
+
+    assert result.stdout == "ok\ufffd"
+    assert "".join(chunk.data for chunk in chunks) == "ok\ufffd"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("code", [0, 1, 2, 42, 255])
 async def test_exit_codes_preserved(code):
     _, result = await _collect(_stream_process("sh", ["-c", f"exit {code}"]))
