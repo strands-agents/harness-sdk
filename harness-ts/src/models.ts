@@ -92,6 +92,7 @@ const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as 
 const BEDROCK_GPT_OSS_LEVELS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
+const BEDROCK_NOVA_LEVELS = ['low', 'medium', 'high'] as const
 const GOOGLE_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 const NO_THINKING_LEVELS: readonly string[] = []
 
@@ -161,6 +162,9 @@ function bedrockLevels(modelId: string): readonly string[] {
   if (family.startsWith('anthropic.')) {
     return claudeThinkingMode(family) !== null ? ANTHROPIC_LEVELS : NO_THINKING_LEVELS
   }
+  if (family.startsWith('amazon.nova-2')) {
+    return BEDROCK_NOVA_LEVELS
+  }
   if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
     return BEDROCK_GPT_LEVELS
   }
@@ -189,6 +193,9 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   const family = bedrockFamily(modelId)
   if (family.startsWith('anthropic.')) {
     return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
+  }
+  if (family.startsWith('amazon.nova-2')) {
+    return { reasoningConfig: { type: 'enabled', maxReasoningEffort: effort } }
   }
   if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
     return { reasoning: { effort } }
