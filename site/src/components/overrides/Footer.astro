@@ -9,24 +9,15 @@ import Default from '@astrojs/starlight/components/Footer.astro'
 import { pathWithBase } from '../../util/links'
 import { currentProduct } from '../../util/current-product'
 import { getReleases, latestPerStream, releaseSlug, formatChangelogDate } from '../../util/changelog'
-import { LANGUAGE_META, streamLabel, type Sdk } from '../../config/changelog'
+import { LANGUAGE_META, PRODUCT_RELEASE_STREAM, streamLabel } from '../../config/changelog'
 import { LEGAL_LINKS } from '../../config/footer'
-
-// Navbar product label → changelog product. Products without a release stream
-// (e.g. Shell) fall back to the newest release overall.
-const PRODUCT_RELEASES: Record<string, Sdk> = {
-  Harness: 'harness',
-  'Harness SDK': 'sdk',
-  Box: 'box',
-  Evals: 'evals',
-}
 
 const changelogHref = pathWithBase('/changelog/')
 const pathname = Astro.url.pathname
 // The changelog pages already lead with the latest release.
 const onChangelog = pathname.startsWith(changelogHref)
 const releases = onChangelog ? [] : await getReleases()
-const productSdk = PRODUCT_RELEASES[currentProduct(pathname)?.label ?? '']
+const productSdk = PRODUCT_RELEASE_STREAM[currentProduct(pathname)?.label ?? '']
 const shown = productSdk ? latestPerStream(releases, productSdk) : releases.slice(0, 1)
 
 const pageUrl = new URL(pathname, Astro.site).href

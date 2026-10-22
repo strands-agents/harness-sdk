@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import path from 'node:path'
 import { loadNavbarFromConfig, loadProductsFromConfig } from '../src/sidebar'
+import { PRODUCT_RELEASE_STREAM } from '../src/config/changelog'
 
 const configPath = path.resolve('./src/config/navigation.yml')
 
@@ -17,6 +18,12 @@ describe('product identity wiring', () => {
       const nav = navbar.find((l) => l.label === p.label)
       expect(nav, `navbar entry for product label "${p.label}"`).toBeDefined()
       expect(nav?.basePath, `basePath for "${p.label}"`).toBeTruthy()
+    }
+  })
+
+  it('every product has a release-stream entry for the docs footer', () => {
+    for (const p of products) {
+      expect(PRODUCT_RELEASE_STREAM, `PRODUCT_RELEASE_STREAM entry for "${p.label}"`).toHaveProperty([p.label])
     }
   })
 
