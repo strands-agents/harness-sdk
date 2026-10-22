@@ -470,6 +470,9 @@ def _resolve_policy(config: BackgroundTasksConfig) -> dict[str, _BackgroundMode]
     ]
     policy: dict[str, _BackgroundMode] = {}
     for mode, selectors in assignments:
+        # A bare string is a Sequence too; iterating it would assign each character as a tool name.
+        if isinstance(selectors, str):
+            raise TypeError(f"'{mode}' must be a list of tools or tool names, got the string {selectors!r}")
         for selector in selectors:
             name = selector if isinstance(selector, str) else selector.tool_name
             existing = policy.get(name)
