@@ -1,18 +1,10 @@
-import { getCollection } from 'astro:content'
 import type { CollectionEntry } from 'astro:content'
-import type { ProductNavItem } from './product-nav'
 import { pathWithBase } from './links'
+import { languageLabel } from './source-links'
 
 export type SampleGuideEntry = CollectionEntry<'sampleGuides'>
 
 const preferredLanguages = ['typescript', 'python']
-let mobileNavCached: Promise<ProductNavItem[]> | undefined
-
-function languageLabel(language: string): string {
-  if (language.toLowerCase() === 'typescript') return 'TypeScript'
-  if (language.toLowerCase() === 'python') return 'Python'
-  return language
-}
 
 function languageOrder(language: string): number {
   const index = preferredLanguages.indexOf(language.toLowerCase())
@@ -74,22 +66,7 @@ export function sampleGuideHref(guide: SampleGuideEntry, defaultGuide: SampleGui
   return pathWithBase(sampleGuidePath(guide, defaultGuide))
 }
 
-export function getSampleGuideMobileNav(): Promise<ProductNavItem[]> {
-  mobileNavCached ??= getCollection('sampleGuides').then((guides) => {
-    const defaultGuide = findDefaultSampleGuide(guides)
-    return buildSampleGuideSidebar(guides, defaultGuide).map((language): ProductNavItem => ({
-      type: 'group',
-      label: language.label,
-      items: language.items.map((category): ProductNavItem => ({
-        type: 'group',
-        label: category.label,
-        items: category.items.map((guide) => ({
-          type: 'link',
-          label: guide.label,
-          href: pathWithBase(guide.link),
-        })),
-      })),
-    }))
-  })
-  return mobileNavCached
+export function isSampleGuidePath(pathname: string): boolean {
+  const root = pathWithBase('/examples')
+  return pathname === root || pathname.startsWith(`${root}/`)
 }

@@ -1,10 +1,30 @@
 ---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { getCollection } from 'astro:content'
 import SampleGuidePage from '../components/samples/SampleGuidePage.astro'
-import { findDefaultSampleGuide, sortSampleGuides } from '../util/sample-guides'
+import { sortSampleGuides } from '../util/sample-guides'
 
 const guides = sortSampleGuides(await getCollection('sampleGuides'))
-const guide = findDefaultSampleGuide(guides)
+const guide = guides[0]
 ---
 
-<SampleGuidePage {guide} {guides} />
+{
+  guide ? (
+    <SampleGuidePage {guide} {guides} />
+  ) : (
+    <StarlightPage
+      frontmatter={{
+        title: 'Examples',
+        description: 'Runnable Strands agent samples.',
+        editUrl: false,
+      }}
+      hasSidebar={false}
+      sidebar={[]}
+    >
+      <p>Sample guides are not available in this local build.</p>
+      <p>
+        Set <code>SAMPLES_SOURCE_DIR</code> to a clean checkout of the samples repository, then restart the site.
+      </p>
+    </StarlightPage>
+  )
+}

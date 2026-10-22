@@ -32,8 +32,6 @@ const { Content, headings } = await render(guide)
   <p>{guide.data.description}</p>
   <p class="sample-guide__source">
     <a href={sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
-    <span aria-hidden="true"> · </span>
-    <code>{guide.data.sourceCommit.slice(0, 7)}</code>
   </p>
   <Content />
 </StarlightPage>

@@ -5,14 +5,11 @@ export interface SampleCategory {
 }
 
 export interface ManifestSample {
-  id: string
   slug?: string
   language: string
   category: string
-  categoryLabel?: string
   title: string
   description: string
-  tags?: string[]
   path: string
   notebook?: string
 }

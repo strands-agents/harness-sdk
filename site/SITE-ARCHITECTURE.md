@@ -46,7 +46,7 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 **Reproducibility and safety:** The importer requires a clean Git checkout, records its exact commit in every generated page, rejects paths outside the checkout, ignores notebook outputs and raw cells, converts safe HTML content and media to Markdown, rejects unsafe URL schemes, and rewrites relative links and images to commit-pinned GitHub URLs. Missing file links emit a warning so a stale reference does not block publishing; missing images fail the build because they would visibly break the guide.
 
-**Local development:** Run `npm run samples:sync -- --source /path/to/samples` to import a local clean checkout. Without a source, development retains existing generated pages or uses the committed one-page fallback. Deployment workflows set `SAMPLES_REQUIRE_SOURCE=1`, so production cannot silently use the fallback.
+**Local development:** Run `SAMPLES_SOURCE_DIR=/path/to/samples npm run dev` to develop with a local clean checkout, or use the same environment variable with `npm run build`. Without a source, the generated collection is cleared and `/examples/` explains how to configure it instead of showing stale content. Deployment workflows set `SAMPLES_REQUIRE_SOURCE=1`, so production fails when the checkout is missing.
 
 **Routes and navigation:** `/examples/` renders the first guide in manifest-derived order. Other entries use `/examples/{sample-slug}/`. Every page receives the same language and category sidebar, and the route middleware preserves that generated sidebar instead of applying the regular product filter.
 

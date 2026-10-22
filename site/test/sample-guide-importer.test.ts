@@ -36,15 +36,14 @@ beforeEach(() => {
       ],
       samples: [
         {
-          id: 'readme',
           language: 'TypeScript',
           category: 'learn',
           title: 'README guide',
           description: 'README fixture',
+          tags: ['Agent class'],
           path: 'typescript/01-learn/01-readme',
         },
         {
-          id: 'notebook',
           language: 'Python',
           category: 'learn',
           title: 'Notebook guide',
@@ -123,7 +122,7 @@ afterEach(() => {
 })
 
 describe('buildSampleGuides', () => {
-  it('turns README and notebook guides into reproducible site Markdown', async () => {
+  it('turns README and notebook guides into path-ordered, reproducible site Markdown', async () => {
     const commit = git('rev-parse', 'HEAD')
     await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toEqual({
       repository: 'example/samples',

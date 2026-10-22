@@ -56,14 +56,6 @@ function optionalString(value: unknown, field: string): string | undefined {
   return requiredString(value, field)
 }
 
-function stringArray(value: unknown, field: string): string[] {
-  if (value === undefined) return []
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
-    throw new Error(`${field} must be an array of strings`)
-  }
-  return value.map((entry) => entry.trim()).filter(Boolean)
-}
-
 function normalizeRelativePath(value: string, field: string): string {
   if (value.includes('\\')) throw new Error(`${field} must use forward slashes`)
   const normalized = path.posix.normalize(value.replace(/^\.\/+/, ''))
@@ -99,19 +91,15 @@ function parseCategory(value: unknown, index: number): SampleCategory {
 function parseSample(value: unknown, index: number): ManifestSample {
   if (!isRecord(value)) throw new Error(`samples[${index}] must be an object`)
   const sample: ManifestSample = {
-    id: normalizeRelativePath(requiredString(value.id, `samples[${index}].id`), `samples[${index}].id`),
     language: requiredString(value.language, `samples[${index}].language`),
     category: requiredString(value.category, `samples[${index}].category`),
     title: requiredString(value.title, `samples[${index}].title`),
     description: requiredString(value.description, `samples[${index}].description`),
-    tags: stringArray(value.tags, `samples[${index}].tags`),
     path: normalizeRelativePath(requiredString(value.path, `samples[${index}].path`), `samples[${index}].path`),
   }
   const slug = optionalString(value.slug, `samples[${index}].slug`)
-  const categoryLabel = optionalString(value.categoryLabel, `samples[${index}].categoryLabel`)
   const notebook = optionalString(value.notebook, `samples[${index}].notebook`)
   if (slug) sample.slug = normalizeSlug(slug, `samples[${index}].slug`)
-  if (categoryLabel) sample.categoryLabel = categoryLabel
   if (notebook) {
     sample.notebook = normalizeRelativePath(notebook, `samples[${index}].notebook`)
   }
@@ -135,10 +123,10 @@ function deriveSlug(sample: ManifestSample): string {
   if (sample.slug) return sample.slug
   const segments = sample.path.split('/')
   const language = segments[0]
-  if (!language) throw new Error(`Cannot derive a slug for ${sample.id}`)
+  if (!language) throw new Error(`Cannot derive a slug for ${sample.path}`)
   return normalizeSlug(
     [language, ...segments.slice(2).map((segment) => segment.replace(/^\d+-/, ''))].join('/'),
-    `${sample.id}.slug`
+    `${sample.path}.slug`
   )
 }
 
@@ -150,16 +138,16 @@ function validateManifest(manifest: SampleManifest): void {
     categories.add(key)
   }
 
-  const ids = new Set<string>()
+  const paths = new Set<string>()
   const slugs = new Set<string>()
   for (const sample of manifest.samples) {
-    if (ids.has(sample.id)) throw new Error(`Duplicate sample id: ${sample.id}`)
-    ids.add(sample.id)
+    if (paths.has(sample.path)) throw new Error(`Duplicate sample path: ${sample.path}`)
+    paths.add(sample.path)
     const slug = deriveSlug(sample)
     if (slugs.has(slug)) throw new Error(`Duplicate sample slug: ${slug}`)
     slugs.add(slug)
     const category = `${sample.language.toLowerCase()}/${sample.category}`
-    if (!categories.has(category)) throw new Error(`${sample.id} references unknown category ${category}`)
+    if (!categories.has(category)) throw new Error(`${sample.path} references unknown category ${category}`)
   }
 }
 
@@ -207,7 +195,7 @@ function isInside(parent: string, child: string): boolean {
 async function resolveGuidePath(sourceDir: string, sample: ManifestSample): Promise<{ path: string; kind: string }> {
   const sourceRoot = await realpath(sourceDir)
   const sampleRoot = await realpath(path.join(sourceRoot, sample.path))
-  if (!isInside(sourceRoot, sampleRoot)) throw new Error(`${sample.id} resolves outside the samples checkout`)
+  if (!isInside(sourceRoot, sampleRoot)) throw new Error(`${sample.path} resolves outside the samples checkout`)
 
   const readme = path.join(sampleRoot, 'README.md')
   try {
@@ -216,11 +204,11 @@ async function resolveGuidePath(sourceDir: string, sample: ManifestSample): Prom
     // Fall through to the configured notebook.
   }
 
-  if (!sample.notebook) throw new Error(`${sample.id} has no root README.md or configured notebook`)
+  if (!sample.notebook) throw new Error(`${sample.path} has no root README.md or configured notebook`)
   const notebook = await realpath(path.join(sampleRoot, sample.notebook))
-  if (!isInside(sampleRoot, notebook)) throw new Error(`${sample.id} notebook resolves outside its sample directory`)
+  if (!isInside(sampleRoot, notebook)) throw new Error(`${sample.path} notebook resolves outside its sample directory`)
   if ((await lstat(path.join(sampleRoot, sample.notebook))).isSymbolicLink()) {
-    throw new Error(`${sample.id} notebook must not be a symlink`)
+    throw new Error(`${sample.path} notebook must not be a symlink`)
   }
   return { path: sample.notebook, kind: 'notebook' }
 }
@@ -404,42 +392,28 @@ async function prepareMarkdown(
   return processor.stringify(tree).trim()
 }
 
-function categoryLabel(manifest: SampleManifest, sample: ManifestSample): string {
-  if (sample.categoryLabel) return sample.categoryLabel
-  return (
-    manifest.categories.find(
-      (category) => category.language.toLowerCase() === sample.language.toLowerCase() && category.id === sample.category
-    )?.label ?? sample.category
-  )
-}
-
 function frontmatter(
   manifest: SampleManifest,
   sample: ManifestSample,
   repository: string,
   commit: string,
-  guidePath: string,
-  guideKind: string,
   order: number
 ): string {
   const categoryOrder = manifest.categories.findIndex(
     (category) => category.language.toLowerCase() === sample.language.toLowerCase() && category.id === sample.category
   )
+  const categoryLabel = manifest.categories[categoryOrder]!.label
   return [
     '---',
     `title: ${JSON.stringify(sample.title)}`,
     `description: ${JSON.stringify(sample.description)}`,
-    `sampleId: ${JSON.stringify(sample.id)}`,
     `slug: ${JSON.stringify(deriveSlug(sample))}`,
     `language: ${JSON.stringify(sample.language)}`,
     `category: ${JSON.stringify(sample.category)}`,
-    `categoryLabel: ${JSON.stringify(categoryLabel(manifest, sample))}`,
-    `tags: ${JSON.stringify(sample.tags ?? [])}`,
+    `categoryLabel: ${JSON.stringify(categoryLabel)}`,
     `sourceRepository: ${JSON.stringify(repository)}`,
     `sourceCommit: ${JSON.stringify(commit)}`,
     `sourcePath: ${JSON.stringify(sample.path)}`,
-    `guidePath: ${JSON.stringify(guidePath)}`,
-    `guideKind: ${JSON.stringify(guideKind)}`,
     `categoryOrder: ${categoryOrder}`,
     `sampleOrder: ${order}`,
     '---',
@@ -454,7 +428,8 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
   const repository = manifest.repository ?? DEFAULT_REPOSITORY
 
   await rm(options.outputDir, { recursive: true, force: true })
-  for (const [index, sample] of manifest.samples.entries()) {
+  const samples = [...manifest.samples].sort((left, right) => left.path.localeCompare(right.path))
+  for (const [index, sample] of samples.entries()) {
     const guide = await resolveGuidePath(sourceDir, sample)
     const guideFile = path.join(sourceDir, sample.path, guide.path)
     const input =
@@ -465,10 +440,7 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
     const body = await prepareMarkdown(input, sourceDir, repository, commit, guideRepositoryPath, sample.title)
     const outputPath = path.join(options.outputDir, `${deriveSlug(sample)}.md`)
     await mkdir(path.dirname(outputPath), { recursive: true })
-    await writeFile(
-      outputPath,
-      `${frontmatter(manifest, sample, repository, commit, guide.path, guide.kind, index)}${body}\n`
-    )
+    await writeFile(outputPath, `${frontmatter(manifest, sample, repository, commit, index)}${body}\n`)
   }
 
   const finalCommit = await inspectCheckout(sourceDir)

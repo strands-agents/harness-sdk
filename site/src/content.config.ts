@@ -192,10 +192,7 @@ const blogSchema = z.object({
 })
 
 // Regex rejects protocol-relative URLs like //evil.com and /\evil.com that startsWith('/') would accept.
-const internalHref = z.string().regex(
-  /^\/(?![/\\])/,
-  'course hrefs must be site-relative (start with a single /)',
-)
+const internalHref = z.string().regex(/^\/(?![/\\])/, 'course hrefs must be site-relative (start with a single /)')
 
 export const courseSchema = z.object({
   title: z.string(),
@@ -268,17 +265,13 @@ const sampleGuideSchema = z
   .object({
     title: z.string(),
     description: z.string(),
-    sampleId: z.string(),
     slug: z.string(),
     language: z.string(),
     category: z.string(),
     categoryLabel: z.string(),
-    tags: z.array(z.string()).default([]),
     sourceRepository: z.string(),
     sourceCommit: z.string(),
     sourcePath: z.string(),
-    guidePath: z.string(),
-    guideKind: z.enum(['readme', 'notebook']),
     categoryOrder: z.number().int().nonnegative(),
     sampleOrder: z.number().int().nonnegative(),
   })

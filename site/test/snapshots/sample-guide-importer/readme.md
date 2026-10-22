@@ -1,19 +1,15 @@
 ---
 title: "README guide"
 description: "README fixture"
-sampleId: "readme"
 slug: "typescript/readme"
 language: "TypeScript"
 category: "learn"
 categoryLabel: "Learn"
-tags: []
 sourceRepository: "example/samples"
 sourceCommit: "<source-commit>"
 sourcePath: "typescript/01-learn/01-readme"
-guidePath: "README.md"
-guideKind: "readme"
 categoryOrder: 0
-sampleOrder: 0
+sampleOrder: 1
 ---
 ![HTML image](https://raw.githubusercontent.com/example/samples/<source-commit>/typescript/01-learn/01-readme/images/html.png)
 
