@@ -492,6 +492,25 @@ async def test_stream_preserves_context_when_explicitly_true(fake_agent):
     assert fake_agent.state.get("key") == "value"
 
 
+@pytest.mark.asyncio
+async def test_stream_blank_input_returns_error_and_preserved_context_still_works():
+    sub_agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}]),
+        callback_handler=None,
+    )
+    tool = _AgentAsTool(sub_agent, name="sub_agent", description="desc", preserve_context=True)
+
+    blank_events = [event async for event in tool.stream({"toolUseId": "t1", "name": "sub_agent", "input": {}}, {})]
+    valid_events = [
+        event async for event in tool.stream({"toolUseId": "t2", "name": "sub_agent", "input": {"input": "hi"}}, {})
+    ]
+
+    assert blank_events[-1].tool_result["status"] == "error"
+    assert "Input prompt is blank" in blank_events[-1].tool_result["content"][0]["text"]
+    assert valid_events[-1].tool_result["status"] == "success"
+    assert sub_agent.messages[0]["content"] == [{"text": "hi"}]
+
+
 def test_preserve_context_false_rejects_session_manager(fake_agent):
     """preserve_context=False should raise ValueError when agent has a session manager."""
     fake_agent._session_manager = MagicMock()

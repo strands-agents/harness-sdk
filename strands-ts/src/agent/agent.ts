@@ -2156,6 +2156,16 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @returns Array of messages to append to the conversation
    */
   private _normalizeInput(args?: InvokeArgs): Message[] {
+    const messages = this._messagesFromInput(args)
+    for (const message of messages) {
+      if (message.role === 'user' && message.content.every(isBlankTextBlock)) {
+        throw new TypeError('Input prompt is blank. Provide non-blank text or at least one non-text content block.')
+      }
+    }
+    return messages
+  }
+
+  private _messagesFromInput(args?: InvokeArgs): Message[] {
     if (args !== undefined) {
       if (typeof args === 'string') {
         // String input: wrap in TextBlock and create user Message
@@ -2845,6 +2855,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     const lastMessage = this.messages[this.messages.length - 1]
     return lastMessage?.role === 'user'
   }
+}
+
+/**
+ * Most providers reject a user turn with no content, and once it is in history every later call fails too.
+ */
+function isBlankTextBlock(block: ContentBlock): boolean {
+  return block.type === 'textBlock' && block.text.trim() === ''
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
