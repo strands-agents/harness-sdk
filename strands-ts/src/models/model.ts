@@ -89,7 +89,9 @@ export interface CacheConfig {
    * placed by hand in the system prompt that carries none of its own, so one value keeps every
    * checkpoint in step. A TTL written on such a point is left as written, and a `toolsTTL` that differs
    * from this one leaves the point at the provider default rather than landing a longer TTL behind a
-   * shorter checkpoint - either way, two TTLs in tension are yours to reconcile.
+   * shorter checkpoint. If the checkpoints, configured or written by hand, still put `'1h'` behind `'5m'`
+   * or behind a point left at the default, the Bedrock provider lowers the later one to match and logs a
+   * warning.
    */
   ttl?: CacheTTL
 
