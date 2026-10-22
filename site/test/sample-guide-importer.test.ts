@@ -131,40 +131,17 @@ describe('buildSampleGuides', () => {
       sampleCount: 2,
     })
 
-    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
-    expect(readme).toContain(`sourceCommit: "${commit}"`)
-    expect(readme).toContain('guideKind: "readme"')
-    expect(readme).not.toContain('# README guide')
-    expect(readme).not.toContain('<div>')
-    expect(readme).toContain(
-      `https://raw.githubusercontent.com/example/samples/${commit}/typescript/01-learn/01-readme/images/html.png`
+    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8').replaceAll(
+      commit,
+      '<source-commit>'
     )
-    expect(readme).toContain('[Watch the sample video](https://example.com/demo.mp4)')
-    expect(readme).toContain('Before after')
-    expect(readme).toContain(
-      `https://raw.githubusercontent.com/example/samples/${commit}/typescript/01-learn/01-readme/images/one.png`
-    )
-    expect(readme).toContain(
-      `https://raw.githubusercontent.com/example/samples/${commit}/typescript/01-learn/01-readme/images/two.png`
-    )
-    expect(readme).toContain(
-      `[diagram]: https://raw.githubusercontent.com/example/samples/${commit}/typescript/01-learn/01-readme/images/reference.png`
-    )
-    expect(readme).toContain(
-      `https://github.com/example/samples/blob/${commit}/typescript/01-learn/01-readme/src/index.ts`
-    )
-    expect(readme).toContain(`https://github.com/example/samples/tree/${commit}/typescript/01-learn/01-readme/src`)
-    expect(readme).toContain('```json')
-    expect(readme).toContain('- [x] Keeps GFM task lists')
-    expect(readme).toContain('- ~~Keeps strikethrough~~')
-    expect(readme).toContain('## Secondary heading')
+    await expect(readme).toMatchFileSnapshot('./snapshots/sample-guide-importer/readme.md')
 
-    const notebook = readFileSync(path.join(outputDir, 'python/notebook.md'), 'utf8')
-    expect(notebook).toContain('guideKind: "notebook"')
-    expect(notebook).toContain('Notebook introduction.')
-    expect(notebook).toContain('```python\nprint("shown")')
-    expect(notebook).not.toContain('hidden output')
-    expect(notebook).not.toContain('hidden raw cell')
+    const notebook = readFileSync(path.join(outputDir, 'python/notebook.md'), 'utf8').replaceAll(
+      commit,
+      '<source-commit>'
+    )
+    await expect(notebook).toMatchFileSnapshot('./snapshots/sample-guide-importer/notebook.md')
   })
 
   it('rejects a samples checkout with unpublished changes', async () => {

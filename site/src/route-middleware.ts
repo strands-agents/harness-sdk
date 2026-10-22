@@ -185,7 +185,7 @@ export const onRequest = defineRouteMiddleware(async (context) => {
   }
 
   // Generated sample guides supply their own language/category sidebar.
-  if (currentPath === pathWithBase('/examples/') || currentPath.startsWith(pathWithBase('/examples/'))) {
+  if (currentPath.startsWith(pathWithBase('/examples/'))) {
     starlightRoute.sidebar = sidebar
     return
   }
