@@ -8,7 +8,7 @@
 import Default from '@astrojs/starlight/components/Footer.astro'
 import { pathWithBase } from '../../util/links'
 import { currentProduct } from '../../util/current-product'
-import { getReleases, latestPerStream, releaseSlug, formatChangelogDate } from '../../util/changelog'
+import { getFooterReleases, releaseSlug, formatChangelogDate } from '../../util/changelog'
 import { LANGUAGE_META, PRODUCT_RELEASE_STREAM, streamLabel } from '../../config/changelog'
 import { LEGAL_LINKS } from '../../config/footer'
 
@@ -16,9 +16,10 @@ const changelogHref = pathWithBase('/changelog/')
 const pathname = Astro.url.pathname
 // The changelog pages already lead with the latest release.
 const onChangelog = pathname.startsWith(changelogHref)
-const releases = onChangelog ? [] : await getReleases()
+const footerReleases = onChangelog ? undefined : await getFooterReleases()
 const productSdk = PRODUCT_RELEASE_STREAM[currentProduct(pathname)?.label ?? '']
-const shown = productSdk ? latestPerStream(releases, productSdk) : releases.slice(0, 1)
+const newest = footerReleases?.newest ? [footerReleases.newest] : []
+const shown = (productSdk && footerReleases?.byProduct[productSdk]) || newest
 
 const pageUrl = new URL(pathname, Astro.site).href
 const issueHref = `https://github.com/strands-agents/harness-sdk/issues/new?${new URLSearchParams({

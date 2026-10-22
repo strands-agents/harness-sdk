@@ -1,6 +1,6 @@
 import { getCollection, type CollectionEntry } from 'astro:content'
 import type { ChangelogEntry } from '../content.config'
-import type { Sdk } from '../config/changelog'
+import { SDK_META, type Sdk } from '../config/changelog'
 import { compareVersionDesc } from './semver'
 export { compareVersionDesc } from './semver'
 
@@ -204,4 +204,32 @@ export function latestPerStream(releases: ChangelogRelease[], sdk: Sdk): Changel
     seen.add(streamKey(r))
     return true
   })
+}
+
+export interface FooterReleases {
+  byProduct: Record<Sdk, ChangelogRelease[]>
+  newest: ChangelogRelease | undefined
+}
+
+let footerReleases: Promise<FooterReleases> | undefined
+
+/**
+ * Latest release per stream for every product, plus the newest overall, for
+ * the docs footer. The footer renders on every page, so the build computes this
+ * once instead of re-reading the collection per page, which nearly doubled peak
+ * build memory. Dev skips the cache so content edits show up.
+ */
+export function getFooterReleases(): Promise<FooterReleases> {
+  if (import.meta.env.DEV) return loadFooterReleases()
+  footerReleases ??= loadFooterReleases()
+  return footerReleases
+}
+
+async function loadFooterReleases(): Promise<FooterReleases> {
+  const releases = await getReleases()
+  const sdks = Object.keys(SDK_META) as Sdk[]
+  const byProduct = Object.fromEntries(
+    sdks.map((sdk) => [sdk, latestPerStream(releases, sdk)])
+  ) as FooterReleases['byProduct']
+  return { byProduct, newest: releases[0] }
 }
