@@ -3,20 +3,15 @@ import { Box, render, renderToString } from 'ink'
 import chalk from 'chalk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  DEFAULT_CHAT_SETTINGS,
-  FROG_THEMES,
-  THEME_COLOR_KEYS,
-  type ChatSettings,
-  type ResolvedColorMode,
-} from '../src/tui/chat/types.js'
+import { DEFAULT_CHAT_SETTINGS, FROG_THEMES, THEME_COLOR_KEYS, type ChatSettings } from '../src/tui/chat/types.js'
 import { Markdown } from '../src/tui/view/markdown.js'
 import { MediaView } from '../src/tui/view/media.js'
 import { PanelOverlay } from '../src/tui/view/panel-components.js'
 import { contextColor, detailLines, permissionLines } from '../src/tui/view/presentation.js'
 import { PromptEditor } from '../src/tui/view/prompt-editor.js'
 import { SettingsControl } from '../src/tui/view/settings-panel.js'
-import { detectColorMode, getTheme, Text, ThemeProvider } from '../src/tui/view/theme.js'
+import { currentColorMode, observeTerminalColorMode, subscribeColorMode } from '../src/tui/view/theme-detection.js'
+import { getTheme, Text, ThemeProvider } from '../src/tui/view/theme.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { CliConfigStore } from '../src/tui/config.js'
@@ -34,8 +29,8 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-function settings(colorMode: ChatSettings['colorMode'], frogTheme: ChatSettings['frogTheme'] = 'green'): ChatSettings {
-  return { ...DEFAULT_CHAT_SETTINGS, colorMode, frogTheme }
+function settings(frogTheme: ChatSettings['frogTheme'] = 'green'): ChatSettings {
+  return { ...DEFAULT_CHAT_SETTINGS, frogTheme }
 }
 
 function ansi(hex: string, background = false): string {
@@ -54,9 +49,8 @@ function luminance(hex: string): number {
 describe('theme resolution', () => {
   it.each(FROG_THEMES.filter((name) => name !== 'custom'))('provides readable light and dark colors for %s', (name) => {
     for (const mode of ['light', 'dark'] as const) {
-      const theme = getTheme(settings(mode, name))
+      const theme = getTheme(settings(name), mode)
       expect(theme.mode).toBe(mode)
-      expect(theme.canvas).toBeUndefined()
       for (const key of name === 'green' ? THEME_COLOR_KEYS : (['accent', 'frog'] as const)) {
         expect(theme[key]).toMatch(/^#[\da-f]{6}$/i)
       }
@@ -75,60 +69,113 @@ describe('theme resolution', () => {
     }
   })
 
-  it('resolves explicit mode before detection, and supplied detection before COLORFGBG', () => {
-    vi.stubEnv('COLORFGBG', '0;15')
-    expect(getTheme(settings('auto')).mode).toBe('light')
-    expect(getTheme(settings('auto'), 'dark').mode).toBe('dark')
-    expect(getTheme(settings('light'), 'dark').mode).toBe('light')
-    expect(getTheme(settings('dark'), 'light').mode).toBe('dark')
+  it('resolves the supplied terminal mode', () => {
+    expect(getTheme(settings(), 'dark').mode).toBe('dark')
+    expect(getTheme(settings(), 'light').mode).toBe('light')
   })
 
   it('merges only the active custom variant over its selected base without modifying settings', () => {
     const custom: ChatSettings = {
-      ...settings('light', 'custom'),
+      ...settings('custom'),
       customTheme: {
         base: 'merlin',
-        light: { foreground: '#123456', accent: '#654321', frog: '#236741' },
-        dark: { surface: '#182028', muted: '#b0c0d0' },
+        light: { accent: '#654321', frog: '#236741' },
+        dark: { frog: '#b0c0d0' },
       },
     }
     const before = globalThis.structuredClone(custom)
-    expect(getTheme(custom)).toEqual({
-      ...getTheme(settings('light', 'merlin')),
+    expect(getTheme(custom, 'light')).toEqual({
+      ...getTheme(settings('merlin'), 'light'),
       ...custom.customTheme.light,
     })
-    expect(getTheme({ ...custom, colorMode: 'dark' })).toEqual({
-      ...getTheme(settings('dark', 'merlin')),
+    expect(getTheme(custom, 'dark')).toEqual({
+      ...getTheme(settings('merlin'), 'dark'),
       ...custom.customTheme.dark,
     })
     expect(custom).toEqual(before)
-    expect(getTheme({ ...custom, frogTheme: 'green' })).toEqual(getTheme(settings('light')))
+    expect(getTheme({ ...custom, frogTheme: 'green' }, 'light')).toEqual(getTheme(settings(), 'light'))
   })
 
   it('keeps preset mascot colors independent of their UI accent', () => {
-    const cyborg = getTheme(settings('dark', 'circuit'))
+    const cyborg = getTheme(settings('circuit'), 'dark')
     expect(cyborg).toMatchObject({ accent: '#79aaff', frog: '#aeb6bf' })
   })
 })
 
 describe('terminal background detection', () => {
   it.each([
-    ['15;0', 'dark'],
-    ['0;default;7', 'light'],
-    ['15;16', 'dark'],
-    ['0;231', 'light'],
-    ['15;232', 'dark'],
-    ['0;255', 'light'],
-    ['', 'dark'],
-    ['garbage', 'dark'],
-  ])('resolves COLORFGBG %s to %s', (COLORFGBG, mode) => {
-    expect(detectColorMode({ COLORFGBG })).toBe(mode)
+    ['0000/0000/0000', 'dark'],
+    ['ffff/ffff/ffff', 'light'],
+  ] as const)('resolves delayed split OSC 11 rgb:%s to %s without consuming typed input', async (rgb, mode) => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let query = ''
+    output.on('data', (chunk: Buffer) => {
+      query += chunk.toString()
+    })
+
+    const observer = observeTerminalColorMode(input, output)
+    await vi.waitFor(() => expect(query).toBe('\u001b[?2031h\u001b]11;?\u001b\\'))
+    input.write(`x\u001b]11;rgb:${rgb.slice(0, 9)}`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    input.write(`${rgb.slice(9)}\u001b\\`)
+
+    await observer.ready
+    expect(getTheme(settings()).mode).toBe(mode)
+    expect(observer.input.read()?.toString()).toBe('x')
+    expect(input.setRawMode).toHaveBeenCalledExactlyOnceWith(true)
+    observer.dispose()
+    expect(query).toContain('\u001b[?2031l')
+  })
+
+  it('defaults to dark without a terminal', async () => {
+    const input = ttyInput()
+    input.isTTY = false
+    await observeTerminalColorMode(input, ttyOutput(80, 24)).ready
+    expect(currentColorMode()).toBe('dark')
+    expect(input.setRawMode).not.toHaveBeenCalled()
+  })
+
+  it('tracks terminal color-scheme notifications without passing them to Ink', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let terminalWrites = ''
+    output.on('data', (chunk: Buffer) => {
+      terminalWrites += chunk.toString()
+    })
+    const changed = vi.fn()
+    const unsubscribe = subscribeColorMode(changed)
+    const watcher = observeTerminalColorMode(input, output)
+    let forwarded = ''
+    watcher.input.on('data', (chunk: Buffer) => {
+      forwarded += chunk.toString()
+    })
+
+    try {
+      expect(terminalWrites).toBe('\u001b[?2031h\u001b]11;?\u001b\\')
+      input.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+      await watcher.ready
+      terminalWrites = ''
+      input.write('a\u001b[?997;')
+      input.write('2nb')
+      await vi.waitFor(() => expect(terminalWrites).toContain('\u001b]11;?\u001b\\'))
+      input.write('\u001b]11;rgb:ffff/ffff/ffff\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('light'))
+      expect(changed).toHaveBeenCalledOnce()
+      expect(forwarded).toBe('ab')
+      input.write('\u001b[?997;1n')
+      input.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('dark'))
+    } finally {
+      unsubscribe()
+      watcher.dispose()
+    }
   })
 })
 
 describe('themed Ink output', () => {
   it.each(['light', 'dark'] as const)('leaves the terminal canvas unpainted in %s mode', async (mode) => {
-    const appearance = { ...settings(mode), animations: false }
+    const appearance = { ...settings(), animations: false }
     for (const screen of ['chat', 'setup'] as const) {
       const input = ttyInput()
       const output = ttyOutput(120, 45)
@@ -150,7 +197,7 @@ describe('themed Ink output', () => {
               checkForUpdate: async () => undefined,
               onComplete: () => {},
             })
-      const instance = render(h(ThemeProvider, { settings: appearance, children }), {
+      const instance = render(h(ThemeProvider, { settings: appearance, detectedMode: mode, children }), {
         stdin: input,
         stdout: output,
         stderr: output,
@@ -169,36 +216,13 @@ describe('themed Ink output', () => {
     }
   })
 
-  it('paints a canvas only when the active custom theme explicitly specifies one', () => {
-    const appearance: ChatSettings = {
-      ...settings('dark', 'custom'),
-      animations: false,
-      customTheme: { base: 'green', light: {}, dark: { background: '#123456' } },
-    }
-    expect(getTheme(appearance).canvas).toBe('#123456')
-    expect(getTheme({ ...appearance, colorMode: 'light' }).canvas).toBeUndefined()
-    const frame = renderToString(
-      h(ThemeProvider, {
-        settings: appearance,
-        children: h(ChatView, {
-          snapshot: snapshot({ settings: appearance }),
-          input: '',
-          cursor: 0,
-          terminalWidth: 80,
-          terminalHeight: 24,
-        }),
-      }),
-      { columns: 80 }
-    )
-    expect(frame.split('\n')[0]).toContain(ansi('#123456', true))
-  })
-
   it('restores the explicit foreground after composer commands', () => {
-    const theme = getTheme(settings('light'))
+    const theme = getTheme(settings(), 'light')
     const input = '/model improve the response'
     const output = renderToString(
       h(ThemeProvider, {
-        settings: settings('light'),
+        settings: settings(),
+        detectedMode: 'light',
         children: h(PromptEditor, {
           input,
           cursor: input.length,
@@ -210,10 +234,11 @@ describe('themed Ink output', () => {
   })
 
   it('preserves an explicit text background through nested styles inside a panel', () => {
-    const theme = getTheme(settings('light'))
+    const theme = getTheme(settings(), 'light')
     const output = renderToString(
       h(ThemeProvider, {
-        settings: settings('light'),
+        settings: settings(),
+        detectedMode: 'light',
         children: h(
           Box,
           { backgroundColor: theme.panel },
@@ -225,10 +250,11 @@ describe('themed Ink output', () => {
   })
 
   it('preserves inherited styles and semantic colors', () => {
-    const theme = getTheme(settings('light'))
+    const theme = getTheme(settings(), 'light')
     const output = renderToString(
       h(ThemeProvider, {
-        settings: settings('light'),
+        settings: settings(),
+        detectedMode: 'light',
         children: h(
           Box,
           { flexDirection: 'column' },
@@ -252,19 +278,20 @@ describe('themed Ink output', () => {
     expect(output).not.toContain('\u001b[2m')
   })
 
-  it('propagates custom colors through child views', () => {
+  it('propagates custom accent colors through child views', () => {
     const custom: ChatSettings = {
-      ...settings('light', 'custom'),
+      ...settings('custom'),
       customTheme: {
         base: 'homeland',
-        light: { accent: '#284567', surface: '#ddeeff', panel: '#eeddcc', border: '#554433', hover: '#734268' },
+        light: { accent: '#284567' },
         dark: {},
       },
     }
-    const theme = getTheme(custom)
+    const theme = getTheme(custom, 'light')
     const output = renderToString(
       h(ThemeProvider, {
         settings: custom,
+        detectedMode: 'light',
         children: h(
           Box,
           { width: 80, height: 28, flexDirection: 'column' },
@@ -290,21 +317,22 @@ describe('themed Ink output', () => {
     expect(output).toContain(ansi(theme.foreground))
     expect(output).toContain(ansi(theme.surface, true))
     expect(output).toContain(ansi(theme.panel, true))
-    expect(output).not.toContain(ansi(theme.border))
     expect(output).not.toContain(ansi('#202223', true))
     expect(output).not.toContain(ansi('#181a1b', true))
   })
 
-  it('updates mounted memoized content on mode and custom-color changes without querying stdin', async () => {
-    const input = ttyInput()
+  it('updates mounted memoized content on terminal mode and custom-color changes', async () => {
+    const source = ttyInput()
     const output = ttyOutput(80, 24)
     const writes: string[] = []
     output.on('data', (chunk: Buffer) => writes.push(chunk.toString()))
+    const watcher = observeTerminalColorMode(source, output)
+    source.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+    await watcher.ready
     const child = h(Markdown, { children: '# Stable **heading**' })
-    const tree = (mode: ResolvedColorMode, config = settings('auto')) =>
-      h(ThemeProvider, { settings: config, detectedMode: mode, children: child })
-    const instance = render(tree('dark'), {
-      stdin: input,
+    const tree = (config = settings()) => h(ThemeProvider, { settings: config, children: child })
+    const instance = render(tree(), {
+      stdin: watcher.input,
       stdout: output,
       stderr: output,
       interactive: true,
@@ -313,30 +341,34 @@ describe('themed Ink output', () => {
     })
     try {
       await instance.waitUntilRenderFlush()
-      const listenerCount = input.listenerCount('data') + input.listenerCount('readable')
       writes.length = 0
-      instance.rerender(tree('light'))
+      source.write('\u001b[?997;2n')
+      source.write('\u001b]11;rgb:ffff/ffff/ffff\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('light'))
       await instance.waitUntilRenderFlush()
-      expect(writes.join('')).toContain(ansi(getTheme(settings('light')).accent))
+      expect(writes.join('')).toContain(ansi(getTheme(settings(), 'light').accent))
       writes.length = 0
       instance.rerender(
-        tree('light', {
-          ...settings('auto', 'custom'),
+        tree({
+          ...settings('custom'),
           customTheme: { base: 'green', light: { accent: '#123456' }, dark: {} },
         })
       )
       await instance.waitUntilRenderFlush()
       expect(writes.join('')).toContain(ansi('#123456'))
       expect(writes.join('')).not.toContain('\u001b]11;?')
-      expect(input.listenerCount('data') + input.listenerCount('readable')).toBe(listenerCount)
     } finally {
+      source.write('\u001b[?997;1n')
+      source.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
+      await vi.waitFor(() => expect(currentColorMode()).toBe('dark'))
       instance.unmount()
       await instance.waitUntilExit()
+      watcher.dispose()
     }
   })
 
   it('uses the supplied palette for permission, activity, and context colors', () => {
-    const palette = getTheme(settings('light', 'merlin'))
+    const palette = getTheme(settings('merlin'), 'light')
     const diff = permissionLines(
       {
         id: 'permission',

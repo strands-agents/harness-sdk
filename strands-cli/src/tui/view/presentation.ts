@@ -1,7 +1,8 @@
 import type { JSONValue } from '@strands-agents/sdk'
 import stringWidth from 'string-width'
 
-import type { ChatEntry, ChatPanel, ChatSnapshot } from '../chat/controller.js'
+import type { ChatDetailPanel, ChatEntry, ChatPermissionPanel, ChatSnapshot } from '../chat/controller.js'
+import type { BackgroundAgentActivity } from '../background/activity.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from '../chat/types.js'
 import { modelDisplayName } from '../model/display.js'
 import { graphemes } from '../terminal/composer.js'
@@ -22,13 +23,13 @@ export function permissionPageSize(terminalHeight: number, optionRows: number): 
   return Math.max(3, Math.min(12, terminalHeight - optionRows - 8))
 }
 
-export function maxPermissionScroll(panel: ChatPanel, terminalHeight: number, terminalWidth: number): number {
+export function maxPermissionScroll(panel: ChatPermissionPanel, terminalHeight: number, terminalWidth: number): number {
   const width = Math.min(panel.diff ? 100 : 68, terminalWidth - 4) - 6
   return Math.max(0, permissionLines(panel, width).length - permissionPageSize(terminalHeight, panel.rows.length))
 }
 
 export function permissionLines(
-  panel: ChatPanel,
+  panel: ChatPermissionPanel,
   width: number,
   palette: ThemeColors = getTheme(DEFAULT_CHAT_SETTINGS)
 ): DetailLine[] {
@@ -81,7 +82,7 @@ export function permissionLines(
   return lines
 }
 
-export function maxDetailScroll(panel: ChatPanel, width: number, height: number): number {
+export function maxDetailScroll(panel: ChatDetailPanel, width: number, height: number): number {
   return Math.max(0, detailLines(panel, Math.max(10, width - 8)).length - detailPageSize(height, panel.rows.length))
 }
 
@@ -94,7 +95,7 @@ interface DetailLine {
 }
 
 export function detailLines(
-  panel: ChatPanel,
+  panel: ChatDetailPanel,
   width: number,
   palette: ThemeColors = getTheme(DEFAULT_CHAT_SETTINGS)
 ): DetailLine[] {
@@ -103,11 +104,7 @@ export function detailLines(
     : wrapLines(panel.body ?? '', width).map((text) => ({ text }))
 }
 
-function activityDetailLines(
-  activity: NonNullable<ChatPanel['activity']>,
-  width: number,
-  palette: ThemeColors
-): DetailLine[] {
+function activityDetailLines(activity: BackgroundAgentActivity, width: number, palette: ThemeColors): DetailLine[] {
   const lines: DetailLine[] = []
   const push = (text: string, style: Omit<DetailLine, 'text'>, prefix = ''): void => {
     const contentWidth = Math.max(1, width - prefix.length)
