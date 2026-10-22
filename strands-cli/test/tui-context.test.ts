@@ -1,6 +1,8 @@
 import type { Agent } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+import { GoogleModel } from '@strands-agents/sdk/models/google'
+import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentModelRuntime } from '../src/tui/model/runtime.js'
@@ -56,6 +58,7 @@ describe('context window limits', () => {
     ['xai.grok-4.6', 500_000],
     ['xai.grok-4.3', 1_000_000],
     ['chat-latest', 272_000],
+    ['gpt-6-astra', 1_050_000],
     ['gpt-6.1-sol', 1_050_000],
     ['gpt-6-sol', 1_050_000],
     ['gpt-6-luna', 1_050_000],
@@ -65,13 +68,18 @@ describe('context window limits', () => {
     ['gemini-3.8-flash', 1_048_576],
     ['gemini-3.7-flash', 1_048_576],
     ['global.openai.gpt-6-astra', 1_050_000],
+    ['us.openai.gpt-6-astra', 1_050_000],
     ['us.openai.gpt-6-sol', 1_050_000],
+    ['global.openai.gpt-6-luna', 1_050_000],
     ['us.openai.gpt-6.1-sol', 1_000_000],
     ['in.openai.gpt-5.6-luna', 1_050_000],
     ['global.openai.gpt-oss-120b', 128_000],
+    ['us.openai.gpt-oss-120b', 128_000],
     ['us-gov.mistral.mistral-large-3-675b-instruct', 256_000],
     ['ap.anthropic.claude-sonnet-5-5', 1_000_000],
+    ['us.google.gemma-4-31b', 256_000],
     ['in.xai.grok-4.7', 524_288],
+    ['us.xai.grok-4.7', 524_288],
     ['arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.openai.gpt-oss-20b-1:0', 128_000],
   ])('fills missing SDK metadata for %s', (modelId, limit) => {
     expect(contextWindowLimit(new BedrockModel({ modelId }))).toBe(limit)
@@ -82,6 +90,23 @@ describe('context window limits', () => {
     vi.spyOn(model, 'getConfig').mockReturnValue({ contextWindowLimit: 100_000 })
 
     expect(contextWindowLimit(model)).toBe(100_000)
+  })
+
+  it.each([
+    ['chat-latest', 272_000],
+    ['gpt-6-astra', 1_050_000],
+    ['gpt-oss-120b', 131_072],
+    ['gpt-oss-20b', 131_072],
+  ])('uses the documented OpenAI context window for %s', (modelId, limit) => {
+    expect(contextWindowLimit(new OpenAIModel({ apiKey: 'test', modelId }))).toBe(limit)
+  })
+
+  it.each([
+    ['gemini-4-argon', 1_048_576],
+    ['gemini-3.8-flash', 1_048_576],
+    ['gemini-3.7-flash', 1_048_576],
+  ])('uses the documented Google context window for %s', (modelId, limit) => {
+    expect(contextWindowLimit(new GoogleModel({ apiKey: 'test', modelId }))).toBe(limit)
   })
 
   it('honors a configured context cap and leaves unknown models unknown', () => {
