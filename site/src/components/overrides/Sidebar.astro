@@ -179,6 +179,8 @@ const staticSlug = isLearning
     display: none;
   }
 
+  html:not([data-lang-pref='python']) .sidebar-content li:has(> [data-sidebar-lang='python']),
+  html[data-lang-pref='python'] .sidebar-content li:has(> [data-sidebar-lang='typescript']),
   html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/quickstart/typescript']),
   html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/api/typescript']) {
     display: none;
