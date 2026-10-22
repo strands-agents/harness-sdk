@@ -239,40 +239,15 @@ describe('Tracer', () => {
       expect(mockSpan.calls.recordException).toContainEqual({ exception: error, time: undefined })
     })
 
-    it('sets accumulated usage attributes', () => {
+    it('does not set usage attributes (tokens live only on the chat span)', () => {
       const tracer = new Tracer()
       const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
 
-      tracer.endAgentSpan(span, {
-        accumulatedUsage: { inputTokens: 100, outputTokens: 200, totalTokens: 300 },
-      })
+      tracer.endAgentSpan(span, { response: new Message({ role: 'assistant', content: [new TextBlock('hi')] }) })
 
-      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(100)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.output_tokens')).toBe(200)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(300)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(100)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.completion_tokens')).toBe(200)
-    })
-
-    // Accumulated usage folds cached tokens into input_tokens for disjoint-cache providers,
-    // matching the per-invocation span (OTel GenAI semconv).
-    it('includes cached tokens in accumulated input_tokens for disjoint-cache providers', () => {
-      const tracer = new Tracer()
-      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
-
-      tracer.endAgentSpan(span, {
-        accumulatedUsage: {
-          inputTokens: 10,
-          outputTokens: 20,
-          totalTokens: 58,
-          cacheReadInputTokens: 25,
-          cacheWriteInputTokens: 3,
-        },
-      })
-
-      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(38)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(38)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(58)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBeUndefined()
+      expect(mockSpan.getAttributeValue('gen_ai.usage.output_tokens')).toBeUndefined()
+      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBeUndefined()
     })
 
     it('adds response event with stable conventions', () => {
@@ -1025,54 +1000,62 @@ describe('Tracer', () => {
   })
 
   describe('Langfuse detection', () => {
-    it('sets langfuse.observation.type on agent span when OTEL_EXPORTER_OTLP_ENDPOINT contains langfuse', () => {
+    // The agent span no longer carries token usage (tokens live only on the chat span), so the
+    // former langfuse.observation.type guard is gone. Langfuse detection is still observable
+    // through _spanAttributesOnly: detected backends record message content as span attributes
+    // instead of events, even without the gen_ai_span_attributes_only opt-in.
+    it('detects langfuse via OTEL_EXPORTER_OTLP_ENDPOINT and records content as span attributes', () => {
       vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'https://us.cloud.langfuse.com')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()
-      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
 
-      tracer.endAgentSpan(span, {
-        accumulatedUsage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const inputMessages = JSON.stringify([{ role: 'user', parts: [{ type: 'text', content: 'Hi' }] }])
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'gen_ai.input.messages': inputMessages },
       })
-
-      expect(mockSpan.getAttributeValue('langfuse.observation.type')).toBe('span')
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(0)
     })
 
-    it('sets langfuse.observation.type when OTEL_EXPORTER_OTLP_TRACES_ENDPOINT contains langfuse', () => {
+    it('detects langfuse via OTEL_EXPORTER_OTLP_TRACES_ENDPOINT and records content as span attributes', () => {
       vi.stubEnv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'https://us.cloud.langfuse.com/api/public/otel/v1/traces')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()
-      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
 
-      tracer.endAgentSpan(span, {
-        accumulatedUsage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const inputMessages = JSON.stringify([{ role: 'user', parts: [{ type: 'text', content: 'Hi' }] }])
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'gen_ai.input.messages': inputMessages },
       })
-
-      expect(mockSpan.getAttributeValue('langfuse.observation.type')).toBe('span')
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(0)
     })
 
-    it('sets langfuse.observation.type when LANGFUSE_BASE_URL is set', () => {
+    it('detects langfuse via LANGFUSE_BASE_URL and records content as span attributes', () => {
       vi.stubEnv('LANGFUSE_BASE_URL', 'https://self-hosted.example.com')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()
-      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
 
-      tracer.endAgentSpan(span, {
-        accumulatedUsage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const inputMessages = JSON.stringify([{ role: 'user', parts: [{ type: 'text', content: 'Hi' }] }])
+      expect(mockSpan.calls.setAttributes).toContainEqual({
+        attributes: { 'gen_ai.input.messages': inputMessages },
       })
-
-      expect(mockSpan.getAttributeValue('langfuse.observation.type')).toBe('span')
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(0)
     })
 
-    it('does not set langfuse.observation.type when no langfuse env vars are set', () => {
+    it('does not treat as langfuse (emits content events) when no langfuse env vars are set', () => {
       vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', '')
       vi.stubEnv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', '')
       vi.stubEnv('LANGFUSE_BASE_URL', '')
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()
-      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
 
-      tracer.endAgentSpan(span, {
-        accumulatedUsage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-      })
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
 
-      expect(mockSpan.getAttributeValue('langfuse.observation.type')).toBeUndefined()
+      expect(mockSpan.getEvents('gen_ai.client.inference.operation.details')).toHaveLength(1)
     })
   })
 

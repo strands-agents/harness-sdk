@@ -538,7 +538,7 @@ describe.sequential('Telemetry Integration', () => {
   })
 
   describe('token usage accumulation', () => {
-    it('records accumulated usage on agent span across multiple cycles', async () => {
+    it('reports per-call usage only on chat spans, not the agent span', async () => {
       let callCount = 0
       const model = new TestModelProvider(() => {
         callCount++
@@ -584,14 +584,23 @@ describe.sequential('Telemetry Integration', () => {
 
       const spans = await flush()
       const agentSpan = findSpans(spans, AGENT_SPAN_PREFIX)[0]!
+      const chatSpans = findSpans(spans, MODEL_SPAN_NAME)
 
-      // Accumulated: 100+200=300 input, 50+75=125 output, 150+275=425 total
-      expect(attr(agentSpan, 'gen_ai.usage.input_tokens')).toBe(300)
-      expect(attr(agentSpan, 'gen_ai.usage.output_tokens')).toBe(125)
-      expect(attr(agentSpan, 'gen_ai.usage.total_tokens')).toBe(425)
-      // Legacy attribute names
-      expect(attr(agentSpan, 'gen_ai.usage.prompt_tokens')).toBe(300)
-      expect(attr(agentSpan, 'gen_ai.usage.completion_tokens')).toBe(125)
+      // Usage is reported exactly once per model call, on the chat spans only.
+      // The agent span must carry no usage attributes (no accumulated re-emission).
+      expect(attr(agentSpan, 'gen_ai.usage.input_tokens')).toBeUndefined()
+      expect(attr(agentSpan, 'gen_ai.usage.output_tokens')).toBeUndefined()
+      expect(attr(agentSpan, 'gen_ai.usage.total_tokens')).toBeUndefined()
+      expect(attr(agentSpan, 'gen_ai.usage.prompt_tokens')).toBeUndefined()
+      expect(attr(agentSpan, 'gen_ai.usage.completion_tokens')).toBeUndefined()
+
+      // Agent-level totals are obtained by summing the chat spans: 100+200=300 input,
+      // 50+75=125 output, 150+275=425 total.
+      expect(chatSpans).toHaveLength(2)
+      const sum = (key: string) => chatSpans.reduce((acc, s) => acc + ((attr(s, key) as number | undefined) ?? 0), 0)
+      expect(sum('gen_ai.usage.input_tokens')).toBe(300)
+      expect(sum('gen_ai.usage.output_tokens')).toBe(125)
+      expect(sum('gen_ai.usage.total_tokens')).toBe(425)
     })
 
     it('records per-call usage on individual model spans', async () => {
