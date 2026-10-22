@@ -8,6 +8,7 @@ messages by type.
 """
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Literal
 
 from ....event_loop.streaming import process_stream
@@ -150,6 +151,7 @@ async def generate_summary(
     messages_to_summarize: list[Message],
     model: "Model",
     system_prompt: str | None = None,
+    cancel_signal: threading.Event | None = None,
 ) -> Message:
     """Generate a summary of the provided messages by calling the model directly.
 
@@ -161,6 +163,7 @@ async def generate_summary(
         model: The model used to generate the summary.
         system_prompt: Optional system prompt override. Defaults to
             :data:`DEFAULT_SUMMARIZATION_PROMPT`.
+        cancel_signal: Event the model observes to abort an in-flight summary request.
 
     Returns:
         A user-role message containing the model-generated summary.
@@ -178,6 +181,7 @@ async def generate_summary(
         summarization_messages,
         tool_specs=None,
         system_prompt=resolved_system_prompt,
+        cancel_signal=cancel_signal,
     )
 
     result_message: Message | None = None

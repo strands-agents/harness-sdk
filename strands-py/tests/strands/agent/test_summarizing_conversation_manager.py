@@ -1,3 +1,4 @@
+import threading
 from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
@@ -52,6 +53,7 @@ class MockAgent:
         self.model = Mock()
         self.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(self.summary_response))
         self.aux_model = self.model
+        self.cancel_signal = threading.Event()
         self.call_tracker = Mock()
         self.tool_registry = Mock()
         self.tool_names = []

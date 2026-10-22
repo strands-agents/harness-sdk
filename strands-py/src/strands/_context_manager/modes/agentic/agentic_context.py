@@ -135,7 +135,7 @@ async def summarize_context(
         )
 
     try:
-        summary_message = await generate_summary(eligible, agent.aux_model)
+        summary_message = await generate_summary(eligible, agent.aux_model, cancel_signal=agent.cancel_signal)
     except Exception as err:
         return f"Summarization failed: {err}"
 
