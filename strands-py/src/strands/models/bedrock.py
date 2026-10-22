@@ -946,11 +946,11 @@ class BedrockModel(Model):
         filtered_unknown_members = False
         dropped_reasoning_content = False
 
-        # Pre-compute the index of the last user message containing text or image content.
-        # This ensures guardContent wrapping is maintained across tool execution cycles, where
-        # the final message in the list is a toolResult (role=user) rather than text/image content.
+        # Tool results also have role=user; only user text/images belong in guardContent.
+        has_guardrail = bool(self.config.get("guardrail_id") and self.config.get("guardrail_version"))
+        guardrail_latest = self.config.get("guardrail_latest_message", False)
         last_user_text_idx = None
-        if self.config.get("guardrail_latest_message", False):
+        if guardrail_latest:
             last_user_text_idx = self._find_last_user_text_message_index(messages)
 
         for idx, message in enumerate(messages):
@@ -973,9 +973,13 @@ class BedrockModel(Model):
                 if formatted_content is None:
                     continue
 
-                # Wrap text or image content in guardContent if this is the last user text/image message.
                 # Bedrock guardContent supports a narrower set of image formats than image content.
-                if idx == last_user_text_idx and ("text" in formatted_content or "image" in formatted_content):
+                should_wrap = idx == last_user_text_idx if guardrail_latest else has_guardrail
+                if (
+                    message["role"] == "user"
+                    and should_wrap
+                    and ("text" in formatted_content or "image" in formatted_content)
+                ):
                     if "text" in formatted_content:
                         # Bedrock rejects a blank guardContent block, and there is nothing to screen.
                         if formatted_content["text"].strip():

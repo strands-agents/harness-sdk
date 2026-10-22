@@ -482,7 +482,7 @@ def test_format_request_guardrail_config(model, messages, model_id, guardrail_co
         },
         "inferenceConfig": {},
         "modelId": model_id,
-        "messages": messages,
+        "messages": [{"role": "user", "content": [{"guardContent": {"text": {"text": "test"}}}]}],
         "system": [],
     }
 
@@ -505,7 +505,7 @@ def test_format_request_guardrail_config_without_trace_or_stream_processing_mode
         },
         "inferenceConfig": {},
         "modelId": model_id,
-        "messages": messages,
+        "messages": [{"role": "user", "content": [{"guardContent": {"text": {"text": "test"}}}]}],
         "system": [],
     }
 
@@ -6453,3 +6453,95 @@ async def test_stream_cancel_signal_consumes_detached_task_exception(bedrock_cli
     # The detached worker now fails; its exception must be consumed, not reported to the loop.
     await asyncio.sleep(0.2)
     assert not captured, f"detached task exception was not consumed: {captured}"
+
+
+@pytest.mark.asyncio
+async def test_format_request_guardrail_default_wraps_all_user_text(model):
+    """Test that guardrails without guardrail_latest_message wrap ALL user text/image in guardContent."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+    )
+
+    messages = [
+        {"role": "user", "content": [{"text": "First message"}]},
+        {"role": "assistant", "content": [{"text": "First response"}]},
+        {"role": "user", "content": [{"text": "Second message"}]},
+    ]
+
+    request = model.format_request(messages)
+    formatted_messages = request["messages"]
+
+    # Both user text messages should be wrapped in guardContent
+    assert "guardContent" in formatted_messages[0]["content"][0]
+    assert formatted_messages[0]["content"][0]["guardContent"]["text"]["text"] == "First message"
+
+    # Assistant message should NOT be wrapped
+    assert "text" in formatted_messages[1]["content"][0]
+    assert formatted_messages[1]["content"][0]["text"] == "First response"
+
+    assert "guardContent" in formatted_messages[2]["content"][0]
+    assert formatted_messages[2]["content"][0]["guardContent"]["text"]["text"] == "Second message"
+
+
+@pytest.mark.asyncio
+async def test_format_request_guardrail_default_excludes_tool_results(model):
+    """Test that tool results are NOT wrapped in guardContent, preventing false-positive guardrail detections."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+    )
+
+    messages = [
+        {"role": "user", "content": [{"text": "Call the identity tool"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": "tool-1", "name": "identity_tool", "input": {}}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "tool-1",
+                        "content": [{"text": "You are Test Admin User."}],
+                        "status": "success",
+                    }
+                }
+            ],
+        },
+        {"role": "user", "content": [{"text": "Hi there"}]},
+    ]
+
+    request = model.format_request(messages)
+    formatted_messages = request["messages"]
+
+    # User text should be wrapped (guardrail evaluates it)
+    assert "guardContent" in formatted_messages[0]["content"][0]
+    assert formatted_messages[0]["content"][0]["guardContent"]["text"]["text"] == "Call the identity tool"
+
+    # Tool result should NOT be wrapped (excluded from guardrail scanning)
+    assert "toolResult" in formatted_messages[2]["content"][0]
+    assert "guardContent" not in formatted_messages[2]["content"][0]
+
+    # Second user text should also be wrapped
+    assert "guardContent" in formatted_messages[3]["content"][0]
+    assert formatted_messages[3]["content"][0]["guardContent"]["text"]["text"] == "Hi there"
+
+
+@pytest.mark.asyncio
+async def test_format_request_no_guardrail_no_wrapping(model):
+    """Test that without guardrails, no content is wrapped in guardContent."""
+    messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {"role": "assistant", "content": [{"text": "Hi"}]},
+    ]
+
+    request = model.format_request(messages)
+    formatted_messages = request["messages"]
+
+    assert "text" in formatted_messages[0]["content"][0]
+    assert formatted_messages[0]["content"][0]["text"] == "Hello"
+    assert "guardContent" not in formatted_messages[0]["content"][0]
