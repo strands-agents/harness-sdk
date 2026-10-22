@@ -1,0 +1,177 @@
+---
+/**
+ * Footer override — Starlight's default footer (edit link, last updated,
+ * pagination) followed by a compact site footer. Docs pages skip the full
+ * homepage footer, so this keeps the current release, a route to help, and the
+ * legal links in reach without pulling the reader out of the docs.
+ */
+import Default from '@astrojs/starlight/components/Footer.astro'
+import { pathWithBase } from '../../util/links'
+import { currentProduct } from '../../util/current-product'
+import { getReleases, latestPerStream, releaseSlug, formatChangelogDate } from '../../util/changelog'
+import { LANGUAGE_META, streamLabel, type Sdk } from '../../config/changelog'
+import { LEGAL_LINKS } from '../../config/footer'
+
+// Navbar product label → changelog product. Products without a release stream
+// (e.g. Shell) fall back to the newest release overall.
+const PRODUCT_RELEASES: Record<string, Sdk> = {
+  Harness: 'harness',
+  'Harness SDK': 'sdk',
+  Box: 'box',
+  Evals: 'evals',
+}
+
+const changelogHref = pathWithBase('/changelog/')
+const pathname = Astro.url.pathname
+// The changelog pages already lead with the latest release.
+const onChangelog = pathname.startsWith(changelogHref)
+const releases = onChangelog ? [] : await getReleases()
+const productSdk = PRODUCT_RELEASES[currentProduct(pathname)?.label ?? '']
+const shown = productSdk ? latestPerStream(releases, productSdk) : releases.slice(0, 1)
+
+const pageUrl = new URL(pathname, Astro.site).href
+const issueHref = `https://github.com/strands-agents/harness-sdk/issues/new?${new URLSearchParams({
+  template: 'documentation_improvement.yml',
+  'documentation-section': pageUrl,
+})}`
+---
+
+<Default />
+<div class="site-footer print:hidden" data-pagefind-ignore>
+  {shown.length > 0 && (
+    <p class="site-footer__row">
+      <span class="site-footer__badge">Latest</span>
+      {shown.map((release) => (
+        <span
+          class="site-footer__release"
+          data-release-lang={release.data.language ? LANGUAGE_META[release.data.language].label : undefined}
+        >
+          <a class="site-footer__version" href={pathWithBase(`/changelog/${releaseSlug(release)}/`)}>
+            {streamLabel(release.data.sdk, release.data.language)} v{release.data.version}
+          </a>
+          <span class="site-footer__muted">{formatChangelogDate(release.data.date)}</span>
+        </span>
+      ))}
+      <a class="site-footer__more" href={changelogHref}>Changelog <span aria-hidden="true">→</span></a>
+    </p>
+  )}
+  <p class="site-footer__row">
+    <a href={issueHref} target="_blank" rel="noopener">Open an issue</a>
+    <a href="https://discord.gg/strands" target="_blank" rel="noopener">Ask on Discord</a>
+  </p>
+  <ul class="site-footer__legal" role="list">
+    {LEGAL_LINKS.map((item) => (
+      <li>
+        <a
+          href={item.href}
+          {...(item.id ? { id: item.id } : {})}
+          {...(item.href.startsWith('http') ? { target: '_blank', rel: 'noopener' } : {})}
+        >{item.label}</a>
+      </li>
+    ))}
+    <li class="site-footer__muted">&copy; 2026 Amazon Web Services, Inc. or its affiliates</li>
+  </ul>
+</div>
+
+<script>
+  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
+
+  // For products released per language, show only the stream matching the
+  // reader's language preference.
+  function showLanguage(lang: string) {
+    const releases = document.querySelectorAll<HTMLElement>('.site-footer [data-release-lang]')
+    const match = [...releases].some((el) => el.dataset.releaseLang === lang)
+    releases.forEach((el) => {
+      el.hidden = match && el.dataset.releaseLang !== lang
+    })
+  }
+
+  function storedLanguage() {
+    try {
+      return localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? DEFAULT_LANGUAGE_LABEL
+    } catch {
+      return DEFAULT_LANGUAGE_LABEL
+    }
+  }
+
+  showLanguage(storedLanguage())
+  window.addEventListener('lang-change', (e) => showLanguage((e as CustomEvent<string>).detail))
+</script>
+
+<style>
+  .site-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 2.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--sl-color-hairline-shade);
+    font-size: var(--sl-text-sm);
+  }
+
+  .site-footer a {
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+  }
+
+  .site-footer .site-footer__version {
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+
+  .site-footer a:hover {
+    color: var(--sl-color-text-accent);
+    text-decoration: underline;
+  }
+
+  .site-footer__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.75rem;
+    margin: 0;
+  }
+
+  .site-footer__release {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0 0.5rem;
+  }
+
+  .site-footer__release[hidden] {
+    display: none;
+  }
+
+  .site-footer__badge {
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+
+  .site-footer__muted {
+    color: var(--sl-color-gray-3);
+  }
+
+  .site-footer__more {
+    margin-inline-start: auto;
+    font-family: var(--sl-font-mono);
+    font-weight: 600;
+  }
+
+  .site-footer__legal {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--sl-text-xs);
+  }
+
+  .site-footer__legal li:last-child {
+    margin-inline-start: auto;
+  }
+</style>

@@ -102,10 +102,13 @@ export default defineConfig({
         dark: './src/assets/logo-dark.svg',
         replacesTitle: false,
       },
+      // Shown in the docs footer; the deploy checkout uses fetch-depth: 0 so dates are accurate.
+      lastUpdated: true,
       editLink: {
         baseUrl: 'https://github.com/strands-agents/harness-sdk/edit/main/site/',
       },
       components: {
+        Footer: './src/components/overrides/Footer.astro',
         Head: './src/components/overrides/Head.astro',
         Header: './src/components/Header.astro',
         Hero: './src/components/overrides/Hero.astro',

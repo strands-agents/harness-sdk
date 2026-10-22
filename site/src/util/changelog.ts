@@ -1,5 +1,6 @@
 import { getCollection, type CollectionEntry } from 'astro:content'
 import type { ChangelogEntry } from '../content.config'
+import type { Sdk } from '../config/changelog'
 import { compareVersionDesc } from './semver'
 export { compareVersionDesc } from './semver'
 
@@ -181,4 +182,26 @@ export function getAreaCounts(entries: ChangelogEntry[]): AreaCount[] {
 
 export function formatChangelogDate(date: Date): string {
   return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/**
+ * Plain-text headline for a compact release preview: the first feature, else
+ * the first fix. `highlights` is skipped because it's multi-line markdown.
+ */
+export function releaseHeadline(release: ChangelogRelease): string | undefined {
+  const { features, fixes } = groupEntries(release.data.entries)
+  return (features[0] ?? fixes[0])?.title
+}
+
+/**
+ * Newest release of each of a product's streams: one per language, or one for
+ * single-stream products. Expects newest-first input (see getReleases).
+ */
+export function latestPerStream(releases: ChangelogRelease[], sdk: Sdk): ChangelogRelease[] {
+  const seen = new Set<string>()
+  return releases.filter((r) => {
+    if (r.data.sdk !== sdk || seen.has(streamKey(r))) return false
+    seen.add(streamKey(r))
+    return true
+  })
 }
