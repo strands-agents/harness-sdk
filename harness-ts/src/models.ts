@@ -92,6 +92,7 @@ const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as 
 const BEDROCK_GPT_OSS_LEVELS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
+const BEDROCK_GEMMA_LEVELS = ['low', 'medium', 'high'] as const
 const GOOGLE_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 const NO_THINKING_LEVELS: readonly string[] = []
 
@@ -173,6 +174,9 @@ function bedrockLevels(modelId: string): readonly string[] {
   if (family.startsWith('xai.')) {
     return BEDROCK_XAI_LEVELS
   }
+  if (family.startsWith('google.gemma-4-')) {
+    return BEDROCK_GEMMA_LEVELS
+  }
   return NO_THINKING_LEVELS
 }
 
@@ -200,6 +204,9 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
     return { reasoning_effort: effort }
   }
   if (family.startsWith('xai.')) {
+    return { reasoning_effort: effort }
+  }
+  if (family.startsWith('google.gemma-4-')) {
     return { reasoning_effort: effort }
   }
   return undefined

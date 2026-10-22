@@ -206,6 +206,7 @@ describe('AgentModelRuntime thinking controls', () => {
     'us.anthropic.claude-sonnet-4-6-v1:0',
     'openai.gpt-oss-120b-1:0',
     'us.qwen.qwen3-32b-v1:0',
+    'google.gemma-4-31b',
   ])('offers only levels the library accepts for %s', async (modelId) => {
     const offered = runtimeFor(modelId, 'auto')
       .listEfforts()
@@ -219,6 +220,13 @@ describe('AgentModelRuntime thinking controls', () => {
 
     expect(offered.length).toBeGreaterThan(0)
     expect(rejected).toEqual([])
+  })
+
+  it('offers Gemma 4 effort levels with High selected by default', () => {
+    const runtime = runtimeFor('google.gemma-4-31b', 'auto')
+
+    expect(runtime.listEfforts().map((option) => option.id)).toEqual(['low', 'medium', 'high'])
+    expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })
   })
 
   it('offers Astra effort levels with High selected by default', () => {

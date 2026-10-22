@@ -181,6 +181,7 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
         ("bedrock/openai.gpt-oss-120b-1:0", ("additional_request_fields", "reasoning_effort")),
         ("bedrock/qwen.qwen3-32b-v1:0", ("additional_request_fields", "reasoning_effort")),
         ("bedrock/us.xai.grok-4", ("additional_request_fields", "reasoning_effort")),
+        ("bedrock/google.gemma-4-31b", ("additional_request_fields", "reasoning_effort")),
         (
             "bedrock/global.amazon.nova-2-lite-v1:0",
             ("additional_request_fields", "reasoningConfig", "maxReasoningEffort"),
@@ -259,6 +260,16 @@ def test_gpt_oss_on_bedrock_uses_its_reasoning_field_and_levels():
     assert "additional_request_fields" not in resolve("bedrock/openai.gpt-oss-120b-1:0", effort="off").config
     with pytest.raises(ValueError, match="not supported by Bedrock model openai.gpt-oss-120b-1:0"):
         resolve("bedrock/openai.gpt-oss-120b-1:0", effort="max")
+
+
+def test_gemma_4_on_bedrock_uses_its_reasoning_field_and_levels():
+    model = resolve("bedrock/google.gemma-4-31b", effort="medium")
+    assert model.config["additional_request_fields"] == {"reasoning_effort": "medium"}
+    assert supports_thinking("bedrock/google.gemma-4-31b") is True
+    # No ``none`` level: off drops the reasoning block instead.
+    assert "additional_request_fields" not in resolve("bedrock/google.gemma-4-31b", effort="off").config
+    with pytest.raises(ValueError, match="not supported by Bedrock model google.gemma-4-31b"):
+        resolve("bedrock/google.gemma-4-31b", effort="max")
 
 
 def test_nova_2_on_bedrock_uses_reasoning_config():

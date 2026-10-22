@@ -97,6 +97,7 @@ _BEDROCK_GPT_OSS_LEVELS = ("low", "medium", "high")
 _BEDROCK_QWEN_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
 _BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
+_BEDROCK_GEMMA_LEVELS = ("low", "medium", "high")
 _GOOGLE_LEVELS = ("minimal", "low", "medium", "high")
 
 _ADAPTIVE_THINKING_SINCE = {"opus": (4, 6), "sonnet": (4, 6), "haiku": (5, 5)}
@@ -160,6 +161,8 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
         return _BEDROCK_QWEN_LEVELS
     if family.startswith("xai."):
         return _BEDROCK_XAI_LEVELS
+    if family.startswith("google.gemma-4-"):
+        return _BEDROCK_GEMMA_LEVELS
     return ()
 
 
@@ -188,6 +191,8 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
     if family.startswith("qwen."):
         return {"reasoning_effort": effort}
     if family.startswith("xai."):
+        return {"reasoning_effort": effort}
+    if family.startswith("google.gemma-4-"):
         return {"reasoning_effort": effort}
     return None
 

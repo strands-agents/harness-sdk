@@ -12,6 +12,7 @@ const BEDROCK_GPT_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as
 const BEDROCK_GPT_OSS_EFFORTS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
+const BEDROCK_GEMMA_EFFORTS = ['low', 'medium', 'high'] as const
 /**
  * The CLI's loose runtime form of an effort setting: a level name, `auto`, or a toggle. Narrowed
  * to the library's `Effort` with `profileEffort()` before it reaches `createHarness`.
@@ -148,6 +149,9 @@ function effortLevels(modelId: string): readonly string[] {
   }
   if (family.startsWith('xai.')) {
     return BEDROCK_XAI_EFFORTS
+  }
+  if (family.startsWith('google.gemma-4-')) {
+    return BEDROCK_GEMMA_EFFORTS
   }
   return []
 }

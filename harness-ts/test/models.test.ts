@@ -145,6 +145,16 @@ describe('resolveModel', () => {
     )
   })
 
+  it('uses the Gemma 4 Bedrock reasoning field and levels', async () => {
+    const model = await resolve('bedrock/google.gemma-4-31b', 'medium')
+    expect(model.getConfig().additionalRequestFields).toEqual({
+      reasoning_effort: 'medium',
+    })
+    await expect(resolve('bedrock/google.gemma-4-31b', 'max')).rejects.toThrow(
+      'not supported by Bedrock model google.gemma-4-31b'
+    )
+  })
+
   it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
     'resolves Astra effort for %s',
     async (modelId) => {
@@ -566,6 +576,7 @@ describe('default effort', () => {
     ['bedrock/openai.gpt-oss-120b-1:0', ['additionalRequestFields', 'reasoning_effort']],
     ['bedrock/qwen.qwen3-32b-v1:0', ['additionalRequestFields', 'reasoning_effort']],
     ['bedrock/us.xai.grok-4', ['additionalRequestFields', 'reasoning_effort']],
+    ['bedrock/google.gemma-4-31b', ['additionalRequestFields', 'reasoning_effort']],
     ['anthropic/claude-opus-5', ['params', 'output_config', 'effort']],
     ['openai/gpt-5.6-sol', ['params', 'reasoning', 'effort']],
     ['bedrock-mantle/openai.gpt-5.6-sol', ['params', 'reasoning', 'effort']],
