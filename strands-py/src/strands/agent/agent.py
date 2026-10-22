@@ -88,6 +88,7 @@ from ..plugins import Plugin
 from ..plugins.registry import _PluginRegistry
 from ..sandbox import Sandbox
 from ..sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
+from ..session.repository_session_manager import RepositorySessionManager
 from ..session.session_manager import SessionManager
 from ..storage import Storage
 from ..telemetry.metrics import EventLoopMetrics
@@ -341,6 +342,9 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to None.
             session_manager: Manager for handling agent sessions including conversation history and state.
                 If provided, enables session-based persistence and state management.
+                A :class:`~strands.session.repository_session_manager.RepositorySessionManager`
+                (including ``FileSessionManager`` and ``S3SessionManager``) cannot be combined with
+                ``context_manager``; use :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager`.
             memory_manager: Cross-session memory manager, as a
                 :class:`~strands.memory.MemoryManager` or a
                 :class:`~strands.memory.MemoryManagerConfig` (auto-wrapped). Registers its
@@ -384,7 +388,8 @@ class Agent(AgentBase, LocalAgent):
                 None (disabled).
 
         Raises:
-            ValueError: If agent id contains path separators.
+            ValueError: If agent id contains path separators, or if ``context_manager`` is combined
+                with a ``RepositorySessionManager``.
             TypeError: If ``aux_model`` is not a ``Model``, a string, or ``None``.
         """
         self._model_router: ModelRouter | None = None
@@ -426,6 +431,12 @@ class Agent(AgentBase, LocalAgent):
             raise ValueError(
                 "context_manager and conversation_manager cannot be used with a stateful model. "
                 "The model manages conversation state server-side."
+            )
+
+        if isinstance(session_manager, RepositorySessionManager) and context_manager not in (None, False):
+            raise ValueError(
+                "context_manager cannot be used with a RepositorySessionManager. "
+                "Use SnapshotSessionManager, or pass context_manager=False."
             )
 
         from .._context_manager.context_manager import ContextManager as _ContextManager
