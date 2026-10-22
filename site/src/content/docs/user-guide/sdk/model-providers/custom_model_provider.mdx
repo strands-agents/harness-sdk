@@ -8,6 +8,8 @@ integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
   - path: strands-ts/src/models/model.ts
+  - path: strands-ts/src/testing/mock-message-model.ts
+  - path: strands-ts/src/testing/test-model-provider.ts
 ---
 
 When Strands Agents doesn't ship a provider for the model you want to run, implement the `Model` interface yourself. A custom model provider connects any LLM service to the agent loop while keeping the integration private to your codebase.
@@ -20,6 +22,48 @@ into requests for your model API. It converts the API's responses into Strands A
 streaming events.
 
 The agent loop consumes those events to assemble the response and run requested tools.
+
+## Test agents offline
+
+Run an agent with scripted model responses to test application behavior without
+model credentials or a model service. These testing model providers are available
+in the TypeScript SDK.
+
+<Tabs>
+<Tab label="TypeScript">
+
+Use `MockMessageModel` to describe responses as content blocks:
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/custom_model_provider_imports.ts:offline"
+
+--8<-- "user-guide/sdk/model-providers/custom_model_provider.ts:offline"
+```
+
+`addTurn` accepts a content block, an array of blocks, or an `Error`. Its optional
+second argument supplies `usage` or overrides `stopReason`. Plain content blocks
+need a `type` discriminator, as shown above.
+
+A single configured turn repeats on every call. Multiple turns are consumed in
+order, and another call after exhaustion throws. `callCount` counts streams when
+consumption starts, including attempts that throw. Create a new model instance for
+each independent test.
+
+Scripted tool-use blocks still execute the agent's registered tools. Use tools
+with controlled side effects when testing tool calling. Media and JSON blocks do
+not simulate a model provider's multimodal responses.
+
+For exact streaming events or errors between events, use `TestModelProvider` from
+the same subpath. Its constructor accepts an async generator factory, invoked
+afresh for each consumed stream. `setEventGenerator` changes subsequent streams.
+Both helpers support `getConfig` and `updateConfig`; their scripted responses do
+not depend on those settings, messages, or stream options.
+
+The subpath works in Node.js and browser bundles without a test framework. Import
+from `@strands-agents/sdk/testing`; internal test fixtures are not public API.
+
+</Tab>
+</Tabs>
 
 ## Implementation Overview
 
