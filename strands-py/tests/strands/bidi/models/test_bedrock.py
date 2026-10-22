@@ -15,6 +15,7 @@ import asyncio
 import base64
 import concurrent.futures
 import json
+import threading
 from dataclasses import asdict
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
@@ -222,6 +223,79 @@ async def test_start_sets_strands_user_agent_on_bedrock_runtime_client(model_id,
         config = mock_cls.call_args.kwargs["config"]
         assert config.user_agent_extra == "strands-agents"
         assert isinstance(config.transport, _BedrockAWSCRTHTTPClient)
+
+
+class _RecordingCredentials:
+    """Credentials that record the thread each attribute is read from."""
+
+    def __init__(self, threads: list[int]) -> None:
+        self._threads = threads
+
+    @property
+    def access_key(self) -> str:
+        self._threads.append(threading.get_ident())
+        return "access-key"
+
+    @property
+    def secret_key(self) -> str:
+        self._threads.append(threading.get_ident())
+        return "secret-key"
+
+    @property
+    def token(self) -> str:
+        self._threads.append(threading.get_ident())
+        return "session-token"
+
+
+class _RecordingSession:
+    """A boto3 session stand-in that records the thread credentials are resolved on."""
+
+    def __init__(self) -> None:
+        self.region_name = "us-east-1"
+        self.threads: list[int] = []
+
+    def get_credentials(self) -> _RecordingCredentials:
+        self.threads.append(threading.get_ident())
+        return _RecordingCredentials(self.threads)
+
+
+@pytest.mark.asyncio
+async def test_start_resolves_credentials_off_the_event_loop(model_id, mock_stream):
+    """Resolving the boto3 credential chain must not run on the event loop.
+
+    The default chain can reach IMDS, SSO or STS, and botocore resolves deferred credentials
+    lazily on the first attribute read, so both the lookup and the reads below it are blocking.
+    """
+    with patch("strands.bidi.models.bedrock.AsyncBedrockRuntimeClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.invoke_model_with_bidirectional_stream = AsyncMock(return_value=mock_stream)
+        mock_cls.return_value = mock_instance
+
+        event_loop_thread = threading.get_ident()
+        session = _RecordingSession()
+        model = BedrockNovaSonicModel(model_id=model_id, boto_session=session)
+
+        await model.start()
+
+        await model.stop()
+
+    assert session.threads, "the credential chain was never resolved"
+    assert event_loop_thread not in session.threads
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_missing_credentials(model_id):
+    """A session that resolves to no credentials fails before any client is created."""
+    session = Mock(region_name="us-east-1")
+    session.get_credentials.return_value = None
+
+    with patch("strands.bidi.models.bedrock.AsyncBedrockRuntimeClient") as mock_cls:
+        model = BedrockNovaSonicModel(model_id=model_id, boto_session=session)
+
+        with pytest.raises(ValueError, match="no AWS credentials found"):
+            await model.start()
+
+        assert mock_cls.call_count == 0
 
 
 @pytest.mark.asyncio
