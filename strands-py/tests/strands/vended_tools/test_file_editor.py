@@ -248,16 +248,30 @@ class TestStrReplace:
         assert (tmp_path / "test.txt").read_text() == "Line 1\nLine 2\nLine 3"
 
     @pytest.mark.asyncio
-    async def test_multiline(self, editor, ctx, tmp_path):
-        file_path = _write(tmp_path / "test.txt", "Line 1\nOLD LINE 1\nOLD LINE 2\nLine 4")
-        await editor(
+    @pytest.mark.parametrize("old_line_count", [2, 10])
+    @pytest.mark.parametrize("new_str", ["NEW LINE", "NEW LINE 1\nNEW LINE 2", ""])
+    async def test_multiline(self, editor, ctx, tmp_path, old_line_count, new_str):
+        # The preview includes the edited lines after shrinking a large block (#4404).
+        old_str = "\n".join(f"OLD LINE {number}" for number in range(1, old_line_count + 1))
+        file_path = _write(tmp_path / "test.txt", f"Line 1\n{old_str}\nLine 4")
+        tru_result = await editor(
             command="str_replace",
             path=file_path,
             tool_context=ctx,
-            old_str="OLD LINE 1\nOLD LINE 2",
-            new_str="NEW LINE",
+            old_str=old_str,
+            new_str=new_str,
         )
-        assert (tmp_path / "test.txt").read_text() == "Line 1\nNEW LINE\nLine 4"
+        tru_content = (tmp_path / "test.txt").read_text()
+        exp_content = f"Line 1\n{new_str}\nLine 4"
+        assert tru_content == exp_content
+
+        exp_lines = "\n".join(f"{number:>6}  {line}" for number, line in enumerate(exp_content.split("\n"), start=1))
+        exp_result = (
+            f"The file {file_path} has been edited. "
+            f"Here's the result of running `cat -n` on a snippet of {file_path}:\n{exp_lines}\n"
+            "Review the changes and make sure they are as expected. Edit the file again if necessary."
+        )
+        assert tru_result == exp_result
 
     @pytest.mark.asyncio
     async def test_preserves_dollar_patterns_literally(self, editor, ctx, tmp_path):
