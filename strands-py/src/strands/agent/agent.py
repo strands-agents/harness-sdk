@@ -1864,12 +1864,20 @@ class Agent(AgentBase, LocalAgent):
                     and event.chunk.get("redactContent")
                     and event.chunk["redactContent"].get("redactUserContentMessage")
                 ):
-                    self.messages[-1]["content"] = self._redact_user_content(
-                        self.messages[-1]["content"],
-                        str(event.chunk["redactContent"]["redactUserContentMessage"]),
+                    # Session managers may append assistant context after the user turn.
+                    last_user_message = next(
+                        (message for message in reversed(self.messages) if message["role"] == "user"),
+                        None,
                     )
-                    if self._session_manager:
-                        self._session_manager.redact_latest_message(self.messages[-1], self)
+                    if last_user_message is not None:
+                        last_user_message["content"] = self._redact_user_content(
+                            last_user_message["content"],
+                            str(event.chunk["redactContent"]["redactUserContentMessage"]),
+                        )
+                        if self._session_manager:
+                            self._session_manager.redact_latest_message(last_user_message, self)
+                    else:
+                        logger.warning("no user message found to redact | guardrail redaction skipped")
                 yield event
 
         return terminal

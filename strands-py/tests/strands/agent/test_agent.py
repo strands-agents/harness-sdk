@@ -26,7 +26,7 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.agent.state import AgentState
 from strands.handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
-from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToolCallEvent
+from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToolCallEvent, MessageAddedEvent
 from strands.interrupt import Interrupt, PendingToolExecution
 from strands.memory import MemoryManager, MemoryManagerConfig
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
@@ -1928,6 +1928,27 @@ def test_agent_restored_from_session_management_with_redacted_input():
 
     # Assert that the restored agent redacted message is equal to the original agent
     assert agent.messages[0] == agent_2.messages[0]
+
+
+def test_agent_redacts_user_message_not_ltm_context():
+    """Guardrail redaction preserves trailing session context (#1639)."""
+    mocked_model = MockedModelProvider(
+        [{"redactedUserContent": "BLOCKED!", "redactedAssistantContent": "INPUT BLOCKED!"}]
+    )
+    agent = Agent(model=mocked_model, callback_handler=None)
+    ltm_message = {"role": "assistant", "content": [{"text": "<user_context>likes cats</user_context>"}]}
+
+    def append_ltm_context(event):
+        if event.message["role"] == "user":
+            event.agent.messages.append(copy.deepcopy(ltm_message))
+
+    agent.hooks.add_callback(MessageAddedEvent, append_ltm_context)
+    agent("Tell me something bad")
+
+    user_messages = [message for message in agent.messages if message["role"] == "user"]
+    assert len(user_messages) == 1
+    assert user_messages[0]["content"] == [{"text": "BLOCKED!"}]
+    assert agent.messages[1] == ltm_message
 
 
 def test_agent_restored_from_session_management_with_correct_index():
