@@ -79,7 +79,7 @@ class _AgentAsTool(AgentTool):
             description: Tool description. Defaults to the agent's description, or a
                 generic description if the agent has no description set.
             preserve_context: Whether to preserve the agent's conversation history across
-                invocations. When False, the agent's messages and state are reset to the
+                invocations. When False, the agent's messages, state, and model state are reset to the
                 values they had at construction time before each call, ensuring every
                 invocation starts from the same baseline regardless of any external
                 interactions with the agent. Defaults to False.
@@ -106,6 +106,7 @@ class _AgentAsTool(AgentTool):
         # restore it before each invocation. This mirrors GraphNode.reset_executor_state().
         self._initial_messages: Messages = []
         self._initial_state: AgentState = AgentState()
+        self._initial_model_state: dict[str, Any] = {}
         # Serialize access so _reset_agent_state + stream_async are atomic.
         # threading.Lock (not asyncio.Lock) because run_async() may create
         # separate event loops in different threads.
@@ -120,6 +121,7 @@ class _AgentAsTool(AgentTool):
                 )
             self._initial_messages = copy.deepcopy(agent.messages)
             self._initial_state = AgentState(agent.state.get())
+            self._initial_model_state = copy.deepcopy(agent._model_state)
 
     @property
     def agent(self) -> Agent:
@@ -342,7 +344,7 @@ class _AgentAsTool(AgentTool):
     def _reset_agent_state(self, tool_use_id: str) -> None:
         """Reset the wrapped agent to its initial state.
 
-        Restores messages, state and interrupt state to the values captured at construction time.
+        Restores messages, state, model state, and interrupt state to the values captured at construction time.
         This mirrors the pattern used by ``GraphNode.reset_executor_state()``.
 
         Args:
@@ -355,6 +357,7 @@ class _AgentAsTool(AgentTool):
         )
         self._agent.messages = copy.deepcopy(self._initial_messages)
         self._agent.state = AgentState(self._initial_state.get())
+        self._agent._model_state = copy.deepcopy(self._initial_model_state)
         self._agent._interrupt_state = _InterruptState()
 
     def _is_resuming(self, parent: Agent, prefix: str) -> bool:

@@ -1179,7 +1179,7 @@ class Agent(AgentBase, LocalAgent):
             description: Tool description. Defaults to the agent's description, or a
                 generic description if the agent has no description set.
             preserve_context: Whether to preserve the agent's conversation history across
-                invocations. When False, the agent's messages and state are reset to the
+                invocations. When False, the agent's messages, state, and model state are reset to the
                 values they had at construction time before each call, ensuring every
                 invocation starts from the same baseline regardless of any external
                 interactions with the agent. Defaults to False.
