@@ -180,6 +180,93 @@ describe('Model', () => {
       })
     })
 
+    describe('when streaming whitespace-only text blocks', () => {
+      it('keeps them when the message has other content', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'First' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: '\n' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Second' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message).toEqual({
+          type: 'message',
+          role: 'assistant',
+          content: [
+            { type: 'textBlock', text: 'First' },
+            { type: 'textBlock', text: '\n' },
+            { type: 'textBlock', text: 'Second' },
+          ],
+          trackingId: anyTrackingId,
+        })
+      })
+
+      it('keeps them alongside non-text content', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool1', name: 'get_weather' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"city": "Paris"}' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: '\n' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message).toEqual({
+          type: 'message',
+          role: 'assistant',
+          content: [
+            { type: 'toolUseBlock', toolUseId: 'tool1', name: 'get_weather', input: { city: 'Paris' } },
+            { type: 'textBlock', text: '\n' },
+          ],
+          trackingId: anyTrackingId,
+        })
+      })
+
+      it('drops them when they are the only content', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: '\n' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message).toEqual({
+          type: 'message',
+          role: 'assistant',
+          content: [],
+          trackingId: anyTrackingId,
+        })
+      })
+    })
+
     describe('when streaming tool use', () => {
       it('yields complete tool use block', async () => {
         const provider = new TestModelProvider(async function* () {
