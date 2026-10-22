@@ -1726,7 +1726,7 @@ class BedrockModel(Model):
 
                     # Bedrock reports an output content-filter block as a stream error, not a messageStop.
                     # Keep streamed text; drop an unfinished tool use or reasoning block.
-                    logger.debug(
+                    logger.info(
                         "text_block_open=<%s> | output blocked by content filter, ending stream", text_block_open
                     )
                     if text_block_open:
