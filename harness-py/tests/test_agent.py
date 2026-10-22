@@ -313,16 +313,19 @@ class TestBuiltinToolsUnion:
     def test_web_fetch_model_config_reaches_the_summarizer(self, monkeypatch):
         seen: list = []
 
-        def spy(main_model, web_fetch_model):
-            seen.append(web_fetch_model)
-            return resolve_web_fetch_model(main_model, web_fetch_model)
+        def spy(main_model, web_fetch_model, **kwargs):
+            seen.append((web_fetch_model, kwargs))
+            return resolve_web_fetch_model(main_model, web_fetch_model, **kwargs)
 
         monkeypatch.setattr(agent_module, "resolve_web_fetch_model", spy)
         create_harness(builtin_tools={"web_fetch": {"model": "openai/gpt-5-mini"}})
-        assert seen == ["openai/gpt-5-mini"]
+        assert seen == [("openai/gpt-5-mini", {"warn_unmapped_family": True})]
+        seen.clear()
+        create_harness(builtin_tools={"web_fetch": {"quiet_fallback": True}})
+        assert seen == [(None, {"warn_unmapped_family": False})]
         seen.clear()
         create_harness(builtin_tools=["web_fetch"])
-        assert seen == [None]
+        assert seen == [(None, {"warn_unmapped_family": True})]
 
     @pytest.mark.parametrize(
         ("name", "factory", "config"),
