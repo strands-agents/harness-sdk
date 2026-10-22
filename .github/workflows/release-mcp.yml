@@ -169,7 +169,7 @@ jobs:
       contents: read
     steps:
       - name: Download build output
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: mcp-pypi-build-output
           path: dist
@@ -229,7 +229,7 @@ jobs:
           twine check dist/*
 
       - name: Upload verified bundle for publish
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: mcp-pypi-dist-bundle
           path: dist/*
@@ -305,7 +305,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release notes artifact
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: mcp-release-notes
           path: release-notes.md
@@ -358,7 +358,7 @@ jobs:
           persist-credentials: true
 
       - name: Download release notes artifact
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: mcp-release-notes
 
@@ -445,7 +445,7 @@ jobs:
       contents: read
     steps:
       - name: Download verified dists
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: mcp-pypi-dist-bundle
           path: dist

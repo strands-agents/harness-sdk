@@ -217,7 +217,7 @@ jobs:
       contents: read
     steps:
       - name: Download build output
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: npm-build-output
           path: dist-npm
@@ -259,7 +259,7 @@ jobs:
           echo "All $checked tarball(s) stamped with version $EXPECTED"
 
       - name: Upload verified tarball for publish
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: npm-pack-bundle
           path: dist-npm/*.tgz
@@ -337,7 +337,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release notes artifact
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release-notes
           path: release-notes.md
@@ -387,7 +387,7 @@ jobs:
           persist-credentials: true
 
       - name: Download release notes artifact
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: release-notes
 
@@ -488,7 +488,7 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Download verified tarball
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           name: npm-pack-bundle
           path: dist-npm

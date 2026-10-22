@@ -9,6 +9,7 @@ instructions: |
   Issues about hook lifecycle events belong to area-hooks even if they mention tools or agents.
   Guardrails and content filtering belong to area-interventions, not area-hooks.
   Documentation content issues belong to documentation, not area-devx.
+  Anything about adding or updating an integration in the integrations catalog (entries under site/src/content/catalog, the catalog submission process, catalog site pages) belongs to area-catalog; area-catalog takes priority over documentation for catalog entry submissions.
   Storage backend implementation issues (S3, DynamoDB, file) belong to area-persistence. Session lifecycle and interface issues belong to area-sessions.
   Context window/token management belongs to area-context.
   General agent class behavior (invocation, streaming, result handling) belongs to area-agent. Do not assign area-agent merely because an issue mentions "agent"; require evidence it concerns the core agent class itself.
@@ -26,6 +27,8 @@ labels:
     description: "Asynchronous flows, multi-threading, asyncio, concurrent execution, event loops, non-blocking operations"
   area-bidirectional-streaming:
     description: "Bidirectional streaming, BidiAgent, real-time audio/video, WebRTC, WebSocket, Bedrock Nova Sonic, Google Gemini Live, OpenAI Realtime, voice agents"
+  area-catalog:
+    description: "Integrations catalog: entries under site/src/content/catalog, submission process, catalog site pages"
   area-community:
     description: "Repo health, governance, contributor guides, release process, and CI dependency bumps. Not a fallback for issues that fit no other area."
   area-config:
