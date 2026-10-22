@@ -72,13 +72,18 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
           const media = restoreMedia(result.data as Record<string, unknown>)
           if (media) return media as unknown as JSONValue
         }
+        const shellResult = renderShellResult(result.data)
+        if (shellResult !== null) {
+          if (shellResult.length <= maxChars) return shellResult
+          return `${shellResult.slice(0, maxChars)}\n\n[truncated]`
+        }
         const serialized = JSON.stringify(result.data)
         if (serialized.length <= maxChars) return result.data as JSONValue
         return `${serialized.slice(0, maxChars)}\n\n[truncated]`
       }
 
-      const text = extractText(result.data)
-      if (!text || !isSearchableContent('text/plain')) {
+      const text = renderShellResult(result.data) ?? extractText(result.data)
+      if (text === null || !isSearchableContent('text/plain')) {
         return `Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.`
       }
 
@@ -112,6 +117,39 @@ function restoreMedia(data: Record<string, unknown>): ImageBlock | DocumentBlock
   if ('image' in data) return ImageBlock.fromJSON(data as Parameters<typeof ImageBlock.fromJSON>[0])
   if ('document' in data) return DocumentBlock.fromJSON(data as Parameters<typeof DocumentBlock.fromJSON>[0])
   if ('video' in data) return VideoBlock.fromJSON(data as Parameters<typeof VideoBlock.fromJSON>[0])
+  return null
+}
+
+function renderShellResult(data: unknown): string | null {
+  if (typeof data === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(data)
+      return renderShellResult(parsed)
+    } catch {
+      return null
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+
+  const record = data as Record<string, unknown>
+  if (typeof record.output === 'string' && typeof record.error === 'string' && Number.isInteger(record.exit_code)) {
+    const parts = [record.output]
+    if (record.error) parts.push(`[stderr]\n${record.error}`)
+    parts.push(`[exit_code: ${record.exit_code}]`)
+
+    const additionalData = Object.fromEntries(
+      Object.entries(record).filter(([key]) => !['output', 'error', 'exit_code'].includes(key))
+    )
+    if (Object.keys(additionalData).length > 0) parts.push(JSON.stringify(additionalData, null, 2))
+
+    return parts.join('\n\n')
+  }
+  for (const key of ['text', 'json'] as const) {
+    if (key in record) {
+      const rendered = renderShellResult(record[key])
+      if (rendered !== null) return rendered
+    }
+  }
   return null
 }
 
