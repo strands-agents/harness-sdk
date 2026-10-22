@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 import warnings
-from collections.abc import AsyncGenerator, Callable, Iterable, Iterator, ValuesView
+from collections.abc import AsyncGenerator, Callable, Iterable, ValuesView
 from typing import Any, Literal, TypeVar, cast
 
 import boto3
@@ -193,39 +193,17 @@ def _is_content_filter_stream_error(error: ClientError) -> bool:
     )
 
 
-def _end_stream_on_content_filter(stream: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
-    """Yield the Converse stream's events, ending with a content_filtered stop if the output is blocked.
+def _is_text_block_open(chunk: dict[str, Any], was_open: bool) -> bool:
+    """Whether a text block is still open after this Converse stream chunk.
 
-    Text streamed before the block is kept. An unfinished tool use or reasoning block is dropped, since
-    its input or signature is incomplete.
-
-    Args:
-        stream: Events from a Converse stream response.
-
-    Yields:
-        The stream's events, followed by a closing content block and content_filtered message stop when
-        the stream fails with a content-filter error.
-
-    Raises:
-        ClientError: If the stream fails with any other error.
+    Citations arrive as deltas inside a text block. Tool use and reasoning blocks never count as open text.
     """
-    text_block_open = False
-    try:
-        for chunk in stream:
-            if "contentBlockDelta" in chunk:
-                delta = chunk["contentBlockDelta"]["delta"]
-                text_block_open = "text" in delta or "citation" in delta
-            elif "contentBlockStart" in chunk or "contentBlockStop" in chunk:
-                text_block_open = False
-            yield chunk
-    except ClientError as error:
-        if not _is_content_filter_stream_error(error):
-            raise
-
-        logger.debug("text_block_open=<%s> | output blocked by content filter, ending stream", text_block_open)
-        if text_block_open:
-            yield {"contentBlockStop": {}}
-        yield {"messageStop": {"stopReason": "content_filtered"}}
+    if "contentBlockDelta" in chunk:
+        delta = chunk["contentBlockDelta"]["delta"]
+        return "text" in delta or "citation" in delta
+    if "contentBlockStart" in chunk or "contentBlockStop" in chunk:
+        return False
+    return was_open
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -1717,28 +1695,44 @@ class BedrockModel(Model):
                 redaction_emitted = False
                 saw_guardrail_trace = False
                 last_stop_reason: str | None = None
-                for chunk in _end_stream_on_content_filter(response["stream"]):
-                    if cancel_signal is not None and cancel_signal.is_set():
-                        # Closing from this thread only: botocore's teardown is not safe against a
-                        # read in flight, and this thread is the one reading.
-                        response["stream"].close()
-                        break
+                text_block_open = False
+                try:
+                    for chunk in response["stream"]:
+                        if cancel_signal is not None and cancel_signal.is_set():
+                            # Closing from this thread only: botocore's teardown is not safe against a
+                            # read in flight, and this thread is the one reading.
+                            response["stream"].close()
+                            break
 
-                    if "messageStop" in chunk:
-                        last_stop_reason = chunk["messageStop"].get("stopReason")
+                        if "messageStop" in chunk:
+                            last_stop_reason = chunk["messageStop"].get("stopReason")
 
-                    # Wait for a metadata chunk before deciding: the guardrail trace arrives there
-                    # and is authoritative for BLOCKED vs ANONYMIZED (masking).
-                    if not redaction_emitted and "metadata" in chunk:
-                        guardrail_data = chunk["metadata"].get("trace", {}).get("guardrail")
-                        if guardrail_data is not None:
-                            saw_guardrail_trace = True
-                        if self._should_redact_guardrail_content(guardrail_data, last_stop_reason):
-                            for event in self._generate_redaction_events():
-                                callback(event)
-                            redaction_emitted = True
+                        # Wait for a metadata chunk before deciding: the guardrail trace arrives there
+                        # and is authoritative for BLOCKED vs ANONYMIZED (masking).
+                        if not redaction_emitted and "metadata" in chunk:
+                            guardrail_data = chunk["metadata"].get("trace", {}).get("guardrail")
+                            if guardrail_data is not None:
+                                saw_guardrail_trace = True
+                            if self._should_redact_guardrail_content(guardrail_data, last_stop_reason):
+                                for event in self._generate_redaction_events():
+                                    callback(event)
+                                redaction_emitted = True
 
-                    callback(chunk)
+                        text_block_open = _is_text_block_open(chunk, text_block_open)
+                        callback(chunk)
+                except ClientError as error:
+                    if not _is_content_filter_stream_error(error):
+                        raise
+
+                    # Bedrock reports an output content-filter block as a stream error, not a messageStop.
+                    # Keep streamed text; drop an unfinished tool use or reasoning block.
+                    logger.debug(
+                        "text_block_open=<%s> | output blocked by content filter, ending stream", text_block_open
+                    )
+                    if text_block_open:
+                        callback({"contentBlockStop": {}})
+                    last_stop_reason = "content_filtered"
+                    callback({"messageStop": {"stopReason": "content_filtered"}})
 
                 # Safety net: guardrail_intervened but no metadata chunk arrived.
                 if not redaction_emitted and not saw_guardrail_trace and last_stop_reason == "guardrail_intervened":
