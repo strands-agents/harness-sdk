@@ -5,7 +5,7 @@ The event loop allows agents to:
 1. Process conversation messages
 2. Execute tools based on model requests
 3. Handle errors and recovery strategies
-4. Manage recursive execution cycles
+4. Run follow-up cycles until the model ends its turn
 """
 
 import copy
@@ -65,6 +65,22 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 6
 INITIAL_DELAY = 4
 MAX_DELAY = 240  # 4 minutes
+
+# Raised to the caller as-is instead of being wrapped in an EventLoopException.
+_PROPAGATED_EXCEPTIONS = (
+    StructuredOutputException,
+    EventLoopException,
+    ContextWindowOverflowException,
+    MaxTokensReachedException,
+    InterruptException,
+)
+
+
+class _ContinueEventLoop:
+    """Signals that the cycle that just ended needs another cycle to finish the turn."""
+
+
+_CONTINUE_EVENT_LOOP = _ContinueEventLoop()
 
 
 def _check_limits(agent: "Agent", limits: Limits | None) -> StopReason | None:
@@ -193,16 +209,16 @@ async def event_loop_cycle(
     structured_output_context: StructuredOutputContext | None = None,
     limits: Limits | None = None,
 ) -> AsyncGenerator[TypedEvent, None]:
-    """Execute a single cycle of the event loop.
+    """Execute event loop cycles until the model ends its turn.
 
-    This core function processes a single conversation turn, handling model inference, tool execution, and error
+    This core function processes a conversation turn, handling model inference, tool execution, and error
     recovery. It manages the entire lifecycle of a conversation turn, including:
 
     1. Initializing cycle state and metrics
     2. Checking execution limits
     3. Processing messages with the model
     4. Handling tool execution requests
-    5. Managing recursive calls for multi-turn tool interactions
+    5. Running each follow-up cycle from a loop, so the stack depth does not grow with the number of cycles
     6. Collecting and reporting metrics
     7. Error handling and recovery
 
@@ -235,7 +251,61 @@ async def event_loop_cycle(
         ContextWindowOverflowException: If the input is too large for the model
     """
     structured_output_context = structured_output_context or StructuredOutputContext()
+    follow_up_traces: list[Trace] = []
+    cycle_events = _execute_cycle(agent, invocation_state, structured_output_context, limits)
 
+    while True:
+        needs_follow_up = False
+        async for event in cycle_events:
+            if isinstance(event, _ContinueEventLoop):
+                needs_follow_up = True
+            else:
+                yield event
+
+        if not needs_follow_up:
+            break
+
+        cycle_trace = invocation_state["event_loop_cycle_trace"]
+        follow_up_trace = Trace("Recursive call", parent_id=cycle_trace.id)
+        cycle_trace.add_child(follow_up_trace)
+        follow_up_traces.append(follow_up_trace)
+
+        yield StartEvent()
+        cycle_events = _execute_follow_up_cycle(agent, invocation_state, structured_output_context, limits)
+
+    for follow_up_trace in reversed(follow_up_traces):
+        follow_up_trace.end()
+
+
+async def _execute_follow_up_cycle(
+    agent: "Agent",
+    invocation_state: dict[str, Any],
+    structured_output_context: StructuredOutputContext,
+    limits: Limits | None,
+) -> AsyncGenerator[TypedEvent | _ContinueEventLoop, None]:
+    """Execute a cycle that continues a turn, reporting its unexpected errors as event loop failures."""
+    try:
+        async for event in _execute_cycle(agent, invocation_state, structured_output_context, limits):
+            yield event
+    except _PROPAGATED_EXCEPTIONS:
+        raise
+    except Exception as error:
+        yield ForceStopEvent(reason=error)
+        logger.error("exception=<%s> | event loop cycle failed", type(error).__name__)
+        logger.debug("event loop cycle failed", exc_info=True)
+        raise EventLoopException(error, invocation_state["request_state"]) from error
+
+
+async def _execute_cycle(
+    agent: "Agent",
+    invocation_state: dict[str, Any],
+    structured_output_context: StructuredOutputContext,
+    limits: Limits | None,
+) -> AsyncGenerator[TypedEvent | _ContinueEventLoop, None]:
+    """Execute one model call and the tools it requests.
+
+    Yields ``_CONTINUE_EVENT_LOOP`` instead of a stop event when the turn needs another cycle.
+    """
     # Caps are positive and use >= semantics, so a trip implies at least one prior cycle
     # ran — meaning agent.messages[-1] exists.
     limit_stop_reason = _check_limits(agent, limits)
@@ -360,7 +430,6 @@ async def event_loop_cycle(
                     invocation_state=invocation_state,
                     tracer=tracer,
                     structured_output_context=structured_output_context,
-                    limits=limits,
                 )
                 async for tool_event in tool_events:
                     yield tool_event
@@ -394,26 +463,12 @@ async def event_loop_cycle(
                 )
 
                 tracer.end_event_loop_cycle_span(cycle_span, message)
-                events = recurse_event_loop(
-                    agent=agent,
-                    invocation_state=invocation_state,
-                    structured_output_context=structured_output_context,
-                    limits=limits,
-                )
-                async for typed_event in events:
-                    yield typed_event
+                yield _CONTINUE_EVENT_LOOP
                 return
 
             tracer.end_event_loop_cycle_span(cycle_span, message)
             yield EventLoopStopEvent(stop_reason, message, agent.event_loop_metrics, invocation_state["request_state"])
-        except (
-            StructuredOutputException,
-            EventLoopException,
-            ContextWindowOverflowException,
-            MaxTokensReachedException,
-            InterruptException,
-        ) as e:
-            # These exceptions should bubble up directly rather than get wrapped in an EventLoopException
+        except _PROPAGATED_EXCEPTIONS as e:
             tracer.end_span_with_error(cycle_span, str(e), e)
             raise
         except Exception as e:
@@ -849,8 +904,7 @@ async def _handle_tool_execution(
     invocation_state: dict[str, Any],
     tracer: Tracer,
     structured_output_context: StructuredOutputContext,
-    limits: Limits | None = None,
-) -> AsyncGenerator[TypedEvent, None]:
+) -> AsyncGenerator[TypedEvent | _ContinueEventLoop, None]:
     """Handles the execution of tools requested by the model during an event loop cycle.
 
     Args:
@@ -863,15 +917,10 @@ async def _handle_tool_execution(
         invocation_state: Additional keyword arguments, including request state.
         tracer: Tracer instance for span management.
         structured_output_context: Optional context for structured output management.
-        limits: Optional per-invocation budget caps. See :class:`~strands.types.agent.Limits`.
 
     Yields:
-        Tool stream events along with events yielded from a recursive call to the event loop. The last event is a tuple
-        containing:
-            - The stop reason,
-            - The updated message,
-            - The updated event loop metrics,
-            - The updated request state.
+        Tool stream events, followed by either an ``EventLoopStopEvent`` that ends the turn or
+        ``_CONTINUE_EVENT_LOOP`` when the model needs to be called again with the tool results.
     """
     tool_uses: list[ToolUse] = [content["toolUse"] for content in message["content"] if "toolUse" in content]
     tool_results: list[ToolResult] = []
@@ -1093,11 +1142,4 @@ async def _handle_tool_execution(
         )
         return
 
-    events = recurse_event_loop(
-        agent=agent,
-        invocation_state=invocation_state,
-        structured_output_context=structured_output_context,
-        limits=limits,
-    )
-    async for event in events:
-        yield event
+    yield _CONTINUE_EVENT_LOOP
