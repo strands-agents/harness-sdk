@@ -492,6 +492,22 @@ describe('BedrockModel', () => {
 
   describe('format_message', async () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
+    it('defaults maxTokens to the model output token limit when not configured', async () => {
+      const provider = new BedrockModel({ region: 'us-west-2', modelId: 'global.anthropic.claude-haiku-5-5' })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
+        expect.objectContaining({ inferenceConfig: { maxTokens: 128_000 } })
+      )
+
+      provider.updateConfig({ maxTokens: 1000 })
+      collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
+        expect.objectContaining({ inferenceConfig: { maxTokens: 1000 } })
+      )
+    })
+
     it('formats the request to bedrock properly', async () => {
       const provider = new BedrockModel({
         region: 'us-west-2',
@@ -645,6 +661,7 @@ describe('BedrockModel', () => {
         ],
         toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
         modelId: expect.any(String),
+        inferenceConfig: { maxTokens: 128_000 },
       })
     })
 
@@ -923,6 +940,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -959,6 +977,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'assistant',
@@ -1040,6 +1059,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -1065,6 +1085,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -1091,6 +1112,7 @@ describe('BedrockModel', () => {
       await collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -2066,6 +2088,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2090,6 +2113,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2115,6 +2139,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2148,6 +2173,7 @@ describe('BedrockModel', () => {
 
       // Verify array is used as-is
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2177,6 +2203,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3315,6 +3342,7 @@ describe('BedrockModel', () => {
 
       // Empty array should not set system field
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3343,6 +3371,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3384,6 +3413,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3424,6 +3454,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3462,6 +3493,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3629,6 +3661,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3670,6 +3703,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -4452,6 +4486,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 128_000 },
           messages: [
             {
               content: [
@@ -4491,6 +4526,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 128_000 },
           messages: [
             {
               content: [

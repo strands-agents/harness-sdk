@@ -259,7 +259,7 @@ Common configuration parameters include:
 
 - `model_id` - The Bedrock model identifier
 - `temperature` - Controls randomness (higher = more random)
-- `max_tokens` - Maximum number of tokens to generate
+- `max_tokens` - Maximum number of tokens to generate. When not set, Claude models get the SDK's best-effort output token limit; other models use Bedrock's default
 - `streaming` - Enable/disable streaming mode
 - `guardrail_id` - ID of the guardrail to apply
 - `cache_prompt` - Cache point type for the system prompt (deprecated, use `cache_config`)
@@ -278,7 +278,7 @@ Common configuration parameters include:
 
 - `modelId` - The Bedrock model identifier
 - `temperature` - Controls randomness (higher = more random)
-- `maxTokens` - Maximum number of tokens to generate
+- `maxTokens` - Maximum number of tokens to generate. When not set, Claude models get the SDK's best-effort output token limit; other models use Bedrock's default
 - `stream` - Enable/disable streaming mode
 - `cacheConfig` - Enable prompt caching with `{ strategy: 'auto' }`, or `{ messagesTTL: false }` to cache the tool definitions and system prompt only
 - `region` - AWS region to use

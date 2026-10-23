@@ -1,6 +1,6 @@
 """Tests for model metadata lookup tables."""
 
-from strands.models._defaults import get_context_window_limit, resolve_config_metadata
+from strands.models._defaults import get_context_window_limit, get_output_token_limit, resolve_config_metadata
 
 
 class TestGetContextWindowLimit:
@@ -188,3 +188,27 @@ class TestResolveConfigMetadata:
         result = resolve_config_metadata(config, "claude-sonnet-4-6")
         assert result is not config
         assert "context_window_limit" not in config
+
+
+class TestGetOutputTokenLimit:
+    """Tests for get_output_token_limit."""
+
+    def test_known_bedrock_anthropic(self):
+        assert get_output_token_limit("anthropic.claude-haiku-5-5") == 128_000
+        assert get_output_token_limit("anthropic.claude-sonnet-4-6") == 128_000
+        assert get_output_token_limit("anthropic.claude-haiku-4-5-20251001-v1:0") == 64_000
+        assert get_output_token_limit("anthropic.claude-opus-4-1-20250805-v1:0") == 32_000
+
+    def test_strips_bedrock_prefixes(self):
+        assert get_output_token_limit("global.anthropic.claude-haiku-5-5") == 128_000
+        assert get_output_token_limit("us.anthropic.claude-opus-4-5-20251101-v1:0") == 64_000
+        assert (
+            get_output_token_limit(
+                "arn:aws:bedrock:us-west-2:123456789012:inference-profile/global.anthropic.claude-opus-5"
+            )
+            == 128_000
+        )
+
+    def test_unknown_returns_none(self):
+        assert get_output_token_limit("amazon.nova-pro-v1:0") is None
+        assert get_output_token_limit("unknown-model") is None

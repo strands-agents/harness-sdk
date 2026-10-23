@@ -34,7 +34,7 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
-from ._defaults import resolve_config_metadata
+from ._defaults import get_output_token_limit, resolve_config_metadata
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -238,7 +238,9 @@ class BedrockModel(Model):
             guardrail_redact_output_message: If a Bedrock Output guardrail triggers, replace output with this message.
             guardrail_latest_message: Flag to send only the lastest user message to guardrails.
                 Defaults to False.
-            max_tokens: Maximum number of tokens to generate in the response
+            max_tokens: Maximum number of tokens to generate in the response. When not set, Claude models
+                get the SDK's best-effort output token limit (subject to change; set a value to pin it) and
+                other models use Bedrock's default. An explicit None omits the field.
             model_id: The Bedrock model ID (e.g., "global.anthropic.claude-sonnet-4-6")
             include_tool_result_status: Flag to include status field in tool results.
                 True includes status, False removes status, "auto" determines based on model_id. Defaults to "auto".
@@ -455,8 +457,11 @@ class BedrockModel(Model):
         if self._tool_result_turn_separation_model_id == self.config["model_id"]:
             formatted_messages = self._separate_tool_result_turns(formatted_messages)
 
+        model_id = self.config["model_id"]
+        # Absent -> the model's known limit; an explicit None -> omitted (team/DECISIONS.md).
+        max_tokens = self.config["max_tokens"] if "max_tokens" in self.config else get_output_token_limit(model_id)
         return {
-            "modelId": self.config["model_id"],
+            "modelId": model_id,
             "messages": formatted_messages,
             "system": self._apply_system_cache_ttl(system_blocks, tools_cache_point),
             **({"serviceTier": {"type": self.config["service_tier"]}} if self.config.get("service_tier") else {}),
@@ -512,7 +517,7 @@ class BedrockModel(Model):
             "inferenceConfig": {
                 key: value
                 for key, value in [
-                    ("maxTokens", self.config.get("max_tokens")),
+                    ("maxTokens", max_tokens),
                     ("temperature", self.config.get("temperature")),
                     ("topP", self.config.get("top_p")),
                     ("stopSequences", self.config.get("stop_sequences")),

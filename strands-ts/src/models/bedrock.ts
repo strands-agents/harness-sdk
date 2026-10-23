@@ -71,7 +71,7 @@ import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
 import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from './strict-schema.js'
-import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
+import { MODEL_DEFAULTS, defaultModelWarningMessage, getOutputTokenLimit } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 
@@ -259,7 +259,9 @@ function snakeToCamel(str: string): string {
  */
 export interface BedrockModelConfig extends BaseModelConfig {
   /**
-   * Maximum number of tokens to generate in the response.
+   * Maximum number of tokens to generate in the response. When not set, Claude models get the
+   * SDK's best-effort output token limit (subject to change; set a value to pin it) and other
+   * models use Bedrock's default.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InferenceConfiguration.html
    */
@@ -915,7 +917,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
-    if (this._config.maxTokens !== undefined) inferenceConfig.maxTokens = this._config.maxTokens
+    const maxTokens =
+      this._config.maxTokens ?? getOutputTokenLimit(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    if (maxTokens !== undefined) inferenceConfig.maxTokens = maxTokens
     if (this._config.temperature !== undefined) inferenceConfig.temperature = this._config.temperature
     if (this._config.topP !== undefined) inferenceConfig.topP = this._config.topP
     if (this._config.stopSequences !== undefined) inferenceConfig.stopSequences = this._config.stopSequences

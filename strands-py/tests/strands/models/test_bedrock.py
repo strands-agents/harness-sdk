@@ -544,6 +544,17 @@ def test_format_request_inference_config(model, messages, model_id, inference_co
     assert tru_request == exp_request
 
 
+def test_format_request_default_max_tokens_from_output_token_limit(bedrock_client, messages):
+    model = BedrockModel(model_id="global.anthropic.claude-haiku-5-5")
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+    model.update_config(max_tokens=1000)
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 1000}
+
+    model.update_config(max_tokens=None)
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
 def test_format_request_system_prompt(model, messages, model_id, system_prompt):
     tru_request = model.format_request(messages, system_prompt_content=[{"text": system_prompt}])
     exp_request = {

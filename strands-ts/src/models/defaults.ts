@@ -234,6 +234,33 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
 const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au', 'in', 'jp', 'us-gov'])
 
 /**
+ * Output token limits for known model IDs — the largest `maxTokens` the provider accepts.
+ *
+ * BedrockModel sends this when `maxTokens` is not configured, because Bedrock's own default is
+ * per-model and can be far below the limit (Claude Haiku 5.5 defaults to 4096). Only models whose
+ * limit has been confirmed against Bedrock are listed; unknown models return `undefined`.
+ */
+const OUTPUT_TOKEN_LIMITS: Record<string, number> = {
+  // Bedrock Anthropic (base model IDs — cross-region prefixes stripped by getOutputTokenLimit)
+  'anthropic.claude-sonnet-4-6': 128_000,
+  'anthropic.claude-sonnet-4-20250514-v1:0': 65_536,
+  'anthropic.claude-sonnet-4-5-20250929-v1:0': 64_000,
+  'anthropic.claude-opus-4-6-v1': 128_000,
+  'anthropic.claude-opus-4-7': 128_000,
+  'anthropic.claude-opus-4-8': 128_000,
+  'anthropic.claude-opus-5': 128_000,
+  'anthropic.claude-opus-5-5': 128_000,
+  'anthropic.claude-fable-5': 128_000,
+  'anthropic.claude-fable-5-1': 128_000,
+  'anthropic.claude-sonnet-5': 128_000,
+  'anthropic.claude-sonnet-5-5': 128_000,
+  'anthropic.claude-haiku-5-5': 128_000,
+  'anthropic.claude-opus-4-5-20251101-v1:0': 64_000,
+  'anthropic.claude-opus-4-1-20250805-v1:0': 32_000,
+  'anthropic.claude-haiku-4-5-20251001-v1:0': 64_000,
+}
+
+/**
  * Looks up the context window limit for a model ID.
  *
  * For Bedrock cross-region model IDs (e.g. `us.anthropic.claude-sonnet-4-6`),
@@ -241,9 +268,27 @@ const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au
  *
  * @param modelId - The model ID to look up
  * @returns The context window limit in tokens, or undefined if not found
+ * @internal
  */
 export function getContextWindowLimit(modelId: string): number | undefined {
-  const direct = CONTEXT_WINDOW_LIMITS[modelId]
+  return lookup(CONTEXT_WINDOW_LIMITS, modelId)
+}
+
+/**
+ * Looks up the output token limit for a model ID.
+ *
+ * Region prefixes are stripped the same way as {@link getContextWindowLimit}.
+ *
+ * @param modelId - The model ID to look up
+ * @returns The largest `maxTokens` the model accepts, or undefined if not known
+ * @internal
+ */
+export function getOutputTokenLimit(modelId: string): number | undefined {
+  return lookup(OUTPUT_TOKEN_LIMITS, modelId)
+}
+
+function lookup(table: Record<string, number>, modelId: string): number | undefined {
+  const direct = table[modelId]
   if (direct !== undefined) return direct
 
   // Strip known Bedrock cross-region prefixes
@@ -251,7 +296,7 @@ export function getContextWindowLimit(modelId: string): number | undefined {
   if (dotIndex !== -1) {
     const prefix = modelId.substring(0, dotIndex)
     if (BEDROCK_REGION_PREFIXES.has(prefix)) {
-      return CONTEXT_WINDOW_LIMITS[modelId.substring(dotIndex + 1)]
+      return table[modelId.substring(dotIndex + 1)]
     }
   }
 
