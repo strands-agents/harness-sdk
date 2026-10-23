@@ -154,7 +154,7 @@ class TestMistralMedium35:
 
 
 class TestMistralLarge4:
-    """Smoke coverage for mistral-large-4-0: the context window resolves; the tool-using turn is blocked on #5032."""
+    """Smoke coverage for mistral-large-4-0: the context window resolves and a tool-using turn completes."""
 
     @pytest.fixture()
     def model(self):
@@ -170,17 +170,13 @@ class TestMistralLarge4:
     def test_context_window_limit_resolves(self, model):
         assert model.get_config()["context_window_limit"] == 1_048_576
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=TypeError,
-        reason="Large 4 returns list content (ThinkChunk/TextChunk) that MistralModel passes through as text: #5032",
-    )
     def test_tool_use_turn(self, model, tools, system_prompt):
         agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
 
         result = agent("What is the time and weather in New York?")
 
-        text = result.message["content"][0]["text"].lower()
+        # A reasoning block can come before the answer.
+        text = next(block["text"] for block in result.message["content"] if "text" in block).lower()
         assert all(string in text for string in ["12:00", "sunny"])
 
 

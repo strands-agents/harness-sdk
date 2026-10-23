@@ -1041,3 +1041,88 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert len(messages_logged) == 2
     assert "count=<3> | Location sources are not supported by Mistral" in messages_logged[0]
     assert "count=<3> | cachePoint content block is not supported by Mistral" in messages_logged[1]
+
+
+def test_format_chunk_content_delta_reasoning(model):
+    event = {"chunk_type": "content_delta", "data_type": "reasoning_content", "data": "Thinking"}
+
+    tru_chunk = model.format_chunk(event)
+    exp_chunk = {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Thinking"}}}}
+
+    assert tru_chunk == exp_chunk
+
+
+@pytest.mark.asyncio
+async def test_stream_splits_list_content_into_reasoning_and_text(mistral_client, model, agenerator, alist):
+    """Reasoning models stream content as a list of ThinkChunk/TextChunk (#5032)."""
+    from mistralai.client.models import TextChunk, ThinkChunk
+
+    def event(content, finish_reason=None):
+        return unittest.mock.Mock(
+            data=unittest.mock.Mock(
+                choices=[
+                    unittest.mock.Mock(
+                        delta=unittest.mock.Mock(content=content, tool_calls=None), finish_reason=finish_reason
+                    )
+                ],
+                usage=None,
+            ),
+        )
+
+    events = [
+        event([ThinkChunk(thinking=[TextChunk(text="Check the "), TextChunk(text="time.")])]),
+        event([ThinkChunk(thinking=[TextChunk(text=" Then answer.")])]),
+        event([TextChunk(text="It is ")]),
+        event("12:00", finish_reason="stop"),
+    ]
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "time?"}]}]))
+
+    exp_chunks = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Check the time."}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": " Then answer."}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "It is "}}},
+        {"contentBlockDelta": {"delta": {"text": "12:00"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_non_streaming_splits_list_content_into_reasoning_and_text(
+    mistral_client, model_id, max_tokens, alist
+):
+    """The non-streaming path receives the same list content on message.content (#5032)."""
+    from mistralai.client.models import ReferenceChunk, TextChunk, ThinkChunk
+
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, stream=False)
+    message = unittest.mock.Mock(
+        content=[
+            ThinkChunk(thinking=[TextChunk(text="Reasoning.")]),
+            ReferenceChunk(reference_ids=[1]),
+            TextChunk(text="Answer."),
+        ],
+        tool_calls=None,
+    )
+    response = unittest.mock.Mock(choices=[unittest.mock.Mock(message=message, finish_reason="stop")], usage=None)
+    mistral_client.chat.complete_async = unittest.mock.AsyncMock(return_value=response)
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "q"}]}]))
+
+    exp_chunks = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Reasoning."}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Answer."}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    assert tru_chunks == exp_chunks
