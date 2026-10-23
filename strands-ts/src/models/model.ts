@@ -349,6 +349,15 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Whether this model can summarize older turns server side via `_compact`, keeping kept-turn thinking valid.
+   *
+   * @internal
+   */
+  get _supportsServerCompaction(): boolean {
+    return false
+  }
+
+  /**
    * Streams a conversation with the model.
    * Returns an async iterable that yields streaming events as they occur.
    *

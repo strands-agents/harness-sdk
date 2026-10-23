@@ -356,3 +356,143 @@ describe('repeated summarization', () => {
     expect(summaries).toHaveLength(1)
   })
 })
+
+describe('server compaction', () => {
+  function conversation(turns: number): Message[] {
+    const messages = [new Message({ role: 'user', content: [new TextBlock('task')] })]
+    for (let index = 0; index < turns; index++) {
+      messages.push(
+        new Message({ role: 'assistant', content: [new TextBlock(`a${index}`)] }),
+        new Message({ role: 'user', content: [new TextBlock(`u${index}`)] })
+      )
+    }
+    return messages
+  }
+
+  function compactingAgent(
+    messages: Message[],
+    compact = vi.fn(async (_messages: Message[], _options?: unknown): Promise<string | undefined> => 'Server summary.')
+  ) {
+    const model = { _supportsServerCompaction: true, _compact: compact, countTokens: async () => 5000 }
+    const toolRegistry = { list: () => [{ toolSpec: { name: 'read' } }] }
+    const agent = createMockAgent({
+      messages,
+      extra: { model, systemPrompt: 'system', toolRegistry } as unknown as Partial<Agent>,
+    })
+    return { agent, compact }
+  }
+
+  const summaries = (messages: Message[]): string[] =>
+    messages
+      .flatMap((message) => message.content)
+      .flatMap((block) => (block instanceof TextBlock && block.text.startsWith('[Summarized:') ? [block.text] : []))
+
+  it('compacts the history before the kept turns', async () => {
+    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const messages = conversation(5)
+    const original = [...messages]
+    const { agent, compact } = compactingAgent(messages)
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(compact).toHaveBeenCalledExactlyOnceWith(original.slice(0, 7), {
+      systemPrompt: 'system',
+      toolSpecs: [{ name: 'read' }],
+    })
+    expect(messages[0]).toBe(original[0])
+    expect(messages[1]!.content).toEqual([
+      new TextBlock('a3'),
+      new TextBlock('[Summarized: 6 messages, ~5,000 tokens]\n\nServer summary.'),
+    ])
+    expect(messages.slice(2)).toStrictEqual(original.slice(8))
+  })
+
+  it.each([
+    { name: 'no summary', compact: vi.fn(async () => undefined) },
+    { name: 'an error', compact: vi.fn(async () => Promise.reject(new Error('boom'))) },
+  ])('falls back to the client summary on $name', async ({ compact }) => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const messages = conversation(5)
+    const { agent } = compactingAgent(messages, compact)
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(compact).toHaveBeenCalledOnce()
+    expect(summaries(messages)).toStrictEqual([
+      '[Summarized: 6 messages, ~5,000 tokens]\n\nSummary of multimodal content',
+    ])
+    warnSpy.mockRestore()
+  })
+
+  it.each([
+    { name: 'a partial target', target: 'assistantText' as const, explicitModel: false },
+    { name: 'an explicit model', target: '*' as const, explicitModel: true },
+  ])('is not attempted for $name', async ({ target, explicitModel }) => {
+    const messages = conversation(5)
+    const { agent, compact } = compactingAgent(messages)
+    const config = explicitModel ? { model: agent.model } : undefined
+    const strategy = Offload.summarize(target, config).when({ utilization: 0.7, preserveRecent: 4 })
+
+    await strategy.apply({ messages, agent, utilization: 0.9 })
+
+    expect(compact).not.toHaveBeenCalled()
+  })
+
+  it('is not attempted without the capability', async () => {
+    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const messages = conversation(5)
+    const compact = vi.fn(async () => 'Server summary.')
+    const model = { _compact: compact, countTokens: async () => 5000 }
+    const agent = createMockAgent({ messages, extra: { model } as unknown as Partial<Agent> })
+
+    await strategy.apply({ messages, agent, utilization: 0.9 })
+
+    expect(compact).not.toHaveBeenCalled()
+  })
+
+  it('stops the cut at a pinned message', async () => {
+    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 2 })
+    const messages = conversation(5)
+    messages[5] = new Message({
+      role: 'assistant',
+      content: [new TextBlock('a2')],
+      metadata: { custom: { pinned: true } },
+    })
+    const { agent, compact } = compactingAgent(messages)
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(compact.mock.calls[0]![0]).toHaveLength(5)
+    expect(messages[1]!.metadata).toStrictEqual({ custom: { pinned: true } })
+    expect(messages[1]!.content[0]).toEqual(new TextBlock('a2'))
+  })
+
+  it('is not attempted without a cut', async () => {
+    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const messages = conversation(2)
+    const { agent, compact } = compactingAgent(messages)
+
+    await strategy.apply({ messages, agent, utilization: 0.9 })
+
+    expect(compact).not.toHaveBeenCalled()
+  })
+
+  it('keeps one marker and message 0 across repeated compactions', async () => {
+    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const messages = conversation(1)
+    const task = messages[0]
+    const { agent } = compactingAgent(messages)
+    for (let index = 0; index < 10; index++) {
+      messages.push(
+        new Message({ role: 'assistant', content: [new TextBlock(`b${index}`)] }),
+        new Message({ role: 'user', content: [new TextBlock(`v${index}`)] })
+      )
+      await strategy.apply({ messages, agent, utilization: 0.9 })
+    }
+
+    expect(messages[0]).toBe(task)
+    expect(summaries(messages)).toHaveLength(1)
+    expect(messages).toHaveLength(5)
+  })
+})

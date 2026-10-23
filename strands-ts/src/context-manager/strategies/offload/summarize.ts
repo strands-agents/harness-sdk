@@ -9,7 +9,7 @@ import { normalizeError } from '../../../errors.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../../types/media.js'
 import type { ContentBlock } from '../../../types/messages.js'
-import type { Model } from '../../../models/model.js'
+import type { Model, StreamOptions } from '../../../models/model.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
@@ -21,6 +21,7 @@ import {
   type SummarizeConfig,
 } from '../../methods/summarize.js'
 import { formatStashRefs } from '../../stash.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
@@ -30,6 +31,14 @@ import {
   type OffloadConditions,
   type OffloadTarget,
 } from './base.js'
+
+/** A model whose `_supportsServerCompaction` is set. */
+type ServerCompactingModel = Model & {
+  _compact(
+    messages: Message[],
+    options?: Pick<StreamOptions, 'systemPrompt' | 'toolSpecs'>
+  ): Promise<string | undefined>
+}
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:summarize'
@@ -60,6 +69,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const { messages } = context
     if (messages.length <= 1) return false
 
+    if (await this._tryServerCompaction(context)) return true
+
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
@@ -86,6 +97,59 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
     return true
+  }
+
+  /**
+   * Summarizes the history before the kept turns server side, so their replayed thinking stays valid.
+   *
+   * Applies only to whole-history summarization on the agent's own model, when that model supports it.
+   * The history keeps the same layout as the client-side summary.
+   */
+  private async _tryServerCompaction(context: ContextState): Promise<boolean> {
+    const { agent, messages } = context
+    if (this._target !== '*' || this._threshold !== undefined || this._config.model) return false
+    if (!agent.model._supportsServerCompaction) return false
+
+    const cut = this._compactionCut(messages)
+    if (cut === undefined) return false
+
+    const model = agent.model as ServerCompactingModel
+    let summary: string | undefined
+    try {
+      summary = await model._compact(messages.slice(0, cut), {
+        ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
+        toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
+      })
+    } catch (error) {
+      logger.warn(
+        `model_id=<${model.modelId}>, error=<${normalizeError(error).message}> | server compaction failed, summarizing client side`
+      )
+      return false
+    }
+    if (!summary) return false
+
+    const removed = messages.slice(1, cut)
+    const totalTokens = await model.countTokens(removed)
+    messages.splice(1, removed.length)
+    insertMarker(messages, 1, formatSummarized(`${removed.length} messages`, totalTokens, summary))
+    logger.debug(`summarized=<${removed.length}>, tokens=<${totalTokens}> | server compaction complete`)
+    return true
+  }
+
+  /**
+   * Index of the first kept message: the latest assistant reply to a user message before the kept turns.
+   *
+   * Cutting at the end of a request already sent never splits a tool use from its result. Pinned messages are kept.
+   */
+  private _compactionCut(messages: Message[]): number | undefined {
+    const preserve = this._preserveRecent
+    const resolved = preserve > 0 && preserve < 1 ? Math.ceil(messages.length * preserve) : Math.floor(preserve)
+    const firstPinned = messages.findIndex((_message, index) => index > 0 && isPinned(messages, index))
+    let cut = Math.min(messages.length - Math.max(resolved, 1), firstPinned === -1 ? messages.length : firstPinned)
+    for (; cut > 1; cut--) {
+      if (messages[cut - 1]!.role === 'user' && messages[cut]!.role === 'assistant') return cut
+    }
+    return undefined
   }
 
   protected async _replaceBlock(

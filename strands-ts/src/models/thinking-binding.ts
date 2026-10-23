@@ -15,6 +15,25 @@ export const THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 const THINKING_BINDING_ERROR = 'bound to a different conversation'
 
 /**
+ * Beta for on-demand compaction, which summarizes older turns server side so thinking in the turns kept
+ * after it stays valid.
+ *
+ * @internal
+ */
+export const COMPACTION_BETA = 'compact-2026-09-04'
+
+const PRESERVED_THINKING_MODELS = /claude-(?:opus-5-5|sonnet-5-5|haiku-5-5|fable-5-1)(?!\d)/
+
+/**
+ * Whether the model binds each thinking block to the content before it.
+ *
+ * @internal
+ */
+export function hasPreservedThinking(modelId: string): boolean {
+  return PRESERVED_THINKING_MODELS.test(modelId)
+}
+
+/**
  * Whether the provider rejected a replayed thinking block because history before it changed.
  *
  * @internal

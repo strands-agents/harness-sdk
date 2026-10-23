@@ -654,6 +654,199 @@ describe('AnthropicModel', () => {
     })
   })
 
+  describe('server compaction', () => {
+    const compactionBlock = { type: 'compaction', content: 'Summary.', signature: 'sig' }
+    const compactionBeta = { headers: { 'anthropic-beta': 'compact-2026-09-04' } }
+
+    const compactedHistory = (marker = '[Summarized: 2 messages, ~10 tokens]\n\nSummary.'): Message[] => [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1'), new TextBlock(marker)] }),
+      new Message({ role: 'user', content: [new TextBlock('u1')] }),
+    ]
+
+    const createCompactionClient = (...responses: unknown[]) => {
+      const create = vi.fn()
+      for (const response of responses.length > 0
+        ? responses
+        : [{ stop_reason: 'compaction', content: [compactionBlock] }]) {
+        create.mockResolvedValueOnce(response)
+      }
+      const stream = vi.fn(() =>
+        (async function* () {
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      const countTokens = vi.fn(async (_params: unknown) => ({ input_tokens: 7 }))
+      return {
+        create,
+        stream,
+        countTokens,
+        client: { messages: { create, stream, countTokens } } as unknown as Anthropic,
+      }
+    }
+
+    const createCompactionModel = (client: Anthropic, modelId = 'claude-opus-5-5') =>
+      new AnthropicModel({
+        client,
+        modelId,
+        maxTokens: 1,
+        stopSequences: ['x'],
+        params: { context_management: { edits: [] }, tool_choice: { type: 'any' } },
+      })
+
+    it.each([
+      { modelId: 'claude-opus-5-5', supported: true },
+      { modelId: 'claude-sonnet-5-5-20260901', supported: true },
+      { modelId: 'claude-haiku-5-5', supported: true },
+      { modelId: 'us.anthropic.claude-fable-5-1', supported: true },
+      { modelId: 'claude-opus-5', supported: false },
+      { modelId: 'claude-opus-5-50', supported: false },
+      { modelId: 'claude-sonnet-4-6', supported: false },
+    ])('reports server compaction support as $supported for $modelId', ({ modelId, supported }) => {
+      const provider = new AnthropicModel({ client: createCompactionClient().client, modelId, maxTokens: 1 })
+
+      expect(provider._supportsServerCompaction).toBe(supported)
+    })
+
+    it('returns the summary and replaces the summarized history on later requests', async () => {
+      const { create, stream, client } = createCompactionClient({
+        stop_reason: 'compaction',
+        content: [{ ...compactionBlock, citations: null }],
+      })
+      const provider = createCompactionModel(client)
+      const history = [
+        new Message({ role: 'user', content: [new TextBlock('task')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('a0')] }),
+        new Message({ role: 'user', content: [new TextBlock('u0')] }),
+      ]
+
+      const summary = await provider._compact(history, {
+        systemPrompt: 's1',
+        toolSpecs: [{ name: 't', description: 'd', inputSchema: { type: 'object' } }],
+      })
+
+      expect(summary).toBe('Summary.')
+      const [request, options] = create.mock.calls[0]!
+      expect(request).toMatchObject({
+        stream: false,
+        max_tokens: 16384,
+        compaction: { type: 'summarize' },
+        system: 's1',
+      })
+      expect(request).not.toHaveProperty('stop_sequences')
+      expect(request).not.toHaveProperty('context_management')
+      expect(request).not.toHaveProperty('tool_choice')
+      expect(request.tools.map((tool: { name: string }) => tool.name)).toStrictEqual(['t'])
+      expect(options).toStrictEqual(compactionBeta)
+
+      await collectIterator(provider.stream(compactedHistory()))
+
+      expect(stream).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          messages: [
+            { role: 'assistant', content: [compactionBlock, { type: 'text', text: 'a1' }] },
+            { role: 'user', content: [{ type: 'text', text: 'u1' }] },
+          ],
+        }),
+        compactionBeta
+      )
+    })
+
+    it('starts a re-compaction from the current block', async () => {
+      const oldBlock = { ...compactionBlock, signature: 'old' }
+      const { create, stream, client } = createCompactionClient(
+        { stop_reason: 'compaction', content: [oldBlock] },
+        { stop_reason: 'compaction', content: [compactionBlock] }
+      )
+      const provider = createCompactionModel(client)
+      await provider._compact(compactedHistory().slice(0, 1))
+
+      await provider._compact(compactedHistory())
+      await collectIterator(provider.stream(compactedHistory()))
+
+      expect(create.mock.calls[1]![0].messages[0].content[0]).toStrictEqual(oldBlock)
+      expect((stream.mock.calls[0] as unknown[])[0]).toMatchObject({
+        messages: [{ content: [compactionBlock, { type: 'text', text: 'a1' }] }, { role: 'user' }],
+      })
+    })
+
+    it.each([
+      {
+        name: 'an edited summary marker',
+        history: compactedHistory('[Summarized: 2 messages, ~10 tokens]\n\nEdited.'),
+      },
+      { name: 'no summary marker', history: [compactedHistory()[0]!, compactedHistory()[2]!] },
+    ])('sends the history unchanged with $name', async ({ history }) => {
+      const { stream, client } = createCompactionClient()
+      const provider = createCompactionModel(client)
+      await provider._compact(compactedHistory().slice(0, 1))
+
+      await collectIterator(provider.stream(history))
+
+      const [request, options] = stream.mock.calls[0] as unknown[]
+      expect((request as { messages: unknown[] }).messages).toHaveLength(history.length)
+      expect((request as { messages: unknown[] }).messages[0]).toStrictEqual({
+        role: 'user',
+        content: [{ type: 'text', text: 'task' }],
+      })
+      expect(options).toBeUndefined()
+    })
+
+    it('counts tokens for the summary marker, not the block', async () => {
+      const { countTokens, client } = createCompactionClient()
+      const provider = new AnthropicModel({
+        client,
+        modelId: 'claude-opus-5-5',
+        maxTokens: 1,
+        useNativeTokenCount: true,
+      })
+      await provider._compact(compactedHistory().slice(0, 1))
+
+      expect(await provider.countTokens(compactedHistory())).toBe(7)
+
+      expect(countTokens.mock.calls[0]![0]).toMatchObject({
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'task' }] },
+          { role: 'assistant' },
+          { role: 'user' },
+        ],
+      })
+    })
+
+    it.each([
+      { name: 'a non-compaction stop', response: { stop_reason: 'end_turn', content: [] } },
+      {
+        name: 'a null summary',
+        response: { stop_reason: 'compaction', content: [{ type: 'compaction', content: null, signature: 'sig' }] },
+      },
+    ])('returns undefined and keeps the history on $name', async ({ response }) => {
+      const { stream, client } = createCompactionClient(response)
+      const provider = createCompactionModel(client)
+
+      expect(await provider._compact(compactedHistory())).toBeUndefined()
+
+      await collectIterator(provider.stream(compactedHistory()))
+      expect((stream.mock.calls[0] as unknown[])[1]).toBeUndefined()
+    })
+
+    it('throws the API error', async () => {
+      const { create, client } = createCompactionClient()
+      create.mockReset().mockRejectedValueOnce(Object.assign(new Error('unsupported'), { status: 400 }))
+      const provider = createCompactionModel(client)
+
+      await expect(provider._compact(compactedHistory())).rejects.toThrow('unsupported')
+    })
+
+    it('skips models without preserved thinking', async () => {
+      const { create, client } = createCompactionClient()
+      const provider = createCompactionModel(client, 'claude-sonnet-4-6')
+
+      expect(await provider._compact(compactedHistory())).toBeUndefined()
+
+      expect(create).not.toHaveBeenCalled()
+    })
+  })
+
   describe('request formatting', () => {
     // Helper to capture request arguments
     const setupCapture = () => {

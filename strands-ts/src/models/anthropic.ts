@@ -9,7 +9,13 @@ import {
   type CacheConfig,
   type ResolvedCacheSection,
 } from '../models/model.js'
-import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
+import {
+  COMPACTION_BETA,
+  THINKING_BINDING_BETA,
+  hasPreservedThinking,
+  isThinkingBindingError,
+  thinkingWithDropBlock,
+} from './thinking-binding.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -56,6 +62,13 @@ const MAX_PAUSE_TURN_CONTINUATIONS = 10
  */
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
+// Request params the API rejects on a compaction request.
+const COMPACTION_INCOMPATIBLE_PARAMS = ['stop_sequences', 'context_management'] as const
+const COMPACTION_MAX_TOKENS = 16384
+
+/** A signed compaction block, kept exactly as the API returned it. */
+type CompactionBlock = { type: 'compaction'; content: string } & Record<string, unknown>
+
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
 /**
@@ -83,6 +96,18 @@ function mergeUsage(target: Record<string, number>, source: object): void {
   for (const [key, value] of Object.entries(source)) {
     if (typeof value === 'number') target[key] = value
   }
+}
+
+/**
+ * Returns the compaction block of a compaction response, without the null fields the API rejects on replay.
+ */
+function compactionBlockFrom(response: { stop_reason?: unknown; content?: unknown }): CompactionBlock | undefined {
+  if (response.stop_reason !== 'compaction' || !Array.isArray(response.content)) return undefined
+  const block = (response.content as Record<string, unknown>[]).find(
+    (item) => item.type === 'compaction' && typeof item.content === 'string' && item.content
+  )
+  if (!block) return undefined
+  return Object.fromEntries(Object.entries(block).filter(([, value]) => value != null)) as CompactionBlock
 }
 
 /**
@@ -160,6 +185,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _client: Anthropic
   private _dropStaleThinkingModelId: string | undefined
   private _clientBetas: string[]
+  // The signed compaction block that replaces the history its summary marker stands for.
+  private _compactionBlock: CompactionBlock | undefined
 
   constructor(options?: AnthropicModelOptions) {
     super()
@@ -212,6 +239,56 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
+   * Whether this model id binds thinking to its prefix, so summarizing must keep kept-turn thinking valid.
+   *
+   * @internal
+   */
+  override get _supportsServerCompaction(): boolean {
+    return hasPreservedThinking(this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId)
+  }
+
+  /**
+   * Summarizes the messages server side, keeping the signed block for later requests.
+   *
+   * The messages must end with a user message the model already answered. Requests built afterwards replace the
+   * history before the marker holding the returned summary with the block.
+   *
+   * @internal
+   * @param messages - The history to summarize
+   * @param options - The system prompt and tool specs the history was sent with
+   * @returns The summary text, or undefined if the model cannot compact or returned no summary
+   */
+  async _compact(
+    messages: Message[],
+    options?: Pick<StreamOptions, 'systemPrompt' | 'toolSpecs'>
+  ): Promise<string | undefined> {
+    if (!this._supportsServerCompaction) return undefined
+
+    const request: Record<string, unknown> = {
+      ...this._withCompaction(this._formatRequest(messages, options)),
+      stream: false,
+      max_tokens: COMPACTION_MAX_TOKENS,
+      compaction: { type: 'summarize' },
+    }
+    for (const param of COMPACTION_INCOMPATIBLE_PARAMS) delete request[param]
+    const toolChoice = (request.tool_choice as { type?: string } | undefined)?.type
+    if (toolChoice === 'any' || toolChoice === 'tool') delete request.tool_choice
+
+    // The SDK has no compaction param and returns the response body as sent, so the block stays as signed.
+    const response = await this._client.messages.create(
+      request as unknown as Anthropic.MessageCreateParamsNonStreaming,
+      this._buildRequestOptions(true)
+    )
+    const block = compactionBlockFrom(response)
+    if (!block) {
+      logger.debug(`model_id=<${this._config.modelId}> | server compaction returned no summary`)
+      return undefined
+    }
+    this._compactionBlock = block
+    return block.content
+  }
+
+  /**
    * Count tokens using Anthropic's native countTokens API.
    *
    * Uses the same message format as the Messages API to get accurate token counts
@@ -261,9 +338,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     let thinking: Anthropic.ThinkingConfigParam | undefined
     let continuations = 0
     try {
-      let request = this._formatRequest(messages, options)
+      const formatted = this._formatRequest(messages, options)
+      let request = this._withCompaction(formatted)
       thinking = request.thinking
-      const requestOptions = this._buildRequestOptions()
+      const requestOptions = this._buildRequestOptions(request !== formatted)
       const usage = createEmptyUsage()
 
       while (true) {
@@ -471,15 +549,35 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
+  private _buildRequestOptions(compaction = false): Anthropic.RequestOptions | undefined {
     let betas = this._config.betas ?? []
-    if (this._dropsStaleThinking()) {
+    const required = [
+      ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
+      ...(compaction ? [COMPACTION_BETA] : []),
+    ]
+    if (required.length > 0) {
       // Request headers replace client headers of the same name, so betas set on the client are carried over.
       if (betas.length === 0) betas = this._clientBetas
-      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
+      betas = [...betas, ...required.filter((beta) => !betas.includes(beta))]
     }
     if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
+  }
+
+  /**
+   * Replaces the summarized history with the compaction block when the history still carries its marker.
+   *
+   * The summary marker is the text block holding the block's summary, on the assistant message after message 0.
+   * Any other history is sent unchanged.
+   */
+  private _withCompaction(request: Anthropic.MessageStreamParams): Anthropic.MessageStreamParams {
+    const block = this._compactionBlock
+    const [, anchor, ...rest] = request.messages
+    if (!block || anchor?.role !== 'assistant' || typeof anchor.content === 'string') return request
+    const kept = anchor.content.filter((item) => !(item.type === 'text' && item.text.endsWith(block.content)))
+    if (kept.length === anchor.content.length) return request
+    const content = [block as unknown as Anthropic.ContentBlockParam, ...kept]
+    return { ...request, messages: [{ ...anchor, content }, ...rest] }
   }
 
   /** Whether a binding error already turned drop_block on for the configured model. */
