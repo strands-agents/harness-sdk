@@ -1286,7 +1286,12 @@ class BedrockModel(Model):
                         formatted_content.append({"text": json.dumps(tool_result_content["json"])})
                     else:
                         # Handle json field since not in ContentBlock but valid in ToolResultContent
-                        formatted_content.append({"json": tool_result_content["json"]})
+                        json_value = tool_result_content["json"]
+                        # Bedrock's ToolResultContentBlock.json must be an object; wrap anything else
+                        # under the same "$value" key the TypeScript SDK uses for array results.
+                        if not isinstance(json_value, dict):
+                            json_value = {"$value": json_value}
+                        formatted_content.append({"json": json_value})
                 else:
                     formatted_message_content = self._format_request_message_content(
                         cast(ContentBlock, tool_result_content)

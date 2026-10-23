@@ -6236,6 +6236,48 @@ def test_claude_model_preserves_json_in_tool_result(bedrock_client):
     assert tool_result["content"][0]["json"] == {"key": "value"}
 
 
+@pytest.mark.parametrize(
+    ("json_value", "expected"),
+    [
+        ([{"id": 1}, {"id": 2}], {"$value": [{"id": 1}, {"id": 2}]}),
+        ([], {"$value": []}),
+        (5, {"$value": 5}),
+        ("x", {"$value": "x"}),
+        (None, {"$value": None}),
+        (True, {"$value": True}),
+        ({"key": "value"}, {"key": "value"}),
+    ],
+)
+def test_bedrock_wraps_non_object_json_in_tool_result(bedrock_client, json_value, expected):
+    """Only object-shaped json blocks pass through; everything else is wrapped.
+
+    Bedrock's ToolResultContentBlock.json is a botocore Document structure and
+    must be an object, so scalars are wrapped in {"$value": ...} just like
+    lists, while dicts go through unchanged.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/4923.
+    """
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "content": [{"json": json_value}],
+                        "toolUseId": "tool_scalar",
+                    }
+                }
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+    tru_tool_result = formatted_request["messages"][0]["content"][0]["toolResult"]
+    exp_tool_result = {"toolUseId": "tool_scalar", "content": [{"json": expected}]}
+    assert tru_tool_result == exp_tool_result
+
+
 def test_nova_model_handles_nested_json_in_tool_result(bedrock_client):
     """Nova models should handle deeply nested JSON structures."""
     model = BedrockModel(model_id="us.amazon.nova-pro-v1:0")
