@@ -1,12 +1,15 @@
 """Unit tests for llama.cpp model provider."""
 
+import asyncio
 import base64
 import json
 import logging
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import pytest_asyncio
 from pydantic import BaseModel
 
 from strands.models.llamacpp import LlamaCppModel
@@ -393,6 +396,102 @@ def test_cache_config_cache_key_warns_and_is_not_routed() -> None:
     assert "id_slot" not in request
 
 
+class _GatedStream(httpx.AsyncByteStream):
+    def __init__(self, body: bytes = b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n') -> None:
+        self.body = body
+        self.release = asyncio.Event()
+        self.waiting = asyncio.Event()
+        self.eof = False
+        self.close_count = 0
+        self.read_error: httpx.ReadError | None = None
+        self.tail = b""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.body
+        self.waiting.set()
+        await self.release.wait()
+        if self.read_error:
+            raise self.read_error
+        if self.tail:
+            yield self.tail
+        self.eof = True
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+@pytest_asyncio.fixture
+async def streaming_model() -> AsyncIterator[tuple[LlamaCppModel, _GatedStream, httpx.Response]]:
+    byte_stream = _GatedStream()
+    response = httpx.Response(200, stream=byte_stream)
+    model = LlamaCppModel()
+    await model.client.aclose()
+    transport = httpx.MockTransport(lambda request: response)
+    async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
+        yield model, byte_stream, response
+
+
+@pytest.mark.parametrize("ending", ["eof", "done", "read_error", "format_error", "cancel", "close"])
+@pytest.mark.asyncio
+async def test_stream_yields_text_before_eof_and_closes_response(streaming_model, ending, alist) -> None:
+    model, byte_stream, response = streaming_model
+    stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
+
+    async def first_text():
+        async for event in stream:
+            if "contentBlockDelta" in event:
+                return event
+
+    try:
+        tru_event = await asyncio.wait_for(first_text(), timeout=5)
+        exp_event = {"contentBlockDelta": {"delta": {"text": "Hello"}}}
+        assert tru_event == exp_event
+        assert not byte_stream.eof
+        assert not response.is_closed
+
+        if ending == "close":
+            await stream.aclose()
+        elif ending == "format_error":
+            byte_stream.tail = byte_stream.body
+            with patch.object(model, "_format_chunk", side_effect=ValueError("invalid chunk")):
+                byte_stream.release.set()
+                with pytest.raises(ValueError, match="invalid chunk"):
+                    await alist(stream)
+        elif ending == "cancel":
+            consumer = asyncio.create_task(alist(stream))
+            try:
+                await asyncio.wait_for(byte_stream.waiting.wait(), timeout=5)
+                consumer.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await consumer
+            finally:
+                consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
+        else:
+            if ending == "done":
+                byte_stream.tail = b"data: [DONE]\n\n"
+            if ending == "read_error":
+                byte_stream.read_error = httpx.ReadError("connection interrupted")
+            byte_stream.release.set()
+            if ending == "read_error":
+                with pytest.raises(httpx.ReadError, match="connection interrupted"):
+                    await alist(stream)
+            else:
+                await alist(stream)
+                tru_eof = byte_stream.eof
+                exp_eof = ending == "eof"
+                assert tru_eof is exp_eof
+
+        assert response.is_closed
+        tru_close_count = byte_stream.close_count
+        exp_close_count = 1
+        assert tru_close_count == exp_close_count
+        assert not model.client.is_closed
+    finally:
+        byte_stream.release.set()
+        await stream.aclose()
+
+
 @pytest.mark.asyncio
 async def test_stream_basic() -> None:
     """Test basic streaming functionality."""
@@ -406,15 +505,8 @@ async def test_stream_basic() -> None:
         "data: [DONE]",
     ]
 
-    async def mock_aiter_lines():
-        for line in mock_response_lines:
-            yield line
-
-    mock_response = AsyncMock()
-    mock_response.aiter_lines = mock_aiter_lines
-    mock_response.raise_for_status = MagicMock()
-
-    with patch.object(model.client, "post", return_value=mock_response):
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text="\n".join(mock_response_lines)))
+    async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
         messages = [{"role": "user", "content": [{"text": "Hi"}]}]
 
         chunks = []
@@ -452,15 +544,8 @@ async def test_stream_surfaces_cache_read_tokens() -> None:
         "data: [DONE]",
     ]
 
-    async def mock_aiter_lines():
-        for line in mock_response_lines:
-            yield line
-
-    mock_response = AsyncMock()
-    mock_response.aiter_lines = mock_aiter_lines
-    mock_response.raise_for_status = MagicMock()
-
-    with patch.object(model.client, "post", return_value=mock_response):
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text="\n".join(mock_response_lines)))
+    async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
         chunks = []
         async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
             chunks.append(chunk)
@@ -496,15 +581,8 @@ async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_paylo
         "data: [DONE]",
     ]
 
-    async def mock_aiter_lines():
-        for line in mock_response_lines:
-            yield line
-
-    mock_response = AsyncMock()
-    mock_response.aiter_lines = mock_aiter_lines
-    mock_response.raise_for_status = MagicMock()
-
-    with patch.object(model.client, "post", return_value=mock_response):
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text="\n".join(mock_response_lines)))
+    async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
         chunks = []
         async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
             chunks.append(chunk)
@@ -601,56 +679,36 @@ def test_json_schema_via_params() -> None:
     assert model.config["params"]["json_schema"] == schema
 
 
+@pytest.mark.parametrize(
+    ("status_code", "body", "exception", "message"),
+    [
+        (400, b'{"error":{"message":"Context length exceeded"}}', ContextWindowOverflowException, "Context length"),
+        (400, b"KV cache full", ContextWindowOverflowException, "KV cache full"),
+        (400, b"slot unavailable", ContextWindowOverflowException, "slot unavailable"),
+        (400, b'{"error":{"message":"Invalid request"}}', httpx.HTTPStatusError, "400"),
+        (400, b"Invalid request", httpx.HTTPStatusError, "400"),
+        (503, b"Server is busy", ModelThrottledException, "server is busy or overloaded"),
+        (500, b"Internal server error", httpx.HTTPStatusError, "500"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_stream_with_context_overflow_error() -> None:
-    """Test stream handling of context overflow errors."""
+async def test_stream_http_errors(status_code, body, exception, message, alist) -> None:
+    byte_stream = _GatedStream(body)
+    byte_stream.release.set()
+    response = httpx.Response(status_code, stream=byte_stream)
     model = LlamaCppModel()
+    transport = httpx.MockTransport(lambda request: response)
 
-    # Create HTTP error response
-    error_response = httpx.Response(
-        status_code=400,
-        json={"error": {"message": "Context window exceeded. Max context length is 4096 tokens"}},
-        request=httpx.Request("POST", "http://test.com"),
-    )
-    error = httpx.HTTPStatusError("Bad Request", request=error_response.request, response=error_response)
+    async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
+        with pytest.raises(exception, match=message) as exc_info:
+            await alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}]))
 
-    # Mock the client to raise the error
-    with patch.object(model.client, "post", side_effect=error):
-        messages = [{"role": "user", "content": [{"text": "Very long message"}]}]
-
-        with pytest.raises(ContextWindowOverflowException) as exc_info:
-            async for _ in model.stream(messages):
-                pass
-
-        assert "Context window exceeded" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_stream_with_server_overload_error() -> None:
-    """Test stream handling of server overload errors."""
-    model = LlamaCppModel()
-
-    # Create HTTP error response for 503
-    error_response = httpx.Response(
-        status_code=503,
-        text="Server is busy",
-        request=httpx.Request("POST", "http://test.com"),
-    )
-    error = httpx.HTTPStatusError(
-        "Service Unavailable",
-        request=error_response.request,
-        response=error_response,
-    )
-
-    # Mock the client to raise the error
-    with patch.object(model.client, "post", side_effect=error):
-        messages = [{"role": "user", "content": [{"text": "Test"}]}]
-
-        with pytest.raises(ModelThrottledException) as exc_info:
-            async for _ in model.stream(messages):
-                pass
-
-        assert "server is busy or overloaded" in str(exc_info.value)
+        if exception is not httpx.HTTPStatusError:
+            assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+        assert response.is_closed
+        tru_close_count = byte_stream.close_count
+        exp_close_count = 1
+        assert tru_close_count == exp_close_count
 
 
 @pytest.mark.asyncio
