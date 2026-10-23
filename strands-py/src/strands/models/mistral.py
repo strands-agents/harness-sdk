@@ -370,7 +370,7 @@ class MistralModel(Model):
                 return {"messageStart": {"role": "assistant"}}
 
             case "content_start":
-                if event["data_type"] == "text":
+                if event["data_type"] in ("text", "reasoning_content"):
                     return {"contentBlockStart": {"start": {}}}
 
                 tool_call = event["data"]
@@ -388,6 +388,9 @@ class MistralModel(Model):
             case "content_delta":
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
+
+                if event["data_type"] == "reasoning_content":
+                    return {"contentBlockDelta": {"delta": {"reasoningContent": {"text": event["data"]}}}}
 
                 return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"]}}}}
 
@@ -423,6 +426,38 @@ class MistralModel(Model):
             case _:
                 raise RuntimeError(f"chunk_type=<{event['chunk_type']}> | unknown type")
 
+    @staticmethod
+    def _content_parts(content: Any) -> list[tuple[str, str]]:
+        """Split Mistral message content into ``(data_type, text)`` parts.
+
+        Content is a plain string for most models. Reasoning models (for example Mistral Large 4) return a list of
+        chunks instead: a ``ThinkChunk`` carries the reasoning, as a list of text chunks, and a ``TextChunk`` carries
+        the answer. Chunk types without text, such as references, are skipped.
+
+        Args:
+            content: The ``content`` of a Mistral message or stream delta.
+
+        Returns:
+            The parts in order, each tagged ``"text"`` or ``"reasoning_content"``.
+        """
+        if isinstance(content, str):
+            return [("text", content)] if content else []
+
+        parts: list[tuple[str, str]] = []
+        for chunk in content or []:
+            chunk_type = getattr(chunk, "type", None)
+            if chunk_type == "thinking":
+                thinking = "".join(
+                    part.text
+                    for part in getattr(chunk, "thinking", None) or []
+                    if isinstance(getattr(part, "text", None), str)
+                )
+                if thinking:
+                    parts.append(("reasoning_content", thinking))
+            elif chunk_type == "text" and isinstance(getattr(chunk, "text", None), str) and chunk.text:
+                parts.append(("text", chunk.text))
+        return parts
+
     def _handle_non_streaming_response(self, response: Any) -> Iterable[dict[str, Any]]:
         """Handle non-streaming response from Mistral API.
 
@@ -434,18 +469,18 @@ class MistralModel(Model):
         """
         yield {"chunk_type": "message_start"}
 
-        content_started = False
-
         if response.choices and response.choices[0].message:
             message = response.choices[0].message
 
-            if hasattr(message, "content") and message.content:
-                if not content_started:
-                    yield {"chunk_type": "content_start", "data_type": "text"}
-                    content_started = True
-
-                yield {"chunk_type": "content_delta", "data_type": "text", "data": message.content}
-
+            data_type: str | None = None
+            for part_type, text in self._content_parts(getattr(message, "content", None)):
+                if part_type != data_type:
+                    if data_type is not None:
+                        yield {"chunk_type": "content_stop"}
+                    yield {"chunk_type": "content_start", "data_type": part_type}
+                    data_type = part_type
+                yield {"chunk_type": "content_delta", "data_type": part_type, "data": text}
+            if data_type is not None:
                 yield {"chunk_type": "content_stop"}
 
             if hasattr(message, "tool_calls") and message.tool_calls:
@@ -517,7 +552,7 @@ class MistralModel(Model):
 
                 yield self.format_chunk({"chunk_type": "message_start"})
 
-                content_started = False
+                data_type: str | None = None
                 tool_calls: dict[str, list[Any]] = {}
                 accumulated_text = ""
 
@@ -528,15 +563,18 @@ class MistralModel(Model):
                         if hasattr(choice, "delta"):
                             delta = choice.delta
 
-                            if hasattr(delta, "content") and delta.content:
-                                if not content_started:
-                                    yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
-                                    content_started = True
+                            for part_type, text in self._content_parts(getattr(delta, "content", None)):
+                                if part_type != data_type:
+                                    if data_type is not None:
+                                        yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+                                    yield self.format_chunk({"chunk_type": "content_start", "data_type": part_type})
+                                    data_type = part_type
 
                                 yield self.format_chunk(
-                                    {"chunk_type": "content_delta", "data_type": "text", "data": delta.content}
+                                    {"chunk_type": "content_delta", "data_type": part_type, "data": text}
                                 )
-                                accumulated_text += delta.content
+                                if part_type == "text":
+                                    accumulated_text += text
 
                             if hasattr(delta, "tool_calls") and delta.tool_calls:
                                 for tool_call in delta.tool_calls:
@@ -544,8 +582,8 @@ class MistralModel(Model):
                                     tool_calls.setdefault(tool_id, []).append(tool_call)
 
                         if hasattr(choice, "finish_reason") and choice.finish_reason:
-                            if content_started:
-                                yield self.format_chunk({"chunk_type": "content_stop", "data_type": "text"})
+                            if data_type is not None:
+                                yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
 
                             for tool_deltas in tool_calls.values():
                                 yield self.format_chunk(
