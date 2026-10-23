@@ -69,6 +69,7 @@ import type { JSONSchema, JSONValue } from '../types/json.js'
 import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError, normalizeError } from '../errors.js'
 import { ensureDefined } from '../types/validation.js'
 import { logger } from '../logging/logger.js'
+import { countSkipped, logSkippedBlocks, type SkippedBlocks } from './skipped-blocks.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
 import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from './strict-schema.js'
@@ -902,9 +903,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Formatted Bedrock request
    */
   private _formatRequest(messages: Message[], options?: StreamOptions): ConverseStreamCommandInput {
+    const skipped: SkippedBlocks = new Map()
     const request: ConverseStreamCommandInput = {
       modelId: this._config.modelId,
-      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0),
+      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0, skipped),
     }
 
     // Add system prompt
@@ -912,7 +914,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       if (typeof options.systemPrompt === 'string') {
         request.system = [{ text: options.systemPrompt }]
       } else if (options.systemPrompt.length > 0) {
-        request.system = options.systemPrompt.map((block) => this._formatContentBlock(block) as SystemContentBlock)
+        request.system = options.systemPrompt.map(
+          (block) => this._formatContentBlock(block, skipped) as SystemContentBlock
+        )
       }
     }
 
@@ -1017,6 +1021,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       }
     }
 
+    logSkippedBlocks(logger, skipped)
     return request
   }
 
@@ -1050,7 +1055,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param messages - SDK messages
    * @returns Bedrock-formatted messages
    */
-  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0): BedrockMessage[] {
+  private _formatMessages(
+    messages: Message[],
+    dynamicTrailingBlocks: number,
+    skipped: SkippedBlocks
+  ): BedrockMessage[] {
     // Pre-compute the index of the last user message containing text/image content
     // This ensures guardContent wrapping is maintained across tool execution cycles
     const lastUserTextIdx = this._config.guardrailConfig?.guardLatestUserMessage
@@ -1068,8 +1077,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           return false
         })
         .map((block: ContentBlock) => {
-          const formattedBlock = this._formatContentBlock(block)
-          return shouldApplyGuardBlocks ? this._applyGuardBlocks(formattedBlock) : formattedBlock
+          const formattedBlock = this._formatContentBlock(block, skipped)
+          return shouldApplyGuardBlocks ? this._applyGuardBlocks(formattedBlock, skipped) : formattedBlock
         })
         .filter((block) => block !== undefined)
 
@@ -1342,7 +1351,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param formattedBlock - The formatted content block to potentially wrap
    * @returns The block wrapped in guardContent if applicable, or the original block
    */
-  private _applyGuardBlocks(formattedBlock: BedrockContentBlock | undefined): BedrockContentBlock | undefined {
+  private _applyGuardBlocks(
+    formattedBlock: BedrockContentBlock | undefined,
+    skipped: SkippedBlocks
+  ): BedrockContentBlock | undefined {
     if (formattedBlock === undefined) {
       return undefined
     }
@@ -1368,7 +1380,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
       // Bedrock guardrails only support png/jpeg formats
       if (format !== 'png' && format !== 'jpeg') {
-        logger.warn(
+        countSkipped(
+          skipped,
           `image_format=<${format}> | format not supported by bedrock guardrails | skipping guardContent wrap`
         )
         return formattedBlock
@@ -1376,7 +1389,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
       // Bedrock guardrails only support bytes source (not S3 or URL)
       if (!('bytes' in imageBlock.source)) {
-        logger.warn(
+        countSkipped(
+          skipped,
           'source_type=<non-bytes> | image source must be bytes for bedrock guardrails | skipping guardContent wrap'
         )
         return formattedBlock
@@ -1453,7 +1467,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param block - SDK content block
    * @returns Bedrock-formatted content block
    */
-  private _formatContentBlock(block: ContentBlock): BedrockContentBlock | undefined {
+  private _formatContentBlock(block: ContentBlock, skipped: SkippedBlocks): BedrockContentBlock | undefined {
     switch (block.type) {
       case 'textBlock':
         return { text: block.text }
@@ -1478,14 +1492,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
               return {
                 image: {
                   format: content.format as ImageFormat,
-                  source: this._formatMediaSource(content.source),
+                  source: this._formatMediaSource(content.source, skipped),
                 },
               }
             case 'videoBlock':
               return {
                 video: {
                   format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
-                  source: this._formatMediaSource(content.source),
+                  source: this._formatMediaSource(content.source, skipped),
                 },
               }
             case 'documentBlock':
@@ -1544,7 +1558,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return {
           audio: {
             format: block.format as AudioFormat,
-            source: this._formatMediaSource(block.source),
+            source: this._formatMediaSource(block.source, skipped),
           },
         }
 
@@ -1552,7 +1566,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return {
           image: {
             format: block.format as ImageFormat,
-            source: this._formatMediaSource(block.source),
+            source: this._formatMediaSource(block.source, skipped),
           },
         }
 
@@ -1560,7 +1574,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return {
           video: {
             format: block.format === '3gp' ? 'three_gp' : block.format,
-            source: this._formatMediaSource(block.source),
+            source: this._formatMediaSource(block.source, skipped),
           },
         }
 
@@ -1617,7 +1631,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Formatted source for Bedrock API
    */
   private _formatMediaSource(
-    source: AudioSource | ImageSource | VideoSource
+    source: AudioSource | ImageSource | VideoSource,
+    skipped: SkippedBlocks
   ):
     | BedrockAudioSource.BytesMember
     | BedrockAudioSource.S3LocationMember
@@ -1641,7 +1656,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             },
           }
         }
-        logger.warn('source_type=<imageSourceUrl> | not supported by bedrock | skipping')
+        countSkipped(skipped, 'source_type=<imageSourceUrl> | not supported by bedrock | skipping')
         return
 
       case 'audioSourceS3Location':

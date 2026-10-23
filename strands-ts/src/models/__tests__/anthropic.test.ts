@@ -1197,6 +1197,33 @@ describe('AnthropicModel', () => {
         expect(captured.request.messages).toHaveLength(0)
         warnSpy.mockRestore()
       })
+
+      it('logs one counted skip warning per request across history', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const { mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = []
+        for (let turn = 0; turn < 3; turn++) {
+          messages.push(
+            new Message({
+              role: 'user',
+              content: [
+                new TextBlock('look'),
+                new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/key.png' } } }),
+              ],
+            })
+          )
+          messages.push(new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }))
+        }
+
+        await collectIterator(provider.stream(messages))
+
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy).toHaveBeenCalledWith(
+          'count=<3> | source_type=<imageSourceS3Location> | s3 location sources are not supported by anthropic | skipping'
+        )
+        warnSpy.mockRestore()
+      })
     })
 
     describe('Tool Results', () => {
