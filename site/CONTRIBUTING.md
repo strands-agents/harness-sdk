@@ -17,8 +17,11 @@ The documentation site is built with [Astro](https://astro.build/) and the [Star
 
 ### Install and Run
 
+From the repository root:
+
 ```bash
-npm install
+cd site
+npm ci
 npm run dev        # starts dev server at http://localhost:4321/
 npm run build      # generates static site
 ```
@@ -37,15 +40,14 @@ For full details on the Astro setup, custom components, frontmatter fields, and 
 
 ### Quality Checks
 
-Before committing, run:
+Before committing, run from `site/`:
 
 ```bash
-npm test              # run tests
-npm run typecheck     # TypeScript type checking
-npm run format:check  # formatting
+npm run format        # apply formatting fixes
+npm run check         # check formatting, build, check types, and run tests
 ```
 
-Pre-commit hooks run these automatically.
+Run `npm test`, `npm run typecheck`, or `npm run format:check` individually as needed; CI also runs these checks.
 
 ### Sync Docs with Source Code Updates
 
