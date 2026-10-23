@@ -261,6 +261,8 @@ sidebar:
             items:
               - label: "Persist state across sessions"
                 slug: docs/user-guide/sdk/agents/session-management
+              - label: "Migrate repository-based sessions"
+                slug: docs/user-guide/sdk/agents/migrate-repository-sessions
           - label: Memory
             items:
               - label: "Overview"

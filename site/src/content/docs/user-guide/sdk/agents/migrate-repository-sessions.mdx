@@ -1,0 +1,160 @@
+---
+title: Migrate repository-based sessions
+description: "Migrate Python sessions from RepositorySessionManager,
+  FileSessionManager, or S3SessionManager to SnapshotSessionManager before v2.0.0."
+languages: [python]
+tags: [session-management, snapshots, state]
+sourceLinks:
+  - path: strands-py/src/strands/session/repository_session_manager.py
+  - path: strands-py/src/strands/session/file_session_manager.py
+  - path: strands-py/src/strands/session/s3_session_manager.py
+  - path: strands-py/src/strands/session/snapshot_session_manager.py
+  - path: strands-py/src/strands/types/session.py
+---
+
+The repository-based session managers are deprecated and will be removed in v2.0.0.
+Use this guide to preserve existing session data when moving `RepositorySessionManager`,
+`FileSessionManager`, or `S3SessionManager` sessions to `SnapshotSessionManager`.
+
+For an overview of session persistence and snapshot behavior, see
+[Session management](./session-management.mdx).
+
+## Decide whether to migrate
+
+`SnapshotSessionManager` cannot read repository-format records. Reusing the same session
+and agent IDs starts an empty snapshot session and leaves the source records unchanged.
+
+If you do not need the existing data, start a new snapshot-backed session. To preserve the
+data, restore each repository-format session through a live agent, then save the restored
+state with `SnapshotSessionManager`.
+
+## Customize the procedure
+
+Match the migrating agent to the production agent before restoring its state:
+
+- **Storage**: Configure the repository-based source and snapshot target. The example
+  reads local records with `FileSessionManager` and writes to `LocalFileStorage`. For an
+  S3 source, use `S3SessionManager` and `S3Storage`. For a custom source, construct the
+  same `SessionRepository` implementation used by the application.
+- **Identifiers**: Use the same `session_id` and `agent_id` for the source and target.
+  Migrate each agent ID in a session separately.
+- **Conversation manager**: Use the same type and settings so the restored message offset
+  and compaction behavior match the production agent.
+- **System prompt**: Pass the production system prompt. Repository-based managers do not
+  restore it, but the new snapshot records it.
+- **Model and tools**: Recreate the production model, tools, and custom components that
+  affect agent initialization or restored behavior.
+
+## Review what restoration preserves
+
+Attaching the repository-based manager to the temporary agent restores the persisted data
+before the snapshot is created. This includes application state, conversation-manager
+state, interrupt state, model state, and message history.
+
+The restore also applies saved redactions and repairs incomplete tool-use pairs in the
+history. A trailing orphan is repaired when the agent receives its next prompt. For a
+stateful model, the manager restores model state instead of local messages because the
+model provider manages conversation history server-side.
+
+## Protect existing data
+
+Complete these checks before constructing a repository-based manager or writing a
+snapshot:
+
+- Validate every source `session_id` and `agent_id`. Repository-based managers create
+  empty records for unknown identifiers, so a typo changes the source store.
+- Run the migration offline against a copy of the session store first. Do not race a live
+  agent that uses the same session.
+- Stop if the target snapshot already exists. Keep the source records until you verify
+  that the snapshot restores correctly.
+
+## Migrate one local session
+
+Attach the repository-based manager to a temporary agent, then capture the restored agent
+with the snapshot manager.
+
+:::caution
+The script can complete even when its configuration does not match the production agent.
+Complete the customization and data-protection checks above before running it.
+:::
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.session import FileSessionManager, SnapshotSessionManager
+from strands.storage import LocalFileStorage
+
+SYSTEM_PROMPT = "<your production system prompt>"
+
+
+async def migrate_session(session_id: str, *, agent_id: str = "default") -> None:
+    """Migrate one repository-format session without overwriting the target."""
+    snapshot = SnapshotSessionManager(
+        session_id=session_id,
+        storage=LocalFileStorage("./snapshot-sessions"),
+    )
+
+    # Stop rather than overwrite an existing target snapshot.
+    if await snapshot.restore_snapshot(Agent(agent_id=agent_id)):
+        raise RuntimeError(
+            f"session={session_id!r} agent={agent_id!r} already migrated"
+        )
+
+    # Restore conversation-manager state, redactions, and message-history repairs.
+    source = FileSessionManager(
+        session_id=session_id,
+        storage_dir="./repository-sessions",
+    )
+    agent = Agent(
+        agent_id=agent_id,
+        system_prompt=SYSTEM_PROMPT,
+        session_manager=source,
+    )
+
+    if not agent.messages and not agent.state.get():
+        raise ValueError(
+            f"no source data found for session={session_id!r} agent={agent_id!r}"
+        )
+
+    # Write the snapshot restored during agent initialization.
+    await snapshot.save_snapshot(agent, is_latest=True)
+
+
+asyncio.run(migrate_session("user-123"))
+```
+
+Save the script as `migrate_repository_session.py`, update its configuration, then run:
+
+```bash
+python migrate_repository_session.py
+```
+
+## Migrate and verify each session
+
+- **Get the source session ID** from the existing agent or session manager. See
+  [Reading the session ID](./session-management.mdx#reading-the-session-id).
+- **Migrate many sessions** by calling `migrate_session` per session and per `agent_id`.
+  Keep each call independent and idempotent so an interrupted run can resume.
+- **Verify, then cut over:**
+  1. Dry-run against a copy of the session store.
+  2. Attach `SnapshotSessionManager` to a fresh agent with the same `session_id` and
+     `agent_id`. Compare `agent.messages`, `agent.state.get()`, `agent.system_prompt`, and
+     the conversation-manager state.
+  3. Cut application code over to `SnapshotSessionManager`.
+  4. Delete the source records only after verifying that the snapshot restores correctly.
+
+## Adapt unsupported session types
+
+The single-agent `migrate_session()` example does not work for Graph or Swarm sessions.
+It passes an `Agent` to `save_snapshot()`, while Graph and Swarm persistence captures the
+orchestrator through its lifecycle hooks. There is no public one-shot conversion API.
+Start a new snapshot-backed multi-agent session before v2.0.0. If you must preserve an
+in-progress orchestrator state, remain on v1 and its repository-based manager until a
+dedicated migration path is available.
+
+`BidiAgent` requires a separate adaptation. Construct the equivalent stopped `BidiAgent`
+and preserve its streaming configuration before calling `save_snapshot()`. After cutover,
+`SnapshotSessionManager` saves Bidi state after each message by default, when the agent
+stops, and before a connection restart. Configure this behavior with
+`bidi_agent_save_latest_on`.
