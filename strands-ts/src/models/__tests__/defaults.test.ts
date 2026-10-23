@@ -112,8 +112,11 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('global.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
   })
 
-  it('does not strip unknown prefixes', () => {
-    expect(getContextWindowLimit('custom.gpt-5.4')).toBeUndefined()
+  it('strips leading segments one at a time, like the Python SDK, so unknown prefixes and ARNs resolve', () => {
+    expect(getContextWindowLimit('custom.gpt-5.4')).toBe(getContextWindowLimit('gpt-5.4'))
+    expect(
+      getContextWindowLimit('arn:aws:bedrock:us-west-2:123:inference-profile/us.anthropic.claude-sonnet-4-6')
+    ).toBe(1_000_000)
   })
 
   it('returns undefined for unknown model IDs', () => {

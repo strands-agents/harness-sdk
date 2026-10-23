@@ -426,6 +426,59 @@ describe('BedrockModel', () => {
     })
   })
 
+  describe('info', () => {
+    it('declares cache points for Claude model ids', () => {
+      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it('leaves caching unknown for other model ids', () => {
+      const provider = new BedrockModel({ modelId: 'amazon.nova-pro-v1:0' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+    })
+
+    it('does not auto-cache a Claude id the shared model info does not list', async () => {
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-future-9', cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    it('injects auto cache points on a model the info override says takes them', async () => {
+      const provider = new BedrockModel({
+        modelId: 'amazon.nova-pro-v1:0',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('skips auto cache points on a Claude model the info override marks unsupported', async () => {
+      const provider = new BedrockModel({
+        modelId: 'us.anthropic.claude-sonnet-4-6',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+  })
+
   describe('updateConfig', () => {
     it('merges new config with existing config', () => {
       const provider = new BedrockModel({ region: 'us-west-2', temperature: 0.5 })
@@ -499,7 +552,7 @@ describe('BedrockModel', () => {
     it('formats the request to bedrock properly', async () => {
       const provider = new BedrockModel({
         region: 'us-west-2',
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         maxTokens: 1024,
         temperature: 0.7,
         topP: 0.9,
@@ -534,7 +587,7 @@ describe('BedrockModel', () => {
         MyExtraArg: 'ExtraArg',
         additionalModelRequestFields: ['World!'],
         additionalModelResponseFieldPaths: ['Hello!'],
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         messages: [
           {
             role: 'user',
@@ -1582,6 +1635,28 @@ describe('BedrockModel', () => {
         await collectIterator(
           provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
         )
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('starts at native output for a model the shared model info says cannot be forced', async () => {
+        const mockSend = mockRejections()
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(1)
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+      })
+
+      it('skips native output when the info override says the model lacks it', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          modelInfo: { capabilities: { nativeStructuredOutput: false } },
+        })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
 
         expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
       })

@@ -1207,7 +1207,132 @@ describe('countTokens', () => {
   })
 })
 
+describe('info', () => {
+  it('is all unknown except the mirrored stateful for a provider that declares nothing', () => {
+    const provider = new TestModelProvider()
+
+    expect(provider.modelInfo).toEqual({ capabilities: { stateful: false } })
+  })
+
+  it('resolves facts from the shared model info for any provider by modelId', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(1_000_000)
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('lets the provider declaration win over the shared model info', () => {
+    class DeclaringProvider extends TestModelProvider {
+      protected override declareModelInfo() {
+        return { limits: { contextWindow: 8_000 } }
+      }
+    }
+    const provider = new DeclaringProvider()
+    provider.updateConfig({ modelId: 'claude-sonnet-4-6' })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+  })
+
+  it('lets the provider declaration win when getConfig() carries the shared value, not a user one', () => {
+    class DeclaringProvider extends TestModelProvider {
+      protected override declareModelInfo() {
+        return { limits: { contextWindow: 8_000 } }
+      }
+    }
+    const provider = new DeclaringProvider()
+    provider.updateConfig({ modelId: 'claude-sonnet-4-6', contextWindowLimit: 1_000_000 }) // what resolveConfigMetadata writes
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+  })
+
+  it('never lets the info override change stateful', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: true } } })
+
+    expect(provider.modelInfo.capabilities?.stateful).toBe(false)
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('lets the info override win over contextWindowLimit', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000, modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(10_000)
+  })
+
+  it('takes the context window from the config', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(50_000)
+  })
+
+  it('mirrors a stateful getter override into the record', () => {
+    class StatefulProvider extends TestModelProvider {
+      override get stateful() {
+        return true
+      }
+    }
+
+    expect(new StatefulProvider().modelInfo.capabilities?.stateful).toBe(true)
+  })
+
+  it('applies what the provider declares', () => {
+    class DeclaringProvider extends TestModelProvider {
+      protected override declareModelInfo() {
+        return { capabilities: { promptCaching: 'auto' as const } }
+      }
+    }
+
+    expect(new DeclaringProvider().modelInfo.capabilities?.promptCaching).toBe('auto')
+  })
+
+  it('lets the info config override win over the declaration', () => {
+    class DeclaringProvider extends TestModelProvider {
+      protected override declareModelInfo() {
+        return { capabilities: { promptCaching: 'auto' as const }, limits: { contextWindow: 8_000 } }
+      }
+    }
+    const provider = new DeclaringProvider()
+    provider.updateConfig({ modelInfo: { capabilities: { promptCaching: 'unsupported' } } })
+
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('unsupported')
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+  })
+
+  it('lets an explicit contextWindowLimit win over the declaration', () => {
+    class DeclaringProvider extends TestModelProvider {
+      protected override declareModelInfo() {
+        return { limits: { contextWindow: 8_000 } }
+      }
+    }
+    const provider = new DeclaringProvider()
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+
+    provider.updateConfig({ contextWindowLimit: 500_000 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(500_000)
+  })
+
+  it('reflects config changes on the next read', () => {
+    const provider = new TestModelProvider()
+    expect(provider.modelInfo.limits?.contextWindow).toBeUndefined()
+
+    provider.updateConfig({ contextWindowLimit: 4_096 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(4_096)
+  })
+})
+
 describe('estimateUtilization', () => {
+  it('uses the context window from info, including an info override', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.estimateUtilization(5_000)).toBe(0.5)
+  })
+
   it('returns ratio of inputTokens to contextWindowLimit', () => {
     const provider = new TestModelProvider()
     provider.updateConfig({ contextWindowLimit: 100_000 })

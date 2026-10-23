@@ -80,3 +80,6 @@ bin/
 .superpowers/
 site/docs/superpowers/
 .agent
+
+# Copied from shared/model-info.json by strands-ts prepare/prebuild
+strands-ts/src/models/model-info.json

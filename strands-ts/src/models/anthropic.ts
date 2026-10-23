@@ -9,6 +9,7 @@ import {
   type CacheConfig,
   type ResolvedCacheSection,
 } from '../models/model.js'
+import { lookupModelInfo, type ModelInfo } from '../models/model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import {
   handleRejectedMechanism,
@@ -214,7 +215,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
     this._config = {
       modelId: MODEL_DEFAULTS.anthropic.modelId,
-      maxTokens: MODEL_DEFAULTS.anthropic.maxTokens,
       ...modelConfig,
     }
 
@@ -225,7 +225,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
 
     if (modelConfig.maxTokens === undefined) {
-      warnOnce(logger, defaultMaxTokensWarningMessage(MODEL_DEFAULTS.anthropic.maxTokens))
+      warnOnce(logger, defaultMaxTokensWarningMessage(this._resolvedMaxTokens()))
     }
 
     if (client) {
@@ -254,7 +254,32 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   getConfig(): AnthropicModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId)
+    const config = resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId)
+    return config.maxTokens === undefined ? { ...config, maxTokens: this._resolvedMaxTokens() } : config
+  }
+
+  /**
+   * The `maxTokens` to send: the user's value, else the model's output ceiling from the `modelInfo`
+   * override or the shared model info, else the fixed default. Resolved on each read so it follows
+   * `updateConfig({ modelId })`. Reads the layers directly because `modelInfo` itself reads `getConfig()`.
+   */
+  private _resolvedMaxTokens(): number {
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
+    return (
+      this._config.maxTokens ??
+      this._config.modelInfo?.limits?.maxOutputTokens ??
+      lookupModelInfo(modelId).limits?.maxOutputTokens ??
+      MODEL_DEFAULTS.anthropic.maxTokens
+    )
+  }
+
+  /**
+   * Declares what this provider knows about the configured model: Claude takes cache points.
+   *
+   * @returns The declared capabilities
+   */
+  protected override declareModelInfo(): ModelInfo {
+    return { capabilities: { promptCaching: 'cachePoints' } }
   }
 
   /**
@@ -533,7 +558,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _structuredOutputMechanism(options: StreamOptions | undefined): StructuredOutputMechanism | undefined {
     const schema = options?.structuredOutputSchema
     if (!schema || !this._config.modelId) return undefined
-    return structuredOutputMechanisms('anthropic', this._config.modelId, options.toolChoice, schema)[0]
+    return structuredOutputMechanisms('anthropic', this._config.modelId, options.toolChoice, schema, this.modelInfo)[0]
   }
 
   /**
@@ -678,7 +703,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
     const request: Anthropic.MessageStreamParams = {
       model: this._config.modelId,
-      max_tokens: this._config.maxTokens ?? MODEL_DEFAULTS.anthropic.maxTokens,
+      max_tokens: this._resolvedMaxTokens(),
       messages: this._formatMessages(messages, messagesCache, cacheTargetMessage, options?.dynamicTrailingBlocks ?? 0),
       stream: true,
     }

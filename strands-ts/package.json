@@ -210,6 +210,8 @@
     }
   },
   "scripts": {
+    "prepare": "cp ../shared/model-info.json src/models/model-info.json",
+    "prebuild": "cp ../shared/model-info.json src/models/model-info.json",
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",

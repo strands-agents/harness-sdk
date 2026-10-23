@@ -96,6 +96,14 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(model.stateful).toBe(true)
     })
 
+    it('is declared on info', () => {
+      const stateful = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
+      const stateless = new OpenAIModel({ api: 'responses', client: {} as OpenAI })
+
+      expect(stateful.modelInfo.capabilities?.stateful).toBe(true)
+      expect(stateless.modelInfo.capabilities?.stateful).toBe(false)
+    })
+
     it('is construction-only and cannot be changed via updateConfig', () => {
       const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: false })
       const warnSpy = vi.spyOn(logger, 'warn')
