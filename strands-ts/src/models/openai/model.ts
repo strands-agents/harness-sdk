@@ -67,6 +67,7 @@ import type {
  */
 export class OpenAIModel extends Model<OpenAIModelConfig> {
   private readonly _api: OpenAIApi
+  private readonly _mantle: boolean
   private _config: OpenAIModelConfig
   private _client: OpenAI
 
@@ -96,6 +97,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     if (bedrockMantleConfig && client) {
       throw new Error("'bedrockMantleConfig' cannot be combined with a pre-built 'client'.")
     }
+    this._mantle = Boolean(bedrockMantleConfig)
 
     if (client) {
       this._client = client
@@ -249,7 +251,9 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
   private async *_streamResponses(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      const request = formatResponsesRequest(this._config as OpenAIResponsesConfig, messages, options, this.stateful)
+      const request = formatResponsesRequest(this._config as OpenAIResponsesConfig, messages, options, this.stateful, {
+        replayMessageItems: !this._mantle,
+      })
       const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
       const state = createResponsesStreamState()

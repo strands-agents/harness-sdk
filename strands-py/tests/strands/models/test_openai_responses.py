@@ -364,6 +364,318 @@ def test_format_request_messages(system_prompt):
     assert tru_result == exp_result
 
 
+def test_format_request_messages_replays_captured_output_items_verbatim():
+    output = [
+        {
+            "id": "rs_1",
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [{"type": "summary_text", "text": "summary"}],
+            "encrypted_content": "encrypted",
+        },
+        {
+            "id": "fc_1",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_1",
+            "name": "lookup",
+            "arguments": '{"query":"next"}',
+        },
+        {
+            "id": "msg_1",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "answer",
+                    "annotations": [
+                        {
+                            "type": "url_citation",
+                            "url": "https://example.com",
+                            "title": "Example",
+                            "start_index": 0,
+                            "end_index": 6,
+                        }
+                    ],
+                }
+            ],
+        },
+    ]
+    messages = [
+        {"role": "user", "content": [{"text": "question"}]},
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": output},
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "call_1",
+                        "status": "success",
+                        "content": [{"text": "result"}],
+                    }
+                }
+            ],
+        },
+    ]
+
+    assert OpenAIResponsesModel._format_request_messages(messages) == [
+        {"role": "user", "content": [{"type": "input_text", "text": "question"}]},
+        *output,
+        {"type": "function_call_output", "call_id": "call_1", "output": "result"},
+    ]
+
+
+def test_format_request_messages_replays_builtin_tool_items_verbatim():
+    output = [
+        {
+            "id": "program_1",
+            "type": "program",
+            "call_id": "call_program_1",
+            "code": "print(1)",
+            "fingerprint": "fingerprint",
+        },
+        {
+            "id": "ws_1",
+            "type": "web_search_call",
+            "status": "completed",
+            "action": {"type": "search", "query": "weather"},
+        },
+    ]
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "recovered"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": output},
+        }
+    ]
+
+    assert OpenAIResponsesModel._format_request_messages(messages) == [
+        *output,
+        {"role": "assistant", "content": "recovered"},
+    ]
+
+
+def test_format_request_messages_falls_back_when_output_items_are_invalid(caplog):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": [{}]},
+        }
+    ]
+
+    assert OpenAIResponsesModel._format_request_messages(messages) == [{"role": "assistant", "content": "answer"}]
+    assert "invalid Responses output items" in caplog.text
+
+
+def test_format_request_messages_falls_back_when_output_is_not_input_compatible(caplog):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {
+                "openaiResponsesOutput": [
+                    {"id": "tools_1", "type": "additional_tools", "role": "assistant", "tools": []}
+                ]
+            },
+        }
+    ]
+
+    assert OpenAIResponsesModel._format_request_messages(messages) == [{"role": "assistant", "content": "answer"}]
+    assert "invalid Responses output items" in caplog.text
+
+
+def test_format_request_does_not_replay_output_items_in_stateful_mode(model_id):
+    model = OpenAIResponsesModel(model_id=model_id, stateful=True)
+    output = [{"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "encrypted"}]
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": output},
+        }
+    ]
+
+    request = model._format_request(messages, None, None)
+
+    assert request["input"] == [{"role": "assistant", "content": "answer"}]
+    assert "include" not in request
+
+
+def test_format_request_passes_configured_include_through_unchanged(model, messages):
+    """The adapter adds nothing to ``include``: stateless Responses already return encrypted reasoning."""
+    model.config["params"] = {"include": ["web_search_call.results"]}
+
+    request = model._format_request(messages, None, None)
+
+    assert request["include"] == ["web_search_call.results"]
+
+
+def test_format_request_messages_mantle_replays_reasoning_but_not_message_items():
+    """Bedrock Mantle rejects replayed ``message`` items; keep reasoning/function_call items and send the text."""
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": [], "content": [{"type": "reasoning_text", "text": "t"}]}
+    message = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "4", "annotations": []}],
+    }
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "4"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": [reasoning, message]},
+        }
+    ]
+
+    result = OpenAIResponsesModel._format_request_messages(messages, replay_message_items=False)
+
+    assert result == [reasoning, {"role": "assistant", "content": "4"}]
+
+
+def test_format_request_messages_mantle_keeps_calls_ahead_of_text_when_message_items_dropped():
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": []}
+    message = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed", "content": []}
+    call = {"id": "fc_1", "type": "function_call", "call_id": "call_1", "name": "calc", "arguments": "{}"}
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "let me check"}, {"toolUse": {"name": "calc", "input": {}, "toolUseId": "call_1"}}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": [reasoning, message, call]},
+        }
+    ]
+
+    result = OpenAIResponsesModel._format_request_messages(messages, replay_message_items=False)
+
+    assert result == [reasoning, call, {"role": "assistant", "content": "let me check"}]
+
+
+def test_format_request_messages_mantle_message_only_items_fall_back_to_legacy_history():
+    message = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed", "content": []}
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": [message]},
+        }
+    ]
+
+    result = OpenAIResponsesModel._format_request_messages(messages, replay_message_items=False)
+
+    assert result == [{"role": "assistant", "content": "answer"}]
+
+
+def test_format_request_with_mantle_config_does_not_replay_message_items(model_id, messages):
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "enc"}
+    message = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed", "content": []}
+    history = [
+        *messages,
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": [reasoning, message]},
+        },
+    ]
+    with unittest.mock.patch("strands.models.openai_responses.resolve_bedrock_client_args") as resolve:
+        resolve.return_value = {"api_key": "k", "base_url": "https://bedrock-mantle.us-east-1.api.aws/v1"}
+        model = OpenAIResponsesModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+        request = model._format_request(history, None, None)
+
+    assert request["input"][-2:] == [reasoning, {"role": "assistant", "content": "answer"}]
+
+
+def test_format_request_messages_replays_items_without_text_fallback():
+    """A replayed turn with no message item and no text content adds nothing beyond the items."""
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "enc"}
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"name": "calculator", "input": {}, "toolUseId": "call_1"}}],
+            "additionalModelResponseFields": {
+                "openaiResponsesOutput": [
+                    reasoning,
+                    {
+                        "id": "fc_1",
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "calculator",
+                        "arguments": "{}",
+                    },
+                ]
+            },
+        }
+    ]
+
+    result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == messages[0]["additionalModelResponseFields"]["openaiResponsesOutput"]
+
+
+def test_format_request_messages_ignores_foreign_response_fields(caplog):
+    """History from another provider carries additionalModelResponseFields without our key: no warning."""
+    messages = [
+        {"role": "assistant", "content": [{"text": "answer"}], "additionalModelResponseFields": {"bedrock": {"x": 1}}}
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == [{"role": "assistant", "content": "answer"}]
+    assert "invalid Responses output items" not in caplog.text
+
+
+def test_format_request_messages_rejects_non_dict_output_items():
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"text": "answer"}],
+            "additionalModelResponseFields": {"openaiResponsesOutput": ["not-an-item"]},
+        }
+    ]
+
+    assert OpenAIResponsesModel._format_request_messages(messages) == [{"role": "assistant", "content": "answer"}]
+
+
+def test_response_item_to_dict_converts_sdk_models_and_rejects_unknown_types():
+    from openai.types.responses import ResponseReasoningItem
+
+    item = ResponseReasoningItem(id="rs_1", type="reasoning", summary=[], encrypted_content="enc")
+
+    assert OpenAIResponsesModel._response_item_to_dict(item) == {
+        "id": "rs_1",
+        "type": "reasoning",
+        "summary": [],
+        "encrypted_content": "enc",
+    }
+    with pytest.raises(TypeError, match="unsupported Responses output item"):
+        OpenAIResponsesModel._response_item_to_dict(42)
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_does_not_capture_output_items(openai_client, model_id, agenerator, alist):
+    model = OpenAIResponsesModel(model_id=model_id, stateful=True)
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "enc"}
+    events = [
+        unittest.mock.Mock(type="response.created", response=unittest.mock.Mock(id="resp_1")),
+        unittest.mock.Mock(type="response.output_text.delta", delta="answer"),
+        unittest.mock.Mock(type="response.output_item.done", output_index=0, item=reasoning),
+        unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None, output=[reasoning])),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    streamed = await alist(model.stream([{"role": "user", "content": [{"text": "x"}]}], model_state={}))
+
+    assert {"messageStop": {"stopReason": "end_turn"}} in streamed
+
+
 def test_format_request_messages_assistant_text_uses_string_content():
     """Assistant history must use the string EasyInputMessage form.
 
@@ -1828,6 +2140,105 @@ def test_stateful(model_id, stateful):
     """Model.stateful reflects the stateful config option."""
     model = OpenAIResponsesModel(model_id=model_id, stateful=stateful)
     assert model.stateful is stateful
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_completed_output_items(openai_client, model, agenerator, alist):
+    reasoning = {
+        "id": "rs_1",
+        "type": "reasoning",
+        "status": "completed",
+        "summary": [{"type": "summary_text", "text": "summary"}],
+        "encrypted_content": "encrypted",
+    }
+    message = {
+        "id": "msg_1",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "phase": "commentary",
+        "content": [{"type": "output_text", "text": "answer", "annotations": []}],
+    }
+    events = [
+        unittest.mock.Mock(type="response.output_text.delta", delta="answer"),
+        unittest.mock.Mock(type="response.output_item.done", output_index=1, item=message),
+        unittest.mock.Mock(type="response.output_item.done", output_index=0, item=reasoning),
+        unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None, output=None)),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    streamed = await alist(model.stream([{"role": "user", "content": [{"text": "x"}]}]))
+
+    assert {
+        "messageStop": {
+            "stopReason": "end_turn",
+            "additionalModelResponseFields": {"openaiResponsesOutput": [reasoning, message]},
+        }
+    } in streamed
+
+
+@pytest.mark.asyncio
+async def test_stream_omits_output_items_that_do_not_cover_tool_calls(openai_client, model, agenerator, alist):
+    """Items missing an emitted function_call are not persisted, or its tool result would be orphaned on replay."""
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "encrypted"}
+    events = [
+        unittest.mock.Mock(type="response.output_item.done", output_index=0, item=reasoning),
+        unittest.mock.Mock(
+            type="response.output_item.added",
+            item=unittest.mock.Mock(type="function_call", call_id="call_1", name="calculator", id="item_1"),
+        ),
+        unittest.mock.Mock(
+            type="response.function_call_arguments.done", arguments='{"expression": "2+2"}', item_id="item_1"
+        ),
+        unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None, output=None)),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    streamed = await alist(model.stream([{"role": "user", "content": [{"text": "calculate"}]}]))
+
+    assert {"messageStop": {"stopReason": "tool_use"}} in streamed
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_incomplete_output_items(openai_client, model, agenerator, alist):
+    """A real `response.incomplete` output list is captured, with max_tokens still winning over tool_use."""
+    reasoning = {"id": "rs_1", "type": "reasoning", "summary": [], "encrypted_content": "encrypted"}
+    truncated_call = {
+        "id": "fc_1",
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "write_file",
+        "arguments": '{"path": "notes.md", "content": "Lorem',
+        "status": "incomplete",
+    }
+    events = [
+        unittest.mock.Mock(
+            type="response.output_item.added",
+            item=unittest.mock.Mock(type="function_call", call_id="call_1", name="write_file", id="fc_1"),
+        ),
+        unittest.mock.Mock(
+            type="response.function_call_arguments.delta", item_id="fc_1", delta=truncated_call["arguments"]
+        ),
+        unittest.mock.Mock(
+            type="response.incomplete",
+            response=unittest.mock.Mock(
+                usage=None,
+                output=[reasoning, truncated_call],
+                incomplete_details=unittest.mock.Mock(reason="max_output_tokens"),
+            ),
+        ),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    streamed = await alist(model.stream([{"role": "user", "content": [{"text": "save my notes"}]}]))
+
+    assert {
+        "messageStop": {
+            "stopReason": "max_tokens",
+            "additionalModelResponseFields": {"openaiResponsesOutput": [reasoning, truncated_call]},
+        }
+    } in streamed
+    assert not any(event.get("messageStop", {}).get("stopReason") == "tool_use" for event in streamed)
 
 
 @pytest.mark.asyncio

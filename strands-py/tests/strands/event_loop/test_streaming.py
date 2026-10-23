@@ -1459,6 +1459,24 @@ async def test_process_stream_signature_does_not_leak_into_later_empty_block(age
 
 
 @pytest.mark.asyncio
+async def test_process_stream_persists_provider_response_fields(agenerator, alist):
+    fields = {"openaiResponsesOutput": [{"type": "reasoning", "id": "rs_1", "summary": []}]}
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "answer"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn", "additionalModelResponseFields": fields}},
+    ]
+
+    last_event = cast(
+        ModelStopReason, (await alist(strands.event_loop.streaming.process_stream(agenerator(response))))[-1]
+    )
+
+    assert _get_message_from_event(last_event)["additionalModelResponseFields"] == fields
+
+
+@pytest.mark.asyncio
 async def test_stream_messages(agenerator, alist):
     mock_model = unittest.mock.MagicMock()
     mock_model.stream.return_value = agenerator(
@@ -1520,6 +1538,34 @@ async def test_stream_messages(agenerator, alist):
         cancel_signal=None,
         agent_metadata=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_preserves_provider_response_fields(agenerator, alist):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.stream.return_value = agenerator([])
+    fields = {"openaiResponsesOutput": [{"type": "reasoning", "id": "rs_1", "summary": []}]}
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model,
+            system_prompt_content=None,
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": [{"text": "answer"}],
+                    "tracking_id": "durable-1",
+                    "metadata": {"custom": {"private": True}},
+                    "additionalModelResponseFields": fields,
+                }
+            ],
+            tool_specs=None,
+            system_prompt=None,
+        )
+    )
+
+    sent = mock_model.stream.call_args[0][0]
+    assert sent == [{"role": "assistant", "content": [{"text": "answer"}], "additionalModelResponseFields": fields}]
 
 
 @pytest.mark.asyncio
