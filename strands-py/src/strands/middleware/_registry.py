@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -65,8 +66,9 @@ class MiddlewareRegistry:
             transformed = handler(context)
             if inspect.isawaitable(transformed):
                 transformed = await transformed
-            async for event in next_fn(transformed):
-                yield event
+            async with contextlib.aclosing(next_fn(transformed)) as events:
+                async for event in events:
+                    yield event
 
         handlers = self._handlers.setdefault(stage, [])
         handlers.append(_TaggedHandler(phase="input", handler=adapted))
@@ -81,11 +83,12 @@ class MiddlewareRegistry:
         # raises or halts on an interrupt never reaches the handler; one that yields no result skips it.
         async def adapted(context: Any, next_fn: MiddlewareNext) -> AsyncGenerator[Any, None]:
             result_event = None
-            async for event in next_fn(context):
-                if isinstance(event, stage.result_event):
-                    result_event = event
-                else:
-                    yield event
+            async with contextlib.aclosing(next_fn(context)) as events:
+                async for event in events:
+                    if isinstance(event, stage.result_event):
+                        result_event = event
+                    else:
+                        yield event
             if result_event is None:
                 return
             transformed = handler(stage.result_type(result=result_event))

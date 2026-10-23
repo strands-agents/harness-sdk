@@ -3912,6 +3912,77 @@ async def test_agent_span_ends_on_generator_exit():
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
 
 
+@pytest.mark.asyncio
+async def test_stream_async_early_aclose_closes_nested_generators_and_cycle_span(caplog):
+    """Closing stream_async early closes all nested generators synchronously and ends the cycle span."""
+    import gc
+    import logging
+    import sys
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    @strands.tool
+    def add_numbers(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": "add_numbers", "input": {"a": 1, "b": 2}}}],
+            },
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+
+    gc_finalized: list[str] = []
+    prev_hooks = sys.get_asyncgen_hooks()
+
+    def _record_finalizer(ag):
+        gc_finalized.append(ag.__qualname__)
+        if prev_hooks.finalizer is not None:
+            prev_hooks.finalizer(ag)
+
+    sys.set_asyncgen_hooks(firstiter=prev_hooks.firstiter, finalizer=_record_finalizer)
+    try:
+        with (
+            unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer),
+            unittest.mock.patch("strands.event_loop.event_loop.get_tracer", return_value=tracer),
+            unittest.mock.patch("strands.tools.executors._executor.get_tracer", return_value=tracer),
+            caplog.at_level(logging.ERROR, logger="opentelemetry.context"),
+        ):
+            agent = Agent(model=model, tools=[add_numbers], callback_handler=None)
+            stream = agent.stream_async("hi")
+            async for event in stream:
+                if "message" in event and event["message"]["role"] == "user":
+                    break
+            await stream.aclose()
+
+            del stream
+            gc.collect()
+            for _ in range(10):
+                await asyncio.sleep(0)
+    finally:
+        sys.set_asyncgen_hooks(*prev_hooks)
+
+    assert gc_finalized == []
+    assert not any("Failed to detach context" in record.getMessage() for record in caplog.records)
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    cycle_spans = [span for span in spans if span.name == "execute_event_loop_cycle"]
+    assert len(cycle_spans) == 1
+    assert cycle_spans[0].status.status_code == StatusCode.UNSET
+    assert cycle_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
 def test_baggage_attributes_default_empty():
     """When baggage_attributes is not provided, no extra baggage is stamped."""
     agent = Agent(

@@ -5,6 +5,7 @@ thread pools, etc.).
 """
 
 import abc
+import contextlib
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable
@@ -443,18 +444,21 @@ class ToolExecutor(abc.ABC):
         Yields:
             Tool events with the last being the tool result.
         """
-        async for event in ToolExecutor._stream(
-            agent,
-            tool_use,
-            tool_results,
-            invocation_state,
-            structured_output_context,
-            tracer=get_tracer(),
-            cycle_span=cycle_span,
-            cycle_trace=cycle_trace,
-            **kwargs,
-        ):
-            yield event
+        async with contextlib.aclosing(
+            ToolExecutor._stream(
+                agent,
+                tool_use,
+                tool_results,
+                invocation_state,
+                structured_output_context,
+                tracer=get_tracer(),
+                cycle_span=cycle_span,
+                cycle_trace=cycle_trace,
+                **kwargs,
+            )
+        ) as stream_events:
+            async for event in stream_events:
+                yield event
 
     @abc.abstractmethod
     # pragma: no cover
@@ -567,8 +571,9 @@ def _make_execute_tool_terminal(
             yield ToolResultEvent(preset_result, exception=ValueError(preset_result["content"][0]["text"]))
             return
         if tracer is None:
-            async for event in _run_tool(ctx, extra_kwargs, tool_context):
-                yield event
+            async with contextlib.aclosing(_run_tool(ctx, extra_kwargs, tool_context)) as tool_events:
+                async for event in tool_events:
+                    yield event
             return
 
         span, tool_trace = _start_tool_telemetry(ctx, tracer, cycle_span, cycle_trace)
@@ -576,10 +581,11 @@ def _make_execute_tool_terminal(
         result_event: ToolResultEvent | None = None
         try:
             with trace_api.use_span(span, end_on_exit=False):
-                async for event in _run_tool(ctx, extra_kwargs, tool_context):
-                    if isinstance(event, ToolResultEvent):
-                        result_event = event
-                    yield event
+                async with contextlib.aclosing(_run_tool(ctx, extra_kwargs, tool_context)) as tool_events:
+                    async for event in tool_events:
+                        if isinstance(event, ToolResultEvent):
+                            result_event = event
+                        yield event
         finally:
             _end_tool_telemetry(ctx, tracer, span, tool_trace, cycle_trace, time.monotonic() - started_at, result_event)
 
@@ -664,22 +670,23 @@ async def _run_tool(
     last_raw_event: Any = None
     stream_kwargs = {**extra_kwargs, "_tool_context": tool_context} if tool_context is not None else extra_kwargs
     try:
-        async for event in ctx.tool.stream(tool_use, ctx.invocation_state, **stream_kwargs):
-            if isinstance(event, ToolInterruptEvent):
-                yield event
-                return
+        async with contextlib.aclosing(ctx.tool.stream(tool_use, ctx.invocation_state, **stream_kwargs)) as tool_stream:
+            async for event in tool_stream:
+                if isinstance(event, ToolInterruptEvent):
+                    yield event
+                    return
 
-            if isinstance(event, ToolResultEvent):
-                # Re-emit so the exception decorated tools attach rides along as the result.
-                yield ToolResultEvent(event.tool_result, exception=event.exception)
-                return
+                if isinstance(event, ToolResultEvent):
+                    # Re-emit so the exception decorated tools attach rides along as the result.
+                    yield ToolResultEvent(event.tool_result, exception=event.exception)
+                    return
 
-            if isinstance(event, ToolStreamEvent):
-                yield event
-            else:
-                yield ToolStreamEvent(tool_use, event)
-            yielded_any = True
-            last_raw_event = event
+                if isinstance(event, ToolStreamEvent):
+                    yield event
+                else:
+                    yield ToolStreamEvent(tool_use, event)
+                yielded_any = True
+                last_raw_event = event
     except InterruptException:
         # A tool-raised interrupt must halt the agent — let it unwind rather than
         # becoming an error result (matches TS re-throwing InterruptError).
