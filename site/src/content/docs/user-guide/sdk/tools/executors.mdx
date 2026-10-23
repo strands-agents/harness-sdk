@@ -33,6 +33,18 @@ agent = Agent(
 agent("What is the weather and time in New York?")
 ```
 
+Pass `max_concurrency` to cap how many tool calls in one batch run at once. The
+remaining calls are admitted as running executions finish, so ordering of results
+still follows the original tool-use order. Omit it to keep every call starting
+immediately:
+
+```python
+agent = Agent(
+    tool_executor=ConcurrentToolExecutor(max_concurrency=2),
+    tools=[weather_tool, time_tool]
+)
+```
+
 </Tab>
 <Tab label="TypeScript">
 
