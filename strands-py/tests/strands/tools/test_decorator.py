@@ -2,6 +2,7 @@
 Tests for the function-based tool decorator pattern.
 """
 
+import functools
 import warnings
 from asyncio import Queue
 from collections.abc import AsyncGenerator
@@ -1731,6 +1732,38 @@ async def test_tool_async_generator():
     ]
 
     assert act_results == exp_results
+
+
+@pytest.mark.asyncio
+async def test_tool_async_function_behind_sync_decorator_is_awaited():
+    """Regression test for #4410: a sync wrapper around an async tool returns a coroutine that must be awaited."""
+    calls: list[str] = []
+
+    def sync_decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    @strands.tool
+    @sync_decorator
+    async def lookup_customer(name: str) -> str:
+        """Look up a customer.
+
+        Args:
+            name: Customer name.
+        """
+        calls.append(name)
+        return f"found {name}"
+
+    tool_use: ToolUse = {"toolUseId": "t1", "name": "lookup_customer", "input": {"name": "Acme"}}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        events = [event async for event in lookup_customer.stream(tool_use, {})]
+
+    assert calls == ["Acme"]
+    assert events == [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "found Acme"}]})]
 
 
 @pytest.mark.asyncio

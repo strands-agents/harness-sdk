@@ -597,6 +597,30 @@ async def test_stream(identity_tool, alist):
     assert tru_events == exp_events
 
 
+@pytest.mark.asyncio
+async def test_stream_awaits_coroutine_returned_by_sync_wrapper(alist):
+    """Regression test for #4410: a sync wrapper around an async tool returns a coroutine that must be awaited."""
+    calls = []
+
+    async def lookup(tool_use, **kwargs):
+        calls.append(tool_use["toolUseId"])
+        return {"toolUseId": tool_use["toolUseId"], "status": "success", "content": [{"text": "found"}]}
+
+    def sync_wrapper(tool_use, **kwargs):
+        return lookup(tool_use, **kwargs)
+
+    tool = PythonAgentTool(
+        tool_name="lookup",
+        tool_spec={"name": "lookup", "description": "lookup", "inputSchema": {"type": "object", "properties": {}}},
+        tool_func=sync_wrapper,
+    )
+
+    events = await alist(tool.stream({"toolUseId": "t1", "name": "lookup", "input": {}}, {}))
+
+    assert calls == ["t1"]
+    assert events == [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "found"}]})]
+
+
 def test_normalize_schema_with_anyof():
     """Test that anyOf properties don't get default type."""
     schema = {
