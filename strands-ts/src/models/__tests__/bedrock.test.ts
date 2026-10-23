@@ -6083,7 +6083,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'image_format=<gif> | format not supported by bedrock guardrails | skipping guardContent wrap'
+          'count=<1> | image_format=<gif> | format not supported by bedrock guardrails | skipping guardContent wrap'
         )
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -6130,7 +6130,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'image_format=<webp> | format not supported by bedrock guardrails | skipping guardContent wrap'
+          'count=<1> | image_format=<webp> | format not supported by bedrock guardrails | skipping guardContent wrap'
         )
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -6181,7 +6181,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'source_type=<non-bytes> | image source must be bytes for bedrock guardrails | skipping guardContent wrap'
+          'count=<1> | source_type=<non-bytes> | image source must be bytes for bedrock guardrails | skipping guardContent wrap'
         )
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -6232,7 +6232,7 @@ describe('BedrockModel', () => {
 
         // URL sources return undefined in _formatMediaSource, resulting in source: undefined
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'source_type=<imageSourceUrl> | not supported by bedrock | skipping'
+          'count=<1> | source_type=<imageSourceUrl> | not supported by bedrock | skipping'
         )
         // The image block still appears but with undefined source (Bedrock will reject this)
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
@@ -6251,6 +6251,32 @@ describe('BedrockModel', () => {
               },
             ],
           })
+        )
+        consoleWarnSpy.mockRestore()
+      })
+
+      it('logs one counted skip warning per request across history', async () => {
+        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const provider = new BedrockModel({})
+        const messages = []
+        for (let turn = 0; turn < 3; turn++) {
+          messages.push(
+            new Message({
+              role: 'user',
+              content: [
+                new TextBlock('look'),
+                new ImageBlock({ format: 'jpeg', source: { url: 'https://example.com/image.jpg' } }),
+              ],
+            })
+          )
+          messages.push(new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }))
+        }
+
+        await collectIterator(provider.stream(messages))
+
+        expect(consoleWarnSpy).toHaveBeenCalledTimes(1)
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+          'count=<3> | source_type=<imageSourceUrl> | not supported by bedrock | skipping'
         )
         consoleWarnSpy.mockRestore()
       })
