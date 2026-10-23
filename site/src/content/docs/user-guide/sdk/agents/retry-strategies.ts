@@ -5,6 +5,8 @@ import {
   DefaultModelRetryStrategy,
   ExponentialBackoff,
   AfterModelCallEvent,
+  type BackoffContext,
+  type BackoffStrategy,
 } from '@strands-agents/sdk'
 
 async function defaultStrategyExample() {
@@ -30,6 +32,21 @@ async function customBackoffExample() {
     }),
   })
   // --8<-- [end:custom_backoff]
+  void agent
+}
+
+async function customBackoffStrategyExample() {
+  // --8<-- [start:custom_backoff_strategy]
+  class StepBackoff implements BackoffStrategy {
+    nextDelay(ctx: BackoffContext): number {
+      return ctx.attempt < 3 ? 1_000 : 10_000
+    }
+  }
+
+  const agent = new Agent({
+    retryStrategy: new DefaultModelRetryStrategy({ backoff: new StepBackoff() }),
+  })
+  // --8<-- [end:custom_backoff_strategy]
   void agent
 }
 
@@ -68,6 +85,8 @@ async function hookRetryExample() {
 
   let attempts = 0
   agent.addHook(AfterModelCallEvent, async (event) => {
+    // Skip if another hook already requested a retry, so delays don't stack.
+    if (event.retry) return
     if (event.error && attempts < 3) {
       attempts += 1
       await new Promise((resolve) => setTimeout(resolve, 2_000))
@@ -80,6 +99,7 @@ async function hookRetryExample() {
 
 void defaultStrategyExample
 void customBackoffExample
+void customBackoffStrategyExample
 void disableExample
 void customSubclassExample
 void hookRetryExample

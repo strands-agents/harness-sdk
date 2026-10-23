@@ -4,9 +4,9 @@ from . import agent, models, storage, telemetry, types
 from .agent.agent import Agent
 from .agent.base import AgentBase
 from .background_tasks import BackgroundTasksConfig
-from .event_loop._retry import ModelRetryStrategy
 from .interventions import InterventionHandler
 from .plugins import MultiAgentPlugin, Plugin
+from .retry import ConstantBackoff, ExponentialBackoff, LinearBackoff, ModelRetryStrategy
 from .sandbox import (
     PosixShellSandbox,
     Sandbox,
@@ -23,7 +23,10 @@ __all__ = [
     "AgentBase",
     "AgentSkills",
     "BackgroundTasksConfig",
+    "ConstantBackoff",
+    "ExponentialBackoff",
     "InterventionHandler",
+    "LinearBackoff",
     "LocalAgent",
     "agent",
     "models",
