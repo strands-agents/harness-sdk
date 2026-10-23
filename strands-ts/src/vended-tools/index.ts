@@ -6,6 +6,7 @@
  * import {
  *   bash,
  *   fileEditor,
+ *   graph,
  *   handoffToUser,
  *   httpRequest,
  *   notebook,
@@ -25,6 +26,7 @@
 
 export * from './bash/index.js'
 export * from './file-editor/index.js'
+export * from './graph/index.js'
 export * from './handoff-to-user/index.js'
 export * from './mcp-router/index.js'
 export * from './shell/index.js'
