@@ -580,6 +580,49 @@ describe("OpenAIModel (api: 'responses')", () => {
       const req = await runOnce({}, messages)
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
     })
+
+    it('formats a user message document as input_file with the format appended to the filename', async () => {
+      const docBytes = new Uint8Array([5, 6, 7, 8])
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('read this'),
+            new DocumentBlock({ name: 'report', format: 'pdf', source: { bytes: docBytes } }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'read this' },
+          {
+            type: 'input_file',
+            file_data: expect.stringMatching(/^data:application\/pdf;base64,/),
+            filename: 'report.pdf',
+          },
+        ],
+      })
+    })
+
+    it('does not double the extension when a message document name already carries it', async () => {
+      const docBytes = new Uint8Array([5, 6, 7, 8])
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new DocumentBlock({ name: 'report.pdf', format: 'pdf', source: { bytes: docBytes } })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0].content).toEqual([
+        {
+          type: 'input_file',
+          file_data: expect.stringMatching(/^data:application\/pdf;base64,/),
+          filename: 'report.pdf',
+        },
+      ])
+    })
   })
 
   describe('stream event mapping', () => {
