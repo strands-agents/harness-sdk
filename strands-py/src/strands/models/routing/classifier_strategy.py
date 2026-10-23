@@ -8,10 +8,9 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from ...types.content import Message, Messages, SystemPrompt
 from ..model import Model
+from ._classifier_selection import ClassifierSelection as _ClassifierSelection
 from .router import RoutingCandidate
 from .strategy import RoutingContext
 
@@ -35,16 +34,6 @@ _MEDIA_CONTENT_LABELS = {
     "document": "[Document]",
     "video": "[Video]",
 }
-
-
-class _ClassifierSelection(BaseModel):
-    """Structured routing decision returned by the classifier model."""
-
-    selected_candidate_index: int = Field(
-        ge=0,
-        strict=True,
-        description="Zero-based index of the configured candidate best suited to the request.",
-    )
 
 
 def _build_candidate_profiles(

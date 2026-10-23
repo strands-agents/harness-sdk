@@ -4,11 +4,13 @@ import asyncio
 import json
 import logging
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from strands import Agent
 from strands.models import ClassifierStrategy, ModelRouter, RoutingAttempt, RoutingCandidate
+from strands.models.bedrock import BedrockModel
 from strands.models.routing.classifier_strategy import (
     _CLASSIFICATION_OMISSION_MARKER,
     _DEFAULT_MESSAGE_CHARACTER_LIMIT,
@@ -395,6 +397,55 @@ def test_agent_classifier_failure_serves_candidate_zero():
 
     assert tru_result.message["content"][0]["text"] == "default"
     assert classifier.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input", "expected_text"),
+    [
+        ("ClassifierSelection", {"selected_candidate_index": 1}, "selected"),
+        ("ClassifierSelection", {}, "default"),
+        ("ClassifierSelection", {"selected_candidate_index": True}, "default"),
+        ("ClassifierSelection", {"selected_candidate_index": "1"}, "default"),
+        ("ClassifierSelection", {"selected_candidate_index": -1}, "default"),
+        ("ClassifierSelection", {"selected_candidate_index": 2}, "default"),
+        ("UnrelatedSelection", {"selected_candidate_index": 1}, "default"),
+    ],
+    ids=["selected", "empty", "bool", "string", "negative", "out-of-range", "wrong-tool"],
+)
+def test_agent_bedrock_classifier_selection(moto_env, monkeypatch, caplog, tool_name, tool_input, expected_text):
+    # Nova-compatible tool names must route to the chosen candidate (#5431).
+    classifier = BedrockModel(model_id="amazon.nova-micro-v1:0", streaming=False)
+    converse = Mock(
+        return_value={
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "selection", "name": tool_name, "input": tool_input}}],
+                }
+            },
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+            "metrics": {"latencyMs": 1},
+        }
+    )
+    monkeypatch.setattr(classifier.client, "converse", converse)
+    router = ModelRouter(
+        models=[_candidate("default"), _candidate("selected")],
+        strategy=ClassifierStrategy(classifier),
+    )
+    agent = Agent(model=router, retry_strategy=None, callback_handler=None)
+
+    with caplog.at_level(logging.WARNING):
+        tru_result = agent("hello")
+
+    assert tru_result.message["content"] == [{"text": expected_text}]
+    converse.assert_called_once()
+    tool_config = converse.call_args.kwargs["toolConfig"]
+    tru_tool_names = [tool["toolSpec"]["name"] for tool in tool_config["tools"]]
+    exp_tool_names = ["ClassifierSelection"]
+    assert tru_tool_names == exp_tool_names
+    assert tool_config["toolChoice"] == {"any": {}}
+    assert ("reason=<classifier_error>" in caplog.text) == (expected_text == "default")
 
 
 def test_agent_selected_model_failure_surfaces_without_switching():
