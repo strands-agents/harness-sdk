@@ -1217,6 +1217,10 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       const invocationContext = resolveInvocationContext(options)
 
+      // One metrics entry per public call: a hook resume re-enters the loop
+      // within the same call, so resumed passes belong to this invocation.
+      this._meter.startNewInvocation()
+
       let currentArgs: InvokeArgs = args
 
       while (true) {
@@ -1638,7 +1642,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     const inputMessages = this._normalizeInput(args)
 
     // Start agent trace span
-    this._meter.startNewInvocation()
     const agentModelId = this.model.modelId
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
       messages: inputMessages,

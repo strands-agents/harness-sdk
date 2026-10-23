@@ -2487,6 +2487,58 @@ describe('normalizeToolUseNames', () => {
       })
     })
 
+    describe('when a hook resumes the invocation', () => {
+      // A cap reached in a pass suppresses the hook's resume, so the call ends
+      // without another model call and without starting another invocation.
+      it.each([
+        ['turns', { turns: 1 }],
+        ['totalTokens', { totalTokens: 15 }],
+        ['outputTokens', { outputTokens: 5 }],
+      ])('does not resume past the %s cap', async (_label, limits) => {
+        const model = new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'one' }, { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })
+          .addTurn({ type: 'textBlock', text: 'two' }, { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })
+          .addTurn(
+            { type: 'textBlock', text: 'three' },
+            { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+          )
+
+        const agent = new Agent({ model })
+        agent.addHook(AfterInvocationEvent, (event) => {
+          event.resume = 'continue'
+        })
+
+        const result = await agent.invoke('go', { limits })
+
+        expect(result.stopReason).toBe('endTurn')
+        expect(model.callCount).toBe(1)
+        expect(result.metrics?.latestAgentInvocation?.cycles.length).toBe(1)
+      })
+    })
+
+    describe('when a hook resumes without a limit', () => {
+      it('records one invocation for the whole call', async () => {
+        const model = new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'one' })
+          .addTurn({ type: 'textBlock', text: 'two' })
+
+        const agent = new Agent({ model })
+        let resumed = false
+        agent.addHook(AfterInvocationEvent, (event) => {
+          if (!resumed) {
+            resumed = true
+            event.resume = 'continue'
+          }
+        })
+
+        const result = await agent.invoke('go')
+
+        expect(model.callCount).toBe(2)
+        expect(result.metrics?.agentInvocations.length).toBe(1)
+        expect(result.metrics?.latestAgentInvocation?.cycles.length).toBe(2)
+      })
+    })
+
     describe('when a limit is invalid', () => {
       it.each([
         ['negative', { limits: { turns: -1 } }],
