@@ -250,6 +250,7 @@ def _resolve_specs(
     instructions: Open | Choice | Fixed,
     tools: Choice | Fixed | Inherit | None = None,
     model: Inherit | Choice | Fixed | None = None,
+    label: str = "agent",
 ) -> list[AgentSpec]:
     """Combine each model-supplied agent input with the axis policies into a spec.
 
@@ -264,6 +265,7 @@ def _resolve_specs(
         instructions: Axis policy for the ``instructions`` field.
         tools: Axis policy for tool selection. Defaults to ``Inherit()`` when not supplied.
         model: Axis policy for model selection. Defaults to ``Inherit()`` when not supplied.
+        label: Model-facing noun for one input in error messages, matching the tool's parameter name.
 
     Returns:
         The resolved ``AgentSpec`` for each input, in order.
@@ -278,20 +280,20 @@ def _resolve_specs(
         model = Inherit()
 
     if not isinstance(model_inputs, list):
-        raise ValueError(f"agents must be a list, got {type(model_inputs).__name__}")
+        raise ValueError(f"{label}s must be a list, got {type(model_inputs).__name__}")
 
     seen_names: set[str] = set()
     specs: list[AgentSpec] = []
     for index, model_input in enumerate(model_inputs):
         if not isinstance(model_input, Mapping):
-            raise ValueError(f"Agent at index {index} must be a dict, got {type(model_input).__name__}")
+            raise ValueError(f"{label.capitalize()} at index {index} must be a dict, got {type(model_input).__name__}")
 
         name = model_input.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"Agent at index {index} must have a non-empty 'name' string")
+            raise ValueError(f"{label.capitalize()} at index {index} must have a non-empty 'name' string")
         name = name.strip()
         if name in seen_names:
-            raise ValueError(f"Duplicate agent name {name!r} at index {index}")
+            raise ValueError(f"Duplicate {label} name {name!r} at index {index}")
         seen_names.add(name)
 
         # agent_type is a closed enum: a provided value must be an exact preset name (absent = no role).
