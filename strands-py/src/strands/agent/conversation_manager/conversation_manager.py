@@ -78,6 +78,9 @@ class ConversationManager(ABC, HookProvider):
           removed_message_count: The messages that have been removed from the agents messages array.
               These represent messages provided by the user or LLM that have been removed, not messages
               included by the conversation manager through something like summarization.
+          pinned_head_count: The number of leading messages the manager has protected from eviction.
+              Restoring a session reattaches this many stored messages, so it counts every protected
+              message, including the tool-pair partner of a pinned message.
         """
         # Resolve the threshold from proactive_compression parameter
         if proactive_compression is True:
@@ -91,6 +94,7 @@ class ConversationManager(ABC, HookProvider):
             raise ValueError(f"compression_threshold must be between 0 (exclusive) and 1 (inclusive), got {threshold}")
 
         self.removed_message_count = 0
+        self.pinned_head_count = 0
         self._compression_threshold = threshold
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
@@ -154,6 +158,7 @@ class ConversationManager(ABC, HookProvider):
         if state.get("__name__") != self.__class__.__name__:
             raise ValueError("Invalid conversation manager state.")
         self.removed_message_count = state["removed_message_count"]
+        self.pinned_head_count = state.get("pinned_head_count", 0)
         return None
 
     def get_state(self) -> dict[str, Any]:
@@ -161,6 +166,7 @@ class ConversationManager(ABC, HookProvider):
         return {
             "__name__": self.__class__.__name__,
             "removed_message_count": self.removed_message_count,
+            "pinned_head_count": self.pinned_head_count,
         }
 
     @abstractmethod
