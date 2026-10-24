@@ -1555,6 +1555,62 @@ async def test_stream_stream_input_guardrails_full_trace(
 
 
 @pytest.mark.asyncio
+async def test_stream_exposes_cache_write_tokens_by_ttl(bedrock_client, model, messages, alist):
+    """Bedrock's per-TTL cache-write split (cacheDetails) is surfaced in the usage (#5257)."""
+    usage = {
+        "inputTokens": 100,
+        "outputTokens": 50,
+        "totalTokens": 150,
+        "cacheReadInputTokens": 2048,
+        "cacheWriteInputTokens": 3584,
+        "cacheDetails": [
+            {"name": "1h", "inputTokens": 2560},
+            {"name": "5m", "inputTokens": 1024},
+        ],
+    }
+    bedrock_client.converse_stream.return_value = {"stream": [{"metadata": {"usage": usage}}]}
+
+    tru_chunks = await alist(model.stream(messages))
+
+    tru_usage = tru_chunks[0]["metadata"]["usage"]
+    assert tru_usage["cacheWriteInputTokensByTtl"] == {"1h": 2560, "5m": 1024}
+    assert tru_usage["cacheWriteInputTokens"] == 3584
+    assert tru_usage["inputTokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_usage_without_cache_details_is_unchanged(bedrock_client, model, messages, alist):
+    """A usage payload without cacheDetails passes through untouched."""
+    usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150}
+    metadata_event = {"metadata": {"usage": usage}}
+    bedrock_client.converse_stream.return_value = {"stream": [metadata_event]}
+
+    tru_chunks = await alist(model.stream(messages))
+
+    assert tru_chunks[0] == metadata_event
+
+
+def test_convert_non_streaming_exposes_cache_write_tokens_by_ttl(bedrock_client, model):
+    """The unary Converse path carries the per-TTL split in its metadata event too (#5257)."""
+    response = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "done"}]}},
+        "stopReason": "end_turn",
+        "usage": {
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "totalTokens": 15,
+            "cacheWriteInputTokens": 1024,
+            "cacheDetails": [{"name": "5m", "inputTokens": 1024}],
+        },
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(response))
+
+    metadata_events = [event for event in events if "metadata" in event]
+    assert metadata_events[0]["metadata"]["usage"]["cacheWriteInputTokensByTtl"] == {"5m": 1024}
+
+
+@pytest.mark.asyncio
 async def test_stream_stream_output_guardrails(
     bedrock_client, model, messages, tool_spec, model_id, additional_request_fields, alist
 ):
