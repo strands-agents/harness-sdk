@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DocumentBlock, ImageBlock } from '@strands-agents/sdk'
@@ -42,6 +42,49 @@ describe('read/write/edit', () => {
     expect(out).toContain('     4\tline4')
     expect(out).not.toContain('line5')
     expect(out).toContain('Showing lines 3-4 of 10')
+  })
+
+  it('does not count a trailing newline as an extra line', async () => {
+    const path = join(dir, 'f.txt')
+    const content = Array.from({ length: 71 }, (_, i) => `line${i + 1}`).join('\n') + '\n'
+    expect(await write.invoke({ path, content }, ctx())).toBe(`Wrote 71 lines to ${path}.`)
+    expect((await read.invoke({ path }, ctx())) as string).toMatch(/\n {4}71\tline71$/)
+    expect(await read.invoke({ path, limit: 1 }, ctx())).toContain('Showing lines 1-1 of 71')
+    expect(await read.invoke({ path, offset: 72 }, ctx())).toBe('[File has 71 lines; offset 72 is past the end.]')
+  })
+
+  it('fits a 2000-line file in the default limit', async () => {
+    const path = join(dir, 'f.txt')
+    await write.invoke({ path, content: 'x\n'.repeat(2000) }, ctx())
+    const out = (await read.invoke({ path }, ctx())) as string
+    expect(out).not.toContain('Showing lines')
+    expect(out).toMatch(/\n {2}2000\tx$/)
+  })
+
+  it('keeps genuine blank lines', async () => {
+    const path = join(dir, 'f.txt')
+    await write.invoke({ path, content: 'a\n\nb\n\n' }, ctx())
+    expect(await read.invoke({ path }, ctx())).toBe('     1\ta\n     2\t\n     3\tb\n     4\t')
+  })
+
+  it.each([
+    ['', 0],
+    ['a', 1],
+    ['a\n', 1],
+    ['\n', 1],
+    ['a\nb', 2],
+    ['a\n\n', 2],
+    ['a\r\nb\r\n', 2],
+  ])('reports the line count of %j as %i without altering bytes', async (content, expected) => {
+    const path = join(dir, 'f.txt')
+    expect(await write.invoke({ path, content }, ctx())).toBe(`Wrote ${expected} lines to ${path}.`)
+    expect(readFileSync(path, 'utf8')).toBe(content)
+  })
+
+  it('reports an empty file', async () => {
+    const path = join(dir, 'f.txt')
+    await write.invoke({ path, content: '' }, ctx())
+    expect(await read.invoke({ path }, ctx())).toBe(`[File ${path} is empty.]`)
   })
 
   it('edits a unique occurrence', async () => {

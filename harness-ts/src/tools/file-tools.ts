@@ -44,11 +44,15 @@ function validatePath(path: string): void {
   }
 }
 
-function numberLines(content: string, start: number): string {
-  return content
-    .split('\n')
-    .map((line, i) => `${String(i + start).padStart(6)}\t${line}`)
-    .join('\n')
+function splitLines(content: string): string[] {
+  // A trailing newline terminates the last line; it does not start another one (`cat -n` semantics).
+  const lines = content.split('\n')
+  if (lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+function numberLines(lines: string[], start: number): string {
+  return lines.map((line, i) => `${String(i + start).padStart(6)}\t${line}`).join('\n')
 }
 
 function extension(path: string): string {
@@ -136,7 +140,10 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
 
     const content = await context.agent.sandbox.readText(input.path)
 
-    const lines = content.split('\n')
+    const lines = splitLines(content)
+    if (lines.length === 0) {
+      return `[File ${input.path} is empty.]`
+    }
     const start = Math.max(0, input.offset ? input.offset - 1 : 0)
     const count = input.limit ?? READ_DEFAULT_LIMIT
     const window = lines.slice(start, start + count)
@@ -144,7 +151,7 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
       return `[File has ${lines.length} lines; offset ${input.offset} is past the end.]`
     }
 
-    let numbered = numberLines(window.join('\n'), start + 1)
+    let numbered = numberLines(window, start + 1)
     if (start > 0 || start + count < lines.length) {
       const shownEnd = start + window.length
       numbered += `\n[Showing lines ${start + 1}-${shownEnd} of ${lines.length}. Use offset/limit to read more.]`
@@ -191,8 +198,7 @@ export const write = tool({
     if (!context) throw new Error('Tool context is required for write.')
     validatePath(input.path)
     await context.agent.sandbox.writeText(input.path, input.content)
-    const lineCount = input.content === '' ? 0 : input.content.split('\n').length
-    return `Wrote ${lineCount} lines to ${input.path}.`
+    return `Wrote ${splitLines(input.content).length} lines to ${input.path}.`
   },
 })
 
