@@ -100,6 +100,35 @@ model = BedrockNovaSonicModel(
 
 Use the provider's field names inside `params`, as shown above.
 
+### Tool choice
+
+Set `tool_choice` to control how the model [selects tools][nova-tool-choice] on each
+response. `{"any": {}}` requires a call to one of the agent's tools, and
+`{"tool": {"name": ...}}` requires a call to the named tool. The model sends the
+choice only when the agent has tools:
+
+```python
+from strands import tool
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BedrockNovaSonicModel
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up the status of an order."""
+    return f"Order {order_id} has shipped."
+
+
+model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
+    tool_choice={"tool": {"name": lookup_order.tool_name}},
+)
+agent = BidiAgent(model=model, tools=[lookup_order])
+```
+
+Nova Sonic ignores a forced tool name that matches none of the agent's tools and
+selects tools automatically, so the model warns when the name is unknown.
+
 ## Connection restarts
 
 Nova Sonic limits each connection to eight minutes. By default, `BidiAgent`
@@ -118,6 +147,7 @@ to the history sent when opening a connection.
 [nova-voices]: https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-language-support.html
 [nova-input-events]: https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-input-events.html
 [nova-history]: https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-chat-history.html
+[nova-tool-choice]: https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-tool-configuration.html
 [boto3-credentials]: https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html
 [credentials-setup]: ../../model-providers/amazon-bedrock.mdx#setting-up-aws-credentials
 [audio-config]: @api/python/strands.bidi.models#strands.bidi.models.BedrockNovaSonicAudioConfig
