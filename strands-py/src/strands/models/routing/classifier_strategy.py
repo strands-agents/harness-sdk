@@ -36,6 +36,7 @@ _MEDIA_CONTENT_LABELS = {
     "image": "[Image]",
     "document": "[Document]",
     "video": "[Video]",
+    "audio": "[Audio]",
 }
 
 
