@@ -41,3 +41,33 @@ def test_parse_junit_xml_returns_one_result_per_testcase(mod, tmp_path):
         ("test_failed", "failed", 2.0),
         ("test_skipped", "skipped", 0.0),
     ]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Agent > tool → result", "Agent > tool -> result"),
+        ("Agent — with em dash", "Agent - with em dash"),
+        ("café", "caf?"),
+        ("plain.ascii[param-1]", "plain.ascii[param-1]"),
+    ],
+)
+def test_sanitize_test_name_maps_to_printable_ascii(mod, raw, expected):
+    assert mod.sanitize_test_name(raw) == expected
+
+
+def test_sanitize_test_name_caps_at_255_chars(mod):
+    sanitized = mod.sanitize_test_name("x" * 300)
+
+    assert len(sanitized) == 255
+    assert sanitized == "x" * 255
+
+
+def test_build_metric_data_uses_sanitized_test_name(mod):
+    result = mod.TestResult(name="tool → result", classname="test/integ/agent.test.ts", duration=1.0, outcome="passed")
+
+    data = mod.build_metric_data([result], "harness-sdk", "typescript")
+
+    dims = {d["Name"]: d["Value"] for d in data[0]["Dimensions"]}
+    assert dims["TestName"] == "test/integ/agent.test.ts.tool -> result"
+    assert all(0x20 <= ord(c) <= 0x7E for c in dims["TestName"])
