@@ -131,6 +131,10 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6',
           'arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0',
           'arn:aws:bedrock:*::foundation-model/amazon.nova-2-5-sonic',
+          'arn:aws:bedrock:*:*:inference-profile/us.xai.grok-4.7',
+          'arn:aws:bedrock:*::foundation-model/xai.grok-4.7',
+          'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-3-675b-instruct',
+          'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
         ],
       }),
     );
