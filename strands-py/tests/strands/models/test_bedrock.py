@@ -1023,6 +1023,220 @@ async def test_stream_retries_with_separated_tool_result_turns(
     assert model._tool_result_turn_separation_model_id == "us.meta.llama4-maverick-17b-instruct-v1:0"
 
 
+@pytest.mark.asyncio
+async def test_stream_falls_back_to_unary_converse_when_streaming_rejects_tool_use(bedrock_client, alist, messages):
+    """Streaming tool-use rejections fall back to unary Converse.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/5445.
+    """
+    validation_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "This model doesn't support tool use in streaming mode.",
+            }
+        },
+        "ConverseStream",
+    )
+    bedrock_client.converse_stream.side_effect = validation_error
+    bedrock_client.converse.return_value = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "tool123",
+                            "name": "test_tool",
+                            "input": {"input": "value"},
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+    }
+
+    model = BedrockModel(model_id="us.meta.llama4-scout-17b-instruct-v1:0")
+
+    tru_events = await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+    bedrock_client.converse.assert_called_once()
+    tru_tool_use_starts = [event for event in tru_events if "contentBlockStart" in event]
+    assert tru_tool_use_starts[0]["contentBlockStart"]["start"]["toolUse"]["name"] == "test_tool"
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_fall_back_on_other_validation_errors(bedrock_client, alist, messages):
+    """Only the streaming tool-use rejection triggers the unary fallback."""
+    validation_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "Some other validation problem.",
+            }
+        },
+        "ConverseStream",
+    )
+    bedrock_client.converse_stream.side_effect = validation_error
+
+    model = BedrockModel(model_id="us.meta.llama4-scout-17b-instruct-v1:0")
+    with pytest.raises(ClientError):
+        await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+    bedrock_client.converse.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_remembers_streaming_tool_use_rejection_per_model(bedrock_client, alist, messages):
+    """After one fallback, later turns on the same model skip streaming.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/5445 —
+    every turn on an affected model paid one failed streamed call before this.
+    """
+    validation_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "This model doesn't support tool use in streaming mode.",
+            }
+        },
+        "ConverseStream",
+    )
+    bedrock_client.converse_stream.side_effect = validation_error
+    bedrock_client.converse.return_value = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [{"text": "done"}],
+            }
+        },
+        "stopReason": "end_turn",
+    }
+
+    model = BedrockModel(model_id="us.meta.llama4-scout-17b-instruct-v1:0")
+
+    await alist(model.stream(messages))
+    assert model._streaming_tool_use_unsupported_model_id == "us.meta.llama4-scout-17b-instruct-v1:0"
+
+    await alist(model.stream(messages))
+
+    bedrock_client.converse_stream.assert_called_once()
+    assert bedrock_client.converse.call_count == 2
+
+
+@pytest.mark.parametrize("first_rejection", ["streaming_tool_use", "turn_separation"])
+@pytest.mark.asyncio
+async def test_stream_composes_streaming_and_turn_separation_fallbacks(
+    bedrock_client,
+    alist,
+    first_rejection,
+    tool_result_turn_messages,
+    separated_tool_result_turn_messages,
+):
+    """Both ValidationException fallbacks compose within a single call, in either order.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/5445 and
+    https://github.com/strands-agents/harness-sdk/issues/1223 applying to the same
+    model: the first fallback's retry can surface the second rejection, and both
+    memos must still be recorded.
+    """
+    streaming_tool_use_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "This model doesn't support tool use in streaming mode.",
+            }
+        },
+        "ConverseStream",
+    )
+    turn_separation_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": (
+                    "messages.3.content: "
+                    "Conversation blocks and tool result blocks cannot be provided in the same turn."
+                ),
+            }
+        },
+        "ConverseStream",
+    )
+    unary_response = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "Done"}]}},
+        "stopReason": "end_turn",
+    }
+    if first_rejection == "streaming_tool_use":
+        bedrock_client.converse_stream.side_effect = [streaming_tool_use_error]
+        bedrock_client.converse.side_effect = [turn_separation_error, unary_response]
+    else:
+        bedrock_client.converse_stream.side_effect = [turn_separation_error, streaming_tool_use_error]
+        bedrock_client.converse.side_effect = [unary_response]
+    model = BedrockModel(model_id="us.meta.llama4-maverick-17b-instruct-v1:0")
+
+    await alist(model.stream(tool_result_turn_messages))
+
+    assert model._streaming_tool_use_unsupported_model_id == "us.meta.llama4-maverick-17b-instruct-v1:0"
+    assert model._tool_result_turn_separation_model_id == "us.meta.llama4-maverick-17b-instruct-v1:0"
+    if first_rejection == "streaming_tool_use":
+        bedrock_client.converse_stream.assert_called_once()
+        assert bedrock_client.converse.call_count == 2
+    else:
+        assert bedrock_client.converse_stream.call_count == 2
+        bedrock_client.converse.assert_called_once()
+    tru_final_messages = bedrock_client.converse.call_args.kwargs["messages"]
+    assert tru_final_messages == separated_tool_result_turn_messages
+
+
+@pytest.mark.asyncio
+async def test_stream_propagates_rejection_after_both_fallbacks_are_spent(
+    bedrock_client,
+    alist,
+    tool_result_turn_messages,
+):
+    """A rejection neither fallback can fix propagates, with both memos recorded.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/5445 and
+    https://github.com/strands-agents/harness-sdk/issues/1223: once streaming has
+    flipped to unary and the turns are already separated, a further rejection has
+    no fallback left and must surface.
+    """
+    streaming_tool_use_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "This model doesn't support tool use in streaming mode.",
+            }
+        },
+        "ConverseStream",
+    )
+    turn_separation_error = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": (
+                    "messages.3.content: "
+                    "Conversation blocks and tool result blocks cannot be provided in the same turn."
+                ),
+            }
+        },
+        "Converse",
+    )
+    bedrock_client.converse_stream.side_effect = [streaming_tool_use_error]
+    bedrock_client.converse.side_effect = [turn_separation_error, turn_separation_error]
+    model = BedrockModel(model_id="us.meta.llama4-maverick-17b-instruct-v1:0")
+
+    with pytest.raises(ClientError):
+        await alist(model.stream(tool_result_turn_messages))
+
+    assert model._streaming_tool_use_unsupported_model_id == "us.meta.llama4-maverick-17b-instruct-v1:0"
+    assert model._tool_result_turn_separation_model_id == "us.meta.llama4-maverick-17b-instruct-v1:0"
+    bedrock_client.converse_stream.assert_called_once()
+    assert bedrock_client.converse.call_count == 2
+
+
 def test_format_request_separates_tool_result_turns_for_remembered_model(
     bedrock_client,
     tool_result_turn_messages,
@@ -1124,13 +1338,20 @@ async def test_stream_does_not_retry_when_tool_result_turns_cannot_be_separated(
 
 @pytest.mark.parametrize("streaming", [True, False])
 @pytest.mark.asyncio
-async def test_stream_does_not_remember_separation_when_retry_fails(
+async def test_stream_remembers_separation_before_the_retry(
     bedrock_client,
     alist,
     streaming,
     tool_result_turn_messages,
+    separated_tool_result_turn_messages,
 ):
-    """Tool-result separation is remembered only after Bedrock accepts the retry."""
+    """Tool-result separation is remembered before the retry, not after it succeeds.
+
+    Guards against the fallback composition in
+    https://github.com/strands-agents/harness-sdk/issues/5445: a retry rejected by
+    a second ValidationException must not skip the memo, so the memo is recorded
+    first and later turns pre-separate at format time.
+    """
     validation_error = ClientError(
         {
             "Error": {
@@ -1153,7 +1374,7 @@ async def test_stream_does_not_remember_separation_when_retry_fails(
     with pytest.raises(ClientError):
         await alist(model.stream(tool_result_turn_messages))
 
-    assert model._tool_result_turn_separation_model_id is None
+    assert model._tool_result_turn_separation_model_id == "us.meta.llama4-maverick-17b-instruct-v1:0"
 
     converse_method.reset_mock(side_effect=True)
     converse_method.return_value = (
@@ -1168,7 +1389,7 @@ async def test_stream_does_not_remember_separation_when_retry_fails(
     await alist(model.stream(tool_result_turn_messages))
 
     converse_method.assert_called_once()
-    assert converse_method.call_args.kwargs["messages"] == tool_result_turn_messages
+    assert converse_method.call_args.kwargs["messages"] == separated_tool_result_turn_messages
 
 
 def test_separate_tool_result_turns_ignores_conversation_only_user_turns():
