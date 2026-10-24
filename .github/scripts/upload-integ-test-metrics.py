@@ -229,9 +229,9 @@ def _test_names(batch: list[dict[str, Any]]) -> list[str]:
     return sorted(names)
 
 
-def publish_metrics(metric_data: list[dict[str, Any]], cloudwatch: Any) -> list[str]:
-    """Publish in batches of 1000; a failed batch never blocks the others. Returns the tests of every failed batch."""
-    failed_names: list[str] = []
+def publish_metrics(metric_data: list[dict[str, Any]], cloudwatch: Any) -> int:
+    """Publish in batches of 1000; a failed batch never blocks the others. Returns the number of failed batches."""
+    failed_batches = 0
 
     batch_size = 1000
     for i in range(0, len(metric_data), batch_size):
@@ -240,13 +240,12 @@ def publish_metrics(metric_data: list[dict[str, Any]], cloudwatch: Any) -> list[
             cloudwatch.put_metric_data(Namespace=STRANDS_METRIC_NAMESPACE, MetricData=batch)
             print(f"Published {len(batch)} metrics to CloudWatch")
         except Exception as e:
+            failed_batches += 1
             names = _test_names(batch)
-            failed_names.extend(names)
             print(f"::error::Failed to publish a batch of {len(batch)} metrics ({len(names)} tests): {e}")
-
-    for name in failed_names:
-        print(f"::error::Metrics not published for test: {name}")
-    return failed_names
+            for name in names:
+                print(f"::error::Metrics not published for test: {name}")
+    return failed_batches
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -283,9 +282,9 @@ def main():
     print(f"Found {len(test_results)} test results (event={ctx.event}, branch={ctx.branch}, leg={ctx.leg})")
     metric_data = build_metric_data(test_results, args.repository, args.sdk, ctx)
     cloudwatch = boto3.client("cloudwatch", region_name=args.region)
-    failed_names = publish_metrics(metric_data, cloudwatch)
-    if failed_names:
-        print(f"::error::{len(failed_names)} tests lost metrics because their batch was rejected")
+    failed_batches = publish_metrics(metric_data, cloudwatch)
+    if failed_batches:
+        print(f"::error::{failed_batches} metric batches were rejected")
         sys.exit(1)
 
 

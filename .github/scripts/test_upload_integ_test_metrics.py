@@ -92,10 +92,22 @@ def test_publish_metrics_isolates_failed_batch_and_reports_its_tests(mod, capsys
     failed = mod.publish_metrics(data, client)
 
     assert len(client.batches) == 3
-    assert failed == [f"suite.t{i:03d}" for i in range(200, 400)]
+    assert failed == 1
     out = capsys.readouterr().out
     assert "::error::Metrics not published for test: suite.t200" in out
+    assert "::error::Metrics not published for test: suite.t399" in out
     assert "suite.t000" not in out
+    assert "suite.t400" not in out
+
+
+def test_publish_metrics_counts_a_failed_suite_only_batch(mod):
+    # 200 tests x 5 datums fill exactly one batch, so the 4 suite datums form a batch without any TestName.
+    ctx = mod.RunContext(event="pull_request_target", branch="main", leg="all")
+    data = mod.build_metric_data(results_named(mod, [f"t{i:03d}" for i in range(200)]), "repo", "python", ctx)
+    client = FakeCloudWatch(fail_on={1})
+
+    assert mod.publish_metrics(data, client) == 1
+    assert [len(batch) for batch in client.batches] == [1000, 4]
 
 
 def test_main_exits_non_zero_when_a_batch_fails(mod, tmp_path, monkeypatch):
