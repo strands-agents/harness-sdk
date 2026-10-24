@@ -183,6 +183,10 @@ def ensure_page(url: str) -> doc_fetcher.Page | None:
 
         return page
     except Exception:
+        # Log the failure instead of swallowing it: a fetch that keeps failing is
+        # otherwise invisible to the operator, and the cache entry stays unset so
+        # the next call retries the fetch.
+        logger.exception("Failed to fetch page: %s", url)
         return None
 
 
