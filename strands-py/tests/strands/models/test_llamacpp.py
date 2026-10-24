@@ -445,7 +445,7 @@ async def test_stream_yields_text_before_eof_and_closes_response(
     ending: str,
     alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
 ) -> None:
-    """Text arrives before HTTP EOF, and completion closes the response."""
+    """Text arrives before HTTP EOF, and completion closes the response (#5490)."""
     model, byte_stream, response = streaming_response
     stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
 
@@ -485,7 +485,7 @@ async def test_stream_preserves_interleaved_tool_inputs_after_done(
     streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
     alist: Callable[[AsyncIterable[TypedEvent]], Coroutine[None, None, list[TypedEvent]]],
 ) -> None:
-    """DONE closes the response while preserving assembled tool inputs and trailing usage."""
+    """DONE closes the response while preserving assembled tool inputs and trailing usage (#5490)."""
     model, byte_stream, response = streaming_response
     byte_stream.body = (
         b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
@@ -527,7 +527,7 @@ async def test_stream_closes_response_on_read_error(
     streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
     alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
 ) -> None:
-    """A transport read error closes the response and propagates to the caller."""
+    """A transport read error closes the response and propagates to the caller (#5490)."""
     model, byte_stream, response = streaming_response
     byte_stream.read_error = httpx.ReadError("connection interrupted")
     byte_stream.release.set()
@@ -545,7 +545,7 @@ async def test_stream_closes_response_on_format_error(
     streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
     alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
 ) -> None:
-    """A content formatting error closes the response without draining its body."""
+    """A content formatting error closes the response without draining its body (#5490)."""
     model, byte_stream, response = streaming_response
     format_chunk = model._format_chunk
 
@@ -569,7 +569,7 @@ async def test_stream_closes_response_on_cancellation(
     streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
     alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
 ) -> None:
-    """Cancelling a stalled consumer closes the response and propagates cancellation."""
+    """Cancelling a stalled consumer closes the response and propagates cancellation (#5490)."""
     model, byte_stream, response = streaming_response
     consumer = asyncio.create_task(alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}])))
     try:
@@ -590,7 +590,7 @@ async def test_stream_closes_response_on_cancellation(
 async def test_stream_closes_response_on_generator_close(
     streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
 ) -> None:
-    """Closing the generator releases an unread response and keeps the client open."""
+    """Closing the generator releases an unread response and keeps the client open (#5490)."""
     model, byte_stream, response = streaming_response
     stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
     try:
@@ -820,7 +820,7 @@ async def test_stream_http_errors(
     message: str,
     alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
 ) -> None:
-    """HTTP errors preserve readable bodies, exception mappings, and response cleanup."""
+    """HTTP errors preserve readable bodies, exception mappings, and response cleanup (#5490)."""
     byte_stream = _GatedStream(body)
     byte_stream.release.set()
     response = httpx.Response(status_code, stream=byte_stream)
