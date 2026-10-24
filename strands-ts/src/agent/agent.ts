@@ -1850,6 +1850,11 @@ export class Agent implements LocalAgent, InvokableAgent {
             continue
           }
 
+          // Message-added hooks may offload the JSON block needed for structured output.
+          const structuredOutput = structuredOutputTool
+            ? this._extractStructuredOutput(assistantMessage, toolResultMessage)
+            : undefined
+
           /**
            * Deferred append: both messages are added AFTER tool execution completes.
            * This keeps agent.messages in a valid, reinvokable state at all times.
@@ -1896,9 +1901,6 @@ export class Agent implements LocalAgent, InvokableAgent {
           }
 
           // Structured output captured: exit
-          const structuredOutput = structuredOutputTool
-            ? this._extractStructuredOutput(assistantMessage, toolResultMessage)
-            : undefined
           if (structuredOutput !== undefined) {
             result = new AgentResult({
               invocationContext,
