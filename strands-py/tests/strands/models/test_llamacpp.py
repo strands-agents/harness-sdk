@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Coroutine
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -14,10 +14,12 @@ from pydantic import BaseModel
 
 from strands.models.llamacpp import LlamaCppModel
 from strands.models.model import CacheConfig
+from strands.types.content import Messages
 from strands.types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
 )
+from strands.types.streaming import StreamEvent
 
 
 def test_init_default_config() -> None:
@@ -436,22 +438,29 @@ async def streaming_response() -> AsyncIterator[tuple[LlamaCppModel, _GatedStrea
 
 @pytest.mark.parametrize("ending", ["eof", "done"])
 @pytest.mark.asyncio
-async def test_stream_yields_text_before_eof_and_closes_response(streaming_response, ending, alist) -> None:
+async def test_stream_yields_text_before_eof_and_closes_response(
+    streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
+    ending: str,
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """Text arrives before HTTP EOF, and completion closes the response."""
     model, byte_stream, response = streaming_response
     stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
 
-    async def first_text():
+    async def first_text() -> StreamEvent:
         async for event in stream:
             if "contentBlockDelta" in event:
                 return event
+        raise AssertionError("stream ended without a text delta")
 
     try:
         tru_event = await asyncio.wait_for(first_text(), timeout=5)
         exp_event = {"contentBlockDelta": {"delta": {"text": "Hello"}}}
         assert tru_event == exp_event
-        assert not byte_stream.eof
-        assert not response.is_closed
+        tru_eof = byte_stream.eof
+        tru_closed = response.is_closed
+        assert not tru_eof
+        assert not tru_closed
 
         if ending == "done":
             byte_stream.tail = b"data: [DONE]\n\n"
@@ -470,7 +479,10 @@ async def test_stream_yields_text_before_eof_and_closes_response(streaming_respo
 
 
 @pytest.mark.asyncio
-async def test_stream_closes_response_on_read_error(streaming_response, alist) -> None:
+async def test_stream_closes_response_on_read_error(
+    streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """A transport read error closes the response and propagates to the caller."""
     model, byte_stream, response = streaming_response
     byte_stream.read_error = httpx.ReadError("connection interrupted")
@@ -485,12 +497,15 @@ async def test_stream_closes_response_on_read_error(streaming_response, alist) -
 
 
 @pytest.mark.asyncio
-async def test_stream_closes_response_on_format_error(streaming_response, alist) -> None:
+async def test_stream_closes_response_on_format_error(
+    streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """A content formatting error closes the response without draining its body."""
     model, byte_stream, response = streaming_response
     format_chunk = model._format_chunk
 
-    def fail_content(event):
+    def fail_content(event: dict[str, object]) -> StreamEvent:
         if event["chunk_type"] == "content_delta":
             raise ValueError("invalid chunk")
         return format_chunk(event)
@@ -506,7 +521,10 @@ async def test_stream_closes_response_on_format_error(streaming_response, alist)
 
 
 @pytest.mark.asyncio
-async def test_stream_closes_response_on_cancellation(streaming_response, alist) -> None:
+async def test_stream_closes_response_on_cancellation(
+    streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """Cancelling a stalled consumer closes the response and propagates cancellation."""
     model, byte_stream, response = streaming_response
     consumer = asyncio.create_task(alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}])))
@@ -525,7 +543,9 @@ async def test_stream_closes_response_on_cancellation(streaming_response, alist)
 
 
 @pytest.mark.asyncio
-async def test_stream_closes_response_on_generator_close(streaming_response) -> None:
+async def test_stream_closes_response_on_generator_close(
+    streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
+) -> None:
     """Closing the generator releases an unread response and keeps the client open."""
     model, byte_stream, response = streaming_response
     stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
@@ -541,7 +561,9 @@ async def test_stream_closes_response_on_generator_close(streaming_response) -> 
 
 
 @pytest.mark.asyncio
-async def test_stream_basic(alist) -> None:
+async def test_stream_basic(
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """Test basic streaming functionality."""
     model = LlamaCppModel()
 
@@ -555,7 +577,7 @@ async def test_stream_basic(alist) -> None:
 
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text="\n".join(mock_response_lines)))
     async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
-        messages = [{"role": "user", "content": [{"text": "Hi"}]}]
+        messages: Messages = [{"role": "user", "content": [{"text": "Hi"}]}]
 
         chunks = await alist(model.stream(messages))
 
@@ -576,7 +598,9 @@ async def test_stream_basic(alist) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_surfaces_cache_read_tokens(alist) -> None:
+async def test_stream_surfaces_cache_read_tokens(
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """A reused KV prefix is surfaced as cacheReadInputTokens, like the other cache-aware providers.
 
     llama.cpp reports the reused prefix length in usage.prompt_tokens_details.cached_tokens.
@@ -611,7 +635,10 @@ _NO_REUSE_TOKENS = {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens"
     ids=["cached_zero", "details_null", "details_absent"],
 )
 @pytest.mark.asyncio
-async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_payload, alist) -> None:
+async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(
+    usage_payload: dict[str, object],
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
     """No reuse — cached zero, a null details object, or the field absent — yields usage with no cache-read key.
 
     The whole-dict assertion pins the ``or {}`` guard in stream() and the ``getattr(..., 0)`` default in
@@ -724,18 +751,32 @@ def test_json_schema_via_params() -> None:
 @pytest.mark.parametrize(
     ("status_code", "body", "exception", "message"),
     [
-        (400, b'{"error":{"message":"Context length exceeded"}}', ContextWindowOverflowException, "Context length"),
-        (400, b"KV cache full", ContextWindowOverflowException, "KV cache full"),
-        (400, b"slot unavailable", ContextWindowOverflowException, "slot unavailable"),
+        (302, b"Moved temporarily", httpx.HTTPStatusError, "302"),
+        (
+            400,
+            b'{"error":{"message":"Context length exceeded"}}',
+            ContextWindowOverflowException,
+            "Context window exceeded: Context length exceeded",
+        ),
+        (400, b"KV cache full", ContextWindowOverflowException, "Context window exceeded: KV cache full"),
+        (400, b"slot unavailable", ContextWindowOverflowException, "Context window exceeded: slot unavailable"),
         (400, b'{"error":{"message":"Invalid request"}}', httpx.HTTPStatusError, "400"),
         (400, b"Invalid request", httpx.HTTPStatusError, "400"),
+        (401, b"Unauthorized", httpx.HTTPStatusError, "401"),
+        (429, b"Too many requests", httpx.HTTPStatusError, "429"),
         (503, b"Server is busy", ModelThrottledException, "server is busy or overloaded"),
         (500, b"Internal server error", httpx.HTTPStatusError, "500"),
     ],
 )
 @pytest.mark.asyncio
-async def test_stream_http_errors(status_code, body, exception, message, alist) -> None:
-    """Unread HTTP error bodies preserve overflow, throttling, and fallback mappings."""
+async def test_stream_http_errors(
+    status_code: int,
+    body: bytes,
+    exception: type[Exception],
+    message: str,
+    alist: Callable[[AsyncIterable[StreamEvent]], Coroutine[None, None, list[StreamEvent]]],
+) -> None:
+    """HTTP errors preserve readable bodies, exception mappings, and response cleanup."""
     byte_stream = _GatedStream(body)
     byte_stream.release.set()
     response = httpx.Response(status_code, stream=byte_stream)
@@ -746,10 +787,14 @@ async def test_stream_http_errors(status_code, body, exception, message, alist) 
         with pytest.raises(exception, match=message) as exc_info:
             await alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}]))
 
-        if exception is not httpx.HTTPStatusError:
-            assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+        error = exc_info.value if exception is httpx.HTTPStatusError else exc_info.value.__cause__
+        assert isinstance(error, httpx.HTTPStatusError)
+        tru_body = error.response.text
+        exp_body = body.decode()
+        assert tru_body == exp_body
         assert response.is_closed
         assert byte_stream.closed
+        assert not model.client.is_closed
 
 
 @pytest.mark.asyncio
