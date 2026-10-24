@@ -190,8 +190,7 @@ def make_swarm(
                 child = build(spec)
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if tool_name in _EXCLUDED_TOOLS or child_tool in _SWARM_TOOLS:
-                        del child.tool_registry.registry[tool_name]
-                        child.tool_registry.dynamic_tools.pop(tool_name, None)
+                        child.tool_registry.remove(tool_name)
                 child_agents[spec.name] = child
         except Exception as error:
             if not tool_streamer.is_resuming():
