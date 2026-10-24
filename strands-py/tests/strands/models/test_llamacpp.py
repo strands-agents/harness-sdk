@@ -12,9 +12,11 @@ import pytest
 import pytest_asyncio
 from pydantic import BaseModel
 
+from strands.event_loop.streaming import process_stream
 from strands.models.llamacpp import LlamaCppModel
 from strands.models.model import CacheConfig
 from strands.types.content import Messages
+from strands.types.events import ModelStopReason, TypedEvent
 from strands.types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -399,7 +401,7 @@ def test_cache_config_cache_key_warns_and_is_not_routed() -> None:
 
 
 class _GatedStream(httpx.AsyncByteStream):
-    """Yield one SSE frame, then hold the response open until released."""
+    """Yield initial bytes, then hold the response open until released."""
 
     def __init__(self, body: bytes = b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n') -> None:
         self.body = body
@@ -476,6 +478,48 @@ async def test_stream_yields_text_before_eof_and_closes_response(
     finally:
         byte_stream.release.set()
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_interleaved_tool_inputs_after_done(
+    streaming_response: tuple[LlamaCppModel, _GatedStream, httpx.Response],
+    alist: Callable[[AsyncIterable[TypedEvent]], Coroutine[None, None, list[TypedEvent]]],
+) -> None:
+    """DONE closes the response while preserving assembled tool inputs and trailing usage."""
+    model, byte_stream, response = streaming_response
+    byte_stream.body = (
+        b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+        b'"function":{"name":"lookup","arguments":"{\\"city\\":"}}]}}]}\n\n'
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c2",'
+        b'"function":{"name":"count","arguments":"{\\"n\\":"}}]}}]}\n\n'
+    )
+    byte_stream.tail = (
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+        b'"function":{"arguments":"\\"Seoul\\"}"}}]}}]}\n\n'
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}\n\n'
+        b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+        b'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    byte_stream.release.set()
+
+    events = await alist(process_stream(model.stream([{"role": "user", "content": [{"text": "Hi"}]}])))
+    stop_event = events[-1]
+    assert isinstance(stop_event, ModelStopReason)
+    tru_result = (stop_event.stop_reason, stop_event.message["content"], stop_event.usage)
+    exp_result = (
+        "tool_use",
+        [
+            {"text": "Hello"},
+            {"toolUse": {"toolUseId": "c1", "name": "lookup", "input": {"city": "Seoul"}}},
+            {"toolUse": {"toolUseId": "c2", "name": "count", "input": {"n": 2}}},
+        ],
+        {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+    )
+    assert tru_result == exp_result
+    assert response.is_closed
+    assert not byte_stream.eof
 
 
 @pytest.mark.asyncio
