@@ -7,8 +7,8 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, TypedDict
 
 import boto3
@@ -31,6 +31,7 @@ TRANSLITERATIONS = {
     "\u00a0": " ",
 }
 MAX_DIMENSION_LENGTH = 255
+MAX_TIMESTAMP_AGE_DAYS = 13
 
 # Runs triggered by a pull request publish only the context-free per-test schema (see build_metric_data).
 PR_EVENTS = frozenset({"pull_request_target", "pull_request"})
@@ -55,6 +56,43 @@ class TestResult:
     classname: str
     duration: float
     outcome: Literal["failed", "skipped", "passed"]
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+def suite_timestamp(attr: str | None, now: datetime) -> datetime:
+    """Parse a <testsuite timestamp="..."> (naive values are UTC, which is what GitHub runners use).
+
+    Falls back to `now` when the attribute is missing, unparsable, in the future, or older than CloudWatch's
+    two-week put_metric_data window (13 days, leaving margin for the upload job itself).
+    """
+    if not attr:
+        return now
+    try:
+        parsed = datetime.fromisoformat(attr)
+    except ValueError:
+        return now
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if parsed > now or now - parsed > timedelta(days=MAX_TIMESTAMP_AGE_DAYS):
+        return now
+    return parsed
+
+
+def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | None:
+    name = testcase.get("name")
+    classname = testcase.get("classname")
+    if not name or not classname:
+        return None
+    duration = float(testcase.get("time", 0.0))
+
+    if testcase.find("failure") is not None or testcase.find("error") is not None:
+        outcome = "failed"
+    elif testcase.find("skipped") is not None:
+        outcome = "skipped"
+    else:
+        outcome = "passed"
+
+    return TestResult(name, classname, duration, outcome, timestamp)
 
 
 def sanitize_test_name(name: str) -> str:
@@ -75,26 +113,20 @@ def parse_junit_xml(xml_file_path: str) -> list[TestResult] | None:
         print(f"Warning: Failed to parse XML: {e}")
         return None
 
-    results = []
+    now = datetime.now(timezone.utc)
     root = tree.getroot()
+    # pytest writes one <testsuite>; vitest writes one per file. Each suite's timestamp applies to its direct
+    # <testcase> children. A report with no <testsuite> at all is stamped with the upload time.
+    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    if not suites:
+        parsed = (_parse_testcase(tc, now) for tc in root.iter("testcase"))
+        return [result for result in parsed if result is not None]
 
-    for testcase in root.iter("testcase"):
-        name = testcase.get("name")
-        classname = testcase.get("classname")
-        duration = float(testcase.get("time", 0.0))
-
-        if not name or not classname:
-            continue
-
-        if testcase.find("failure") is not None or testcase.find("error") is not None:
-            outcome = "failed"
-        elif testcase.find("skipped") is not None:
-            outcome = "skipped"
-        else:
-            outcome = "passed"
-
-        results.append(TestResult(name, classname, duration, outcome))
-
+    results = []
+    for suite in suites:
+        timestamp = suite_timestamp(suite.get("timestamp"), now)
+        parsed = (_parse_testcase(tc, timestamp) for tc in suite.findall("testcase"))
+        results.extend(result for result in parsed if result is not None)
     return results
 
 
@@ -163,7 +195,6 @@ def build_metric_data(
     because a PR's own breakage is not a flakiness signal and PRs dominate stream count (and cost).
     """
     metrics: list[MetricDatum] = []
-    timestamp = datetime.now(timezone.utc)
     context_dimensions = [
         Dimension(Name="Event", Value=ctx.event),
         Dimension(Name="Branch", Value=ctx.branch),
@@ -178,12 +209,13 @@ def build_metric_data(
             Dimension(Name="Repository", Value=repository),
             Dimension(Name="SDK", Value=sdk),
         ]
-        metrics.extend(_test_datums(test, dimensions, timestamp))
+        metrics.extend(_test_datums(test, dimensions, test.timestamp))
         if emit_context_schema:
-            metrics.extend(_test_datums(test, dimensions + context_dimensions, timestamp))
+            metrics.extend(_test_datums(test, dimensions + context_dimensions, test.timestamp))
 
     suite_dimensions = [Dimension(Name="Repository", Value=repository), Dimension(Name="SDK", Value=sdk)]
-    metrics.extend(_suite_datums(test_results, suite_dimensions + context_dimensions, timestamp))
+    earliest = min(test.timestamp for test in test_results)
+    metrics.extend(_suite_datums(test_results, suite_dimensions + context_dimensions, earliest))
     return metrics
 
 

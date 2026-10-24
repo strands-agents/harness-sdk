@@ -2,6 +2,7 @@
 
 import importlib.util
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -189,6 +190,68 @@ def test_parse_args_defaults_and_legacy_positionals(mod, monkeypatch):
         ["r.xml", "harness-sdk", "typescript", "--leg", "mcp-1x", "--branch", "dev", "--event", "push"]
     )
     assert (explicit.sdk, explicit.leg, explicit.branch, explicit.event) == ("typescript", "mcp-1x", "dev", "push")
+
+
+NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("attr", "expected"),
+    [
+        ("2026-10-24T10:30:00.123456", datetime(2026, 10, 24, 10, 30, 0, 123456, tzinfo=timezone.utc)),
+        ("2026-10-24T10:30:00.000Z", datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)),
+        ("2026-10-24T06:30:00-04:00", datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)),
+        (None, NOW),
+        ("", NOW),
+        ("not-a-date", NOW),
+        ("2026-10-04T12:00:00", NOW),
+        ("2026-10-25T12:00:00", NOW),
+    ],
+)
+def test_suite_timestamp(mod, attr, expected):
+    assert mod.suite_timestamp(attr, NOW) == expected
+
+
+def test_parse_junit_xml_stamps_tests_with_their_suite_time(mod, tmp_path):
+    path = write_junit(tmp_path, THREE_CASES, suite_attrs='timestamp="2026-10-24T10:30:00.000000"')
+
+    results = mod.parse_junit_xml(path)
+
+    assert {r.timestamp for r in results} == {datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)}
+
+
+def test_parse_junit_xml_stamps_each_vitest_suite_separately(mod, tmp_path):
+    xml = (
+        '<testsuites><testsuite name="a.test.ts" timestamp="2026-10-24T10:00:00.000Z">'
+        '<testcase classname="a.test.ts" name="one" time="1"/></testsuite>'
+        '<testsuite name="b.test.ts" timestamp="2026-10-24T11:00:00.000Z">'
+        '<testcase classname="b.test.ts" name="two" time="1"/></testsuite></testsuites>'
+    )
+    path = tmp_path / "report.xml"
+    path.write_text(xml, encoding="utf-8")
+
+    results = mod.parse_junit_xml(str(path))
+
+    assert [(r.name, r.timestamp.hour) for r in results] == [("one", 10), ("two", 11)]
+
+
+def test_parse_junit_xml_without_suite_timestamp_uses_upload_time(mod, tmp_path):
+    before = datetime.now(timezone.utc)
+
+    results = mod.parse_junit_xml(write_junit(tmp_path, THREE_CASES))
+
+    assert all(before <= r.timestamp <= datetime.now(timezone.utc) for r in results)
+
+
+def test_build_metric_data_uses_test_timestamps_and_earliest_for_suite(mod):
+    early, late = NOW - timedelta(hours=2), NOW - timedelta(hours=1)
+    results = results_named(mod, ["a", "b"])
+    results[0].timestamp, results[1].timestamp = late, early
+
+    data = mod.build_metric_data(results, "repo", "python")
+
+    assert {d["Timestamp"] for d in data if dims_of(d).get("TestName", "").endswith(".a")} == {late}
+    assert {d["Timestamp"] for d in data if d["MetricName"].startswith("Tests")} == {early}
 
 
 def test_build_metric_data_uses_sanitized_test_name(mod):
