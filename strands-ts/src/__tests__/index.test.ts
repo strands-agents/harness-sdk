@@ -37,6 +37,8 @@ describe('index', () => {
 
     it('exports model routing values', () => {
       expect(SDK.ClassifierStrategy).toBeDefined()
+      expect(SDK.DecisionStrategy).toBeDefined()
+      expect(new SDK.ClassifierStrategy(new SDK.BedrockModel())).toBeInstanceOf(SDK.DecisionStrategy)
       expect(SDK.FallbackStrategy).toBeDefined()
       expect(SDK.ModelRouter).toBeDefined()
       expect(SDK.RoutingCandidate).toBeDefined()

@@ -26,3 +26,18 @@ import {
   type RoutingStrategy,
 } from '@strands-agents/sdk'
 // --8<-- [end:mr_composed_imports]
+
+// --8<-- [start:mr_decision_imports]
+import {
+  Agent,
+  BedrockModel,
+  DecisionModel,
+  DecisionStrategy,
+  ModelRouter,
+  RoutingCandidate,
+  type AskOptions,
+  type DecisionInput,
+  type DecisionResult,
+  type Question,
+} from '@strands-agents/sdk'
+// --8<-- [end:mr_decision_imports]

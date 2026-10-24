@@ -1,0 +1,362 @@
+/**
+ * Route among configured candidates by asking a decision model.
+ */
+import { DecisionModel } from '../../decisions/decision-model.js'
+import { Uncertain } from '../../decisions/types.js'
+import { normalizeError } from '../../errors.js'
+import { logger } from '../../logging/logger.js'
+import type { Question } from '../../decisions/types.js'
+import type { ContentBlock, Message, SystemPrompt, TextBlock } from '../../types/messages.js'
+import type { JSONValue } from '../../types/json.js'
+import type { RoutingCandidate } from './router.js'
+import type { RoutingContext, RoutingStrategy } from './strategy.js'
+
+const DEFAULT_MESSAGE_CHARACTER_LIMIT = 4_000
+const DEFAULT_AGENT_INSTRUCTIONS_CHARACTER_LIMIT = 4_000
+const DEFAULT_CANDIDATE_CHARACTER_LIMIT = 4_000
+const DEFAULT_TIMEOUT_MS = 30_000
+const ROUTING_OMISSION_MARKER = '\n...[content omitted for routing]...\n'
+const NO_REQUEST_TEXT = '[No request-bearing user message provided]'
+const DEFAULT_QUESTION =
+  'Which candidate, identified by its key, should serve the latest request? Judge only the latest request, ' +
+  'agent instructions, and candidate evidence in the routing context.'
+
+/**
+ * Identifier of the single routing question asked of the decision model.
+ *
+ * @internal
+ */
+export const QUESTION_ID = 'candidate'
+
+/**
+ * Return the positional key offered to the decision model for the candidate at `index`.
+ *
+ * @internal
+ */
+export function candidateKey(index: number): string {
+  return `c${index}`
+}
+
+/**
+ * Log reasons and message a strategy reports when it declines selection.
+ *
+ * @internal
+ */
+export interface DeclineLog {
+  /** Reason for a decision call that threw. */
+  readonly error: string
+  /** Reason for a decision call that exceeded `timeoutMs`. */
+  readonly timeout: string
+  /** Reason for an `Uncertain` answer. */
+  readonly uncertain: string
+  /** Reason for an answer that matches no candidate key. */
+  readonly unknownKey: string
+  /** Message suffix after the structured fields. */
+  readonly message: string
+}
+
+const DECISION_DECLINE_LOG: DeclineLog = {
+  error: 'decision_error',
+  timeout: 'decision_timeout',
+  uncertain: 'decision_uncertain',
+  unknownKey: 'unknown_candidate_key',
+  message: 'selection declined',
+}
+
+/** One candidate's decision-facing evidence, identified by a positional key. */
+interface CandidateProfile {
+  readonly key: string
+  readonly name?: string
+  readonly description?: string
+  readonly metadata?: Readonly<Record<string, JSONValue>>
+}
+
+/** Options for constructing a {@link DecisionStrategy}. */
+export interface DecisionStrategyOptions {
+  /** Question posed to the decision model. Defaults to an SDK routing question over candidate keys. */
+  readonly question?: string
+  /**
+   * Maximum milliseconds to wait for the decision. Defaults to 30000. On timeout the in-flight call is
+   * aborted through its abort `signal`, which is honored implementation- and provider-dependently.
+   * The timeout runs independently of agent cancellation: {@link RoutingContext} carries no cancel
+   * signal, so cancelling the agent while a decision is in flight does not abort that decision.
+   */
+  readonly timeoutMs?: number
+  /** Maximum characters copied from the latest request into the routing context. Defaults to 4000. */
+  readonly maxMessageChars?: number
+  /** Maximum characters copied from the parent agent's system prompt text into the routing context. Defaults to 4000. */
+  readonly maxAgentInstructionsChars?: number
+  /**
+   * Maximum aggregate characters for the serialized evidence (keys, names, descriptions, and metadata) of
+   * all candidates. Evidence is never truncated; selection throws when the budget is exceeded.
+   * Defaults to 4000.
+   */
+  readonly maxCandidateChars?: number
+}
+
+/**
+ * Choose a candidate by asking a {@link DecisionModel} one closed question over the candidates.
+ *
+ * Each candidate is offered under a positional key (`c0`, `c1`, …); names, descriptions, and metadata
+ * travel only as evidence in the routing context, so optional or arbitrary names never become answer
+ * values. The routing context is a bounded projection of the latest request, the parent agent's textual
+ * instructions, and candidate evidence; it crosses the decision model's boundary and must not contain
+ * secrets.
+ *
+ * Selection runs only before the first model call. A single candidate is returned without asking.
+ * The routing question sets `uncertainty: false`, so the decision model must commit to a key. Decision
+ * failures, unknown keys, `Uncertain` answers from implementations that ignore that setting, and timeouts
+ * warn and decline selection, so {@link ModelRouter} serves candidate zero. After an attempt this
+ * strategy declines, so a failure of the selected candidate surfaces without switching.
+ *
+ * @example
+ * ```typescript
+ * const router = new ModelRouter([fast, strong], {
+ *   strategy: new DecisionStrategy(new LLMDecisionModel({ model: classifierModel })),
+ * })
+ * const agent = new Agent({ model: router })
+ * ```
+ */
+export class DecisionStrategy implements RoutingStrategy {
+  /** Log vocabulary used when declining; presets override it to keep their own log contract. */
+  protected readonly _declineLog: DeclineLog = DECISION_DECLINE_LOG
+  private readonly _decisionModel: DecisionModel
+  private readonly _question: string
+  private readonly _timeoutMs: number
+  private readonly _maxMessageChars: number
+  private readonly _maxAgentInstructionsChars: number
+  private readonly _maxCandidateChars: number
+
+  /**
+   * Create a decision strategy.
+   *
+   * @param decisionModel - Decision model asked to choose among candidate keys
+   * @param options - Question, timeout, and character budgets
+   * @throws TypeError if `decisionModel` is not a DecisionModel
+   * @throws Error if `question` is empty, `timeoutMs` is not finite and greater than zero, or a character limit is not a positive integer
+   */
+  constructor(decisionModel: DecisionModel, options: DecisionStrategyOptions = {}) {
+    if (!(decisionModel instanceof DecisionModel)) throw new TypeError('decisionModel must be a DecisionModel')
+    const question = options.question ?? DEFAULT_QUESTION
+    if (question.trim().length === 0) throw new Error('question must be a non-empty string')
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error('timeoutMs must be finite and greater than zero')
+    }
+
+    this._decisionModel = decisionModel
+    this._question = question
+    this._timeoutMs = timeoutMs
+    this._maxMessageChars = validatedCharacterLimit(
+      'maxMessageChars',
+      options.maxMessageChars ?? DEFAULT_MESSAGE_CHARACTER_LIMIT
+    )
+    this._maxAgentInstructionsChars = validatedCharacterLimit(
+      'maxAgentInstructionsChars',
+      options.maxAgentInstructionsChars ?? DEFAULT_AGENT_INSTRUCTIONS_CHARACTER_LIMIT
+    )
+    this._maxCandidateChars = validatedCharacterLimit(
+      'maxCandidateChars',
+      options.maxCandidateChars ?? DEFAULT_CANDIDATE_CHARACTER_LIMIT
+    )
+  }
+
+  /**
+   * Select one opening candidate, declining on a decision failure.
+   *
+   * @param context - Current request and chronological routing history
+   * @returns The chosen candidate, or `undefined` to decline
+   * @throws Error if the candidates' serialized evidence exceeds `maxCandidateChars`; this misconfiguration is permanent, so it propagates instead of declining
+   */
+  async select(context: RoutingContext): Promise<RoutingCandidate | undefined> {
+    if (context.attempts.length > 0) return undefined
+    if (context.candidates.length === 1) return context.candidates[0]
+
+    const profiles = buildCandidateProfiles(context.candidates, this._maxCandidateChars)
+    let answer: string | boolean | Uncertain
+    try {
+      answer = await this._decideWithTimeout(context, profiles)
+    } catch (error) {
+      const reason = error instanceof DecisionTimeoutError ? this._declineLog.timeout : this._declineLog.error
+      // Logs only the error name: decision failures may carry request or candidate evidence.
+      this._warnDeclined(reason, normalizeError(error).name)
+      return undefined
+    }
+
+    if (answer instanceof Uncertain) {
+      this._warnDeclined(this._declineLog.uncertain)
+      return undefined
+    }
+    const index = profiles.findIndex((profile) => profile.key === answer)
+    if (index === -1) {
+      this._warnDeclined(this._declineLog.unknownKey)
+      return undefined
+    }
+    return context.candidates[index]
+  }
+
+  /** Log a decline using only the reason and, for failures, the error type. */
+  private _warnDeclined(reason: string, errorType?: string): void {
+    const errorField = errorType !== undefined ? `, error_type=<${errorType}>` : ''
+    logger.warn(`strategy=<${this.constructor.name}>, reason=<${reason}>${errorField} | ${this._declineLog.message}`)
+  }
+
+  /** Race the decision against the timeout, aborting the decision call when time runs out. */
+  private async _decideWithTimeout(
+    context: RoutingContext,
+    profiles: readonly CandidateProfile[]
+  ): Promise<string | boolean | Uncertain> {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const decision = this._decide(context, profiles, controller.signal)
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new DecisionTimeoutError())
+      }, this._timeoutMs)
+    })
+    try {
+      return await Promise.race([decision, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Ask the decision model for one candidate key over the bounded routing context. */
+  private async _decide(
+    context: RoutingContext,
+    profiles: readonly CandidateProfile[],
+    signal: AbortSignal
+  ): Promise<string | boolean | Uncertain> {
+    const state = JSON.stringify({
+      latestRequest: latestRequestText(context.messages, this._maxMessageChars),
+      agentInstructions: extractBoundedAgentInstructions(context.systemPrompt, this._maxAgentInstructionsChars),
+      candidates: profiles,
+    })
+    const question: Question = {
+      question: this._question,
+      choices: profiles.map((profile) => profile.key),
+      uncertainty: false,
+    }
+    // `ask` adds the decision's reported usage to the request; the request's limits don't gate routing.
+    const result = await this._decisionModel.ask(
+      state,
+      { [QUESTION_ID]: question },
+      { signal, ...(context.invocationContext !== undefined && { invocationContext: context.invocationContext }) }
+    )
+    return result.answers[QUESTION_ID]!
+  }
+}
+
+/** Signals that the decision exceeded its configured budget rather than failing outright. */
+class DecisionTimeoutError extends Error {
+  constructor() {
+    super('decision timed out')
+    this.name = 'TimeoutError'
+  }
+}
+
+/**
+ * Build keyed candidate profiles, rejecting evidence that exceeds the aggregate budget.
+ *
+ * Candidate evidence is caller-authored configuration, so it is never truncated; an over-budget
+ * profile set throws instead of silently degrading the decision basis.
+ */
+function buildCandidateProfiles(
+  candidates: readonly RoutingCandidate[],
+  characterLimit: number
+): readonly CandidateProfile[] {
+  const profiles = candidates.map((candidate, index) => ({
+    key: candidateKey(index),
+    ...(candidate.name !== undefined && { name: candidate.name }),
+    ...(candidate.description !== undefined && { description: candidate.description }),
+    ...(candidate.metadata !== undefined && { metadata: candidate.metadata }),
+  }))
+  const serializedSize = JSON.stringify(profiles).length
+  if (serializedSize > characterLimit) {
+    throw new Error(
+      `candidate evidence serializes to ${serializedSize} characters, exceeding maxCandidateChars=` +
+        `${characterLimit}; trim candidate names, descriptions, and metadata, or raise the limit`
+    )
+  }
+  return profiles
+}
+
+/** Return the latest request-bearing user message as bounded safe text. */
+function latestRequestText(messages: readonly Message[], characterLimit: number): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!
+    if (message.role !== 'user') continue
+    const request = requestText(message, characterLimit)
+    if (request !== undefined) return request
+  }
+  return truncateText(NO_REQUEST_TEXT, characterLimit)
+}
+
+/** Projects one content block to safe routing text, or `undefined` when it carries no user request. */
+type BlockProjection<T extends ContentBlock['type']> = (block: Extract<ContentBlock, { type: T }>) => string | undefined
+
+const notRequestBearing = (): undefined => undefined
+
+/**
+ * Safe routing projection for every content block type. The mapped type makes a new block type a
+ * compile error here, so request-bearing content cannot silently fall back to stale history.
+ */
+const REQUEST_BLOCK_PROJECTIONS: { readonly [T in ContentBlock['type']]: BlockProjection<T> } = {
+  textBlock: (block) => (block.text.trim().length > 0 ? block.text : undefined),
+  guardContentBlock: (block) =>
+    block.image !== undefined || (block.text !== undefined && block.text.text.trim().length > 0)
+      ? '[Guarded content]'
+      : undefined,
+  audioBlock: () => '[Audio]',
+  imageBlock: () => '[Image]',
+  documentBlock: () => '[Document]',
+  videoBlock: () => '[Video]',
+  toolUseBlock: notRequestBearing,
+  toolResultBlock: notRequestBearing,
+  reasoningBlock: notRequestBearing,
+  cachePointBlock: notRequestBearing,
+  citationsBlock: notRequestBearing,
+}
+
+/** Project one block through its type's entry in {@link REQUEST_BLOCK_PROJECTIONS}. */
+function projectRequestBlock(block: ContentBlock): string | undefined {
+  const project = REQUEST_BLOCK_PROJECTIONS[block.type] as (block: ContentBlock) => string | undefined
+  return project(block)
+}
+
+/** Render only safe request-bearing fields from one user message. */
+function requestText(message: Message, characterLimit: number): string | undefined {
+  const parts = message.content.map(projectRequestBlock).filter((part): part is string => part !== undefined)
+  if (parts.length === 0) return undefined
+  return truncateText(parts.join('\n'), characterLimit)
+}
+
+/** Extract bounded text from the parent agent system prompt, omitting non-text blocks. */
+function extractBoundedAgentInstructions(systemPrompt: SystemPrompt | undefined, characterLimit: number): string {
+  if (systemPrompt === undefined) return ''
+  const instructions =
+    typeof systemPrompt === 'string'
+      ? systemPrompt
+      : systemPrompt
+          .filter((block): block is TextBlock => block.type === 'textBlock')
+          .map((block) => block.text)
+          .join('\n')
+  return truncateText(instructions, characterLimit)
+}
+
+/** Bound text while preserving its opening and trailing request. */
+function truncateText(text: string, characterLimit: number): string {
+  if (text.length <= characterLimit) return text
+  if (characterLimit <= ROUTING_OMISSION_MARKER.length) return text.slice(0, characterLimit)
+  const availableCharacters = characterLimit - ROUTING_OMISSION_MARKER.length
+  const headCharacters = Math.floor(availableCharacters / 2)
+  const tailCharacters = availableCharacters - headCharacters
+  return `${text.slice(0, headCharacters)}${ROUTING_OMISSION_MARKER}${text.slice(-tailCharacters)}`
+}
+
+/** Return a validated positive character limit. */
+function validatedCharacterLimit(name: string, value: number): number {
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`)
+  return value
+}

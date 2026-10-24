@@ -167,6 +167,17 @@ describe('LLMDecisionModel', () => {
       await decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(model.options[0]?.toolChoice).toEqual({ tool: { name: STRUCTURED_OUTPUT_TOOL_NAME } })
+      expect(model.options[0]).not.toHaveProperty('cancelSignal')
+    })
+
+    it('forwards the abort signal to the model call as cancelSignal', async () => {
+      const model = toolUseModel({ q: 'true' })
+      const decision = new LLMDecisionModel({ model })
+      const controller = new AbortController()
+
+      await decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } }, { signal: controller.signal })
+
+      expect(model.options[0]?.cancelSignal).toBe(controller.signal)
     })
 
     it('wraps a plain string state as a single user message', async () => {

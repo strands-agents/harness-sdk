@@ -6,6 +6,8 @@
  */
 export { ClassifierStrategy } from './classifier-strategy.js'
 export type { ClassifierStrategyOptions } from './classifier-strategy.js'
+export { DecisionStrategy } from './decision-strategy.js'
+export type { DecisionStrategyOptions } from './decision-strategy.js'
 export { FallbackStrategy } from './fallback-strategy.js'
 export { ModelRouter, RoutingCandidate } from './router.js'
 export type { ModelRouterOptions, RoutingCandidateOptions } from './router.js'

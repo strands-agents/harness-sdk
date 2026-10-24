@@ -2,9 +2,15 @@ import {
   Agent,
   BedrockModel,
   ClassifierStrategy,
+  DecisionModel,
+  DecisionStrategy,
   FallbackStrategy,
   ModelRouter,
   RoutingCandidate,
+  type AskOptions,
+  type DecisionInput,
+  type DecisionResult,
+  type Question,
   type RoutingContext,
   type RoutingStrategy,
 } from '@strands-agents/sdk'
@@ -121,4 +127,48 @@ async function modelRoutingComposedStrategy() {
     'Design a rollback-safe migration from regional to global idempotency keys.'
   )
   // --8<-- [end:mr_composed]
+}
+
+async function modelRoutingDecisionStrategy() {
+  // --8<-- [start:mr_decision]
+  // Picks the advanced candidate when the request mentions design work.
+  class KeywordDecisionModel extends DecisionModel {
+    protected async _ask<const Q extends Record<string, Question>>(
+      state: DecisionInput,
+      questions: Q,
+      _options: AskOptions
+    ): Promise<DecisionResult<Q>> {
+      const startedAt = performance.now()
+      const choices = questions['candidate']!.choices as readonly string[]
+      const answer = JSON.stringify(state).toLowerCase().includes('design')
+        ? choices[1]
+        : choices[0]
+      return {
+        answers: { candidate: answer } as DecisionResult<Q>['answers'],
+        metadata: { latencyMs: Math.round(performance.now() - startedAt) },
+      }
+    }
+  }
+
+  const router = new ModelRouter(
+    [
+      new RoutingCandidate({
+        model: new BedrockModel({ modelId: 'global.anthropic.claude-haiku-5-5' }),
+        name: 'routine',
+        description: 'Concise factual questions and routine requests.',
+      }),
+      new RoutingCandidate({
+        model: new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' }),
+        name: 'advanced',
+        description: 'Systems design with several interacting constraints.',
+      }),
+    ],
+    { strategy: new DecisionStrategy(new KeywordDecisionModel(), { timeoutMs: 5_000 }) }
+  )
+  const agent = new Agent({ model: router })
+
+  await agent.invoke(
+    'Design a rollback-safe migration from regional to global idempotency keys.'
+  )
+  // --8<-- [end:mr_decision]
 }

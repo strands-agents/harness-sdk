@@ -9,6 +9,7 @@ sourceLinks:
   - path: strands-py/src/strands/models/routing/classifier_strategy.py
   - path: strands-ts/src/models/routing/router.ts
   - path: strands-ts/src/models/routing/classifier-strategy.ts
+  - path: strands-ts/src/models/routing/decision-strategy.ts
 ---
 
 Use model routing to choose a model for each agent invocation from a fixed set of
@@ -49,6 +50,7 @@ Choose the strategy that matches how your application should select and recover:
 | --- | --- |
 | Try candidates in order, then favor healthier candidates | Default `FallbackStrategy` |
 | Choose the opening candidate from the request and evidence | `ClassifierStrategy` |
+| Choose the opening candidate with any decision | `DecisionStrategy` |
 | Define a custom candidate-selection policy | Custom `RoutingStrategy` |
 
 `ClassifierStrategy` does not select another candidate after the serving model
@@ -191,7 +193,7 @@ the first serving call. Choose a classifier model that supports
 
 Set <Syntax py="system_prompt" ts="systemPrompt" /> to supply your routing policy.
 The policy can prioritize cost, latency, region, capabilities, or another criterion
-represented in candidate evidence. The SDK appends mandatory isolation, valid-index,
+represented in candidate evidence. The SDK appends mandatory isolation, valid-choice,
 and structured-output rules to every custom policy.
 
 The classifier receives a bounded representation of the latest request-bearing user
@@ -200,15 +202,65 @@ metadata. Keep secrets out of that evidence because it can cross a model provide
 boundary.
 
 The classifier prompt tells the model not to infer preference from declaration
-order. If the classifier call times out, fails, or returns an invalid choice, the
-router uses the first candidate. Candidate evidence that exceeds
+order, and the classifier must commit to one candidate. If the classifier call times
+out, fails, or returns an invalid choice, the router uses the first candidate.
+Candidate evidence that exceeds
 <Syntax py="max_candidate_chars" ts="maxCandidateChars" /> raises
 <Syntax py="ValueError" ts="Error" /> instead.
+
+In TypeScript, `ClassifierStrategy` is a preset over
+[`DecisionStrategy`](#route-with-a-decision-model) with an `LLMDecisionModel`.
 
 `ClassifierStrategy` only chooses the opening model. If the selected model fails and
 no same-model retry claims the failure, the strategy declines further selection.
 The router surfaces the selected model's original error instead of switching
 candidates.
+
+## Route with a decision model
+
+Use `DecisionStrategy` when you want routing posed as a structured, closed
+question so that any decision maker can answer it effectively. The answer can
+come from `LLMDecisionModel`, which wraps a regular model, or from any other
+`DecisionModel` subclass, such as a fine-tuned classifier, a rules engine, or a
+small local model. The strategy asks one closed question over the candidate keys
+and maps the answer back to a candidate.
+
+:::note
+`DecisionStrategy` is currently available in the TypeScript SDK only. Python
+support is planned.
+:::
+
+This example implements a keyword-based decision model so routing runs without a
+classifier call, then routes with it:
+
+<Tabs>
+<Tab label="TypeScript">
+```typescript
+--8<-- "user-guide/sdk/model-providers/model-routing_imports.ts:mr_decision_imports"
+
+--8<-- "user-guide/sdk/model-providers/model-routing.ts:mr_decision"
+```
+</Tab>
+</Tabs>
+
+The decision model receives two inputs:
+
+- **State**: A JSON string with the latest request, the agent's textual
+  instructions, and the candidates, under the keys `latestRequest`,
+  `agentInstructions`, and `candidates`. `DecisionStrategy` bounds the request and
+  instructions with `maxMessageChars` and `maxAgentInstructionsChars`, and rejects
+  candidate evidence larger than `maxCandidateChars`, the same way
+  `ClassifierStrategy` does.
+- **Question**: One question with the id `candidate` whose choices are positional
+  keys: `c0` for the first candidate, `c1` for the second, and so on. Candidate
+  names, descriptions, and metadata appear in the state as evidence, so candidates
+  do not need names and a name never becomes an answer value.
+
+The question sets `uncertainty` to `false`, so the decision model must commit to one
+key. An unknown key, an error, or a call that runs past `timeoutMs` logs a warning
+and declines, and the router serves the first candidate. A timeout also aborts the
+in-flight call through the abort `signal` that `DecisionModel.ask` passes to the
+implementation.
 
 ## Build a custom routing strategy
 

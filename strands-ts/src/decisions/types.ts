@@ -19,6 +19,8 @@ export type DecisionInput = string | ContentBlock[] | Message[]
 export interface AskOptions {
   /** The request to add this decision's token usage to, such as a hook event's or tool context's `invocationContext`; the request's limits don't apply to the decision. */
   invocationContext?: InvocationContext
+  /** Aborts the underlying decision call; honored provider-dependently by model-backed implementations. */
+  signal?: AbortSignal
 }
 
 /**

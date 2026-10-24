@@ -24,7 +24,8 @@ export abstract class DecisionModel {
    * @param state - A plain string, a one-shot content list, or a message history.
    * @param questions - Map of identifier → question. The returned `answers` object
    *   is keyed off this same map and statically narrowed per question.
-   * @param options - Per-call options, such as the request to add the decision's usage to.
+   * @param options - Per-call options, such as the request to add the decision's usage to,
+   *   or a `signal` that aborts the underlying call.
    * @returns A {@link DecisionResult} whose answers are statically narrowed from
    *   each question's `choices`.
    * @throws Error if `questions` is empty or contains an invalid `question`,
@@ -34,10 +35,10 @@ export abstract class DecisionModel {
   async ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
     questions: Q,
-    options?: AskOptions
+    options: AskOptions = {}
   ): Promise<DecisionResult<Q>> {
     validateQuestions(questions)
-    const invocationContext = unwrapInvocationContext(options?.invocationContext)
+    const invocationContext = unwrapInvocationContext(options.invocationContext)
 
     const span = trace.getTracer(getServiceName()).startSpan('decision', {
       kind: SpanKind.INTERNAL,
@@ -48,7 +49,9 @@ export abstract class DecisionModel {
     span.addEvent('gen_ai.decision.questions', { ids: Object.keys(questions) })
 
     try {
-      const result = await context.with(trace.setSpan(context.active(), span), () => this._ask(state, questions))
+      const result = await context.with(trace.setSpan(context.active(), span), () =>
+        this._ask(state, questions, options)
+      )
 
       const spanAttributes: Record<string, number> = { 'gen_ai.decision.latency_ms': result.metadata.latencyMs }
       if (result.usage !== undefined) {
@@ -75,11 +78,13 @@ export abstract class DecisionModel {
   /**
    * Implementation-specific decision logic. Must return a complete
    * {@link DecisionResult}, including `metadata.latencyMs` sourced from the
-   * underlying model provider.
+   * underlying model provider. Implementations should forward `options.signal`
+   * to any cancellable work they start.
    */
   protected abstract _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q
+    questions: Q,
+    options: AskOptions
   ): Promise<DecisionResult<Q>>
 }
 

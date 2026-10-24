@@ -207,10 +207,17 @@ export type {
 } from './decisions/index.js'
 
 // Model routing
-export { ClassifierStrategy, FallbackStrategy, ModelRouter, RoutingCandidate } from './models/routing/index.js'
+export {
+  ClassifierStrategy,
+  DecisionStrategy,
+  FallbackStrategy,
+  ModelRouter,
+  RoutingCandidate,
+} from './models/routing/index.js'
 export type {
   CandidateInput,
   ClassifierStrategyOptions,
+  DecisionStrategyOptions,
   ModelRouterOptions,
   RoutingAttempt,
   RoutingCandidateOptions,

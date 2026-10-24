@@ -13,7 +13,14 @@ import { Model } from '../models/model.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool } from '../tools/structured-output-tool.js'
 import { Message, TextBlock, type ContentBlock, type ToolUseBlock } from '../types/messages.js'
 import { DecisionModel, uncertaintyAllowed } from './decision-model.js'
-import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
+import {
+  Uncertain,
+  type AnswerOf,
+  type AskOptions,
+  type DecisionInput,
+  type DecisionResult,
+  type Question,
+} from './types.js'
 
 /** Reserved option value used to signal uncertainty on the wire. */
 const UNCERTAIN_LITERAL = 'uncertain'
@@ -85,7 +92,8 @@ export class LLMDecisionModel extends DecisionModel {
 
   protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q
+    questions: Q,
+    options: AskOptions
   ): Promise<DecisionResult<Q>> {
     const schema = buildAnswerSchema(questions)
     const tool = new StructuredOutputTool(schema)
@@ -97,6 +105,7 @@ export class LLMDecisionModel extends DecisionModel {
       systemPrompt,
       toolSpecs: [tool.toolSpec],
       toolChoice: { tool: { name: tool.name } },
+      ...(options.signal !== undefined && { cancelSignal: options.signal }),
     })
 
     let iteration = await stream.next()
