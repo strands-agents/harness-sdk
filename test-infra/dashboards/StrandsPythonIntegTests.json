@@ -785,7 +785,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). Flaky tables: the nightly scheduled run on main only, so each test is one row and the group stays under 500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
+        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). Flaky tables: the nightly scheduled run on main only, one table per matrix leg (and name group), so each test is one row and the group stays under 500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
       },
       "x": 0,
       "y": 105,
@@ -841,7 +841,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, models: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, models: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
@@ -893,7 +893,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, other: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, other: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
@@ -939,6 +939,110 @@
       },
       "x": 0,
       "y": 122,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, bidi leg: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"bidi\"', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 131,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, mcp-1x leg: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"mcp-1x\"', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 140,
       "width": 24,
       "height": 9
     }

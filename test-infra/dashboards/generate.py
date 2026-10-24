@@ -48,10 +48,14 @@ class DashboardSpec:
     sdk: str
     name: str
     # (label, SEARCH term). Terms must be disjoint and complete so every test lands in exactly one widget, and
-    # each must match < 500 series on every schema it is used with (the context schema is therefore always pinned
-    # to one Event/Branch/Leg, see main_only_section). SEARCH tokenizes TestName on non-alphanumerics, so "models"
-    # matches tests_integ.models.* and test/integ/models/*.
+    # each must match < 500 series on every schema it is used with. SEARCH tokenizes TestName on non-alphanumerics,
+    # so "models" matches tests_integ.models.* and test/integ/models/*.
     partitions: tuple[tuple[str, str], ...]
+    # (label, Leg, SEARCH term) for the nightly tables on the context schema, which has one series per
+    # (TestName, Event, Branch, Leg) and is therefore always pinned to one Event/Branch/Leg (see main_only_section).
+    # Every test the nightly run executes must land in exactly one (Leg, term) cell: a leg that runs a subset of the
+    # suite needs its own cell because the "all" leg may skip or not collect those tests.
+    nightly_partitions: tuple[tuple[str, str, str], ...]
 
 
 SPECS = (
@@ -59,6 +63,15 @@ SPECS = (
         sdk="python",
         name="StrandsPythonIntegTests",
         partitions=(("models", "models"), ("other", "NOT models")),
+        # On the "all" leg (Python 3.10) tests_integ/bidi is skipped wholesale by an autouse session fixture (needs
+        # 3.12) and tests_integ/mcp/conftest.py does not collect the seven mcp 1.x-only modules under mcp 2.x, so
+        # those tests only produce real outcomes on their own legs.
+        nightly_partitions=(
+            ("all leg, models", "all", "models"),
+            ("all leg, other", "all", "NOT models"),
+            ("bidi leg", "bidi", ""),
+            ("mcp-1x leg", "mcp-1x", ""),
+        ),
     ),
     DashboardSpec(
         sdk="typescript",
@@ -67,6 +80,12 @@ SPECS = (
             ("agent", "agent"),
             ("interventions", "interventions NOT agent"),
             ("other", "NOT agent NOT interventions"),
+        ),
+        # TypeScript has a single matrix leg, published as Leg="all".
+        nightly_partitions=(
+            ("agent", "all", "agent"),
+            ("interventions", "all", "interventions NOT agent"),
+            ("other", "all", "NOT agent NOT interventions"),
         ),
     ),
 )
@@ -366,8 +385,9 @@ def main_only_section(spec: DashboardSpec, layout: Layout) -> None:
     # The per-test context schema has one series per (TestName, Event, Branch, Leg), so a SEARCH over it must pin
     # all three context dimensions: otherwise every event that publishes multiplies the partition (merge_group +
     # schedule alone pushes "other" past 500) and a flaky test appears once per combination. The nightly run on main
-    # is the baseline: full suite for both SDKs, one run per day, and the "all" leg covers every test.
-    nightly = 'Event="schedule" Branch="main" Leg="all"'
+    # is the baseline: full suite for both SDKs, one run per day. Legs that run a subset of the suite get their own
+    # table (spec.nightly_partitions) because the "all" leg skips or does not collect those tests.
+    nightly = 'Event="schedule" Branch="main"'
     layout.full(
         metric(
             f"Pass rate per day, merge queue and nightly runs on main only ({V2_NOTE})",
@@ -383,9 +403,10 @@ def main_only_section(spec: DashboardSpec, layout: Layout) -> None:
         ),
         6,
     )
-    for label, term in spec.partitions:
+    for label, leg, term in spec.nightly_partitions:
+        pinned = f'{nightly} Leg="{leg}"'
         rate = expr(
-            search(SCHEMA_PER_TEST_CONTEXT, "TestFailed", spec.sdk, "Average", MONTH, f"{nightly} {term}"),
+            search(SCHEMA_PER_TEST_CONTEXT, "TestFailed", spec.sdk, "Average", MONTH, f"{pinned} {term}".rstrip()),
             "rb",
             MONTH,
             visible=False,
@@ -432,9 +453,9 @@ def build(spec: DashboardSpec) -> dict[str, Any]:
         layout,
         "Merge queue / main only",
         "Pass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). "
-        "Flaky tables: the nightly scheduled run on main only, so each test is one row and the group stays under "
-        "500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run "
-        "has published.",
+        "Flaky tables: the nightly scheduled run on main only, one table per matrix leg (and name group), so each "
+        "test is one row and the group stays under 500 series. Empty until the publisher that emits "
+        "Event/Branch/Leg dimensions has shipped and such a run has published.",
     )
     main_only_section(spec, layout)
     return {"start": "-P30D", "periodOverride": "inherit", "widgets": layout.widgets}

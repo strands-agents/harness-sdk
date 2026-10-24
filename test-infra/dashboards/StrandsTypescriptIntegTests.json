@@ -1005,7 +1005,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). Flaky tables: the nightly scheduled run on main only, so each test is one row and the group stays under 500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
+        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). Flaky tables: the nightly scheduled run on main only, one table per matrix leg (and name group), so each test is one row and the group stays under 500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
       },
       "x": 0,
       "y": 142,
