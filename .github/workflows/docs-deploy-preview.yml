@@ -66,6 +66,14 @@ jobs:
           persist-credentials: false
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
 
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          # Intentionally unpinned: each site build imports the latest samples default branch.
+          repository: strands-agents/samples
+          path: samples-source
+          persist-credentials: false
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -77,6 +85,8 @@ jobs:
       - name: Build CMS
         env:
           ASTRO_BASE_PATH: /${{ env.S3_PATH }}/
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
         run: npm run cms:build
 
       - name: Configure AWS credentials

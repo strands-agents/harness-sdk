@@ -43,7 +43,7 @@ export default function astroBrokenLinksChecker(options = {}) {
         logger.info(`Checking ${htmlFiles.length} html pages for broken links`);
         // start time
         const startTime = Date.now();
-        const checkHtmlPromises = htmlFiles.map(async (htmlFile) => {
+        for (const htmlFile of htmlFiles) {
           const absoluteHtmlFilePath = join(distPath, htmlFile);
           const htmlContent = fs.readFileSync(absoluteHtmlFilePath, 'utf8');
           const baseUrl = normalizeHtmlFilePath(absoluteHtmlFilePath, distPath);
@@ -60,9 +60,7 @@ export default function astroBrokenLinksChecker(options = {}) {
             options.trailingSlash,
             options.basePath || '',
           );
-        });
-
-        await Promise.all(checkHtmlPromises);
+        }
         logBrokenLinks(brokenLinksMap, logFilePath, logger);
 
         // end time

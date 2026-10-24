@@ -19,6 +19,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          # Intentionally unpinned: each site build imports the latest samples default branch.
+          repository: strands-agents/samples
+          path: samples-source
+          persist-credentials: false
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
@@ -36,6 +44,8 @@ jobs:
         # Node's default heap on the runner; raise the ceiling to avoid an OOM.
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
 
       - name: Typecheck
         run: npm run typecheck

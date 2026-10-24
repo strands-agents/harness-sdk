@@ -16,6 +16,12 @@ function hasCurrentChild(entries: any[]): boolean {
   );
 }
 
+
+// Top-level Python / TypeScript groups follow the header language toggle (see Sidebar.astro).
+function sidebarLang(label: string): string | undefined {
+  const lang = label.toLowerCase()
+  return lang === 'python' || lang === 'typescript' ? lang : undefined
+}
 ---
 
 <ul class:list={{ "top-level": !nested }}>
@@ -36,7 +42,7 @@ function hasCurrentChild(entries: any[]): boolean {
           </a>
         ) : isTopLevel && entry.collapsed !== true ? (
           /* Top-level groups: non-collapsible section headers */
-          <div class="section-group">
+          <div class="section-group" data-sidebar-lang={sidebarLang(entry.label)}>
             <span class="section-label">
               {entry.label}
               {entry.badge && (

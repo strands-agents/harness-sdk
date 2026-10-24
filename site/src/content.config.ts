@@ -261,6 +261,22 @@ export const announcementSchema = z
   })
 export type Announcement = z.infer<typeof announcementSchema>
 
+const sampleGuideSchema = z
+  .object({
+    title: z.string(),
+    description: z.string(),
+    slug: z.string(),
+    language: z.string(),
+    category: z.string(),
+    categoryLabel: z.string(),
+    sourceRepository: z.string(),
+    sourceCommit: z.string(),
+    sourcePath: z.string(),
+    categoryOrder: z.number().int().nonnegative(),
+    sampleOrder: z.number().int().nonnegative(),
+  })
+  .strict()
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -322,6 +338,13 @@ export const collections = {
       pattern: '**/*.{yml,yaml}',
     }),
     schema: announcementSchema,
+  }),
+  sampleGuides: defineCollection({
+    loader: glob({
+      base: '.build/samples/pages',
+      pattern: '**/*.md',
+    }),
+    schema: sampleGuideSchema,
   }),
   docs: defineCollection({
     loader: glob({
