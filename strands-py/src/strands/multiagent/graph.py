@@ -801,6 +801,19 @@ class Graph(MultiAgentBase):
         """Execute graph and yield TypedEvent objects."""
         if self._interrupt_state.activated:
             ready_nodes = [self.nodes[node_id] for node_id in self._interrupt_state.context["completed_nodes"]]
+
+            # Check the execution limits before consuming the interrupted nodes: a limit hit on
+            # the resume call must leave them in interrupted_nodes, or a retry with a raised
+            # limit or a longer timeout would report COMPLETED without ever running them (#5341).
+            should_continue, reason = self.state.should_continue(
+                max_node_executions=self.max_node_executions,
+                execution_timeout=self.execution_timeout,
+            )
+            if not should_continue:
+                self.state.status = Status.FAILED
+                logger.debug("reason=<%s> | stopping execution", reason)
+                return  # Let the top-level exception handler deal with it
+
             ready_nodes.extend(self.state.interrupted_nodes)
 
             self.state.interrupted_nodes.clear()
