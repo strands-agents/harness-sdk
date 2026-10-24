@@ -50,6 +50,7 @@ def test_parse_junit_xml_returns_one_result_per_testcase(mod, tmp_path):
     [
         ("Agent > tool → result", "Agent > tool -> result"),
         ("Agent — with em dash", "Agent - with em dash"),
+        ("wait… for it", "wait... for it"),
         ("café", "caf?"),
         ("plain.ascii[param-1]", "plain.ascii[param-1]"),
     ],
@@ -77,6 +78,11 @@ class FakeCloudWatch:
         self.batches.append(MetricData)
         if index in self.fail_on:
             raise RuntimeError(f"batch {index} rejected")
+
+
+@pytest.fixture
+def pr_ctx(mod):
+    return mod.RunContext(event="pull_request_target", branch="main", leg="all")
 
 
 def results_named(mod, names):
@@ -277,21 +283,21 @@ def test_parse_junit_xml_without_suite_timestamp_uses_upload_time(mod, tmp_path)
     assert all(before <= r.timestamp <= datetime.now(timezone.utc) for r in results)
 
 
-def test_build_metric_data_uses_test_timestamps_and_earliest_for_suite(mod):
+def test_build_metric_data_uses_test_timestamps_and_earliest_for_suite(mod, pr_ctx):
     early, late = NOW - timedelta(hours=2), NOW - timedelta(hours=1)
     results = results_named(mod, ["a", "b"])
     results[0].timestamp, results[1].timestamp = late, early
 
-    data = mod.build_metric_data(results, "repo", "python")
+    data = mod.build_metric_data(results, "repo", "python", pr_ctx)
 
     assert {d["Timestamp"] for d in data if dims_of(d).get("TestName", "").endswith(".a")} == {late}
     assert {d["Timestamp"] for d in data if d["MetricName"].startswith("Tests")} == {early}
 
 
-def test_build_metric_data_uses_sanitized_test_name(mod):
+def test_build_metric_data_uses_sanitized_test_name(mod, pr_ctx):
     result = mod.TestResult(name="tool → result", classname="test/integ/agent.test.ts", duration=1.0, outcome="passed")
 
-    data = mod.build_metric_data([result], "harness-sdk", "typescript")
+    data = mod.build_metric_data([result], "harness-sdk", "typescript", pr_ctx)
 
     dims = {d["Name"]: d["Value"] for d in data[0]["Dimensions"]}
     assert dims["TestName"] == "test/integ/agent.test.ts.tool -> result"

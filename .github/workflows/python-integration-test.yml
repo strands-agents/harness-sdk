@@ -216,7 +216,6 @@ jobs:
       - name: Publish test metrics to CloudWatch
         env:
           REPO_NAME: ${{ github.event.repository.name }}
-          BRANCH: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
           RESULTS_DIR: ${{ runner.temp }}/test-results
         run: |
           pip install --no-cache-dir boto3
@@ -230,6 +229,6 @@ jobs:
               continue
             fi
             python .github/scripts/upload-integ-test-metrics.py "$dir/test-results.xml" "$REPO_NAME" python \
-              --leg "$leg" --branch "${BRANCH#refs/heads/}" || status=1
+              --leg "$leg" || status=1
           done
           exit "$status"

@@ -15,9 +15,8 @@ import boto3
 
 STRANDS_METRIC_NAMESPACE = "Strands/Tests"
 
-# CloudWatch dimension values must be printable ASCII and at most 255 characters; a single offending
-# value rejects the whole put_metric_data batch. Characters seen in real test names get a readable ASCII
-# form so the name stays searchable; anything else outside 0x20-0x7E becomes "?".
+# One non-printable-ASCII dimension value rejects the whole put_metric_data batch. Applied after NFKC, which
+# already maps "…" and NBSP; anything left outside 0x20-0x7E becomes "?".
 TRANSLITERATIONS = {
     "→": "->",
     "←": "<-",
@@ -27,8 +26,6 @@ TRANSLITERATIONS = {
     "’": "'",
     "“": '"',
     "”": '"',
-    "…": "...",
-    "\u00a0": " ",
 }
 MAX_DIMENSION_LENGTH = 255
 MAX_TIMESTAMP_AGE_DAYS = 13
@@ -139,9 +136,6 @@ class RunContext:
     leg: str
 
 
-DEFAULT_CONTEXT = RunContext(event="unknown", branch="unknown", leg="all")
-
-
 def resolve_branch(env: Mapping[str, str]) -> str:
     """Base branch of the run: PR base, merge-queue base, or the pushed/scheduled ref. Never a PR head branch."""
     base_ref = env.get("GITHUB_BASE_REF", "")
@@ -184,9 +178,7 @@ def _suite_datums(
     ]
 
 
-def build_metric_data(
-    test_results: list[TestResult], repository: str, sdk: str, ctx: RunContext = DEFAULT_CONTEXT
-) -> list[MetricDatum]:
+def build_metric_data(test_results: list[TestResult], repository: str, sdk: str, ctx: RunContext) -> list[MetricDatum]:
     """Per-test datums on (Repository, SDK, TestName) for every run, the same with (Event, Branch, Leg) for
     nightly runs only, and one set of suite-level Tests* counters per publish.
 

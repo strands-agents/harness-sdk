@@ -229,7 +229,6 @@ jobs:
       - name: Publish test metrics to CloudWatch
         env:
           REPO_NAME: ${{ github.event.repository.name }}
-          BRANCH: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
         run: |
           REPORT=downloaded-artifacts/test-report/junit/report.xml
           if [ ! -f "$REPORT" ]; then
@@ -237,5 +236,4 @@ jobs:
             exit 0
           fi
           pip install --no-cache-dir boto3
-          python .github/scripts/upload-integ-test-metrics.py "$REPORT" "$REPO_NAME" typescript \
-            --branch "${BRANCH#refs/heads/}"
+          python .github/scripts/upload-integ-test-metrics.py "$REPORT" "$REPO_NAME" typescript
