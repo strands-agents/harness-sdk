@@ -158,11 +158,12 @@ class Limits(TypedDict, total=False):
     it stops at whichever limit is reached first, its own or the request's.
 
     Auxiliary calls (summarization, routing, memory extraction, steering, HITL, goal judging,
-    web-fetch) add their tokens to the request's usage, but no limits apply to them. The same
-    holds for an agent that an extension point (a conversation manager, context or routing
-    strategy, or memory extractor) runs with the ``invocation_context`` it receives, unless the
-    extension point also passes ``limits``. Usage starts from zero on each top-level call; pass
-    ``result.invocation_context`` to a later call to continue on the same limits and usage.
+    web-fetch) and decision models asked with the request's ``invocation_context`` add their
+    tokens to the request's usage, but no limits apply to them. The same holds for an agent that
+    an extension point (a conversation manager, context or routing strategy, or memory extractor)
+    runs with the ``invocation_context`` it receives, unless the extension point also passes
+    ``limits``. Usage starts from zero on each top-level call; pass ``result.invocation_context``
+    to a later call to continue on the same limits and usage.
 
     Limits are checked before each turn, so tools requested by the previous turn finish first
     and ``agent.messages`` stays reinvokable. Each limit, when set, must be a positive ``int``;
