@@ -187,6 +187,61 @@ describe('VercelModel', () => {
           delta: { type: 'reasoningContentDelta', text: 'Let me think...' },
         })
       })
+
+      it('forwards reasoning signature metadata delivered on an empty delta', async () => {
+        const { model } = setupCaptureTest([
+          { type: 'stream-start', warnings: [] },
+          { type: 'reasoning-start', id: 'r1' },
+          { type: 'reasoning-delta', id: 'r1', delta: 'Let me think...' },
+          {
+            type: 'reasoning-delta',
+            id: 'r1',
+            delta: '',
+            providerMetadata: { bedrock: { signature: 'sig-1' } },
+          },
+          { type: 'reasoning-end', id: 'r1' },
+          { type: 'finish', usage: testUsage, finishReason: stopFinish },
+        ])
+
+        const events = await collectIterator(model.stream([]))
+
+        const signatureDelta = events.find(
+          (e) =>
+            e.type === 'modelContentBlockDeltaEvent' &&
+            e.delta.type === 'reasoningContentDelta' &&
+            'signature' in e.delta
+        )
+        expect(signatureDelta).toMatchObject({
+          delta: { type: 'reasoningContentDelta', signature: 'sig-1' },
+        })
+      })
+
+      it('forwards redacted reasoning metadata as decoded bytes', async () => {
+        const { model } = setupCaptureTest([
+          { type: 'stream-start', warnings: [] },
+          { type: 'reasoning-start', id: 'r1' },
+          {
+            type: 'reasoning-delta',
+            id: 'r1',
+            delta: '',
+            providerMetadata: { bedrock: { redactedData: 'AQI=' } },
+          },
+          { type: 'reasoning-end', id: 'r1' },
+          { type: 'finish', usage: testUsage, finishReason: stopFinish },
+        ])
+
+        const events = await collectIterator(model.stream([]))
+
+        const redactedDelta = events.find(
+          (e) =>
+            e.type === 'modelContentBlockDeltaEvent' &&
+            e.delta.type === 'reasoningContentDelta' &&
+            'redactedContent' in e.delta
+        )
+        expect(redactedDelta).toMatchObject({
+          delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([1, 2]) },
+        })
+      })
     })
 
     describe('tool call streaming', () => {
@@ -787,6 +842,56 @@ describe('VercelModel', () => {
           new Message({
             role: 'assistant',
             content: [new ReasoningBlock({ text: 'thinking...' })],
+          }),
+        ])
+
+        const assistantMsg = callArgs().prompt[0] as any
+        expect(assistantMsg.content[0]).toEqual({ type: 'reasoning', text: 'thinking...' })
+      })
+
+      it.each([
+        { provider: 'amazon-bedrock', expectedKey: 'bedrock' },
+        { provider: 'anthropic', expectedKey: 'anthropic' },
+      ])('replays a signed reasoning block under the $provider options key', async ({ provider, expectedKey }) => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts, undefined, provider)
+        await collect([
+          new Message({
+            role: 'assistant',
+            content: [new ReasoningBlock({ text: 'thinking...', signature: 'sig-1' })],
+          }),
+        ])
+
+        const assistantMsg = callArgs().prompt[0] as any
+        expect(assistantMsg.content[0]).toEqual({
+          type: 'reasoning',
+          text: 'thinking...',
+          providerOptions: { [expectedKey]: { signature: 'sig-1' } },
+        })
+      })
+
+      it('replays redacted reasoning under the bedrock key', async () => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts, undefined, 'amazon-bedrock')
+        await collect([
+          new Message({
+            role: 'assistant',
+            content: [new ReasoningBlock({ redactedContent: new Uint8Array([1, 2]) })],
+          }),
+        ])
+
+        const assistantMsg = callArgs().prompt[0] as any
+        expect(assistantMsg.content[0]).toEqual({
+          type: 'reasoning',
+          text: '',
+          providerOptions: { bedrock: { redactedData: 'AQI=' } },
+        })
+      })
+
+      it('omits reasoning providerOptions for providers that carry no reasoning metadata', async () => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts)
+        await collect([
+          new Message({
+            role: 'assistant',
+            content: [new ReasoningBlock({ text: 'thinking...', signature: 'sig-1' })],
           }),
         ])
 
