@@ -91,6 +91,13 @@ def test_anthropic_direct_no_caching_when_off():
     assert "cache_tools" not in model.config
 
 
+@pytest.mark.parametrize("caching", [True, False])
+def test_openai_caching_preserves_reasoning_and_search(caching):
+    model = resolve("openai/gpt-5.6-sol", effort="high", web_search=True, caching=caching)
+    assert model.config.get("cache_config") == (CacheConfig(strategy="auto") if caching else None)
+    assert model.config["params"] == {"reasoning": {"effort": "high"}, "tools": [{"type": "web_search"}]}
+
+
 def test_explicit_caching_on_supported_provider_builds():
     model = resolve("openai/gpt-5.6-sol", caching=True, caching_explicit=True)
     assert model is not None

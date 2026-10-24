@@ -1,9 +1,8 @@
 /**
  * Shared prompt-caching translation for OpenAI adapters.
  *
- * OpenAI caches prompt prefixes automatically server-side and routes reads on a caller-supplied
- * `prompt_cache_key`. It exposes no cache-point placement knobs, so of `CacheConfig` only `cacheKey`
- * (and, when it already names a valid retention literal, `ttl`) maps onto the request.
+ * Shared routing and retention fields for OpenAI-compatible requests. Content-level Responses
+ * checkpoints are handled separately; older models and Chat Completions use implicit caching.
  *
  * @internal
  */
@@ -23,8 +22,8 @@ type RetentionLiteral = (typeof RETENTION_LITERALS)[number]
  */
 interface CacheableRequest {
   prompt_cache_key?: string
-  // Deprecated in openai 6.45.0 in favor of prompt_cache_options.ttl, whose only accepted value today
-  // is '30m' — so '24h'/'in_memory' remain expressible only through this field.
+  // Legacy retention literals remain supported here. New Responses TTLs can be passed via
+  // native params.prompt_cache_options.ttl without changing existing CacheConfig behavior.
   prompt_cache_retention?: RetentionLiteral | null
 }
 
@@ -43,15 +42,15 @@ interface ResolvedOpenAICache {
 /**
  * Reports whether any placement field is set to something other than its default.
  *
- * OpenAI has no cache-point placement knobs, so these fields never reach the request; a configured
- * value signals a config carried over from a content-addressed provider and warrants a one-time nudge.
+ * Supported Responses models handle message checkpoints separately. Other placement fields are
+ * not translated; a non-default value warrants a one-time warning.
  */
-function hasPlacementConfig(cacheConfig: CacheConfig): boolean {
+function hasPlacementConfig(cacheConfig: CacheConfig, supportsMessageCaching: boolean): boolean {
   return (
     (cacheConfig.strategy !== undefined && cacheConfig.strategy !== 'auto') ||
     (cacheConfig.toolsTTL !== undefined && cacheConfig.toolsTTL !== true) ||
     (cacheConfig.systemPromptTTL !== undefined && cacheConfig.systemPromptTTL !== true) ||
-    (cacheConfig.messagesTTL !== undefined && cacheConfig.messagesTTL !== true)
+    (!supportsMessageCaching && cacheConfig.messagesTTL !== undefined && cacheConfig.messagesTTL !== true)
   )
 }
 
@@ -78,7 +77,11 @@ function resolveCacheKey(cacheConfig: CacheConfig, agentMetadata: AgentMetadata 
  *
  * @internal
  */
-export function resolveOpenAICache(cacheConfig: CacheConfig, agentMetadata?: AgentMetadata): ResolvedOpenAICache {
+export function resolveOpenAICache(
+  cacheConfig: CacheConfig,
+  agentMetadata?: AgentMetadata,
+  supportsMessageCaching = false
+): ResolvedOpenAICache {
   const openaiCache: ResolvedOpenAICache = {}
 
   const cacheKey = resolveCacheKey(cacheConfig, agentMetadata)
@@ -90,10 +93,12 @@ export function resolveOpenAICache(cacheConfig: CacheConfig, agentMetadata?: Age
     openaiCache.retention = cacheConfig.ttl as RetentionLiteral
   }
 
-  if (hasPlacementConfig(cacheConfig)) {
+  if (hasPlacementConfig(cacheConfig, supportsMessageCaching)) {
     warnOnce(
       logger,
-      'openai caches prefixes automatically server-side | strategy, toolsTTL, systemPromptTTL and messagesTTL have no effect'
+      supportsMessageCaching
+        ? 'openai responses caching | automatic message checkpoints require strategy auto; toolsTTL and systemPromptTTL are not applied'
+        : 'openai caches prefixes automatically server-side | strategy, toolsTTL, systemPromptTTL and messagesTTL have no effect'
     )
   }
 
@@ -126,14 +131,16 @@ export function warnUnsupportedRetention(ttl: string): void {
  * @param request - The request being assembled; mutated in place.
  * @param cacheConfig - The provider's configured cache settings, if any.
  * @param agentMetadata - The invoking agent's metadata, used to derive a routing key when one is unset.
+ * @param supportsMessageCaching - Whether the adapter handles message checkpoints separately.
  */
 export function applyCacheConfig(
   request: CacheableRequest,
   cacheConfig: CacheConfig | undefined,
-  agentMetadata?: AgentMetadata
+  agentMetadata?: AgentMetadata,
+  supportsMessageCaching = false
 ): void {
   if (!cacheConfig) return
-  const openaiCache = resolveOpenAICache(cacheConfig, agentMetadata)
+  const openaiCache = resolveOpenAICache(cacheConfig, agentMetadata, supportsMessageCaching)
 
   if (openaiCache.cacheKey && request.prompt_cache_key === undefined) {
     request.prompt_cache_key = openaiCache.cacheKey

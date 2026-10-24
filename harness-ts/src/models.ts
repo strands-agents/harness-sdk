@@ -7,9 +7,9 @@
  * one value regardless of provider.
  *
  * Prompt caching is requested via `caching` and reaches the provider one of two ways: the harness
- * configures Bedrock and Anthropic direct (cache points covering messages and tools), while OpenAI,
- * Google, bedrock-mantle, and litellm cache automatically server-side (Gemini on models 2.5 and
- * newer; litellm through its OpenAI-compatible backend). Only a pre-built `Model` or `ModelRouter`
+ * configures Bedrock, Anthropic direct, and OpenAI through the SDK cache config. Google,
+ * bedrock-mantle, and litellm cache automatically server-side (Gemini on models 2.5 and newer;
+ * litellm through its OpenAI-compatible backend). Only a pre-built `Model` or `ModelRouter`
  * instance can't be honored (its provider is unknown), so a warning is logged.
  *
  * Providers are imported dynamically so a consumer only needs the peer dependency for the
@@ -249,8 +249,7 @@ async function anthropic(modelId: string, effort: string | null, webSearch: bool
   })
 }
 
-// `_caching` is unused: OpenAI caches server-side with no opt-in.
-async function openai(modelId: string, effort: string | null, webSearch: boolean, _caching: boolean): Promise<Model> {
+async function openai(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const params: Record<string, unknown> = {}
   if (effort !== null) {
@@ -260,7 +259,11 @@ async function openai(modelId: string, effort: string | null, webSearch: boolean
   if (webSearch) {
     params.tools = [{ type: 'web_search' }]
   }
-  return new OpenAIModel(Object.keys(params).length === 0 ? { modelId } : { modelId, params })
+  return new OpenAIModel({
+    modelId,
+    ...(caching ? { cacheConfig: { strategy: 'auto' as const } } : {}),
+    ...(Object.keys(params).length === 0 ? {} : { params }),
+  })
 }
 
 // `_caching` is unused: Mantle caches server-side automatically.
@@ -342,7 +345,7 @@ interface Provider {
   // GPT-5/GPT-6 models. Bedrock Converse has no mechanism.
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
-  // Bedrock and Anthropic direct (the harness sets cache points and tool caching) plus OpenAI, Google,
+  // Bedrock, Anthropic direct, and OpenAI (the harness passes SDK cache config) plus Google,
   // bedrock-mantle, and litellm (automatic server-side). Only a pre-built `Model` instance can't
   // be honored (its provider is unknown), so the factory warns there.
   caching: boolean

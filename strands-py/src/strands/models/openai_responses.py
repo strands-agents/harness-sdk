@@ -22,6 +22,7 @@ import base64
 import json
 import logging
 import mimetypes
+import re
 from collections import Counter
 from collections.abc import AsyncGenerator
 from importlib.metadata import version as get_package_version
@@ -78,6 +79,8 @@ _MAX_MEDIA_SIZE_LABEL = "20MB"
 _DEFAULT_MIME_TYPE = "application/octet-stream"
 _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overflow error"
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
+# Input content types that accept prompt_cache_breakpoint (gpt-5.6+).
+_CACHEABLE_INPUT_TYPES = frozenset({"input_text", "input_image", "input_file"})
 
 
 class _OpenAIResponsesStreamError(RuntimeError):
@@ -154,7 +157,9 @@ class OpenAIResponsesModel(Model):
                 When False (default), skips the API call and uses the local estimator.
             cache_config: Prompt-caching configuration. OpenAI routes cache reads on
                 ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` only when it names
-                an OpenAI retention value; other fields have no effect. An explicit
+                an OpenAI retention value. On GPT-5.6 and later, automatic message checkpoints
+                exclude per-call injected content; ``messages_ttl=False`` disables them. Other
+                placement fields have no effect. An explicit
                 ``prompt_cache_key``/``prompt_cache_retention`` in ``params`` takes precedence.
         """
 
@@ -325,7 +330,16 @@ class OpenAIResponsesModel(Model):
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
         logger.debug("formatting request for OpenAI Responses API")
-        request = self._format_request(messages, tool_specs, system_prompt, tool_choice, model_state, agent_metadata)
+        request = self._format_request(
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice,
+            model_state,
+            agent_metadata,
+            dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
+        )
+        self._move_new_fields_to_extra_body(request)
         logger.debug("formatted request=<%s>", request)
 
         logger.debug("invoking OpenAI Responses API model")
@@ -530,6 +544,7 @@ class OpenAIResponsesModel(Model):
             try:
                 request = self._format_request(prompt, system_prompt=system_prompt)
                 request.pop("stream", None)
+                self._move_new_fields_to_extra_body(request)
                 response = await client.responses.parse(**request, text_format=output_model)
             except openai.APIError as error:
                 error_kind = classify_openai_error(error)
@@ -554,6 +569,8 @@ class OpenAIResponsesModel(Model):
         tool_choice: ToolChoice | None = None,
         model_state: dict[str, Any] | None = None,
         agent_metadata: AgentMetadata | None = None,
+        *,
+        dynamic_trailing_blocks: int = 0,
     ) -> dict[str, Any]:
         """Format an OpenAI Responses API compatible response streaming request.
 
@@ -564,6 +581,7 @@ class OpenAIResponsesModel(Model):
             tool_choice: Selection strategy for tool invocation.
             model_state: Runtime state for model providers (e.g., server-side response ids).
             agent_metadata: Invoking agent's metadata.
+            dynamic_trailing_blocks: Number of temporary trailing blocks in the final user message.
 
         Returns:
             An OpenAI Responses API compatible response streaming request.
@@ -572,7 +590,20 @@ class OpenAIResponsesModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an OpenAI-compatible
                 format.
         """
-        input_items = self._format_request_messages(messages)
+        cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
+        supports_message_caching = self._supports_message_caching()
+        cache_messages = (
+            supports_message_caching
+            and cache_config is not None
+            and cache_config.strategy == "auto"
+            and cache_config.messages_ttl is not False
+            and "input" not in cast(dict[str, Any], self.config.get("params", {}))
+        )
+        input_items, has_checkpoints = (
+            self._format_cacheable_request_messages(messages, dynamic_trailing_blocks=dynamic_trailing_blocks)
+            if cache_messages
+            else (self._format_request_messages(messages), False)
+        )
         request: dict[str, Any] = {
             "model": self.config["model_id"],
             "input": input_items,
@@ -608,7 +639,11 @@ class OpenAIResponsesModel(Model):
             ]
             request.update(self._format_request_tool_choice(tool_choice))
 
-        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
+        apply_cache_config(request, cache_config, agent_metadata, supports_message_caching=supports_message_caching)
+        if cache_messages and (has_checkpoints or dynamic_trailing_blocks > 0):
+            # Explicit mode keeps the temporary suffix out of the cache. Without a durable checkpoint
+            # or a temporary suffix, leave the implicit breakpoint so the request still caches.
+            request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
 
         return request
 
@@ -636,18 +671,106 @@ class OpenAIResponsesModel(Model):
                 # Default to auto for unknown formats
                 return {"tool_choice": "auto"}
 
+    @staticmethod
+    def _move_new_fields_to_extra_body(request: dict[str, Any]) -> None:
+        """Send wire fields newer than the minimum supported OpenAI client through ``extra_body``.
+
+        ``prompt_cache_options`` is a named kwarg only in recent clients; older supported clients
+        reject it on ``create`` and ``parse``. A caller-supplied ``extra_body`` keeps final precedence.
+        """
+        if "prompt_cache_options" in request:
+            request["extra_body"] = {
+                "prompt_cache_options": request.pop("prompt_cache_options"),
+                **(request.get("extra_body") or {}),
+            }
+
+    def _supports_message_caching(self) -> bool:
+        """Whether the configured model supports explicit Responses input checkpoints."""
+        params = cast(dict[str, Any], self.config.get("params", {}))
+        model_id = params.get("model", self.config["model_id"])
+        match = re.match(r"^gpt-(\d+)(?:\.(\d+))?(?:-|$)", str(model_id))
+        return bool(match and (int(match[1]), int(match[2] or 0)) >= (5, 6))
+
     @classmethod
-    def _format_request_messages(cls, messages: Messages) -> list[dict[str, Any]]:
+    def _format_cacheable_request_messages(
+        cls, messages: Messages, *, dynamic_trailing_blocks: int = 0
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Keep durable checkpoints stable when temporary trailing content changes between requests.
+
+        Only input content blocks (text, image, file) can be marked. This changes cache placement, not the
+        lifetime of content retained by a stateful server-side conversation.
+        """
+        formatted_messages: list[dict[str, Any]] = []
+        has_checkpoints = False
+        skipped: Counter[str] = Counter()
+        for message_index, message in enumerate(messages):
+            dynamic_count = dynamic_trailing_blocks if message_index == len(messages) - 1 else 0
+            if message["role"] != "user":
+                dynamic_count = 0
+            boundary = max(0, len(message["content"]) - dynamic_count)
+            contents = message["content"][:boundary]
+            items = cls._format_request_messages(
+                [{"role": message["role"], "content": contents}],
+                tool_output_content_array=True,
+                skipped_blocks=skipped,
+            )
+            if message["role"] == "user":
+                candidate = cls._last_cacheable_part(items)
+                if candidate is not None:
+                    # Preserve every historical boundary: the provider bounds lookup and writes,
+                    # not the number of markers callers may include in the request.
+                    candidate["prompt_cache_breakpoint"] = {"mode": "explicit"}
+                    has_checkpoints = True
+            cls._append_dynamic_content(items, message["content"][boundary:], skipped_blocks=skipped)
+            formatted_messages.extend(items)
+        _log_skipped_blocks(logger, skipped)
+        return formatted_messages, has_checkpoints
+
+    @classmethod
+    def _append_dynamic_content(
+        cls, items: list[dict[str, Any]], contents: list[ContentBlock], *, skipped_blocks: Counter[str]
+    ) -> None:
+        """Append temporary content after durable tool outputs, merging only with ordinary user content.
+
+        The temporary blocks go through the regular formatter so unsupported blocks are skipped the
+        same way as durable content.
+        """
+        if not contents:
+            return
+        tail = cls._format_request_messages(
+            [{"role": "user", "content": contents}], tool_output_content_array=True, skipped_blocks=skipped_blocks
+        )
+        if (
+            tail
+            and tail[0].get("role") == "user"
+            and items
+            and items[-1].get("role") == "user"
+            and isinstance(items[-1].get("content"), list)
+        ):
+            items[-1]["content"].extend(tail.pop(0)["content"])
+        items.extend(tail)
+
+    @classmethod
+    def _format_request_messages(
+        cls,
+        messages: Messages,
+        *,
+        tool_output_content_array: bool = False,
+        skipped_blocks: Counter[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Format an OpenAI compatible messages array.
 
         Args:
             messages: List of message objects to be processed by the model.
+            tool_output_content_array: Preserve tool text blocks so they can carry cache checkpoints.
+            skipped_blocks: Caller-owned counter for unsupported blocks. When given, the caller logs
+                the skips once for the whole request; otherwise they are logged here.
 
         Returns:
             An OpenAI compatible messages array.
         """
         formatted_messages: list[dict[str, Any]] = []
-        skipped: Counter[str] = Counter()
+        skipped: Counter[str] = Counter() if skipped_blocks is None else skipped_blocks
 
         for message in messages:
             role = message["role"]
@@ -681,7 +804,7 @@ class OpenAIResponsesModel(Model):
             ]
 
             formatted_tool_messages = [
-                cls._format_request_tool_message(content["toolResult"])
+                cls._format_request_tool_message(content["toolResult"], content_array=tool_output_content_array)
                 for content in contents
                 if "toolResult" in content
             ]
@@ -715,13 +838,26 @@ class OpenAIResponsesModel(Model):
             formatted_messages.extend(formatted_tool_calls)
             formatted_messages.extend(formatted_tool_messages)
 
-        _log_skipped_blocks(logger, skipped)
+        if skipped_blocks is None:
+            _log_skipped_blocks(logger, skipped)
 
         return [
             message
             for message in formatted_messages
             if message.get("content") or message.get("type") in ["function_call", "function_call_output"]
         ]
+
+    @staticmethod
+    def _last_cacheable_part(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Find the final input content block in a formatted durable user message."""
+        for item in reversed(items):
+            parts = item.get("output") if item.get("type") == "function_call_output" else item.get("content")
+            if not isinstance(parts, list):
+                continue
+            for part in reversed(parts):
+                if part.get("type") in _CACHEABLE_INPUT_TYPES:
+                    return cast(dict[str, Any], part)
+        return None
 
     @classmethod
     def _format_request_message_content(cls, content: ContentBlock, *, role: Role = "user") -> dict[str, Any]:
@@ -781,11 +917,12 @@ class OpenAIResponsesModel(Model):
         }
 
     @classmethod
-    def _format_request_tool_message(cls, tool_result: ToolResult) -> dict[str, Any]:
+    def _format_request_tool_message(cls, tool_result: ToolResult, *, content_array: bool = False) -> dict[str, Any]:
         """Format an OpenAI compatible tool message.
 
         Args:
             tool_result: Tool result collected from a tool execution.
+            content_array: Send text outputs as one content block so it can carry a cache checkpoint.
 
         Returns:
             OpenAI compatible tool message.
@@ -826,6 +963,9 @@ class OpenAIResponsesModel(Model):
             output = output_parts
         else:
             output = "\n".join(part.get("text", "") for part in output_parts) if output_parts else ""
+            if content_array and output:
+                # One text block, matching the string form, so it can carry a cache checkpoint.
+                output = [{"type": "input_text", "text": output}]
 
         return {
             "type": "function_call_output",

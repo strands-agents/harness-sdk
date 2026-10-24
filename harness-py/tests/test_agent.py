@@ -593,6 +593,15 @@ def test_caching_enabled_by_default_on_anthropic_direct():
     assert agent.model.config["cache_config"] == CacheConfig(strategy="auto", tools_ttl=True)
 
 
+@pytest.mark.parametrize("options", [{}, {"caching": "auto"}, {"caching": True}, {"caching": False}, {"caching": None}])
+def test_openai_caching_defaults_and_optout(options):
+    agent = create_harness(
+        model="openai/gpt-5.6-sol", session=False, memory=False, skills=False, builtin_tools=[], **options
+    )
+    enabled = options.get("caching", "auto") not in (False, None)
+    assert agent.model.config.get("cache_config") == (CacheConfig(strategy="auto") if enabled else None)
+
+
 def test_caching_default_on_model_instance_warns_and_builds(caplog):
     import logging
 

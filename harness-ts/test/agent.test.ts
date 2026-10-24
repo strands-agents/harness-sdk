@@ -464,6 +464,20 @@ describe('createHarness', () => {
     expect(agent.model.getConfig().cacheConfig).toEqual({ strategy: 'auto' })
   })
 
+  it.each([undefined, 'auto', true, false, null] as const)('configures OpenAI caching=%s', async (caching) => {
+    const agent = await createHarness({
+      model: 'openai/gpt-5.6-sol',
+      ...(caching !== undefined && { caching }),
+      session: false,
+      memory: false,
+      skills: false,
+      builtinTools: [],
+    })
+    expect(agent.model.getConfig().cacheConfig).toEqual(
+      caching === false || caching === null ? undefined : { strategy: 'auto' }
+    )
+  })
+
   it('builds silently with default caching on a Model instance', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
