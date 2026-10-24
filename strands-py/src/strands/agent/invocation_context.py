@@ -177,6 +177,22 @@ def _unwrap_invocation_context(invocation_context: object | None) -> InvocationC
     return invocation_context
 
 
+def _resolve_invocation_context(limits: Limits | None, invocation_context: object | None) -> InvocationContext:
+    """Join the request in ``invocation_context``, or start a new request with the call's ``limits``.
+
+    A nested call that sets its own ``limits`` gets child state, bound by both its own limits and
+    the request's.
+
+    Raises:
+        TypeError: If ``invocation_context`` was not created by the SDK, or ``limits`` is invalid.
+    """
+    _validate_limits(limits)
+    inherited = _unwrap_invocation_context(invocation_context)
+    if inherited is None:
+        return _create_invocation_context(limits)
+    return inherited if limits is None else _create_invocation_context(limits, inherited)
+
+
 def _invocation_context_kwargs(
     method: Callable[..., Any], invocation_context: InvocationContext | None
 ) -> dict[str, Any]:

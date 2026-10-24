@@ -27,7 +27,7 @@ from opentelemetry import trace as trace_api
 
 from .._async import run_async
 from ..agent import Agent, AgentResult
-from ..agent.invocation_context import InvocationContext, _create_invocation_context, _unwrap_invocation_context
+from ..agent.invocation_context import InvocationContext, _create_invocation_context, _resolve_invocation_context
 from ..agent.state import AgentState
 from ..hooks.events import (
     AfterMultiAgentInvocationEvent,
@@ -52,6 +52,7 @@ from ..types._events import (
     MultiAgentNodeStreamEvent,
     MultiAgentResultEvent,
 )
+from ..types.agent import Limits
 from ..types.content import ContentBlock, Messages
 from ..types.event_loop import _LIMIT_STOP_REASONS, Metrics, Usage, _limit_stop_message
 from ..types.multiagent import MultiAgentInput
@@ -193,6 +194,9 @@ class SwarmState:
     execution_time: int = 0  # Total execution time in milliseconds
     handoff_node: SwarmNode | None = None  # The agent to execute next
     handoff_message: str | None = None  # Message passed during agent handoff
+    # The request the current run belongs to (None before a run starts). Read-only: the SDK rebinds it
+    # on every run. Not persisted.
+    invocation_context: InvocationContext | None = field(default=None, repr=False, compare=False)
 
     def should_continue(
         self,
@@ -368,6 +372,7 @@ class Swarm(MultiAgentBase):
         invocation_state: dict[str, Any] | None = None,
         *,
         invocation_context: InvocationContext | None = None,
+        limits: Limits | None = None,
         **kwargs: Any,
     ) -> SwarmResult:
         """Invoke the swarm synchronously.
@@ -378,11 +383,19 @@ class Swarm(MultiAgentBase):
                 Defaults to None to avoid mutable default argument issues.
             invocation_context: Runs the swarm as a nested call in the request this handle belongs to,
                 so every node shares its limits and usage.
+            limits: Limits for the request this swarm starts, shared by every node; a node whose agent
+                reaches one fails and the result is ``FAILED``. See ``stream_async``.
             **kwargs: Keyword arguments allowing backward compatible future changes.
+
+        Raises:
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive
+                integer, or ``invocation_context`` was not created by the SDK.
         """
         if invocation_state is None:
             invocation_state = {}
-        return run_async(lambda: self.invoke_async(task, invocation_state, invocation_context=invocation_context))
+        return run_async(
+            lambda: self.invoke_async(task, invocation_state, invocation_context=invocation_context, limits=limits)
+        )
 
     async def invoke_async(
         self,
@@ -390,6 +403,7 @@ class Swarm(MultiAgentBase):
         invocation_state: dict[str, Any] | None = None,
         *,
         invocation_context: InvocationContext | None = None,
+        limits: Limits | None = None,
         **kwargs: Any,
     ) -> SwarmResult:
         """Invoke the swarm asynchronously.
@@ -403,9 +417,17 @@ class Swarm(MultiAgentBase):
                 Defaults to None to avoid mutable default argument issues.
             invocation_context: Runs the swarm as a nested call in the request this handle belongs to,
                 so every node shares its limits and usage.
+            limits: Limits for the request this swarm starts, shared by every node; a node whose agent
+                reaches one fails and the result is ``FAILED``. See ``stream_async``.
             **kwargs: Keyword arguments allowing backward compatible future changes.
+
+        Raises:
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive
+                integer, or ``invocation_context`` was not created by the SDK.
         """
-        events = self.stream_async(task, invocation_state, invocation_context=invocation_context, **kwargs)
+        events = self.stream_async(
+            task, invocation_state, invocation_context=invocation_context, limits=limits, **kwargs
+        )
         final_event = None
         async for event in events:
             final_event = event
@@ -421,6 +443,7 @@ class Swarm(MultiAgentBase):
         invocation_state: dict[str, Any] | None = None,
         *,
         invocation_context: InvocationContext | None = None,
+        limits: Limits | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream events during swarm execution.
@@ -431,6 +454,14 @@ class Swarm(MultiAgentBase):
                 Defaults to None to avoid mutable default argument issues.
             invocation_context: Runs the swarm as a nested call in the request this handle belongs to,
                 so every node shares its limits and usage. A fresh request starts when omitted.
+            limits: Limits for the request this swarm starts, shared by every node. Each agent node
+                checks them before each turn, so ``turns`` counts turns across all nodes (node
+                executions are bounded by ``max_iterations``). A node whose agent reaches a limit
+                fails, so the result is ``FAILED`` and no handoff follows. Set alongside
+                ``invocation_context``, they only add stricter limits to the request's. Resuming an
+                interrupted run starts a new request even though the swarm keeps its state; pass the
+                interrupted result's ``invocation_context`` to continue its limits and usage. See
+                :class:`~strands.types.agent.Limits` for what they cover.
             **kwargs: Keyword arguments allowing backward compatible future changes.
 
         Yields:
@@ -440,13 +471,15 @@ class Swarm(MultiAgentBase):
             - multi_agent_handoff: When control is handed off between agents
             - multi_agent_node_stop: When a node stops execution
             - result: Final swarm result
+
+        Raises:
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive
+                integer, or ``invocation_context`` was not created by the SDK.
         """
         if invocation_state is None:
             invocation_state = {}
 
-        self._current_invocation_context = (
-            _unwrap_invocation_context(invocation_context) or _create_invocation_context()
-        )
+        self._current_invocation_context = _resolve_invocation_context(limits, invocation_context)
 
         await self.hooks.invoke_callbacks_async(
             BeforeMultiAgentInvocationEvent(self, invocation_state, invocation_context=self._current_invocation_context)
@@ -468,6 +501,8 @@ class Swarm(MultiAgentBase):
                 completion_status=Status.EXECUTING,
                 shared_context=self.shared_context,
             )
+        # Rebound on every run: a resumed run reuses the state but may belong to another request.
+        self.state.invocation_context = self._current_invocation_context
 
         span = self.tracer.start_multiagent_span(task, "swarm", custom_trace_attributes=self.trace_attributes)
         with trace_api.use_span(span, end_on_exit=True):
@@ -847,7 +882,12 @@ class Swarm(MultiAgentBase):
                 )
 
                 before_event, interrupts = await self.hooks.invoke_callbacks_async(
-                    BeforeNodeCallEvent(self, current_node.node_id, invocation_state)
+                    BeforeNodeCallEvent(
+                        self,
+                        current_node.node_id,
+                        invocation_state,
+                        invocation_context=self._current_invocation_context,
+                    )
                 )
 
                 # TODO: Implement cancellation token to stop _execute_node from continuing
@@ -920,7 +960,12 @@ class Swarm(MultiAgentBase):
                 finally:
                     if self.state.completion_status != Status.INTERRUPTED:
                         await self.hooks.invoke_callbacks_async(
-                            AfterNodeCallEvent(self, current_node.node_id, invocation_state)
+                            AfterNodeCallEvent(
+                                self,
+                                current_node.node_id,
+                                invocation_state,
+                                invocation_context=self._current_invocation_context,
+                            )
                         )
 
                 logger.debug("node=<%s> | node execution completed", current_node.node_id)
