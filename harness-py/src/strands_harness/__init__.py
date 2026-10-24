@@ -30,6 +30,8 @@ from strands_harness.types.agent import (
     SessionConfig,
     ShellConfig,
     SubagentConfig,
+    VerifyConfig,
+    VerifyOption,
     WebFetchConfig,
     WebFetchTransport,
 )
@@ -54,6 +56,8 @@ __all__ = [
     "ReadConfig",
     "ShellConfig",
     "SubagentConfig",
+    "VerifyConfig",
+    "VerifyOption",
     "WebFetchConfig",
     "WebFetchTransport",
     "build_system_prompt",
