@@ -1,6 +1,7 @@
 """Unit tests for upload-integ-test-metrics.py (run with `python -m pytest .github/scripts -q`)."""
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,60 @@ def test_sanitize_test_name_caps_at_255_chars(mod):
 
     assert len(sanitized) == 255
     assert sanitized == "x" * 255
+
+
+class FakeCloudWatch:
+    """put_metric_data stub that raises on the batch indices listed in `fail_on`."""
+
+    def __init__(self, fail_on=()):
+        self.fail_on = set(fail_on)
+        self.batches = []
+
+    def put_metric_data(self, Namespace, MetricData):
+        index = len(self.batches)
+        self.batches.append(MetricData)
+        if index in self.fail_on:
+            raise RuntimeError(f"batch {index} rejected")
+
+
+def results_named(mod, names):
+    return [mod.TestResult(name=n, classname="suite", duration=0.1, outcome="passed") for n in names]
+
+
+def test_publish_metrics_isolates_failed_batch_and_reports_its_tests(mod, capsys):
+    # 750 tests x 4 datums = 3000 datums = 3 batches of 1000, i.e. 250 tests per batch.
+    data = mod.build_metric_data(results_named(mod, [f"t{i:03d}" for i in range(750)]), "repo", "python")
+    client = FakeCloudWatch(fail_on={1})
+
+    failed = mod.publish_metrics(data, client)
+
+    assert len(client.batches) == 3
+    assert failed == [f"suite.t{i:03d}" for i in range(250, 500)]
+    out = capsys.readouterr().out
+    assert "::error::Metrics not published for test: suite.t250" in out
+    assert "suite.t000" not in out
+
+
+def test_main_exits_non_zero_when_a_batch_fails(mod, tmp_path, monkeypatch):
+    client = FakeCloudWatch(fail_on={0})
+    monkeypatch.setattr(mod.boto3, "client", lambda *args, **kwargs: client)
+    monkeypatch.setattr(sys, "argv", ["upload", write_junit(tmp_path, THREE_CASES), "harness-sdk", "python"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+
+    assert exc.value.code == 1
+    assert len(client.batches) == 1
+
+
+def test_main_succeeds_when_all_batches_publish(mod, tmp_path, monkeypatch):
+    client = FakeCloudWatch()
+    monkeypatch.setattr(mod.boto3, "client", lambda *args, **kwargs: client)
+    monkeypatch.setattr(sys, "argv", ["upload", write_junit(tmp_path, THREE_CASES), "harness-sdk", "python"])
+
+    mod.main()
+
+    assert len(client.batches) == 1
 
 
 def test_build_metric_data_uses_sanitized_test_name(mod):

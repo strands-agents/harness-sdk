@@ -146,8 +146,14 @@ def build_metric_data(test_results: list[TestResult], repository: str, sdk: str)
     return metrics
 
 
-def publish_metrics(metric_data: list[dict[str, Any]], region: str):
-    cloudwatch = boto3.client("cloudwatch", region_name=region)
+def _test_names(batch: list[dict[str, Any]]) -> list[str]:
+    names = {dim["Value"] for datum in batch for dim in datum["Dimensions"] if dim["Name"] == "TestName"}
+    return sorted(names)
+
+
+def publish_metrics(metric_data: list[dict[str, Any]], cloudwatch: Any) -> list[str]:
+    """Publish in batches of 1000; a failed batch never blocks the others. Returns the tests of every failed batch."""
+    failed_names: list[str] = []
 
     batch_size = 1000
     for i in range(0, len(metric_data), batch_size):
@@ -156,7 +162,13 @@ def publish_metrics(metric_data: list[dict[str, Any]], region: str):
             cloudwatch.put_metric_data(Namespace=STRANDS_METRIC_NAMESPACE, MetricData=batch)
             print(f"Published {len(batch)} metrics to CloudWatch")
         except Exception as e:
-            print(f"Warning: Failed to publish metrics batch: {e}")
+            names = _test_names(batch)
+            failed_names.extend(names)
+            print(f"::error::Failed to publish a batch of {len(batch)} metrics ({len(names)} tests): {e}")
+
+    for name in failed_names:
+        print(f"::error::Metrics not published for test: {name}")
+    return failed_names
 
 
 def main():
@@ -178,7 +190,11 @@ def main():
 
     print(f"Found {len(test_results)} test results")
     metric_data = build_metric_data(test_results, repository, sdk)
-    publish_metrics(metric_data, region)
+    cloudwatch = boto3.client("cloudwatch", region_name=region)
+    failed_names = publish_metrics(metric_data, cloudwatch)
+    if failed_names:
+        print(f"::error::{len(failed_names)} tests lost metrics because their batch was rejected")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
