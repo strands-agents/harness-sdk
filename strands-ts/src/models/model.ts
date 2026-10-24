@@ -30,6 +30,9 @@ import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT, getContextWindowLimit } from './defaults.js'
 import { warnOnce } from '../logging/warn-once.js'
+import { isPinned } from '../conversation-manager/compression/pin-message.js'
+import { summarizeMessages } from '../context-manager/methods/summarize.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 
 /**
  * Resolves model metadata fields on a config object from built-in lookup tables
@@ -282,6 +285,26 @@ export interface CountTokensOptions {
 }
 
 /**
+ * Options for compacting a conversation history.
+ */
+export interface CompactOptions {
+  /**
+   * How many trailing messages to keep verbatim: an integer (1 or above) is a count, a decimal between
+   * 0 and 1 exclusive is a ratio of the history. Same shape as `OffloadConditions.preserveRecent`.
+   */
+  preservedMessages?: number
+
+  /** The live conversation's system prompt, passed through unchanged. */
+  systemPrompt?: SystemPrompt
+
+  /** The live conversation's tool specifications, passed through unchanged. */
+  toolSpecs?: ToolSpec[]
+
+  /** Custom summarization prompt that replaces the default one. */
+  instructions?: string
+}
+
+/**
  * Result interface for the streamAggregated method.
  * Contains the complete message, stop reason, and optional metadata.
  */
@@ -357,6 +380,16 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Whether this model compacts history server-side, or `undefined` when unknown.
+   *
+   * @returns `undefined` by default
+   * @internal
+   */
+  get serverCompaction(): boolean | undefined {
+    return undefined
+  }
+
+  /**
    * Streams a conversation with the model.
    * Returns an async iterable that yields streaming events as they occur.
    *
@@ -382,6 +415,33 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
+  }
+
+  /**
+   * Summarizes the older messages of a conversation and keeps the most recent ones verbatim.
+   *
+   * The base implementation writes a client-side summary with this model: every message before the
+   * cut except message 0 and pinned messages is replaced by one `[Summarized: ...]` marker. Providers
+   * with server-side compaction override this method.
+   *
+   * @param messages - Full conversation history, left unmodified
+   * @param options - Where to cut, the live system prompt and tools, and custom summarization instructions
+   * @param invocationContext - The request the summary call's usage is added to
+   * @returns The compacted history, or `undefined` if there was nothing to compact
+   */
+  async compact(
+    messages: Message[],
+    options: CompactOptions = {},
+    invocationContext?: InvocationContext
+  ): Promise<Message[] | undefined> {
+    const split = compactionSplitIndex(messages, options.preservedMessages ?? 0)
+    const older = messages.filter((_, index) => index > 0 && index < split && !isPinned(messages, index))
+    if (older.length === 0) return undefined
+
+    const compacted = [...messages]
+    const config = options.instructions !== undefined ? { systemPrompt: options.instructions } : {}
+    const summarized = await summarizeMessages(compacted, older, this, config, invocationContext)
+    return summarized ? compacted : undefined
   }
 
   /**
@@ -669,6 +729,31 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       throw new ModelError(normalizedError.message, { cause: error })
     }
   }
+}
+
+/**
+ * Returns the index of the first message `compact()` keeps verbatim.
+ *
+ * The cut only ever moves back, so at least `preservedMessages` are kept: it never passes the last
+ * message, which the next model call responds to, and never separates a `toolUse` from its `toolResult`.
+ *
+ * @param messages - Full conversation history
+ * @param preservedMessages - Count (1 or above) or ratio (between 0 and 1 exclusive) of trailing messages to keep
+ * @returns The split index; messages before it may be summarized
+ * @internal
+ */
+export function compactionSplitIndex(messages: Message[], preservedMessages: number): number {
+  const preserve = Number.isFinite(preservedMessages) ? Math.max(0, preservedMessages) : 0
+  const kept = preserve > 0 && preserve < 1 ? Math.ceil(messages.length * preserve) : Math.floor(preserve)
+  const split = Math.min(messages.length - kept, messages.length - 1)
+  if (split <= 0) return 0
+  return splitsToolPair(messages, split) ? split - 1 : split
+}
+
+/** Whether a cut before `messages[index]` separates a tool result from the tool use before it. */
+function splitsToolPair(messages: Message[], index: number): boolean {
+  const hasToolResult = messages[index]!.content.some((block) => block.type === 'toolResultBlock')
+  return hasToolResult && messages[index - 1]!.content.some((block) => block.type === 'toolUseBlock')
 }
 
 /**

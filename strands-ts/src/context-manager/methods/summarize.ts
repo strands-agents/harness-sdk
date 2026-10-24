@@ -21,6 +21,12 @@ import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/m
 import { CitationsBlock } from '../../types/citations.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
+import {
+  collectRemovableWithPair,
+  insertMarker,
+  repairAlternation,
+  spliceWithPairs,
+} from '../strategies/offload/base.js'
 
 export const SUMMARIZED_PREFIX = '[Summarized:'
 
@@ -174,4 +180,47 @@ export function flattenMessagesToContent(messages: Message[]): ContentBlock[] {
     blocks.push(new TextBlock(`\n---\n[${message.role}]`), ...content)
   }
   return blocks
+}
+
+/**
+ * Replaces `eligible` messages in `messages` with one `[Summarized: ...]` marker, in place. Each eligible
+ * message's tool-pair partner is summarized with it; message 0 and the last message never are.
+ *
+ * @param messages - The history to edit
+ * @param eligible - Messages in `messages` to summarize
+ * @param model - Model that writes the summary
+ * @param config - Summarization settings; only `systemPrompt` is read
+ * @param invocationContext - The request the summary call's usage is added to
+ * @returns Whether any messages were summarized
+ * @internal
+ */
+export async function summarizeMessages(
+  messages: Message[],
+  eligible: Message[],
+  model: Model,
+  config?: SummarizeConfig,
+  invocationContext?: InvocationContext
+): Promise<boolean> {
+  const safeSet = new Set<Message>()
+  for (const message of eligible) {
+    const index = messages.indexOf(message)
+    if (index === -1) continue
+    for (const removable of collectRemovableWithPair(messages, index)) {
+      safeSet.add(removable)
+    }
+  }
+  const safe = messages.filter((message) => safeSet.has(message))
+  if (safe.length === 0) return false
+
+  const contentBlocks = flattenMessagesToContent(safe)
+  const summary = await summarizeContent(contentBlocks, model, config, invocationContext)
+  if (!summary) return false
+
+  const totalTokens = await model.countTokens(safe)
+  const { lowestIndex } = spliceWithPairs(messages, safe)
+  insertMarker(messages, lowestIndex, formatSummarized(`${safe.length} messages`, totalTokens, summary))
+
+  repairAlternation(messages)
+  logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
+  return true
 }

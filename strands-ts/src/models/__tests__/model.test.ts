@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -10,10 +10,12 @@ import {
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
-import { Model } from '../model.js'
+import { Model, compactionSplitIndex } from '../model.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 
 /**
  * Test model provider that throws an error from stream().
@@ -1233,5 +1235,95 @@ describe('estimateUtilization', () => {
     provider.updateConfig({ contextWindowLimit: 100_000 })
 
     expect(provider.estimateUtilization(0)).toBe(0)
+  })
+})
+
+describe('compactionSplitIndex', () => {
+  const text = (role: 'user' | 'assistant', value: string): Message =>
+    new Message({ role, content: [new TextBlock(value)] })
+  const toolUse = (id: string): Message =>
+    new Message({ role: 'assistant', content: [new ToolUseBlock({ toolUseId: id, name: 'read', input: {} })] })
+  const toolResult = (id: string): Message =>
+    new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: id, status: 'success', content: [new TextBlock('ok')] })],
+    })
+
+  it('keeps a count or ratio of trailing messages and never cuts past the last message', () => {
+    const messages = [
+      text('user', 'a'),
+      text('assistant', 'b'),
+      text('user', 'c'),
+      text('assistant', 'd'),
+      text('user', 'e'),
+    ]
+
+    expect(compactionSplitIndex(messages, 2)).toBe(3)
+    expect(compactionSplitIndex(messages, 0.5)).toBe(2)
+    expect(compactionSplitIndex(messages, 0)).toBe(4)
+    expect(compactionSplitIndex(messages, Number.NaN)).toBe(4)
+    expect(compactionSplitIndex(messages, 5)).toBe(0)
+    expect(compactionSplitIndex(messages, 9)).toBe(0)
+    expect(compactionSplitIndex([], 0)).toBe(0)
+  })
+
+  it('moves the cut back so a toolUse stays with its toolResult', () => {
+    const messages = [text('user', 'task'), toolUse('a'), toolResult('a'), toolUse('b'), toolResult('b')]
+
+    expect(compactionSplitIndex(messages, 2)).toBe(3)
+    expect(compactionSplitIndex(messages, 3)).toBe(1)
+    expect(compactionSplitIndex(messages, 0)).toBe(3)
+  })
+})
+
+describe('compact', () => {
+  const text = (role: 'user' | 'assistant', value: string, pinned = false): Message =>
+    new Message({ role, content: [new TextBlock(value)], ...(pinned && { metadata: { custom: { pinned: true } } }) })
+
+  it('replaces older messages after message 0 with a summary marker and keeps pinned and recent messages', async () => {
+    const model = new MockMessageModel().addTurn(
+      { type: 'textBlock', text: 'the summary' },
+      { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+    )
+    const streamSpy = vi.spyOn(model, 'stream')
+    const messages = [
+      text('user', 'task'),
+      text('assistant', 'first answer'),
+      text('user', 'pinned note', true),
+      text('assistant', 'second answer'),
+      text('user', 'follow up'),
+      text('assistant', 'third answer'),
+      text('user', 'latest'),
+    ]
+    const original = [...messages]
+    const invocationContext = new InvocationContextImpl({})
+    const summarizedTokens = await model.countTokens([messages[1]!, messages[3]!, messages[4]!])
+
+    const result = await model.compact(messages, { preservedMessages: 2, instructions: 'Keep ids' }, invocationContext)
+
+    expect(result).toEqual([
+      messages[0],
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock(`[Summarized: 3 messages, ~${summarizedTokens} tokens]\n\nthe summary`)],
+        trackingId: anyTrackingId,
+      }),
+      messages[2],
+      messages[5],
+      messages[6],
+    ])
+    expect(messages).toEqual(original)
+    expect(streamSpy).toHaveBeenCalledWith(expect.any(Array), { systemPrompt: 'Keep ids' })
+    expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
+  })
+
+  it('returns undefined without a model call when nothing before the cut can be summarized', async () => {
+    const model = new MockMessageModel()
+    const streamSpy = vi.spyOn(model, 'stream')
+    const messages = [text('user', 'task'), text('assistant', 'pinned', true), text('user', 'latest')]
+
+    expect(await model.compact(messages)).toBeUndefined()
+    expect(await model.compact(messages, { preservedMessages: 2 })).toBeUndefined()
+    expect(streamSpy).not.toHaveBeenCalled()
   })
 })

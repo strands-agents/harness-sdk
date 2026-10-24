@@ -20,8 +20,10 @@ from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 
 if TYPE_CHECKING:
+    from .._context_manager.methods.summarize import SummarizeConfig
     from ..agent.agent import Agent
     from ..agent.agent_metadata import AgentMetadata
+    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,33 @@ def _estimate_tokens_with_heuristic(
     return total
 
 
+def _compaction_split_index(messages: Messages, preserved_messages: int | float) -> int:
+    """Return the index of the first message ``Model.compact()`` keeps verbatim.
+
+    The cut only ever moves back, so at least ``preserved_messages`` are kept: it never passes the last message,
+    which the next model call responds to, and never separates a ``toolUse`` from its ``toolResult``.
+
+    Args:
+        messages: Full conversation history.
+        preserved_messages: Count (1 or above) or ratio (between 0 and 1 exclusive) of trailing messages to keep.
+
+    Returns:
+        The split index; messages before it may be summarized.
+    """
+    preserve = max(0.0, float(preserved_messages)) if math.isfinite(preserved_messages) else 0.0
+    kept = math.ceil(len(messages) * preserve) if 0 < preserve < 1 else math.floor(preserve)
+    split = min(len(messages) - kept, len(messages) - 1)
+    if split <= 0:
+        return 0
+    return split - 1 if _splits_tool_pair(messages, split) else split
+
+
+def _splits_tool_pair(messages: Messages, index: int) -> bool:
+    """Whether a cut before ``messages[index]`` separates a tool result from the tool use before it."""
+    has_tool_result = any("toolResult" in block for block in messages[index]["content"])
+    return has_tool_result and any("toolUse" in block for block in messages[index - 1]["content"])
+
+
 class BaseModelConfig(TypedDict, total=False):
     """Base configuration shared by all model providers.
 
@@ -203,6 +232,17 @@ class Model(abc.ABC):
             False by default. Model providers that support server-side state should override this.
         """
         return False
+
+    @property
+    def server_compaction(self) -> bool | None:
+        """Whether this model compacts history server-side, or None when unknown.
+
+        Not part of the public API.
+
+        Returns:
+            None by default.
+        """
+        return None
 
     @property
     def context_window_limit(self) -> int | None:
@@ -333,6 +373,52 @@ class Model(abc.ABC):
             Estimated total input tokens.
         """
         return _estimate_tokens_with_heuristic(messages, tool_specs, system_prompt, system_prompt_content)
+
+    async def compact(
+        self,
+        messages: Messages,
+        *,
+        preserved_messages: int | float = 0,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        invocation_context: "InvocationContext | None" = None,
+    ) -> Messages | None:
+        """Summarize the older messages of a conversation and keep the most recent ones verbatim.
+
+        The base implementation writes a client-side summary with this model: every message before the cut except
+        message 0 and pinned messages is replaced by one ``[Summarized: ...]`` marker. Providers with server-side
+        compaction override this method.
+
+        Args:
+            messages: Full conversation history, left unmodified.
+            preserved_messages: Count (1 or above) or ratio (between 0 and 1 exclusive) of trailing messages to keep
+                verbatim, in the same shape as ``OffloadConditions.preserve_recent``.
+            tool_specs: The live conversation's tool specifications, passed through unchanged.
+            system_prompt: The live conversation's plain string system prompt, passed through unchanged.
+            system_prompt_content: The live conversation's structured system prompt, passed through unchanged.
+            instructions: Custom summarization prompt that replaces the default one.
+            invocation_context: The request the summary call's usage is added to.
+
+        Returns:
+            The compacted history, or None if there was nothing to compact.
+        """
+        # Imported here: loading either module loads the event loop, which imports this module.
+        from .._context_manager.methods.summarize import _summarize_messages
+        from ..agent.conversation_manager.compression.pin_message import is_pinned
+
+        split = _compaction_split_index(messages, preserved_messages)
+        older = [
+            message for index, message in enumerate(messages[:split]) if index > 0 and not is_pinned(messages, index)
+        ]
+        if not older:
+            return None
+
+        compacted = list(messages)
+        config: SummarizeConfig = {"system_prompt": instructions} if instructions is not None else {}
+        summarized = await _summarize_messages(compacted, older, self, config, invocation_context)
+        return compacted if summarized else None
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.

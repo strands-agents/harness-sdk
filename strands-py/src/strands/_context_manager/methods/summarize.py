@@ -15,6 +15,12 @@ from typing_extensions import TypedDict
 from ...event_loop.streaming import process_stream
 from ...types.content import ContentBlock, Message, Messages
 from ...types.tools import ToolResult, ToolResultContent
+from ..strategies.offload.base import (
+    _collect_removable_with_pair,
+    _insert_marker,
+    _repair_alternation,
+    _splice_with_pairs,
+)
 
 if TYPE_CHECKING:
     from ...agent.invocation_context import InvocationContext
@@ -169,3 +175,51 @@ def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
             blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
             blocks.extend(content)
     return blocks
+
+
+async def _summarize_messages(
+    messages: Messages,
+    eligible: Messages,
+    model: Model,
+    config: SummarizeConfig | None = None,
+    invocation_context: InvocationContext | None = None,
+) -> bool:
+    """Replace ``eligible`` messages in ``messages`` with one ``[Summarized: ...]`` marker, in place.
+
+    Each eligible message's tool-pair partner is summarized with it; message 0 and the last message never are.
+
+    Args:
+        messages: The history to edit.
+        eligible: Messages in ``messages`` to summarize.
+        model: Model that writes the summary.
+        config: Summarization settings; only ``system_prompt`` is read.
+        invocation_context: The request the summary call's usage is added to.
+
+    Returns:
+        Whether any messages were summarized.
+    """
+    identity_map = {id(msg): index for index, msg in enumerate(messages)}
+    safe_ids: set[int] = set()
+    for message in eligible:
+        index = identity_map.get(id(message))
+        if index is None:
+            continue
+        for removable in _collect_removable_with_pair(messages, index):
+            safe_ids.add(id(removable))
+    safe = [msg for msg in messages if id(msg) in safe_ids]
+    if not safe:
+        return False
+
+    content_blocks = _flatten_messages_to_content(safe)
+    summary = await _summarize_content(content_blocks, model, config, invocation_context)
+    if not summary:
+        return False
+
+    total_tokens = await model.count_tokens(safe)
+
+    _, lowest_index = _splice_with_pairs(messages, safe)
+    _insert_marker(messages, lowest_index, _format_summarized(f"{len(safe)} messages", total_tokens, summary))
+
+    _repair_alternation(messages)
+    logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", len(safe), total_tokens)
+    return True

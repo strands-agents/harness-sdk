@@ -9,23 +9,14 @@ from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
     SummarizeConfig,
-    _flatten_messages_to_content,
     _format_summarized,
     _summarize_content,
+    _summarize_messages,
     _tool_result_to_content_blocks,
 )
 from ...stash import _format_stash_refs
 from ...types import ContextState
-from .base import (
-    BaseOffloadStrategy,
-    OffloadConditions,
-    OffloadTarget,
-    _build_conditions,
-    _collect_removable_with_pair,
-    _insert_marker,
-    _repair_alternation,
-    _splice_with_pairs,
-)
+from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_conditions
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
@@ -73,11 +64,38 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return False
         return await super().apply(context)
 
+    @property
+    def _selects_by_recency_only(self) -> bool:
+        """Whether ``preserve_recent``, the only selection ``Model.compact()`` receives, decides what is summarized."""
+        return self._target in (None, "*") and self._threshold is None
+
+    async def _compact(self, context: ContextState, model: Model, preserved_messages: int | float) -> bool:
+        """Replace the history with ``model.compact()``'s result, keeping ``preserved_messages`` trailing messages."""
+        agent = context.agent
+        compacted = await model.compact(
+            context.messages,
+            preserved_messages=preserved_messages,
+            # A server-side compaction must carry the live system prompt and tools, or the provider
+            # treats it as a different conversation.
+            tool_specs=agent.tool_registry.get_all_tool_specs(),
+            system_prompt=agent.system_prompt,
+            system_prompt_content=agent.system_prompt_content,
+            instructions=self._config.get("system_prompt"),
+            invocation_context=context.invocation_context,
+        )
+        if compacted is None:
+            return False
+
+        context.messages[:] = compacted
+        return True
+
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Summarize oldest eligible messages into a single summary message."""
         model = self._resolve_model(context.agent)
         if not model:
             return False
+        if self._selects_by_recency_only:
+            return await self._compact(context, model, self._preserve_recent)
 
         messages = context.messages
         if len(messages) <= 1:
@@ -87,34 +105,25 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not eligible:
             return False
 
-        identity_map = {id(msg): index for index, msg in enumerate(messages)}
-        safe_ids: set[int] = set()
-        for message in eligible:
-            index = identity_map.get(id(message))
-            if index is None:
-                continue
-            for removable in _collect_removable_with_pair(messages, index):
-                safe_ids.add(id(removable))
-        safe = [msg for msg in messages if id(msg) in safe_ids]
-        if not safe:
+        return await _summarize_messages(messages, eligible, model, self._config, context.invocation_context)
+
+    async def _apply_per_block(self, context: ContextState) -> bool:
+        """Summarize eligible blocks, or compact the history when the model compacts server-side.
+
+        A retroactive per-block summary invalidates later thinking on a model that compacts server-side, so it
+        compacts the history instead, but only when a block it targets is eligible.
+        """
+        model = self._resolve_model(context.agent)
+        if not model or not self._is_retroactive or model.server_compaction is not True:
+            return await super()._apply_per_block(context)
+
+        messages = context.messages
+        eligible = await self._get_eligible_messages(context)
+        if not eligible:
             return False
-
-        content_blocks = _flatten_messages_to_content(safe)
-        summary = await _summarize_content(content_blocks, model, self._config, context.invocation_context)
-        if not summary:
-            return False
-
-        total_tokens = await model.count_tokens(safe)
-
-        removed, lowest_index = _splice_with_pairs(messages, safe)
-        if removed == 0:
-            return False
-
-        _insert_marker(messages, lowest_index, _format_summarized(f"{removed} messages", total_tokens, summary))
-
-        _repair_alternation(messages)
-        logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)
-        return True
+        # ``preserve_recent`` counts only matching messages, so the cut is set just after the newest eligible one.
+        newest_eligible = next(index for index in reversed(range(len(messages))) if messages[index] is eligible[-1])
+        return await self._compact(context, model, len(messages) - newest_eligible - 1)
 
     async def _replace_block(
         self,

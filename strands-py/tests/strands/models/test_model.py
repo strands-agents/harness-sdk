@@ -1,15 +1,17 @@
 import json
 import math
+import unittest.mock
 import warnings
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
+from strands.agent.invocation_context import _create_invocation_context
 from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig
 from strands.models import Model as SAModel
-from strands.models.model import _ModelPlugin
+from strands.models.model import _compaction_split_index, _ModelPlugin
 
 
 class Person(BaseModel):
@@ -694,3 +696,101 @@ class TestCacheConfig:
     def test_cache_key_round_trips(self):
         """cache_key preserves the value it was constructed with."""
         assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"
+
+
+def _text(role, text, pinned=False):
+    message = {"role": role, "content": [{"text": text}]}
+    if pinned:
+        message["metadata"] = {"custom": {"pinned": True}}
+    return message
+
+
+def _tool_use(tool_use_id):
+    return {"role": "assistant", "content": [{"toolUse": {"toolUseId": tool_use_id, "name": "read", "input": {}}}]}
+
+
+def _tool_result(tool_use_id):
+    return {
+        "role": "user",
+        "content": [{"toolResult": {"toolUseId": tool_use_id, "status": "success", "content": [{"text": "ok"}]}}],
+    }
+
+
+class TestCompactionSplitIndex:
+    def test_keeps_a_count_or_ratio_of_trailing_messages_and_never_cuts_past_the_last_message(self):
+        messages = [
+            _text("user", "a"),
+            _text("assistant", "b"),
+            _text("user", "c"),
+            _text("assistant", "d"),
+            _text("user", "e"),
+        ]
+
+        tru_splits = [
+            _compaction_split_index(messages, 2),
+            _compaction_split_index(messages, 0.5),
+            _compaction_split_index(messages, 0),
+            _compaction_split_index(messages, math.nan),
+            _compaction_split_index(messages, 5),
+            _compaction_split_index(messages, 9),
+            _compaction_split_index([], 0),
+        ]
+
+        assert tru_splits == [3, 2, 4, 4, 0, 0, 0]
+
+    def test_moves_the_cut_back_so_a_tool_use_stays_with_its_tool_result(self):
+        messages = [_text("user", "task"), _tool_use("a"), _tool_result("a"), _tool_use("b"), _tool_result("b")]
+
+        tru_splits = [_compaction_split_index(messages, kept) for kept in (2, 3, 0)]
+
+        assert tru_splits == [3, 1, 3]
+
+
+class TestCompact:
+    @pytest.mark.asyncio
+    async def test_replaces_older_messages_after_message_0_with_a_marker_and_keeps_pinned_and_recent_messages(
+        self, model
+    ):
+        messages = [
+            _text("user", "task"),
+            _text("assistant", "first answer"),
+            _text("user", "pinned note", pinned=True),
+            _text("assistant", "second answer"),
+            _text("user", "follow up"),
+            _text("assistant", "third answer"),
+            _text("user", "latest"),
+        ]
+        original = list(messages)
+        summarized_tokens = await model.count_tokens([messages[1], messages[3], messages[4]])
+
+        request = _create_invocation_context({})
+
+        with unittest.mock.patch.object(model, "stream", wraps=model.stream) as stream:
+            tru_compacted = await model.compact(
+                messages, preserved_messages=2, instructions="Keep ids", invocation_context=request
+            )
+
+        exp_compacted = [
+            messages[0],
+            {
+                "role": "assistant",
+                "content": [{"text": f"[Summarized: 3 messages, ~{summarized_tokens} tokens]\n\nProcessed 1 messages"}],
+            },
+            messages[2],
+            messages[5],
+            messages[6],
+        ]
+        assert tru_compacted == exp_compacted
+        assert messages == original
+        assert stream.call_args.kwargs["system_prompt"] == "Keep ids"
+        assert request.usage == {"turns_taken": 0, "inputTokens": 10, "outputTokens": 15, "totalTokens": 25}
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_a_model_call_when_nothing_before_the_cut_can_be_summarized(self, model):
+        messages = [_text("user", "task"), _text("assistant", "pinned", pinned=True), _text("user", "latest")]
+
+        with unittest.mock.patch.object(model, "stream") as stream:
+            tru_results = [await model.compact(messages), await model.compact(messages, preserved_messages=2)]
+
+        assert tru_results == [None, None]
+        stream.assert_not_called()
