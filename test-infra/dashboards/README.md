@@ -25,18 +25,10 @@ Top to bottom:
    week and the number of flagged weeks as the summary, so a reader can tell a new problem from an ongoing or fixed
    one.
 5. **Duration**: the 10 slowest tests by p90 and the daily mean of per-test p90.
-6. **Merge queue / main only**: the pass rate over every run that was not a pull request, and the top flaky tests
-   over the nightly scheduled run on `main` only (`Event="schedule" Branch="main"`), one table per matrix leg.
-   These widgets read the `Event` / `Branch` / `Leg` dimensions and the `Tests*` counters, so they stay empty until
-   a publisher that emits them has run on a `merge_group`, `schedule`, `workflow_dispatch` or `push` event. The
-   flaky tables are pinned to one event, branch and leg because the context schema has one series per combination:
-   leaving any of them open would multiply each test group past the 500-series cap (limit 1 below) as soon as
-   merge-queue and nightly runs both publish, and would list a flaky test once per combination. Python has four
-   tables: `Leg="all"` split `models` / `NOT models`, plus `Leg="bidi"` and `Leg="mcp-1x"`. The `all` leg (Python
-   3.10) does not stand in for the other two: `tests_integ/bidi/conftest.py` skips every bidi test below Python
-   3.12, so on `all` they publish `TestSkipped=1` and a constant failure rate of 0, and
-   `tests_integ/mcp/conftest.py` does not collect the seven mcp 1.x-only modules under mcp 2.x, so they publish only
-   from `mcp-1x`. TypeScript has one leg (`all`), split by the same name groups as the rest of the dashboard.
+6. **Merge queue / main only**: the pass rate over every run that was not a pull request (from the `Tests*`
+   counters), and the top flaky tests over the nightly run on `main`, one table per matrix leg. Only nightly runs
+   publish the per-test `Event` / `Branch` / `Leg` schema, one series per test and leg. Python needs a table per leg
+   because the `all` leg (Python 3.10) skips every bidi test and does not collect the mcp 1.x-only modules.
 
 ## Publishing (one-time, Admin)
 

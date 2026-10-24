@@ -136,8 +136,9 @@ def dims_of(datum):
     return {d["Name"]: d["Value"] for d in datum["Dimensions"]}
 
 
-def test_pr_event_emits_context_free_per_test_schema_and_suite_counters(mod):
-    ctx = mod.RunContext(event="pull_request_target", branch="main", leg="all")
+@pytest.mark.parametrize("event", ["pull_request_target", "merge_group"])
+def test_non_nightly_event_emits_context_free_per_test_schema_and_suite_counters(mod, event):
+    ctx = mod.RunContext(event=event, branch="main", leg="all")
 
     data = mod.build_metric_data(results_named(mod, ["a", "b", "c"]), "repo", "python", ctx)
 
@@ -152,13 +153,12 @@ def test_pr_event_emits_context_free_per_test_schema_and_suite_counters(mod):
         "TestsSkipped": 0.0,
     }
     assert all(
-        dims_of(d)
-        == {"Repository": "repo", "SDK": "python", "Event": "pull_request_target", "Branch": "main", "Leg": "all"}
+        dims_of(d) == {"Repository": "repo", "SDK": "python", "Event": event, "Branch": "main", "Leg": "all"}
         for d in suite
     )
 
 
-def test_non_pr_event_emits_both_per_test_schemas(mod):
+def test_nightly_event_emits_both_per_test_schemas(mod):
     ctx = mod.RunContext(event="schedule", branch="main", leg="bidi")
     results = results_named(mod, ["a", "b"])
     results[1].outcome = "failed"

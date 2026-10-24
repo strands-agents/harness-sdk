@@ -33,8 +33,8 @@ TRANSLITERATIONS = {
 MAX_DIMENSION_LENGTH = 255
 MAX_TIMESTAMP_AGE_DAYS = 13
 
-# Runs triggered by a pull request publish only the context-free per-test schema (see build_metric_data).
-PR_EVENTS = frozenset({"pull_request_target", "pull_request"})
+# The only event the dashboards read the per-test context schema for (see build_metric_data).
+CONTEXT_SCHEMA_EVENT = "schedule"
 
 
 class Dimension(TypedDict):
@@ -187,12 +187,11 @@ def _suite_datums(
 def build_metric_data(
     test_results: list[TestResult], repository: str, sdk: str, ctx: RunContext = DEFAULT_CONTEXT
 ) -> list[MetricDatum]:
-    """Per-test datums on (Repository, SDK, TestName) for every run, plus the same datums with
-    (Event, Branch, Leg) for non-PR runs only, plus one set of suite-level Tests* counters per publish.
+    """Per-test datums on (Repository, SDK, TestName) for every run, the same with (Event, Branch, Leg) for
+    nightly runs only, and one set of suite-level Tests* counters per publish.
 
-    The context-free per-test schema is the one every dashboard SEARCH is pinned to; adding dimensions to it
-    would multiply series per test past the 500-series SEARCH cap. PR runs are excluded from the context schema
-    because a PR's own breakage is not a flakiness signal and PRs dominate stream count (and cost).
+    Context dimensions stay off the first schema because they would multiply series per test past the 500-series
+    SEARCH cap.
     """
     metrics: list[MetricDatum] = []
     context_dimensions = [
@@ -200,7 +199,7 @@ def build_metric_data(
         Dimension(Name="Branch", Value=ctx.branch),
         Dimension(Name="Leg", Value=ctx.leg),
     ]
-    emit_context_schema = ctx.event not in PR_EVENTS
+    emit_context_schema = ctx.event == CONTEXT_SCHEMA_EVENT
 
     for test in test_results:
         test_name = sanitize_test_name(f"{test.classname}.{test.name}")
