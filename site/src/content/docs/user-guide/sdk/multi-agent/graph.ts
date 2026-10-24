@@ -412,3 +412,36 @@ async function topologyFeedbackLoop() {
   })
   // --8<-- [end:topology_feedback]
 }
+
+async function waitingDependencies() {
+  // --8<-- [start:waiting_dependencies]
+  const technicalResearcher = new Agent({
+    id: 'A',
+    systemPrompt: 'Research the technical requirements.',
+  })
+  const budgetResearcher = new Agent({
+    id: 'B',
+    systemPrompt: 'Research the budget requirements.',
+  })
+  const staffingResearcher = new Agent({
+    id: 'C',
+    systemPrompt: 'Research the staffing requirements.',
+  })
+  const planner = new Agent({
+    id: 'Z',
+    systemPrompt: 'Combine the research into a project plan.',
+  })
+
+  const graph = new Graph({
+    nodes: [technicalResearcher, budgetResearcher, staffingResearcher, planner],
+    edges: [
+      ['A', 'Z'],
+      ['B', 'Z'],
+      ['C', 'Z'],
+    ],
+  })
+
+  const result = await graph.invoke('Plan a customer support portal')
+  console.log(result)
+  // --8<-- [end:waiting_dependencies]
+}
