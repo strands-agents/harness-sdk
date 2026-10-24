@@ -7,6 +7,7 @@ import unittest.mock
 import warnings
 
 import anthropic
+import httpx
 import pydantic
 import pytest
 
@@ -3123,3 +3124,163 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]
+
+
+COMPACTION_BLOCK = {"type": "compaction", "content": "Summary.", "signature": "sig"}
+
+
+def _compacted_history(marker="[Summarized: 2 messages, ~10 tokens]\n\nSummary."):
+    return [
+        {"role": "user", "content": [{"text": "task"}]},
+        {"role": "assistant", "content": [{"text": "a1"}, {"text": marker}]},
+        {"role": "user", "content": [{"text": "u1"}]},
+    ]
+
+
+@pytest.fixture
+def compaction_model(anthropic_client):
+    _ = anthropic_client
+    return AnthropicModel(model_id="claude-opus-5-5", max_tokens=1, params={"stop_sequences": ["x"]})
+
+
+def _compaction_response(anthropic_client, body):
+    response = unittest.mock.Mock(http_response=httpx.Response(200, json=body))
+    anthropic_client.messages.with_raw_response.create = unittest.mock.AsyncMock(return_value=response)
+
+
+@pytest.mark.parametrize(
+    ("model_id", "supported"),
+    [
+        ("claude-opus-5-5", True),
+        ("claude-sonnet-5-5-20260901", True),
+        ("claude-haiku-5-5", True),
+        ("us.anthropic.claude-fable-5-1", True),
+        ("claude-opus-5", False),
+        ("claude-opus-5-50", False),
+        ("claude-sonnet-4-6", False),
+    ],
+)
+def test_supports_server_compaction_for_preserved_thinking_models(anthropic_client, model_id, supported):
+    _ = anthropic_client
+    model = AnthropicModel(model_id=model_id, max_tokens=1)
+
+    assert model._supports_server_compaction is supported
+
+
+@pytest.mark.asyncio
+async def test_compact_returns_summary_and_replaces_summarized_history(anthropic_client, alist, compaction_model):
+    _compaction_response(
+        anthropic_client,
+        {"stop_reason": "compaction", "content": [{**COMPACTION_BLOCK, "citations": None}]},
+    )
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+    history = [
+        {"role": "user", "content": [{"text": "task"}]},
+        {"role": "assistant", "content": [{"text": "a0"}]},
+        {"role": "user", "content": [{"text": "u0"}]},
+    ]
+
+    summary = await compaction_model._compact(
+        history,
+        system_prompt_content=[{"text": "s1"}],
+        tool_specs=[{"name": "t", "description": "d", "inputSchema": {"json": {}}}],
+    )
+
+    assert summary == "Summary."
+    request = anthropic_client.messages.with_raw_response.create.call_args.kwargs
+    assert request["extra_body"] == {"compaction": {"type": "summarize"}}
+    assert request["extra_headers"] == {"anthropic-beta": "compact-2026-09-04"}
+    assert request["max_tokens"] == 16384
+    assert "stop_sequences" not in request
+    assert request["system"] == [{"type": "text", "text": "s1"}]
+    assert [tool["name"] for tool in request["tools"]] == ["t"]
+
+    await alist(compaction_model.stream(_compacted_history()))
+
+    request = anthropic_client.messages.stream.call_args.kwargs
+    assert request["messages"] == [
+        {"role": "assistant", "content": [COMPACTION_BLOCK, {"type": "text", "text": "a1"}]},
+        {"role": "user", "content": [{"type": "text", "text": "u1"}]},
+    ]
+    assert request["extra_headers"] == {"anthropic-beta": "compact-2026-09-04"}
+
+
+@pytest.mark.asyncio
+async def test_compact_starts_from_current_block(anthropic_client, compaction_model):
+    _compaction_response(anthropic_client, {"stop_reason": "compaction", "content": [COMPACTION_BLOCK]})
+    compaction_model._compaction_block = {**COMPACTION_BLOCK, "signature": "old"}
+
+    await compaction_model._compact(_compacted_history())
+
+    request = anthropic_client.messages.with_raw_response.create.call_args.kwargs
+    assert request["messages"][0]["content"][0] == {**COMPACTION_BLOCK, "signature": "old"}
+    assert compaction_model._compaction_block == COMPACTION_BLOCK
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        _compacted_history(marker="[Summarized: 2 messages, ~10 tokens]\n\nEdited."),
+        _compacted_history()[:1] + [{"role": "user", "content": [{"text": "u1"}]}],
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_sends_history_unchanged_without_its_summary_marker(
+    anthropic_client, alist, compaction_model, history
+):
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+    compaction_model._compaction_block = COMPACTION_BLOCK
+
+    await alist(compaction_model.stream(history))
+
+    request = anthropic_client.messages.stream.call_args.kwargs
+    assert request["messages"] == compaction_model.format_request(history)["messages"]
+    assert "extra_headers" not in request
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_counts_summary_marker_not_block(anthropic_client):
+    anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=unittest.mock.Mock(input_tokens=7))
+    model = AnthropicModel(model_id="claude-opus-5-5", max_tokens=1, use_native_token_count=True)
+    model._compaction_block = COMPACTION_BLOCK
+
+    assert await model.count_tokens(_compacted_history()) == 7
+
+    request = anthropic_client.messages.count_tokens.call_args.kwargs
+    assert request["messages"][0] == {"role": "user", "content": [{"type": "text", "text": "task"}]}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"stop_reason": "end_turn", "content": []},
+        {"stop_reason": "compaction", "content": [{"type": "compaction", "content": None, "signature": "sig"}]},
+    ],
+)
+@pytest.mark.asyncio
+async def test_compact_returns_none_without_summary(anthropic_client, compaction_model, body):
+    _compaction_response(anthropic_client, body)
+
+    assert await compaction_model._compact(_compacted_history()) is None
+    assert compaction_model._compaction_block is None
+
+
+@pytest.mark.asyncio
+async def test_compact_returns_none_on_api_error(anthropic_client, compaction_model, caplog):
+    anthropic_client.messages.with_raw_response.create = unittest.mock.AsyncMock(
+        side_effect=anthropic.BadRequestError("unsupported", response=unittest.mock.Mock(), body=None)
+    )
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.anthropic"):
+        assert await compaction_model._compact(_compacted_history()) is None
+
+    assert "server compaction failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_compact_skips_models_without_preserved_thinking(anthropic_client, model):
+    anthropic_client.messages.with_raw_response.create = unittest.mock.AsyncMock()
+
+    assert await model._compact(_compacted_history()) is None
+
+    anthropic_client.messages.with_raw_response.create.assert_not_awaited()

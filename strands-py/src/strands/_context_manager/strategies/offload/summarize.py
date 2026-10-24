@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING
 
-from ....types.content import ContentBlock, Message
+from ....agent.conversation_manager.compression.pin_message import is_pinned
+from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
     SummarizeConfig,
@@ -83,6 +85,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if len(messages) <= 1:
             return False
 
+        if await self._try_server_compaction(context):
+            return True
+
         eligible = await self._get_eligible_messages(context)
         if not eligible:
             return False
@@ -115,6 +120,61 @@ class SummarizeStrategy(BaseOffloadStrategy):
         _repair_alternation(messages)
         logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)
         return True
+
+    async def _try_server_compaction(self, context: ContextState) -> bool:
+        """Summarize the history before the kept turns server side, so their replayed thinking stays valid.
+
+        Applies only to whole-history summarization on the agent's own model, when that model supports it.
+        The history keeps the same layout as the client-side summary.
+        """
+        agent = context.agent
+        if self._target != "*" or self._threshold is not None or "model" in self._config:
+            return False
+        if getattr(agent.model, "_supports_server_compaction", False) is not True:
+            return False
+
+        messages = context.messages
+        cut = self._compaction_cut(messages)
+        if cut is None:
+            return False
+
+        try:
+            summary = await agent.model._compact(  # type: ignore[attr-defined]
+                messages[:cut],
+                system_prompt_content=agent.system_prompt_content,
+                tool_specs=agent.tool_registry.get_all_tool_specs(),
+            )
+        except Exception as error:
+            logger.warning("error=<%s> | server compaction failed, summarizing client side", error)
+            return False
+        if not summary:
+            return False
+
+        removed = messages[1:cut]
+        total_tokens = await agent.model.count_tokens(removed)
+        del messages[1:cut]
+        _insert_marker(messages, 1, _format_summarized(f"{len(removed)} messages", total_tokens, summary))
+        logger.debug("summarized=<%s>, tokens=<%s> | server compaction complete", len(removed), total_tokens)
+        return True
+
+    def _compaction_cut(self, messages: Messages) -> int | None:
+        """Index of the first kept message: the latest assistant reply to a user message before the kept turns.
+
+        Cutting at the end of a request already sent never splits a tool use from its result. Pinned messages
+        are kept.
+        """
+        preserve = self._preserve_recent
+        resolved = math.ceil(len(messages) * preserve) if 0 < preserve < 1 else int(preserve)
+        first_pinned = next((index for index in range(1, len(messages)) if is_pinned(messages, index)), len(messages))
+        upper = min(len(messages) - max(resolved, 1), first_pinned)
+        return next(
+            (
+                cut
+                for cut in range(upper, 1, -1)
+                if messages[cut - 1]["role"] == "user" and messages[cut]["role"] == "assistant"
+            ),
+            None,
+        )
 
     async def _replace_block(
         self,

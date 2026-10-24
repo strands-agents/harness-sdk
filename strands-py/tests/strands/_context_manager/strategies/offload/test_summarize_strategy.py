@@ -388,3 +388,112 @@ class TestSummarizationWithToolCalls:
             ]
         ]
         assert tru_calls == exp_calls
+
+
+def _conversation(turns: int) -> Messages:
+    messages: Messages = [Message(role="user", content=[ContentBlock(text="task")])]
+    for index in range(turns):
+        messages.append(Message(role="assistant", content=[ContentBlock(text=f"a{index}")]))
+        messages.append(Message(role="user", content=[ContentBlock(text=f"u{index}")]))
+    return messages
+
+
+@pytest.fixture
+def compacting_agent(mock_agent):
+    mock_agent.model._supports_server_compaction = True
+    mock_agent.model._compact = unittest.mock.AsyncMock(return_value="Server summary.")
+    mock_agent.system_prompt_content = [{"text": "system"}]
+    mock_agent.tool_registry.get_all_tool_specs.return_value = [{"name": "read"}]
+    return mock_agent
+
+
+class TestSummarizeStrategyServerCompaction:
+    """Tests for whole-history summarization through the model's server compaction."""
+
+    @pytest.mark.asyncio
+    async def test_compacts_history_before_kept_turns(self, compacting_agent):
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+        messages = _conversation(5)
+        kept = messages[7:]
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+
+        compacting_agent.model._compact.assert_awaited_once_with(
+            _conversation(5)[:7],
+            system_prompt_content=[{"text": "system"}],
+            tool_specs=[{"name": "read"}],
+        )
+        assert messages[0] == Message(role="user", content=[ContentBlock(text="task")])
+        assert messages[1]["content"] == [
+            ContentBlock(text="a3"),
+            ContentBlock(text="[Summarized: 6 messages, ~5,000 tokens]\n\nServer summary."),
+        ]
+        assert messages[2:] == kept[1:]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("result", [None, RuntimeError("boom")])
+    async def test_falls_back_to_client_summary(self, compacting_agent, result):
+        compacting_agent.model._compact.side_effect = [result]
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+        messages = _conversation(5)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+
+        summaries = [b["text"] for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Sum")]
+        assert summaries == ["[Summarized: 6 messages, ~5,000 tokens]\n\nSummary of content."]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("target", "explicit_model"), [("assistant_text", False), ("*", True)])
+    async def test_not_attempted_for_partial_or_explicit_model_summaries(
+        self, compacting_agent, target, explicit_model
+    ):
+        config = {"model": compacting_agent.model} if explicit_model else None
+        strategy = Offload.summarize(target, config).when(utilization=0.7, preserve_recent=4)
+
+        await strategy.apply(ContextState(messages=_conversation(5), agent=compacting_agent, utilization=0.9))
+
+        compacting_agent.model._compact.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_not_attempted_without_capability(self, mock_agent):
+        mock_agent.model._compact = unittest.mock.AsyncMock(return_value="Server summary.")
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+
+        await strategy.apply(ContextState(messages=_conversation(5), agent=mock_agent, utilization=0.9))
+
+        mock_agent.model._compact.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cut_stops_at_pinned_message(self, compacting_agent):
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=2)
+        messages = _conversation(5)
+        messages[5]["metadata"] = {"custom": {"pinned": True}}
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+
+        assert compacting_agent.model._compact.await_args.args[0] == _conversation(5)[:5]
+        assert messages[1]["metadata"] == {"custom": {"pinned": True}}
+        assert messages[1]["content"][0] == ContentBlock(text="a2")
+
+    @pytest.mark.asyncio
+    async def test_not_attempted_without_a_cut(self, compacting_agent):
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+        messages = _conversation(2)
+
+        await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+
+        compacting_agent.model._compact.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_repeated_compaction_keeps_one_marker_and_message_zero(self, compacting_agent):
+        strategy = Offload.summarize("*").when(utilization=0.7, preserve_recent=4)
+        messages = _conversation(1)
+        for index in range(10):
+            messages.append(Message(role="assistant", content=[ContentBlock(text=f"b{index}")]))
+            messages.append(Message(role="user", content=[ContentBlock(text=f"v{index}")]))
+            await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+
+        assert messages[0] == Message(role="user", content=[ContentBlock(text="task")])
+        summaries = [b for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Summarized:")]
+        assert len(summaries) == 1
+        assert len(messages) == 5

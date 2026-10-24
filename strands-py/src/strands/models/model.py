@@ -195,6 +195,9 @@ class Model(abc.ABC):
     # structured_output_model and the full tool list, instead of only the forced tool.
     _supports_structured_output: bool = False
 
+    # A provider that sets this can summarize older turns server side via `_compact`, keeping kept-turn thinking valid.
+    _supports_server_compaction: bool = False
+
     @property
     def stateful(self) -> bool:
         """Whether the model manages conversation state server-side.

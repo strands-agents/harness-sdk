@@ -41,7 +41,13 @@ from ._native_output import (
     structured_output_mechanisms,
     unsupported_mechanisms,
 )
-from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
+from ._thinking_binding import (
+    COMPACTION_BETA,
+    THINKING_BINDING_BETA,
+    has_preserved_thinking,
+    is_thinking_binding_error,
+    thinking_with_drop_block,
+)
 from ._validation import (
     _has_location_source,
     _log_skipped_blocks,
@@ -70,6 +76,10 @@ _SERVER_TOOL_BLOCK_TYPES = frozenset(
         "web_search_tool_result",
     }
 )
+
+# Request params the API rejects on a compaction request.
+_COMPACTION_INCOMPATIBLE_PARAMS = ("stop_sequences", "context_management")
+_COMPACTION_MAX_TOKENS = 16384
 
 # Anthropic pauses a long server-side tool turn with stop_reason=pause_turn and expects the paused
 # assistant message to be sent back as-is to resume it. Bounds how many times stream() does so.
@@ -120,6 +130,16 @@ def _with_native_output(
     schema = anthropic.transform_schema(structured_output_model)
     output_config = {**request.get("output_config", {}), "format": {"type": "json_schema", "schema": schema}}
     return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
+
+
+def _compaction_block_from(body: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the compaction block of a compaction response, without the null fields the API rejects on replay."""
+    if body.get("stop_reason") != "compaction":
+        return None
+    for item in body.get("content", []):
+        if item.get("type") == "compaction" and item.get("content"):
+            return {key: value for key, value in item.items() if value is not None}
+    return None
 
 
 class AnthropicModel(Model):
@@ -194,6 +214,13 @@ class AnthropicModel(Model):
         client_args = client_args or {}
         self.client = anthropic.AsyncAnthropic(**client_args)
         self._drop_stale_thinking_model_id: str | None = None
+        # The signed compaction block that replaces the history its summary marker stands for.
+        self._compaction_block: dict[str, Any] | None = None
+
+    @property
+    def _supports_server_compaction(self) -> bool:  # type: ignore[override]
+        """Whether this model id binds thinking to its prefix, so summarizing must keep kept-turn thinking valid."""
+        return has_preserved_thinking(self.config["model_id"])
 
     @override
     def update_config(self, **model_config: Unpack[AnthropicConfig]) -> None:  # type: ignore[override]
@@ -614,14 +641,82 @@ class AnthropicModel(Model):
         thinking = thinking_with_drop_block(request.get("thinking"))
         if thinking is None:
             return None
+        return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
+
+    def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
+        """Return the request with the beta added to its anthropic-beta header."""
         extra_headers = dict(request.get("extra_headers") or {})
         # Request headers replace client headers of the same name, so betas set on the client are carried over.
         configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
-        betas = [beta.strip() for beta in configured.split(",")] if isinstance(configured, str) else []
-        if THINKING_BINDING_BETA not in betas:
-            betas.append(THINKING_BINDING_BETA)
-        extra_headers["anthropic-beta"] = ",".join(beta for beta in betas if beta)
-        return {**request, "thinking": thinking, "extra_headers": extra_headers}
+        betas = [item.strip() for item in configured.split(",")] if isinstance(configured, str) else []
+        if beta not in betas:
+            betas.append(beta)
+        extra_headers["anthropic-beta"] = ",".join(item for item in betas if item)
+        return {**request, "extra_headers": extra_headers}
+
+    def _with_compaction(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Replace the summarized history with the compaction block when the history still carries its marker.
+
+        The summary marker is the text block holding the block's summary, on the assistant message after message 0.
+        Any other history is sent unchanged.
+        """
+        block = self._compaction_block
+        messages = request["messages"]
+        if block is None or len(messages) < 2 or messages[1]["role"] != "assistant":
+            return request
+        content = messages[1]["content"]
+        kept = [
+            item
+            for item in content
+            if not (item.get("type") == "text" and item.get("text", "").endswith(block["content"]))
+        ]
+        if len(kept) == len(content):
+            return request
+        anchor = {**messages[1], "content": [block, *kept]}
+        return {**self._with_beta(request, COMPACTION_BETA), "messages": [anchor, *messages[2:]]}
+
+    async def _compact(
+        self,
+        messages: Messages,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        tool_specs: list[ToolSpec] | None = None,
+    ) -> str | None:
+        """Summarize the messages server side, keeping the signed block for later requests.
+
+        The messages must end with a user message the model already answered. Requests built afterwards replace the
+        history before the marker holding the returned summary with the block.
+
+        Returns:
+            The summary text, or None if the model cannot compact or returned no summary.
+        """
+        if not self._supports_server_compaction:
+            return None
+        request = self._with_compaction(
+            self.format_request(messages, tool_specs, system_prompt_content=system_prompt_content)
+        )
+        request = self._with_beta(request, COMPACTION_BETA)
+        for param in _COMPACTION_INCOMPATIBLE_PARAMS:
+            request.pop(param, None)
+        if (request.get("tool_choice") or {}).get("type") in ("any", "tool"):
+            request.pop("tool_choice")
+        request["max_tokens"] = _COMPACTION_MAX_TOKENS
+        request["extra_body"] = {**(request.get("extra_body") or {}), "compaction": {"type": "summarize"}}
+
+        try:
+            # The pinned SDK has no compaction block type, so the raw body keeps the block exactly as signed.
+            response = await self.client.messages.with_raw_response.create(**request)
+            body = response.http_response.json()
+        except anthropic.APIError as error:
+            logger.warning("model_id=<%s>, error=<%s> | server compaction failed", self.config["model_id"], error)
+            return None
+
+        block = _compaction_block_from(body)
+        if block is None:
+            logger.debug("model_id=<%s> | server compaction returned no summary", self.config["model_id"])
+            return None
+        self._compaction_block = block
+        return cast(str, block["content"])
 
     def _format_system_prompt(
         self, system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None
@@ -1022,6 +1117,7 @@ class AnthropicModel(Model):
             dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
         )
         request = _with_native_output(request, mechanism, structured_output_model)
+        request = self._with_compaction(request)
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")
