@@ -45,6 +45,7 @@ const FALLBACK_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
   ['xai.grok-4.6', 500_000],
   ['xai.grok-4.3', 1_000_000],
   ['chat-latest', 272_000],
+  ['gpt-6-astra', 1_050_000],
   ['gpt-6.1-sol', 1_050_000],
   ['gpt-6-sol', 1_050_000],
   ['gpt-6-luna', 1_050_000],
