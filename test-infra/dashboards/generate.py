@@ -183,7 +183,7 @@ def header(spec: DashboardSpec) -> str:
             f"## {spec.sdk.capitalize()} integration tests: health and flaky-test triage",
             "",
             "Every completed integration test run publishes one datapoint per test (TestPassed / TestFailed / "
-            f"TestSkipped / TestDuration / TestRetried) from [upload-integ-test-metrics.py]({PUBLISHER_URL}). "
+            f"TestSkipped / TestDuration) from [upload-integ-test-metrics.py]({PUBLISHER_URL}). "
             f"This dashboard is generated from code in [test-infra/dashboards]({DASHBOARDS_URL}); edit it there.",
             "",
             "**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window "
