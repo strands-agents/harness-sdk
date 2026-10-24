@@ -4,6 +4,8 @@ import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
 import { getPublishedPosts } from '../util/blog';
 import { formatEventDate, upcomingEvents } from '../util/learn';
+import { getReleases, releaseHeadline, formatChangelogDate } from '../util/changelog';
+import { streamLabel } from '../config/changelog';
 
 // The old /community/ hub is gone; its "what's new" and events feed now lives
 // here on the homepage. Events are filtered to upcoming ones at build time.
@@ -20,6 +22,9 @@ const eventHref = (href?: string) =>
 
 const learnHref = pathWithBase('/docs/learning/how-agents-really-work/');
 const upcomingList = upcoming.slice(0, 4);
+
+const recentReleases = (await getReleases()).slice(0, 4);
+const changelogHref = pathWithBase('/changelog/');
 ---
 
 <section class="community" aria-label="Community & learning hub">
@@ -50,8 +55,30 @@ const upcomingList = upcoming.slice(0, 4);
       )}
     </div>
 
+    {recentReleases.length > 0 && (
+      <div class="community__panel community__panel--tinted">
+        <h3 class="community__panel-title community__panel-title--accent">Latest releases</h3>
+        <ol class="community__list" role="list">
+          {recentReleases.map((release) => {
+            const headline = releaseHeadline(release);
+            return (
+              <li class="community__row">
+                <a class="community__row-link" href={changelogHref}>
+                  <span class="community__row-kicker">{formatChangelogDate(release.data.date)}</span>
+                  <span class="community__row-title">
+                    {streamLabel(release.data.sdk, release.data.language)} v{release.data.version}
+                  </span>
+                  {headline && <span class="community__row-meta community__row-meta--clamp">{headline}</span>}
+                </a>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    )}
+
     {upcomingList.length > 0 && (
-      <div class="community__panel community__panel--events">
+      <div class="community__panel community__panel--tinted">
         <h3 class="community__panel-title community__panel-title--accent">Events</h3>
         <ul class="community__list" role="list">
           {upcomingList.map((event) => (
@@ -79,12 +106,12 @@ const upcomingList = upcoming.slice(0, 4);
     padding: 42px 80px;
   }
 
-  /* Two-column card: the intro and What's new stack in the left column; Events
-     fills the right column at full height, since it carries more rows. */
+  /* Three-column card: the intro and What's new stack in the left column;
+     Latest releases and Events fill the other two at full height. */
   .community__card {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 40px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 32px;
     align-items: stretch;
     max-width: 1282px;
     margin: 0 auto;
@@ -111,8 +138,8 @@ const upcomingList = upcoming.slice(0, 4);
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 600;
-    font-size: 36px;
-    letter-spacing: 3.6px;
+    font-size: 30px;
+    letter-spacing: 3px;
     line-height: 1.12;
     color: var(--fg);
   }
@@ -120,8 +147,8 @@ const upcomingList = upcoming.slice(0, 4);
   .community__lede {
     margin: 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 20px;
-    letter-spacing: 2px;
+    font-size: 16px;
+    letter-spacing: 1.2px;
     line-height: 1.3;
     color: var(--fg);
   }
@@ -133,7 +160,7 @@ const upcomingList = upcoming.slice(0, 4);
     padding: 4px 18px 4px 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 600;
-    font-size: 19.25px;
+    font-size: 17px;
     line-height: 1.3;
     color: var(--fg);
     text-decoration: none;
@@ -169,15 +196,15 @@ const upcomingList = upcoming.slice(0, 4);
     border-top: 1px solid var(--card-border);
   }
 
-  /* Events sit on a subtly tinted, rounded panel filling the right column. */
-  .community__panel--events {
-    padding: 32px;
+  /* Releases and Events sit on subtly tinted, rounded panels. */
+  .community__panel--tinted {
+    padding: 28px;
     border-radius: 20px;
     background: color-mix(in srgb, var(--accent-green) 5%, var(--bg));
   }
 
-  /* Softer rules between event rows so they read within the tinted panel. */
-  .community__panel--events .community__row + .community__row {
+  /* Softer rules between rows so they read within the tinted panel. */
+  .community__panel--tinted .community__row + .community__row {
     border-top-color: color-mix(in srgb, var(--fg) 12%, transparent);
   }
 
@@ -256,18 +283,38 @@ const upcomingList = upcoming.slice(0, 4);
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 13px;
     line-height: 1.3;
-    color: var(--strands-grey-400);
+    color: var(--sl-color-gray-3);
+  }
+
+  /* Release headlines are commit titles of any length; keep rows uniform. */
+  .community__row-meta--clamp {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
+  }
+
+  /* ---------- Mid layouts (1024–1279px) ----------
+     Intro spans the top row; Releases and Events share the row below. */
+  @media (max-width: 1279px) {
+    .community__card {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .community__main {
+      grid-column: 1 / -1;
+    }
   }
 
   /* ---------- Narrow layouts (< 1024px) ----------
-     Collapse to one column: intro, then What's new, then Events. */
+     Collapse to one column: intro, What's new, Latest releases, then Events. */
   @media (max-width: 1023px) {
     .community {
       padding: 24px 19px;
     }
 
     .community__card {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       gap: 24px;
       max-width: 560px;
       padding: 24px;
@@ -287,9 +334,8 @@ const upcomingList = upcoming.slice(0, 4);
       letter-spacing: 2.4px;
     }
 
-    .community__lede {
-      font-size: 16px;
-      letter-spacing: 1.6px;
+    .community__panel--tinted {
+      padding: 20px;
     }
   }
 </style>

@@ -12,6 +12,7 @@ import {join} from 'path';
 import fs from 'fs';
 import {checkLinksInHtml, normalizeHtmlFilePath} from './astro-broken-links-checker-check-links.js';
 import fastGlob from 'fast-glob';
+import pLimit from 'p-limit';
 
 export default function astroBrokenLinksChecker(options = {}) {
   const logFilePath = options.logFilePath || 'broken-links.log';
@@ -43,7 +44,10 @@ export default function astroBrokenLinksChecker(options = {}) {
         logger.info(`Checking ${htmlFiles.length} html pages for broken links`);
         // start time
         const startTime = Date.now();
-        const checkHtmlPromises = htmlFiles.map(async (htmlFile) => {
+        // Bounded so only a few parsed pages are in memory at once; unbounded,
+        // every page's DOM is held together and the build runs out of heap.
+        const limitPages = pLimit(16);
+        const checkHtmlPromises = htmlFiles.map((htmlFile) => limitPages(async () => {
           const absoluteHtmlFilePath = join(distPath, htmlFile);
           const htmlContent = fs.readFileSync(absoluteHtmlFilePath, 'utf8');
           const baseUrl = normalizeHtmlFilePath(absoluteHtmlFilePath, distPath);
@@ -60,7 +64,7 @@ export default function astroBrokenLinksChecker(options = {}) {
             options.trailingSlash,
             options.basePath || '',
           );
-        });
+        }));
 
         await Promise.all(checkHtmlPromises);
         logBrokenLinks(brokenLinksMap, logFilePath, logger);

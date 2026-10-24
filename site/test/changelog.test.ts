@@ -113,7 +113,15 @@ describe('changelogFrontmatterSchema', () => {
   })
 })
 
-import { groupEntries, getAreaCounts, formatChangelogDate, escapeMarkdownInline } from '../src/util/changelog'
+import {
+  groupEntries,
+  getAreaCounts,
+  formatChangelogDate,
+  escapeMarkdownInline,
+  releaseHeadline,
+  latestPerStream,
+  type ChangelogRelease,
+} from '../src/util/changelog'
 
 describe('escapeMarkdownInline (.md endpoint safety)', () => {
   it('escapes snake_case so it does not render as italics', () => {
@@ -189,5 +197,47 @@ describe('getAreaCounts', () => {
 describe('formatChangelogDate', () => {
   it('formats as a short date', () => {
     expect(formatChangelogDate(new Date('2026-06-01T00:00:00Z'))).toMatch(/Jun 1, 2026/)
+  })
+})
+
+const mkRelease = (
+  date: string,
+  entries: ChangelogEntry[] = [],
+  stream: Partial<ChangelogRelease['data']> = {}
+): ChangelogRelease =>
+  ({
+    id: `${stream.sdk}-${stream.language}-${date}`,
+    data: { date: new Date(date), entries, ...stream },
+  }) as unknown as ChangelogRelease
+
+describe('releaseHeadline', () => {
+  it('prefers a feature, then a fix, and ignores other entry types', () => {
+    expect(
+      releaseHeadline(mkRelease('2026-10-01', [mk({ type: 'fix', title: 'f' }), mk({ type: 'feat', title: 'a' })]))
+    ).toBe('a')
+    expect(
+      releaseHeadline(mkRelease('2026-10-01', [mk({ type: 'chore', title: 'c' }), mk({ type: 'fix', title: 'f' })]))
+    ).toBe('f')
+    expect(releaseHeadline(mkRelease('2026-10-01', [mk({ type: 'chore', title: 'c' })]))).toBeUndefined()
+  })
+})
+
+describe('latestPerStream', () => {
+  it('keeps the newest release of each language stream for the product', () => {
+    const releases = [
+      mkRelease('2026-10-21', [], { sdk: 'harness', language: 'typescript', version: '0.3.1' }),
+      mkRelease('2026-10-20', [], { sdk: 'sdk', language: 'python', version: '1.62.0' }),
+      mkRelease('2026-10-19', [], { sdk: 'harness', language: 'typescript', version: '0.3.0' }),
+      mkRelease('2026-10-18', [], { sdk: 'harness', language: 'python', version: '0.2.0' }),
+    ]
+    expect(latestPerStream(releases, 'harness').map((r) => r.data.version)).toEqual(['0.3.1', '0.2.0'])
+  })
+
+  it('returns one release for single-stream products', () => {
+    const releases = [
+      mkRelease('2026-10-21', [], { sdk: 'box', version: '0.2.0' }),
+      mkRelease('2026-10-01', [], { sdk: 'box', version: '0.1.0' }),
+    ]
+    expect(latestPerStream(releases, 'box').map((r) => r.data.version)).toEqual(['0.2.0'])
   })
 })
