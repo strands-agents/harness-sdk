@@ -3,7 +3,6 @@ title: Build chat experiences with AG-UI and CopilotKit
 community: true
 description: 'Build streaming chat interfaces for Strands agents with the AG-UI protocol and CopilotKit front-end components.'
 integrationType: integration
-languages: Python
 sidebar:
   label: "AG-UI"
 ---
@@ -12,7 +11,7 @@ sidebar:
 As an agent builder, you want users to interact with your agents through a rich
 and responsive interface. Building UIs from scratch requires a lot of effort,
 especially to support streaming events and client state. That's exactly what
-[AG-UI](https://docs.ag-ui.com/) was designed for - rich user experiences
+[AG-UI](https://docs.ag-ui.com/) was designed for: rich user experiences
 directly connected to an agent.
 
 [AG-UI](https://github.com/ag-ui-protocol/ag-ui) provides a consistent interface
@@ -31,160 +30,289 @@ demonstrates some of the features supported by AG-UI.
 To get started, let's create a sample application with a Strands agent and a simple
 web client:
 
-```
+<Tabs>
+<Tab label="Python">
+
+```bash
 npx copilotkit create -f aws-strands-py
 ```
+</Tab>
+<Tab label="TypeScript">
 
-### Chat
-
-Chat is a familiar interface for exposing your agent, and AG-UI handles
-streaming messages between your users and agents:
-
-```jsx title="src/app/page.tsx"
-const labels = {
-    title: "Popup Assistant",
-    initial: "Hi, there! You\'re chatting with an agent. This agent comes with a few tools to get you started."
-  }
-<CopilotSidebar
-  clickOutsideToClose={false}
-  defaultOpen={true}
-  labels={labels}
-/>
+```bash
+npx copilotkit create -f aws-strands-ts
 ```
+</Tab>
+</Tabs>
 
-Learn more about the chat UI
-[in the CopilotKit docs](https://docs.copilotkit.ai/aws-strands/agentic-chat-ui).
+The CLI asks you to sign in to CopilotKit before it creates the app.
 
-### Tool Based Generative UI (Rendering Tools)
+### What the starter includes
 
-AG-UI lets you share tool information with a Generative UI so that it can be
-displayed to users:
+The starter app demonstrates three AG-UI features. The CopilotKit docs cover each one:
 
-```jsx title="src/app/page.tsx"
-useCopilotAction({
-  name: "get_weather",
-  description: "Get the weather for a given location.",
-  available: "disabled",
-  parameters: [
-    { name: "location", type: "string", required: true },
-  ],
-  render: ({ args }) => {
-    return <WeatherCard location={args.location} themeColor={themeColor} />
-  },
-});
-```
+- **Chat**: messages stream between your users and the agent. See
+  [Prebuilt components](https://docs.copilotkit.ai/strands/prebuilt-components).
+- **Tool-based generative UI**: the UI renders the agent's tool calls as components. See
+  [Tool call rendering](https://docs.copilotkit.ai/strands/generative-ui/tool-rendering).
+- **Shared state**: the agent and the UI read and write the same state, so each reacts to
+  changes the other makes. See
+  [Reading agent state](https://docs.copilotkit.ai/strands/shared-state/in-app-agent-read).
 
-Learn more about the Tool-based Generative UI
-[in the CopilotKit docs](https://docs.copilotkit.ai/aws-strands/generative-ui/backend-tools).
+### Run the app
 
-### Shared State
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY`, then install and start the app:
 
-Strands agents are stateful, and synchronizing that state between your agents and
-your UIs enables powerful and fluid user experiences. State can be synchronized
-both ways so agents are automatically aware of changes made by your user or
-other parts of your application:
-
-```jsx
-const { state, setState } = useCoAgent<AgentState>({
-  name: "my_agent",
-  initialState: {
-    proverbs: [
-      "CopilotKit may be new, but its the best thing since sliced bread.",
-    ],
-  },
-})
-```
-
-Learn more about shared state
-[in the CopilotKit docs](https://docs.copilotkit.ai/aws-strands/shared-state/in-app-agent-read).
-
-### Try it out!
-
-```
+```bash
 npm install && npm run dev
 ```
 
+## Serve an existing agent
+
+If you already have a Strands agent, you can expose it over AG-UI without the
+starter app. Install the AG-UI adapter for your SDK:
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+pip install ag-ui-strands uvicorn
+```
+
+`ag-ui-strands` installs `strands-agents` and FastAPI. Uvicorn runs the app.
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @ag-ui/aws-strands @strands-agents/sdk express
+```
+
+The server helpers in `@ag-ui/aws-strands/server` are built on Express.
+</Tab>
+</Tabs>
+
+Wrap your agent in the adapter's `StrandsAgent` and serve it:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import uvicorn
+from ag_ui_strands import StrandsAgent, create_strands_app
+from strands import Agent
+
+agent = Agent(system_prompt="You are a helpful assistant.")
+
+agui_agent = StrandsAgent(
+    agent=agent,
+    name="my_agent",
+    description="A Strands agent served over AG-UI",
+)
+
+app = create_strands_app(agui_agent, cors_enabled=False)
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+import { StrandsAgent } from '@ag-ui/aws-strands'
+import { createStrandsApp } from '@ag-ui/aws-strands/server'
+import { Agent } from '@strands-agents/sdk'
+
+const agent = new Agent({
+  systemPrompt: 'You are a helpful assistant.',
+})
+
+const aguiAgent = new StrandsAgent({
+  agent,
+  name: 'my_agent',
+  description: 'A Strands agent served over AG-UI',
+})
+
+const app = await createStrandsApp(aguiAgent)
+app.listen(8000, '127.0.0.1')
+```
+</Tab>
+</Tabs>
+
+The server accepts AG-UI requests at `http://localhost:8000/` and answers health
+checks at `/ping`. Neither example enables CORS, so a browser page on another
+origin can't read the server's responses. See the adapter README for
+[Python](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/aws-strands/python)
+or [TypeScript](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/aws-strands/typescript)
+to configure CORS, authentication, and per-tool behavior.
+
 ## Deploy to AgentCore
 
-Once you've built your agent with AG-UI, you can deploy it to AWS Bedrock AgentCore for production use. Install the [bedrock-agentcore](https://pypi.org/project/bedrock-agentcore/) CLI tool to get started.
+You can run the starter's agent on Amazon Bedrock AgentCore Runtime and keep the UI on
+your machine. AgentCore builds the agent into a container, checks a bearer token on every
+request, and serves AG-UI at `POST /invocations` on port 8080.
 
 :::note
-This guide is adapted for AG-UI. For general AgentCore deployment documentation, see [Deploy to Bedrock AgentCore](../../user-guide/sdk/deploy/deploy_to_bedrock_agentcore/index.md).
+This guide is adapted for AG-UI. For general AgentCore deployment documentation, see
+[Deploy to Amazon Bedrock AgentCore](../../user-guide/sdk/deploy/deploy_to_bedrock_agentcore/index.md).
 :::
 
-### Setup Authentication
+### Set up authentication
 
-First, configure Cognito for authentication:
+AgentCore validates a JSON Web Token (JWT) from Amazon Cognito on each request. Create a
+user pool, app client, and user with the script in
+[Set up Cognito user pool for authentication](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-mcp.html#runtime-mcp-appendix-a).
+It exports `REGION`, `POOL_ID`, `CLIENT_ID`, and `BEARER_TOKEN`, so run the remaining
+steps in the same shell.
 
-```bash
-agentcore identity setup-cognito
-```
+### Create an AgentCore project
 
-This creates a Cognito user pool and outputs:
-
-- Pool ID
-- Client ID
-- Discovery URL
-
-Follow the instructions for loading the environment variables:
+Install the [AgentCore CLI](https://www.npmjs.com/package/@aws/agentcore). If the
+Bedrock AgentCore Starter Toolkit is installed, uninstall it first
+(`pip uninstall bedrock-agentcore-starter-toolkit`): both provide an `agentcore` command.
 
 ```bash
-export $(grep -v '^#' .agentcore_identity_user.env | xargs)
+npm install -g @aws/agentcore
 ```
 
-### Configure Your Agent
-
-Navigate to your agent directory and run:
+From the starter's root directory, create a project in your Cognito region:
 
 ```bash
-cd agent
-agentcore configure -e main.py
+export AWS_REGION=$REGION
+agentcore create --name AguiStarter --template empty
+cd AguiStarter
 ```
 
-Respond to the prompts:
+Register the agent as an AG-UI runtime that accepts tokens from your app client. The
+environment variables move the starter's agent onto the path and port AgentCore expects,
+and pass it your OpenAI API key:
 
-1. **Agent name**: Press Enter to use the inferred name `main`, or provide your own
-2. **Dependency file**: Enter `pyproject.toml`
-3. **Deployment type**: Enter `2` for Container
-4. **Execution role**: Press Enter to auto-create
-5. **ECR Repository**: Press Enter to auto-create
-6. **OAuth authorizer**: Enter `yes`
-7. **OAuth discovery URL**: Paste the Discovery URL from the previous step
-8. **OAuth client IDs**: Paste the Client ID from the previous step
-9. **OAuth audience/scopes/claims**: Press Enter to skip
-10. **Request header allowlist**: Enter `no`
-11. **Memory configuration**: Enter `s` to skip
-
-### Launch Your Agent
-
-Deploy your agent with the required environment variables. AgentCore Runtime requires:
-
-- `POST /invocations` - Agent interaction endpoint (configured via `AGENT_PATH`)
-- `GET /ping` - Health check endpoint (created automatically by AG-UI)
+<Tabs>
+<Tab label="Python">
 
 ```bash
-agentcore launch --env AGENT_PORT=8080 --env AGENT_PATH=/invocations --env OPENAI_API_KEY=<your-api-key>
+DISCOVERY_URL="https://cognito-idp.$REGION.amazonaws.com/$POOL_ID"
+DISCOVERY_URL="$DISCOVERY_URL/.well-known/openid-configuration"
+AUTHORIZER=$(jq -nc --arg url "$DISCOVERY_URL" --arg client "$CLIENT_ID" \
+  '{customJwtAuthorizer: {discoveryUrl: $url, allowedClients: [$client]}}')
+ENV_VARS=$(jq -nc --arg key "$OPENAI_API_KEY" \
+  '{AGENT_PATH: "/invocations", OPENAI_API_KEY: $key}')
+
+agentcore add runtime --name agent --language python --protocol AGUI \
+  --authorizer-type CUSTOM_JWT --authorizer-configuration "$AUTHORIZER" \
+  --environment-variables "$ENV_VARS"
+```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+DISCOVERY_URL="https://cognito-idp.$REGION.amazonaws.com/$POOL_ID"
+DISCOVERY_URL="$DISCOVERY_URL/.well-known/openid-configuration"
+AUTHORIZER=$(jq -nc --arg url "$DISCOVERY_URL" --arg client "$CLIENT_ID" \
+  '{customJwtAuthorizer: {discoveryUrl: $url, allowedClients: [$client]}}')
+ENV_VARS=$(jq -nc --arg key "$OPENAI_API_KEY" \
+  '{AGENT_PORT: "8080", OPENAI_API_KEY: $key}')
+
+agentcore add runtime --name agent --language typescript --protocol AGUI \
+  --authorizer-type CUSTOM_JWT --authorizer-configuration "$AUTHORIZER" \
+  --environment-variables "$ENV_VARS"
+```
+</Tab>
+</Tabs>
+
+:::caution
+`agentcore add runtime` writes these environment variables, including `OPENAI_API_KEY`, to
+`agentcore/agentcore.json` in plain text, and anyone who can read the runtime's
+configuration in your account can see them. Keep `agentcore/agentcore.json` out of
+version control. For production, store the key with `agentcore add credentials api-key`
+and fetch it at request time through AgentCore Identity.
+:::
+
+### Add the agent code
+
+Copy the starter's agent into the runtime's folder, along with the agent Dockerfile that
+ships with the starter. The Dockerfile switches the runtime to a container build, which
+installs the exact dependency versions in the starter's lock file. Add it before your
+first deploy: AgentCore can't change an existing runtime's build type.
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+cp -R ../agent/main.py ../agent/pyproject.toml ../agent/uv.lock ../agent/src app/agent/
+cp ../docker/Dockerfile.agent app/agent/Dockerfile
 ```
 
-Your agent is now deployed and accessible through AgentCore!
+In `app/agent/Dockerfile`, change the port from `8000` to `8080` in the `EXPOSE` and
+`CMD` lines:
 
-### Connect Your Frontend
+```dockerfile
+EXPOSE 8080
 
-Return to the root directory and configure the environment variables to connect your UI to the deployed agent:
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+cp -R ../agent/package.json ../agent/package-lock.json ../agent/tsconfig.json \
+  ../agent/src app/agent/
+cp ../docker/Dockerfile.agent app/agent/Dockerfile
+```
+
+In `app/agent/src/server.ts`, serve the agent at `/invocations` instead of `/`:
+
+```typescript
+addStrandsExpressEndpoint(app, agent, { path: '/invocations' })
+```
+</Tab>
+</Tabs>
+
+### Deploy your agent
+
+```bash
+agentcore deploy
+```
+
+The first deploy bootstraps the AWS CDK in your account and region if it isn't already,
+then builds the container and creates the runtime. Save the runtime's ARN for the next
+step:
+
+```bash
+export AGENT_ARN=$(agentcore status --json \
+  | jq -r '.resources[] | select(.name == "agent") | .arn')
+```
+
+### Connect your frontend
+
+The starter's UI reaches the agent through `src/agent.ts`. Replace that file so it calls
+the runtime's invocation URL with your bearer token:
+
+```typescript title="src/agent.ts"
+import { HttpAgent } from '@ag-ui/client'
+
+export function createDefaultAgent(): HttpAgent {
+  return new HttpAgent({
+    url: process.env.AGENT_URL!,
+    headers: { Authorization: `Bearer ${process.env.AGENT_BEARER_TOKEN}` },
+  })
+}
+```
+
+Return to the starter's root directory, build the invocation URL from the ARN, and start
+the UI:
 
 ```bash
 cd ..
-export STRANDS_AGENT_URL="https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/{runtime-id}/invocations?accountId={account-id}&qualifier=DEFAULT"
-export STRANDS_AGENT_BEARER_TOKEN=$(agentcore identity get-cognito-inbound-token)
-```
-
-Replace `{runtime-id}` and `{account-id}` with your actual values from the AgentCore deployment output.
-
-Start the UI:
-
-```bash
+ENCODED_ARN=$(printf %s "$AGENT_ARN" | jq -sRr @uri)
+export AGENT_URL="https://bedrock-agentcore.$REGION.amazonaws.com"
+export AGENT_URL="$AGENT_URL/runtimes/$ENCODED_ARN/invocations?qualifier=DEFAULT"
+export AGENT_BEARER_TOKEN=$BEARER_TOKEN
 npm run dev:ui
 ```
+
+Cognito access tokens expire after an hour by default. When chat requests start failing
+with `401`, run the `initiate-auth` command from the Cognito setup script again and
+export the new token.
 
 ## Messaging platforms
 
@@ -195,9 +323,10 @@ for the full setup.
 
 ## Resources
 
-To see what other features you can build into your UI with AG-UI, refer to the CopilotKit docs:
+To see what other features you can build into your UI with AG-UI, refer to the CopilotKit
+docs:
 
-- [Agentic Generative UI](https://docs.copilotkit.ai/aws-strands/generative-ui/agentic)
-- [Frontend Actions](https://docs.copilotkit.ai/aws-strands/frontend-actions)
+- [Display-only generative UI](https://docs.copilotkit.ai/strands/generative-ui/your-components/display-only)
+- [Frontend tools](https://docs.copilotkit.ai/strands/frontend-tools)
 
 Or try them out in the [AG-UI Dojo](https://dojo.ag-ui.com).

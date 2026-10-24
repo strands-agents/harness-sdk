@@ -129,7 +129,8 @@ const href = card.external ? card.href : pathWithBase(card.href)
       <span class="cat-facts">
         <span class="cat-type">{TYPE_LABELS[card.integrationType]}</span>
         <span class="cat-langs">
-          {card.languages.map((l) => (l === 'python' ? 'Python' : 'TypeScript')).join(' · ')} · by {card.maintainer}
+          {card.languages.map((l) => (l === 'python' ? 'Python' : 'TypeScript')).join(' · ')} ·{' '}
+          <span class="cat-maintainer">by {card.maintainer}</span>
         </span>
       </span>
       <span class="cat-links">
