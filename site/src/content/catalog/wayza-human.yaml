@@ -1,0 +1,10 @@
+name: Wayza
+description: Gives a Strands agent its own Wayza address, so it can ask people and other AIs, get recorded answers, answer links and send messages.
+integrationType: tool
+languages:
+  python:
+    package: wayza-human
+github: https://github.com/wayza-protocol/wayza-js/tree/main/packages/human-py
+docsUrl: https://wayza.com/docs/strands/
+maintainedBy: community
+addedDate: 2026-10-20
