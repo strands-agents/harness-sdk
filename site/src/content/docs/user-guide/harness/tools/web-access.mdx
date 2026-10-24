@@ -6,7 +6,7 @@ sourceLinks:
   - path: harness-py/src/strands_harness/models.py
   - path: harness-ts/src/tools/web-fetch.ts
 sidebar:
-  label: "Web access"
+  label: 'Web access'
 ---
 
 Two default capabilities put the web within the agent's reach: `web_fetch` reads a
@@ -52,6 +52,7 @@ main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it wit
         ```
       </Tab>
     </Tabs>
+
   </Tab>
   <Tab label="SDK">
     <Tabs>
@@ -76,6 +77,7 @@ main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it wit
         ```
       </Tab>
     </Tabs>
+
   </Tab>
 </Tabs>
 
@@ -104,3 +106,22 @@ list or set it to `False`; see
 [add tools and instructions](../../configure/tools-and-instructions/) for
 how selection works. To change the summarizer model, see
 [choose a model and reasoning](../../configure/model/).
+
+## Serper-compatible web search
+
+Support any Serper.dev-compatible endpoint (like litescrape.com, serpbase.dev,
+serpensapi.org, and others). Set `SERPER_API_KEY` and optionally
+`SERPER_BASE_URL` to the API base URL, without `/search`.
+
+Import <Syntax py="make_serper_web_search" ts="makeSerperWebSearch" /> from
+
+<Syntax py="strands_harness.tools" ts="@strands-agents/harness" /> and call it to create the search tool. Pass the tool
+in the harness's `tools` list and set
+<Syntax py='builtin_tools={"web_search": False}' ts="builtinTools: { web_search: false }" /> to select this search
+provider.
+
+The tool returns up to 10 results in the existing numbered-source format. See
+[add tools and instructions](../../configure/tools-and-instructions/) for harness
+configuration.
+
+The default API base URL is `https://google.serper.dev`.
