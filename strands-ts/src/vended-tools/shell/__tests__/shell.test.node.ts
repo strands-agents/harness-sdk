@@ -1,19 +1,24 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { makeBash, makeShell, ShellTimeoutError, ShellExecutionError, type ShellOutput } from '../index.js'
 import { BashTimeoutError, BashSessionError } from '../../bash/types.js'
 import type { ToolContext } from '../../../index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { TestSandbox } from '../../../__fixtures__/test-sandbox.node.js'
+import { SandboxAbortError } from '../../../sandbox/errors.js'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
 describe.skipIf(process.platform === 'win32')('makeShell', () => {
-  const createSandboxShell = (): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
+  const createSandboxShell = (): {
+    sandboxShell: ReturnType<typeof makeShell>
+    context: ToolContext
+    sandbox: TestSandbox
+  } => {
     const workDir = mkdtempSync(join(tmpdir(), 'shell-sandbox-test-'))
     const sandbox = new TestSandbox(workDir)
     const sandboxShell = makeShell(sandbox)
-    const agent = createMockAgent()
+    const agent = createMockAgent({ extra: { sandbox } })
     const context: ToolContext = {
       toolUse: { name: 'shell', toolUseId: 'test-id', input: {} },
       agent,
@@ -23,7 +28,7 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
         throw new Error('interrupt not available in mock context')
       },
     }
-    return { sandboxShell, context }
+    return { sandboxShell, context, sandbox }
   }
 
   it('executes command via sandbox', async () => {
@@ -61,6 +66,94 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
   it('respects timeout', async () => {
     const { sandboxShell, context } = createSandboxShell()
     await expect(sandboxShell.invoke({ command: 'sleep 10', timeout: 0.1 }, context)).rejects.toThrow()
+  })
+
+  describe('cancellation', () => {
+    it.each([
+      ['bound', undefined],
+      ['bound', 7],
+      ['agent', undefined],
+      ['agent', 7],
+    ] as const)('forwards the execution-scoped signal to the %s sandbox with timeout %s', async (binding, timeout) => {
+      const { sandboxShell, context, sandbox } = createSandboxShell()
+      const shell = binding === 'bound' ? sandboxShell : makeShell()
+      const controller = new AbortController()
+      const execute = vi.spyOn(sandbox, 'execute').mockResolvedValue({
+        type: 'executionResult',
+        stdout: 'done',
+        stderr: '',
+        exitCode: 0,
+        outputFiles: [],
+      })
+      const result = await shell.invoke(
+        { command: 'test-command', timeout },
+        {
+          ...context,
+          cancelSignal: controller.signal,
+        }
+      )
+
+      expect(controller.signal).not.toBe(context.agent.cancelSignal)
+      expect(execute).toHaveBeenCalledExactlyOnceWith('test-command', {
+        timeout: timeout ?? 120,
+        signal: controller.signal,
+      })
+      expect(result).toEqual({ output: 'done', error: '', exit_code: 0 })
+    })
+
+    it('rejects pre-aborted work without executing a command', async () => {
+      const { sandboxShell, context, sandbox } = createSandboxShell()
+      const controller = new AbortController()
+      controller.abort(new Error('caller cancellation'))
+      const execute = vi.spyOn(sandbox, 'execute').mockResolvedValue({
+        type: 'executionResult',
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        outputFiles: [],
+      })
+
+      await expect(
+        sandboxShell.invoke(
+          { command: 'must-not-run' },
+          {
+            ...context,
+            cancelSignal: controller.signal,
+          }
+        )
+      ).rejects.toThrow(SandboxAbortError)
+      expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('preserves the sandbox cancellation error', async () => {
+      const { sandboxShell, context, sandbox } = createSandboxShell()
+      const cancellation = new SandboxAbortError()
+      vi.spyOn(sandbox, 'execute').mockRejectedValue(cancellation)
+      await expect(sandboxShell.invoke({ command: 'test-command' }, context)).rejects.toBe(cancellation)
+    })
+
+    it('cancels a running command after its readiness output', async () => {
+      const { sandboxShell, context, sandbox } = createSandboxShell()
+      const controller = new AbortController()
+      const executeStreaming = sandbox.executeStreaming.bind(sandbox)
+      vi.spyOn(sandbox, 'executeStreaming').mockImplementation(async function* (command, options) {
+        for await (const chunk of executeStreaming(command, options)) {
+          if (chunk.type === 'streamChunk' && chunk.streamType === 'stdout') controller.abort()
+          yield chunk
+        }
+      })
+
+      await expect(
+        sandboxShell.invoke(
+          { command: 'printf ready; exec sleep 30', timeout: 1 },
+          {
+            ...context,
+            cancelSignal: controller.signal,
+          }
+        )
+      ).rejects.toThrow(SandboxAbortError)
+      expect(controller.signal.aborted).toBe(true)
+    })
   })
 
   it('throws ShellTimeoutError on timeout', async () => {

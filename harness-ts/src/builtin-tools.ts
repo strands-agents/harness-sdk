@@ -5,7 +5,7 @@
  */
 
 import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
-import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
+import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
 
 import type { HarnessAgentOptions } from './agent.js'
 import {
