@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { ContextWindowOverflowError } from '../../../errors.js'
 import { FallbackStrategy } from '../fallback-strategy.js'
 import { ModelRouter } from '../router.js'
 import type { RoutingAttempt, RoutingContext } from '../strategy.js'
@@ -19,6 +20,8 @@ function context(count: number, attempts: readonly RoutingAttempt[] = []): Routi
 }
 
 describe('FallbackStrategy', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   describe('select', () => {
     it('uses declaration order before any attempt', async () => {
       const routingContext = context(2)
@@ -84,6 +87,73 @@ describe('FallbackStrategy', () => {
       const selected = await new FallbackStrategy().select({ ...routingContext, attempts })
 
       expect(selected).toBe(routingContext.candidates[0])
+    })
+
+    it('declines errors excluded by failOverOn', async () => {
+      const routingContext = context(2)
+      const attempts = [{ candidate: routingContext.candidates[0]!, exception: new TypeError('bad request') }]
+
+      const selected = await new FallbackStrategy({ failOverOn: [RangeError] }).select({
+        ...routingContext,
+        attempts,
+      })
+
+      expect(selected).toBeUndefined()
+    })
+
+    it('skips a cooling candidate across invocations and retries it after expiry', async () => {
+      const now = vi.spyOn(globalThis.performance, 'now').mockReturnValue(0)
+      const routingContext = context(2)
+      const strategy = new FallbackStrategy({ cooldown: 60 })
+      const attempts = [{ candidate: routingContext.candidates[0]!, exception: new Error('down') }]
+
+      expect(await strategy.select({ ...routingContext, attempts })).toBe(routingContext.candidates[1])
+
+      now.mockReturnValue(10_000)
+      expect(await strategy.select({ ...routingContext, attempts: [] })).toBe(routingContext.candidates[1])
+
+      now.mockReturnValue(61_000)
+      expect(await strategy.select({ ...routingContext, attempts: [] })).toBe(routingContext.candidates[0])
+    })
+
+    it('uses the earliest-expiring candidate when all candidates are cooling', async () => {
+      const now = vi.spyOn(globalThis.performance, 'now').mockReturnValue(0)
+      const routingContext = context(2)
+      const strategy = new FallbackStrategy({ cooldown: 60 })
+      const firstFailure = [{ candidate: routingContext.candidates[0]!, exception: new Error('first down') }]
+      expect(await strategy.select({ ...routingContext, attempts: firstFailure })).toBe(routingContext.candidates[1])
+
+      now.mockReturnValue(10_000)
+      const secondFailure = [
+        ...firstFailure,
+        { candidate: routingContext.candidates[1]!, exception: new Error('second down') },
+      ]
+      expect(await strategy.select({ ...routingContext, attempts: secondFailure })).toBeUndefined()
+
+      now.mockReturnValue(20_000)
+      expect(await strategy.select({ ...routingContext, attempts: [] })).toBe(routingContext.candidates[0])
+    })
+
+    it('uses only a larger context candidate for overflow without cooling the source', async () => {
+      vi.spyOn(globalThis.performance, 'now').mockReturnValue(0)
+      const models = [8_000, 4_000, 16_000].map((contextWindowLimit) => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+        model.updateConfig({ contextWindowLimit })
+        return model
+      })
+      const router = new ModelRouter(models)
+      const routingContext: RoutingContext = {
+        messages: [],
+        toolSpecs: [],
+        candidates: router.candidates,
+        invocationState: {},
+        attempts: [],
+      }
+      const strategy = new FallbackStrategy({ cooldown: 60 })
+      const attempts = [{ candidate: router.candidates[0]!, exception: new ContextWindowOverflowError('too large') }]
+
+      expect(await strategy.select({ ...routingContext, attempts })).toBe(router.candidates[2])
+      expect(await strategy.select(routingContext)).toBe(router.candidates[0])
     })
   })
 })
