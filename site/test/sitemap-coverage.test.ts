@@ -170,6 +170,22 @@ describe('Known Routes', () => {
     ).toEqual([])
   })
 
+  // Registering every page keeps its URL covered by the test below once the page
+  // moves, so a move without a redirect rule fails here instead of 404ing.
+  it('every docs page has a corresponding entry in legacy-routes.json', async () => {
+    const knownRoutes = new Set<string>(JSON.parse(fs.readFileSync(KNOWN_ROUTES_PATH, 'utf-8')))
+    const docs = await getCollection('docs')
+
+    const missing = docs
+      .map((doc) => `/${doc.id}/`)
+      .filter((route) => route.startsWith('/docs/') && !route.startsWith('/docs/api/') && !knownRoutes.has(route))
+
+    expect(
+      missing,
+      `${missing.length} docs page(s) are missing from legacy-routes.json. Run: npm run routes:update`
+    ).toEqual([])
+  })
+
   it('every known route resolves to a valid CMS entry', async () => {
     const knownRoutes: string[] = JSON.parse(fs.readFileSync(KNOWN_ROUTES_PATH, 'utf-8'))
     const docs = await getCollection('docs')
@@ -201,6 +217,8 @@ describe('Known Routes', () => {
 
     const broken: Array<{ url: string; resolved: string }> = []
     for (const routePath of knownRoutes) {
+      // A live page is served as-is; redirect rules only apply once it's gone.
+      if (validIds.has(routePath.replace(/^\/+|\/+$/g, ''))) continue
       const resolved = resolveRedirectFromUrl(routePath, redirectFromMap)
       if (!resolved || resolved === '/') continue
       // External redirects (e.g. GitHub) are always valid

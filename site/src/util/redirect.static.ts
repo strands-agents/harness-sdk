@@ -85,6 +85,11 @@ function scanContent(contentDir: string): { slugs: Set<string>; redirectFromEntr
   return { slugs, redirectFromEntries }
 }
 
+/** Every docs page slug under contentDir, as the content collection will id it. */
+export function docsPageSlugs(contentDir: string): Set<string> {
+  return scanContent(contentDir).slugs
+}
+
 /**
  * Scan the Astro pages directory for statically routable page slugs
  * (integrations.astro → "integrations"), so redirect rules can target custom
@@ -205,6 +210,9 @@ export function buildStaticRedirects(
 
   for (const route of legacyRoutes) {
     const source = route.replace(/^\/+|\/+$/g, '')
+    // A live page is served as-is; prefix rules (e.g. harness/ → sdk/) only
+    // apply once it's gone.
+    if (validSlugs.has(source)) continue
     const target = resolveRedirectFromUrl(route, redirectFromEntries)
     if (!target) continue
 

@@ -39,6 +39,16 @@ const redirectCases: Array<{ description: string; input: string; expected: strin
     expected: 'docs/user-guide/sdk/bidi/events',
   },
   {
+    description: 'shell-sdk/ renamed to shell/',
+    input: 'docs/user-guide/shell-sdk/quickstart',
+    expected: 'docs/user-guide/shell/quickstart',
+  },
+  {
+    description: 'shell-sdk section root -> shell',
+    input: 'docs/user-guide/shell-sdk',
+    expected: 'docs/user-guide/shell',
+  },
+  {
     description: 'legacy example tutorial -> /examples/ catalog',
     input: 'docs/examples/python/multi_agent_example',
     expected: 'examples',

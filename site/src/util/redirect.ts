@@ -215,6 +215,12 @@ const PREFIX_SLUG_RULES: SlugRule[] = [
     to: (m) => `docs/user-guide/sdk/bidi${m[1] ?? ''}`,
   },
 
+  // shell-sdk/ → shell/ section rename (#2860).
+  {
+    match: /^docs\/user-guide\/shell-sdk(\/.+)?$/,
+    to: (m) => `docs/user-guide/shell${m[1] ?? ''}`,
+  },
+
   // docs/community/ → docs/integrations/ section rename.
   { match: startsWith('docs/community'), to: (m) => `docs/integrations/${m[1]}` },
 
