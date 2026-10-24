@@ -1,20 +1,26 @@
-"""Truncate strategy — replaces oversized content with a preview."""
+"""Truncate strategy — keeps a head/tail preview of oversized blocks, or of the old messages."""
 
 from __future__ import annotations
 
 import logging
-import math
+import re
 from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
-from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
+from ...methods.truncate import (
+    TruncateConfig,
+    _is_truncated,
+    _resolve_head_share,
+    _resolve_preview_tokens,
+    _truncate_text_block,
+    _truncate_tool_result,
+)
 from ...stash import Stash, _format_stash_refs
 from ...types import is_text_block
 from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
     OffloadTarget,
-    _build_conditions,
     _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
@@ -28,6 +34,8 @@ from ...types import ContextState
 
 logger = logging.getLogger(__name__)
 
+_ELISION_MARKER = re.compile(r"\[\.\.\. \d+ messages? elided \.\.\.\]")
+
 
 def _append_stash_refs_to_tool_result(block: ContentBlock, refs: str) -> None:
     """Append stash ref annotation to the first text entry of a tool result in place."""
@@ -40,7 +48,7 @@ def _append_stash_refs_to_tool_result(block: ContentBlock, refs: str) -> None:
 
 
 class TruncateStrategy(BaseOffloadStrategy):
-    """Truncate strategy — replaces oversized content with a head/tail preview."""
+    """Truncate strategy — keeps a head/tail preview of oversized blocks, or of the old messages."""
 
     @property
     def name(self) -> str:
@@ -53,36 +61,44 @@ class TruncateStrategy(BaseOffloadStrategy):
         config: TruncateConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
-        super().__init__(target, conditions)
         self._truncate_config: TruncateConfig = config or {}
+        super().__init__(target, conditions)
 
-        raw_preview = self._truncate_config.get("preview_tokens", 1000)
-        preview_tokens = raw_preview if isinstance(raw_preview, (int, float)) and math.isfinite(raw_preview) else 1000
-
-        if (
-            conditions
-            and "threshold" in conditions
-            and isinstance(conditions["threshold"], (int, float))
-            and conditions["threshold"] <= preview_tokens
-        ):
+        preview_tokens = _resolve_preview_tokens(self._truncate_config)
+        threshold = (conditions or {}).get("threshold")
+        # A percent resolves against the window at apply time; skipping already-truncated blocks keeps it convergent.
+        if isinstance(threshold, int) and threshold <= preview_tokens:
             raise ValueError(
-                f"threshold ({conditions['threshold']}) must be greater than preview_tokens ({preview_tokens}) "
+                f"threshold ({threshold}) must be greater than preview_tokens ({preview_tokens}) "
                 "to ensure truncation converges"
             )
 
-    def when(
-        self,
-        *,
-        threshold: int | None = None,
-        utilization: float | None = None,
-        preserve_recent: int | float = 0,
-    ) -> TruncateStrategy:
-        """Return a new instance with the given conditions applied."""
-        return TruncateStrategy(
-            self._target,
-            self._truncate_config,
-            _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
-        )
+    def _default_threshold(self) -> int:
+        return _resolve_preview_tokens(self._truncate_config)
+
+    async def _apply_per_message(self, context: ContextState) -> bool:
+        """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle."""
+        messages = context.messages
+        # Skipping earlier markers lets a pass with nothing new to elide return False instead of re-eliding them.
+        eligible = [msg for msg in self._get_eligible_messages(context) if not _has_elision_marker(msg)]
+        middle = await self._middle_of(eligible, context.agent)
+        if not middle:
+            return False
+
+        removed, lowest_index = _splice_with_pairs(messages, middle)
+        if removed == 0:
+            return False
+
+        _insert_marker(messages, lowest_index, self._make_removal_marker(removed))
+        _repair_alternation(messages)
+        return True
+
+    async def _middle_of(self, eligible: list[Message], agent: Agent) -> list[Message]:
+        preview_tokens = _resolve_preview_tokens(self._truncate_config)
+        head_budget = int(preview_tokens * _resolve_head_share(self._truncate_config))
+        head = await _count_within_budget(eligible, head_budget, agent)
+        tail = await _count_within_budget(eligible[head:][::-1], preview_tokens - head_budget, agent)
+        return eligible[head : len(eligible) - tail]
 
     def _make_removal_marker(self, count: int) -> str:
         word = "message" if count == 1 else "messages"
@@ -97,6 +113,8 @@ class TruncateStrategy(BaseOffloadStrategy):
         stash_refs: list[str],
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
+        if _is_truncated(block):
+            return None
         refs = _format_stash_refs(stash_refs)
         if "toolResult" in block:
             tool_use_id = block["toolResult"]["toolUseId"]
@@ -118,6 +136,20 @@ class TruncateStrategy(BaseOffloadStrategy):
             return result
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
         return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
+
+
+async def _count_within_budget(messages: list[Message], budget: int, agent: Agent) -> int:
+    """Count how many leading messages fit within ``budget`` tokens."""
+    used = 0
+    for count, message in enumerate(messages):
+        used += await agent.model.count_tokens([message])
+        if used > budget:
+            return count
+    return len(messages)
+
+
+def _has_elision_marker(message: Message) -> bool:
+    return any(is_text_block(block) and _ELISION_MARKER.fullmatch(block["text"]) for block in message["content"])
 
 
 _EMERGENCY_REMOVAL_RATIO = 0.2

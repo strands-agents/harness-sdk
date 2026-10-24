@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .base import OffloadStrategyBuilder
 from .drop import DropStrategy
 from .summarize import SummarizeStrategy
 from .truncate import TruncateStrategy
@@ -19,22 +20,22 @@ class _OffloadNamespace:
 
     Example:
         >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(threshold=1500)
-        >>> Offload.summarize("*").when(utilization=0.85, preserve_recent=2)
-        >>> Offload.drop("tool_result_errors").when(threshold=500)
+        >>> Offload.summarize("*").when(utilization="85%", preserve_recent=2)
+        >>> Offload.drop("tool_result_errors").when()
     """
 
-    def drop(self, target: OffloadTarget) -> DropStrategy:
+    def drop(self, target: OffloadTarget) -> OffloadStrategyBuilder:
         """Drop matching content from context window entirely.
 
         Args:
             target: What content to target for dropping.
 
         Returns:
-            A DropStrategy builder (usable directly or with .when()).
+            A builder; call ``.when()`` on it to get the strategy.
         """
-        return DropStrategy(target)
+        return OffloadStrategyBuilder(target, lambda conditions: DropStrategy(target, conditions))
 
-    def truncate(self, target: OffloadTarget, config: TruncateConfig | None = None) -> TruncateStrategy:
+    def truncate(self, target: OffloadTarget, config: TruncateConfig | None = None) -> OffloadStrategyBuilder:
         """Replace oversized content with a preview.
 
         Args:
@@ -42,11 +43,11 @@ class _OffloadNamespace:
             config: Method-specific config (preview_tokens, preview mode).
 
         Returns:
-            A TruncateStrategy builder (usable directly or with .when()).
+            A builder; call ``.when()`` on it to get the strategy.
         """
-        return TruncateStrategy(target, config)
+        return OffloadStrategyBuilder(target, lambda conditions: TruncateStrategy(target, config, conditions))
 
-    def summarize(self, target: OffloadTarget, config: SummarizeConfig | None = None) -> SummarizeStrategy:
+    def summarize(self, target: OffloadTarget, config: SummarizeConfig | None = None) -> OffloadStrategyBuilder:
         """Replace oversized content with an LLM-generated summary.
 
         Args:
@@ -54,9 +55,9 @@ class _OffloadNamespace:
             config: Method-specific config (model, system_prompt).
 
         Returns:
-            A SummarizeStrategy builder (usable directly or with .when()).
+            A builder; call ``.when()`` on it to get the strategy.
         """
-        return SummarizeStrategy(target, config)
+        return OffloadStrategyBuilder(target, lambda conditions: SummarizeStrategy(target, config, conditions))
 
 
 Offload = _OffloadNamespace()

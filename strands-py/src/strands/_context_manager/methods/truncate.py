@@ -16,6 +16,10 @@ from ...types.tools import ToolResult, ToolResultContent
 
 DEFAULT_PREVIEW_TOKENS = 1000
 CHARS_PER_TOKEN = 4
+TRUNCATED_PREFIX = "[Truncated:"
+
+_PREVIEW_HEAD_SHARE = {"head": 1.0, "tail": 0.0, "head_tail": 0.6}
+"""Share of the preview budget kept from the start; the rest is kept from the end."""
 
 
 class TruncateConfig(TypedDict, total=False):
@@ -30,24 +34,34 @@ class TruncateConfig(TypedDict, total=False):
     preview: Literal["head", "tail", "head_tail"]
 
 
+def _resolve_preview_tokens(config: TruncateConfig | None) -> int:
+    raw_preview_tokens = (config or {}).get("preview_tokens", DEFAULT_PREVIEW_TOKENS)
+    if isinstance(raw_preview_tokens, (int, float)) and math.isfinite(raw_preview_tokens):
+        return max(0, int(raw_preview_tokens))
+    return DEFAULT_PREVIEW_TOKENS
+
+
+def _resolve_head_share(config: TruncateConfig | None) -> float:
+    return _PREVIEW_HEAD_SHARE.get((config or {}).get("preview", "head_tail"), 0.6)
+
+
+def _is_truncated(block: ContentBlock) -> bool:
+    """Whether the block already holds a truncation preview."""
+    if "toolResult" in block:
+        texts = [item["text"] for item in block["toolResult"]["content"] if "text" in item]
+        return bool(texts) and texts[0].startswith(TRUNCATED_PREFIX)
+    return "text" in block and block["text"].startswith(TRUNCATED_PREFIX)
+
+
 def _build_preview(full_text: str, block_count: int, config: TruncateConfig | None = None) -> str:
     """Build a head/tail preview of the text, or return the original if within budget."""
-    config = config or {}
-    raw_preview_tokens = config.get("preview_tokens", DEFAULT_PREVIEW_TOKENS)
-    preview_tokens = (
-        max(0, int(raw_preview_tokens))
-        if isinstance(raw_preview_tokens, (int, float)) and math.isfinite(raw_preview_tokens)
-        else DEFAULT_PREVIEW_TOKENS
-    )
-    preview_chars = preview_tokens * CHARS_PER_TOKEN
-    preview_mode = config.get("preview", "head_tail")
+    preview_chars = _resolve_preview_tokens(config) * CHARS_PER_TOKEN
     total_chars = len(full_text)
 
     if total_chars <= preview_chars:
         return full_text
 
-    head_share = {"head": 1.0, "tail": 0.0, "head_tail": 0.6}.get(preview_mode, 0.6)
-    head_chars = int(preview_chars * head_share)
+    head_chars = int(preview_chars * _resolve_head_share(config))
     tail_chars = preview_chars - head_chars
     head = full_text[:head_chars]
     tail = full_text[-tail_chars:] if tail_chars > 0 else ""
@@ -57,7 +71,7 @@ def _build_preview(full_text: str, block_count: int, config: TruncateConfig | No
 
     blocks_word = "block" if block_count == 1 else "blocks"
     approx_tokens = math.ceil(total_chars / CHARS_PER_TOKEN)
-    result = f"[Truncated: {block_count} {blocks_word}, ~{approx_tokens:,} tokens]\n\n{preview}"
+    result = f"{TRUNCATED_PREFIX} {block_count} {blocks_word}, ~{approx_tokens:,} tokens]\n\n{preview}"
 
     if len(result) >= total_chars:
         return full_text

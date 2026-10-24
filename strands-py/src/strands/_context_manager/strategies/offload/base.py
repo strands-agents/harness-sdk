@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
 from ....agent.invocation_context import _invocation_context_kwargs
+from ....models._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
 from ...stash import Stash
-from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
+from ...types import ContextState, ContextStrategy, is_text_block, is_tool_result_block, is_tool_use_block
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
@@ -28,42 +32,119 @@ OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_te
 
 
 class OffloadConditions(TypedDict, total=False):
-    """Conditions that determine when an offload strategy fires.
+    """Conditions that determine when and on what an offload strategy acts.
+
+    A number is a count in the condition's unit, and a ``"N%"`` string is a share of the whole.
+    Target ``"*"`` without ``threshold`` acts on whole messages; any other target, or any
+    ``threshold``, acts on individual blocks.
 
     Attributes:
-        threshold: Token threshold above which individual blocks are offloaded.
-        utilization: Context utilization ratio (0-1+) above which the strategy fires.
-        preserve_recent: Messages to preserve. An integer keeps that many most-recent
-            matches; a float between 0 and 1 (exclusive) is treated as a ratio of
-            the matching messages.
+        utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
+            window; a whole number above 1 fires at that many conversation tokens, up to the
+            model's context window.
+        threshold: Which blocks the strategy acts on. A whole number selects blocks over
+            that many tokens; ``"5%"`` selects blocks over 5% of the context window.
+        preserve_recent: Matching messages the strategy never touches. A whole number keeps that
+            many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
     """
 
-    threshold: int
-    utilization: float
-    preserve_recent: int | float
+    utilization: float | str
+    threshold: int | str
+    preserve_recent: int | float | str
 
 
-def _finite_or_none(value: int | float | None) -> int | float | None:
-    if isinstance(value, (int, float)) and math.isfinite(value):
-        return max(0, value)
-    return None
+@dataclass(frozen=True)
+class _Measure:
+    """A parsed condition value: an absolute count, or a share of a whole."""
+
+    value: float
+    is_share: bool
+
+    def of(self, whole: float) -> float:
+        """Resolve against ``whole``: a share scales it, a count stands on its own."""
+        return self.value * whole if self.is_share else self.value
+
+
+_PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)%")
+_UTILIZATION_FORMS = 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count'
+_THRESHOLD_FORMS = 'a whole token count or a "N%" string up to "100%"'
+_PRESERVE_RECENT_FORMS = 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)'
+
+
+def _invalid_condition(name: str, value: object, forms: str) -> ValueError:
+    return ValueError(f"{name}={value!r} is invalid: expected {forms}")
+
+
+def _percent_share(value: str) -> float | None:
+    match = _PERCENT_PATTERN.fullmatch(value)
+    return float(match.group(1)) / 100 if match else None
+
+
+def _parse_utilization(value: int | float | str) -> _Measure:
+    if isinstance(value, str):
+        share = _percent_share(value)
+        if share is None or not 0 < share <= 1:
+            raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
+        return _Measure(share, is_share=True)
+    if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+        raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
+    if value <= 1:
+        return _Measure(float(value), is_share=True)
+    if isinstance(value, float):
+        raise _invalid_condition("utilization", value, _UTILIZATION_FORMS)
+    return _Measure(float(value), is_share=False)
+
+
+def _parse_threshold(value: int | str) -> _Measure:
+    if isinstance(value, str):
+        share = _percent_share(value)
+        if share is None or not 0 < share <= 1:
+            raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
+        return _Measure(share, is_share=True)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise _invalid_condition("threshold", value, _THRESHOLD_FORMS)
+    return _Measure(float(value), is_share=False)
+
+
+def _parse_preserve_recent(value: int | float | str) -> _Measure:
+    if isinstance(value, str):
+        share = _percent_share(value)
+        if share is None or not 0 <= share < 1:
+            raise _invalid_condition("preserve_recent", value, _PRESERVE_RECENT_FORMS)
+        return _Measure(share, is_share=True)
+    if isinstance(value, bool) or not math.isfinite(value) or value < 0:
+        raise _invalid_condition("preserve_recent", value, _PRESERVE_RECENT_FORMS)
+    if isinstance(value, float):
+        if value >= 1:
+            raise _invalid_condition("preserve_recent", value, _PRESERVE_RECENT_FORMS)
+        return _Measure(value, is_share=True)
+    return _Measure(float(value), is_share=False)
 
 
 def _build_conditions(
     *,
-    threshold: int | None = None,
-    utilization: float | None = None,
-    preserve_recent: int | float = 0,
+    utilization: float | str | None = None,
+    threshold: int | str | None = None,
+    preserve_recent: int | float | str = 0,
 ) -> OffloadConditions:
     """Build an OffloadConditions dict from explicit kwargs."""
     conditions = OffloadConditions()
-    if threshold is not None:
-        conditions["threshold"] = threshold
     if utilization is not None:
         conditions["utilization"] = utilization
+    if threshold is not None:
+        conditions["threshold"] = threshold
     if preserve_recent:
         conditions["preserve_recent"] = preserve_recent
     return conditions
+
+
+def _validate_target(target: OffloadTarget | None) -> None:
+    if isinstance(target, list) and len(target) == 0:
+        raise ValueError("Empty array target matches nothing — provide at least one target")
+
+
+def _window_limit(agent: Agent) -> int:
+    return agent.model.context_window_limit or DEFAULT_CONTEXT_WINDOW_LIMIT
 
 
 def _build_tool_name_map(messages: Messages) -> dict[str, str]:
@@ -143,21 +224,18 @@ def _message_matches_target(
 def _get_oldest_matches(
     messages: Messages,
     target: OffloadTarget | None,
-    count: int | float,
+    preserve: _Measure,
     tool_name_map: dict[str, str],
     tool_include_filter: set[str] | None,
     tool_exclude_filter: set[str] | None,
 ) -> list[Message]:
-    """Return target-matching messages excluding the ``count`` most recent matches.
-
-    When ``0 < count < 1`` it is treated as a ratio of the matching messages to preserve.
-    """
+    """Return target-matching messages excluding the most recent ones ``preserve`` keeps."""
     matching = [
         msg
         for msg in messages
         if _message_matches_target(msg, target, tool_name_map, tool_include_filter, tool_exclude_filter)
     ]
-    resolved = math.ceil(len(matching) * count) if 0 < count < 1 else int(count)
+    resolved = math.ceil(preserve.of(len(matching)))
     if resolved <= 0:
         return matching
     if resolved >= len(matching):
@@ -291,7 +369,7 @@ def _resolve_tool_filter(target: OffloadTarget | None) -> tuple[set[str] | None,
 
 
 class BaseOffloadStrategy(ABC):
-    """Shared offload logic: target routing, eager hooks, preserveRecent."""
+    """Shared offload logic: target routing, conditions, eager hooks, and both granularities."""
 
     @property
     @abstractmethod
@@ -300,41 +378,95 @@ class BaseOffloadStrategy(ABC):
         ...
 
     _target: OffloadTarget | None
-    _threshold: int | None
-    _utilization_threshold: float | None
-    _preserve_recent: float
+    _utilization: _Measure | None
+    _threshold: _Measure | None
+    _preserve_recent: _Measure
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
     _stash: Stash | None
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
-        if isinstance(target, list) and len(target) == 0:
-            raise ValueError("Empty array target matches nothing — provide at least one target")
+        """Initialize the strategy.
 
+        Args:
+            target: Content the strategy applies to.
+            conditions: Conditions from ``.when()``. ``None`` skips condition validation, for
+                internal strategies that override ``apply``.
+
+        Raises:
+            ValueError: If ``target`` is an empty list, a condition value is invalid, or a
+                message-level strategy has no ``utilization`` or ``preserve_recent``.
+        """
+        _validate_target(target)
         self._target = target
         self._stash = None
+        conditions_given = conditions is not None
         conditions = conditions or {}
-        threshold = _finite_or_none(conditions.get("threshold"))
-        self._threshold = int(threshold) if threshold is not None else None
-        util = _finite_or_none(conditions.get("utilization"))
-        self._utilization_threshold = float(util) if util is not None else None
-        preserve = _finite_or_none(conditions.get("preserve_recent"))
-        self._preserve_recent = float(preserve) if preserve is not None else 0
-
+        utilization = conditions.get("utilization")
+        threshold = conditions.get("threshold")
+        self._utilization = _parse_utilization(utilization) if utilization is not None else None
+        self._threshold = _parse_threshold(threshold) if threshold is not None else None
+        self._preserve_recent = _parse_preserve_recent(conditions.get("preserve_recent", 0))
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
+        if conditions_given and self._acts_on_messages and self._utilization is None and not self._preserves_recent:
+            method = self.name.removeprefix("offload:")
+            raise ValueError(
+                f'Offload.{method}("*") without threshold acts on whole messages; set utilization or preserve_recent'
+            )
+
     @property
-    def _is_message_level(self) -> bool:
-        return self._utilization_threshold is not None
+    def _acts_on_messages(self) -> bool:
+        return self._target == "*" and self._threshold is None
+
+    @property
+    def _preserves_recent(self) -> bool:
+        return self._preserve_recent.value > 0
+
+    @property
+    def _runs_eagerly(self) -> bool:
+        """Whether the eager hook processes each message as it arrives."""
+        return self._utilization is None and not self._preserves_recent and not self._acts_on_messages
+
+    def _default_threshold(self) -> int:
+        """Block size, in tokens, at or under which blocks are left alone when no threshold is set."""
+        return 0
+
+    def _resolve_threshold(self, agent: Agent) -> int:
+        if self._threshold is None:
+            return self._default_threshold()
+        if not self._threshold.is_share:
+            return int(self._threshold.value)
+        return math.ceil(self._threshold.of(_window_limit(agent)))
+
+    def _check_utilization_fits(self, agent: Agent) -> None:
+        if self._utilization is None or self._utilization.is_share:
+            return
+        limit = agent.model.context_window_limit
+        if limit and self._utilization.value > limit:
+            raise ValueError(
+                f"utilization ({int(self._utilization.value)}) is larger than the model's context window "
+                f'({limit} tokens); use a smaller token count or a "N%" share'
+            )
+
+    def _utilization_reached(self, context: ContextState) -> bool:
+        if self._utilization is None or context.overflow:
+            return True
+        if self._utilization.is_share:
+            return context.utilization >= self._utilization.value
+        return context.utilization >= self._utilization.value / _window_limit(context.agent)
 
     def init(self, agent: Agent, stash: Stash | None = None) -> None:
-        """Register eager hooks if this is a per-block strategy without preserveRecent."""
+        """Check utilization against the model's context window, then register the eager hook if this runs eagerly.
+
+        Raises:
+            ValueError: If ``utilization`` is a token count larger than the model's context window.
+        """
         self._stash = stash
+        self._check_utilization_fits(agent)
         from ....hooks.events import MessageAddedEvent
 
-        if self._is_message_level:
-            return
-        if self._preserve_recent > 0:
+        if not self._runs_eagerly:
             return
 
         async def _eager_hook(event: MessageAddedEvent) -> None:
@@ -354,11 +486,10 @@ class BaseOffloadStrategy(ABC):
     async def apply(self, context: ContextState) -> bool:
         """Apply the strategy to the context."""
         self._stash = context.stash
-        if self._is_message_level:
-            if not context.overflow and context.utilization < self._utilization_threshold:  # type: ignore[operator]
-                return False
+        if not self._utilization_reached(context):
+            return False
+        if self._acts_on_messages:
             return await self._apply_per_message(context)
-
         return await self._apply_per_block(context)
 
     async def _apply_per_block(self, context: ContextState) -> bool:
@@ -371,9 +502,13 @@ class BaseOffloadStrategy(ABC):
             _get_oldest_matches(
                 messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
             )
-            if self._preserve_recent > 0
+            if self._preserves_recent
             else list(messages)
         )
+
+        # Without the eager hook, the last message is one the model has not yet responded to.
+        if not self._runs_eagerly and eligible and eligible[-1] is messages[-1]:
+            eligible.pop()
 
         acted = False
         index_map = {id(msg): i for i, msg in enumerate(messages)}
@@ -394,7 +529,7 @@ class BaseOffloadStrategy(ABC):
         if len(messages) <= 1:
             return False
 
-        eligible = await self._get_eligible_messages(context)
+        eligible = self._get_eligible_messages(context)
         if not eligible:
             return False
 
@@ -438,7 +573,7 @@ class BaseOffloadStrategy(ABC):
         invocation_context: InvocationContext | None = None,
     ) -> bool:
         """Process eligible blocks in a message."""
-        effective_threshold = self._threshold or 0
+        effective_threshold = self._resolve_threshold(agent)
         acted = False
         content = message["content"]
         for block_index in range(len(content)):
@@ -465,48 +600,23 @@ class BaseOffloadStrategy(ABC):
 
         return acted
 
-    async def _get_eligible_messages(self, context: ContextState) -> list[Message]:
-        """Collect eligible messages for message-level operations."""
+    def _get_eligible_messages(self, context: ContextState) -> list[Message]:
+        """Collect the messages a message-level strategy may act on, oldest first.
+
+        Excludes message 0, pinned messages, and the matches ``preserve_recent`` keeps.
+        """
         messages = context.messages
         tool_name_map = _build_tool_name_map(messages)
-
-        if self._preserve_recent > 0:
-            oldest = _get_oldest_matches(
-                messages,
-                self._target,
-                self._preserve_recent,
-                tool_name_map,
-                self._include_filter,
-                self._exclude_filter,
-            )
-            index_map = {id(msg): i for i, msg in enumerate(messages)}
-            candidates = [
-                msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
-            ]
-        else:
-            candidates = [
-                msg
-                for idx, msg in enumerate(messages)
-                if idx > 0
-                and not is_pinned(messages, idx)
-                and _message_matches_target(
-                    msg, self._target, tool_name_map, self._include_filter, self._exclude_filter
-                )
-            ]
-
-        if self._threshold is None:
-            return candidates
-
-        eligible: list[Message] = []
-        for message in candidates:
-            for block in message["content"]:
-                if not self._block_matches_target(block, message, tool_name_map):
-                    continue
-                tokens = await context.agent.model.count_tokens([Message(role=message["role"], content=[block])])
-                if tokens > self._threshold:
-                    eligible.append(message)
-                    break
-        return eligible
+        oldest = _get_oldest_matches(
+            messages,
+            self._target,
+            self._preserve_recent,
+            tool_name_map,
+            self._include_filter,
+            self._exclude_filter,
+        )
+        index_map = {id(msg): i for i, msg in enumerate(messages)}
+        return [msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])]
 
     @abstractmethod
     async def _replace_block(
@@ -520,3 +630,51 @@ class BaseOffloadStrategy(ABC):
     ) -> ContentBlock | None:
         """Transform a block. Return the replacement, or None to skip."""
         ...
+
+
+class OffloadStrategyBuilder:
+    """An offload strategy waiting for its conditions. Call ``.when()`` to get the strategy."""
+
+    def __init__(self, target: OffloadTarget, factory: Callable[[OffloadConditions], ContextStrategy]) -> None:
+        """Initialize the builder.
+
+        Args:
+            target: Content the strategy applies to.
+            factory: Builds the strategy from its conditions.
+
+        Raises:
+            ValueError: If ``target`` is an empty list.
+        """
+        _validate_target(target)
+        self._factory = factory
+
+    def when(
+        self,
+        *,
+        utilization: float | str | None = None,
+        threshold: int | str | None = None,
+        preserve_recent: int | float | str = 0,
+    ) -> ContextStrategy:
+        """Return the strategy with these conditions.
+
+        Call with no arguments to act on every new message as it arrives.
+
+        Args:
+            utilization: When the strategy fires. ``"80%"`` or ``0.8`` fires at 80% of the context
+                window; a whole number above 1 fires at that many conversation tokens, up to the
+                model's context window.
+            threshold: Which blocks the strategy acts on. A whole number selects blocks over
+                that many tokens; ``"5%"`` selects blocks over 5% of the context window.
+            preserve_recent: Matching messages the strategy never touches. A whole number keeps that
+                many of the newest; ``"70%"`` or ``0.7`` keeps the newest 70% of them.
+
+        Returns:
+            The configured strategy.
+
+        Raises:
+            ValueError: If a condition value is invalid, or a target ``"*"`` strategy without
+                ``threshold`` has neither ``utilization`` nor ``preserve_recent``.
+        """
+        return self._factory(
+            _build_conditions(utilization=utilization, threshold=threshold, preserve_recent=preserve_recent)
+        )

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...stash import _format_stash_refs
-from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_conditions
+from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
@@ -20,7 +20,7 @@ DROPPED_MARKER = "[Dropped]"
 
 
 class DropStrategy(BaseOffloadStrategy):
-    """Drop strategy — replaces matching content with a [Dropped] marker."""
+    """Drop strategy — removes old messages, or replaces matching blocks with a [Dropped] marker."""
 
     @property
     def name(self) -> str:
@@ -29,19 +29,6 @@ class DropStrategy(BaseOffloadStrategy):
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
         super().__init__(target, conditions)
-
-    def when(
-        self,
-        *,
-        threshold: int | None = None,
-        utilization: float | None = None,
-        preserve_recent: int | float = 0,
-    ) -> DropStrategy:
-        """Return a new instance with the given conditions applied."""
-        return DropStrategy(
-            self._target,
-            _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
-        )
 
     def _make_removal_marker(self, count: int) -> str:
         word = "message" if count == 1 else "messages"

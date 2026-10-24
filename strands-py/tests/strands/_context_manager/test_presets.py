@@ -24,7 +24,7 @@ class TestResolvePreset:
     def test_overflow_protection(self):
         strategies = _resolve_preset("overflow_protection")
         assert len(strategies) == 1
-        assert strategies[0].name == "offload:truncate"
+        assert strategies[0].name == "offload:drop"
 
     def test_stale_tool_cleanup(self):
         strategies = _resolve_preset("stale_tool_cleanup")
@@ -58,6 +58,10 @@ class TestResolveStrategies:
     def test_unknown_preset_in_list_raises(self):
         with pytest.raises(ValueError, match="Unknown strategy preset"):
             _resolve_strategies(["nonexistent"])
+
+    def test_rejects_builder_without_when(self):
+        with pytest.raises(TypeError, match=r"need \.when\(\) before use"):
+            _resolve_strategies([Offload.drop("tool_results")])
 
     def test_empty_list(self):
         assert _resolve_strategies([]) == []

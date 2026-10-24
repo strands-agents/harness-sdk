@@ -9,6 +9,7 @@ you need a specific, pinned configuration.
 from __future__ import annotations
 
 from .strategies.offload import Offload
+from .strategies.offload.base import OffloadStrategyBuilder
 from .types import ContextStrategy
 
 StrategyPresetName = str
@@ -19,7 +20,7 @@ between releases.
 
 - ``'proactive_summarization'`` — batch summarize oldest messages at 70% utilization
 - ``'large_tool_offloading'`` — truncate tool results over 2500 tokens to a 1000-token preview
-- ``'overflow_protection'`` — truncate oldest messages when the context window is full
+- ``'overflow_protection'`` — drop the oldest messages when the context window is full
 - ``'stale_tool_cleanup'`` — drop tool results older than 5 messages
 """
 
@@ -45,7 +46,7 @@ def _resolve_preset(name: str) -> list[ContextStrategy]:
     if name == "large_tool_offloading":
         return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=2500)]
     if name == "overflow_protection":
-        return [Offload.truncate("*").when(utilization=1.0, preserve_recent=4)]
+        return [Offload.drop("*").when(utilization=1.0, preserve_recent=4)]
     if name == "stale_tool_cleanup":
         return [Offload.drop("tool_results").when(preserve_recent=5)]
     raise ValueError(f'Unknown strategy preset: "{name}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}')
@@ -59,9 +60,17 @@ def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStr
 
     Returns:
         Flattened list of concrete strategies.
+
+    Raises:
+        TypeError: If an entry is an ``Offload`` builder that ``.when()`` was never called on.
     """
     strategies: list[ContextStrategy] = []
     for entry in entries:
+        if isinstance(entry, OffloadStrategyBuilder):
+            raise TypeError(
+                'Offload strategies need .when() before use, for example .when(utilization="80%"); '
+                'a target other than "*" can call .when() with no conditions to run on every new message'
+            )
         if isinstance(entry, str):
             strategies.extend(_resolve_preset(entry))
         else:
