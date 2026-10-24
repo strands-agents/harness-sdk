@@ -1,9 +1,12 @@
+import logging
+
 import pytest
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 
-from strands_harness.defaults import DEFAULT_EFFORT
+from strands_harness.defaults import DEFAULT_EFFORT, DEFAULT_MAX_TOKENS
 from strands_harness.models import (
     _claude_extended_thinking,
+    _default_max_tokens,
     _supports_media,
     resolve_model,
     supports_thinking,
@@ -13,9 +16,15 @@ from strands_harness.models import (
 DEFAULT = "bedrock/global.anthropic.claude-opus-4-8"
 
 
-def resolve(model, effort="auto", web_search=False, caching=False, caching_explicit=False):
+def resolve(model, effort="auto", web_search=False, caching=False, caching_explicit=False, max_tokens=None):
     return resolve_model(
-        model, DEFAULT, effort, web_search=web_search, caching=caching, caching_explicit=caching_explicit
+        model,
+        DEFAULT,
+        effort,
+        web_search=web_search,
+        caching=caching,
+        caching_explicit=caching_explicit,
+        max_tokens=max_tokens,
     )
 
 
@@ -274,6 +283,16 @@ def test_nova_2_on_bedrock_uses_reasoning_config():
         resolve("bedrock/amazon.nova-2-lite-v1:0", effort="max")
 
 
+def test_nova_2_rejects_max_tokens_at_high_effort():
+    with pytest.raises(ValueError, match="rejects max_tokens at reasoning effort 'high'"):
+        resolve("bedrock/global.amazon.nova-2-lite-v1:0", max_tokens=8_000)
+    model = resolve("bedrock/global.amazon.nova-2-lite-v1:0", effort="medium", max_tokens=8_000)
+    assert model.config["max_tokens"] == 8_000
+    assert model.config["additional_request_fields"] == {
+        "reasoningConfig": {"type": "enabled", "maxReasoningEffort": "medium"}
+    }
+
+
 def test_nova_1_on_bedrock_still_has_no_thinking_levels():
     assert supports_thinking("bedrock/amazon.nova-pro-v1:0") is False
     with pytest.raises(ValueError, match="not supported by Bedrock model"):
@@ -375,7 +394,7 @@ def test_google_uses_model_id_directly():
     model = resolve("google/gemini-3.5-flash", effort="off")
     assert model.config["model_id"] == "gemini-3.5-flash"
     # Gemini has no ``none`` level: off drops the thinking config.
-    assert "params" not in model.config
+    assert "thinking_config" not in model.config["params"]
 
 
 def test_openai_maps_to_reasoning_effort():
@@ -387,12 +406,12 @@ def test_openai_maps_to_reasoning_effort():
 def test_anthropic_maps_to_thinking_and_max_tokens():
     model = resolve("anthropic/claude-opus-4-8")
     assert model.config["model_id"] == "claude-opus-4-8"
-    assert model.config["max_tokens"] == 128_000
+    assert model.config["max_tokens"] == DEFAULT_MAX_TOKENS
     assert model.config["params"]["thinking"] == {"type": "adaptive", "display": "summarized"}
 
 
-def test_anthropic_haiku_gets_its_own_tier_max_tokens():
-    model = resolve("anthropic/claude-haiku-4-5-20251001")
+def test_anthropic_haiku_clamps_max_tokens_to_its_tier_limit():
+    model = resolve("anthropic/claude-haiku-4-5-20251001", max_tokens=100_000)
     assert model.config["max_tokens"] == 64_000
 
 
@@ -401,13 +420,13 @@ def test_anthropic_unrecognized_tier_falls_back_to_flat_max_tokens():
     assert model.config["max_tokens"] == 32_000
 
 
-def test_bedrock_claude_gets_tier_max_tokens():
+def test_bedrock_claude_gets_the_default_max_tokens():
     model = resolve("bedrock/global.anthropic.claude-opus-4-8")
-    assert model.config["max_tokens"] == 128_000
+    assert model.config["max_tokens"] == DEFAULT_MAX_TOKENS
 
 
-def test_bedrock_claude_haiku_gets_its_own_tier_max_tokens():
-    model = resolve("bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0")
+def test_bedrock_claude_haiku_clamps_max_tokens_to_its_tier_limit():
+    model = resolve("bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", max_tokens=100_000)
     assert model.config["max_tokens"] == 64_000
 
 
@@ -419,6 +438,118 @@ def test_bedrock_non_claude_model_has_no_forced_max_tokens():
 def test_bedrock_legacy_claude_3_id_has_no_forced_max_tokens():
     model = resolve("bedrock/anthropic.claude-3-haiku-20240307-v1:0")
     assert "max_tokens" not in model.config
+
+
+@pytest.mark.parametrize(
+    ("spec", "path"),
+    [
+        ("bedrock/global.anthropic.claude-opus-5", ("max_tokens",)),
+        ("bedrock/global.anthropic.claude-mythos-5-1", ("max_tokens",)),
+        ("anthropic/claude-opus-5", ("max_tokens",)),
+        ("anthropic/claude-mythos-1", ("max_tokens",)),
+        ("openai/gpt-5.6-sol", ("params", "max_output_tokens")),
+        ("bedrock-mantle/openai.gpt-5.6-sol", ("params", "max_output_tokens")),
+        ("google/gemini-3.5-flash", ("params", "max_output_tokens")),
+    ],
+)
+def test_default_max_tokens_caps_each_model_call(spec, path):
+    at = resolve(spec).config
+    for key in path:
+        at = at[key]
+    assert at == DEFAULT_MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "bedrock/amazon.nova-2-lite-v1:0",
+        "bedrock/openai.gpt-oss-120b-1:0",
+        "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+        "ollama/llama3",
+        "litellm/gpt-4o",
+    ],
+)
+def test_default_max_tokens_is_not_sent_where_the_model_limit_is_unknown(spec):
+    config = resolve(spec, effort="off").config
+    assert "max_tokens" not in config
+    assert "max_tokens" not in config.get("params", {})
+
+
+@pytest.mark.parametrize(
+    ("spec", "path"),
+    [
+        ("bedrock/global.anthropic.claude-opus-5", ("max_tokens",)),
+        ("bedrock/amazon.nova-pro-v1:0", ("max_tokens",)),
+        ("anthropic/claude-opus-5", ("max_tokens",)),
+        ("openai/gpt-5.6-sol", ("params", "max_output_tokens")),
+        ("bedrock-mantle/openai.gpt-5.6-sol", ("params", "max_output_tokens")),
+        ("google/gemini-3.5-flash", ("params", "max_output_tokens")),
+        ("ollama/llama3", ("max_tokens",)),
+        ("litellm/gpt-4o", ("params", "max_tokens")),
+    ],
+)
+def test_explicit_max_tokens_reaches_each_provider(spec, path):
+    at = resolve(spec, effort="off", max_tokens=8_000).config
+    for key in path:
+        at = at[key]
+    assert at == 8_000
+
+
+def test_max_tokens_above_the_model_limit_is_clamped_with_a_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="strands_harness.models"):
+        model = resolve("bedrock/global.anthropic.claude-opus-5", max_tokens=500_000)
+    assert model.config["max_tokens"] == 128_000
+    assert any("above the model output limit" in r.message for r in caplog.records)
+
+
+def test_max_tokens_above_the_default_warns(caplog):
+    with caplog.at_level(logging.WARNING, logger="strands_harness.models"):
+        model = resolve("openai/gpt-5.6-sol", max_tokens=64_000)
+    assert model.config["params"]["max_output_tokens"] == 64_000
+    assert any("above the harness default" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("max_tokens", [None, 8_000, DEFAULT_MAX_TOKENS])
+def test_max_tokens_at_or_below_the_default_does_not_warn(caplog, max_tokens):
+    with caplog.at_level(logging.WARNING, logger="strands_harness.models"):
+        resolve("bedrock/global.anthropic.claude-opus-5", max_tokens=max_tokens)
+    assert not any("max_tokens" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("max_tokens", [0, -1, 1.5, True, "8000"])
+def test_invalid_max_tokens_is_rejected_even_for_model_instances(max_tokens):
+    with pytest.raises(ValueError, match="max_tokens must be a positive integer"):
+        resolve("bedrock/global.anthropic.claude-opus-5", max_tokens=max_tokens)
+    with pytest.raises(ValueError, match="max_tokens must be a positive integer"):
+        resolve(BedrockModel(model_id="anything"), max_tokens=max_tokens)
+
+
+def test_explicit_max_tokens_on_model_instance_warns_and_builds(caplog):
+    instance = BedrockModel(model_id="anything")
+    with caplog.at_level(logging.WARNING, logger="strands_harness.models"):
+        assert resolve(instance, max_tokens=8_000) is instance
+    assert any("max_tokens=8000 not applied" in r.message for r in caplog.records)
+    assert "max_tokens" not in instance.config
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        (None, DEFAULT_MAX_TOKENS),
+        ("bedrock/global.anthropic.claude-mythos-5-1", DEFAULT_MAX_TOKENS),
+        ("anthropic/claude-opus-5", DEFAULT_MAX_TOKENS),
+        ("google/gemini-3.5-flash", DEFAULT_MAX_TOKENS),
+        ("bedrock/anthropic.claude-3-haiku-20240307-v1:0", None),
+        ("bedrock/amazon.nova-pro-v1:0", None),
+        ("ollama/llama3", None),
+    ],
+)
+def test_default_max_tokens_reports_the_cap_the_harness_applies(model, expected):
+    assert _default_max_tokens(model) == expected
+
+
+def test_default_max_tokens_is_none_for_a_model_instance():
+    assert _default_max_tokens(BedrockModel(model_id="global.anthropic.claude-opus-5")) is None
 
 
 def test_bedrock_mantle_builds_via_openai_responses_model():
@@ -454,6 +585,7 @@ def test_bedrock_mantle_web_search_with_effort_off():
     assert model.config["params"] == {
         "reasoning": {"effort": "none"},
         "tools": [{"type": "web_search", "external_web_access": True}],
+        "max_output_tokens": DEFAULT_MAX_TOKENS,
     }
 
 
@@ -599,7 +731,7 @@ def test_claude_below_the_thinking_floor_rejects_an_explicit_level_locally():
 
 def test_claude_without_adaptive_thinking_keeps_max_tokens_and_caching():
     model = resolve(HAIKU_ON_BEDROCK, caching=True)
-    assert model.config["max_tokens"] == 64000
+    assert model.config["max_tokens"] == DEFAULT_MAX_TOKENS
     assert model.config["cache_config"] == CacheConfig(strategy="auto", tools_ttl=True)
 
 
@@ -652,9 +784,26 @@ def test_an_id_with_no_parsable_version_fails_open_to_adaptive(model_id):
     [("low", 2_048), ("medium", 8_192), ("high", 16_384), ("xhigh", 32_768), ("max", 49_152)],
 )
 def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
-    config = resolve(HAIKU_ON_BEDROCK, effort=level).config
+    config = resolve(HAIKU_ON_BEDROCK, effort=level, max_tokens=64_000).config
     assert config["additional_request_fields"] == {"thinking": {"type": "enabled", "budget_tokens": budget}}
     assert budget < config["max_tokens"]
+
+
+@pytest.mark.parametrize("level", ["xhigh", "max"])
+def test_extended_thinking_keeps_room_for_the_answer_under_the_default_max_tokens(level):
+    config = resolve(HAIKU_ON_BEDROCK, effort=level).config
+    assert config["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert config["additional_request_fields"] == {
+        "thinking": {"type": "enabled", "budget_tokens": DEFAULT_MAX_TOKENS - 8_192}
+    }
+
+
+def test_a_max_tokens_too_small_for_extended_thinking_is_rejected():
+    with pytest.raises(ValueError, match="leaves no room for extended thinking"):
+        resolve(HAIKU_ON_BEDROCK, max_tokens=1_000)
+    model = resolve(HAIKU_ON_BEDROCK, effort="off", max_tokens=1_000)
+    assert model.config["max_tokens"] == 1_000
+    assert "additional_request_fields" not in model.config
 
 
 @pytest.mark.parametrize(
@@ -675,11 +824,11 @@ def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
     ],
 )
 def test_a_split_family_carries_its_version_max_tokens_ceiling(model_id, max_tokens):
-    assert resolve(f"bedrock/global.anthropic.{model_id}").config["max_tokens"] == max_tokens
+    assert resolve(f"bedrock/global.anthropic.{model_id}", max_tokens=1_000_000).config["max_tokens"] == max_tokens
 
 
 def test_the_budget_is_clamped_below_a_small_max_tokens():
-    assert _claude_extended_thinking("max", 4_096) == {"thinking": {"type": "enabled", "budget_tokens": 4_095}}
+    assert _claude_extended_thinking("max", 4_096) == {"thinking": {"type": "enabled", "budget_tokens": 2_048}}
     assert _claude_extended_thinking("low", 64_000) == {"thinking": {"type": "enabled", "budget_tokens": 2_048}}
 
 
@@ -687,7 +836,7 @@ def test_a_version_led_id_clamps_against_the_anthropic_direct_fallback(monkeypat
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     config = resolve("anthropic/claude-4-5-haiku", effort="max").config
     assert config["max_tokens"] == 32_000
-    assert config["params"] == {"thinking": {"type": "enabled", "budget_tokens": 31_999}}
+    assert config["params"] == {"thinking": {"type": "enabled", "budget_tokens": 23_808}}
 
 
 def test_supports_thinking_answers_for_consumers():

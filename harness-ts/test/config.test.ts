@@ -61,6 +61,18 @@ describe('HarnessAgentConfig', () => {
     const options = await harnessAgentOptionsFromConfig(DEFAULT_HARNESS_AGENT_CONFIG)
     expect(options).not.toHaveProperty('builtinTools')
     expect(options).not.toHaveProperty('caching')
+    expect(options).not.toHaveProperty('maxTokens')
+  })
+
+  it('passes maxTokens through the config bridge', async () => {
+    const options = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig({ maxTokens: 8_000 }))
+    expect(options.maxTokens).toBe(8_000)
+  })
+
+  it.each([0, -1, 1.5, true, '8000'])('rejects maxTokens %s', (value) => {
+    expect(() => normalizeHarnessAgentConfig({ maxTokens: value })).toThrow(
+      'maxTokens must be a positive integer or null.'
+    )
   })
 
   it('forwards a disabled session as off', async () => {

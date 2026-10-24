@@ -27,7 +27,6 @@ from strands_harness.types.agent import Effort
 
 logger = logging.getLogger(__name__)
 
-_ANTHROPIC_MAX_TOKENS = 32_000
 # Claude calls the search directly (not from code execution), so results come back as citations
 # and the tool works on every Claude model, not only those with programmatic tool calling. The
 # type is a dated version; the current ones are listed at
@@ -58,6 +57,63 @@ def _claude_max_tokens(model_id: str) -> int | None:
     if pinned is not None:
         return pinned
     return next((tokens for needle, tokens in _CLAUDE_MAX_TOKENS.items() if needle in model_id), None)
+
+
+_PROVIDERS_WITH_DEFAULT_MAX_TOKENS = frozenset({"anthropic", "openai", "bedrock-mantle", "google"})
+
+
+def _check_max_tokens(max_tokens: object) -> None:
+    if max_tokens is not None and (isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0):
+        raise ValueError(f"max_tokens must be a positive integer or None, got {max_tokens!r}.")
+
+
+def _model_max_tokens(provider_name: str, name: str) -> int | None:
+    return _claude_max_tokens(name) if provider_name in ("bedrock", "anthropic") else None
+
+
+def _takes_default_max_tokens(provider_name: str, name: str) -> bool:
+    if provider_name in _PROVIDERS_WITH_DEFAULT_MAX_TOKENS:
+        return True
+    family = _bedrock_family(name)
+    return provider_name == "bedrock" and family.startswith("anthropic.") and _claude_thinking_mode(family) is not None
+
+
+def _default_cap(provider_name: str, name: str, ceiling: int | None) -> int | None:
+    if ceiling is not None:
+        return min(defaults.DEFAULT_MAX_TOKENS, ceiling)
+    return defaults.DEFAULT_MAX_TOKENS if _takes_default_max_tokens(provider_name, name) else None
+
+
+def _max_tokens(provider_name: str, name: str, requested: int | None) -> int | None:
+    ceiling = _model_max_tokens(provider_name, name)
+    if requested is None:
+        return _default_cap(provider_name, name, ceiling)
+    limit = requested if ceiling is None else min(requested, ceiling)
+    if limit < requested:
+        logger.warning(
+            "model=<%s/%s>, max_tokens=<%s>, limit=<%s> | max_tokens is above the model output limit | using the limit",
+            provider_name,
+            name,
+            requested,
+            limit,
+        )
+    if limit > defaults.DEFAULT_MAX_TOKENS:
+        logger.warning(
+            "model=<%s/%s>, max_tokens=<%s>, default=<%s> | max_tokens is above the harness default "
+            "| each model call can generate up to max_tokens output tokens",
+            provider_name,
+            name,
+            limit,
+            defaults.DEFAULT_MAX_TOKENS,
+        )
+    return limit
+
+
+def _default_max_tokens(model: Model | ModelRouter | str | None) -> int | None:
+    if isinstance(model, (Model, ModelRouter)):
+        return None
+    provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
+    return _default_cap(provider_name, name, _model_max_tokens(provider_name, name))
 
 
 # Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
@@ -119,6 +175,8 @@ _CLAUDE_ID = re.compile(
     r"(?:[-.](\d{1,2}))?(?:[-.](\d{1,2}))?(?!\d)"
 )
 _EXTENDED_THINKING_BUDGETS = {"low": 2_048, "medium": 8_192, "high": 16_384, "xhigh": 32_768, "max": 49_152}
+_MIN_THINKING_BUDGET = 1_024
+_EXTENDED_THINKING_ANSWER_TOKENS = 8_192
 
 
 def _claude_thinking_mode(model_id: str) -> str | None:
@@ -145,7 +203,14 @@ def _claude_thinking(effort: str) -> dict:
 
 
 def _claude_extended_thinking(effort: str, max_tokens: int) -> dict:
-    return {"thinking": {"type": "enabled", "budget_tokens": min(_EXTENDED_THINKING_BUDGETS[effort], max_tokens - 1)}}
+    answer_tokens = min(_EXTENDED_THINKING_ANSWER_TOKENS, max_tokens // 2)
+    budget = min(_EXTENDED_THINKING_BUDGETS[effort], max_tokens - answer_tokens)
+    if budget < _MIN_THINKING_BUDGET:
+        raise ValueError(
+            f"max_tokens={max_tokens} leaves no room for extended thinking, which needs a budget of at least "
+            f"{_MIN_THINKING_BUDGET} tokens. Pass a larger max_tokens, or effort='off'."
+        )
+    return {"thinking": {"type": "enabled", "budget_tokens": budget}}
 
 
 def _claude_thinking_block(model_id: str, effort: str, max_tokens: int) -> dict:
@@ -186,12 +251,12 @@ def _bedrock_effort(model_id: str, effort: Effort) -> str | None:
     raise ValueError(f"Effort {effort!r} is not supported by Bedrock model {model_id}. Pass 'auto' or 'off'.")
 
 
-def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
+def _bedrock_thinking(model_id: str, effort: str | None, max_tokens: int | None) -> dict | None:
     if effort is None:
         return None
     family = _bedrock_family(model_id)
     if family.startswith("anthropic."):
-        return _claude_thinking_block(family, effort, _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS)
+        return _claude_thinking_block(family, effort, max_tokens or defaults.DEFAULT_MAX_TOKENS)
     if family.startswith("amazon.nova-2"):
         return {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}}
     if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
@@ -205,12 +270,20 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
     return None
 
 
-def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _check_nova_max_tokens(model_id: str, effort: str | None, max_tokens: int | None) -> None:
+    if max_tokens is not None and effort == "high" and _bedrock_family(model_id).startswith("amazon.nova-2"):
+        raise ValueError(
+            f"Bedrock model {model_id} rejects max_tokens at reasoning effort 'high'. "
+            "Pass effort='medium' or lower, or remove max_tokens."
+        )
+
+
+def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None) -> Model:
     from strands.models import BedrockModel, CacheConfig
 
-    thinking = _bedrock_thinking(model_id, effort)
+    _check_nova_max_tokens(model_id, effort, max_tokens)
+    thinking = _bedrock_thinking(model_id, effort, max_tokens)
     extra: dict[str, Any] = {} if thinking is None else {"additional_request_fields": thinking}
-    max_tokens = _claude_max_tokens(model_id)
     if max_tokens is not None:
         extra["max_tokens"] = max_tokens
     if caching:
@@ -220,22 +293,22 @@ def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool)
     return BedrockModel(model_id=model_id, **extra)
 
 
-def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None) -> Model:
     from strands.models import CacheConfig
     from strands.models.anthropic import AnthropicModel
 
-    max_tokens = _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS
-    extra: dict[str, Any] = {} if effort is None else {"params": _claude_thinking_block(model_id, effort, max_tokens)}
+    limit = max_tokens or defaults.DEFAULT_MAX_TOKENS
+    extra: dict[str, Any] = {} if effort is None else {"params": _claude_thinking_block(model_id, effort, limit)}
     if web_search:
         extra["anthropic_tools"] = [_ANTHROPIC_WEB_SEARCH]
     if caching:
         # Caches the tool definitions plus a cache point on the last user message; the system
         # prompt is cached automatically. Mirrors the Bedrock builder.
         extra["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
-    return AnthropicModel(model_id=model_id, max_tokens=max_tokens, **extra)
+    return AnthropicModel(model_id=model_id, max_tokens=limit, **extra)
 
 
-def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None) -> Model:
     # ``caching`` is unused: OpenAI caches server-side with no opt-in.
     from strands.models.openai_responses import OpenAIResponsesModel
 
@@ -245,36 +318,45 @@ def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) 
     # The Responses API merges built-in tools carried in ``params`` with the agent's function tools.
     if web_search:
         params["tools"] = [{"type": "web_search"}]
+    if max_tokens is not None:
+        params["max_output_tokens"] = max_tokens
     return OpenAIResponsesModel(model_id=model_id, **({"params": params} if params else {}))
 
 
-def _bedrock_mantle(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _bedrock_mantle(
+    model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None
+) -> Model:
     # ``caching`` is unused: Mantle caches server-side automatically.
     from strands.models.openai_responses import BedrockMantleConfig, OpenAIResponsesModel
 
     params: dict[str, Any] = {} if effort is None else {"reasoning": {"effort": effort}}
     if web_search:
         params["tools"] = [{"type": "web_search", "external_web_access": True}]
+    if max_tokens is not None:
+        params["max_output_tokens"] = max_tokens
     return OpenAIResponsesModel(
         model_id=model_id, bedrock_mantle_config=BedrockMantleConfig(), **({"params": params} if params else {})
     )
 
 
-def _gemini(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _gemini(model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None) -> Model:
     # ``caching`` is unused: Gemini caches implicitly server-side (models 2.5 and newer).
     from google.genai import types as genai_types
     from strands.models.gemini import GeminiModel
 
-    extra: dict[str, Any] = {}
+    params: dict[str, Any] = {}
     if effort is not None:
-        extra["params"] = {"thinking_config": {"thinking_level": effort}}
+        params["thinking_config"] = {"thinking_level": effort}
+    if max_tokens is not None:
+        params["max_output_tokens"] = max_tokens
+    extra: dict[str, Any] = {"params": params} if params else {}
     # ``gemini_tools`` is appended alongside function declarations, so search coexists with tools.
     if web_search:
         extra["gemini_tools"] = [genai_types.Tool(google_search=genai_types.GoogleSearch())]
     return GeminiModel(model_id=model_id, **extra)
 
 
-def _ollama(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _ollama(model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None) -> Model:
     from strands.models.ollama import OllamaModel
 
     # OLLAMA_API_KEY mirrors the TS builder, which sends it as a bearer token (for proxied hosts).
@@ -284,10 +366,11 @@ def _ollama(model_id: str, effort: str | None, web_search: bool, caching: bool) 
         host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
         ollama_client_args=client_args,
         model_id=model_id,
+        **({} if max_tokens is None else {"max_tokens": max_tokens}),
     )
 
 
-def _litellm(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _litellm(model_id: str, effort: str | None, web_search: bool, caching: bool, max_tokens: int | None) -> Model:
     # ``caching`` is unused: LiteLLM caches server-side via its OpenAI-compatible backend.
     from strands.models.litellm import LiteLLMModel
 
@@ -297,7 +380,8 @@ def _litellm(model_id: str, effort: str | None, web_search: bool, caching: bool)
         **({"api_key": api_key} if api_key else {}),
         **({"api_base": api_base} if api_base else {}),
     }
-    return LiteLLMModel(client_args=client_args, model_id=model_id)
+    params = {} if max_tokens is None else {"params": {"max_tokens": max_tokens}}
+    return LiteLLMModel(client_args=client_args, model_id=model_id, **params)
 
 
 class Provider(NamedTuple):
@@ -314,7 +398,7 @@ class Provider(NamedTuple):
     ``Model`` instance can't be honored (its provider is unknown), so the factory warns there.
     """
 
-    build: Callable[[str, str | None, bool, bool], Model]
+    build: Callable[[str, str | None, bool, bool, int | None], Model]
     recommended_thinking: str | None
     thinking_levels: tuple[str, ...]
     web_search: bool
@@ -450,6 +534,7 @@ def resolve_model(
     web_search: bool = False,
     caching: bool = False,
     caching_explicit: bool = False,
+    max_tokens: int | None = None,
 ) -> Model | ModelRouter:
     """Resolve the ``model`` argument into a model or router instance.
 
@@ -461,12 +546,15 @@ def resolve_model(
     is only passed for models that have one (``supports_web_search``).
     """
     _check_effort(effort)
+    _check_max_tokens(max_tokens)
     if isinstance(model, (Model, ModelRouter)):
         instance = "a pre-built Model instance or ModelRouter"
         if effort != "auto":
             logger.warning("effort=%r not applied to %s; configure reasoning on the instance", effort, instance)
         if caching:
             logger.warning("prompt caching not applied to %s; configure it on the instance", instance)
+        if max_tokens is not None:
+            logger.warning("max_tokens=%r not applied to %s; configure it on the instance", max_tokens, instance)
         return model
     if model is None:
         model = default
@@ -509,7 +597,13 @@ def resolve_model(
         else _effort(effort, recommended, levels, f"model {name}")
     )
     native_search = web_search and _has_web_search(provider_name, name)
-    return provider.build(name, level, native_search, caching and provider.caching and not unsupported_caching)
+    return provider.build(
+        name,
+        level,
+        native_search,
+        caching and provider.caching and not unsupported_caching,
+        _max_tokens(provider_name, name, max_tokens),
+    )
 
 
 def _bedrock_web_fetch_model(name: str) -> str | None:
