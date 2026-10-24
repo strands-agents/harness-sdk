@@ -36,7 +36,7 @@
   </p>
 </div>
 
-Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands when you would otherwise write your own agent loop: it runs in your process with no hosted control plane, and it covers the jobs a hand-rolled loop grows into. In one SDK you get [lifecycle controls](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/) (turn limits, token budgets, cancellation, stop reasons), [tools](https://strandsagents.com/docs/user-guide/concepts/tools/) and [structured output](https://strandsagents.com/docs/user-guide/concepts/agents/structured-output/), [MCP](https://strandsagents.com/docs/user-guide/concepts/tools/mcp-tools/), [multi-agent patterns](https://strandsagents.com/docs/user-guide/concepts/multi-agent/multi-agent-patterns/), [memory](https://strandsagents.com/docs/user-guide/concepts/memory/overview/) and [sessions](https://strandsagents.com/docs/user-guide/concepts/agents/session-management/), [model portability](https://strandsagents.com/docs/user-guide/concepts/model-providers/), [streaming](https://strandsagents.com/docs/user-guide/concepts/streaming/), [guardrails](https://strandsagents.com/docs/user-guide/safety-security/guardrails/), [tracing](https://strandsagents.com/docs/user-guide/observability-evaluation/observability/), and [evals](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/).
+Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands when you would otherwise write your own agent loop: it runs in your process with no hosted control plane, and it covers the jobs a hand-rolled loop grows into. In one SDK you get [lifecycle controls](https://strandsagents.com/docs/user-guide/sdk/agents/agent-loop/) (turn limits, token budgets, cancellation, stop reasons), [tools](https://strandsagents.com/docs/user-guide/sdk/tools/) and [structured output](https://strandsagents.com/docs/user-guide/sdk/agents/structured-output/), [MCP](https://strandsagents.com/docs/user-guide/sdk/tools/mcp-tools/), [multi-agent patterns](https://strandsagents.com/docs/user-guide/sdk/multi-agent/multi-agent-patterns/), [memory](https://strandsagents.com/docs/user-guide/sdk/memory/overview/) and [sessions](https://strandsagents.com/docs/user-guide/sdk/agents/session-management/), [model portability](https://strandsagents.com/docs/user-guide/sdk/model-providers/), [streaming](https://strandsagents.com/docs/user-guide/sdk/streaming/), [guardrails](https://strandsagents.com/docs/user-guide/sdk/safety-security/guardrails/), [tracing](https://strandsagents.com/docs/user-guide/sdk/observability-evaluation/observability/), and [evals](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/).
 
 Using a coding agent? Install the Strands plugin for Claude Code, Codex, or Cursor.
 It adds framework selection, scaffolding, tool authoring, MCP server connections, web
@@ -63,7 +63,7 @@ This monorepo contains Strands harness, the Python and TypeScript SDKs, the docu
 Build an agent harness. Control it end-to-end.
 
 - **Build your way.** Any model, any cloud. Context management, execution limits, and observability built in before you write a line of config. Swap backends when you scale; your code stays the same.
-- **Model agnostic.** First-class support for Amazon Bedrock, Anthropic, OpenAI, and Gemini, plus [many more providers](https://strandsagents.com/docs/user-guide/concepts/model-providers/) and custom ones.
+- **Model agnostic.** First-class support for Amazon Bedrock, Anthropic, OpenAI, and Gemini, plus [many more providers](https://strandsagents.com/docs/user-guide/sdk/model-providers/) and custom ones.
 - **Stay in control.** The agent loop traces every decision by default. Hooks let you intercept any step to log it, validate it, or redirect it.
 - **Deliver outcomes that work.** Guardrails catch mistakes before they run. Steering handlers let agents correct themselves instead of failing silently.
 
@@ -101,7 +101,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 
 Start here to get a batteries-included agent, then drop down to the SDKs below when you want to own the agent loop and wire up tools, model providers, and memory yourself. The [harness configuration reference](https://strandsagents.com/docs/user-guide/harness/reference/configuration/) documents every default you can override.
 
-The [Quickstart Guide](https://strandsagents.com/docs/user-guide/quickstart/overview/) covers configuring providers (Amazon Bedrock, Anthropic, OpenAI, Gemini, Ollama, and more).
+The [Quickstart Guide](https://strandsagents.com/docs/user-guide/sdk/quickstart/overview/) covers configuring providers (Amazon Bedrock, Anthropic, OpenAI, Gemini, Ollama, and more).
 
 ## Working with the SDK
 
@@ -153,12 +153,12 @@ For detailed guidance & examples, explore our documentation:
 
 - [User Guide](https://strandsagents.com/)
 - [Strands Harness Guide](https://strandsagents.com/docs/user-guide/harness/) ([quickstart](https://strandsagents.com/docs/user-guide/harness/quickstart/) · [configuration reference](https://strandsagents.com/docs/user-guide/harness/reference/configuration/))
-- [Quick Start Guide](https://strandsagents.com/docs/user-guide/quickstart/overview/)
-- [Agent Loop](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/)
+- [Quick Start Guide](https://strandsagents.com/docs/user-guide/sdk/quickstart/overview/)
+- [Agent Loop](https://strandsagents.com/docs/user-guide/sdk/agents/agent-loop/)
 - [Bidirectional Streaming](https://strandsagents.com/docs/user-guide/sdk/bidi/) (Python)
 - [Examples](https://strandsagents.com/docs/examples/)
 - API Reference: [Python](https://strandsagents.com/docs/api/python/strands.agent.agent/) · [TypeScript](https://strandsagents.com/docs/api/typescript/)
-- [Production & Deployment Guide](https://strandsagents.com/docs/user-guide/deploy/operating-agents-in-production/)
+- [Production & Deployment Guide](https://strandsagents.com/docs/user-guide/sdk/deploy/operating-agents-in-production/)
 
 The docs themselves live in this monorepo under [`site/`](site/), and doc PRs are welcome alongside code changes.
 
