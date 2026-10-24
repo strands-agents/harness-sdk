@@ -1,11 +1,16 @@
 """Built-in tools for commands, files, HTTP, taking notes, pausing, and multi-agent delegation.
 
-The :func:`make_shell` and :func:`make_file_editor` factories produce
-sandbox-routed tools that either bind to a
-:class:`~strands.sandbox.base.Sandbox` at creation (as the built-in Docker/SSH
-sandboxes do when vending tools) or read the sandbox from the agent at call time.
-Each :data:`shell` call runs in a fresh shell, so state does not persist between
-calls. The :data:`sleep` tool pauses execution for a bounded, cancellable duration.
+The :func:`make_shell` and :func:`make_edit` factories produce sandbox-routed
+tools that either bind to a :class:`~strands.sandbox.base.Sandbox` at creation
+(as the built-in Docker/SSH sandboxes do when vending tools) or read the sandbox
+from the agent at call time. Each :data:`shell` call runs in a fresh shell, so
+state does not persist between calls. The :data:`sleep` tool pauses execution
+for a bounded, cancellable duration.
+
+The :data:`edit` tool makes in-place changes to a text file via ``str_replace``
+and ``insert`` commands; it pairs with the forthcoming ``read`` and ``write``
+tools. The older :data:`file_editor` tool is retained for compatibility but is
+deprecated.
 
 The :data:`http_request` tool makes raw HTTP calls; use
 :func:`make_http_request` to supply a pre-configured ``httpx.AsyncClient``
@@ -52,10 +57,10 @@ Example Usage:
     ```python
     from strands import Agent
     from strands.vended_tools import (
-        file_editor, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch
+        edit, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch
     )
 
-    agent = Agent(tools=[file_editor, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch])
+    agent = Agent(tools=[edit, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch])
     ```
 """
 
@@ -63,6 +68,7 @@ import warnings
 from typing import Any
 
 from ._bash import _RENAME_RATIONALE, make_bash  # noqa: F401  deprecated tool, kept importable until v2.0.0
+from .edit import edit, make_edit
 from .file_editor import file_editor, make_file_editor
 from .handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user, make_handoff_to_user
 from .http_request import http_request, make_http_request
@@ -107,9 +113,11 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "HANDOFF_INTERRUPT_NAME",
+    "edit",
     "file_editor",
     "handoff_to_user",
     "http_request",
+    "make_edit",
     "make_file_editor",
     "make_handoff_to_user",
     "make_http_request",

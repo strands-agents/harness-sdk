@@ -187,9 +187,15 @@ async def test_rejects_invalid_env_var_names(mock_stream_process):
         await SshSandbox("h", working_dir="/w").execute("cmd", env={"FOO=bar BAZ": "val"})
 
 
-def test_get_tools_vends_file_editor_and_shell():
+def test_get_tools_vends_edit_and_shell():
     tools = SshSandbox("myhost", working_dir="/workspace").get_tools()
-    assert [t.tool_name for t in tools] == ["sandbox_file_editor", "sandbox_shell"]
+    assert [t.tool_name for t in tools] == ["sandbox_edit", "sandbox_shell"]
+
+
+def test_get_tools_edit_description_names_host():
+    tools = SshSandbox("myhost", working_dir="/workspace").get_tools()
+    edit_tool = next(t for t in tools if t.tool_name == "sandbox_edit")
+    assert "myhost" in edit_tool.tool_spec["description"]
 
 
 def test_get_tools_shell_description_names_host():

@@ -7,8 +7,8 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from ..types.tools import AgentTool
-from ..vended_tools.file_editor import make_file_editor
-from ..vended_tools.file_editor.file_editor import DEFAULT_FILE_EDITOR_DESCRIPTION
+from ..vended_tools.edit import make_edit
+from ..vended_tools.edit.edit import DEFAULT_EDIT_DESCRIPTION
 from ..vended_tools.shell import make_shell
 from ..vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION
 from .posix_shell import PosixShellSandbox, validate_env_keys
@@ -104,10 +104,10 @@ class DockerSandbox(PosixShellSandbox):
         """
         cwd = f" Working directory: {self.working_dir}." if self.working_dir else ""
         return [
-            make_file_editor(
+            make_edit(
                 sandbox=self,
-                name="sandbox_file_editor",
-                description=f'{DEFAULT_FILE_EDITOR_DESCRIPTION} Files are in Docker container "{self.container}".',
+                name="sandbox_edit",
+                description=f'{DEFAULT_EDIT_DESCRIPTION} Files are in Docker container "{self.container}".',
             ),
             make_shell(
                 sandbox=self,

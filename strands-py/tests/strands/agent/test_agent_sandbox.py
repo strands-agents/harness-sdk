@@ -52,7 +52,7 @@ def test_configured_sandbox_vends_prefixed_tools():
     agent = Agent(model="nonsense", sandbox=DockerSandbox("my-container"))
     registered = _registered(agent)
     assert "sandbox_shell" in registered
-    assert "sandbox_file_editor" in registered
+    assert "sandbox_edit" in registered
 
 
 def test_host_default_vends_nothing():

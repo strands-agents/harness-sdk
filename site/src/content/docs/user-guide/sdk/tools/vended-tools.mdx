@@ -6,6 +6,8 @@ sidebar:
 tags: [tool-authoring]
 sourceLinks:
   - path: strands-ts/src/vended-tools/file-editor/file-editor.ts
+  - path: strands-py/src/strands/vended_tools/file_editor/file_editor.py
+  - path: strands-py/src/strands/vended_tools/edit/edit.py
   - path: strands-ts/src/vended-tools/handoff-to-user/handoff-to-user.ts
   - path: strands-ts/src/vended-tools/bash/bash.ts
   - path: strands-ts/src/vended-tools/http-request/http-request.ts
@@ -50,7 +52,8 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 
 | Tool | Description | Supported in |
 |------|-------------|--------------|
-| [File Editor](#file-editor) | View, create, and edit files | Python, TypeScript (Node.js) |
+| [Edit](#edit) | Make in-place changes to a text file (Python) | Python |
+| [File Editor](#file-editor) *(deprecated)* | View, create, and edit files | Python, TypeScript (Node.js) |
 | [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
@@ -64,7 +67,39 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
 | [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
 
+### Edit
+
+Lets your agent make surgical, in-place changes to a text file. Two commands: `str_replace` replaces an exact, unique string; `insert` inserts a line after a given 0-indexed line number.
+
+The `edit` tool pairs with the forthcoming `read` and `write` vended tools and supersedes `file_editor`. Available in Python today.
+
+:::caution[Security Warning]
+This tool writes files at arbitrary absolute paths with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../sandbox/index.mdx) for production.
+:::
+
+**Example:**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import edit
+
+agent = Agent(tools=[edit])
+agent("In /tmp/hello.txt, replace 'world' with 'Strands'.")
+```
+
+</Tab>
+</Tabs>
+
+---
+
 ### File editor
+
+:::caution[Deprecated]
+`file_editor` is deprecated in favor of the focused `edit` tool (and the forthcoming `read` and `write` tools). It will be removed in a future release. Importing or constructing it emits a `DeprecationWarning`.
+:::
 
 Lets your agent read and modify files on disk: useful for coding agents, config management, or any workflow where the agent inspects output and makes targeted edits.
 

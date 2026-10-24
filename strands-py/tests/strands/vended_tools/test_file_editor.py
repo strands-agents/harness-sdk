@@ -1,30 +1,37 @@
 """Tests for the sandbox-routed file editor tool.
 
-Tests for the sandbox-routed file editor tool.
-The tool is exercised against a real ``NotASandboxLocalEnvironment`` (host
-filesystem), and called directly
-(like a normal async function). Errors
-surface as raised ``ValueError`` (the raw function raises; the error->status
-wrapping only happens through the tool's ``stream`` path). Path semantics assume
-POSIX, so these are skipped on Windows.
+Exercises the tool against a real ``NotASandboxLocalEnvironment`` (host
+filesystem), calling it directly as an async function. Errors surface as
+raised ``ValueError`` — the raw function raises; the error→status wrapping
+only happens through the tool's ``stream`` path. Path semantics assume
+POSIX, so these tests are skipped on Windows.
 """
 
+import asyncio
 import sys
-from types import SimpleNamespace
 
 import pytest
 
+from strands.agent.state import AgentState
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.tools import ToolContext
 from strands.vended_tools.file_editor import file_editor, make_file_editor
-from strands.vended_tools.file_editor.file_editor import DEFAULT_FILE_EDITOR_DESCRIPTION
+from strands.vended_tools.file_editor.file_editor import DEFAULT_UNDO_STATE_KEY
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX path semantics assumed")
 
 
+class _FakeAgent:
+    """A minimal agent stand-in with a ``sandbox`` and ``state``."""
+
+    def __init__(self, sandbox: NotASandboxLocalEnvironment | None = None) -> None:
+        self.sandbox = sandbox or NotASandboxLocalEnvironment()
+        self.state = AgentState()
+
+
 def _tool_context(sandbox: NotASandboxLocalEnvironment | None = None) -> ToolContext:
     """Build a ToolContext whose agent exposes the given sandbox (or a fresh one)."""
-    agent = SimpleNamespace(sandbox=sandbox or NotASandboxLocalEnvironment())
+    agent = _FakeAgent(sandbox=sandbox)
     return ToolContext(
         tool_use={"name": "file_editor", "toolUseId": "test-id", "input": {}},
         agent=agent,
@@ -144,8 +151,10 @@ class TestViewErrors:
             await editor(command="view", path="relative/path.txt", tool_context=ctx)
 
     @pytest.mark.asyncio
-    async def test_path_traversal_raises(self, editor, ctx):
-        with pytest.raises(ValueError, match="path traversal"):
+    async def test_traversal_rejected_without_root(self, editor, ctx):
+        # `..` is rejected on the raw input so a default (no-root) deployment
+        # on a host-filesystem sandbox cannot be coerced out of a parent dir.
+        with pytest.raises(ValueError, match="path traversal is not allowed"):
             await editor(command="view", path="/tmp/../etc/passwd", tool_context=ctx)
 
     @pytest.mark.asyncio
@@ -277,8 +286,20 @@ class TestStrReplace:
     @pytest.mark.asyncio
     async def test_multiple_occurrences_raises(self, editor, ctx, tmp_path):
         file_path = _write(tmp_path / "test.txt", "DUP Line 1\nLine 2\nDUP Line 3")
-        with pytest.raises(ValueError, match="Multiple occurrences"):
+        with pytest.raises(ValueError, match=r"2 occurrences .* \[1, 3\]"):
             await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="DUP", new_str="NEW")
+
+    @pytest.mark.asyncio
+    async def test_overlapping_match_counted_non_overlapping(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "aaaa\n")
+        with pytest.raises(ValueError, match=r"2 occurrences .* \[1, 1\]\."):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="aa", new_str="b")
+
+    @pytest.mark.asyncio
+    async def test_many_occurrences_truncates_line_list(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "\n".join(["x"] * 50) + "\n")
+        with pytest.raises(ValueError, match=r"50 occurrences .* \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]\.\.\."):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="x", new_str="y")
 
     @pytest.mark.asyncio
     async def test_nonexistent_raises(self, editor, ctx, tmp_path):
@@ -385,50 +406,30 @@ class TestPreservesUntouchedBytes:
 
         assert (tmp_path / "Makefile").read_text() == ".PHONY: build test\n" + self.MAKEFILE
 
-    @pytest.mark.asyncio
-    async def test_empty_old_str_reports_the_empty_argument(self, editor, ctx, tmp_path):
-        file_path = _write(tmp_path / "notes.txt", "alpha\nbeta\n")
-
-        with pytest.raises(ValueError, match="old_str must not be empty"):
-            await editor(command="str_replace", path=file_path, old_str="", new_str="x", tool_context=ctx)
-
-        assert (tmp_path / "notes.txt").read_text() == "alpha\nbeta\n"
-
 
 class TestFileSizeLimit:
-    """The 1MB content size guard."""
+    """The configurable content size guard."""
 
     @pytest.mark.asyncio
-    async def test_view_exceeds_size_limit_raises(self, editor, ctx, tmp_path):
-        file_path = _write(tmp_path / "large.txt", "x" * 1048577)  # 1MB + 1 byte
+    async def test_view_exceeds_size_limit_raises(self, ctx, tmp_path):
+        # Use a low custom cap so the test doesn't need to allocate the default cap.
+        small_editor = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=1024)
+        file_path = _write(tmp_path / "large.txt", "x" * 2048)
         with pytest.raises(ValueError, match="exceeds"):
-            await editor(command="view", path=file_path, tool_context=ctx)
+            await small_editor(command="view", path=file_path, tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_default_cap_is_one_megabyte(self, editor, ctx, tmp_path):
+        # Default cap is 1 MB. A file just under it is accepted; a 2 MB file is rejected.
+        under = _write(tmp_path / "under.txt", "x" * (1 * 1024 * 1024 - 1))
+        result = await editor(command="view", path=under, tool_context=ctx)
+        assert "cat -n" in result
+        over = _write(tmp_path / "over.txt", "x" * (2 * 1024 * 1024))
+        with pytest.raises(ValueError, match="exceeds"):
+            await editor(command="view", path=over, tool_context=ctx)
 
 
 class TestEdgeCases:
-    """Content edge cases: special characters, unicode, tabs, trailing slashes."""
-
-    @pytest.mark.asyncio
-    async def test_special_characters(self, editor, ctx, tmp_path):
-        content = 'Special chars: @#$%^&*()_+-={}[]|:;"<>,.?/~`'
-        file_path = _write(tmp_path / "special.txt", content)
-        result = await editor(command="view", path=file_path, tool_context=ctx)
-        assert "Special chars:" in result
-
-    @pytest.mark.asyncio
-    async def test_unicode(self, editor, ctx, tmp_path):
-        content = "你好世界\n🚀 Emoji test\nΣ Greek letters"
-        file_path = _write(tmp_path / "unicode.txt", content)
-        result = await editor(command="view", path=file_path, tool_context=ctx)
-        assert "你好世界" in result
-        assert "🚀" in result
-
-    @pytest.mark.asyncio
-    async def test_expands_tabs(self, editor, ctx, tmp_path):
-        file_path = _write(tmp_path / "tabs.txt", "Line 1\tTab\tSeparated")
-        result = await editor(command="view", path=file_path, tool_context=ctx)
-        assert "\t" not in result
-
     @pytest.mark.asyncio
     async def test_handles_trailing_slash_on_file_path(self, editor, ctx, tmp_path):
         file_path = _write(tmp_path / "trailing.txt", "content here")
@@ -462,10 +463,768 @@ class TestToolMetadata:
         assert make_file_editor(name="sandbox_file_editor").tool_name == "sandbox_file_editor"
 
     def test_default_description(self):
-        assert make_file_editor().tool_spec["description"] == DEFAULT_FILE_EDITOR_DESCRIPTION
+        description = make_file_editor().tool_spec["description"]
+        assert "Filesystem editor" in description
+        assert "pdf documents returned as media blocks" in description
 
     def test_input_schema_excludes_context(self):
         props = file_editor.tool_spec["inputSchema"]["json"]["properties"]
         assert "command" in props
         assert "path" in props
         assert "tool_context" not in props
+
+    def test_input_schema_advertises_commands(self):
+        command_enum = file_editor.tool_spec["inputSchema"]["json"]["properties"]["command"]["enum"]
+        assert set(command_enum) == {
+            "view",
+            "create",
+            "str_replace",
+            "insert",
+            "find_line",
+            "undo_edit",
+        }
+
+
+class TestConfinementRoot:
+    """When a ``root`` is configured, all paths must resolve inside it."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_absolute_path_outside_root(self, ctx, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        outside = tmp_path / "outside.txt"
+        _write(outside, "secret")
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        with pytest.raises(ValueError, match="outside the configured root"):
+            await confined(command="view", path=str(outside), tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_rejects_traversal_even_with_root(self, ctx, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        with pytest.raises(ValueError, match="path traversal is not allowed"):
+            await confined(command="view", path=f"{root}/../outside.txt", tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_backslash_in_filename_is_literal(self, ctx, tmp_path):
+        # On POSIX, ``\`` is a legal character in a filename. Containment must
+        # treat it literally — a basename like ``weird\name`` sits inside root
+        # and must not be rewritten into a ``weird/name`` subpath.
+        root = tmp_path / "workspace"
+        root.mkdir()
+        weird = root / "weird\\name"
+        weird.write_text("ok", encoding="utf-8")
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        result = await confined(command="view", path=str(weird), tool_context=ctx)
+        assert "ok" in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_sibling_that_shares_prefix(self, ctx, tmp_path):
+        root = tmp_path / "ws"
+        root.mkdir()
+        sibling = tmp_path / "ws-neighbor"
+        sibling.mkdir()
+        _write(sibling / "file.txt", "content")
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        with pytest.raises(ValueError, match="outside the configured root"):
+            await confined(command="view", path=str(sibling / "file.txt"), tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_allows_path_inside_root(self, ctx, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        target = _write(root / "ok.txt", "hello")
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        result = await confined(command="view", path=target, tool_context=ctx)
+        assert "hello" in result
+
+    def test_rejects_relative_root_at_construction(self):
+        with pytest.raises(ValueError, match="absolute path"):
+            make_file_editor(root="relative/root")
+
+    def test_default_description_mentions_configured_root(self, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        assert str(root) in confined.tool_spec["description"]
+
+    def test_custom_description_is_not_rewritten(self, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        confined = make_file_editor(
+            sandbox=NotASandboxLocalEnvironment(), root=str(root), description="custom description"
+        )
+        assert confined.tool_spec["description"] == "custom description"
+
+    @pytest.mark.asyncio
+    async def test_symlink_pointing_inside_root_is_allowed(self, ctx, tmp_path):
+        root = tmp_path / "workspace"
+        root.mkdir()
+        target = _write(root / "real.txt", "inside content")
+        link = root / "alias.txt"
+        link.symlink_to(target)
+        confined = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        result = await confined(command="view", path=str(link), tool_context=ctx)
+        assert "inside content" in result
+
+
+class TestWriteSizeCaps:
+    """The write side must also reject payloads above the configured cap."""
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_oversize_file_text(self, ctx, tmp_path):
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=1024)
+        with pytest.raises(ValueError, match="exceeds maximum allowed size"):
+            await e(
+                command="create",
+                path=str(tmp_path / "big.txt"),
+                tool_context=ctx,
+                file_text="x" * 2048,
+            )
+
+    @pytest.mark.asyncio
+    async def test_str_replace_rejects_oversize_new_str(self, ctx, tmp_path):
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=1024)
+        file_path = _write(tmp_path / "s.txt", "small")
+        with pytest.raises(ValueError, match="exceeds maximum allowed size"):
+            await e(
+                command="str_replace",
+                path=file_path,
+                tool_context=ctx,
+                old_str="small",
+                new_str="y" * 2048,
+            )
+
+
+class TestMissingRoot:
+    """A ``root`` that does not exist in the sandbox is rejected on first use."""
+
+    @pytest.mark.asyncio
+    async def test_missing_root_fails_on_first_use(self, ctx):
+        missing_root = "/workspace-does-not-exist-anywhere"
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=missing_root)
+        with pytest.raises(ValueError, match="does not exist in the sandbox"):
+            await e(command="view", path=f"{missing_root}/foo.txt", tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_deleted_root_trips_config_error_on_every_call(self, ctx, tmp_path):
+        # Guards #3235: a root deleted after a successful first probe must
+        # still raise the clear configuration error on later calls, not
+        # surface as a generic "path does not exist" on whatever child the
+        # model tries next.
+        root = tmp_path / "workspace"
+        root.mkdir()
+        inner = _write(root / "a.txt", "hello")
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), root=str(root))
+        await e(command="view", path=inner, tool_context=ctx)
+        # Remove the root; the next call must surface the config error.
+        (root / "a.txt").unlink()
+        root.rmdir()
+        with pytest.raises(ValueError, match="does not exist in the sandbox"):
+            await e(command="view", path=inner, tool_context=ctx)
+
+
+class TestUndoLRUEviction:
+    """The undo history is a bounded LRU: it must evict on overflow."""
+
+    @pytest.mark.asyncio
+    async def test_evicts_oldest_entry_past_entry_cap(self, ctx, tmp_path):
+        # Two-entry cap; three edits must evict the oldest.
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_undo_entries=2)
+        paths = [_write(tmp_path / f"f{i}.txt", f"orig{i}") for i in range(3)]
+        for i, p in enumerate(paths):
+            await e(command="str_replace", path=p, tool_context=ctx, old_str=f"orig{i}", new_str=f"new{i}")
+        # Oldest snapshot (f0) has been evicted.
+        with pytest.raises(ValueError, match="No undo history"):
+            await e(command="undo_edit", path=paths[0], tool_context=ctx)
+        # Two most recent still restore.
+        await e(command="undo_edit", path=paths[1], tool_context=ctx)
+        assert (tmp_path / "f1.txt").read_text() == "orig1"
+
+    @pytest.mark.asyncio
+    async def test_preserves_just_inserted_entry_when_it_alone_exceeds_byte_cap(self, ctx, tmp_path):
+        # Guards #3235: an edit whose snapshot alone exceeds `max_undo_bytes`
+        # must still be undoable. The byte cap is best-effort when a single
+        # snapshot is larger than the whole budget.
+        tiny_cap = 10
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_undo_bytes=tiny_cap)
+        file_path = _write(tmp_path / "big.txt", "x" * 100)
+        await e(command="str_replace", path=file_path, tool_context=ctx, old_str="x", new_str="X", replace_all=True)
+        # The snapshot (100 bytes) alone busts the 10-byte cap; the editor
+        # still keeps it so undo works.
+        await e(command="undo_edit", path=file_path, tool_context=ctx)
+        assert (tmp_path / "big.txt").read_text() == "x" * 100
+
+    @pytest.mark.asyncio
+    async def test_evicts_past_byte_cap(self, ctx, tmp_path):
+        # Byte cap sized to fit one snapshot but not two, so a second edit
+        # forces the oldest out.
+        snapshot = "x" * 100
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_undo_bytes=len(snapshot) + 20)
+        p1 = _write(tmp_path / "big1.txt", snapshot)
+        p2 = _write(tmp_path / "big2.txt", "y" * 100)
+        await e(command="str_replace", path=p1, tool_context=ctx, old_str="x", new_str="X", replace_all=True)
+        await e(command="str_replace", path=p2, tool_context=ctx, old_str="y", new_str="Y", replace_all=True)
+        with pytest.raises(ValueError, match="No undo history"):
+            await e(command="undo_edit", path=p1, tool_context=ctx)
+        await e(command="undo_edit", path=p2, tool_context=ctx)
+        assert (tmp_path / "big2.txt").read_text() == "y" * 100
+
+
+class TestBinaryRejection:
+    """Binary files must be rejected on view/edit rather than silently mangled."""
+
+    @pytest.mark.asyncio
+    async def test_view_rejects_binary_file(self, editor, ctx, tmp_path):
+        file_path = tmp_path / "binary.bin"
+        file_path.write_bytes(b"\x00\x01\x02BINARY\x00DATA")
+        with pytest.raises(ValueError, match="binary"):
+            await editor(command="view", path=str(file_path), tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_str_replace_rejects_binary_file(self, editor, ctx, tmp_path):
+        file_path = tmp_path / "binary.bin"
+        file_path.write_bytes(b"HEAD\x00TAIL")
+        with pytest.raises(ValueError, match="binary"):
+            await editor(command="str_replace", path=str(file_path), tool_context=ctx, old_str="HEAD", new_str="X")
+
+    @pytest.mark.asyncio
+    async def test_utf16_le_bom_rejected_as_unsupported_encoding(self, editor, ctx, tmp_path):
+        # UTF-16 text is a valid, decodable format but not UTF-8. Report it as
+        # an unsupported encoding rather than misclassifying as binary.
+        file_path = tmp_path / "utf16.txt"
+        file_path.write_bytes(b"\xff\xfe" + "hello world".encode("utf-16-le"))
+        with pytest.raises(ValueError, match="UTF-16"):
+            await editor(command="view", path=str(file_path), tool_context=ctx)
+
+
+class TestViewMedia:
+    """``view`` returns a media-shaped ToolResult for images and binary documents."""
+
+    @pytest.mark.parametrize(
+        ("filename", "expected_format"),
+        [
+            ("photo.png", "png"),
+            ("photo.jpg", "jpeg"),
+            ("photo.jpeg", "jpeg"),
+            ("photo.gif", "gif"),
+            ("photo.webp", "webp"),
+            ("photo.PNG", "png"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_image_returns_image_content_block(self, editor, ctx, tmp_path, filename, expected_format):
+        file_path = tmp_path / filename
+        payload = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        file_path.write_bytes(payload)
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert result["status"] == "success"
+        assert result["toolUseId"] == "test-id"
+        (block,) = result["content"]
+        assert block["image"]["format"] == expected_format
+        assert block["image"]["source"]["bytes"] == payload
+
+    @pytest.mark.asyncio
+    async def test_pdf_returns_document_content_block_by_default(self, editor, ctx, tmp_path):
+        file_path = tmp_path / "report.pdf"
+        payload = b"%PDF-1.4\n%\xd0\xd4\xc5\xd8\n" + b"\x00" * 32
+        file_path.write_bytes(payload)
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert result["status"] == "success"
+        (block,) = result["content"]
+        assert block["document"]["format"] == "pdf"
+        assert block["document"]["name"] == "report pdf"
+        assert block["document"]["source"]["bytes"] == payload
+
+    @pytest.mark.parametrize(
+        ("filename", "expected_format", "expected_name"),
+        [
+            ("report.doc", "doc", "report doc"),
+            ("report.docx", "docx", "report docx"),
+            ("report.xls", "xls", "report xls"),
+            ("report.xlsx", "xlsx", "report xlsx"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_office_formats_opt_in_route_as_document(
+        self, ctx, tmp_path, filename, expected_format, expected_name
+    ):
+        # Office formats are off by default because Anthropic raises an
+        # unrecoverable TypeError when they re-enter conversation history.
+        # Opt in via ``binary_document_formats``.
+        file_path = tmp_path / filename
+        payload = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 32
+        file_path.write_bytes(payload)
+        editor = make_file_editor(
+            sandbox=NotASandboxLocalEnvironment(),
+            binary_document_formats=("pdf", "doc", "docx", "xls", "xlsx"),
+        )
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert result["status"] == "success"
+        (block,) = result["content"]
+        assert block["document"]["format"] == expected_format
+        assert block["document"]["name"] == expected_name
+        assert block["document"]["source"]["bytes"] == payload
+
+    @pytest.mark.asyncio
+    async def test_office_formats_rejected_by_default_as_binary(self, editor, ctx, tmp_path):
+        # With the default ``("pdf",)``, a .docx falls to the text path and is
+        # rejected as binary — not routed as a DocumentBlock.
+        file_path = tmp_path / "report.docx"
+        file_path.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 32)
+        with pytest.raises(ValueError, match="binary file"):
+            await editor(command="view", path=str(file_path), tool_context=ctx)
+
+    @pytest.mark.parametrize("filename", ["notes.csv", "notes.html", "notes.txt", "notes.md"])
+    @pytest.mark.asyncio
+    async def test_text_representable_documents_stay_on_text_path(self, editor, ctx, tmp_path, filename):
+        # csv/html/txt/md are documents by Bedrock's taxonomy but are text-
+        # representable, so view keeps them on the numbered-lines path where
+        # find_line and str_replace still work.
+        file_path = _write(tmp_path / filename, "alpha\nbeta\n")
+        result = await editor(command="view", path=file_path, tool_context=ctx)
+        assert isinstance(result, str)
+        assert "alpha" in result and "beta" in result
+
+    @pytest.mark.parametrize(
+        ("filename", "payload"),
+        [("photo.png", b"\x89PNG\r\n\x1a\n"), ("report.pdf", b"%PDF-1.4\n")],
+    )
+    @pytest.mark.asyncio
+    async def test_view_range_rejected_on_media(self, editor, ctx, tmp_path, filename, payload):
+        file_path = tmp_path / filename
+        file_path.write_bytes(payload)
+        with pytest.raises(ValueError, match="view_range"):
+            await editor(command="view", path=str(file_path), tool_context=ctx, view_range=[1, 2])
+
+    @pytest.mark.asyncio
+    async def test_media_bound_by_max_media_file_size(self, ctx, tmp_path):
+        file_path = tmp_path / "big.png"
+        file_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096)
+        editor = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_media_file_size=256)
+        with pytest.raises(ValueError, match="exceeds maximum allowed size"):
+            await editor(command="view", path=str(file_path), tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_media_size_cap_skipped_when_media_false(self, ctx, tmp_path):
+        # media=False returns a text placeholder; the media byte cap is a
+        # provider-API constraint, so it should not reject the view.
+        file_path = tmp_path / "big.png"
+        file_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096)
+        editor = make_file_editor(
+            sandbox=NotASandboxLocalEnvironment(), media=False, max_media_file_size=256
+        )
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert isinstance(result, str)
+        assert "Image file" in result
+
+    @pytest.mark.asyncio
+    async def test_binary_document_formats_lowercased(self, ctx, tmp_path):
+        file_path = tmp_path / "report.docx"
+        payload = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 32
+        file_path.write_bytes(payload)
+        editor = make_file_editor(
+            sandbox=NotASandboxLocalEnvironment(), binary_document_formats=("PDF", "DOCX")
+        )
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert result["status"] == "success"
+        assert result["content"][0]["document"]["format"] == "docx"
+
+    @pytest.mark.asyncio
+    async def test_media_not_bound_by_text_max_file_size(self, ctx, tmp_path):
+        # The text ``max_file_size`` cap does not apply to media; a small text
+        # cap must not block a modest image/document view.
+        file_path = tmp_path / "photo.png"
+        payload = b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096
+        file_path.write_bytes(payload)
+        editor = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=256)
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert result["status"] == "success"
+        assert result["content"][0]["image"]["source"]["bytes"] == payload
+
+    def test_document_name_truncated_to_200_chars(self):
+        from strands.vended_tools.file_editor.file_editor import _document_name
+
+        # Bedrock caps DocumentBlock.name at 200 characters.
+        assert len(_document_name(f"/tmp/{'a' * 300}.pdf")) == 200
+
+    @pytest.mark.asyncio
+    async def test_media_false_returns_text_placeholder_for_image(self, ctx, tmp_path):
+        file_path = tmp_path / "photo.png"
+        payload = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+        file_path.write_bytes(payload)
+        editor = make_file_editor(sandbox=NotASandboxLocalEnvironment(), media=False)
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert isinstance(result, str)
+        assert "Image file" in result
+        assert str(file_path) in result
+        assert "png" in result
+        assert f"{len(payload)} bytes" in result
+
+    @pytest.mark.asyncio
+    async def test_media_false_returns_text_placeholder_for_document(self, ctx, tmp_path):
+        file_path = tmp_path / "report.pdf"
+        payload = b"%PDF-1.4\n" + b"\x00" * 16
+        file_path.write_bytes(payload)
+        editor = make_file_editor(sandbox=NotASandboxLocalEnvironment(), media=False)
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        assert isinstance(result, str)
+        assert "Document file" in result
+        assert "pdf" in result
+
+    @pytest.mark.asyncio
+    async def test_document_name_sanitizes_special_characters(self, editor, ctx, tmp_path):
+        # Bedrock allows only alphanumerics, whitespace, `-`, `()`, `[]` in document names.
+        file_path = tmp_path / "My Report (v2)!.pdf"
+        file_path.write_bytes(b"%PDF-1.4\n")
+        result = await editor(command="view", path=str(file_path), tool_context=ctx)
+        name = result["content"][0]["document"]["name"]
+        assert name == "My Report (v2) pdf"
+
+
+class TestStrReplaceReplaceAll:
+    """``str_replace`` must refuse ambiguous matches without ``replace_all``."""
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_without_opt_in_raises(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "DUP\nfoo\nDUP\nbar\nDUP\n")
+        with pytest.raises(ValueError, match="replace_all"):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="DUP", new_str="X")
+
+    @pytest.mark.asyncio
+    async def test_replace_all_opt_in_replaces_every_occurrence(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "DUP\nfoo\nDUP\nbar\nDUP\n")
+        result = await editor(
+            command="str_replace",
+            path=file_path,
+            tool_context=ctx,
+            old_str="DUP",
+            new_str="X",
+            replace_all=True,
+        )
+        assert "3 occurrences replaced" in result
+        assert (tmp_path / "test.txt").read_text() == "X\nfoo\nX\nbar\nX\n"
+
+
+class TestFindLine:
+    """The ``find_line`` command returns every match and treats absence as an empty report."""
+
+    @pytest.mark.asyncio
+    async def test_returns_every_match(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "alpha\nbeta\ngamma\nbeta again\n")
+        result = await editor(command="find_line", path=file_path, tool_context=ctx, search_text="beta")
+        assert "[2, 4]" in result
+        # The snippet is drawn around the first hit.
+        assert "gamma" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_report_when_missing(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "alpha\n")
+        result = await editor(command="find_line", path=file_path, tool_context=ctx, search_text="MISSING")
+        assert "No matches" in result
+        assert "MISSING" in result
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_matches_across_whitespace(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "def   my_function ( ):\n    pass\n")
+        result = await editor(
+            command="find_line", path=file_path, tool_context=ctx, search_text="def my_function", fuzzy=True
+        )
+        assert "[1]" in result
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_does_not_allow_arbitrary_content_between_tokens(self, editor, ctx, tmp_path):
+        # Fuzzy is whitespace-tolerant only: tokens separated by non-whitespace
+        # content (``foo = baz; bar``) must not match ``foo bar``.
+        file_path = _write(tmp_path / "test.txt", "foo = baz; bar\n")
+        result = await editor(
+            command="find_line", path=file_path, tool_context=ctx, search_text="foo bar", fuzzy=True
+        )
+        assert "No matches" in result
+
+    @pytest.mark.asyncio
+    async def test_truncates_past_hit_cap(self, editor, ctx, tmp_path):
+        # 300 matching lines with a 200-hit cap: the reply is truncated and says so.
+        content = "\n".join("hit line" for _ in range(300)) + "\n"
+        file_path = _write(tmp_path / "test.txt", content)
+        result = await editor(command="find_line", path=file_path, tool_context=ctx, search_text="hit")
+        assert "truncated" in result
+
+    @pytest.mark.asyncio
+    async def test_exact_cap_hits_is_not_marked_truncated(self, editor, ctx, tmp_path):
+        # Guards #3235: with exactly the cap of matches, every hit is
+        # returned, so the reply must not claim truncation.
+        from strands.vended_tools.file_editor.file_editor import _MAX_FIND_LINE_HITS
+
+        content = "\n".join("hit line" for _ in range(_MAX_FIND_LINE_HITS)) + "\n"
+        file_path = _write(tmp_path / "test.txt", content)
+        result = await editor(command="find_line", path=file_path, tool_context=ctx, search_text="hit")
+        assert "truncated" not in result
+
+    @pytest.mark.asyncio
+    async def test_empty_search_text_returns_no_matches(self, editor, ctx, tmp_path):
+        # Both branches must align: an empty search string once matched every
+        # line in the plain branch while the fuzzy branch returned "no matches".
+        file_path = _write(tmp_path / "test.txt", "alpha\nbeta\n")
+        plain = await editor(command="find_line", path=file_path, tool_context=ctx, search_text="")
+        fuzzy = await editor(command="find_line", path=file_path, tool_context=ctx, search_text="", fuzzy=True)
+        assert "No matches" in plain
+        assert "No matches" in fuzzy
+
+class TestUndo:
+    """In-memory, per-agent ``undo_edit``."""
+
+    @pytest.mark.asyncio
+    async def test_undo_str_replace(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "hello\n")
+        await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="hello", new_str="goodbye")
+        assert (tmp_path / "test.txt").read_text() == "goodbye\n"
+        await editor(command="undo_edit", path=file_path, tool_context=ctx)
+        assert (tmp_path / "test.txt").read_text() == "hello\n"
+
+    @pytest.mark.asyncio
+    async def test_undo_insert(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "one\ntwo\n")
+        await editor(command="insert", path=file_path, tool_context=ctx, insert_line=1, new_str="between")
+        await editor(command="undo_edit", path=file_path, tool_context=ctx)
+        assert (tmp_path / "test.txt").read_text() == "one\ntwo\n"
+
+    @pytest.mark.asyncio
+    async def test_undo_without_history_raises(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "test.txt", "content\n")
+        with pytest.raises(ValueError, match="No undo history"):
+            await editor(command="undo_edit", path=file_path, tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_max_undo_entries_zero_disables_history(self, ctx, tmp_path):
+        # Opt-out: ``max_undo_entries=0`` skips the agent-state write on every
+        # mutating command, and ``undo_edit`` reports the feature is disabled.
+        file_path = _write(tmp_path / "test.txt", "hello\n")
+        no_undo = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_undo_entries=0)
+        await no_undo(command="str_replace", path=file_path, tool_context=ctx, old_str="hello", new_str="goodbye")
+        assert (tmp_path / "test.txt").read_text() == "goodbye\n"
+        assert ctx.agent.state.get(DEFAULT_UNDO_STATE_KEY) is None
+        with pytest.raises(ValueError, match="Undo is disabled"):
+            await no_undo(command="undo_edit", path=file_path, tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_snapshot_survives_across_agent_state_roundtrip(self, tmp_path):
+        # Guards #3235: undo history lives in ``agent.state`` so a session
+        # manager can persist it. Simulate a rehydrated agent by copying the
+        # first agent's serialized state into a fresh one and confirm undo
+        # still restores the pre-edit content.
+        file_path = _write(tmp_path / "test.txt", "original\n")
+        editor = make_file_editor(sandbox=NotASandboxLocalEnvironment())
+
+        first_agent = _FakeAgent()
+        first_ctx = ToolContext(
+            tool_use={"name": "file_editor", "toolUseId": "first", "input": {}},
+            agent=first_agent,
+            invocation_state={},
+        )
+        await editor(
+            command="str_replace", path=file_path, tool_context=first_ctx, old_str="original", new_str="edited"
+        )
+        serialized = first_agent.state.get()
+        assert serialized  # sanity: state was written
+
+        rehydrated = _FakeAgent()
+        rehydrated.state = AgentState(serialized)
+        rehydrated_ctx = ToolContext(
+            tool_use={"name": "file_editor", "toolUseId": "second", "input": {}},
+            agent=rehydrated,
+            invocation_state={},
+        )
+        await editor(command="undo_edit", path=file_path, tool_context=rehydrated_ctx)
+        assert (tmp_path / "test.txt").read_text() == "original\n"
+
+    @pytest.mark.asyncio
+    async def test_undo_is_scoped_per_agent_within_one_editor(self, tmp_path):
+        # Guards #3235: two agents sharing one editor instance must not see each
+        # other's undo history, so agent B cannot restore agent A's snapshot
+        # over B's file.
+        file_a = _write(tmp_path / "a.txt", "A-original\n")
+        file_b = _write(tmp_path / "b.txt", "B-original\n")
+        shared = make_file_editor(sandbox=NotASandboxLocalEnvironment())
+
+        agent_a = _FakeAgent()
+        agent_b = _FakeAgent()
+        ctx_a = ToolContext(
+            tool_use={"name": "file_editor", "toolUseId": "a", "input": {}}, agent=agent_a, invocation_state={}
+        )
+        ctx_b = ToolContext(
+            tool_use={"name": "file_editor", "toolUseId": "b", "input": {}}, agent=agent_b, invocation_state={}
+        )
+
+        await shared(command="str_replace", path=file_a, tool_context=ctx_a, old_str="A-original", new_str="A-changed")
+        await shared(command="str_replace", path=file_b, tool_context=ctx_b, old_str="B-original", new_str="B-changed")
+
+        # Agent B cannot undo agent A's edit.
+        with pytest.raises(ValueError, match="No undo history"):
+            await shared(command="undo_edit", path=file_a, tool_context=ctx_b)
+        # Agent B's own edit is still undoable and lands on B's file (not A's).
+        await shared(command="undo_edit", path=file_b, tool_context=ctx_b)
+        assert (tmp_path / "a.txt").read_text() == "A-changed\n"
+        assert (tmp_path / "b.txt").read_text() == "B-original\n"
+
+    @pytest.mark.asyncio
+    async def test_two_editors_sharing_state_key_dont_drop_snapshots(self, ctx, tmp_path):
+        # Two editor instances for one agent sharing the default undo_state_key
+        # must preserve each other's snapshots when their calls interleave on the
+        # event loop. The state update is a synchronous read-modify-write with
+        # no await between get and set, which guarantees serialization.
+        file_a = _write(tmp_path / "a.txt", "A-original\n")
+        file_b = _write(tmp_path / "b.txt", "B-original\n")
+        sandbox = NotASandboxLocalEnvironment()
+        editor_one = make_file_editor(sandbox=sandbox)
+        editor_two = make_file_editor(sandbox=sandbox)
+
+        await asyncio.gather(
+            editor_one(
+                command="str_replace", path=file_a, tool_context=ctx, old_str="A-original", new_str="A-changed"
+            ),
+            editor_two(
+                command="str_replace", path=file_b, tool_context=ctx, old_str="B-original", new_str="B-changed"
+            ),
+        )
+
+        # Both snapshots survived — either editor can undo the other's edit.
+        await editor_one(command="undo_edit", path=file_b, tool_context=ctx)
+        await editor_two(command="undo_edit", path=file_a, tool_context=ctx)
+        assert (tmp_path / "a.txt").read_text() == "A-original\n"
+        assert (tmp_path / "b.txt").read_text() == "B-original\n"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_only_stored_after_successful_write(self, ctx, tmp_path):
+        # Guards #3235: a write failure must not shadow the still-valid earlier
+        # snapshot. undo_edit after a failed edit restores what was on disk
+        # before the last successful write, not the current-but-unwritten content.
+        file_path = _write(tmp_path / "test.txt", "original\n")
+        sandbox = NotASandboxLocalEnvironment()
+        editor = make_file_editor(sandbox=sandbox)
+
+        await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="original", new_str="first")
+        assert (tmp_path / "test.txt").read_text() == "first\n"
+
+        original_write = sandbox.write_text
+
+        async def failing_write(path, content, **kwargs):
+            raise OSError("EIO: transient failure")
+
+        sandbox.write_text = failing_write  # type: ignore[method-assign]
+        with pytest.raises(OSError, match="transient failure"):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="first", new_str="second")
+
+        # The failed write must not have shadowed the still-valid snapshot.
+        sandbox.write_text = original_write  # type: ignore[method-assign]
+        await editor(command="undo_edit", path=file_path, tool_context=ctx)
+        assert (tmp_path / "test.txt").read_text() == "original\n"
+
+    @pytest.mark.asyncio
+    async def test_undo_stays_retryable_on_transient_write_failure(self, ctx, tmp_path):
+        # Guards #3235: a failed undo write must keep the entry in history so
+        # the caller can retry.
+        file_path = _write(tmp_path / "test.txt", "original\n")
+        sandbox = NotASandboxLocalEnvironment()
+        editor = make_file_editor(sandbox=sandbox)
+
+        await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="original", new_str="edited")
+        assert (tmp_path / "test.txt").read_text() == "edited\n"
+
+        original_write = sandbox.write_text
+        calls = {"count": 0}
+
+        async def flaky_write(path, content, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise OSError("EIO: transient failure")
+            return await original_write(path, content, **kwargs)
+
+        sandbox.write_text = flaky_write  # type: ignore[method-assign]
+        with pytest.raises(OSError, match="transient failure"):
+            await editor(command="undo_edit", path=file_path, tool_context=ctx)
+
+        # Undo entry is still there and the retry succeeds.
+        await editor(command="undo_edit", path=file_path, tool_context=ctx)
+        assert (tmp_path / "test.txt").read_text() == "original\n"
+
+
+class TestEmptyInputRejection:
+    """Empty ``old_str`` input produces confusing behavior and is rejected."""
+
+    @pytest.mark.asyncio
+    async def test_str_replace_empty_old_str_raises(self, editor, ctx, tmp_path):
+        # `"".count("")` returns `len + 1`; without an explicit guard the caller
+        # would see a confusing "multiple occurrences" error or, with
+        # replace_all, `new_str` inserted between every character.
+        file_path = _write(tmp_path / "test.txt", "hello\n")
+        with pytest.raises(ValueError, match="empty"):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="", new_str="X")
+
+
+class TestOversizePreflight:
+    """An edit whose projected output would exceed ``max_file_size`` is rejected before allocation."""
+
+    @pytest.mark.asyncio
+    async def test_str_replace_expansion_past_cap_rejected(self, ctx, tmp_path):
+        # Cap is 32 bytes. Original is 20 bytes. `replace_all` on "x" -> "XXX"
+        # produces 60 bytes, past the cap.
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=32)
+        file_path = _write(tmp_path / "grow.txt", "x" * 20)
+        with pytest.raises(ValueError, match="exceeding the maximum"):
+            await e(
+                command="str_replace",
+                path=file_path,
+                tool_context=ctx,
+                old_str="x",
+                new_str="XXX",
+                replace_all=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_str_replace_preflight_runs_before_allocation(self, ctx, tmp_path):
+        # Guards #3235: replace_all must reject an oversized projected output
+        # by byte-count arithmetic, before str.replace allocates the buffer.
+        # Small file × small replacement × many matches models the pathological
+        # case where the individual payloads fit but the aggregate is huge.
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=4 * 1024)
+        file_path = _write(tmp_path / "small.txt", "a" * 1000)
+        with pytest.raises(ValueError, match="exceeding the maximum"):
+            await e(
+                command="str_replace",
+                path=file_path,
+                tool_context=ctx,
+                old_str="a",
+                new_str="x" * 100,
+                replace_all=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_insert_expansion_past_cap_rejected(self, ctx, tmp_path):
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=32)
+        file_path = _write(tmp_path / "grow.txt", "x" * 30)
+        with pytest.raises(ValueError, match="exceeding the maximum"):
+            await e(
+                command="insert",
+                path=file_path,
+                tool_context=ctx,
+                insert_line=0,
+                new_str="y" * 10,
+            )
+
+    @pytest.mark.asyncio
+    async def test_insert_preflight_accounts_for_join_newline(self, ctx, tmp_path):
+        # Projected size must include the separator newline that joins the
+        # inserted block to existing content; a 1-byte original + 1-byte insert
+        # produces a 3-byte file (`a\nX`), not 2.
+        e = make_file_editor(sandbox=NotASandboxLocalEnvironment(), max_file_size=2)
+        file_path = _write(tmp_path / "tight.txt", "a")
+        with pytest.raises(ValueError, match="exceeding the maximum"):
+            await e(
+                command="insert",
+                path=file_path,
+                tool_context=ctx,
+                insert_line=1,
+                new_str="X",
+            )

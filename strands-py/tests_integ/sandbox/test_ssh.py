@@ -177,11 +177,11 @@ async def test_stateless_between_commands(ssh_sandbox: SshSandbox):
 # ---------------------------------------------------------------------------
 
 
-async def test_get_tools_returns_sandbox_shell_and_file_editor(ssh_sandbox: SshSandbox):
+async def test_get_tools_returns_sandbox_shell_and_edit(ssh_sandbox: SshSandbox):
     tools = ssh_sandbox.get_tools()
     names = {t.tool_name for t in tools}
     assert "sandbox_shell" in names
-    assert "sandbox_file_editor" in names
+    assert "sandbox_edit" in names
 
 
 async def test_get_tools_descriptions_reference_host(ssh_sandbox: SshSandbox):
