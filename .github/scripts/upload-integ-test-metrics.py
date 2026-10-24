@@ -32,6 +32,8 @@ TRANSLITERATIONS = {
 }
 MAX_DIMENSION_LENGTH = 255
 MAX_TIMESTAMP_AGE_DAYS = 13
+# Child elements that pytest-rerunfailures / surefire-style reporters add to a <testcase> that was re-run.
+RETRY_TAGS = ("rerun", "rerunFailure", "rerunError", "flakyFailure", "flakyError")
 
 # Runs triggered by a pull request publish only the context-free per-test schema (see build_metric_data).
 PR_EVENTS = frozenset({"pull_request_target", "pull_request"})
@@ -57,6 +59,7 @@ class TestResult:
     duration: float
     outcome: Literal["failed", "skipped", "passed"]
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    retried: bool = False
 
 
 def suite_timestamp(attr: str | None, now: datetime) -> datetime:
@@ -92,7 +95,8 @@ def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | N
     else:
         outcome = "passed"
 
-    return TestResult(name, classname, duration, outcome, timestamp)
+    retried = any(testcase.find(tag) is not None for tag in RETRY_TAGS)
+    return TestResult(name, classname, duration, outcome, timestamp, retried)
 
 
 def sanitize_test_name(name: str) -> str:
@@ -161,6 +165,7 @@ def _test_datums(test: TestResult, dimensions: list[Dimension], timestamp: datet
         ("TestFailed", 1.0 if test.outcome == "failed" else 0.0, "Count"),
         ("TestSkipped", 1.0 if test.outcome == "skipped" else 0.0, "Count"),
         ("TestDuration", test.duration, "Seconds"),
+        ("TestRetried", 1.0 if test.retried else 0.0, "Count"),
     ]
     return [
         MetricDatum(MetricName=name, Dimensions=dimensions, Value=value, Unit=unit, Timestamp=timestamp)

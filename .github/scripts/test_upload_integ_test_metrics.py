@@ -84,17 +84,17 @@ def results_named(mod, names):
 
 
 def test_publish_metrics_isolates_failed_batch_and_reports_its_tests(mod, capsys):
-    # 749 tests x 4 datums + 4 suite datums = 3000 datums = 3 batches of 1000, i.e. 250 tests per batch.
+    # 599 tests x 5 datums + 4 suite datums = 2999 datums = 3 batches, 200 tests per batch.
     ctx = mod.RunContext(event="pull_request_target", branch="main", leg="all")
-    data = mod.build_metric_data(results_named(mod, [f"t{i:03d}" for i in range(749)]), "repo", "python", ctx)
+    data = mod.build_metric_data(results_named(mod, [f"t{i:03d}" for i in range(599)]), "repo", "python", ctx)
     client = FakeCloudWatch(fail_on={1})
 
     failed = mod.publish_metrics(data, client)
 
     assert len(client.batches) == 3
-    assert failed == [f"suite.t{i:03d}" for i in range(250, 500)]
+    assert failed == [f"suite.t{i:03d}" for i in range(200, 400)]
     out = capsys.readouterr().out
-    assert "::error::Metrics not published for test: suite.t250" in out
+    assert "::error::Metrics not published for test: suite.t200" in out
     assert "suite.t000" not in out
 
 
@@ -131,7 +131,7 @@ def test_pr_event_emits_context_free_per_test_schema_and_suite_counters(mod):
 
     per_test = [d for d in data if d["MetricName"].startswith("Test") and not d["MetricName"].startswith("Tests")]
     suite = [d for d in data if d["MetricName"].startswith("Tests")]
-    assert len(per_test) == 3 * 4
+    assert len(per_test) == 3 * 5
     assert all(set(dims_of(d)) == {"TestName", "Repository", "SDK"} for d in per_test)
     assert {d["MetricName"]: d["Value"] for d in suite} == {
         "TestsRun": 3.0,
@@ -153,9 +153,9 @@ def test_non_pr_event_emits_both_per_test_schemas(mod):
 
     data = mod.build_metric_data(results, "repo", "python", ctx)
 
-    assert len(data) == 2 * 4 * 2 + 4
+    assert len(data) == 2 * 5 * 2 + 4
     context_schema = [d for d in data if "TestName" in dims_of(d) and "Event" in dims_of(d)]
-    assert len(context_schema) == 2 * 4
+    assert len(context_schema) == 2 * 5
     assert all(dims_of(d)["Leg"] == "bidi" and dims_of(d)["Event"] == "schedule" for d in context_schema)
     suite = {d["MetricName"]: d["Value"] for d in data if d["MetricName"].startswith("Tests")}
     assert suite == {"TestsRun": 2.0, "TestsPassed": 1.0, "TestsFailed": 1.0, "TestsSkipped": 0.0}
@@ -252,6 +252,33 @@ def test_build_metric_data_uses_test_timestamps_and_earliest_for_suite(mod):
 
     assert {d["Timestamp"] for d in data if dims_of(d).get("TestName", "").endswith(".a")} == {late}
     assert {d["Timestamp"] for d in data if d["MetricName"].startswith("Tests")} == {early}
+
+
+@pytest.mark.parametrize(
+    ("body", "outcome", "retried"),
+    [
+        ('<testcase classname="c" name="t" time="1"><rerun message="x"/></testcase>', "passed", True),
+        ('<testcase classname="c" name="t" time="1"><flakyFailure message="x"/></testcase>', "passed", True),
+        ('<testcase classname="c" name="t" time="1"><rerunFailure/><failure/></testcase>', "failed", True),
+        ('<testcase classname="c" name="t" time="1"/>', "passed", False),
+        ('<testcase classname="c" name="t" time="1"><skipped/></testcase>', "skipped", False),
+    ],
+)
+def test_parse_junit_xml_marks_retried_tests(mod, tmp_path, body, outcome, retried):
+    (result,) = mod.parse_junit_xml(write_junit(tmp_path, body))
+
+    assert (result.outcome, result.retried) == (outcome, retried)
+
+
+def test_build_metric_data_emits_test_retried(mod):
+    results = results_named(mod, ["a", "b"])
+    results[1].retried = True
+
+    data = mod.build_metric_data(results, "repo", "python")
+
+    retried = {dims_of(d)["TestName"]: d["Value"] for d in data if d["MetricName"] == "TestRetried"}
+    assert retried == {"suite.a": 0.0, "suite.b": 1.0}
+    assert all(d["Unit"] == "Count" for d in data if d["MetricName"] == "TestRetried")
 
 
 def test_build_metric_data_uses_sanitized_test_name(mod):
