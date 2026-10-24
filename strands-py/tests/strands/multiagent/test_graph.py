@@ -2535,6 +2535,99 @@ def test_graph_interrupt_on_before_node_call_event(interrupt_hook):
     assert multiagent_result.execution_time >= first_execution_time
 
 
+def _build_review_loop_graph(revise_target):
+    """Build write -> review -> (revise_target | publish), interrupting before every review for a decision."""
+
+    class ApprovalHook(HookProvider):
+        def __init__(self):
+            self.decision = None
+
+        def register_hooks(self, registry):
+            registry.add_callback(BeforeNodeCallEvent, self.approve)
+
+        def approve(self, event):
+            if event.node_id == "review":
+                self.decision = event.interrupt("approval", reason="approve or revise")
+
+    hook = ApprovalHook()
+    builder = GraphBuilder()
+    for name in ("write", "review", "publish"):
+        builder.add_node(create_mock_agent(name, name), name)
+    builder.add_edge("write", "review")
+    builder.add_edge("review", revise_target, condition=lambda _: hook.decision == "revise")
+    builder.add_edge("review", "publish", condition=lambda _: hook.decision == "approve")
+    builder.set_entry_point("write")
+    builder.set_hook_providers([hook])
+    builder.set_max_node_executions(10)
+    return builder.build()
+
+
+def _resume_review_loop_from_state(state, revise_target, interrupts, response):
+    """Restore a fresh review-loop graph from serialized state and answer its pending interrupts."""
+    graph = _build_review_loop_graph(revise_target)
+    graph.deserialize_state(state)
+    responses = [{"interruptResponse": {"interruptId": interrupt.id, "response": response}} for interrupt in interrupts]
+    return graph, graph(responses)
+
+
+@pytest.mark.parametrize(
+    ("revise_target", "exp_node_ids"),
+    [
+        ("write", ["write", "review", "write", "review", "publish"]),
+        ("review", ["write", "review", "review", "publish"]),
+    ],
+)
+def test_graph_interrupt_on_revisited_node_resumes_after_restore(revise_target, exp_node_ids):
+    """A node interrupted again on a revisit still runs when the graph is restored from serialized state (#5253)."""
+    graph = _build_review_loop_graph(revise_target)
+    result = graph("draft a post")
+
+    tru_status = result.status
+    exp_status = Status.INTERRUPTED
+    assert tru_status == exp_status
+
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), revise_target, result.interrupts, "revise")
+
+    tru_status = result.status
+    exp_status = Status.INTERRUPTED
+    assert tru_status == exp_status
+
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), revise_target, result.interrupts, "approve")
+
+    tru_status = result.status
+    exp_status = Status.COMPLETED
+    assert tru_status == exp_status
+
+    tru_node_ids = [node.node_id for node in result.execution_order]
+    assert tru_node_ids == exp_node_ids
+
+
+@pytest.mark.parametrize("next_nodes_to_execute", [[], ["write"]])
+def test_graph_resumes_interrupted_node_also_listed_as_completed(next_nodes_to_execute):
+    """A payload listing an interrupted node as completed still resumes that node (#5253).
+
+    The empty next_nodes_to_execute case is the payload such a graph produces; the non-empty case covers restoring
+    the node's interrupted status when the payload does schedule other work.
+    """
+    graph = _build_review_loop_graph("write")
+    result = graph("draft a post")
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), "write", result.interrupts, "revise")
+
+    state = graph.serialize_state()
+    state["completed_nodes"] = [*state["completed_nodes"], "review"]
+    state["next_nodes_to_execute"] = next_nodes_to_execute
+
+    graph, result = _resume_review_loop_from_state(state, "write", result.interrupts, "approve")
+
+    tru_status = result.status
+    exp_status = Status.COMPLETED
+    assert tru_status == exp_status
+
+    tru_node_ids = [node.node_id for node in result.execution_order]
+    exp_node_ids = ["write", "review", "write", "review", "publish"]
+    assert tru_node_ids == exp_node_ids
+
+
 def test_graph_interrupt_on_agent(agenerator):
     exp_interrupts = [
         Interrupt(

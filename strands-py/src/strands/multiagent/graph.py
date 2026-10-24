@@ -775,6 +775,8 @@ class Graph(MultiAgentBase):
         node.execution_status = Status.INTERRUPTED
 
         self.state.status = Status.INTERRUPTED
+        # An interrupted node is not completed, including one interrupted on a revisit.
+        self.state.completed_nodes.discard(node)
         self.state.interrupted_nodes.add(node)
 
         self._interrupt_state.interrupts.update({interrupt.id: interrupt for interrupt in interrupts})
@@ -1365,9 +1367,10 @@ class Graph(MultiAgentBase):
         """Restore graph state from a session dict and prepare for execution.
 
         This method handles two scenarios:
-        1. If the graph execution ended (no next_nodes_to_execute, eg: Completed, or Failed with dead end nodes),
+        1. If the graph execution ended (no next_nodes_to_execute and no interrupted nodes, eg: Completed, or Failed
+           with dead end nodes),
         resets all nodes and graph state to allow re-execution from the beginning.
-        2. If the graph execution was interrupted mid-execution (has next_nodes_to_execute),
+        2. If the graph execution was interrupted mid-execution (has next_nodes_to_execute or interrupted nodes),
            restores the persisted state and prepares to resume execution from the next ready nodes.
 
         Args:
@@ -1378,7 +1381,7 @@ class Graph(MultiAgentBase):
             internal_state = payload["_internal_state"]
             self._interrupt_state = _InterruptState.from_dict(internal_state["interrupt_state"])
 
-        if not payload.get("next_nodes_to_execute"):
+        if not payload.get("next_nodes_to_execute") and not payload.get("interrupted_nodes"):
             # Reset all nodes
             for node in self.nodes.values():
                 node.reset_executor_state()
@@ -1554,8 +1557,10 @@ class Graph(MultiAgentBase):
         for node in self.state.interrupted_nodes:
             node.execution_status = Status.INTERRUPTED
 
-        self.state.completed_nodes = set(
-            self.nodes[node_id] for node_id in (payload.get("completed_nodes") or []) if node_id in self.nodes
+        # An interrupted node is not completed, even if the payload lists it in both sets.
+        self.state.completed_nodes = (
+            set(self.nodes[node_id] for node_id in (payload.get("completed_nodes") or []) if node_id in self.nodes)
+            - self.state.interrupted_nodes
         )
         for node in self.state.completed_nodes:
             node.execution_status = Status.COMPLETED
