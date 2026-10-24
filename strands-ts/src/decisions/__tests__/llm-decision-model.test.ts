@@ -26,18 +26,11 @@ class RecordingModel extends TestModelProvider {
 /**
  * Build a {@link RecordingModel} that replays a single tool-use turn plus a
  * metadata event carrying usage and latency.
- *
- * `input` entries may be bare strings (shorthand for `{ answer }`) or
- * full `{ answer, reason? }` objects.
  */
 function toolUseModel(
-  input: Record<string, string | { answer: string; reason?: string }>,
+  input: Record<string, unknown>,
   options: { usage?: Usage | null; latencyMs?: number | null } = {}
 ): RecordingModel {
-  const normalized: Record<string, { answer: string; reason?: string }> = {}
-  for (const [id, value] of Object.entries(input)) {
-    normalized[id] = typeof value === 'string' ? { answer: value } : value
-  }
   const usage = options.usage === undefined ? DEFAULT_USAGE : options.usage
   const latencyMs = options.latencyMs === undefined ? 42 : options.latencyMs
 
@@ -50,7 +43,7 @@ function toolUseModel(
     }
     yield {
       type: 'modelContentBlockDeltaEvent',
-      delta: { type: 'toolUseInputDelta', input: JSON.stringify(normalized) },
+      delta: { type: 'toolUseInputDelta', input: JSON.stringify(input) },
     }
     yield { type: 'modelContentBlockStopEvent' }
     yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
@@ -120,7 +113,7 @@ describe('LLMDecisionModel', () => {
     })
 
     it('returns Uncertain carrying the model-supplied reason', async () => {
-      const model = toolUseModel({ color: { answer: 'uncertain', reason: 'the input mentioned no color' } })
+      const model = toolUseModel({ color: 'uncertain', color_reason: 'the input mentioned no color' })
       const decision = new LLMDecisionModel({ model })
 
       const result = await decision.ask('ambiguous', {
@@ -141,10 +134,9 @@ describe('LLMDecisionModel', () => {
       })
 
       const toolSpec = model.options[0]?.toolSpecs?.[0]
-      const schema = toolSpec?.inputSchema as {
-        properties?: Record<string, { properties?: { answer?: { enum?: string[] } } }>
-      }
-      expect(schema.properties?.['q']?.properties?.answer?.enum).toEqual(['yes', 'no'])
+      const schema = toolSpec?.inputSchema as { properties?: Record<string, { enum?: string[] }> }
+      expect(Object.keys(schema.properties ?? {})).toEqual(['q'])
+      expect(schema.properties?.['q']?.enum).toEqual(['yes', 'no'])
     })
 
     it('appends uncertain to the enum by default', async () => {
@@ -154,10 +146,9 @@ describe('LLMDecisionModel', () => {
       await decision.ask('state', { q: { question: 'ok?', choices: ['yes', 'no'] } })
 
       const toolSpec = model.options[0]?.toolSpecs?.[0]
-      const schema = toolSpec?.inputSchema as {
-        properties?: Record<string, { properties?: { answer?: { enum?: string[] } } }>
-      }
-      expect(schema.properties?.['q']?.properties?.answer?.enum).toEqual(['yes', 'no', 'uncertain'])
+      const schema = toolSpec?.inputSchema as { properties?: Record<string, { enum?: string[] }> }
+      expect(Object.keys(schema.properties ?? {})).toEqual(['q', 'q_reason'])
+      expect(schema.properties?.['q']?.enum).toEqual(['yes', 'no', 'uncertain'])
     })
 
     it('forces the structured-output tool', async () => {
@@ -301,6 +292,28 @@ describe('LLMDecisionModel', () => {
       expect(result.answers.q).toBe(true)
       expect(result.usage).toBeUndefined()
       expect(result.metadata.latencyMs).toBeGreaterThanOrEqual(0)
+    })
+
+    it('throws when the model nests an answer inside an object', async () => {
+      const model = toolUseModel({ q: { answer: 'true' } })
+      const decision = new LLMDecisionModel({ model })
+
+      await expect(decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /invalid answer set/
+      )
+    })
+
+    it("rejects a question id that collides with another question's reason field", async () => {
+      const model = toolUseModel({})
+      const decision = new LLMDecisionModel({ model })
+
+      await expect(
+        decision.ask('x', {
+          q: { question: 'ok?', choices: 'boolean' },
+          q_reason: { question: 'why?', choices: ['a', 'b'] },
+        })
+      ).rejects.toThrow(/collides/)
+      expect(model.requests).toHaveLength(0)
     })
 
     it('throws when the model returns an unknown option', async () => {

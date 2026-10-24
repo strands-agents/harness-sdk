@@ -23,7 +23,7 @@ class ToolUseFixture extends TestModelProvider {
       }
       yield {
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'toolUseInputDelta', input: JSON.stringify({ q: { answer: 'true' } }) },
+        delta: { type: 'toolUseInputDelta', input: JSON.stringify({ q: 'true' }) },
       }
       yield { type: 'modelContentBlockStopEvent' }
       yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
@@ -64,7 +64,7 @@ describe('LLMDecisionModel tracing', () => {
         }
         yield {
           type: 'modelContentBlockDeltaEvent',
-          delta: { type: 'toolUseInputDelta', input: JSON.stringify({ q: { answer: 'true' } }) },
+          delta: { type: 'toolUseInputDelta', input: JSON.stringify({ q: 'true' }) },
         }
         yield { type: 'modelContentBlockStopEvent' }
         yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }

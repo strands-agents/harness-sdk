@@ -114,9 +114,9 @@ export class LLMDecisionModel extends DecisionModel {
       throw new Error('decision model returned no structured answers')
     }
 
-    let parsed: Record<string, { answer: string; reason?: string }>
+    let parsed: Record<string, string | undefined>
     try {
-      parsed = schema.parse(toolUse.input) as Record<string, { answer: string; reason?: string }>
+      parsed = schema.parse(toolUse.input) as Record<string, string | undefined>
     } catch (error) {
       throw new Error(`decision model returned an invalid answer set: ${normalizeError(error).message}`, {
         cause: error,
@@ -143,18 +143,34 @@ export class LLMDecisionModel extends DecisionModel {
 
 function buildAnswerSchema<const Q extends Record<string, Question>>(
   questions: Q
-): z.ZodObject<Record<string, z.ZodObject<{ answer: z.ZodEnum; reason: z.ZodOptional<z.ZodString> }>>> {
-  const shape: Record<string, z.ZodObject<{ answer: z.ZodEnum; reason: z.ZodOptional<z.ZodString> }>> = {}
+): z.ZodObject<Record<string, AnswerField>> {
+  // Kept flat: some models (e.g. Claude Haiku 4.5) intermittently serialize a nested
+  // object argument as a string, which then fails validation.
+  const shape: Record<string, AnswerField> = {}
   for (const [id, question] of Object.entries(questions)) {
-    const literals = answerLiterals(question, uncertaintyAllowed(question))
-    shape[id] = z
-      .object({
-        answer: z.enum(literals as [string, ...string[]]),
-        reason: z.string().optional().describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
-      })
-      .describe(question.question)
+    const allowUncertain = uncertaintyAllowed(question)
+    const literals = answerLiterals(question, allowUncertain)
+    addField(shape, id, z.enum(literals as [string, ...string[]]).describe(question.question))
+    if (allowUncertain) {
+      addField(
+        shape,
+        reasonKey(id),
+        z.string().optional().describe(`Explanation when ${id} is '${UNCERTAIN_LITERAL}'; omit otherwise.`)
+      )
+    }
   }
   return z.object(shape).describe('Answer for each question in the input decision set.')
+}
+
+type AnswerField = z.ZodEnum | z.ZodOptional<z.ZodString>
+
+function reasonKey(id: string): string {
+  return `${id}_reason`
+}
+
+function addField(shape: Record<string, AnswerField>, key: string, field: AnswerField): void {
+  if (key in shape) throw new Error(`field=<${key}> | question id collides with another question's reason field`)
+  shape[key] = field
 }
 
 function answerLiterals(question: Question, allowUncertain: boolean): readonly string[] {
@@ -163,24 +179,24 @@ function answerLiterals(question: Question, allowUncertain: boolean): readonly s
 }
 
 function convertAnswers<const Q extends Record<string, Question>>(
-  raw: Record<string, { answer: string; reason?: string }>,
+  raw: Record<string, string | undefined>,
   questions: Q
 ): { [K in keyof Q]: AnswerOf<Q[K]> } {
   const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
   for (const id of Object.keys(questions) as (keyof Q)[]) {
     const question = questions[id]!
-    const entry = raw[id as string]
-    if (entry === undefined) throw new Error(`decision model omitted answer for question id=<${String(id)}>`)
-    answers[id] = convertSingleAnswer(question, entry) as AnswerOf<Q[typeof id]>
+    const answer = raw[id as string]
+    if (answer === undefined) throw new Error(`decision model omitted answer for question id=<${String(id)}>`)
+    answers[id] = convertSingleAnswer(question, answer, raw[reasonKey(id as string)]) as AnswerOf<Q[typeof id]>
   }
   return answers
 }
 
 function convertSingleAnswer(
   question: Question,
-  entry: { answer: string; reason?: string }
+  answer: string,
+  reason: string | undefined
 ): boolean | string | Uncertain {
-  const { answer, reason } = entry
   if (answer === UNCERTAIN_LITERAL) return new Uncertain(reason)
   if (question.choices === 'boolean') return answer === 'true'
   return answer
