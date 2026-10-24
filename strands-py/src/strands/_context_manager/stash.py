@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..storage.storage import _NAMESPACED, _NamespacedStorage
 from ..types.content import ContentBlock
+from .methods.truncate import SPLIT_THRESHOLD_CHARS
+from .split import is_field_ref, split_large_strings
 
 if TYPE_CHECKING:
     from ..storage.storage import Storage
@@ -92,10 +94,16 @@ class Stash:
         return key
 
     def refs_for(self, block: ContentBlock, message: Message, block_index: int) -> list[str]:
-        """Compute deterministic reference keys for a content block."""
+        """Compute deterministic reference keys for a content block, followed by the refs of any split-out fields."""
         if "toolResult" in block:
             tool_result = block["toolResult"]
-            return [f"{tool_result['toolUseId']}_{index}" for index in range(len(tool_result["content"]))]
+            refs: list[str] = []
+            field_refs: list[str] = []
+            for index, item in enumerate(tool_result["content"]):
+                key = f"{tool_result['toolUseId']}_{index}"
+                refs.append(key)
+                field_refs.extend(split_large_strings(item, key, SPLIT_THRESHOLD_CHARS)[1])
+            return refs + field_refs
         return [f"{message.get('tracking_id', 'unknown')}_{block_index}"]
 
     async def store_message(
@@ -131,10 +139,12 @@ class Stash:
                     )
 
     async def retrieve(self, reference: str) -> object | None:
-        """Retrieve a stashed block by reference. Returns None if not found."""
+        """Retrieve a stashed block by reference, or the raw text of a split-out field. Returns None if not found."""
         data = await self._storage.read(reference)
         if data is None:
             return None
+        if is_field_ref(reference):
+            return data.decode("utf-8", "surrogatepass")
         return _decode(data)
 
     async def list(self) -> list[str]:
@@ -157,7 +167,7 @@ class Stash:
         for key in keys:
             data = await self._storage.read(key)
             if data is not None:
-                entries[key] = _decode(data)
+                entries[key] = data.decode("utf-8", "surrogatepass") if is_field_ref(key) else _decode(data)
         return entries
 
     async def load_snapshot(self, entries: dict[str, Any]) -> None:
@@ -167,7 +177,9 @@ class Stash:
             entries: Map of reference keys to their JSON values (from :meth:`take_snapshot`).
         """
         for key, data in entries.items():
-            await self._storage.write(key, _encode(data))
+            await self._storage.write(
+                key, data.encode("utf-8", "surrogatepass") if is_field_ref(key) else _encode(data)
+            )
 
     async def clear(self) -> None:
         """Delete all entries in this agent's stash namespace."""
@@ -192,11 +204,21 @@ class Stash:
             await self._base_storage.delete(key)
 
     async def _store_tool_result(self, block: ContentBlock, *, keep_existing: bool = False) -> None:
-        """Store each sub-block of a tool result individually."""
+        """Store each sub-block of a tool result individually, with large strings split out as raw text."""
         tool_result = block["toolResult"]
         for block_index, item in enumerate(tool_result["content"]):
             try:
-                await self.store(tool_result["toolUseId"], block_index, _encode(item), keep_existing=keep_existing)
+                key = f"{tool_result['toolUseId']}_{block_index}"
+                if keep_existing and await self._storage.read(key) is not None:
+                    continue
+                parent, fields = split_large_strings(item, key, SPLIT_THRESHOLD_CHARS)
+                try:
+                    for ref, text in fields.items():
+                        await self._storage.write(ref, text.encode("utf-8", "surrogatepass"))
+                except Exception:
+                    logger.warning("key=<%s> | failed to stash split field, storing block unsplit", key, exc_info=True)
+                    parent = item
+                await self._storage.write(key, _encode(parent))
             except Exception:
                 logger.warning(
                     "tool_use_id=<%s>, block_index=<%s> | failed to stash sub-block",

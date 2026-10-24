@@ -72,7 +72,7 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
           const media = restoreMedia(result.data as Record<string, unknown>)
           if (media) return media as unknown as JSONValue
         }
-        const serialized = JSON.stringify(result.data)
+        const serialized = typeof result.data === 'string' ? result.data : JSON.stringify(result.data)
         if (serialized.length <= maxChars) return result.data as JSONValue
         return `${serialized.slice(0, maxChars)}\n\n[truncated]`
       }

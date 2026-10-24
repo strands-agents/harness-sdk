@@ -98,15 +98,39 @@ describe('ContextManager tool registration', () => {
     await registry.initialize(agent)
 
     const stash = contextManager.stash!
+    // Large text is split out: a marker parent plus the raw text under a field ref (#4741).
     const keys = await stash.list()
-    expect(keys.length).toBe(1)
-    const retrieved = await stash.retrieve(keys[0]!)
-    expect((retrieved!.data as { text: string }).text).toBe(largeText)
+    expect(keys).toHaveLength(2)
+    const fieldKey = keys.find((key) => key.startsWith('fields/'))!
+    expect((await stash.retrieve(fieldKey))!.data).toBe(largeText)
   })
 })
 
 describe('Offload strategies with stash', () => {
   describe('truncate + stash', () => {
+    it.each([100, 750, 2000])('every field ref in the preview resolves (previewTokens=%i)', async (previewTokens) => {
+      // The stash and the preview split at one shared threshold, whatever the preview budget is (#4741).
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const content = [
+        new TextBlock(JSON.stringify({ output: 'a'.repeat(3500), exit_code: 0 })), // below the split threshold
+        new TextBlock(JSON.stringify({ output: Array(100).fill('b'.repeat(80)).join('\n'), exit_code: 1 })), // above it
+      ]
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content })],
+        }),
+      ]
+      await stashAll(stash, messages)
+      const strategy = Offload.truncate('toolResults', { previewTokens }).when({ threshold: previewTokens + 1 })
+      await strategy.apply(makeContext(messages, stash))
+
+      const text = ((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text
+      const fieldRefs = new Set(text.match(/fields\/[^\s\],]+/g))
+      expect(fieldRefs).toEqual(new Set(['fields/tu-1_1/output']))
+      expect(await stash.retrieve('fields/tu-1_1/output')).not.toBeNull()
+    })
+
     it('persists original content to stash before truncating', async () => {
       const storage = new InMemoryStorage()
       const stash = new Stash(storage, 'test-session', 'test-agent')
@@ -120,12 +144,11 @@ describe('Offload strategies with stash', () => {
 
       expect(acted).toBe(true)
 
+      // Large text is split out: a marker parent plus the raw text under a field ref (#4741).
       const keys = await stash.list()
-      expect(keys.length).toBe(1)
-
-      const retrieved = await stash.retrieve(keys[0]!)
-      expect(retrieved).not.toBeNull()
-      expect((retrieved!.data as { text: string }).text).toBe(largeText)
+      expect(keys).toHaveLength(2)
+      const fieldKey = keys.find((key) => key.startsWith('fields/'))!
+      expect((await stash.retrieve(fieldKey))!.data).toBe(largeText)
     })
 
     it('includes stash reference in the truncated preview', async () => {
@@ -140,7 +163,7 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Stashed] [ref:')
+      expect(text).toContain('[Stashed] [refs: tool-123_0, fields/tool-123_0/text]')
     })
 
     it('does not stash when no stash is configured', async () => {
@@ -170,11 +193,11 @@ describe('Offload strategies with stash', () => {
 
       expect(acted).toBe(true)
 
+      // Large text is split out: a marker parent plus the raw text under a field ref (#4741).
       const keys = await stash.list()
-      expect(keys.length).toBe(1)
-
-      const retrieved = await stash.retrieve(keys[0]!)
-      expect((retrieved!.data as { text: string }).text).toBe(largeText)
+      expect(keys).toHaveLength(2)
+      const fieldKey = keys.find((key) => key.startsWith('fields/'))!
+      expect((await stash.retrieve(fieldKey))!.data).toBe(largeText)
     })
 
     it('includes stash reference in the drop marker', async () => {
@@ -189,7 +212,7 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Dropped] [ref:')
+      expect(text).toContain('[Dropped] [refs: tool-123_0, fields/tool-123_0/text]')
     })
   })
 
@@ -277,11 +300,11 @@ describe('Offload strategies with stash', () => {
 
       await stash.storeMessage(message)
 
+      // Large text is split out: a marker parent plus the raw text under a field ref (#4741).
       const keys = await stash.list()
-      expect(keys.length).toBe(1)
-      const retrieved = await stash.retrieve(keys[0]!)
-      expect(retrieved).not.toBeNull()
-      expect((retrieved!.data as { text: string }).text).toBe(largeText)
+      expect(keys).toHaveLength(2)
+      const fieldKey = keys.find((key) => key.startsWith('fields/'))!
+      expect((await stash.retrieve(fieldKey))!.data).toBe(largeText)
     })
 
     it('persists text blocks from assistant messages on arrival', async () => {

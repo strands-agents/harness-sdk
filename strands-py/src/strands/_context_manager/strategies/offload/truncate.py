@@ -101,7 +101,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         if "toolResult" in block:
             tool_use_id = block["toolResult"]["toolUseId"]
             logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_use_id, tokens)
-            truncated_result = _truncate_tool_result(block["toolResult"], self._truncate_config)
+            truncated_result = _truncate_tool_result(block["toolResult"], self._truncate_config, split=bool(stash_refs))
             if truncated_result is block["toolResult"]:
                 return block
             truncated = ContentBlock(toolResult=truncated_result)

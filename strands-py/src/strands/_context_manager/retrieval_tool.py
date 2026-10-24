@@ -77,7 +77,7 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                 media = _restore_media(result)
                 if media is not None:
                     return ToolResult(toolUseId=tool_use_id, status="success", content=[media])
-            full_text = json.dumps(result)
+            full_text = result if isinstance(result, str) else json.dumps(result)
             if len(full_text) > max_chars:
                 full_text = full_text[:max_chars] + "\n\n[truncated]"
             content: list[ToolResultContent] = [ToolResultContent(text=full_text)]

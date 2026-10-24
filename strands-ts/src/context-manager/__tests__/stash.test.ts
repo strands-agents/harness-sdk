@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 
 describe('Stash', () => {
   describe('store and retrieve', () => {
@@ -132,6 +133,70 @@ describe('Stash', () => {
       await stash.clearSession()
 
       expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+  })
+
+  describe('large strings are split out as raw text (#4741)', () => {
+    const BIG = Array.from({ length: 2000 }, (_, i) => `line ${i + 1}`).join('\n')
+    const toolResultMessage = (content: (TextBlock | JsonBlock)[]) =>
+      new Message({ role: 'user', content: [new ToolResultBlock({ toolUseId: 'tu', status: 'success', content })] })
+
+    it('stores a large field as raw text and a marker in the parent', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      await stash.storeMessage(
+        toolResultMessage([new TextBlock(JSON.stringify({ output: BIG, error: '', exit_code: 0 }))])
+      )
+
+      const raw = await storage.read('context/test-session/scopes/agent/test-agent/fields/tu_0/output')
+      expect(new TextDecoder().decode(raw!)).toBe(BIG)
+      expect((await stash.retrieve('fields/tu_0/output'))!.data).toBe(BIG)
+      const parent = (await stash.retrieve('tu_0'))!.data as { text: string }
+      expect(JSON.parse(parent.text)).toEqual({
+        output: '[ref: fields/tu_0/output (2,000 lines, 18,892 chars)]',
+        error: '',
+        exit_code: 0,
+      })
+    })
+
+    it('refsFor lists field refs after block refs', () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = toolResultMessage([
+        new TextBlock('small'),
+        new JsonBlock({ json: { output: BIG, exit_code: 0 } }),
+      ])
+      expect(stash.refsFor(message.content[0]!, message, 0)).toEqual(['tu_0', 'tu_1', 'fields/tu_1/output'])
+    })
+
+    it('stores the block unsplit when a field write fails', async () => {
+      const storage = new InMemoryStorage()
+      const originalWrite = storage.write.bind(storage)
+      storage.write = async (key: string, data: Uint8Array) => {
+        if (key.endsWith('/text')) throw new Error('quota')
+        await originalWrite(key, data)
+      }
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      await stash.storeMessage(toolResultMessage([new TextBlock(BIG)]))
+      expect((await stash.retrieve('tu_0'))!.data).toEqual({ text: BIG })
+    })
+
+    it('stores small results as before', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.storeMessage(toolResultMessage([new JsonBlock({ json: { output: 'ok', exit_code: 0 } })]))
+      expect((await stash.retrieve('tu_0'))!.data).toEqual({ json: { output: 'ok', exit_code: 0 } })
+      expect(await stash.list()).toEqual(['tu_0'])
+    })
+
+    it('round-trips raw field entries through snapshots', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.storeMessage(toolResultMessage([new JsonBlock({ json: { output: BIG, exit_code: 1 } })]))
+      const snapshot = await stash.takeSnapshot()
+      expect(snapshot['fields/tu_0/output']).toBe(BIG)
+
+      const restored = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await restored.loadSnapshot(snapshot)
+      expect((await restored.retrieve('fields/tu_0/output'))!.data).toBe(BIG)
+      expect((await restored.retrieve('tu_0'))!.data).toEqual((await stash.retrieve('tu_0'))!.data)
     })
   })
 })

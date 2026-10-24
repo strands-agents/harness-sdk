@@ -13,6 +13,8 @@ import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
+import { SPLIT_THRESHOLD_CHARS } from './methods/truncate.js'
+import { isFieldRef, splitLargeStrings } from './split.js'
 
 /** @internal */
 export const STASH_PREFIX = 'context'
@@ -100,7 +102,14 @@ export class Stash {
    */
   refsFor(block: ContentBlock, message: Message, blockIndex: number): string[] {
     if (block instanceof ToolResultBlock) {
-      return Array.from({ length: block.content.length }, (_, index) => `${block.toolUseId}_${index}`)
+      const refs: string[] = []
+      const fieldRefs: string[] = []
+      block.content.forEach((item, index) => {
+        const key = `${block.toolUseId}_${index}`
+        refs.push(key)
+        fieldRefs.push(...Object.keys(splitLargeStrings(item, key, SPLIT_THRESHOLD_CHARS).fields))
+      })
+      return [...refs, ...fieldRefs]
     }
     return [`${message.trackingId}_${blockIndex}`]
   }
@@ -134,11 +143,12 @@ export class Stash {
    * Retrieve previously stashed content as its serialized JSON form.
    *
    * @param reference - Key returned by a previous store call
-   * @returns The deserialized block data (from `toJSON()`), or null if not found
+   * @returns The deserialized block data (from `toJSON()`), the raw text of a split-out field, or null if not found
    */
   async retrieve(reference: string): Promise<{ data: unknown } | null> {
     const bytes = await this._storage.read(reference)
     if (bytes === null) return null
+    if (isFieldRef(reference)) return { data: new TextDecoder().decode(bytes) }
     return { data: decode(bytes) }
   }
 
@@ -216,14 +226,29 @@ export class Stash {
    * @param entries - Map of reference keys to their JSON values (from {@link takeSnapshot})
    */
   async loadSnapshot(entries: Record<string, JSONValue>): Promise<void> {
-    await Promise.all(Object.entries(entries).map(([key, data]) => this._storage.write(key, encode(data))))
+    await Promise.all(
+      Object.entries(entries).map(([key, data]) =>
+        this._storage.write(key, isFieldRef(key) ? new TextEncoder().encode(data as string) : encode(data))
+      )
+    )
   }
 
+  /** Store each sub-block of a tool result individually, with large strings split out as raw text. */
   private async _storeToolResult(block: ToolResultBlock): Promise<void> {
     for (let blockIndex = 0; blockIndex < block.content.length; blockIndex++) {
       const item = block.content[blockIndex]!
       try {
-        await this.store(block.toolUseId, blockIndex, encode(item.toJSON()))
+        const key = `${block.toolUseId}_${blockIndex}`
+        let { parent, fields } = splitLargeStrings(item, key, SPLIT_THRESHOLD_CHARS)
+        try {
+          for (const [ref, text] of Object.entries(fields)) {
+            await this._storage.write(ref, new TextEncoder().encode(text))
+          }
+        } catch (error) {
+          logger.warn(`key=<${key}>, error=<${error}> | failed to stash split field, storing block unsplit`)
+          parent = item
+        }
+        await this.store(block.toolUseId, blockIndex, encode(parent.toJSON()))
       } catch (error) {
         logger.warn(
           `toolUseId=<${block.toolUseId}>, blockIndex=<${blockIndex}>, error=<${error}> | failed to stash sub-block`

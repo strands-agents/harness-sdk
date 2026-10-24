@@ -1645,7 +1645,7 @@ class TestSnapshotStashIntegration:
                                 "toolUse": {
                                     "toolUseId": "tu-2",
                                     "name": "retrieve_context",
-                                    "input": {"reference": "tu-1_0"},
+                                    "input": {"reference": "fields/tu-1_0/text"},
                                 }
                             }
                         ],
@@ -1656,8 +1656,11 @@ class TestSnapshotStashIntegration:
         )
         resumed_agent("read it in full")
 
-        assert json.loads(_tool_result_text(resumed_agent, "tu-2")) == {"text": full_result}
-        assert asyncio.run(resumed_agent.context_manager.stash.retrieve("tu-1_0")) == {"text": full_result}
+        # Large text is stashed as raw text under a field ref; the block itself keeps a marker (#4741).
+        assert _tool_result_text(resumed_agent, "tu-2") == full_result
+        stash = resumed_agent.context_manager.stash
+        assert asyncio.run(stash.retrieve("fields/tu-1_0/text")) == full_result
+        assert asyncio.run(stash.retrieve("tu-1_0")) == {"text": "[ref: fields/tu-1_0/text (1 lines, 34,000 chars)]"}
 
 
 # ---------------------------------------------------------------------------
