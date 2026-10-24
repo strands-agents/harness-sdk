@@ -75,6 +75,16 @@ class TestHasLocationSource:
         content = {"video": {"source": {"bytes": b"data"}}}
         assert not _has_location_source(content)
 
+    def test_audio_with_location_source(self):
+        """Test detection of location source in audio content."""
+        content = {"audio": {"source": {"location": {"type": "s3", "uri": "s3://bucket/key"}}}}
+        assert _has_location_source(content)
+
+    def test_audio_with_bytes_source(self):
+        """Test that bytes source is not detected as location."""
+        content = {"audio": {"source": {"bytes": b"data"}}}
+        assert not _has_location_source(content)
+
     def test_text_content(self):
         """Test that text content is not detected as location source."""
         content = {"text": "hello"}
@@ -103,6 +113,11 @@ class TestHasLocationSource:
     def test_video_without_source(self):
         """Test that video without source is not detected as location."""
         content = {"video": {"format": "mp4"}}
+        assert not _has_location_source(content)
+
+    def test_audio_without_source(self):
+        """Test that audio without source is not detected as location."""
+        content = {"audio": {"format": "wav"}}
         assert not _has_location_source(content)
 
 
