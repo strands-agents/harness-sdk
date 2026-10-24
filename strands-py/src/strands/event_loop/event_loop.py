@@ -26,7 +26,10 @@ from ..middleware.stages import InvokeModelContext, InvokeModelStage
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
-from ..tools.structured_output._structured_output_context import StructuredOutputContext
+from ..tools.structured_output._structured_output_context import (
+    DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
+    StructuredOutputContext,
+)
 from ..types._events import (
     EventLoopStopEvent,
     ForceStopEvent,
@@ -1100,6 +1103,18 @@ async def _handle_tool_execution(
             structured_output=structured_output_result,
         )
         return
+
+    if (
+        not agent._checkpointing
+        and structured_output_context.validation_failure_count >= DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+    ):
+        logger.warning(
+            "attempts=<%d> | structured output validation failed repeatedly",
+            structured_output_context.validation_failure_count,
+        )
+        raise StructuredOutputException(
+            f"Structured output validation failed after {structured_output_context.validation_failure_count} attempts."
+        )
 
     # End the cycle span before the checkpoint pause or the recursive cycle.
     if cycle_span:
