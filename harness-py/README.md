@@ -444,7 +444,9 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318  # where your collector
 
 Set headers, protocol, and the rest through the other `OTEL_EXPORTER_OTLP_*` variables. With
 `OTEL_TRACES_EXPORTER` unset, the harness touches telemetry not at all: no exporter, no cost. If your
-process already configures a tracer, the harness uses it. Disable with `OTEL_SDK_DISABLED=true`.
+process already installed a tracer provider (for example ADOT auto-instrumentation on AgentCore Runtime),
+the harness leaves it and its propagators alone — `OTEL_TRACES_EXPORTER` is then that owner's to honor.
+Disable with `OTEL_SDK_DISABLED=true`.
 
 ## Requiring approval for tool calls
 

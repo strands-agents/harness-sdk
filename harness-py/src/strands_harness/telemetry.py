@@ -10,7 +10,9 @@ configured through the usual ``OTEL_EXPORTER_OTLP_*`` variables, which the expor
 
 Tracing is process-global (the provider lives on the OpenTelemetry global API, not on an ``Agent``),
 so setup runs at most once per process: building several agents — or a ``generalist``, which builds
-another agent per call — cannot stack duplicate exporters onto the same trace.
+another agent per call — cannot stack duplicate exporters onto the same trace. A tracer provider that is
+already installed (ADOT auto-instrumentation on AgentCore Runtime, or the host application's own setup)
+owns tracing outright: the harness leaves it, its exporters, and its propagators untouched.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 
+from opentelemetry import trace as trace_api
 from strands.telemetry import StrandsTelemetry
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,13 @@ def setup_telemetry() -> None:
         return
     exporters = _resolve_exporters()
     if not exporters:
+        return
+    provider = trace_api.get_tracer_provider()
+    if not isinstance(provider, trace_api.ProxyTracerProvider):
+        logger.info(
+            "provider=<%s> | tracer provider already installed, leaving telemetry to its owner", type(provider).__name__
+        )
+        _configured = True
         return
     telemetry = StrandsTelemetry()
     if "otlp" in exporters:
