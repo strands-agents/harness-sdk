@@ -3888,3 +3888,99 @@ class TestResumeDispatchedSibling:
         join_input_text = " ".join(str(block) for block in join_input)
         assert "From left:" in join_input_text
         assert "From right:" in join_input_text
+
+
+def test_graph_interrupt_resume_preserves_interrupted_nodes_when_execution_limit_reached():
+    """Verify interrupted nodes are not lost when an execution limit is reached on resume (#5341)."""
+
+    class ReviewInterruptHook(HookProvider):
+        def __init__(self):
+            self.decision = None
+
+        def register_hooks(self, registry: HookRegistry) -> None:
+            registry.add_callback(BeforeNodeCallEvent, self.before_node)
+
+        def before_node(self, event: BeforeNodeCallEvent) -> None:
+            if event.node_id == "review" and self.decision is None:
+                self.decision = event.interrupt("review-approval", reason="approve?")
+
+    hook = ReviewInterruptHook()
+    write_agent = create_mock_agent("write", "draft done")
+    review_agent = create_mock_agent("review", "review done")
+
+    builder = GraphBuilder()
+    builder.add_node(write_agent, "write")
+    builder.add_node(review_agent, "review")
+    builder.add_edge("write", "review")
+    builder.set_entry_point("write")
+    builder.set_max_node_executions(10)
+    builder.set_hook_providers([hook])
+    graph = builder.build()
+
+    # Step 1: Run until review interrupts
+    result1 = graph("draft a post")
+    assert result1.status == Status.INTERRUPTED
+    assert [n.node_id for n in graph.state.interrupted_nodes] == ["review"]
+
+    # Step 2: Set max_node_executions=1 (already met by 'write') and attempt resume
+    graph.max_node_executions = 1
+    responses = [{"interruptResponse": {"interruptId": i.id, "response": "approve"}} for i in result1.interrupts]
+    result2 = graph(responses)
+    assert result2.status == Status.FAILED
+    assert [n.node_id for n in graph.state.interrupted_nodes] == ["review"]
+    assert "review" not in result2.results
+
+    # Step 3: Raise the limit and retry on the same graph
+    graph.max_node_executions = 10
+    result3 = graph(responses)
+    assert result3.status == Status.COMPLETED
+    assert [n.node_id for n in graph.state.interrupted_nodes] == []
+    assert "review" in result3.results
+
+
+def test_graph_interrupt_resume_preserves_interrupted_nodes_across_session_when_limit_reached():
+    """Verify session serialization after a limit-blocked interrupt resume preserves the interrupted node (#5341)."""
+
+    class ReviewInterruptHook(HookProvider):
+        def __init__(self):
+            self.decision = None
+
+        def register_hooks(self, registry: HookRegistry) -> None:
+            registry.add_callback(BeforeNodeCallEvent, self.before_node)
+
+        def before_node(self, event: BeforeNodeCallEvent) -> None:
+            if event.node_id == "review" and self.decision is None:
+                self.decision = event.interrupt("review-approval", reason="approve?")
+
+    def build_graph(hook: ReviewInterruptHook, max_node_executions: int = 10):
+        builder = GraphBuilder()
+        builder.add_node(create_mock_agent("write", "draft done"), "write")
+        builder.add_node(create_mock_agent("review", "review done"), "review")
+        builder.add_edge("write", "review")
+        builder.set_entry_point("write")
+        builder.set_hook_providers([hook])
+        builder.set_max_node_executions(max_node_executions)
+        return builder.build()
+
+    hook = ReviewInterruptHook()
+    graph1 = build_graph(hook, max_node_executions=10)
+    result1 = graph1("draft a post")
+    assert result1.status == Status.INTERRUPTED
+    snapshot1 = graph1.serialize_state()
+
+    responses = [{"interruptResponse": {"interruptId": i.id, "response": "approve"}} for i in result1.interrupts]
+
+    # Restore into a second graph with max_node_executions=1 (already exhausted by 'write')
+    graph2 = build_graph(hook, max_node_executions=1)
+    graph2.deserialize_state(snapshot1)
+    result2 = graph2(responses)
+    assert result2.status == Status.FAILED
+    snapshot2 = graph2.serialize_state()
+    assert snapshot2["interrupted_nodes"] == ["review"]
+
+    # Restore into a third graph with raised limit and retry
+    graph3 = build_graph(hook, max_node_executions=10)
+    graph3.deserialize_state(snapshot2)
+    result3 = graph3(responses)
+    assert result3.status == Status.COMPLETED
+    assert "review" in result3.results
