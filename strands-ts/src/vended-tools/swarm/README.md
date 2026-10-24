@@ -79,4 +79,4 @@ The default builder gives each agent the parent's model and tools (narrowed by t
 
 Returns each participating agent's latest output as `name: output` lines. Returns an error result with the partial output when the swarm does not complete (an agent fails, a handoff loop is detected, or a step or time limit is hit), and an error result when the input is invalid.
 
-If an agent stops on interrupts, they are raised on the parent one per resume, each named after the agent's interrupt id with its original `name` and `reason` in `reason`. Resuming the parent resumes the same swarm; it is held in memory only, so it cannot be resumed after a process restart.
+If an agent stops on interrupts, they are raised on the parent with the id `swarm:<toolUseId>:<agentInterruptId>` (`toolUseId` URI-encoded) and the agent's original `name` and `reason`. The interrupted swarm's state is stored in the parent's interrupt state, so resuming the parent resumes the swarm, including after the parent is restored from a session. On resume the swarm's agents are rebuilt from the same input, so a custom `builder` must give each spec the same agent id.
