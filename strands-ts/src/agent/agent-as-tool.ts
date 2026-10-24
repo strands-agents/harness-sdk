@@ -261,8 +261,8 @@ export class AgentAsTool extends Tool {
         delete (parentState.context[INTERRUPTED_TURNS_KEY] as Record<string, JSONValue> | undefined)?.[toolUseId]
       }
 
-      if (result.stopReason === 'cancelled') {
-        return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
+      if (result.stopReason === 'cancelled' || result.stopReason === 'superseded') {
+        return createErrorResult(`Agent '${this.name}' ${result.stopReason}`, toolUseId)
       }
 
       if (LIMIT_STOP_REASONS.has(result.stopReason)) {

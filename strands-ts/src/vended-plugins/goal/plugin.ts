@@ -73,7 +73,7 @@ import { warnOnce } from '../../logging/warn-once.js'
 import type { Model } from '../../models/model.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { InvokeOptions, LocalAgent } from '../../types/agent.js'
-import type { ContentBlock, Message } from '../../types/messages.js'
+import { LIMIT_STOP_REASONS, type ContentBlock, type Message, type StopReason } from '../../types/messages.js'
 import type { Snapshot } from '../../types/snapshot.js'
 import { JUDGE_OUTCOME_SCHEMA, JUDGE_SYSTEM_PROMPT, buildJudgePrompt } from './judge.js'
 
@@ -98,8 +98,12 @@ export type Validator = (
   agent: LocalAgent
 ) => boolean | ValidationOutcome | Promise<boolean | ValidationOutcome>
 
-/** Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no further attempt could run. */
-export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit'
+/**
+ * Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no
+ * further attempt could run; `'stopped'` means the pass was cancelled or superseded by
+ * another invocation, so there was no answer to grade — see {@link GoalResult.agentStopReason}.
+ */
+export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit' | 'stopped'
 
 /** Single attempt summary preserved on `GoalResult`. */
 export interface GoalAttempt {
@@ -113,6 +117,8 @@ export interface GoalAttempt {
 export interface GoalResult {
   passed: boolean
   stopReason: GoalStopReason
+  /** The agent's own stop reason when `stopReason` is `'stopped'`. */
+  agentStopReason?: StopReason
   attempts: readonly GoalAttempt[]
 }
 
@@ -211,6 +217,10 @@ interface RunState {
   attempts: GoalAttempt[]
   result?: GoalResult
   resumed?: boolean
+  /** When the run paused for human input; the pause is not charged to `timeout`. */
+  pausedAt?: number
+  /** The interrupts the run paused on; the run continues only while the agent still holds them. */
+  pausedInterruptIds?: readonly string[]
   /** The latest assistant message when the current pass started, to tell whether the pass produced a new answer. */
   answerBeforePass: Message | undefined
   /**
@@ -309,9 +319,19 @@ export class GoalLoop implements Plugin {
     // attach to it without each having to lazy-create.
     agent.addHook(BeforeInvocationEvent, () => {
       const existing = this._runs.get(agent)
-      if (existing?.resumed) {
+      // A paused run continues only if the agent still holds the interrupts it paused on. A
+      // host that abandoned them (e.g. restored a pre-interrupt snapshot) gets a fresh run.
+      const heldInterrupts = (agent as Agent)._interruptState.interrupts
+      const abandoned =
+        existing?.pausedInterruptIds !== undefined && !existing.pausedInterruptIds.every((id) => id in heldInterrupts)
+      if (existing?.resumed && !abandoned) {
         existing.resumed = false
         existing.answerBeforePass = lastAssistantMessage(agent.messages)
+        if (existing.pausedAt !== undefined) {
+          existing.startTime += Date.now() - existing.pausedAt
+          delete existing.pausedAt
+          delete existing.pausedInterruptIds
+        }
         return
       }
       this._runs.set(agent, {
@@ -357,9 +377,31 @@ export class GoalLoop implements Plugin {
         return
       }
 
+      // A pass that stopped on a limit, or was cancelled / superseded by another caller,
+      // produced no answer to grade, and resuming it would continue a run the caller gave up on.
+      const agentStopReason = event.result?.stopReason
+      if (agentStopReason !== undefined && LIMIT_STOP_REASONS.has(agentStopReason)) {
+        finishRun(run, 'limit')
+        return
+      }
+      if (agentStopReason !== undefined && ENDED_WITHOUT_ANSWER.has(agentStopReason)) {
+        finishRun(run, 'stopped', agentStopReason)
+        return
+      }
+      // A pause for human input is not an attempt: keep the run alive so the resume continues
+      // it with the same attempt and time budget. The agent accepts nothing but the interrupt
+      // response until then; the BeforeInvocation hook drops the run if the host abandoned the
+      // interrupt instead (e.g. restored a pre-interrupt snapshot).
+      if (agentStopReason === 'interrupt') {
+        run.resumed = true
+        run.pausedAt = Date.now()
+        run.pausedInterruptIds = (event.result?.interrupts ?? []).map((interrupt) => interrupt.id)
+        return
+      }
+
       const response = lastAssistantMessage(agent.messages)
       const invocationContext = unwrapInvocationContext(event.invocationContext)
-      // The request's limit stopped this pass before it produced a new answer, so there is nothing to grade.
+      // The pass threw before producing a new answer (so `result` is unset) and the limit is spent.
       if (response === run.answerBeforePass && invocationContext && reachedLimit(invocationContext)) {
         finishRun(run, 'limit')
         return
@@ -452,10 +494,13 @@ export class GoalLoop implements Plugin {
   }
 }
 
-function finishRun(run: RunState, stopReason: GoalStopReason): void {
+const ENDED_WITHOUT_ANSWER = new Set<StopReason>(['cancelled', 'superseded'])
+
+function finishRun(run: RunState, stopReason: GoalStopReason, agentStopReason?: StopReason): void {
   run.result = {
     passed: stopReason === 'satisfied',
     stopReason,
+    ...(agentStopReason !== undefined && { agentStopReason }),
     attempts: run.attempts.slice(),
   }
   run.resumed = false

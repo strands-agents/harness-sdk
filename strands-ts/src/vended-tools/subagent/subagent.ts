@@ -426,8 +426,8 @@ class SubagentTool extends Tool {
       throw new InterruptError(raised)
     }
     this._pending.delete(toolUseId)
-    if (result.stopReason === 'cancelled') {
-      return this._errorResult(toolUseId, 'Subagent was cancelled.')
+    if (result.stopReason === 'cancelled' || result.stopReason === 'superseded') {
+      return this._errorResult(toolUseId, `Subagent was ${result.stopReason}.`)
     }
     if (LIMIT_STOP_REASONS.has(result.stopReason)) {
       return this._errorResult(toolUseId, limitStopMessage(this.name, result.stopReason))

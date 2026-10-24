@@ -4,6 +4,7 @@ import { AgentAsTool } from '../agent-as-tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
+import { tool } from '../../tools/tool-factory.js'
 import { ToolValidationError } from '../../errors.js'
 import { BeforeModelCallEvent } from '../../hooks/events.js'
 import { createErrorResult, Tool, ToolStreamEvent } from '../../tools/tool.js'
@@ -151,6 +152,32 @@ describe('AgentAsTool', () => {
       const { result } = await collectGenerator(tool.stream(context))
 
       expect(result).toEqual(createErrorResult("Agent 'test-agent' cancelled", 'tool-1'))
+    })
+
+    it('returns an error when another caller supersedes the wrapped agent mid-run', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'noop', toolUseId: 'n1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Host answer' })
+      const noop = { name: 'noop', description: 'does nothing', callback: () => 'ok' }
+      const agent = new Agent({
+        model,
+        name: 'helper',
+        tools: [tool(noop)],
+        printer: false,
+        concurrentInvocationMode: 'stopPrevious',
+      })
+      const asTool = new AgentAsTool({ agent })
+      let takeover: Promise<unknown> | undefined
+      agent.addHook(BeforeModelCallEvent, () => {
+        takeover ??= agent.invoke('host takes over')
+      })
+
+      const { result } = await collectGenerator(
+        asTool.stream(createMockContext({ name: 'helper', toolUseId: 'tool-1', input: { input: 'Hello agent' } }))
+      )
+
+      expect(result).toEqual(createErrorResult("Agent 'helper' superseded", 'tool-1'))
+      expect(((await takeover) as { stopReason: string }).stopReason).toBe('endTurn')
     })
 
     it('does not persist cancellation when the signal aborts during initialization', async () => {

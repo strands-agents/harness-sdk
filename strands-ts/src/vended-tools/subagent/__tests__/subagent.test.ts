@@ -519,6 +519,7 @@ describe('subagent tool', () => {
 
     it.each([
       ['a cancelled child', fakeResult('', 'cancelled'), 'Subagent was cancelled.'],
+      ['a superseded child', fakeResult('Superseded by a new request', 'superseded'), 'Subagent was superseded.'],
       ['a missing child result', undefined, 'Subagent produced no result.'],
       ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
     ])('turns %s into an error result', async (_, childResult, message) => {
