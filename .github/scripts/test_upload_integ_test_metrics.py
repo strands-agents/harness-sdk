@@ -235,6 +235,28 @@ def test_parse_junit_xml_stamps_each_vitest_suite_separately(mod, tmp_path):
     assert [(r.name, r.timestamp.hour) for r in results] == [("one", 10), ("two", 11)]
 
 
+def test_parse_junit_xml_accepts_a_bare_testsuite_root(mod, tmp_path):
+    xml = f'<testsuite name="pytest" timestamp="2026-10-24T10:30:00">{THREE_CASES}</testsuite>'
+    path = tmp_path / "report.xml"
+    path.write_text(xml, encoding="utf-8")
+
+    results = mod.parse_junit_xml(str(path))
+
+    assert [r.outcome for r in results] == ["passed", "failed", "skipped"]
+    assert {r.timestamp for r in results} == {datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)}
+
+
+def test_parse_junit_xml_without_any_testsuite_stamps_upload_time(mod, tmp_path):
+    before = datetime.now(timezone.utc)
+    path = tmp_path / "report.xml"
+    path.write_text(f"<testsuites>{THREE_CASES}</testsuites>", encoding="utf-8")
+
+    results = mod.parse_junit_xml(str(path))
+
+    assert [r.name for r in results] == ["test_passed", "test_failed", "test_skipped"]
+    assert all(before <= r.timestamp <= datetime.now(timezone.utc) for r in results)
+
+
 def test_parse_junit_xml_without_suite_timestamp_uses_upload_time(mod, tmp_path):
     before = datetime.now(timezone.utc)
 
