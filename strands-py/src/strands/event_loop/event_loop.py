@@ -8,6 +8,7 @@ The event loop allows agents to:
 4. Manage recursive execution cycles
 """
 
+import asyncio
 import copy
 import logging
 import uuid
@@ -279,14 +280,22 @@ async def event_loop_cycle(
                 )
                 # Always bound: _handle_model_execution raises when the chain yields no ModelStopReason.
                 stop_event: ModelStopReason
-                async for model_event in model_events:
-                    if isinstance(model_event, ModelStopReason):
-                        stop_event = model_event
-                    else:
-                        yield model_event
+                try:
+                    async for model_event in model_events:
+                        if isinstance(model_event, ModelStopReason):
+                            stop_event = model_event
+                        else:
+                            yield model_event
+                finally:
+                    await model_events.aclose()
 
                 stop_reason, message = stop_event.stop_reason, stop_event.message
                 yield ModelMessageEvent(message=message)
+        except (GeneratorExit, asyncio.CancelledError) as e:
+            # The stream was closed early (or the task cancelled) while the cycle was in flight;
+            # end the span so it is still exported with the same parent context it was started in.
+            tracer.end_span_with_cancellation(cycle_span, e)
+            raise
         except Exception as e:
             tracer.end_span_with_error(cycle_span, str(e), e)
             raise
@@ -339,8 +348,11 @@ async def event_loop_cycle(
                     structured_output_context=structured_output_context,
                     invocation_context=invocation_context,
                 )
-                async for tool_event in tool_events:
-                    yield tool_event
+                try:
+                    async for tool_event in tool_events:
+                        yield tool_event
+                finally:
+                    await tool_events.aclose()
 
                 return
 
@@ -378,8 +390,11 @@ async def event_loop_cycle(
                     structured_output_context=structured_output_context,
                     invocation_context=invocation_context,
                 )
-                async for typed_event in events:
-                    yield typed_event
+                try:
+                    async for typed_event in events:
+                        yield typed_event
+                finally:
+                    await events.aclose()
                 return
 
             tracer.end_event_loop_cycle_span(cycle_span, message)
@@ -393,6 +408,11 @@ async def event_loop_cycle(
         ) as e:
             # These exceptions should bubble up directly rather than get wrapped in an EventLoopException
             tracer.end_span_with_error(cycle_span, str(e), e)
+            raise
+        except (GeneratorExit, asyncio.CancelledError) as e:
+            # Early stream close / task cancellation reaches a yield inside the handlers above;
+            # end the span so it is still exported instead of being dropped by the asyncgen finalizer.
+            tracer.end_span_with_cancellation(cycle_span, e)
             raise
         except Exception as e:
             tracer.end_span_with_error(cycle_span, str(e), e)
@@ -460,8 +480,11 @@ async def recurse_event_loop(
         limits=limits,
         invocation_context=invocation_context,
     )
-    async for event in events:
-        yield event
+    try:
+        async for event in events:
+            yield event
+    finally:
+        await events.aclose()
 
     recursive_trace.end()
 
@@ -624,14 +647,18 @@ async def _handle_model_execution(
             # Run through the middleware chain. The ModelStopReason is the stage result; middleware
             # may yield other events around it, so it is selected by type and the last one wins.
             stop_event: ModelStopReason | None = None
-            async for event in agent._middleware_registry.invoke(
+            invoke_events = agent._middleware_registry.invoke(
                 InvokeModelStage,
                 middleware_context,
                 _make_invoke_model_terminal(agent, cycle_span, tracer, model_state_snapshot, invocation_context),
-            ):
-                if isinstance(event, ModelStopReason):
-                    stop_event = event
-                yield event
+            )
+            try:
+                async for event in invoke_events:
+                    if isinstance(event, ModelStopReason):
+                        stop_event = event
+                    yield event
+            finally:
+                await invoke_events.aclose()
 
             if stop_event is None:
                 raise RuntimeError(
@@ -788,7 +815,7 @@ def _make_invoke_model_terminal(
         )
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:
-                async for event in stream_messages(
+                stream_events = stream_messages(
                     ctx.model,
                     system_prompt_str,
                     ctx.messages,
@@ -802,11 +829,20 @@ def _make_invoke_model_terminal(
                     agent_metadata=agent._metadata,
                     structured_output_model=structured_output_model,
                     invocation_context=invocation_context,
-                ):
-                    yield event
+                )
+                try:
+                    async for event in stream_events:
+                        yield event
+                finally:
+                    await stream_events.aclose()
 
                 stop_reason, message, usage, metrics = event["stop"]
                 tracer.end_model_invoke_span(model_invoke_span, message, usage, metrics, stop_reason)
+            except (GeneratorExit, asyncio.CancelledError) as e:
+                # An early close / task cancellation reaches a yield inside the stream, so the
+                # end_model_invoke_span call above never runs; end the span as a cancellation.
+                tracer.end_span_with_cancellation(model_invoke_span, e)
+                raise
             except Exception as e:
                 tracer.end_span_with_error(model_invoke_span, str(e), e)
                 raise
@@ -907,7 +943,7 @@ async def _handle_tool_execution(
     before_tools_event, interrupts = await agent.hooks.invoke_callbacks_async(before_tools_event)
 
     if interrupts:
-        async for interrupt_event in _stop_for_interrupts(
+        interrupt_events = _stop_for_interrupts(
             agent,
             message,
             tool_results,
@@ -917,8 +953,12 @@ async def _handle_tool_execution(
             cycle_span,
             invocation_state,
             tracer,
-        ):
-            yield interrupt_event
+        )
+        try:
+            async for interrupt_event in interrupt_events:
+                yield interrupt_event
+        finally:
+            await interrupt_events.aclose()
         return
 
     cancel_message = None
@@ -964,11 +1004,14 @@ async def _handle_tool_execution(
                 structured_output_context,
                 **_invocation_context_kwargs(agent.tool_executor._execute, invocation_context),
             )
-            async for tool_event in tool_events:
-                if isinstance(tool_event, ToolInterruptEvent):
-                    interrupts.extend(tool_event["tool_interrupt_event"]["interrupts"])
+            try:
+                async for tool_event in tool_events:
+                    if isinstance(tool_event, ToolInterruptEvent):
+                        interrupts.extend(tool_event["tool_interrupt_event"]["interrupts"])
 
-                yield tool_event
+                    yield tool_event
+            finally:
+                await tool_events.aclose()
 
             if structured_output_context.is_enabled:
                 if structured_output_result := structured_output_context.extract_result(tool_uses):
@@ -1001,7 +1044,7 @@ async def _handle_tool_execution(
     invocation_state["event_loop_parent_cycle_id"] = invocation_state["event_loop_cycle_id"]
 
     if interrupts:
-        async for interrupt_event in _stop_for_interrupts(
+        interrupt_events = _stop_for_interrupts(
             agent,
             message,
             tool_results,
@@ -1012,8 +1055,12 @@ async def _handle_tool_execution(
             invocation_state,
             tracer,
             structured_output_result,
-        ):
-            yield interrupt_event
+        )
+        try:
+            async for interrupt_event in interrupt_events:
+                yield interrupt_event
+        finally:
+            await interrupt_events.aclose()
         return
 
     # Reset interrupt state if tools ran so the next cycle starts clean.
@@ -1125,5 +1172,8 @@ async def _handle_tool_execution(
         structured_output_context=structured_output_context,
         invocation_context=invocation_context,
     )
-    async for event in events:
-        yield event
+    try:
+        async for event in events:
+            yield event
+    finally:
+        await events.aclose()

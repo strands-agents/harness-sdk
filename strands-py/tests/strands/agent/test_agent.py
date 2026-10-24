@@ -2,6 +2,7 @@ import asyncio
 import copy
 import importlib
 import json
+import logging
 import os
 import textwrap
 import threading
@@ -3910,6 +3911,118 @@ async def test_agent_span_ends_on_generator_exit():
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.UNSET
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
+def _tool_calling_model():
+    return MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": "add", "input": {"a": 1, "b": 2}}}],
+            },
+            {"role": "assistant", "content": [{"text": "3"}]},
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_cycle_span_ends_when_consumer_stops_mid_stream():
+    """Closing stream_async mid model-stream ends the cycle span in the caller's context.
+
+    Before the fix the nested generators were left to the asyncio asyncgen finalizer, which
+    closed them in a copied context: opentelemetry.context logged 'Failed to detach context'
+    and the execute_event_loop_cycle span was never ended or exported.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    @strands.tool
+    async def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    detach_errors: list[str] = []
+
+    class _DetachErrorCapture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "Failed to detach context" in record.getMessage():
+                detach_errors.append(record.getMessage())
+
+    otel_context_logger = logging.getLogger("opentelemetry.context")
+    capture = _DetachErrorCapture()
+    otel_context_logger.addHandler(capture)
+    try:
+        with (
+            unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer),
+            unittest.mock.patch("strands.event_loop.event_loop.get_tracer", return_value=tracer),
+        ):
+            agent = Agent(model=_tool_calling_model(), tools=[add], callback_handler=None)
+            stream = agent.stream_async("add 1 and 2")
+            async for event in stream:
+                if "delta" in event:
+                    break
+            await stream.aclose()
+    finally:
+        otel_context_logger.removeHandler(capture)
+
+    provider.force_flush()
+    cycle_spans = [span for span in exporter.get_finished_spans() if span.name == "execute_event_loop_cycle"]
+    assert len(cycle_spans) == 1
+    assert cycle_spans[0].status.status_code == StatusCode.UNSET
+    assert cycle_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+    assert not detach_errors
+
+
+@pytest.mark.asyncio
+async def test_no_context_detach_errors_when_consumer_stops_after_tool_result():
+    """Breaking after a tool result and closing the stream closes every nested generator
+    in the caller's context, so opentelemetry.context never sees a cross-context detach."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    @strands.tool
+    async def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    detach_errors: list[str] = []
+
+    class _DetachErrorCapture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "Failed to detach context" in record.getMessage():
+                detach_errors.append(record.getMessage())
+
+    otel_context_logger = logging.getLogger("opentelemetry.context")
+    capture = _DetachErrorCapture()
+    otel_context_logger.addHandler(capture)
+    try:
+        with (
+            unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer),
+            unittest.mock.patch("strands.event_loop.event_loop.get_tracer", return_value=tracer),
+        ):
+            agent = Agent(model=_tool_calling_model(), tools=[add], callback_handler=None)
+            stream = agent.stream_async("add 1 and 2")
+            async for event in stream:
+                if "toolResult" in str(event):
+                    break
+            await stream.aclose()
+    finally:
+        otel_context_logger.removeHandler(capture)
+
+    provider.force_flush()
+    cycle_spans = [span for span in exporter.get_finished_spans() if span.name == "execute_event_loop_cycle"]
+    assert len(cycle_spans) == 1
+    assert not detach_errors
 
 
 def test_baggage_attributes_default_empty():
