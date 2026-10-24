@@ -294,7 +294,8 @@ The `secret.*` keys can also be written as one inline table:
 
 A prefix matches by whole segment: `api.example.com/v1/chat` matches
 `/v1/chat/completions` but not `/v1/chatbot`. Paths match case-sensitively, against the
-gateway's canonical form of the path. Hosts match in lowercase.
+gateway's canonical form of the path, which keeps repeated slashes: `api.example.com/v1`
+covers `/v1//chat`, and `api.example.com/v1/chat` doesn't. Hosts match in lowercase.
 
 A pattern matching every host, port `0`, and two overlapping patterns are refused. A
 host used by an `[mcp.<name>]` server can't appear in another table.
