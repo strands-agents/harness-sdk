@@ -8,18 +8,15 @@ import { logger } from '../../../logging/logger.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import type { ContextStrategy } from '../../types.js'
 import { formatStashRefs } from '../../stash.js'
 import { BaseOffloadStrategy } from './base.js'
-import type { OffloadConditions } from './base.js'
+import type { OffloadConditions, OffloadTarget } from './base.js'
 
 export const DROPPED_MARKER = '[Dropped]'
 
 export class DropStrategy extends BaseOffloadStrategy {
-  readonly name = 'offload:drop'
-
-  when(conditions: OffloadConditions): ContextStrategy {
-    return new DropStrategy(this._target, conditions)
+  constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
+    super('offload:drop', target, conditions)
   }
 
   protected override _makeRemovalMarker(count: number): string {

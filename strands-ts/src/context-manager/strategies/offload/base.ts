@@ -19,6 +19,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -36,48 +37,162 @@ import { isPinned } from '../../../conversation-manager/compression/pin-message.
 export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
 
 /**
- * Conditions that determine when an offload strategy fires.
+ * A share of a whole, written as a percent string such as `'70%'` or `'12.5%'`.
  *
- * Granularity is determined by which conditions are set:
- * - `threshold` only → per-block, eager (act on each block above this size on message arrival)
- * - `utilization` only → message-level (remove/summarize oldest messages when utilization exceeded)
- * - Both → message-level, targeting only messages with blocks over the threshold
+ * @experimental
+ */
+export type Percent = `${number}%`
+
+/**
+ * Conditions that determine when and how an offload strategy fires.
  *
- * When multiple strategies target the same content, they don't conflict — strategies
- * run as an ordered pipeline, and once an earlier strategy shrinks a block, it falls
- * below the next strategy's threshold and gets skipped automatically.
+ * - `utilization` sets when the strategy fires. `'80%'` or `0.8` fires at 80% of the context window; a whole number
+ *   above 1 fires at that many conversation tokens, up to the model's context window.
+ * - `threshold` sets which blocks it acts on. A whole number selects blocks over that many tokens; `'5%'` selects
+ *   blocks over 5% of the context window.
+ * - `preserveRecent` sets which matching messages it never touches. A whole number keeps that many of the newest;
+ *   `'70%'` or `0.7` keeps the newest 70% of them.
+ *
+ * Granularity: target `'*'` without `threshold` acts on whole messages (drop removes them, truncate elides the
+ * middle, summarize merges each contiguous run). Any other target, or a set `threshold`, acts on each block.
+ * `utilization` only gates when the strategy fires, and `preserveRecent` only protects the newest matching messages.
+ *
+ * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
+ * strategy's threshold and gets skipped.
  *
  * @experimental
  */
 export interface OffloadConditions {
-  /** Token threshold above which individual blocks are offloaded. */
-  threshold?: number
+  /** Context usage at or above which the strategy fires, as conversation tokens (up to the context window) or a share. */
+  utilization?: number | Percent
 
-  /** Context utilization ratio (0-1+) above which the strategy fires. */
-  utilization?: number
+  /** Size above which an individual block is offloaded, as tokens or a share of the context window. */
+  threshold?: number | Percent
 
-  /**
-   * How many recent matching messages to leave untouched.
-   * - Integer (1 or above): absolute count of messages to preserve.
-   * - Decimal (between 0 and 1 exclusive): ratio of matching messages to preserve (e.g. 0.7 = keep 70%).
-   */
-  preserveRecent?: number
+  /** How many of the most recent matching messages to leave untouched, as a count or a share. */
+  preserveRecent?: number | Percent
 }
 
 /**
- * Intermediate builder result that allows chaining `.when()` conditions.
- * Also implements `ContextStrategy` directly so it can be used without `.when()`.
+ * Result of `Offload.drop/truncate/summarize`. Call `.when()` to get a strategy; pass `{}` to run on every new
+ * message.
+ *
+ * @experimental
  */
-export interface OffloadStrategyBuilder extends ContextStrategy {
-  /** Add conditions that determine when this strategy fires. */
+export interface OffloadStrategyBuilder {
+  /** Sets the conditions that determine when and how this strategy fires, and returns the strategy. */
   when(conditions: OffloadConditions): ContextStrategy
 }
 
-// --- Shared helpers ---
+// --- Condition parsing ---
 
-function finiteOrUndefined(value: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : undefined
+type ConditionName = keyof OffloadConditions
+
+/**
+ * A parsed condition: a count in the condition's unit, or a share of the whole.
+ *
+ * @internal
+ */
+export interface ParsedCondition {
+  /** The count, or the share in `[0, 1]`. */
+  value: number
+
+  /** Whether `value` is a share of the whole rather than a count. */
+  isShare: boolean
 }
+
+interface ConditionRule {
+  /** Whether a `'N%'` value's N is in range. */
+  percentInRange(percent: number): boolean
+
+  /** Parses a finite non-negative number, or returns undefined to reject it. */
+  parseNumber(value: number): ParsedCondition | undefined
+
+  /** Accepted values, for error messages. */
+  expected: string
+}
+
+const PERCENT_PATTERN = /^\d+(\.\d+)?%$/
+
+const CONDITION_RULES: Record<ConditionName, ConditionRule> = {
+  utilization: {
+    percentInRange: (percent) => percent > 0 && percent <= 100,
+    parseNumber: (value) => {
+      if (value > 0 && value <= 1) return { value, isShare: true }
+      if (value > 1 && Number.isInteger(value)) return { value, isShare: false }
+      return undefined
+    },
+    expected: 'a "N%" string up to "100%", a fraction in (0, 1], or a whole token count',
+  },
+  threshold: {
+    percentInRange: (percent) => percent > 0 && percent <= 100,
+    parseNumber: (value) => (Number.isInteger(value) ? { value, isShare: false } : undefined),
+    expected: 'a whole token count or a "N%" string up to "100%"',
+  },
+  preserveRecent: {
+    percentInRange: (percent) => percent >= 0 && percent < 100,
+    parseNumber: (value) => {
+      if (Number.isInteger(value)) return { value, isShare: false }
+      if (value < 1) return { value, isShare: true }
+      return undefined
+    },
+    expected: 'a whole message count, a "N%" string below "100%", or a fraction in [0, 1)',
+  },
+}
+
+/**
+ * Parses one offload condition value.
+ *
+ * @param name - The condition name
+ * @param raw - The value as supplied, or undefined when unset
+ * @returns The parsed condition, or undefined when unset
+ * @throws Error when the value is not accepted for the condition
+ * @internal
+ */
+export function parseCondition(name: ConditionName, raw: unknown): ParsedCondition | undefined {
+  if (raw === undefined) return undefined
+  const rule = CONDITION_RULES[name]
+  const parsed = typeof raw === 'string' ? parsePercent(raw, rule) : parseNumber(raw, rule)
+  if (!parsed) {
+    throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}`)
+  }
+  return parsed
+}
+
+function parsePercent(raw: string, rule: ConditionRule): ParsedCondition | undefined {
+  if (!PERCENT_PATTERN.test(raw)) return undefined
+  const percent = Number(raw.slice(0, -1))
+  return rule.percentInRange(percent) ? { value: percent / 100, isShare: true } : undefined
+}
+
+function parseNumber(raw: unknown, rule: ConditionRule): ParsedCondition | undefined {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined
+  return rule.parseNumber(raw)
+}
+
+function formatConditionValue(raw: unknown): string {
+  return typeof raw === 'string' ? `"${raw}"` : String(raw)
+}
+
+/** The model's context window limit, falling back to the default `estimateUtilization` uses. */
+function effectiveWindowLimit(agent: LocalAgent): number {
+  return agent.model.getConfig().contextWindowLimit || DEFAULT_CONTEXT_WINDOW_LIMIT
+}
+
+/**
+ * Throws if an offload target matches nothing.
+ *
+ * @param target - The offload target
+ * @throws Error when the target is an empty array
+ * @internal
+ */
+export function validateTarget(target: OffloadTarget | undefined): void {
+  if (Array.isArray(target) && target.length === 0) {
+    throw new Error('Empty array target matches nothing — provide at least one target')
+  }
+}
+
+// --- Shared helpers ---
 
 /**
  * Builds a toolUseId → toolName map from all assistant messages in the conversation.
@@ -316,59 +431,113 @@ export function resolveToolFilter(target: OffloadTarget | undefined): { include?
 
 // --- Base strategy class ---
 
-/** Shared offload logic: target routing, eager hooks, preserveRecent. */
+const NO_PRESERVE: ParsedCondition = { value: 0, isShare: false }
+
+/** Shared offload logic: condition parsing, firing, granularity, eager hooks, preserveRecent. */
 export abstract class BaseOffloadStrategy implements ContextStrategy {
-  abstract readonly name: string
+  readonly name: string
 
   protected readonly _target: OffloadTarget | undefined
-  protected readonly _threshold: number | undefined
-  protected readonly _utilizationThreshold: number | undefined
-  protected readonly _preserveRecent: number
+  protected readonly _threshold: ParsedCondition | undefined
+  protected readonly _utilization: ParsedCondition | undefined
+  protected readonly _preserveRecent: ParsedCondition
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
 
-  constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
-    if (Array.isArray(target) && target.length === 0) {
-      throw new Error('Empty array target matches nothing — provide at least one target')
-    }
+  /**
+   * @param name - Strategy name, `offload:<method>`
+   * @param target - Content the strategy acts on
+   * @param conditions - When and how the strategy fires; omitted only by internal strategies
+   * @throws Error when the target is empty, a condition value is invalid, or a whole-message strategy has neither
+   *   `utilization` nor `preserveRecent`
+   */
+  constructor(name: string, target?: OffloadTarget, conditions?: OffloadConditions) {
+    validateTarget(target)
 
+    this.name = name
     this._target = target
-    this._threshold = finiteOrUndefined(conditions?.threshold)
-    this._utilizationThreshold = finiteOrUndefined(conditions?.utilization)
-    this._preserveRecent = finiteOrUndefined(conditions?.preserveRecent) ?? 0
+    this._utilization = parseCondition('utilization', conditions?.utilization)
+    this._threshold = parseCondition('threshold', conditions?.threshold)
+    this._preserveRecent = parseCondition('preserveRecent', conditions?.preserveRecent) ?? NO_PRESERVE
 
     const resolved = resolveToolFilter(target)
     this._includeFilter = resolved.include
     this._excludeFilter = resolved.exclude
+
+    if (conditions && this._actsOnMessages && this._utilization === undefined && this._preserveRecent.value === 0) {
+      const method = name.slice(name.indexOf(':') + 1)
+      throw new Error(
+        `Offload.${method}("*") without threshold acts on whole messages; set utilization or preserveRecent`
+      )
+    }
   }
 
-  /** Whether this strategy operates at message-level (batch) vs per-block. */
-  protected get _isMessageLevel(): boolean {
-    return this._utilizationThreshold !== undefined
+  /** Whether this strategy acts on whole messages rather than individual blocks. */
+  protected get _actsOnMessages(): boolean {
+    return this._target === '*' && this._threshold === undefined
   }
 
+  /** Whether the eager hook processes each message as it arrives. */
+  private get _runsEagerly(): boolean {
+    return this._utilization === undefined && this._preserveRecent.value === 0 && !this._actsOnMessages
+  }
+
+  /** Block size at or below which blocks are left alone when `threshold` is unset. */
+  protected get _defaultThreshold(): number {
+    return 0
+  }
+
+  /**
+   * Checks utilization against the model's context window, then registers the eager hook if this runs eagerly.
+   *
+   * @param agent - The agent this strategy is attached to
+   * @param stash - The stash offloaded content is stored in
+   * @throws Error when `utilization` is a token count larger than the model's context window
+   */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash
-    if (this._isMessageLevel) return
-    if (this._preserveRecent > 0) return
+    this._checkUtilizationFits(agent)
+    if (!this._runsEagerly) return
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
       const toolNameMap = buildToolNameMap(messages)
-      await this._transformBlocks(event.message, messages, toolNameMap, event.agent)
+      const threshold = this._resolveThreshold(event.agent)
+      await this._transformBlocks(event.message, messages, toolNameMap, threshold, event.agent)
     })
   }
 
   async apply(context: ContextState): Promise<boolean> {
     if (context.stash) this._stash = context.stash
-    if (this._isMessageLevel) {
-      if (!context.overflow && context.utilization < this._utilizationThreshold!) return false
-      return this._applyPerMessage(context)
-    }
+    if (!this._utilizationReached(context)) return false
+    return this._actsOnMessages ? this._applyPerMessage(context) : this._applyPerBlock(context)
+  }
 
-    return this._applyPerBlock(context)
+  private _checkUtilizationFits(agent: LocalAgent): void {
+    const utilization = this._utilization
+    if (!utilization || utilization.isShare) return
+    const limit = agent.model.getConfig().contextWindowLimit
+    if (!limit || utilization.value <= limit) return
+    throw new Error(
+      `utilization (${utilization.value}) is larger than the model's context window (${limit} tokens); use a smaller token count or a "N%" share`
+    )
+  }
+
+  /** Whether the utilization gate (if any) is open: on overflow, or at or above the configured share. */
+  private _utilizationReached(context: ContextState): boolean {
+    const utilization = this._utilization
+    if (!utilization || context.overflow) return true
+    const share = utilization.isShare ? utilization.value : utilization.value / effectiveWindowLimit(context.agent)
+    return context.utilization >= share
+  }
+
+  /** Tokens per block above which a block is offloaded. */
+  private _resolveThreshold(agent: LocalAgent): number {
+    const threshold = this._threshold
+    if (!threshold) return this._defaultThreshold
+    return threshold.isShare ? Math.ceil(threshold.value * effectiveWindowLimit(agent)) : threshold.value
   }
 
   /** Per-block execution: walk each message, transform individual blocks above threshold. */
@@ -376,23 +545,16 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const { messages, agent } = context
     const invocationContext = context.invocationContext
     const toolNameMap = buildToolNameMap(messages)
-    const eligible =
-      this._preserveRecent > 0
-        ? getOldestMatches(
-            messages,
-            this._target,
-            this._preserveRecent,
-            toolNameMap,
-            this._includeFilter,
-            this._excludeFilter
-          )
-        : messages
+    const threshold = this._resolveThreshold(agent)
+    const eligible = this._preserveRecent.value > 0 ? this._oldestMatches(messages, toolNameMap) : [...messages]
+    // Without the eager hook, the last message is one the model has not yet responded to.
+    if (!this._runsEagerly && eligible.at(-1) === messages.at(-1)) eligible.pop()
     let acted = false
 
     for (const message of eligible) {
       const index = messages.indexOf(message)
       if (isPinned(messages, index)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext)) {
+      if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, invocationContext)) {
         acted = true
       }
     }
@@ -405,7 +567,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const { messages } = context
     if (messages.length <= 1) return false
 
-    const eligible = await this._getEligibleMessages(context)
+    const eligible = this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
     const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
@@ -442,22 +604,22 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return false
   }
 
-  /** Process eligible blocks in a message. */
+  /** Process eligible blocks in a message, replacing each one larger than `threshold` tokens. */
   protected async _transformBlocks(
     message: Message,
     messages: Message[],
     toolNameMap: Map<string, string>,
+    threshold: number,
     agent: LocalAgent,
     invocationContext?: InvocationContext
   ): Promise<boolean> {
-    const effectiveThreshold = this._threshold ?? 0
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
 
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-      if (tokens <= effectiveThreshold) continue
+      if (tokens <= threshold) continue
 
       const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
       const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
@@ -469,50 +631,26 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Collect eligible messages for message-level operations, respecting preserveRecent, head-pin, and threshold. */
-  protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
-    const { messages, agent } = context
-    const toolNameMap = buildToolNameMap(messages)
+  /** Messages outside `preserveRecent`, excluding message 0 and pinned messages, in history order. */
+  protected _getEligibleMessages(context: ContextState): Message[] {
+    const { messages } = context
+    const candidates =
+      this._preserveRecent.value > 0 ? this._oldestMatches(messages, buildToolNameMap(messages)) : messages
+    return candidates.filter((message) => {
+      const index = messages.indexOf(message)
+      return index > 0 && !isPinned(messages, index)
+    })
+  }
 
-    let candidates: Message[]
-    if (this._preserveRecent > 0) {
-      candidates = getOldestMatches(
-        messages,
-        this._target,
-        this._preserveRecent,
-        toolNameMap,
-        this._includeFilter,
-        this._excludeFilter
-      ).filter((message) => {
-        const index = messages.indexOf(message)
-        return index > 0 && !isPinned(messages, index)
-      })
-    } else {
-      candidates = messages.filter(
-        (message, index) =>
-          index > 0 &&
-          !isPinned(messages, index) &&
-          messageMatchesTarget(message, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
-      )
-    }
-
-    if (this._threshold === undefined) return candidates
-
-    const eligible: Message[] = []
-    for (const message of candidates) {
-      let hasOversize = false
-      for (const block of message.content) {
-        if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
-
-        const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-        if (tokens > this._threshold!) {
-          hasOversize = true
-          break
-        }
-      }
-      if (hasOversize) eligible.push(message)
-    }
-    return eligible
+  private _oldestMatches(messages: Message[], toolNameMap: Map<string, string>): Message[] {
+    return getOldestMatches(
+      messages,
+      this._target,
+      this._preserveRecent.value,
+      toolNameMap,
+      this._includeFilter,
+      this._excludeFilter
+    )
   }
 
   /** Transform a block. Return the replacement, or null to skip. */
@@ -540,10 +678,8 @@ const EMERGENCY_REMOVAL_RATIO = 0.2
  * @internal
  */
 export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
-  readonly name = 'offload:emergency-truncate'
-
   constructor() {
-    super('*')
+    super('offload:emergency-truncate', '*')
   }
 
   override init(_agent: LocalAgent, stash?: Stash): void {

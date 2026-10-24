@@ -12,7 +12,7 @@ import type { ContentBlock } from '../../../types/messages.js'
 import type { Model } from '../../../models/model.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import type { ContextStrategy, ContextState } from '../../types.js'
+import type { ContextState } from '../../types.js'
 import {
   flattenMessagesToContent,
   formatSummarized,
@@ -25,24 +25,17 @@ import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
   insertMarker,
-  spliceWithPairs,
   repairAlternation,
   type OffloadConditions,
   type OffloadTarget,
 } from './base.js'
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
-  readonly name = 'offload:summarize'
-
   private readonly _config: SummarizeConfig
 
   constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
-    super(target, conditions)
+    super('offload:summarize', target, conditions)
     this._config = config ?? {}
-  }
-
-  when(conditions: OffloadConditions): ContextStrategy {
-    return new SummarizeStrategy(this._target, this._config, conditions)
   }
 
   override async apply(context: ContextState): Promise<boolean> {
@@ -53,6 +46,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return super.apply(context)
   }
 
+  /** Summarizes each contiguous run of eligible messages into its own summary, last run first. */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const model = this._resolveModel(context.agent)
     if (!model) return false
@@ -60,31 +54,37 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const { messages } = context
     if (messages.length <= 1) return false
 
-    const eligible = await this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    // Expand to include paired messages so we don't orphan tool pairs
-    const safeSet = new Set<Message>()
-    for (const message of eligible) {
-      const index = messages.indexOf(message)
-      if (index === -1) continue
-      for (const removable of collectRemovableWithPair(messages, index)) {
-        safeSet.add(removable)
-      }
+    const runs = splitIntoRuns(indicesWithPairs(messages, this._getEligibleMessages(context)))
+    let acted = false
+    for (const run of runs.reverse()) {
+      if (await this._summarizeRun(messages, run, model, context.invocationContext)) acted = true
     }
-    const safe = messages.filter((message) => safeSet.has(message))
-    if (safe.length === 0) return false
+    if (acted) repairAlternation(messages)
+    return acted
+  }
 
-    const contentBlocks = flattenMessagesToContent(safe)
-    const summary = await summarizeContent(contentBlocks, model, this._config, context.invocationContext)
+  /** Replaces the messages at `run` (contiguous indices) with one summary marker; a failure leaves the run intact. */
+  private async _summarizeRun(
+    messages: Message[],
+    run: number[],
+    model: Model,
+    invocationContext?: InvocationContext
+  ): Promise<boolean> {
+    const start = run[0]!
+    const runMessages = messages.slice(start, start + run.length)
+    let summary: string | null
+    try {
+      summary = await summarizeContent(flattenMessagesToContent(runMessages), model, this._config, invocationContext)
+    } catch (error) {
+      logger.warn(`runLength=<${run.length}>, error=<${normalizeError(error).message}> | run summarization failed`)
+      return false
+    }
     if (!summary) return false
 
-    const totalTokens = await model.countTokens(safe)
-    const { lowestIndex } = spliceWithPairs(messages, safe)
-    insertMarker(messages, lowestIndex, formatSummarized(`${safe.length} messages`, totalTokens, summary))
-
-    repairAlternation(messages)
-    logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
+    const totalTokens = await model.countTokens(runMessages)
+    messages.splice(start, runMessages.length)
+    insertMarker(messages, start, formatSummarized(`${runMessages.length} messages`, totalTokens, summary))
+    logger.debug(`summarized=<${runMessages.length}>, tokens=<${totalTokens}> | summarized message run`)
     return true
   }
 
@@ -156,4 +156,26 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   private _resolveModel(agent: LocalAgent): Model | undefined {
     return this._config.model ?? agent.auxModel
   }
+}
+
+/** Sorted indices of `eligible` plus the tool-pair partners that must be removed with them. */
+function indicesWithPairs(messages: Message[], eligible: Message[]): number[] {
+  const indices = new Set<number>()
+  for (const message of eligible) {
+    for (const removable of collectRemovableWithPair(messages, messages.indexOf(message))) {
+      indices.add(messages.indexOf(removable))
+    }
+  }
+  return [...indices].sort((left, right) => left - right)
+}
+
+/** Splits sorted indices into runs of consecutive indices. */
+function splitIntoRuns(indices: number[]): number[][] {
+  const runs: number[][] = []
+  for (const index of indices) {
+    const run = runs.at(-1)
+    if (run && run.at(-1) === index - 1) run.push(index)
+    else runs.push([index])
+  }
+  return runs
 }

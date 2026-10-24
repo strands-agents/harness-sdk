@@ -20,7 +20,7 @@ import { Offload } from './strategies/offload/index.js'
  *
  * - `'proactiveSummarization'` — batch summarize oldest messages at 70% utilization
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
- * - `'overflowProtection'` — truncate oldest messages when the context window is full
+ * - `'overflowProtection'` — drop the oldest messages when the context window is full
  * - `'staleToolCleanup'` — drop tool results older than 5 messages
  */
 export const STRATEGY_PRESET_NAMES = [
@@ -48,7 +48,7 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
     case 'largeToolOffloading':
       return [Offload.truncate('toolResults', { previewTokens: 1000 }).when({ threshold: 2500 })]
     case 'overflowProtection':
-      return [Offload.truncate('*').when({ utilization: 1.0, preserveRecent: 4 })]
+      return [Offload.drop('*').when({ utilization: 1.0, preserveRecent: 4 })]
     case 'staleToolCleanup':
       return [Offload.drop('toolResults').when({ preserveRecent: 5 })]
   }
@@ -59,6 +59,7 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
  *
  * @param entries - Array of raw strategies and/or preset name strings
  * @returns Flattened array of concrete strategies
+ * @throws Error when an entry is an unknown preset name or an `Offload` builder without `.when()`
  * @internal
  */
 export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName)[]): ContextStrategy[] {
@@ -69,6 +70,11 @@ export function resolveStrategies(entries: (ContextStrategy | StrategyPresetName
         throw new Error(`Unknown strategy preset: "${entry}". Valid presets: ${STRATEGY_PRESET_NAMES.join(', ')}`)
       }
       strategies.push(...resolvePreset(entry as StrategyPresetName))
+    } else if (typeof entry.apply !== 'function') {
+      throw new Error(
+        'Offload strategies need .when() before use, for example .when({ utilization: "80%" }); ' +
+          'a target other than "*" can call .when({}) to run on every new message'
+      )
     } else {
       strategies.push(entry)
     }

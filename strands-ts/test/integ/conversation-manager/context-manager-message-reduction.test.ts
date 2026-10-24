@@ -18,7 +18,7 @@ const calculator = tool({
 
 const strategies = {
   drop: () => Offload.drop('*').when({ utilization: 0.5 }),
-  truncate: () => Offload.truncate('*').when({ utilization: 0.5 }),
+  truncate: () => Offload.truncate('*', { previewTokens: 50 }).when({ utilization: 0.5 }),
   summarize: () => Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 2 }),
 }
 

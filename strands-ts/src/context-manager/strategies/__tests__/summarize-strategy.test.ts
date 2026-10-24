@@ -65,7 +65,7 @@ function makeContext(messages: Message[], utilization = 0.5, model?: unknown): C
 
 describe('Offload.summarize', () => {
   it('creates a strategy with correct name', () => {
-    const strategy = Offload.summarize('toolResults')
+    const strategy = Offload.summarize('toolResults').when({})
     expect(strategy.name).toBe('offload:summarize')
   })
 
@@ -78,7 +78,7 @@ describe('Offload.summarize', () => {
     it('returns false when no model is available', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
-      const strategy = Offload.summarize('toolResults')
+      const strategy = Offload.summarize('toolResults').when({})
       const context = makeContext(messages)
 
       const result = await strategy.apply(context)
@@ -102,7 +102,7 @@ describe('Offload.summarize', () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('toolResults')
+      const strategy = Offload.summarize('toolResults').when({})
       const context = makeContext(messages, 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -120,7 +120,7 @@ describe('Offload.summarize', () => {
       const mainModel = { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) }
       const auxModel = { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) }
       const agent = createMockAgent({ messages, extra: { model: mainModel, auxModel } as unknown as Partial<Agent> })
-      const strategy = Offload.summarize('toolResults')
+      const strategy = Offload.summarize('toolResults').when({})
 
       const result = await strategy.apply({ messages, agent, utilization: 0.9 })
 
@@ -136,7 +136,7 @@ describe('Offload.summarize', () => {
         content: [new TextBlock(largeText)],
       })
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('assistantText')
+      const strategy = Offload.summarize('assistantText').when({})
       const context = makeContext([message], 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -153,7 +153,7 @@ describe('Offload.summarize', () => {
         content: [new TextBlock(largeText)],
       })
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('userText')
+      const strategy = Offload.summarize('userText').when({})
       const context = makeContext([message], 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -192,7 +192,7 @@ describe('Offload.summarize', () => {
 
     it('returns false on empty messages', async () => {
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('toolResults')
+      const strategy = Offload.summarize('toolResults').when({})
       const context = makeContext([], 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -211,7 +211,7 @@ describe('Offload.summarize', () => {
         { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
       )
       const messages = [makeToolResultMessage('x'.repeat(2500 * 4 + 100))]
-      const strategy = Offload.summarize('toolResults', { model: summarizer })
+      const strategy = Offload.summarize('toolResults', { model: summarizer }).when({})
       const invocationContext = new InvocationContextImpl({ turns: 1 })
       invocationContext.usage.turnsTaken = 5
 
@@ -278,7 +278,7 @@ describe('summarizer errors', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const largeText = 'x'.repeat(2500 * 4 + 100)
     const messages = [makeToolResultMessage(largeText, 'call_1'), makeToolResultMessage(largeText, 'call_2')]
-    const strategy = Offload.summarize('toolResults')
+    const strategy = Offload.summarize('toolResults').when({})
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
@@ -354,5 +354,65 @@ describe('repeated summarization', () => {
       .flatMap((message) => message.content)
       .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
     expect(summaries).toHaveLength(1)
+  })
+})
+
+describe('summarizing whole messages', () => {
+  it('summarizes each contiguous run separately, around pinned messages', async () => {
+    vi.mocked(summarizeContent).mockClear().mockResolvedValueOnce('late run').mockResolvedValueOnce('early run')
+    const pinned = { metadata: { custom: { pinned: true } } }
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')], ...pinned }),
+      ...['u2', 'a3', 'u4'].map(
+        (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
+      ),
+      new Message({ role: 'assistant', content: [new TextBlock('a5')], ...pinned }),
+      ...['u6', 'a7', 'u8', 'a9', 'u10'].map(
+        (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
+      ),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(summarizeContent).toHaveBeenCalledTimes(2)
+    expect(messages.map((message) => message.content.map((block) => (block as TextBlock).text))).toEqual([
+      ['task'],
+      [
+        'a1',
+        '[Summarized: 3 messages, ~3 tokens]\n\nearly run',
+        'a5',
+        '[Summarized: 2 messages, ~2 tokens]\n\nlate run',
+      ],
+      ['u8'],
+      ['a9'],
+      ['u10'],
+    ])
+  })
+
+  it('leaves a failed run intact and still summarizes the others', async () => {
+    vi.mocked(summarizeContent)
+      .mockClear()
+      .mockResolvedValueOnce('late run')
+      .mockRejectedValueOnce(new Error('throttled'))
+    const pinned = { metadata: { custom: { pinned: true } } }
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      ...['a1', 'u2', 'a3'].map(
+        (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
+      ),
+      new Message({ role: 'user', content: [new TextBlock('u4')], ...pinned }),
+      ...['a5', 'u6', 'a7'].map(
+        (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
+      ),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
+    expect(texts.slice(0, 5)).toEqual([['task'], ['a1'], ['u2'], ['a3'], ['u4']])
+    expect(texts[5]).toContain('[Summarized: 2 messages, ~2 tokens]\n\nlate run')
   })
 })

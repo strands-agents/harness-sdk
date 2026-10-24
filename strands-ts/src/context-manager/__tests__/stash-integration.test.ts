@@ -113,7 +113,7 @@ describe('Offload strategies with stash', () => {
       const largeText = 'important data '.repeat(1000)
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
-      const strategy = Offload.truncate('toolResults')
+      const strategy = Offload.truncate('toolResults').when({})
       const context = makeContext(messages, stash)
 
       const acted = await strategy.apply(context)
@@ -133,7 +133,7 @@ describe('Offload strategies with stash', () => {
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
-      const strategy = Offload.truncate('toolResults')
+      const strategy = Offload.truncate('toolResults').when({})
       const context = makeContext(messages, stash)
 
       await strategy.apply(context)
@@ -146,7 +146,7 @@ describe('Offload strategies with stash', () => {
     it('does not stash when no stash is configured', async () => {
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
-      const strategy = Offload.truncate('toolResults')
+      const strategy = Offload.truncate('toolResults').when({})
       const context = makeContext(messages)
 
       await strategy.apply(context)
@@ -163,7 +163,7 @@ describe('Offload strategies with stash', () => {
       const largeText = 'critical information '.repeat(500)
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
-      const strategy = Offload.drop('toolResults')
+      const strategy = Offload.drop('toolResults').when({})
       const context = makeContext(messages, stash)
 
       const acted = await strategy.apply(context)
@@ -182,7 +182,7 @@ describe('Offload strategies with stash', () => {
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
-      const strategy = Offload.drop('toolResults')
+      const strategy = Offload.drop('toolResults').when({})
       const context = makeContext(messages, stash)
 
       await strategy.apply(context)
@@ -210,7 +210,7 @@ describe('Offload strategies with stash', () => {
         }),
       ]
       await stashAll(stash, messages)
-      const strategy = Offload.drop('toolResults')
+      const strategy = Offload.drop('toolResults').when({})
       const context = makeContext(messages, stash)
 
       const acted = await strategy.apply(context)
@@ -245,7 +245,7 @@ describe('Offload strategies with stash', () => {
         }),
       ]
       await stashAll(stash, messages)
-      const strategy = Offload.drop('toolResults')
+      const strategy = Offload.drop('toolResults').when({})
       const context = makeContext(messages, stash)
 
       await strategy.apply(context)
@@ -371,7 +371,7 @@ describe('Offload strategies with stash', () => {
           ],
         }),
       ]
-      const strategy = Offload.truncate('toolResults')
+      const strategy = Offload.truncate('toolResults').when({})
       const context = makeContext(messages, stash)
 
       const acted = await strategy.apply(context)
@@ -401,7 +401,7 @@ describe('Offload strategies with stash', () => {
           ],
         }),
       ]
-      const strategy = Offload.truncate('toolResults')
+      const strategy = Offload.truncate('toolResults').when({})
       const context = makeContext(messages)
 
       const acted = await strategy.apply(context)

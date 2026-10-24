@@ -26,16 +26,32 @@ export interface TruncateConfig {
 }
 
 /**
+ * Share of the preview budget kept from the head; the rest is kept from the tail.
+ *
+ * @internal
+ */
+export const PREVIEW_HEAD_SHARE = { head: 1, tail: 0, headTail: 0.6 } as const
+
+/**
+ * Resolves the preview token budget, defaulting to 1,000.
+ *
+ * @param config - Truncate configuration
+ * @returns The preview token budget
+ * @internal
+ */
+export function resolvePreviewTokens(config?: TruncateConfig): number {
+  return typeof config?.previewTokens === 'number' && Number.isFinite(config.previewTokens)
+    ? Math.max(0, config.previewTokens)
+    : DEFAULT_PREVIEW_TOKENS
+}
+
+/**
  * Builds a preview of the given text (head, tail, or head-tail depending on config).
  *
  * @returns The preview string with truncation metadata header, or the original text if already within budget.
  */
 export function buildPreview(fullText: string, blockCount: number, config?: TruncateConfig): string {
-  const previewTokens =
-    typeof config?.previewTokens === 'number' && Number.isFinite(config.previewTokens)
-      ? Math.max(0, config.previewTokens)
-      : DEFAULT_PREVIEW_TOKENS
-  const previewChars = previewTokens * CHARS_PER_TOKEN
+  const previewChars = resolvePreviewTokens(config) * CHARS_PER_TOKEN
   const previewMode = config?.preview ?? 'headTail'
   const totalChars = fullText.length
 
@@ -43,7 +59,7 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
     return fullText
   }
 
-  const headShare = { head: 1, tail: 0, headTail: 0.6 }[previewMode]
+  const headShare = PREVIEW_HEAD_SHARE[previewMode]
   const headChars = Math.floor(previewChars * headShare)
   const tailChars = previewChars - headChars
   const head = fullText.slice(0, headChars)
