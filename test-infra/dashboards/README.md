@@ -25,9 +25,13 @@ Top to bottom:
    week and the number of flagged weeks as the summary, so a reader can tell a new problem from an ongoing or fixed
    one.
 5. **Duration**: the 10 slowest tests by p90 and the daily mean of per-test p90.
-6. **Merge queue / main only**: pass rate and top flaky tests restricted to runs that were not pull requests. These
-   widgets read the `Event` / `Branch` / `Leg` dimensions and the `Tests*` counters, so they stay empty until a
-   publisher that emits them has run on a `merge_group`, `schedule`, `workflow_dispatch` or `push` event.
+6. **Merge queue / main only**: the pass rate over every run that was not a pull request, and the top flaky tests
+   over the nightly scheduled run on `main` only (`Event="schedule" Branch="main" Leg="all"`). These widgets read
+   the `Event` / `Branch` / `Leg` dimensions and the `Tests*` counters, so they stay empty until a publisher that
+   emits them has run on a `merge_group`, `schedule`, `workflow_dispatch` or `push` event. The flaky tables are
+   pinned to one event, branch and leg because the context schema has one series per combination: leaving any of
+   them open would multiply each test group past the 500-series cap (limit 1 below) as soon as merge-queue and
+   nightly runs both publish, and would list a flaky test once per combination.
 
 ## Publishing (one-time, Admin)
 
@@ -73,7 +77,8 @@ These were measured against the account with read-only `GetMetricData` calls and
    means "nothing in this group is inside the band". This only works when the table has a single time bucket: with
    several buckets a NaN in one bucket survives `FILL` and `SORT` ranks NaN-carrying series first. The weekly tables
    therefore show a NaN-free 0/1 flag instead of the rate: `FLOOR(r + 0.05)` is 1 only for `r >= 0.95` and
-   `CEIL(0.45 - ABS(r - 0.5))` is 1 only for `0.05 < r < 0.95`, sorted by `SUM` (number of flagged weeks).
+   `ABS(CEIL(0.45 - ABS(r - 0.5)))` is 1 only for `0.05 < r < 0.95` (the outer `ABS` removes the `-0` that `CEIL`
+   produces for `r = 0` or `r = 1`), sorted by `SUM` (number of flagged weeks).
 4. **Metrics Insights (`SELECT ... FROM SCHEMA(...)`) is capped at 14 days**; on a 30-day dashboard it still
    returns data but only for the most recent 14 days. It is used only for the "latest hour" cards and the two
    14-day suite-health charts, whose titles say so.

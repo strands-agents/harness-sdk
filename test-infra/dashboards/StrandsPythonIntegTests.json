@@ -598,7 +598,7 @@
           ],
           [
             {
-              "expression": "SORT(CEIL(0.45 - ABS(r7 - 0.5)), SUM, DESC, 15)",
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
               "id": "flaky",
               "period": 604800
             }
@@ -634,7 +634,7 @@
           ],
           [
             {
-              "expression": "SORT(CEIL(0.45 - ABS(r7 - 0.5)), SUM, DESC, 15)",
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
               "id": "flaky",
               "period": 604800
             }
@@ -785,7 +785,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "### Merge queue / main only\nOnly runs that are not pull requests (merge_group, schedule, workflow_dispatch, push). Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
+        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). Flaky tables: the nightly scheduled run on main only, so each test is one row and the group stays under 500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
       },
       "x": 0,
       "y": 105,
@@ -841,14 +841,14 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, non-PR runs only, models: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, models: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" NOT \"pull_request_target\" models', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" models', 'Average', 2592000)",
               "id": "rb",
               "period": 2592000,
               "visible": false
@@ -893,14 +893,14 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, non-PR runs only, other: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, other: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" NOT \"pull_request_target\" NOT models', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" NOT models', 'Average', 2592000)",
               "id": "rb",
               "period": 2592000,
               "visible": false

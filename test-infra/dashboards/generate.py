@@ -48,8 +48,9 @@ class DashboardSpec:
     sdk: str
     name: str
     # (label, SEARCH term). Terms must be disjoint and complete so every test lands in exactly one widget, and
-    # each must match < 500 series. SEARCH tokenizes TestName on non-alphanumerics, so "models" matches
-    # tests_integ.models.* and test/integ/models/*.
+    # each must match < 500 series on every schema it is used with (the context schema is therefore always pinned
+    # to one Event/Branch/Leg, see main_only_section). SEARCH tokenizes TestName on non-alphanumerics, so "models"
+    # matches tests_integ.models.* and test/integ/models/*.
     partitions: tuple[tuple[str, str], ...]
 
 
@@ -323,8 +324,9 @@ def weekly_section(spec: DashboardSpec, layout: Layout) -> None:
             table(
                 f"Recently flaky by week, {label}: 1 = failure rate strictly between {FLAKY_LOW} and {FLAKY_HIGH} "
                 "that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
-                # CEIL(0.45 - |r - 0.5|) is 1 only when 0.05 < r < 0.95.
-                [rate, weekly_indicator(f"CEIL({half_width} - ABS(r7 - {centre}))", "flaky")],
+                # CEIL(0.45 - |r - 0.5|) is 1 only when 0.05 < r < 0.95; the outer ABS turns the -0 that CEIL
+                # yields for r = 0 or r = 1 into a plain 0.
+                [rate, weekly_indicator(f"ABS(CEIL({half_width} - ABS(r7 - {centre})))", "flaky")],
                 WEEK,
                 time_columns=True,
                 summary="SUM",
@@ -361,6 +363,11 @@ def duration_section(spec: DashboardSpec, layout: Layout) -> None:
 
 def main_only_section(spec: DashboardSpec, layout: Layout) -> None:
     non_pr = 'Branch="main" NOT "pull_request_target"'
+    # The per-test context schema has one series per (TestName, Event, Branch, Leg), so a SEARCH over it must pin
+    # all three context dimensions: otherwise every event that publishes multiplies the partition (merge_group +
+    # schedule alone pushes "other" past 500) and a flaky test appears once per combination. The nightly run on main
+    # is the baseline: full suite for both SDKs, one run per day, and the "all" leg covers every test.
+    nightly = 'Event="schedule" Branch="main" Leg="all"'
     layout.full(
         metric(
             f"Pass rate per day, merge queue and nightly runs on main only ({V2_NOTE})",
@@ -378,16 +385,14 @@ def main_only_section(spec: DashboardSpec, layout: Layout) -> None:
     )
     for label, term in spec.partitions:
         rate = expr(
-            search(
-                SCHEMA_PER_TEST_CONTEXT, "TestFailed", spec.sdk, "Average", MONTH, f'NOT "pull_request_target" {term}'
-            ),
+            search(SCHEMA_PER_TEST_CONTEXT, "TestFailed", spec.sdk, "Average", MONTH, f"{nightly} {term}"),
             "rb",
             MONTH,
             visible=False,
         )
         layout.full(
             table(
-                f"Top 15 flaky tests, 30 days, non-PR runs only, {label}: failure rate strictly between "
+                f"Top 15 flaky tests, 30 days, nightly runs on main only, {label}: failure rate strictly between "
                 f"{FLAKY_LOW} and {FLAKY_HIGH} ({V2_NOTE})",
                 [rate] + flaky_band("rb", MONTH, 15),
                 MONTH,
@@ -426,8 +431,10 @@ def build(spec: DashboardSpec) -> dict[str, Any]:
     section(
         layout,
         "Merge queue / main only",
-        "Only runs that are not pull requests (merge_group, schedule, workflow_dispatch, push). "
-        "Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published.",
+        "Pass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). "
+        "Flaky tables: the nightly scheduled run on main only, so each test is one row and the group stays under "
+        "500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run "
+        "has published.",
     )
     main_only_section(spec, layout)
     return {"start": "-P30D", "periodOverride": "inherit", "widgets": layout.widgets}
