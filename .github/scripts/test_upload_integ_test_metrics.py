@@ -83,8 +83,9 @@ def results_named(mod, names):
 
 
 def test_publish_metrics_isolates_failed_batch_and_reports_its_tests(mod, capsys):
-    # 750 tests x 4 datums = 3000 datums = 3 batches of 1000, i.e. 250 tests per batch.
-    data = mod.build_metric_data(results_named(mod, [f"t{i:03d}" for i in range(750)]), "repo", "python")
+    # 749 tests x 4 datums + 4 suite datums = 3000 datums = 3 batches of 1000, i.e. 250 tests per batch.
+    ctx = mod.RunContext(event="pull_request_target", branch="main", leg="all")
+    data = mod.build_metric_data(results_named(mod, [f"t{i:03d}" for i in range(749)]), "repo", "python", ctx)
     client = FakeCloudWatch(fail_on={1})
 
     failed = mod.publish_metrics(data, client)
@@ -116,6 +117,78 @@ def test_main_succeeds_when_all_batches_publish(mod, tmp_path, monkeypatch):
     mod.main()
 
     assert len(client.batches) == 1
+
+
+def dims_of(datum):
+    return {d["Name"]: d["Value"] for d in datum["Dimensions"]}
+
+
+def test_pr_event_emits_context_free_per_test_schema_and_suite_counters(mod):
+    ctx = mod.RunContext(event="pull_request_target", branch="main", leg="all")
+
+    data = mod.build_metric_data(results_named(mod, ["a", "b", "c"]), "repo", "python", ctx)
+
+    per_test = [d for d in data if d["MetricName"].startswith("Test") and not d["MetricName"].startswith("Tests")]
+    suite = [d for d in data if d["MetricName"].startswith("Tests")]
+    assert len(per_test) == 3 * 4
+    assert all(set(dims_of(d)) == {"TestName", "Repository", "SDK"} for d in per_test)
+    assert {d["MetricName"]: d["Value"] for d in suite} == {
+        "TestsRun": 3.0,
+        "TestsPassed": 3.0,
+        "TestsFailed": 0.0,
+        "TestsSkipped": 0.0,
+    }
+    assert all(
+        dims_of(d)
+        == {"Repository": "repo", "SDK": "python", "Event": "pull_request_target", "Branch": "main", "Leg": "all"}
+        for d in suite
+    )
+
+
+def test_non_pr_event_emits_both_per_test_schemas(mod):
+    ctx = mod.RunContext(event="schedule", branch="main", leg="bidi")
+    results = results_named(mod, ["a", "b"])
+    results[1].outcome = "failed"
+
+    data = mod.build_metric_data(results, "repo", "python", ctx)
+
+    assert len(data) == 2 * 4 * 2 + 4
+    context_schema = [d for d in data if "TestName" in dims_of(d) and "Event" in dims_of(d)]
+    assert len(context_schema) == 2 * 4
+    assert all(dims_of(d)["Leg"] == "bidi" and dims_of(d)["Event"] == "schedule" for d in context_schema)
+    suite = {d["MetricName"]: d["Value"] for d in data if d["MetricName"].startswith("Tests")}
+    assert suite == {"TestsRun": 2.0, "TestsPassed": 1.0, "TestsFailed": 1.0, "TestsSkipped": 0.0}
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"GITHUB_BASE_REF": "main", "GITHUB_REF_NAME": "feature/x"}, "main"),
+        ({"GITHUB_REF_NAME": "gh-readonly-queue/main/pr-12-0123abcd"}, "main"),
+        ({"GITHUB_REF_NAME": "gh-readonly-queue/release/v2/pr-7-00ff"}, "release/v2"),
+        ({"GITHUB_REF_NAME": "refs/heads/main"}, "main"),
+        ({"GITHUB_REF_NAME": "main"}, "main"),
+        ({}, "unknown"),
+    ],
+)
+def test_resolve_branch(mod, env, expected):
+    assert mod.resolve_branch(env) == expected
+
+
+def test_parse_args_defaults_and_legacy_positionals(mod, monkeypatch):
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.setenv("GITHUB_REF_NAME", "gh-readonly-queue/main/pr-3-abc")
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.delenv("AWS_REGION", raising=False)
+
+    legacy = mod.parse_args(["results.xml", "harness-sdk"])
+    assert (legacy.xml_file, legacy.repository, legacy.sdk) == ("results.xml", "harness-sdk", "python")
+    assert (legacy.event, legacy.branch, legacy.leg, legacy.region) == ("merge_group", "main", "all", "us-east-1")
+
+    explicit = mod.parse_args(
+        ["r.xml", "harness-sdk", "typescript", "--leg", "mcp-1x", "--branch", "dev", "--event", "push"]
+    )
+    assert (explicit.sdk, explicit.leg, explicit.branch, explicit.event) == ("typescript", "mcp-1x", "dev", "push")
 
 
 def test_build_metric_data_uses_sanitized_test_name(mod):
