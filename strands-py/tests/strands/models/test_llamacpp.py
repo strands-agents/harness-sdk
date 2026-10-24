@@ -397,12 +397,14 @@ def test_cache_config_cache_key_warns_and_is_not_routed() -> None:
 
 
 class _GatedStream(httpx.AsyncByteStream):
+    """Yield one SSE frame, then hold the response open until released."""
+
     def __init__(self, body: bytes = b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n') -> None:
         self.body = body
         self.release = asyncio.Event()
         self.waiting = asyncio.Event()
         self.eof = False
-        self.close_count = 0
+        self.closed = False
         self.read_error: httpx.ReadError | None = None
         self.tail = b""
 
@@ -417,11 +419,12 @@ class _GatedStream(httpx.AsyncByteStream):
         self.eof = True
 
     async def aclose(self) -> None:
-        self.close_count += 1
+        self.closed = True
 
 
 @pytest_asyncio.fixture
-async def streaming_model() -> AsyncIterator[tuple[LlamaCppModel, _GatedStream, httpx.Response]]:
+async def streaming_response() -> AsyncIterator[tuple[LlamaCppModel, _GatedStream, httpx.Response]]:
+    """Provide a real HTTPX response with a gated body and an isolated client."""
     byte_stream = _GatedStream()
     response = httpx.Response(200, stream=byte_stream)
     model = LlamaCppModel()
@@ -431,10 +434,11 @@ async def streaming_model() -> AsyncIterator[tuple[LlamaCppModel, _GatedStream, 
         yield model, byte_stream, response
 
 
-@pytest.mark.parametrize("ending", ["eof", "done", "read_error", "format_error", "cancel", "close"])
+@pytest.mark.parametrize("ending", ["eof", "done"])
 @pytest.mark.asyncio
-async def test_stream_yields_text_before_eof_and_closes_response(streaming_model, ending, alist) -> None:
-    model, byte_stream, response = streaming_model
+async def test_stream_yields_text_before_eof_and_closes_response(streaming_response, ending, alist) -> None:
+    """Text arrives before HTTP EOF, and completion closes the response."""
+    model, byte_stream, response = streaming_response
     stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
 
     async def first_text():
@@ -449,43 +453,16 @@ async def test_stream_yields_text_before_eof_and_closes_response(streaming_model
         assert not byte_stream.eof
         assert not response.is_closed
 
-        if ending == "close":
-            await stream.aclose()
-        elif ending == "format_error":
-            byte_stream.tail = byte_stream.body
-            with patch.object(model, "_format_chunk", side_effect=ValueError("invalid chunk")):
-                byte_stream.release.set()
-                with pytest.raises(ValueError, match="invalid chunk"):
-                    await alist(stream)
-        elif ending == "cancel":
-            consumer = asyncio.create_task(alist(stream))
-            try:
-                await asyncio.wait_for(byte_stream.waiting.wait(), timeout=5)
-                consumer.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await consumer
-            finally:
-                consumer.cancel()
-                await asyncio.gather(consumer, return_exceptions=True)
-        else:
-            if ending == "done":
-                byte_stream.tail = b"data: [DONE]\n\n"
-            if ending == "read_error":
-                byte_stream.read_error = httpx.ReadError("connection interrupted")
-            byte_stream.release.set()
-            if ending == "read_error":
-                with pytest.raises(httpx.ReadError, match="connection interrupted"):
-                    await alist(stream)
-            else:
-                await alist(stream)
-                tru_eof = byte_stream.eof
-                exp_eof = ending == "eof"
-                assert tru_eof is exp_eof
+        if ending == "done":
+            byte_stream.tail = b"data: [DONE]\n\n"
+        byte_stream.release.set()
+        await alist(stream)
 
+        tru_eof = byte_stream.eof
+        exp_eof = ending == "eof"
+        assert tru_eof is exp_eof
         assert response.is_closed
-        tru_close_count = byte_stream.close_count
-        exp_close_count = 1
-        assert tru_close_count == exp_close_count
+        assert byte_stream.closed
         assert not model.client.is_closed
     finally:
         byte_stream.release.set()
@@ -493,7 +470,78 @@ async def test_stream_yields_text_before_eof_and_closes_response(streaming_model
 
 
 @pytest.mark.asyncio
-async def test_stream_basic() -> None:
+async def test_stream_closes_response_on_read_error(streaming_response, alist) -> None:
+    """A transport read error closes the response and propagates to the caller."""
+    model, byte_stream, response = streaming_response
+    byte_stream.read_error = httpx.ReadError("connection interrupted")
+    byte_stream.release.set()
+
+    with pytest.raises(httpx.ReadError, match="connection interrupted"):
+        await alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}]))
+
+    assert response.is_closed
+    assert byte_stream.closed
+    assert not model.client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_on_format_error(streaming_response, alist) -> None:
+    """A content formatting error closes the response without draining its body."""
+    model, byte_stream, response = streaming_response
+    format_chunk = model._format_chunk
+
+    def fail_content(event):
+        if event["chunk_type"] == "content_delta":
+            raise ValueError("invalid chunk")
+        return format_chunk(event)
+
+    with patch.object(model, "_format_chunk", side_effect=fail_content):
+        with pytest.raises(ValueError, match="invalid chunk"):
+            await alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}]))
+
+    assert response.is_closed
+    assert byte_stream.closed
+    assert not byte_stream.eof
+    assert not model.client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_on_cancellation(streaming_response, alist) -> None:
+    """Cancelling a stalled consumer closes the response and propagates cancellation."""
+    model, byte_stream, response = streaming_response
+    consumer = asyncio.create_task(alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}])))
+    try:
+        await asyncio.wait_for(byte_stream.waiting.wait(), timeout=5)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+
+        assert response.is_closed
+        assert byte_stream.closed
+        assert not model.client.is_closed
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_response_on_generator_close(streaming_response) -> None:
+    """Closing the generator releases an unread response and keeps the client open."""
+    model, byte_stream, response = streaming_response
+    stream = model.stream([{"role": "user", "content": [{"text": "Hi"}]}])
+    try:
+        await asyncio.wait_for(stream.__anext__(), timeout=5)
+    finally:
+        await stream.aclose()
+
+    assert response.is_closed
+    assert byte_stream.closed
+    assert not byte_stream.eof
+    assert not model.client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_stream_basic(alist) -> None:
     """Test basic streaming functionality."""
     model = LlamaCppModel()
 
@@ -509,9 +557,7 @@ async def test_stream_basic() -> None:
     async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
         messages = [{"role": "user", "content": [{"text": "Hi"}]}]
 
-        chunks = []
-        async for chunk in model.stream(messages):
-            chunks.append(chunk)
+        chunks = await alist(model.stream(messages))
 
         # Verify we got the expected chunks
         assert any("messageStart" in chunk for chunk in chunks)
@@ -530,7 +576,7 @@ async def test_stream_basic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_surfaces_cache_read_tokens() -> None:
+async def test_stream_surfaces_cache_read_tokens(alist) -> None:
     """A reused KV prefix is surfaced as cacheReadInputTokens, like the other cache-aware providers.
 
     llama.cpp reports the reused prefix length in usage.prompt_tokens_details.cached_tokens.
@@ -546,9 +592,7 @@ async def test_stream_surfaces_cache_read_tokens() -> None:
 
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text="\n".join(mock_response_lines)))
     async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
-        chunks = []
-        async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
-            chunks.append(chunk)
+        chunks = await alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}]))
 
     usage = next(chunk["metadata"]["usage"] for chunk in chunks if "metadata" in chunk)
     assert usage == {"inputTokens": 100, "outputTokens": 5, "totalTokens": 105, "cacheReadInputTokens": 91}
@@ -567,7 +611,7 @@ _NO_REUSE_TOKENS = {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens"
     ids=["cached_zero", "details_null", "details_absent"],
 )
 @pytest.mark.asyncio
-async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_payload) -> None:
+async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_payload, alist) -> None:
     """No reuse — cached zero, a null details object, or the field absent — yields usage with no cache-read key.
 
     The whole-dict assertion pins the ``or {}`` guard in stream() and the ``getattr(..., 0)`` default in
@@ -583,9 +627,7 @@ async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_paylo
 
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text="\n".join(mock_response_lines)))
     async with httpx.AsyncClient(base_url=model.base_url, transport=transport) as model.client:
-        chunks = []
-        async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
-            chunks.append(chunk)
+        chunks = await alist(model.stream([{"role": "user", "content": [{"text": "Hi"}]}]))
 
     usage = next(chunk["metadata"]["usage"] for chunk in chunks if "metadata" in chunk)
     assert usage == {"inputTokens": 100, "outputTokens": 5, "totalTokens": 105}
@@ -693,6 +735,7 @@ def test_json_schema_via_params() -> None:
 )
 @pytest.mark.asyncio
 async def test_stream_http_errors(status_code, body, exception, message, alist) -> None:
+    """Unread HTTP error bodies preserve overflow, throttling, and fallback mappings."""
     byte_stream = _GatedStream(body)
     byte_stream.release.set()
     response = httpx.Response(status_code, stream=byte_stream)
@@ -706,9 +749,7 @@ async def test_stream_http_errors(status_code, body, exception, message, alist) 
         if exception is not httpx.HTTPStatusError:
             assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
         assert response.is_closed
-        tru_close_count = byte_stream.close_count
-        exp_close_count = 1
-        assert tru_close_count == exp_close_count
+        assert byte_stream.closed
 
 
 @pytest.mark.asyncio
