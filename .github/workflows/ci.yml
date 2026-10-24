@@ -84,6 +84,7 @@ jobs:
             integ-metrics:
               - '.github/scripts/upload-integ-test-metrics.py'
               - '.github/scripts/test_upload_integ_test_metrics.py'
+              - 'test-infra/dashboards/**'
               - '.github/workflows/ci.yml'
 
   dependency-review:
@@ -197,7 +198,7 @@ jobs:
         run: npx --yes prettier@3 --check '.github/scripts/pr-metrics/*.mjs'
 
   integ-metrics:
-    name: Integ Metrics Publisher
+    name: Integ Metrics
     needs: detect-changes
     if: needs.detect-changes.outputs.integ-metrics == 'true'
     runs-on: strands-agents_ubuntu-latest_4-core
@@ -215,8 +216,10 @@ jobs:
       - run: python -m pytest .github/scripts -q
       - name: Lint
         run: |
-          ruff check .github/scripts/*.py
-          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py
+          ruff check .github/scripts/*.py test-infra/dashboards/generate.py
+          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py
+      - name: Check dashboards are up to date
+        run: python test-infra/dashboards/generate.py --check
 
   ci-gate:
     name: CI Gate
