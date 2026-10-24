@@ -1,8 +1,18 @@
 import { KeywordSearchStrategy } from '@strands-agents/sdk/storage/search'
 import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
-import { InMemoryStorage, LocalFileStorage } from '@strands-agents/sdk/storage'
+import {
+  Embedder,
+  S3VectorSearchStrategy,
+} from '@strands-agents/sdk/storage/search'
+import { BedrockEmbedder } from '@strands-agents/sdk/storage/embeddings/bedrock'
+import {
+  InMemoryStorage,
+  LocalFileStorage,
+  S3Storage,
+} from '@strands-agents/sdk/storage'
 import type { Storage } from '@strands-agents/sdk/storage'
 import type {
+  EmbedOptions,
   SearchStrategy,
   StorageSearchResult,
 } from '@strands-agents/sdk/storage/search'
@@ -26,6 +36,53 @@ async function bm25Search() {
 
   await search.close()
   // --8<-- [end:bm25_search]
+}
+
+async function s3VectorSearch() {
+  // --8<-- [start:s3_vector_search]
+  // Defaults: my-bucket-vectors / default / Titan Text Embeddings V2
+  const storage = new S3Storage('my-bucket', {
+    searchStrategy: new S3VectorSearchStrategy(),
+  })
+
+  // Or override the index and embedder
+  const custom = new S3Storage('my-bucket', {
+    searchStrategy: new S3VectorSearchStrategy({
+      vectorBucketName: 'shared-vectors',
+      indexName: 'agent-a',
+      embedder: new BedrockEmbedder({ dimensions: 512 }),
+    }),
+  })
+
+  const results = await storage.search(
+    'how do users sign in?',
+  )
+  // --8<-- [end:s3_vector_search]
+}
+
+async function customEmbedder() {
+  // --8<-- [start:custom_embedder]
+  class MyEmbedder extends Embedder {
+    async embed(
+      text: string,
+      options?: EmbedOptions,
+    ): Promise<number[]> {
+      // Call your embedding model here and return a
+      // vector whose length matches the index dimension.
+      return myModel.embed(text, options?.purpose)
+    }
+  }
+
+  const storage = new S3Storage('my-bucket', {
+    searchStrategy: new S3VectorSearchStrategy({
+      embedder: new MyEmbedder(),
+    }),
+  })
+  // --8<-- [end:custom_embedder]
+}
+
+declare const myModel: {
+  embed(text: string, purpose?: string): Promise<number[]>
 }
 
 async function storageWithStrategy() {

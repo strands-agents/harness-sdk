@@ -1,6 +1,6 @@
 ---
 title: Search Strategies
-description: "Plug in keyword, BM25, or custom search algorithms
+description: "Plug in keyword, BM25, vector, or custom search algorithms
   to find relevant content across storage backends."
 tags: [session-management]
 addedDate: 2026-09-15
@@ -11,6 +11,9 @@ sourceLinks:
   - path: strands-ts/src/storage/search/types.ts
   - path: strands-ts/src/storage/search/keyword.ts
   - path: strands-ts/src/storage/search/qmd.ts
+  - path: strands-ts/src/storage/search/s3-vector.ts
+  - path: strands-ts/src/storage/search/embedder.ts
+  - path: strands-ts/src/storage/embeddings/bedrock.ts
 ---
 
 Storage backends expose a
@@ -121,6 +124,119 @@ The strategy persists a SQLite database alongside the
 storage directory. Call
 <Syntax py="close()" ts="close()" /> when the strategy
 is no longer needed to release the database connection.
+
+## S3 Vectors search
+
+Semantic (vector) search for `S3Storage`, backed by
+[Amazon S3 Vectors](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html).
+`S3VectorSearchStrategy` embeds each value on write and
+stores the vector in an S3 Vectors index, removes it on
+delete, and embeds the query on search to find the
+nearest stored entries. The vectors are a derived index
+over the bucket: every write costs one embedding call
+plus a `PutVectors` request.
+
+<Tabs>
+<Tab label="Python">
+
+Not yet available in the Python SDK.
+
+</Tab>
+<Tab label="TypeScript">
+
+It works only with `S3Storage`; attaching it to another
+backend is a type error. By default it uses the vector
+bucket `<bucket>-vectors`, the index `default`, a
+`BedrockEmbedder` (Amazon Titan Text Embeddings V2),
+and the storage's region:
+
+```typescript
+--8<-- "user-guide/sdk/storage/search-strategies_imports.ts:s3_vector_search_imports"
+
+--8<-- "user-guide/sdk/storage/search-strategies.ts:s3_vector_search"
+```
+
+The vector bucket and index are not created for you.
+Create them before the first write, with a dimension
+that matches the embedder (1024 for Titan Text
+Embeddings V2):
+
+```bash
+aws s3vectors create-vector-bucket --vector-bucket-name my-bucket-vectors
+aws s3vectors create-index --vector-bucket-name my-bucket-vectors \
+  --index-name default --data-type float32 --dimension 1024 --distance-metric cosine
+```
+
+#### Required IAM permissions
+
+At runtime, the IAM user or role needs the following
+permissions on the vector index, on top of the S3
+permissions `S3Storage` already needs:
+
+- `s3vectors:PutVectors` (on write)
+- `s3vectors:DeleteVectors` (on delete, and on writes
+  of empty or non-UTF-8 values)
+- `s3vectors:QueryVectors` (on search)
+- `bedrock:InvokeModel` on the embedding model (with the
+  default `BedrockEmbedder`)
+
+Here's a sample IAM policy for the default setup:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3vectors:PutVectors",
+                "s3vectors:DeleteVectors",
+                "s3vectors:QueryVectors"
+            ],
+            "Resource": "arn:aws:s3vectors:*:*:bucket/my-bucket-vectors/index/default"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "bedrock:InvokeModel",
+            "Resource": "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0"
+        }
+    ]
+}
+```
+
+Creating the vector bucket and index needs
+`s3vectors:CreateVectorBucket` and
+`s3vectors:CreateIndex`, but only for setup; the
+strategy never creates resources itself.
+
+Keep these in mind:
+
+- Only content written after the strategy is attached
+  is searchable; there is no backfill.
+- Empty and non-UTF-8 values are stored but not
+  indexed, and remove any earlier vector for that key.
+- Vectors are keyed by the full object key, so storages
+  on one bucket under different prefixes (including
+  `namespace()` views) can share an index. Don't share
+  one index across different buckets.
+- Query and stored vectors must come from the same
+  model. If you change the embedder, use a new index.
+
+To use another model or provider, pass your own
+`embedder`. An embedder extends the `Embedder` abstract
+class and implements
+`embed(text, { purpose })`, where `purpose` is
+`'document'` when indexing and `'query'` when
+searching:
+
+```typescript
+--8<-- "user-guide/sdk/storage/search-strategies_imports.ts:custom_embedder_imports"
+
+--8<-- "user-guide/sdk/storage/search-strategies.ts:custom_embedder"
+```
+
+</Tab>
+</Tabs>
 
 ## Passing a strategy to a storage backend
 
