@@ -197,16 +197,33 @@ jobs:
             .github/scripts
           persist-credentials: false
 
+      # One directory per matrix leg: test-results/, bidi-test-results/, mcp-1x-test-results/.
       - name: Download test results
         uses: actions/download-artifact@v8.0.2
         with:
-          name: test-results
+          pattern: '*test-results'
+          merge-multiple: false
           path: ${{ runner.temp }}/test-results
 
+      # Each leg is published separately with a Leg dimension; a leg whose upload
+      # fails does not stop the others, but the step fails at the end.
       - name: Publish test metrics to CloudWatch
         env:
           REPO_NAME: ${{ github.event.repository.name }}
-          TEST_RESULTS_FILE: ${{ runner.temp }}/test-results/test-results.xml
+          BRANCH: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}
+          RESULTS_DIR: ${{ runner.temp }}/test-results
         run: |
           pip install --no-cache-dir boto3
-          python .github/scripts/upload-integ-test-metrics.py "$TEST_RESULTS_FILE" "$REPO_NAME"
+          status=0
+          for dir in "$RESULTS_DIR"/*/; do
+            leg=$(basename "$dir")
+            leg=${leg%-test-results}
+            [ "$leg" = "test-results" ] && leg=all
+            if [ ! -f "$dir/test-results.xml" ]; then
+              echo "::warning::No test-results.xml in $dir; nothing to publish for leg $leg"
+              continue
+            fi
+            python .github/scripts/upload-integ-test-metrics.py "$dir/test-results.xml" "$REPO_NAME" python \
+              --leg "$leg" --branch "${BRANCH#refs/heads/}" || status=1
+          done
+          exit "$status"
