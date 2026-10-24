@@ -1,8 +1,30 @@
 import { describe, expect, it } from 'vitest'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
 import { builtinToolConfig, enabledBuiltinTools, resolveBuiltinTools, webSearchExplicit } from '../src/builtin-tools.js'
 import { BUILTIN_TOOL_CONFIG_KEYS, BUILTIN_TOOL_NAMES, normalizeHarnessAgentConfig } from '../src/config.js'
 import { DEFAULT_BUILTIN_TOOLS } from '../src/defaults.js'
+
+describe('builtin tool imports', () => {
+  it('leaves process lifecycle handlers with the embedding application', async () => {
+    const moduleUrl = new URL('../src/builtin-tools.ts', import.meta.url).href
+    const source = `
+      const events = ['beforeExit', 'exit', 'SIGINT', 'SIGTERM'];
+      const counts = () => events.map(event => process.listenerCount(event));
+      const before = counts();
+      await import(${JSON.stringify(moduleUrl)});
+      process.stdout.write(JSON.stringify({ before, after: counts() }));
+    `
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx'), '--input-type=module', '--eval', source],
+      { timeout: 20_000 }
+    )
+    const counts = JSON.parse(stdout)
+    expect(counts.after).toEqual(counts.before)
+  })
+})
 
 describe('resolveBuiltinTools', () => {
   it('selects the defaults when undefined', () => {

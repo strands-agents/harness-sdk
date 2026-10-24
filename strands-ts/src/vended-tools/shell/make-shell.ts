@@ -11,7 +11,7 @@
 
 import { tool } from '../../tools/tool-factory.js'
 import { z } from 'zod'
-import { SandboxTimeoutError } from '../../sandbox/errors.js'
+import { SandboxAbortError, SandboxTimeoutError } from '../../sandbox/errors.js'
 import { Sandbox } from '../../sandbox/base.js'
 import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type ShellOutput } from './types.js'
 
@@ -56,12 +56,17 @@ export function makeShell(
       if (!context) {
         throw new Error('Tool context is required for shell operations')
       }
+      if (context.cancelSignal.aborted) throw new SandboxAbortError()
 
       const sandbox = boundSandbox ?? context.agent.sandbox
       try {
-        const result = await sandbox.execute(input.command, { timeout: input.timeout ?? 120 })
+        const result = await sandbox.execute(input.command, {
+          timeout: input.timeout ?? 120,
+          signal: context.cancelSignal,
+        })
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
+        if (err instanceof SandboxAbortError) throw err
         // Shell* extends Bash* so pre-rename catch clauses keep matching.
         if (err instanceof SandboxTimeoutError) {
           // Thrown errors reach the model as `Error: <message>`, so the partial output rides in the message.
