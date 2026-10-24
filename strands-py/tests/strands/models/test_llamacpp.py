@@ -459,6 +459,9 @@ async def test_stream_yields_text_before_eof_and_closes_response(
         tru_event = await asyncio.wait_for(first_text(), timeout=5)
         exp_event = {"contentBlockDelta": {"delta": {"text": "Hello"}}}
         assert tru_event == exp_event
+        tru_request = (response.request.method, response.request.url.path)
+        exp_request = ("POST", "/v1/chat/completions")
+        assert tru_request == exp_request
         tru_eof = byte_stream.eof
         tru_closed = response.is_closed
         assert not tru_eof
