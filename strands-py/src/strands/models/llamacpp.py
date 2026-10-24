@@ -653,7 +653,7 @@ class LlamaCppModel(Model):
 
             logger.debug("invoking model")
             async with self.client.stream("POST", "/v1/chat/completions", json=request) as response:
-                if response.status_code == 400:
+                if not response.is_success:
                     await response.aread()
                 response.raise_for_status()
 
