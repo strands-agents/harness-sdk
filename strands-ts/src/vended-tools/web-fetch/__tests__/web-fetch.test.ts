@@ -136,9 +136,45 @@ describe('webFetch tool', () => {
       const result = await makeWebFetch({ mode: 'markdown', maxContentChars: 50 }).invoke({
         url: 'https://example.com/',
       })
-      expect(result).toContain('x'.repeat(50))
-      expect(result).not.toContain('x'.repeat(51))
-      expect(result).toContain('[content truncated]')
+      expect(result).toBe(
+        'x'.repeat(50) +
+          '\n\n[content truncated: showing characters 0-50 of 200; pass offset=50 to read the next window]'
+      )
+    })
+
+    it('offset returns the next window', async () => {
+      const body = 'a'.repeat(50) + 'b'.repeat(50) + 'c'.repeat(20)
+      const webFetch = makeWebFetch({ mode: 'markdown', maxContentChars: 50 })
+
+      mockFetch(body, { contentType: 'text/plain' })
+      const middle = await webFetch.invoke({ url: 'https://example.com/', offset: 50 })
+      expect(middle).toBe(
+        'b'.repeat(50) +
+          '\n\n[content truncated: showing characters 50-100 of 120; pass offset=100 to read the next window]'
+      )
+
+      mockFetch(body, { contentType: 'text/plain' })
+      const last = await webFetch.invoke({ url: 'https://example.com/', offset: 100 })
+      expect(last).toBe('c'.repeat(20) + '\n\n[content truncated: showing characters 100-120 of 120; end of content]')
+    })
+
+    it('no marker when content fits', async () => {
+      mockFetch('short', { contentType: 'text/plain' })
+      const result = await makeWebFetch({ mode: 'markdown', maxContentChars: 50 }).invoke({
+        url: 'https://example.com/',
+      })
+      expect(result).toBe('short')
+    })
+
+    it.each([
+      [-1, /must be non-negative/],
+      [5, /past the end of the content \(5 characters\)/],
+      [50, /past the end/],
+    ])('rejects out-of-range offset %i', async (offset, message) => {
+      mockFetch('short', { contentType: 'text/plain' })
+      await expect(
+        makeWebFetch({ mode: 'markdown', maxContentChars: 50 }).invoke({ url: 'https://example.com/', offset })
+      ).rejects.toThrow(message)
     })
 
     it('rejects non-http scheme', async () => {
@@ -326,14 +362,37 @@ describe('webFetch tool', () => {
     it('truncates content before passing to analyst', async () => {
       mockFetch('x'.repeat(200), { contentType: 'text/plain' })
       mockInvoke.mockResolvedValue(makeAgentResult('answer'))
-      await makeWebFetch({ mode: 'agentic', model: {} as LocalAgent['model'], maxContentChars: 50 }).invoke({
+      const result = await makeWebFetch({
+        mode: 'agentic',
+        model: {} as LocalAgent['model'],
+        maxContentChars: 50,
+      }).invoke({
         url: 'https://example.com/',
         prompt: 'Summarize',
       })
       const [invokePrompt] = mockInvoke.mock.calls[0] ?? []
-      expect(invokePrompt).toContain('x'.repeat(50))
-      expect(invokePrompt).not.toContain('x'.repeat(51))
-      expect(invokePrompt).toContain('[content truncated]')
+      // The analyst sees the bounds only; the paging hint is for the calling agent.
+      expect(invokePrompt).toMatch(/--- Content ---\nx{50}\n\n\[content truncated: showing characters 0-50 of 200\]$/)
+      expect(result).toBe(
+        'answer\n\n[content truncated: showing characters 0-50 of 200; pass offset=50 to read the next window]'
+      )
+    })
+
+    it('offset selects the window passed to the analyst', async () => {
+      mockFetch('a'.repeat(50) + 'b'.repeat(50), { contentType: 'text/plain' })
+      mockInvoke.mockResolvedValue(makeAgentResult('answer'))
+      const result = await makeWebFetch({
+        mode: 'agentic',
+        model: {} as LocalAgent['model'],
+        maxContentChars: 50,
+      }).invoke({
+        url: 'https://example.com/',
+        prompt: 'Summarize',
+        offset: 50,
+      })
+      const [invokePrompt] = mockInvoke.mock.calls[0] ?? []
+      expect(invokePrompt).toMatch(/--- Content ---\nb{50}\n\n\[content truncated: showing characters 50-100 of 100\]$/)
+      expect(result).toBe('answer\n\n[content truncated: showing characters 50-100 of 100; end of content]')
     })
 
     it('wraps analyst error with url context', async () => {

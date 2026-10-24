@@ -6,6 +6,8 @@ import type { Model } from '../../models/model.js'
 export interface WebFetchMarkdownInput {
   /** URL to fetch. Must be http:// or https://. */
   url: string
+  /** Character offset into the extracted content to start from. Defaults to 0. */
+  offset?: number
 }
 
 /**
@@ -16,18 +18,23 @@ export interface WebFetchAgenticInput {
   url: string
   /** Question or instruction about the page content. */
   prompt: string
+  /** Character offset into the extracted content to start from. Defaults to 0. */
+  offset?: number
 }
 
 export const WEB_FETCH_DESCRIPTION_MARKDOWN =
   'Fetches an HTTP(S) URL and returns its content as clean markdown. ' +
   'HTML pages are converted to markdown with scripts, styles, and noise stripped; ' +
-  'other content types are returned as-is.'
+  'other content types are returned as-is. Long pages are returned one window at a time: ' +
+  'a truncation marker reports the total length and the offset to pass to read the next window.'
 
 export const WEB_FETCH_DESCRIPTION_AGENTIC =
   'Fetches an HTTP(S) URL and answers a prompt about its content. ' +
   'The analyst processes the page directly so the full content never enters ' +
   "the main agent's context. " +
-  'The prompt parameter is required.'
+  'The prompt parameter is required. Long pages are analyzed one window at a time: ' +
+  'a truncation marker on the result reports the total length and the offset to pass ' +
+  'to ask about the next window.'
 
 /**
  * Options for {@link makeWebFetch}.
@@ -39,7 +46,11 @@ export interface MakeWebFetchOptions {
   description?: string
   /** Maximum response body size in bytes. Defaults to 5 MiB. */
   maxBytes?: number
-  /** Maximum characters of extracted content delivered to the model. Defaults to 50,000. */
+  /**
+   * Maximum characters of extracted content delivered to the model or analyst per call.
+   * Longer content is truncated with a marker that reports the total length and the
+   * `offset` to pass to read the next window. Defaults to 50,000.
+   */
   maxContentChars?: number
   /**
    * Optional model for the analyst agent. Only used when `mode` is `'agentic'`.

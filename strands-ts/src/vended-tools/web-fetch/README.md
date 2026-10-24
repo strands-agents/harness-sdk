@@ -71,7 +71,7 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 | `name`            | `string`                  | `'web_fetch'` | Tool name shown to the model.                                                                |
 | `description`     | `string`                  | (built-in)    | Tool description shown to the model. Defaults to a mode-appropriate description.             |
 | `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
-| `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
+| `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model or analyst per call.          |
 | `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
 
 Throws if `maxBytes` or `maxContentChars` is not a positive number.
@@ -84,20 +84,24 @@ Throws if `maxBytes` or `maxContentChars` is not a positive number.
 
 ### Input — markdown mode
 
-| Property | Type     | Required | Description                                    |
-| -------- | -------- | -------- | ---------------------------------------------- |
-| `url`    | `string` | Yes      | URL to fetch. Must be `http://` or `https://`. |
+| Property | Type     | Required | Description                                                                 |
+| -------- | -------- | -------- | --------------------------------------------------------------------------- |
+| `url`    | `string` | Yes      | URL to fetch. Must be `http://` or `https://`.                              |
+| `offset` | `number` | No       | Character offset into the extracted content to start from. Defaults to `0`. |
 
 ### Input — agentic mode
 
-| Property | Type     | Required | Description                                     |
-| -------- | -------- | -------- | ----------------------------------------------- |
-| `url`    | `string` | Yes      | URL to fetch. Must be `http://` or `https://`.  |
-| `prompt` | `string` | Yes      | Question or instruction about the page content. |
+| Property | Type     | Required | Description                                                                 |
+| -------- | -------- | -------- | --------------------------------------------------------------------------- |
+| `url`    | `string` | Yes      | URL to fetch. Must be `http://` or `https://`.                              |
+| `prompt` | `string` | Yes      | Question or instruction about the page content.                             |
+| `offset` | `number` | No       | Character offset into the extracted content to start from. Defaults to `0`. |
 
 ### Output
 
 Both modes return a string. Markdown mode returns the extracted page content; agentic mode returns the analyst's answer.
+
+Pages longer than `maxContentChars` are read one window at a time. The result ends with a marker such as `[content truncated: showing characters 0-50000 of 123456; pass offset=50000 to read the next window]` (or `; end of content]` on the last window); pass the given `offset` on the next call to continue. In agentic mode the analyst sees only the window bounds, and the paging hint is appended to its answer. Each call re-fetches the URL. An `offset` that is negative or past the end of the content throws.
 
 ## What it does not do
 
