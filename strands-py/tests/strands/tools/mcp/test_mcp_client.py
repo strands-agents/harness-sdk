@@ -2115,3 +2115,97 @@ def test_mcp_client_client_info_none_when_no_name(mock_transport, mock_session, 
         with MCPClient(mock_transport["transport_callable"], **kwargs) as _client:
             call_kwargs = mock_client_session.call_args[1]
             assert call_kwargs["client_info"] is None
+
+
+def test_meta_provider_not_used_for_direct_tool_calls(mock_transport, mock_session):
+    """Test a direct call_tool_sync does not consult the meta_provider."""
+    mock_content = MCPTextContent(type="text", text="done")
+    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[mock_content])
+    calls = []
+
+    def provider(tool_use, invocation_state):
+        calls.append((tool_use, invocation_state))
+        return {"com.example/user": "alice"}
+
+    with MCPClient(mock_transport["transport_callable"], meta_provider=provider) as client:
+        result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={})
+
+    assert result["status"] == "success"
+    assert calls == []
+
+
+def test_meta_provider_merged_over_client_meta(mock_transport, mock_session):
+    """Test the provider's metadata is merged over the client-level meta."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    def provider(tool_use, invocation_state):
+        return {"com.example/user": invocation_state["user"]}
+
+    with MCPClient(
+        mock_transport["transport_callable"],
+        meta={"com.example/app": "demo"},
+        meta_provider=provider,
+    ) as client:
+        meta = client._resolve_meta({"toolUseId": "test-123", "name": "test_tool", "input": {}}, {"user": "alice"})
+
+    assert meta == {"com.example/app": "demo", "com.example/user": "alice"}
+
+
+def test_meta_provider_overrides_client_meta_key(mock_transport, mock_session):
+    """Test the provider's metadata wins over the client-level meta for the same key."""
+
+    def provider(tool_use, invocation_state):
+        return {"com.example/request_id": "per-call"}
+
+    with MCPClient(
+        mock_transport["transport_callable"],
+        meta={"com.example/request_id": "client"},
+        meta_provider=provider,
+    ) as client:
+        meta = client._resolve_meta({"toolUseId": "test-123", "name": "test_tool", "input": {}}, {})
+
+    assert meta == {"com.example/request_id": "per-call"}
+
+
+def test_meta_provider_returning_none_keeps_client_meta(mock_transport, mock_session):
+    """Test a provider that returns None sends the client-level meta alone."""
+    with MCPClient(
+        mock_transport["transport_callable"],
+        meta={"com.example/app": "demo"},
+        meta_provider=lambda tool_use, invocation_state: None,
+    ) as client:
+        meta = client._resolve_meta({"toolUseId": "test-123", "name": "test_tool", "input": {}}, {})
+
+    assert meta == {"com.example/app": "demo"}
+
+
+def test_no_meta_provider_keeps_client_meta(mock_transport, mock_session):
+    """Test the client-level meta is unchanged when no provider is configured."""
+    with MCPClient(mock_transport["transport_callable"], meta={"com.example/app": "demo"}) as client:
+        meta = client._resolve_meta({"toolUseId": "test-123", "name": "test_tool", "input": {}}, {})
+
+    assert meta == {"com.example/app": "demo"}
+
+
+def test_loaded_tools_inherit_meta_provider(mock_transport, mock_session):
+    """Test tools returned by load_tools carry the client's meta_provider."""
+    mock_tool = MCPTool(name="test_tool", description="A test tool", inputSchema={"type": "object", "properties": {}})
+    mock_session.list_tools.return_value = ListToolsResult(tools=[mock_tool])
+
+    def provider(tool_use, invocation_state):
+        return {"com.example/user": "alice"}
+
+    with MCPClient(mock_transport["transport_callable"], meta_provider=provider) as client:
+        tools = client.list_tools_sync()
+
+        assert tools[0]._meta_provider is not None
+        assert tools[0]._resolve_meta({"toolUseId": "test-123", "name": "test_tool", "input": {}}, {}) == {
+            "com.example/user": "alice"
+        }
