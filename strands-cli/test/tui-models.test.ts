@@ -16,6 +16,18 @@ import {
   type EffortInput,
 } from '../src/tui/model/selection.js'
 
+// The harness-side half of
+// https://github.com/strands-agents/harness-sdk/issues/5191 extends thinking support to the whole
+// GPT-5 Bedrock line; until that harness version is published, emulate it so the CLI's own level
+// table is testable. The cross-check against resolveModel below still uses the published table.
+vi.mock('@strands-agents/harness', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@strands-agents/harness')>()
+  return {
+    ...actual,
+    supportsThinking: (spec: string) => actual.supportsThinking(spec) || /openai\.gpt-5\.\d/.test(spec),
+  }
+})
+
 afterEach(() => {
   vi.restoreAllMocks()
 })
@@ -224,6 +236,14 @@ describe('AgentModelRuntime thinking controls', () => {
 
   it('offers Astra effort levels with High selected by default', () => {
     const runtime = runtimeFor('global.openai.gpt-6-astra', 'auto')
+
+    expect(runtime.listEfforts().map((option) => option.id)).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
+    expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5191
+  it.each(['openai.gpt-5.4', 'us.openai.gpt-5.5'])('offers GPT-5 line effort levels for %s', (modelId) => {
+    const runtime = runtimeFor(modelId, 'auto')
 
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
     expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })

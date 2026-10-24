@@ -177,6 +177,7 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
         ("bedrock/us.anthropic.claude-sonnet-4-6", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/global.anthropic.claude-fable-5-1", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/openai.gpt-5.6-sol", ("additional_request_fields", "reasoning", "effort")),
+        ("bedrock/us.openai.gpt-5.5", ("additional_request_fields", "reasoning", "effort")),
         ("bedrock/global.openai.gpt-6-astra", ("additional_request_fields", "reasoning", "effort")),
         ("bedrock/openai.gpt-oss-120b-1:0", ("additional_request_fields", "reasoning_effort")),
         ("bedrock/qwen.qwen3-32b-v1:0", ("additional_request_fields", "reasoning_effort")),
@@ -250,6 +251,25 @@ def test_astra_on_bedrock_resolves_effort(model_id):
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     with pytest.raises(ValueError, match="not supported"):
         resolve(f"bedrock/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["openai.gpt-5.4", "us.openai.gpt-5.4", "openai.gpt-5.5", "us.openai.gpt-5.5", "global.openai.gpt-5.5"],
+)
+def test_gpt_5_line_on_bedrock_resolves_effort(model_id):
+    # https://github.com/strands-agents/harness-sdk/issues/5191 — Converse accepts
+    # reasoning.effort for the whole GPT-5 line, not only the .6 minor.
+    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max"), ("off", "none")]:
+        model = resolve(f"bedrock/{model_id}", effort=effort)
+        assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
+    with pytest.raises(ValueError, match="not supported"):
+        resolve(f"bedrock/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize("model_id", ["bedrock/openai.gpt-5.4", "bedrock/us.openai.gpt-5.5"])
+def test_gpt_5_line_on_bedrock_reports_thinking(model_id):
+    assert supports_thinking(model_id) is True
 
 
 def test_gpt_oss_on_bedrock_uses_its_reasoning_field_and_levels():

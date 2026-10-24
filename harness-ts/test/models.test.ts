@@ -165,6 +165,28 @@ describe('resolveModel', () => {
     }
   )
 
+  // https://github.com/strands-agents/harness-sdk/issues/5191 — Converse accepts
+  // reasoning.effort for the whole GPT-5 line, not only the .6 minor.
+  it.each(['openai.gpt-5.4', 'us.openai.gpt-5.4', 'openai.gpt-5.5', 'us.openai.gpt-5.5', 'global.openai.gpt-5.5'])(
+    'resolves GPT-5 line effort for %s',
+    async (modelId) => {
+      for (const [thinking, effort] of [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['max', 'max'],
+      ] as const) {
+        const model = await resolve(`bedrock/${modelId}`, thinking)
+        expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+      }
+      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toEqual({
+        reasoning: { effort: 'none' },
+      })
+      await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
+        "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
+      )
+    }
+  )
+
   it('uses the Qwen Bedrock reasoning field and levels', async () => {
     const model = await resolve('bedrock/qwen.qwen3-32b-v1:0', 'minimal')
     expect(model.getConfig().additionalRequestFields).toEqual({

@@ -174,7 +174,7 @@ function bedrockLevels(modelId: string): readonly string[] {
   if (family.startsWith('anthropic.')) {
     return claudeThinkingMode(family) !== null ? ANTHROPIC_LEVELS : NO_THINKING_LEVELS
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (family.startsWith('openai.gpt-5.') || family.startsWith('openai.gpt-6-') || family.startsWith('openai.gpt-6.')) {
     return BEDROCK_GPT_LEVELS
   }
   if (family.startsWith('openai.gpt-oss-')) {
@@ -203,7 +203,7 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   if (family.startsWith('anthropic.')) {
     return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (family.startsWith('openai.gpt-5.') || family.startsWith('openai.gpt-6-') || family.startsWith('openai.gpt-6.')) {
     return { reasoning: { effort } }
   }
   if (family.startsWith('openai.gpt-oss-')) {
