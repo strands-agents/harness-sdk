@@ -1,0 +1,9 @@
+name: strands-comment-scraper
+description: Tools that let Strands agents read, filter and summarise Reddit and Hacker News threads exported with the Comment Scraper browser extension.
+integrationType: tool
+languages:
+  python:
+    package: strands-comment-scraper
+github: https://github.com/supertj/strands-comment-scraper
+docsUrl: https://comment-scraper.com/strands
+addedDate: 2026-10-22
