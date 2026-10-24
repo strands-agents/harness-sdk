@@ -5,10 +5,7 @@
     python3 test-infra/dashboards/generate.py          # rewrite the *.json next to this file
     python3 test-infra/dashboards/generate.py --check  # exit 1 if a *.json is stale
 
-Both dashboards share one layout, parametrised by SDK. The layout is shaped by hard CloudWatch limits
-(see README.md in this directory): one SEARCH per widget, every SEARCH partitioned to < 500 series, failure
-rates from a single SEARCH('Average'), band filters built from LOG10 (single-bucket tables) or FLOOR/CEIL/ABS
-(multi-bucket tables) because metric math has no comparisons on arrays, FILL before SORT.
+Both dashboards share one layout, parametrised by SDK and shaped by the CloudWatch limits in README.md.
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 REGION = "us-east-1"
-NAMESPACE = "Strands/Tests"
 SCHEMA_PER_TEST = "{Strands/Tests,Repository,SDK,TestName}"
 SCHEMA_PER_TEST_CONTEXT = "{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg}"
 SCHEMA_SUITE = "{Strands/Tests,Repository,SDK,Event,Branch,Leg}"
@@ -34,7 +30,6 @@ MONTH = 30 * DAY
 
 PUBLISHER_URL = "https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py"
 DASHBOARDS_URL = "https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards"
-V2_NOTE = "fills in after publisher v2 ships"
 
 # Thresholds, repeated in widget titles so a reader never has to open the JSON.
 FLAKY_LOW = 0.05
@@ -47,14 +42,10 @@ MIN_RUNS = 5
 class DashboardSpec:
     sdk: str
     name: str
-    # (label, SEARCH term). Terms must be disjoint and complete so every test lands in exactly one widget, and
-    # each must match < 500 series on every schema it is used with. SEARCH tokenizes TestName on non-alphanumerics,
-    # so "models" matches tests_integ.models.* and test/integ/models/*.
+    # (label, SEARCH term): disjoint, complete, and < 500 series each. SEARCH tokenizes TestName on
+    # non-alphanumerics, so "models" matches tests_integ.models.* and test/integ/models/*.
     partitions: tuple[tuple[str, str], ...]
-    # (label, Leg, SEARCH term) for the nightly tables on the context schema, which has one series per
-    # (TestName, Event, Branch, Leg) and is therefore always pinned to one Event/Branch/Leg (see main_only_section).
-    # Every test the nightly run executes must land in exactly one (Leg, term) cell: a leg that runs a subset of the
-    # suite needs its own cell because the "all" leg may skip or not collect those tests.
+    # (label, Leg, SEARCH term) for the nightly tables; every test the nightly run executes is in exactly one cell.
     nightly_partitions: tuple[tuple[str, str, str], ...]
 
 
@@ -63,9 +54,7 @@ SPECS = (
         sdk="python",
         name="StrandsPythonIntegTests",
         partitions=(("models", "models"), ("other", "NOT models")),
-        # On the "all" leg (Python 3.10) tests_integ/bidi is skipped wholesale by an autouse session fixture (needs
-        # 3.12) and tests_integ/mcp/conftest.py does not collect the seven mcp 1.x-only modules under mcp 2.x, so
-        # those tests only produce real outcomes on their own legs.
+        # The "all" leg (3.10) skips tests_integ/bidi and does not collect the mcp 1.x-only modules.
         nightly_partitions=(
             ("all leg, models", "all", "models"),
             ("all leg, other", "all", "NOT models"),
@@ -111,11 +100,7 @@ def expr(expression: str, id_: str, period: int, visible: bool = True, **extra: 
 
 
 def flaky_band(source_id: str, period: int, top_n: int) -> list[list[dict[str, object]]]:
-    """Keep rates strictly inside (FLAKY_LOW, FLAKY_HIGH); everything else becomes 0 so SORT ranks real flakes first.
-
-    LOG10(x) is empty for x <= 0, which is the only way metric math can drop a series by value: `lo` is the rate when
-    rate > FLAKY_LOW, `band` is the rate when additionally rate < FLAKY_HIGH. FILL turns the dropped series into 0.
-    """
+    """Keep rates strictly inside (FLAKY_LOW, FLAKY_HIGH) and zero the rest; LOG10 of x <= 0 drops the series."""
     return [
         expr(f"10 ^ LOG10({source_id} - {FLAKY_LOW}) + {FLAKY_LOW}", "lo", period, visible=False),
         expr(f"{FLAKY_HIGH} - 10 ^ LOG10({FLAKY_HIGH} - lo)", "band", period, visible=False),
@@ -191,12 +176,11 @@ def header(spec: DashboardSpec) -> str:
             f"{FLAKY_LOW}-{FLAKY_HIGH} = flaky. A row showing 0 means no test in that group is inside the band. "
             "Tests are split into groups by name token because one widget can only show 500 series.",
             "",
-            "**Caveats.** Until merge-queue and nightly runs publish, every datapoint comes from a pull request, so a "
-            'PR breaking its own tests shows up here as flakiness; the "merge queue / main only" section at the '
-            'bottom separates the two once that data exists. Metric math cannot join a "minimum runs" filter onto '
-            f'a rate, so read the rate tables together with the "fewer than {MIN_RUNS} runs" tables. Widgets built '
-            "on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that "
-            "has not run for 14 days drops out of every table.",
+            "**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as "
+            'flakiness; the "merge queue / main only" section at the bottom separates the two. Metric math cannot '
+            'join a "minimum runs" filter onto a rate, so read the rate tables together with the '
+            f'"fewer than {MIN_RUNS} runs" tables. Widgets built on Metrics Insights (SELECT ...) only see the last '
+            "14 days whatever the time range says. A test that has not run for 14 days drops out of every table.",
         ]
     )
 
@@ -217,7 +201,7 @@ def last_publish_row(spec: DashboardSpec, layout: Layout) -> None:
     )
     layout.full(
         metric(
-            f"Runs published per day, all legs and events (TestsRun; {V2_NOTE})",
+            "Runs published per day, all legs and events (TestsRun)",
             [
                 expr(search(SCHEMA_SUITE, "TestsRun", spec.sdk, "SampleCount", DAY), "runs", DAY, visible=False),
                 expr("SUM(runs)", "total", DAY),
@@ -258,7 +242,7 @@ def suite_health(spec: DashboardSpec, layout: Layout) -> None:
         expr(search(SCHEMA_SUITE, "TestsFailed", spec.sdk, "Sum", DAY), "f", DAY, visible=False),
     ]
     pass_rate = metric(
-        f"Pass rate per day, all events, 30 days ({V2_NOTE})",
+        "Pass rate per day, all events, 30 days",
         suite_sums + [expr("SUM(p) / (SUM(p) + SUM(f))", "rate", DAY, label="passed / (passed + failed)")],
         DAY,
         "timeSeries",
@@ -266,7 +250,7 @@ def suite_health(spec: DashboardSpec, layout: Layout) -> None:
         yAxis={"left": {"min": 0, "max": 1}},
     )
     failed_tests = metric(
-        f"Failed tests per day, all events, 30 days ({V2_NOTE})",
+        "Failed tests per day, all events, 30 days",
         suite_sums + [expr("SUM(f)", "failed", DAY, label="failed tests", color="#d62728")],
         DAY,
         "timeSeries",
@@ -311,12 +295,7 @@ def flaky_section(spec: DashboardSpec, layout: Layout) -> None:
 
 
 def weekly_indicator(expression: str, id_: str) -> list[dict[str, object]]:
-    """Per-week 0/1 flag, sorted by how many weeks were flagged.
-
-    Multi-bucket tables cannot use the LOG10 band trick: LOG10 leaves a NaN in any bucket where the test ran but was
-    outside the band, FILL does not replace NaNs, and SORT ranks NaN-carrying series first. FLOOR/CEIL/ABS never
-    produce NaN, so these chains stay sortable; the price is a flag instead of the rate.
-    """
+    """Per-week 0/1 flag sorted by flagged weeks; LOG10's NaNs would break SORT across several buckets."""
     return expr(f"SORT({expression}, SUM, DESC, 15)", id_, WEEK)
 
 
@@ -382,15 +361,11 @@ def duration_section(spec: DashboardSpec, layout: Layout) -> None:
 
 def main_only_section(spec: DashboardSpec, layout: Layout) -> None:
     non_pr = 'Branch="main" NOT "pull_request_target"'
-    # The per-test context schema has one series per (TestName, Event, Branch, Leg), so a SEARCH over it must pin
-    # all three context dimensions: otherwise every event that publishes multiplies the partition (merge_group +
-    # schedule alone pushes "other" past 500) and a flaky test appears once per combination. The nightly run on main
-    # is the baseline: full suite for both SDKs, one run per day. Legs that run a subset of the suite get their own
-    # table (spec.nightly_partitions) because the "all" leg skips or does not collect those tests.
+    # Pin every context dimension so each test is one series.
     nightly = 'Event="schedule" Branch="main"'
     layout.full(
         metric(
-            f"Pass rate per day, merge queue and nightly runs on main only ({V2_NOTE})",
+            "Pass rate per day, merge queue and nightly runs on main only",
             [
                 expr(search(SCHEMA_SUITE, "TestsPassed", spec.sdk, "Sum", DAY, non_pr), "p", DAY, visible=False),
                 expr(search(SCHEMA_SUITE, "TestsFailed", spec.sdk, "Sum", DAY, non_pr), "f", DAY, visible=False),
@@ -414,7 +389,7 @@ def main_only_section(spec: DashboardSpec, layout: Layout) -> None:
         layout.full(
             table(
                 f"Top 15 flaky tests, 30 days, nightly runs on main only, {label}: failure rate strictly between "
-                f"{FLAKY_LOW} and {FLAKY_HIGH} ({V2_NOTE})",
+                f"{FLAKY_LOW} and {FLAKY_HIGH}",
                 [rate] + flaky_band("rb", MONTH, 15),
                 MONTH,
             ),
@@ -452,10 +427,8 @@ def build(spec: DashboardSpec) -> dict[str, Any]:
     section(
         layout,
         "Merge queue / main only",
-        "Pass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). "
-        "Flaky tables: the nightly scheduled run on main only, one table per matrix leg (and name group), so each "
-        "test is one row and the group stays under 500 series. Empty until the publisher that emits "
-        "Event/Branch/Leg dimensions has shipped and such a run has published.",
+        "Pass rate: every run that is not a pull request (merge queue, nightly and release runs). "
+        "Flaky tables: the nightly run on main only, one table per matrix leg and name group.",
     )
     main_only_section(spec, layout)
     return {"start": "-P30D", "periodOverride": "inherit", "widgets": layout.widgets}

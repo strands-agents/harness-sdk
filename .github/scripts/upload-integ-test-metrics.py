@@ -57,11 +57,8 @@ class TestResult:
 
 
 def suite_timestamp(attr: str | None, now: datetime) -> datetime:
-    """Parse a <testsuite timestamp="..."> (naive values are UTC, which is what GitHub runners use).
-
-    Falls back to `now` when the attribute is missing, unparsable, in the future, or older than CloudWatch's
-    two-week put_metric_data window (13 days, leaving margin for the upload job itself).
-    """
+    """Parse a <testsuite timestamp> (naive = UTC, as on GitHub runners), falling back to `now` when it is missing,
+    unparsable, in the future, or outside CloudWatch's two-week put_metric_data window."""
     if not attr:
         return now
     try:

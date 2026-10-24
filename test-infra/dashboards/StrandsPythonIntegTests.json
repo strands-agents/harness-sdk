@@ -5,7 +5,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "## Python integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed executions / all executions, skips count as not failed). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Until merge-queue and nightly runs publish, every datapoint comes from a pull request, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two once that data exists. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
+        "markdown": "## Python integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed executions / all executions, skips count as not failed). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
       },
       "x": 0,
       "y": 0,
@@ -117,7 +117,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Runs published per day, all legs and events (TestsRun; fills in after publisher v2 ships)",
+        "title": "Runs published per day, all legs and events (TestsRun)",
         "region": "us-east-1",
         "view": "singleValue",
         "period": 86400,
@@ -228,7 +228,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Pass rate per day, all events, 30 days (fills in after publisher v2 ships)",
+        "title": "Pass rate per day, all events, 30 days",
         "region": "us-east-1",
         "view": "timeSeries",
         "period": 86400,
@@ -274,7 +274,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Failed tests per day, all events, 30 days (fills in after publisher v2 ships)",
+        "title": "Failed tests per day, all events, 30 days",
         "region": "us-east-1",
         "view": "timeSeries",
         "period": 86400,
@@ -785,7 +785,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge_group, schedule, workflow_dispatch, push). Flaky tables: the nightly scheduled run on main only, one table per matrix leg (and name group), so each test is one row and the group stays under 500 series. Empty until the publisher that emits Event/Branch/Leg dimensions has shipped and such a run has published."
+        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge queue, nightly and release runs). Flaky tables: the nightly run on main only, one table per matrix leg and name group."
       },
       "x": 0,
       "y": 105,
@@ -795,7 +795,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Pass rate per day, merge queue and nightly runs on main only (fills in after publisher v2 ships)",
+        "title": "Pass rate per day, merge queue and nightly runs on main only",
         "region": "us-east-1",
         "view": "timeSeries",
         "period": 86400,
@@ -841,7 +841,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, models: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, models: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
@@ -893,7 +893,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, other: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, other: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
@@ -945,7 +945,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, bidi leg: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, bidi leg: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
@@ -997,7 +997,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, mcp-1x leg: failure rate strictly between 0.05 and 0.95 (fills in after publisher v2 ships)",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, mcp-1x leg: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
