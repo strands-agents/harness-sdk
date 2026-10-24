@@ -51,6 +51,7 @@ import {
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../errors.js'
 import { toMimeType } from '../mime.js'
 import { logger } from '../logging/logger.js'
+import { countSkipped, logSkippedBlocks, type SkippedBlocks } from './skipped-blocks.js'
 import { warnOnce } from '../logging/warn-once.js'
 
 /**
@@ -681,6 +682,7 @@ function mapUsage(usage: LanguageModelV3Usage): Usage {
  */
 function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): LanguageModelV3Prompt {
   const prompt: LanguageModelV3Prompt = []
+  const skipped: SkippedBlocks = new Map()
 
   if (systemPrompt) {
     if (typeof systemPrompt === 'string') {
@@ -727,12 +729,13 @@ function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): Langu
 
   for (const message of messages) {
     if (message.role === 'user') {
-      formatUserMessage(message, prompt, toolNameMap)
+      formatUserMessage(message, prompt, toolNameMap, skipped)
     } else if (message.role === 'assistant') {
-      formatAssistantMessage(message, prompt)
+      formatAssistantMessage(message, prompt, skipped)
     }
   }
 
+  logSkippedBlocks(logger, skipped)
   return prompt
 }
 
@@ -747,7 +750,12 @@ function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): Langu
  * @param prompt - The prompt array to push formatted messages into
  * @param toolNameMap - Map of toolCallId to toolName for resolving tool result names
  */
-function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, toolNameMap: Map<string, string>): void {
+function formatUserMessage(
+  message: Message,
+  prompt: LanguageModelV3Prompt,
+  toolNameMap: Map<string, string>,
+  skipped: SkippedBlocks
+): void {
   const content: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = []
   const toolResults: LanguageModelV3ToolResultPart[] = []
 
@@ -759,18 +767,18 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
       case 'imageBlock':
       case 'documentBlock':
       case 'videoBlock':
-        content.push(...formatMediaBlock(block))
+        content.push(...formatMediaBlock(block, skipped))
         break
       case 'toolResultBlock':
         toolResults.push({
           type: 'tool-result',
           toolCallId: block.toolUseId,
           toolName: toolNameMap.get(block.toolUseId) ?? '',
-          output: formatToolResultOutput(block.status, block.content),
+          output: formatToolResultOutput(block.status, block.content, skipped),
         })
         break
       default:
-        logger.warn(`block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
+        countSkipped(skipped, `block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
         break
     }
   }
@@ -790,7 +798,7 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
  * @param message - The assistant message to format
  * @param prompt - The prompt array to push formatted messages into
  */
-function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt): void {
+function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt, skipped: SkippedBlocks): void {
   const content: Array<
     LanguageModelV3TextPart | LanguageModelV3FilePart | LanguageModelV3ReasoningPart | LanguageModelV3ToolCallPart
   > = []
@@ -814,15 +822,18 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
         })
         break
       case 'toolResultBlock':
-        logger.warn('tool result in assistant message is not supported, skipping')
+        countSkipped(skipped, 'tool result in assistant message is not supported, skipping')
         break
       case 'imageBlock':
       case 'documentBlock':
       case 'videoBlock':
-        content.push(...formatMediaBlock(block))
+        content.push(...formatMediaBlock(block, skipped))
         break
       default:
-        logger.warn(`block_type=<${block.type}> | unsupported content type in vercel assistant message, skipping`)
+        countSkipped(
+          skipped,
+          `block_type=<${block.type}> | unsupported content type in vercel assistant message, skipping`
+        )
         break
     }
   }
@@ -836,7 +847,8 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
  * Converts an image, document, or video block to LanguageModelV3 file/text parts.
  */
 function formatMediaBlock(
-  block: ImageBlock | DocumentBlock | VideoBlock
+  block: ImageBlock | DocumentBlock | VideoBlock,
+  skipped: SkippedBlocks
 ): Array<LanguageModelV3TextPart | LanguageModelV3FilePart> {
   const parts: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = []
 
@@ -848,7 +860,7 @@ function formatMediaBlock(
       } else if (block.source.type === 'imageSourceUrl') {
         parts.push({ type: 'file', data: new URL(block.source.url), mediaType })
       } else {
-        logger.warn(`source_type=<${block.source.type}> | unsupported image source type, skipping`)
+        countSkipped(skipped, `source_type=<${block.source.type}> | unsupported image source type, skipping`)
       }
       break
     }
@@ -863,7 +875,7 @@ function formatMediaBlock(
           parts.push({ type: 'text', text: contentBlock.text })
         }
       } else {
-        logger.warn(`source_type=<${block.source.type}> | unsupported document source type, skipping`)
+        countSkipped(skipped, `source_type=<${block.source.type}> | unsupported document source type, skipping`)
       }
       break
     }
@@ -875,7 +887,7 @@ function formatMediaBlock(
           mediaType: toMimeType(block.format) ?? `video/${block.format}`,
         })
       } else {
-        logger.warn(`source_type=<${block.source.type}> | unsupported video source type, skipping`)
+        countSkipped(skipped, `source_type=<${block.source.type}> | unsupported video source type, skipping`)
       }
       break
     }
@@ -889,7 +901,8 @@ function formatMediaBlock(
  */
 function formatToolResultOutput(
   status: string,
-  content: ReadonlyArray<ToolResultContent>
+  content: ReadonlyArray<ToolResultContent>,
+  skipped: SkippedBlocks
 ): LanguageModelV3ToolResultOutput {
   if (status === 'error') {
     const errorText = content
@@ -915,7 +928,10 @@ function formatToolResultOutput(
         } else if (c.source.type === 'imageSourceUrl') {
           value.push({ type: 'text', text: c.source.url })
         } else {
-          logger.warn(`source_type=<${c.source.type}> | unsupported image source in vercel tool result, skipping`)
+          countSkipped(
+            skipped,
+            `source_type=<${c.source.type}> | unsupported image source in vercel tool result, skipping`
+          )
         }
         break
       }
@@ -930,7 +946,10 @@ function formatToolResultOutput(
             value.push({ type: 'text', text: block.text })
           }
         } else {
-          logger.warn(`source_type=<${c.source.type}> | unsupported document source in vercel tool result, skipping`)
+          countSkipped(
+            skipped,
+            `source_type=<${c.source.type}> | unsupported document source in vercel tool result, skipping`
+          )
         }
         break
       }
@@ -939,12 +958,16 @@ function formatToolResultOutput(
         if (c.source.type === 'videoSourceBytes') {
           value.push({ type: 'file-data', data: encodeBase64(c.source.bytes), mediaType })
         } else {
-          logger.warn(`source_type=<${c.source.type}> | unsupported video source in vercel tool result, skipping`)
+          countSkipped(
+            skipped,
+            `source_type=<${c.source.type}> | unsupported video source in vercel tool result, skipping`
+          )
         }
         break
       }
       default:
-        logger.warn(
+        countSkipped(
+          skipped,
           `block_type=<${(c as unknown as { type: string }).type}> | unsupported content type in vercel tool result, skipping`
         )
         break

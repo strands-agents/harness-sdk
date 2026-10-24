@@ -4,7 +4,7 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
@@ -223,6 +223,31 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.stream).toBe(true)
       expect(req.store).toBe(false)
       expect(Array.isArray(req.input)).toBe(true)
+    })
+
+    it('logs one counted skip warning per request across history', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const messages = []
+      for (let turn = 0; turn < 3; turn++) {
+        messages.push(
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('look'),
+              new GuardContentBlock({ text: { qualifiers: ['guard_content'], text: 'Guard content' } }),
+            ],
+          })
+        )
+        messages.push(new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }))
+      }
+
+      await runOnce({}, messages)
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'count=<3> | block_type=<guardContentBlock> | unsupported content type in responses api message formatting | skipping'
+      )
+      warnSpy.mockRestore()
     })
 
     it('sets store=true when stateful is enabled', async () => {

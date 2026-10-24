@@ -25,6 +25,7 @@ import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
 import { encodeBase64, decodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
+import { countSkipped, logSkippedBlocks, type SkippedBlocks } from './skipped-blocks.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
 
@@ -664,6 +665,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
 
+    const skipped: SkippedBlocks = new Map()
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
     let cacheTargetMessage = -1
@@ -679,7 +681,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const request: Anthropic.MessageStreamParams = {
       model: this._config.modelId,
       max_tokens: this._config.maxTokens ?? MODEL_DEFAULTS.anthropic.maxTokens,
-      messages: this._formatMessages(messages, messagesCache, cacheTargetMessage, options?.dynamicTrailingBlocks ?? 0),
+      messages: this._formatMessages(
+        messages,
+        messagesCache,
+        cacheTargetMessage,
+        options?.dynamicTrailingBlocks ?? 0,
+        skipped
+      ),
       stream: true,
     }
 
@@ -734,6 +742,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (tools.length > 0) request.tools = tools
     else delete request.tools
 
+    logSkippedBlocks(logger, skipped)
     return request
   }
 
@@ -741,7 +750,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     messages: Message[],
     messagesCache: ResolvedCacheSection = { enabled: false },
     cacheTargetMessage = -1,
-    dynamicTrailingBlocks = 0
+    dynamicTrailingBlocks = 0,
+    skipped: SkippedBlocks = new Map()
   ): Anthropic.MessageParam[] {
     let strippedCachePoints = 0
     const cacheManaged = messagesCache.enabled
@@ -778,7 +788,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
           continue
         }
 
-        const formattedBlock = this._formatContentBlock(block)
+        const formattedBlock = this._formatContentBlock(block, skipped)
         if (formattedBlock) content.push(formattedBlock)
       }
 
@@ -823,7 +833,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   private _formatContentBlock(
-    block: ContentBlock
+    block: ContentBlock,
+    skipped: SkippedBlocks
   ): Anthropic.ContentBlockParam | Anthropic.ToolResultBlockParam | undefined {
     switch (block.type) {
       case 'textBlock':
@@ -870,7 +881,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               },
             }
           case 'imageSourceS3Location':
-            logger.warn(
+            countSkipped(
+              skipped,
               'source_type=<imageSourceS3Location> | s3 location sources are not supported by anthropic | skipping'
             )
             return undefined
@@ -929,7 +941,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         }
 
       case 'videoBlock':
-        logger.warn('block_type=<videoBlock> | video blocks not supported by anthropic, skipping')
+        countSkipped(skipped, 'block_type=<videoBlock> | video blocks not supported by anthropic, skipping')
         return undefined
 
       case 'toolResultBlock': {
@@ -939,7 +951,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
             if (c.type === 'jsonBlock') return { type: 'text' as const, text: JSON.stringify(c.json) }
 
             // Recursively format any other content block (image, document, video, etc.)
-            const formatted = this._formatContentBlock(c as unknown as ContentBlock)
+            const formatted = this._formatContentBlock(c as unknown as ContentBlock, skipped)
             return formatted
           })
           .filter((c): c is NonNullable<typeof c> => !!c)

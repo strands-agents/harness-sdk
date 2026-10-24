@@ -13,6 +13,7 @@ import { toMimeType } from '../../mime.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
+import { countSkipped, logSkippedBlocks, type SkippedBlocks } from '../skipped-blocks.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
@@ -102,7 +103,8 @@ export function formatChatRequest(
     }
   }
 
-  request.messages.push(...formatChatMessages(messages))
+  const skipped: SkippedBlocks = new Map()
+  request.messages.push(...formatChatMessages(messages, skipped))
 
   if (config.temperature !== undefined) request.temperature = config.temperature
   if (config.maxTokens !== undefined) request.max_completion_tokens = config.maxTokens
@@ -145,6 +147,7 @@ export function formatChatRequest(
     throw new Error('Streaming with n > 1 is not supported')
   }
 
+  logSkippedBlocks(logger, skipped)
   return request
 }
 
@@ -155,7 +158,10 @@ export function formatChatRequest(
  * assistant `tool_calls` they answer; media inside tool results is hoisted into a
  * following user-role message (OpenAI restricts media to user role).
  */
-function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+function formatChatMessages(
+  messages: Message[],
+  skipped: SkippedBlocks
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const openAIMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
 
   for (const message of messages) {
@@ -197,7 +203,8 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
                   break
                 }
                 case 'documentSourceText': {
-                  logger.warn(
+                  countSkipped(
+                    skipped,
                     'source_type=<documentSourceText> | openai does not support text document sources directly | converting to string content'
                   )
                   contentParts.push({ type: 'text', text: docBlock.source.text })
@@ -213,7 +220,8 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
                   break
                 }
                 default: {
-                  logger.warn(
+                  countSkipped(
+                    skipped,
                     `source_type=<${docBlock.source.type}> | openai only supports text content in user messages | skipping document block`
                   )
                   break
@@ -222,7 +230,10 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
               break
             }
             default: {
-              logger.warn(`block_type=<${block.type}> | unsupported content type in openai user message | skipping`)
+              countSkipped(
+                skipped,
+                `block_type=<${block.type}> | unsupported content type in openai user message | skipping`
+              )
               break
             }
           }
@@ -236,7 +247,7 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
       const userMessagesWithMedia: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
 
       for (const toolResult of toolResults) {
-        const [textContent, imageParts] = splitToolResultMedia(toolResult)
+        const [textContent, imageParts] = splitToolResultMedia(toolResult, skipped)
 
         if (imageParts.length > 0) {
           logger.warn(
@@ -301,13 +312,19 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
           }
           case 'reasoningBlock': {
             if (block.text) {
-              logger.warn('block_type=<reasoningBlock> | reasoning blocks not supported by openai | converting to text')
+              countSkipped(
+                skipped,
+                'block_type=<reasoningBlock> | reasoning blocks not supported by openai | converting to text'
+              )
               textParts.push(block.text)
             }
             break
           }
           default: {
-            logger.warn(`block_type=<${block.type}> | unsupported content type in openai assistant message | skipping`)
+            countSkipped(
+              skipped,
+              `block_type=<${block.type}> | unsupported content type in openai assistant message | skipping`
+            )
           }
         }
       }
@@ -338,7 +355,8 @@ function formatImageContentPart(
 }
 
 function splitToolResultMedia(
-  toolResult: ToolResultBlock
+  toolResult: ToolResultBlock,
+  skipped: SkippedBlocks
 ): [string, OpenAI.Chat.Completions.ChatCompletionContentPart[]] {
   const textParts: string[] = []
   const imageParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = []
@@ -362,9 +380,9 @@ function splitToolResultMedia(
       const formatted = formatImageContentPart(c as ImageBlock)
       if (formatted) imageParts.push(formatted)
     } else if (c.type === 'documentBlock') {
-      logger.warn('block_type=<documentBlock> | documents not supported in openai tool results, skipping')
+      countSkipped(skipped, 'block_type=<documentBlock> | documents not supported in openai tool results, skipping')
     } else if (c.type === 'videoBlock') {
-      logger.warn('block_type=<videoBlock> | videos not supported in openai tool results, skipping')
+      countSkipped(skipped, 'block_type=<videoBlock> | videos not supported in openai tool results, skipping')
     }
   }
 

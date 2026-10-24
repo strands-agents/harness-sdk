@@ -764,6 +764,31 @@ describe('GoogleModel', () => {
         warnSpy.mockRestore()
       })
 
+      it('logs one counted skip warning per request across history', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const messages = []
+        for (let turn = 0; turn < 3; turn++) {
+          messages.push(
+            new Message({
+              role: 'user',
+              content: [
+                new TextBlock('look'),
+                new GuardContentBlock({ text: { qualifiers: ['guard_content'], text: 'test' } }),
+              ],
+            })
+          )
+          messages.push(new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }))
+        }
+
+        formatMessages(messages)
+
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy).toHaveBeenCalledWith(
+          'count=<3> | block_type=<guardContentBlock> | guard content not supported by gemini, skipping'
+        )
+        warnSpy.mockRestore()
+      })
+
       it('formats tool use blocks as function calls', () => {
         const toolUseBlock = new ToolUseBlock({ toolUseId: 'test-id', name: 'testTool', input: { key: 'value' } })
 
