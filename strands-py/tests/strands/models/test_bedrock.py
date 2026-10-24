@@ -2120,6 +2120,91 @@ async def test_stream_with_streaming_false_with_metrics_and_usage(bedrock_client
 
 
 @pytest.mark.asyncio
+async def test_stream_splits_cache_write_tokens_by_ttl(bedrock_client, model, messages, alist):
+    bedrock_client.converse_stream.return_value = {
+        "stream": [
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 10,
+                        "outputTokens": 5,
+                        "totalTokens": 3087,
+                        "cacheWriteInputTokens": 3072,
+                        "cacheDetails": [{"ttl": "1h", "inputTokens": 2048}, {"ttl": "5m", "inputTokens": 1024}],
+                    },
+                    "metrics": {"latencyMs": 245},
+                }
+            }
+        ]
+    }
+
+    tru_events = await alist(model.stream(messages))
+    exp_events = [
+        {
+            "metadata": {
+                "usage": {
+                    "inputTokens": 10,
+                    "outputTokens": 5,
+                    "totalTokens": 3087,
+                    "cacheWriteInputTokens": 3072,
+                    "cacheDetails": [{"ttl": "1h", "inputTokens": 2048}, {"ttl": "5m", "inputTokens": 1024}],
+                    "cacheWriteInputTokensByTtl": {"1h": 2048, "5m": 1024},
+                },
+                "metrics": {"latencyMs": 245},
+            }
+        }
+    ]
+
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_splits_cache_write_tokens_by_ttl_non_streaming(bedrock_client, messages, alist):
+    bedrock_client.converse.return_value = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "test"}]}},
+        "usage": {
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "totalTokens": 1039,
+            "cacheWriteInputTokens": 1024,
+            "cacheDetails": [{"ttl": "5m", "inputTokens": 1024}],
+        },
+        "stopReason": "end_turn",
+    }
+
+    model = BedrockModel(model_id="test-model", streaming=False)
+    events = await alist(model.stream(messages))
+
+    tru_usage = events[-1]["metadata"]["usage"]
+    exp_usage = {
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 1039,
+        "cacheWriteInputTokens": 1024,
+        "cacheDetails": [{"ttl": "5m", "inputTokens": 1024}],
+        "cacheWriteInputTokensByTtl": {"5m": 1024},
+    }
+
+    assert tru_usage == exp_usage
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cache_details", [None, []])
+async def test_stream_omits_cache_write_tokens_by_ttl_without_cache_details(
+    bedrock_client, model, messages, alist, cache_details
+):
+    usage = {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+    if cache_details is not None:
+        usage["cacheDetails"] = cache_details
+    bedrock_client.converse_stream.return_value = {"stream": [{"metadata": {"usage": dict(usage)}}]}
+
+    tru_events = await alist(model.stream(messages))
+    exp_events = [{"metadata": {"usage": usage}}]
+
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
 async def test_stream_input_guardrails(bedrock_client, alist, messages):
     """Test stream method with streaming=False."""
     bedrock_client.converse.return_value = {

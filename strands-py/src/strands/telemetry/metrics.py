@@ -181,6 +181,22 @@ class AgentInvocation:
     usage: Usage = field(default_factory=lambda: Usage(inputTokens=0, outputTokens=0, totalTokens=0))
 
 
+def _accumulate_tokens_by_ttl(target: dict[str, int] | None, source: dict[str, int]) -> dict[str, int]:
+    """Sum per-TTL cache write token counts, keeping TTLs that appear in only one of the two.
+
+    Args:
+        target: Already accumulated counts, keyed by cache TTL.
+        source: Counts to add, keyed by cache TTL.
+
+    Returns:
+        The summed counts.
+    """
+    accumulated = dict(target or {})
+    for ttl, tokens in source.items():
+        accumulated[ttl] = accumulated.get(ttl, 0) + tokens
+    return accumulated
+
+
 def _total_prompt_tokens(usage: Usage) -> int:
     """Return the total prompt the model processed, including cached tokens.
 
@@ -376,6 +392,11 @@ class EventLoopMetrics:
 
         if "cacheWriteInputTokens" in source:
             target["cacheWriteInputTokens"] = target.get("cacheWriteInputTokens", 0) + source["cacheWriteInputTokens"]
+
+        if "cacheWriteInputTokensByTtl" in source:
+            target["cacheWriteInputTokensByTtl"] = _accumulate_tokens_by_ttl(
+                target.get("cacheWriteInputTokensByTtl"), source["cacheWriteInputTokensByTtl"]
+            )
 
     def update_usage(self, usage: Usage) -> None:
         """Update the accumulated token usage with new usage data.
