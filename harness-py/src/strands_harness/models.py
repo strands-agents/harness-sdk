@@ -77,7 +77,7 @@ _WEB_FETCH_MODELS = {
 # own model list, so the vended small summarizer is not guaranteed to exist on it.
 _CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
 
-_BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
+_BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "us-gov.", "eu.", "au.", "jp.")
 
 # Small regional summarizer per Bedrock model family, keyed by family prefix. These ids are served
 # regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
