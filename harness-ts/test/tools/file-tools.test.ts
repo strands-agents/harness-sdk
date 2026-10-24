@@ -44,6 +44,41 @@ describe('read/write/edit', () => {
     expect(out).toContain('Showing lines 3-4 of 10')
   })
 
+  it('does not number a phantom line after a trailing newline', async () => {
+    const path = join(dir, 'f.txt')
+    await write.invoke({ path, content: 'alpha\nbeta\n' }, ctx())
+    const out = await read.invoke({ path }, ctx())
+    expect(out).toBe('     1\talpha\n     2\tbeta')
+  })
+
+  it('counts a trailing newline as a terminator when writing', async () => {
+    const path = join(dir, 'f.txt')
+    const out = await write.invoke({ path, content: 'alpha\nbeta\n' }, ctx())
+    expect(out).toBe(`Wrote 2 lines to ${path}.`)
+  })
+
+  it('reports the real line count when the offset is past the end', async () => {
+    const path = join(dir, 'f.txt')
+    await write.invoke({ path, content: 'alpha\nbeta\n' }, ctx())
+    const out = await read.invoke({ path, offset: 3 }, ctx())
+    expect(out).toBe('[File has 2 lines; offset 3 is past the end.]')
+  })
+
+  it('reports an empty file as zero lines in read and write', async () => {
+    const path = join(dir, 'empty.txt')
+    writeFileSync(path, '')
+    const readOut = await read.invoke({ path }, ctx())
+    expect(readOut).toBe('[File is empty.]')
+    const writeOut = await write.invoke({ path, content: '' }, ctx())
+    expect(writeOut).toBe(`Wrote 0 lines to ${path}.`)
+  })
+
+  it('rejects a non-positive limit', async () => {
+    const path = join(dir, 'f.txt')
+    await write.invoke({ path, content: 'alpha\nbeta\n' }, ctx())
+    await expect(read.invoke({ path, limit: 0 }, ctx())).rejects.toThrow('limit must be at least 1')
+  })
+
   it('edits a unique occurrence', async () => {
     const path = join(dir, 'f.txt')
     await write.invoke({ path, content: 'one\ntwo\nthree\n' }, ctx())
