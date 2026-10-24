@@ -8,22 +8,40 @@ import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
 import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
-import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
+import { AfterModelCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, MessageAddedEvent } from '../hooks/events.js'
+import { HookOrder } from '../hooks/types.js'
+import { InvokeModelStage } from '../middleware/index.js'
+import { addInputProperty } from '../tools/input-schema.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
+import { MANAGE_TOOL_NAME } from '../background-tasks/types.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
+import type { JSONSchema } from '../types/json.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
+import { readResultLimit, RESULT_LIMIT_PROPERTY } from './strategies/offload/base.js'
+import { TruncateStrategy } from './strategies/offload/truncate.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
-import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
+import { createRetrievalTool, trackRetrievalToolUseIds, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
+import { pinContextTool, summarizeContextTool, truncateContextTool } from './modes/agentic/agentic-context.js'
 
 const AUTO_TRUNCATE_THRESHOLD = 1_500
 const AGENTIC_TRUNCATE_THRESHOLD = 8_000
 const TRUNCATE_PREVIEW_TOKENS = 750
 const AUTO_SUMMARIZE_UTILIZATION = 0.85
+// Tools whose results are never truncated, or are not produced by a model-issued call.
+const RESULT_LIMIT_EXEMPT_TOOLS = new Set([
+  RETRIEVAL_TOOL_NAME,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+  MANAGE_TOOL_NAME,
+  summarizeContextTool.name,
+  truncateContextTool.name,
+  pinContextTool.name,
+])
 
 /** @internal */
 export const CONTEXT_MANAGER_PRESETS = ['auto', 'agentic'] as const
@@ -153,6 +171,12 @@ export class ContextManager implements Plugin {
       strategy.init?.(agent, this._stash)
     }
 
+    const agenticTruncates = this._strategies.filter(
+      (strategy): strategy is TruncateStrategy =>
+        strategy instanceof TruncateStrategy && strategy.agenticLimit !== undefined
+    )
+    if (agenticTruncates.length > 0) this._registerResultLimitSelection(agent, agenticTruncates)
+
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
     })
@@ -199,6 +223,57 @@ export class ContextManager implements Plugin {
    */
   get stashIsDurable(): boolean {
     return this._stashIsDurable
+  }
+
+  /**
+   * Advertises `_max_result_tokens` on the specs of tools targeted by an agentic truncate strategy
+   * and strips it from tool input before execution.
+   */
+  private _registerResultLimitSelection(agent: LocalAgent, strategies: TruncateStrategy[]): void {
+    const retrievable = this._stash !== undefined && this._enableRetrievalTool
+    const schemaFor = (toolName: string): JSONSchema | undefined => {
+      const caps = strategies.filter((s) => s.targetsTool(toolName)).map((s) => s.agenticLimit!)
+      if (caps.length === 0) return undefined
+      return {
+        type: 'integer',
+        minimum: 0,
+        maximum: Math.max(...caps),
+        description:
+          'Maximum tokens of this result to keep in context. Larger results are truncated to a preview of this size' +
+          (retrievable ? ' and the full content is stashed for retrieval' : '') +
+          '. Omit to use the default.',
+      }
+    }
+    const declaresProperty = (name: string): boolean =>
+      agent.toolRegistry.get(name)?.toolSpec.inputSchema?.properties?.[RESULT_LIMIT_PROPERTY] !== undefined
+
+    agent.addMiddleware(InvokeModelStage.Input, async (context) => ({
+      ...context,
+      toolSpecs: context.toolSpecs.map((spec) => {
+        if (RESULT_LIMIT_EXEMPT_TOOLS.has(spec.name)) return spec
+        const schema = schemaFor(spec.name)
+        return schema ? (addInputProperty(spec, RESULT_LIMIT_PROPERTY, schema) ?? spec) : spec
+      }),
+    }))
+    agent.addHook(
+      BeforeToolCallEvent,
+      (event) => {
+        const input = event.toolUse.input
+        if (input === null || typeof input !== 'object' || Array.isArray(input) || !(RESULT_LIMIT_PROPERTY in input)) {
+          return
+        }
+        // A tool that declares the property itself owns it; leave its input alone.
+        if (declaresProperty(event.toolUse.name)) return
+        const { [RESULT_LIMIT_PROPERTY]: value, ...rest } = input
+        if (readResultLimit(input) === undefined) {
+          logger.debug(
+            `toolUseId=<${event.toolUse.toolUseId}>, value=<${JSON.stringify(value)}> | ignoring invalid ${RESULT_LIMIT_PROPERTY}`
+          )
+        }
+        event.toolUse = { ...event.toolUse, input: rest }
+      },
+      { order: HookOrder.SDK_FIRST }
+    )
   }
 
   private async _runStrategies(

@@ -10,6 +10,7 @@ import { logger } from '../logging/logger.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
+import { addInputProperty } from '../tools/input-schema.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
@@ -31,12 +32,10 @@ import type { Agent } from '../agent/agent.js'
 import type { ToolUseData } from '../hooks/events.js'
 import type { InvocationState, LocalAgent } from '../types/agent.js'
 import type { BackgroundTaskManager } from './manager.js'
-import { isTaskStatusTerminal, type BackgroundTask, type BackgroundTasksConfig } from './types.js'
+import { isTaskStatusTerminal, MANAGE_TOOL_NAME, type BackgroundTask, type BackgroundTasksConfig } from './types.js'
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 const BACKGROUND_PROPERTY = '_background_execution'
-const MANAGE_TOOL_NAME = 'strands_manage_background_task'
-const COMPOSITE_SCHEMA_KEYS = ['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'] as const
 const FOREGROUND_TOOL_NAMES = new Set([
   MANAGE_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
@@ -401,30 +400,10 @@ function canSelectBackground(tool: Tool): boolean {
 }
 
 function addBackgroundSelection(toolSpec: ToolSpec): ToolSpec | undefined {
-  const schema = toolSpec.inputSchema ?? {}
-  if (
-    COMPOSITE_SCHEMA_KEYS.some((key) => schema[key] !== undefined) ||
-    (schema.type !== undefined && schema.type !== 'object') ||
-    (schema.properties !== undefined && (typeof schema.properties !== 'object' || Array.isArray(schema.properties))) ||
-    schema.properties?.[BACKGROUND_PROPERTY] !== undefined ||
-    schema.required?.includes(BACKGROUND_PROPERTY)
-  ) {
-    return
-  }
-  return {
-    ...toolSpec,
-    inputSchema: {
-      ...schema,
-      type: 'object',
-      properties: {
-        ...schema.properties,
-        [BACKGROUND_PROPERTY]: {
-          type: 'boolean',
-          description: 'Run this tool in the background and continue without waiting for its result.',
-        },
-      },
-    },
-  }
+  return addInputProperty(toolSpec, BACKGROUND_PROPERTY, {
+    type: 'boolean',
+    description: 'Run this tool in the background and continue without waiting for its result.',
+  })
 }
 
 function resolvePolicy(config: BackgroundTasksConfig): ReadonlyMap<string, 'never' | 'agentic' | 'always'> {

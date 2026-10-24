@@ -96,6 +96,48 @@ export function buildToolNameMap(messages: Message[]): Map<string, string> {
   return map
 }
 
+/**
+ * Tool input property through which the model picks a per-call result token limit.
+ *
+ * @internal
+ */
+export const RESULT_LIMIT_PROPERTY = '_max_result_tokens'
+
+/**
+ * Reads the model-selected result token limit from a tool-use input.
+ *
+ * @param input - The tool-use input as emitted by the model
+ * @returns The non-negative integer limit, or undefined when absent or invalid
+ * @internal
+ */
+export function readResultLimit(input: unknown): number | undefined {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const value = (input as Record<string, unknown>)[RESULT_LIMIT_PROPERTY]
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+}
+
+/**
+ * Builds a toolUseId → model-selected result token limit map from the tool-use inputs in
+ * assistant messages.
+ *
+ * @param messages - The conversation to scan
+ * @param maxTokens - Upper bound the model may not exceed; larger values are clamped to it
+ * @returns Limits keyed by toolUseId; calls without a valid limit are absent
+ * @internal
+ */
+export function buildResultLimitMap(messages: Message[], maxTokens: number): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    for (const block of message.content) {
+      if (!(block instanceof ToolUseBlock)) continue
+      const limit = readResultLimit(block.input)
+      if (limit !== undefined) map.set(block.toolUseId, Math.min(limit, maxTokens))
+    }
+  }
+  return map
+}
+
 export function toolMatchesTarget(
   block: ToolResultBlock,
   target: OffloadTarget,
@@ -327,6 +369,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
+  /** Set by subclasses that honour model-selected result limits; `max` caps what the model may pick. */
+  protected _modelLimits: { max: number } | undefined
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     if (Array.isArray(target) && target.length === 0) {
@@ -357,7 +401,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
       const toolNameMap = buildToolNameMap(messages)
-      await this._transformBlocks(event.message, messages, toolNameMap, event.agent)
+      const resultLimits = this._modelLimits ? buildResultLimitMap(messages, this._modelLimits.max) : undefined
+      await this._transformBlocks(event.message, messages, toolNameMap, event.agent, undefined, resultLimits)
     })
   }
 
@@ -376,6 +421,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const { messages, agent } = context
     const invocationContext = context.invocationContext
     const toolNameMap = buildToolNameMap(messages)
+    const resultLimits = this._modelLimits ? buildResultLimitMap(messages, this._modelLimits.max) : undefined
     const eligible =
       this._preserveRecent > 0
         ? getOldestMatches(
@@ -392,7 +438,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     for (const message of eligible) {
       const index = messages.indexOf(message)
       if (isPinned(messages, index)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext)) {
+      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext, resultLimits)) {
         acted = true
       }
     }
@@ -442,25 +488,29 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return false
   }
 
-  /** Process eligible blocks in a message. */
+  /**
+   * Process eligible blocks in a message. A tool result whose tool call carries a model-selected
+   * limit (see `resultLimits`) uses that limit as its threshold instead of the strategy's.
+   */
   protected async _transformBlocks(
     message: Message,
     messages: Message[],
     toolNameMap: Map<string, string>,
     agent: LocalAgent,
-    invocationContext?: InvocationContext
+    invocationContext?: InvocationContext,
+    resultLimits?: ReadonlyMap<string, number>
   ): Promise<boolean> {
-    const effectiveThreshold = this._threshold ?? 0
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
 
+      const limit = block instanceof ToolResultBlock ? resultLimits?.get(block.toolUseId) : undefined
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-      if (tokens <= effectiveThreshold) continue
+      if (tokens <= (limit ?? this._threshold ?? 0)) continue
 
       const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext, limit)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -515,14 +565,18 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return eligible
   }
 
-  /** Transform a block. Return the replacement, or null to skip. */
+  /**
+   * Transform a block. Return the replacement, or null to skip.
+   * `limit` is the model-selected token limit for this tool result, when one applies.
+   */
   protected abstract _replaceBlock(
     block: ContentBlock,
     tokens: number,
     message: Message,
     agent: LocalAgent,
     stashRefs: string[],
-    invocationContext?: InvocationContext
+    invocationContext?: InvocationContext,
+    limit?: number
   ): Promise<ContentBlock | null>
 }
 

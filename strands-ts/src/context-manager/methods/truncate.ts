@@ -9,6 +9,24 @@ import type { ToolResultContent } from '../../types/messages.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
 
+/** Matches the header `formatTruncatedHeader` produces. */
+const TRUNCATED_HEADER = /^\[Truncated: \d+ blocks?, ~[\d,]+ tokens\]\n\n/
+
+function formatTruncatedHeader(blockCount: number, totalChars: number): string {
+  const tokens = Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString('en-US')
+  return `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${tokens} tokens]\n\n`
+}
+
+/**
+ * Whether `text` is a preview produced by `buildPreview`.
+ *
+ * @param text - Text to inspect
+ * @returns true when the text starts with a truncation header
+ */
+export function isTruncatedText(text: string): boolean {
+  return TRUNCATED_HEADER.test(text)
+}
+
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
 
@@ -23,6 +41,15 @@ export interface TruncateConfig {
 
   /** Which portion of the text to keep as preview. Defaults to 'headTail'. */
   preview?: 'head' | 'tail' | 'headTail'
+
+  /**
+   * Let the model choose, per tool call, how many tokens of that call's result stay in context,
+   * up to this cap. Adds an optional `_max_result_tokens` integer to the input schema of the tools
+   * this strategy targets; when the model sets it, that result is kept whole up to the value and
+   * otherwise truncated to a preview of that size, in place of `threshold` and `previewTokens`.
+   * Calls without it keep the configured defaults. Must be a positive number. Off when omitted.
+   */
+  agenticLimit?: number
 }
 
 /**
@@ -52,9 +79,7 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
   const marker = `[... ${elided.toLocaleString('en-US')} chars elided ...]`
   const preview = [head, marker, tail].filter(Boolean).join('\n\n')
 
-  const result =
-    `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString('en-US')} tokens]\n\n` +
-    preview
+  const result = formatTruncatedHeader(blockCount, totalChars) + preview
 
   if (result.length >= totalChars) {
     return fullText
