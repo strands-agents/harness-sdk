@@ -24,7 +24,7 @@ import {
 } from '../../multiagent/spec.js'
 import { NodeResultEvent } from '../../multiagent/events.js'
 import type { MultiAgentInput } from '../../multiagent/multiagent.js'
-import { Status, type NodeResult } from '../../multiagent/state.js'
+import { Status, type MultiAgentResult, type NodeResult } from '../../multiagent/state.js'
 import { Swarm, type SwarmConfig } from '../../multiagent/swarm.js'
 import { tool } from '../../tools/tool-factory.js'
 import type { InvokableTool, Tool, ToolContext } from '../../tools/tool.js'
@@ -254,10 +254,14 @@ async function* streamSwarm(
   toolContext: ToolContext,
   pending: PendingSwarms
 ): AsyncGenerator<JSONValue, string> {
-  const { toolUse, invocationState, cancelSignal } = toolContext
+  const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
   // Step and time limits throw, so node results are collected as they stream to keep the partial output.
   const nodeResults: NodeResult[] = []
-  const gen = swarm.stream(swarmInput, { invocationState: { ...invocationState }, cancelSignal })
+  const gen = swarm.stream(swarmInput, {
+    invocationState: { ...invocationState },
+    cancelSignal,
+    ...(invocationContext && { invocationContext }),
+  })
   let next
   try {
     next = await gen.next()
@@ -282,8 +286,9 @@ async function* streamSwarm(
   }
   const output = renderOutput(result.results)
   if (result.status !== Status.COMPLETED) {
-    const reason = result.error ? `: ${result.error.message}` : ''
-    throw new Error(`Swarm stopped before completing (status=${result.status}${reason}). Partial output:\n${output}`)
+    throw new Error(
+      `Swarm stopped before completing (status=${result.status}${failureReason(result)}). Partial output:\n${output}`
+    )
   }
   return output
 }
@@ -323,6 +328,17 @@ function renderOutput(results: NodeResult[]): string {
     .filter(([, text]) => text)
     .map(([nodeId, text]) => `${nodeId}: ${text}`)
     .join('\n')
+}
+
+/**
+ * The swarm's own error or, failing that, the first failed node's (such as a limit stop), as a message suffix.
+ *
+ * @param result - The swarm's result.
+ * @returns `: <message>`, or an empty string when there is no error to report.
+ */
+function failureReason(result: MultiAgentResult): string {
+  const error = result.error ?? result.results.find((nodeResult) => nodeResult.status === Status.FAILED)?.error
+  return error ? `: ${error.message}` : ''
 }
 
 /**

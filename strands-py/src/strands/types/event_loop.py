@@ -65,3 +65,23 @@ StopReason = Literal[
 - "stop_sequence": Stop sequence encountered
 - "tool_use": Model requested to use a tool
 """
+
+
+_LIMIT_STOP_REASONS: frozenset[StopReason] = frozenset({"limit_turns", "limit_total_tokens", "limit_output_tokens"})
+"""Stop reasons for a call that stopped because a limit (``limits``) was reached."""
+
+
+def _limit_stop_message(agent_name: str, stop_reason: StopReason) -> str:
+    """Explain that a nested call stopped because a limit (its own or the request's) was reached.
+
+    Args:
+        agent_name: Name of the agent that stopped.
+        stop_reason: The limit stop reason it returned.
+
+    Returns:
+        The message to surface in place of the agent's answer.
+    """
+    return (
+        f"Agent '{agent_name}' stopped early ({stop_reason}): "
+        "a limit on this call was reached, so its answer is incomplete"
+    )

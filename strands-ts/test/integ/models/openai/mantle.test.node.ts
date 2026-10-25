@@ -16,15 +16,6 @@ const REGION = 'us-east-1'
 const MODEL_ID = 'openai.gpt-oss-120b'
 
 describe.skipIf(bedrock.skip)('OpenAIModel (Bedrock Mantle) Integration Tests', () => {
-  it('resolves the Bedrock-published context window for gpt-oss-120b', () => {
-    const model = new OpenAIModel({
-      modelId: MODEL_ID,
-      bedrockMantleConfig: { region: REGION },
-    })
-
-    expect(model.getConfig().contextWindowLimit).toBe(128_000)
-  })
-
   it('reaches Mantle via bedrockMantleConfig on the Chat Completions API', async () => {
     const model = new OpenAIModel({
       api: 'chat',

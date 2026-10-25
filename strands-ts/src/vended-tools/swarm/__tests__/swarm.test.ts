@@ -9,7 +9,7 @@ import type { AgentSpec } from '../../../multiagent/spec.js'
 import type { Tool, ToolContext } from '../../../tools/tool.js'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
 import type { JSONValue } from '../../../types/json.js'
-import { TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { limitStopMessage, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 
 /** Model whose turns hand off (or finish) through the swarm's structured output tool. */
 function handoffModel(...handoffs: { agentId?: string; message: string }[]): MockMessageModel {
@@ -209,6 +209,51 @@ describe('swarm tool', () => {
       expect(parent.messages[2]!.content).toEqual([
         new ToolResultBlock({ toolUseId: 'p1', status: 'success', content: [new TextBlock('a: Done!')] }),
       ])
+    })
+
+    it("counts the swarm's turns toward the parent's request", async () => {
+      const model = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'swarm',
+          toolUseId: 'p1',
+          input: { task: 'go', agents: [{ name: 'a', instructions: 'Do.' }] },
+        })
+        .addTurn({ type: 'toolUseBlock', name: 'strands_structured_output', toolUseId: 'c1', input: { message: 'ok' } })
+        .addTurn({ type: 'textBlock', text: 'parent final' })
+      const parent = new Agent({ model, tools: [swarm], printer: false })
+
+      const result = await parent.invoke('start')
+
+      expect(result.invocationContext?.usage.turnsTaken).toBe(3)
+    })
+
+    it("fails the swarm once the parent's request reaches its limit", async () => {
+      const model = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'swarm',
+          toolUseId: 'p1',
+          input: { task: 'go', agents: [{ name: 'a', instructions: 'Do.' }] },
+        })
+        .addTurn({ type: 'toolUseBlock', name: 'strands_structured_output', toolUseId: 'c1', input: { message: 'ok' } })
+      const parent = new Agent({ model, tools: [swarm], printer: false })
+
+      const result = await parent.invoke('start', { limits: { turns: 1 } })
+
+      expect({ stopReason: result.stopReason, toolResults: parent.messages[2]!.content }).toEqual({
+        stopReason: 'limitTurns',
+        toolResults: [
+          expect.objectContaining({
+            status: 'error',
+            content: [
+              new TextBlock(
+                `Error: Swarm stopped before completing (status=FAILED: ${limitStopMessage('a', 'limitTurns')}). Partial output:\n`
+              ),
+            ],
+          }),
+        ],
+      })
     })
 
     it('surfaces agent interrupts on the parent one per resume and resumes the same swarm', async () => {

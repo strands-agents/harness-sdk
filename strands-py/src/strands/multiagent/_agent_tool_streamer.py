@@ -17,6 +17,7 @@ from urllib.parse import quote
 from ..interrupt import Interrupt, _InterruptState
 from ..types._events import ToolInterruptEvent, ToolResultEvent
 from ..types._snapshot import Snapshot
+from ..types.event_loop import _LIMIT_STOP_REASONS, _limit_stop_message
 from ..types.tools import ToolResultContent, ToolUse
 from ._snapshot import load_snapshot, take_snapshot
 from .base import MultiAgentBase, Status
@@ -57,8 +58,9 @@ class _ChildAdapter(Protocol):
 class _ChildAgentAdapter:
     """Adapts an agent child to the tool streamer interface."""
 
-    def __init__(self, *, label: str) -> None:
+    def __init__(self, *, label: str, agent_name: str) -> None:
         self.label = label
+        self.agent_name = agent_name
 
     def take_snapshot(self, child: Agent) -> Snapshot:
         return child.take_snapshot(preset="session")
@@ -73,6 +75,8 @@ class _ChildAgentAdapter:
             return list(result.interrupts)
         if result.stop_reason == "cancelled" and child.cancel_signal.is_set():
             return f"{self.label} cancelled"
+        if result.stop_reason in _LIMIT_STOP_REASONS:
+            return _limit_stop_message(self.agent_name, result.stop_reason)
         return None
 
     def pending_interrupt_ids(self, turn: Any) -> set[str]:

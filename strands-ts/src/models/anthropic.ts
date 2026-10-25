@@ -10,6 +10,13 @@ import {
   type ResolvedCacheSection,
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
+import {
+  handleRejectedMechanism,
+  structuredOutputMechanisms,
+  toNativeOutputSchema,
+  type StructuredOutputMechanism,
+} from './native-output.js'
+import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -83,6 +90,45 @@ function mergeUsage(target: Record<string, number>, source: object): void {
   for (const [key, value] of Object.entries(source)) {
     if (typeof value === 'number') target[key] = value
   }
+}
+
+/** The stream options to format the request with: the requested ones, or auto when the mechanism does not force. */
+function mechanismOptions(
+  options: StreamOptions | undefined,
+  mechanism: StructuredOutputMechanism | undefined
+): StreamOptions | undefined {
+  if (mechanism !== 'native' && mechanism !== 'auto') return options
+  return { ...options, toolChoice: { auto: {} } }
+}
+
+/**
+ * Constrains the response to the schema, keeping other `output_config` settings.
+ *
+ * `tool_choice` none keeps the tools array unchanged while ruling out tool calls, so the response is the JSON object.
+ */
+function withNativeOutput(
+  request: Anthropic.MessageStreamParams,
+  mechanism: StructuredOutputMechanism | undefined,
+  options: StreamOptions | undefined
+): Anthropic.MessageStreamParams {
+  if (mechanism !== 'native' || !options?.structuredOutputSchema) return request
+  const schema = toNativeOutputSchema(
+    zodSchemaToJsonSchema(options.structuredOutputSchema)
+  ) as Anthropic.JSONOutputFormat['schema']
+  return {
+    ...request,
+    tool_choice: { type: 'none' },
+    output_config: { ...request.output_config, format: { type: 'json_schema', schema } },
+  }
+}
+
+/**
+ * The provider's error text. The SDK's error message is the JSON-encoded response body, which escapes quotes in the
+ * text, so the body's own message is read when present.
+ */
+function apiErrorMessage(error: unknown): string {
+  const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
+  return typeof message === 'string' ? message : normalizeError(error).message
 }
 
 /**
@@ -260,8 +306,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     let thinking: Anthropic.ThinkingConfigParam | undefined
     let continuations = 0
+    const mechanism = this._structuredOutputMechanism(options)
     try {
-      let request = this._formatRequest(messages, options)
+      let request = withNativeOutput(
+        this._formatRequest(messages, mechanismOptions(options, mechanism)),
+        mechanism,
+        options
+      )
       thinking = request.thinking
       const requestOptions = this._buildRequestOptions()
       const usage = createEmptyUsage()
@@ -453,6 +504,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
 
+      // A mechanism is rejected on a turn's first request, before any event is yielded; continuations reuse an
+      // accepted one. So the request can be resent with the next mechanism, the same order BedrockModel tries.
+      if (continuations === 0 && this._recordRejectedMechanism(unknownError, mechanism, options)) {
+        yield* this.stream(messages, options)
+        return
+      }
+
       const error = normalizeError(unknownError)
 
       const lowered = error.message.toLowerCase()
@@ -469,6 +527,29 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       throw error
     }
+  }
+
+  /** Chooses the strongest structured output mechanism not yet rejected for this model. */
+  private _structuredOutputMechanism(options: StreamOptions | undefined): StructuredOutputMechanism | undefined {
+    const schema = options?.structuredOutputSchema
+    if (!schema || !this._config.modelId) return undefined
+    return structuredOutputMechanisms('anthropic', this._config.modelId, options.toolChoice, schema)[0]
+  }
+
+  /**
+   * Records a structured output rejection, so the request should be resent with the next mechanism.
+   *
+   * @returns True if the rejection was recorded; false if the error is unrelated and should surface unchanged
+   */
+  private _recordRejectedMechanism(
+    error: unknown,
+    mechanism: StructuredOutputMechanism | undefined,
+    options: StreamOptions | undefined
+  ): boolean {
+    const schema = options?.structuredOutputSchema
+    const modelId = this._config.modelId
+    if (!mechanism || !schema || !modelId || (error as { status?: number }).status !== 400) return false
+    return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
   }
 
   private _buildRequestOptions(): Anthropic.RequestOptions | undefined {

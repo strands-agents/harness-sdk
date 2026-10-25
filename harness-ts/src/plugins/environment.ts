@@ -123,10 +123,11 @@ async function gather(agent: LocalAgent): Promise<Gathered> {
     // back to (e.g. a browser build), still surface the date block without probing the environment.
     return { platform: undefined, cwd: undefined, agentsMd: undefined, otherAgents: [], readmes: [] }
   }
-  // Platform and cwd are read from the sandbox (via `uname`/`pwd`), not the host process, so they
+  // Platform and cwd are read from the sandbox (via `uname` and `$PWD`), not the host process, so they
   // describe where the agent actually runs — a Docker or SSH sandbox, not the machine hosting it.
   const platform = await probe(sandbox, 'uname -s')
-  const cwd = await probe(sandbox, 'pwd')
+  // `echo "$PWD"` prints a bare path in both sh and PowerShell; PowerShell's `pwd` prints a table.
+  const cwd = await probe(sandbox, 'echo "$PWD"')
   const agentsMd = await readText(sandbox, 'AGENTS.md')
   const found = await discover(sandbox)
   // The working-directory AGENTS.md is shown in full above; keep only the nested ones as links.

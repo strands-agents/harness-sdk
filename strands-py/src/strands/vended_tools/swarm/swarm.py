@@ -218,7 +218,9 @@ def make_swarm(
         logger.info("task=<%s>, agents=<%d> | starting swarm", task[:120], len(child_agents))
         # Drop request_state so a child's stop can't halt the parent.
         child_state = {key: value for key, value in tool_context.invocation_state.items() if key != "request_state"}
-        source = sdk_swarm.stream_async(swarm_input, invocation_state=child_state)
+        source = sdk_swarm.stream_async(
+            swarm_input, invocation_state=child_state, invocation_context=tool_context.invocation_context
+        )
         async for event in tool_streamer.stream(_SWARM_ADAPTER, sdk_swarm, source):
             yield event
         if tool_streamer.error is not None or tool_streamer.interrupts is not None:

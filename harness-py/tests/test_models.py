@@ -313,9 +313,9 @@ def test_unknown_bedrock_family_rejects_explicit_effort():
 
 
 def test_level_rejected_when_provider_does_not_support_it():
-    with pytest.raises(ValueError, match="not supported by this provider"):
+    with pytest.raises(ValueError, match="not supported by model gemini-3.5-flash"):
         resolve("google/gemini-3.5-flash", effort="xhigh")
-    with pytest.raises(ValueError, match="not supported by this provider"):
+    with pytest.raises(ValueError, match="not supported by model gpt-5.6-sol"):
         resolve("openai/gpt-5.6-sol", effort="max")
 
 
@@ -343,6 +343,32 @@ def test_google_auto_maps_to_high_thinking_level():
     model = resolve("google/gemini-3.5-flash")
     assert isinstance(model, Model)
     assert model.config["params"]["thinking_config"]["thinking_level"] == "high"
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "expected"),
+    [
+        ("google/gemini-4-argon", "minimal", "Supported levels: low, medium, high"),
+        ("google/gemini-3.6-flash", "minimal", "minimal"),
+        ("google/gemini-3.1-flash-lite-image", "minimal", "minimal"),
+        ("google/gemini-3.1-flash-lite-image", "low", "Supported levels: minimal, high"),
+        ("bedrock-mantle/google.gemma-4-31b", "auto", "high"),
+        ("bedrock-mantle/google.gemma-4-31b", "off", "none"),
+        ("bedrock-mantle/google.gemma-4-31b", "low", "Supported levels: high"),
+    ],
+)
+def test_per_model_levels(model, effort, expected):
+    if expected.startswith("Supported levels"):
+        with pytest.raises(ValueError, match=f"not supported by model {model.split('/')[1]}. {expected}"):
+            resolve(model, effort=effort)
+        return
+    params = resolve(model, effort=effort).config["params"]
+    sent = (
+        params["reasoning"]["effort"]
+        if model.startswith("bedrock-mantle/")
+        else params["thinking_config"]["thinking_level"]
+    )
+    assert sent == expected
 
 
 def test_google_uses_model_id_directly():
@@ -413,7 +439,7 @@ def test_bedrock_mantle_caching_does_not_warn(caplog):
 
 
 def test_bedrock_mantle_rejects_an_unsupported_thinking_level():
-    with pytest.raises(ValueError, match="not supported by this provider"):
+    with pytest.raises(ValueError, match="not supported by model openai.gpt-oss-120b"):
         resolve("bedrock-mantle/openai.gpt-oss-120b", effort="max")
 
 

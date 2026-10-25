@@ -27,7 +27,7 @@ async def _stream(*events: dict[str, Any]):
         yield event
 
 
-AGENT_ADAPTER = _ChildAgentAdapter(label="Child")
+AGENT_ADAPTER = _ChildAgentAdapter(label="Child", agent_name="child")
 MULTI_AGENT_ADAPTER = _ChildMultiAgentAdapter(label="Swarm")
 
 

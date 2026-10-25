@@ -36,7 +36,7 @@ class InvocationTrigger(ExtractionTrigger):
         blocks.
         """
         context.agent.add_hook(
-            lambda event: context.fire(),
+            lambda event: context.fire(event.invocation_context),
             AfterInvocationEvent,
             order=HookOrder.SDK_LAST,
         )
@@ -89,6 +89,6 @@ class IntervalTrigger(ExtractionTrigger):
             count += 1
             # `fire` is fire-and-forget; it dispatches extraction in the background.
             if count % self._turns == 0:
-                context.fire()
+                context.fire(event.invocation_context)
 
         context.agent.add_hook(_callback, AfterInvocationEvent, order=HookOrder.SDK_LAST)

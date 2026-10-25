@@ -37,6 +37,7 @@ import { BedrockModel } from '../../models/bedrock.js'
 import { ModelRouter } from '../../models/routing/router.js'
 import type { Model } from '../../models/model.js'
 import { StructuredOutputError } from '../../errors.js'
+import { NO_STRUCTURED_OUTPUT_MESSAGE } from '../../tools/structured-output-tool.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
@@ -412,6 +413,39 @@ describe('Agent', () => {
         const agent = new Agent({ model })
 
         await expect(agent.invoke('Test')).rejects.toThrow(MaxTokensError)
+      })
+
+      it.each([
+        ['empty string', ''],
+        ['whitespace string', '  \n'],
+        ['blank text blocks', [new TextBlock(' '), new TextBlock('\n')]],
+        ['blank content block data', [{ text: '' }]],
+        ['user message with blank text', [{ role: 'user' as const, content: [{ text: '' }] }]],
+        ['user message with no content', [{ role: 'user' as const, content: [] }]],
+      ])('rejects a blank prompt (%s) without breaking later calls', async (_, prompt) => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+        const agent = new Agent({ model })
+
+        await expect(agent.invoke(prompt)).rejects.toThrow('Input prompt is blank')
+
+        expect(agent.messages).toEqual([])
+        const result = await agent.invoke('Hi')
+        expect(result.toString()).toBe('Hello')
+      })
+
+      it.each([
+        ['text alongside blank text', [new TextBlock('hello'), new TextBlock('')]],
+        [
+          'image alongside blank text',
+          [new TextBlock(''), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })],
+        ],
+      ])('accepts a prompt with some non-blank content (%s)', async (_, prompt) => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+        const agent = new Agent({ model })
+
+        const result = await agent.invoke(prompt)
+
+        expect(result.toString()).toBe('Hello')
       })
     })
 
@@ -1561,7 +1595,48 @@ describe('Agent', () => {
 
       const agent = new Agent({ model, structuredOutputSchema: schema })
 
-      await expect(agent.invoke('Test')).rejects.toThrow(StructuredOutputError)
+      await expect(agent.invoke('Test')).rejects.toThrow(new StructuredOutputError(NO_STRUCTURED_OUTPUT_MESSAGE))
+    })
+
+    it('passes the schema on the retry and accepts a JSON text response', async () => {
+      const schema = z.object({ value: z.number() })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain text, no tool call' })
+        .addTurn({ type: 'textBlock', text: '{"value": 42}' })
+      const streamOptions: (StreamOptions | undefined)[] = []
+      const originalStream = model.stream.bind(model)
+      vi.spyOn(model, 'stream').mockImplementation((messages, options) => {
+        streamOptions.push(options)
+        return originalStream(messages, options)
+      })
+
+      const agent = new Agent({ model, tools: [createRandomTool('lookup')], structuredOutputSchema: schema })
+      const result = await agent.invoke('Test')
+
+      expect(result.structuredOutput).toStrictEqual({ value: 42 })
+      expect(result.stopReason).toBe('endTurn')
+      expect(agent.messages.map((message) => message.role)).toStrictEqual(['user', 'assistant'])
+      expect(agent.messages[1]).toStrictEqual(result.lastMessage)
+      expect(streamOptions.map((options) => options?.structuredOutputSchema)).toStrictEqual([undefined, schema])
+      expect(streamOptions.map((options) => options?.toolChoice)).toStrictEqual([
+        undefined,
+        { tool: { name: 'strands_structured_output' } },
+      ])
+      expect(streamOptions[1]?.toolSpecs?.map((spec) => spec.name)).toStrictEqual([
+        'lookup',
+        'strands_structured_output',
+      ])
+    })
+
+    it('throws StructuredOutputError when the JSON text response fails validation', async () => {
+      const schema = z.object({ value: z.number() })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain text, no tool call' })
+        .addTurn({ type: 'textBlock', text: '{"value": "not a number"}' })
+
+      const agent = new Agent({ model, structuredOutputSchema: schema })
+
+      await expect(agent.invoke('Test')).rejects.toThrow(/^Structured output failed validation: /)
     })
 
     it('throws MaxTokensError when maxTokens reached before structured output', async () => {

@@ -54,8 +54,19 @@ describe('htmlToMarkdown', () => {
     expect(result).toContain('click')
   })
 
+  it.each(['vbscript:msgbox(1)', 'data:text/html,<script>alert(1)</script>'])(
+    'drops %s hrefs but keeps link text',
+    async (href) => {
+      expect((await htmlToMarkdown(`<a href="${href}">click</a>`)).trim()).toBe('click')
+    }
+  )
+
   it('drops javascript: img srcs', async () => {
     expect(await htmlToMarkdown('<img src="javascript:alert(1)" alt="x">')).not.toMatch(/javascript:/)
+  })
+
+  it('drops vbscript: img srcs', async () => {
+    expect(await htmlToMarkdown('<img src="vbscript:msgbox(1)" alt="x">')).toBe('')
   })
 
   it('returns alt text for image with empty src', async () => {

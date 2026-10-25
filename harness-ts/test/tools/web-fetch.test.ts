@@ -325,7 +325,9 @@ describe('web_fetch', () => {
     expect(invokeCalls).toHaveLength(2)
   })
 
-  it('fetches end to end through the local environment sandbox', async () => {
+  // Every sandbox command here is a fresh process (a PowerShell start on Windows) and they run in sequence: more
+  // than the default 5 s allows on a busy CI runner.
+  it('fetches end to end through the local environment sandbox', { timeout: 30_000 }, async () => {
     const server = createServer((req, res) => {
       if (req.url === '/redirect') {
         res.writeHead(302, { Location: '/page' })
