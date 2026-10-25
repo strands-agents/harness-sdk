@@ -263,6 +263,9 @@ test('internal mode grants the Bedrock models the integ suites invoke', () => {
       'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
       'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
       'arn:aws:bedrock:*:*:foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+      'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-opus-4-8',
+      'arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-4-8',
+      'arn:aws:bedrock:*::foundation-model/amazon.nova-sonic-v1:0',
     ]),
   );
 });
