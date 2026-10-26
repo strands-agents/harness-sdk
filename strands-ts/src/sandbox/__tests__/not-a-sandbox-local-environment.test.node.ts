@@ -15,7 +15,7 @@ const PRINT_CWD = WINDOWS ? '(Get-Location).Path' : 'pwd'
 const FAIL_WITH_STDERR = WINDOWS ? "[Console]::Error.WriteLine('oops'); exit 3" : 'echo oops >&2; exit 3'
 const PRINT_GREETING = WINDOWS ? 'echo $env:GREETING' : 'echo "$GREETING"'
 const INTERPRETER = 'node'
-// PowerShell and Windows Python end lines with \r\n.
+// PowerShell ends lines with \r\n.
 const EOL = WINDOWS ? '\r\n' : '\n'
 
 describe('NotASandboxLocalEnvironment', () => {
