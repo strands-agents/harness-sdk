@@ -1,6 +1,6 @@
 ---
-title: Coordinate multiple agents
-description: "Coordinate multiple AI agents with handoffs, swarms, graphs, and workflow patterns. Built-in primitives for complex multi-agent orchestration."
+title: Choose a multi-agent pattern
+description: "Decide whether you need more than one agent, then map agents-as-tools, workflow, graph, and swarm to the research, analysis, and review shape your prompts already use."
 tags: [multi-agent]
 sourceLinks:
   - path: strands-py/src/strands/multiagent/base.py
@@ -12,41 +12,34 @@ sourceLinks:
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 
-When one agent isn't enough, coordinate several. Strands offers several ways to compose agents: let one agent call another as a tool, connect agents across processes, or hand a pool of agents to a built-in orchestrator. Pick a pattern below, or read on for how the three built-in orchestrators (Graph, Swarm, and Workflow) compare.
+This page is a decision guide. Start by asking whether you need more than one
+agent at all, map the work your prompts already do onto a pattern, then grow
+into a supervised orchestrator that enforces deadlines, cancellation, and an
+approval gate. Each step adds only the coordination the previous one lacked.
 
-## Multi-agent patterns
+## Do you need more than one agent?
 
-<CardGrid>
-  <LinkCard
-    title="Agents as tools"
-    href="../agents-as-tools/"
-    description="Give one agent another agent to call as a specialized tool, with an orchestrator that delegates to domain experts."
-  />
-  <LinkCard
-    title="Agent-to-Agent (A2A)"
-    href="../agent-to-agent/"
-    description="Connect agents running as separate services over the Agent-to-Agent protocol."
-  />
-  <LinkCard
-    title="Swarm"
-    href="../swarm/"
-    description="Hand a pool of specialized agents that autonomously hand off tasks to one another."
-  />
-  <LinkCard
-    title="Graph"
-    href="../graph/"
-    description="Define a flowchart of agents where an LLM decision at each node picks the path, with branching and loops."
-  />
-  <LinkCard
-    title="Workflow"
-    href="../workflow/"
-    description="Run a fixed task graph (DAG) as a single, reusable tool, with independent tasks in parallel."
-  />
-</CardGrid>
+Most tasks do not. A single agent with the right tools is simpler to build,
+cheaper to run, and easier to debug than any multi-agent system. Reach for a
+second agent only when one of these is true:
 
-## The smallest multi-agent system
+- **One prompt is doing too much.** A single system prompt juggling research,
+  analysis, and review tends to blur the roles and degrade each one. Splitting
+  them into focused agents keeps each prompt sharp.
+- **You need isolated context.** A specialist should not see the orchestrator's
+  full history, or two sub-tasks should not pollute each other's context window.
+- **You want independent iteration.** Different owners, models, or tool sets per
+  role, tuned and tested on their own.
 
-The simplest way to compose agents is to pass one agent to another as a tool. The orchestrator reads each specialist's description and calls it when the query fits, exactly as it would call any other tool.
+If none of these apply, stop here and give one agent more tools. If one does,
+the smallest step up is to let that one agent call another agent as a tool.
+
+### Start with the smallest step: an agent as a tool
+
+The simplest multi-agent system passes one agent to another as a tool. The
+orchestrator reads each specialist's description and calls it when the query
+fits, exactly as it would call any other tool. No new orchestration primitive,
+just one more tool in the array.
 
 <Tabs>
 <Tab label="Python">
@@ -82,120 +75,265 @@ orchestrator("What should I pack for Seattle this weekend?")
 </Tab>
 </Tabs>
 
-For structured orchestration, reach for the built-in Graph, Swarm, and Workflow patterns. The rest of this page compares them so you can decide which one fits your problem.
+When one orchestrator calling specialists on demand is no longer enough — when
+the *order* of the work matters, or the agents need to hand off among
+themselves — reach for a built-in orchestrator.
 
-To best help you decide which one is best for your problem, we will discuss them from core concepts, commonalities, and differences.
+## Map the work to a pattern
 
-## Main Idea of Multi-agent System
+The patterns differ in one thing above all: **how the path of execution is
+determined.** The quickest way to choose is to match the pattern to the shape
+of work your prompts already describe. Most agent prompts move through some mix
+of three phases — **research** (gather), **analysis** (reason), and **review**
+(check) — and each pattern expresses that shape differently.
 
-Before we start comparing, Let's agree on a common concept. Multi-agent system is a system composed of multiple autonomous agents that interact with each other to achieve a mutual goal that is too complex or too large for any single agent to reach alone.
+| Pattern | How the path is decided | The research → analysis → review shape it fits |
+|---|---|---|
+| **[Agents as tools](./agents-as-tools.md)** | The orchestrator LLM decides, per query, which specialist to call. | One agent that occasionally delegates a research or analysis sub-question to an expert, then folds the answer back in. |
+| **[Workflow](./workflow.md)** | Fixed in code. A developer-defined task graph (DAG) runs as one reusable tool; independent tasks run in parallel. | A repeatable pipeline where research, analysis, and review are the same every time and the dependencies never change. |
+| **[Graph](./graph.md)** | Controlled but dynamic. The flow follows developer-defined edges, but an LLM decision at each node picks the branch. Cycles allowed. | Research feeds analysis feeds review, but review can loop back to analysis or branch to an error path based on what it finds. |
+| **[Swarm](./swarm.md)** | Emergent. Agents hand off to one another autonomously through shared context, with no fixed path. | A research, analysis, and review team that reorders itself as the problem unfolds — review can hand straight back to research. |
 
-The key principles are:
+<CardGrid>
+  <LinkCard
+    title="Agents as tools"
+    href="../agents-as-tools/"
+    description="One orchestrator delegates to specialist agents it calls like any other tool. Start here."
+  />
+  <LinkCard
+    title="Workflow"
+    href="../workflow/"
+    description="A fixed task graph (DAG) run as a single reusable tool, with independent tasks in parallel."
+  />
+  <LinkCard
+    title="Graph"
+    href="../graph/"
+    description="A flowchart of agents where an LLM decision at each node picks the path, with branching and loops."
+  />
+  <LinkCard
+    title="Swarm"
+    href="../swarm/"
+    description="A pool of specialized agents that autonomously hand off tasks to one another."
+  />
+  <LinkCard
+    title="Agent-to-Agent (A2A)"
+    href="../agent-to-agent/"
+    description="Connect agents running as separate services over the Agent-to-Agent protocol."
+  />
+</CardGrid>
 
-- Orchestration: A controlling logic or structure to manage the flow of information and tasks between agents.
-- Specialization: An agent has a specific role or expertise, and a set of tools that it can use.
-- Collaboration: Agents communicate and share information to work upon each other's work.
+### How they compare in depth
 
-Graph, Swarm, and Workflow are different methods of orchestration. Graph and Swarm
-are built-in SDK orchestrators. Workflow is a pattern you implement in code by
-chaining agents together.
+All three built-in orchestrators — Graph, Swarm, and Workflow — share the same
+foundations: they solve a problem too large for one agent, they use a single
+Strands `Agent` as the unit of work, and they pass information between
+components toward a final answer. They diverge on control.
 
-## High Level Commonality in Graph, Swarm and Workflow
+| Dimension | Graph | Swarm | Workflow |
+|---|---|---|---|
+| Core concept | Developer-defined flowchart; an LLM decision at each node picks the path. | A collaborative team that autonomously hands off tasks. | A pre-defined task graph (DAG) run as a single, non-conversational tool. |
+| Who defines the path | Developer defines all nodes and edges up front. | Developer provides a pool; the agents decide. | Developer defines all tasks and dependencies in code. |
+| Execution flow | Controlled but dynamic. | Sequential and autonomous. | Deterministic and parallel. |
+| Cycles | Yes. | Yes. | No. |
+| State sharing | Shared state object all nodes read and write. | Shared context and working memory across agents. | Task outputs auto-passed as inputs to dependents. |
+| Error handling | Explicit error edges route failures to a handler node. | An agent can hand off to an error specialist; timeouts and handoff limits bound loops. | A failed task halts downstream tasks; the run enters a `Failed` state. |
 
-They share some common things within Strands system:
+The sections below give one or two concrete triggers for each.
 
-- They all have the ultimate goal to solve complicated problems for users.
-- They all use a single Strands `Agent` as the minimal unit of actions.
-- They all involve passing information between different components to move toward a final answer.
+#### Reach for a Graph
 
+When the process needs conditional logic, branching, or loops with a controlled
+execution flow. A `Graph` models a business process where the next step depends
+on the outcome of the current one.
 
-## Difference in Graph, Swarm and Workflow
+- **Interactive support routing**: branch a conversation on user intent
+  ("order question" vs. "address change" vs. "needs a human").
+- **Validation with error paths**: an agent validates data and a conditional
+  edge routes it to a processing node or a pre-defined error-handling node.
 
->⚠️ To be more explicit, the most difference you should consider among those patterns is **how the path of execution is determined**.
+#### Reach for a Swarm
 
-| Field                   | Graph                                                                                                                                 | Swarm                                                                                                                                                             | Workflow                                                                                                                          |
-|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| Core Concept            | A structured, developer-defined flowchart where an agent decides which path to take.                                                  | A dynamic, collaborative team of agents that autonomously hand off tasks.                                                                                         | A pre-defined Task Graph (DAG) executed as a single, non-conversational tool.                                                     |
-| Structure               | A developer defines all nodes (agents) and edges (transitions) in advance.                                                            | A developer provides a pool of agents. The agents themselves decide the path.                                                                                     | A developer defines all tasks and their dependencies in code.                                                                     |
-| Execution Flow          | Controlled but Dynamic. <br/>The flow follows graph edges, but an LLM's decision at each node determines the path.                    | Sequential & Autonomous.<br/> An agent performs a task and then hands off control to the most suitable peer.                           | Deterministic & Parallel. <br/>The flow is fixed by the dependency graph. Independent tasks run in parallel.                      |
-| Allow Cycle?            | Yes.                                                                                                                                  | Yes.                                                                                                                                                              | No.                                                                                                                               |
-| State Sharing Mechanism | A shared state object is passed to all agents, who can freely read and modify it.                                              | A shared context or working memory is available to all agents, containing the original request, task history, and knowledge from previous agents. | The tool automatically captures task outputs and passes them as inputs to dependent tasks.                                        |
-| Conversation History    | Full Transcript.<br/>The entire dialogue history is part of the shared state, giving every agent complete and open context.      | Shared Transcript.<br/>The shared context provides a full history of agent handoffs and knowledge contributed by previous agents, available to the current agent. | Task-Specific context. <br/>A task receives a curated summary of relevant results from its dependencies, not the full history.    |
-| Behavior Control        | The user's input at each step can directly influence which path the graph takes next.                                                 | The user's initial prompt defines the goal, but the swarm runs autonomously from there.                                                                           | The user's prompt can trigger a pre-defined workflow, but it cannot alter its internal structure.                                 |
-| Scalability             | Scales well with process complexity (many branches, conditions).                                                                      | Scales with the number of specialized agents in the team and the complexity of the collaborative task.                                                            | Scales well for repeatable, complex operations.                                                                                   |
-| Error handling          | Controllable.<br/> A developer can define explicit "error" edges to route the flow to a specific error-handling node if a step fails. | Agent-driven.<br/>An agent can decide to hand off to an error-handling specialist. The system relies on timeouts and handoff limits to prevent indefinite loops.  | Systemic. A failure in one task will halt all downstream dependent tasks. The entire workflow will likely enter a `Failed` state. |
+When the problem benefits from several specialized perspectives handing off to
+one another. A `Swarm` suits exploration, brainstorming, or synthesizing
+sources through collaborative handoffs.
 
-## When to Use Each Pattern
+- **Incident response**: a monitoring agent detects an issue and hands off to a
+  network specialist, who diagnoses a database problem and hands off to a DBA.
+- **Software build**: a researcher hands to an architect, to a coder, to a
+  reviewer — the path emerges from the work.
 
-Now you should have some general concept about the difference between patterns. Choosing the right pattern is critical for building an effective system.
+#### Reach for a Workflow
 
-### When to Use [Graph](./graph.md)
+When you have a complex but repeatable process you want to encapsulate as one
+reliable, reusable tool.
 
-When you need a structured process that requires conditional logic, branching, or loops with deterministic execution flow. A `Graph` is perfect for modeling a business process or any task where the next step is decided by the outcome of the current one.
+- **Data pipeline**: a fixed set of extract, analyze, and report tasks, where
+  independent analysis steps run in parallel.
+- **Standard business process**: onboarding — create accounts, assign training,
+  send a welcome email — triggered by a single agent action.
 
-Some Examples:
+## Grow into a supervised orchestrator
 
-- Interactive Customer Support: Routing a conversation based on user intent ("I have question about my order, I need to update my address, I need human assistance").
-- Data Validation with Error Paths: An agent validates data and, based on the outcome, a conditional edge routes it to either a "processing" node or a pre-defined "error-handling" node.
+A bare orchestrator does the routing but enforces nothing. Production systems
+need guardrails: a node that hangs must be stopped, a cancellation must
+propagate instead of leaving work half-done, high-impact steps must pause for a
+human, and every handoff must be recorded for audit.
 
-### When to Use [Swarm](./swarm.md)
+The example below is one supervisor Graph that layers all four onto the
+research → analysis → review shape:
 
-When your problem can be broken down into sub-tasks that benefit from different specialized perspectives. A `Swarm` is ideal for exploration, brainstorming, or synthesizing information from multiple sources through collaborative handoffs. It leverages agent specialization and shared context to generate diverse, comprehensive results.
-
-Some Examples:
-
-- Multidisciplinary Incident Response: A monitoring agent detects an issue and hands off to a network_specialist, who diagnoses it as a database problem and hands off to a database_admin.
-- Software Development: As shown in the [`Swarm` documentation](./swarm.md#how-swarms-work), a researcher hands off to an architect, who hands off to a coder, who hands off to a reviewer. The path is emergent.
-
-### When to Use [Workflow](./workflow.md)
-
-When you have a complex but repeatable process that you want to encapsulate into a single, reliable, and reusable tool. A `Workflow` is a developer-defined task graph that an agent can execute as a single, powerful action.
-
-Some Examples:
-
-- Automated Data Pipelines: A fixed set of tasks to extract, analyze, and report on data, where independent analysis steps can run in parallel.
-- Standard Business Processes: Onboarding a new employee by creating accounts, assigning training, and sending a welcome email, all triggered by a single agent action.
-
-## Shared State Across Multi-Agent Patterns
+1. **Per-node deadlines** so a single slow node cannot stall the run.
+2. **Cancellation propagation** so denying a step stops it cleanly with a
+   recorded reason rather than failing silently.
+3. **An approval gate** that interrupts before the one high-impact node and
+   waits for a human `y/N`.
+4. **Handoff logging through a hook** so every node transition is recorded.
 
 <Tabs>
 <Tab label="Python">
 
-Both Graph and Swarm patterns support passing shared state to all agents through the `invocation_state` parameter. This enables sharing context and configuration across agents without exposing it to the LLM.
+```python
+import json
 
-**How Shared State Works**
+from strands import Agent
+from strands.hooks import BeforeNodeCallEvent, HookProvider, HookRegistry
+from strands.multiagent import GraphBuilder, Status
+
+
+class SupervisorHook(HookProvider):
+    """Logs every handoff and gates the one high-impact node for approval."""
+
+    def __init__(self, app_name: str, gated_node: str) -> None:
+        self.app_name = app_name
+        self.gated_node = gated_node
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeNodeCallEvent, self.on_node)
+
+    def on_node(self, event: BeforeNodeCallEvent) -> None:
+        # 4. Record every handoff: BeforeNodeCallEvent fires before each node runs.
+        print(f"[handoff] -> {event.node_id}")
+
+        # 3. Approval gate: pause before the one high-impact node and wait for a human.
+        if event.node_id != self.gated_node:
+            return
+
+        approval = event.interrupt(
+            f"{self.app_name}-approval",
+            reason={"node": event.node_id},
+        )
+        if approval.lower() != "y":
+            # 2. Propagate cancellation: deny the node with a recorded reason
+            #    instead of letting it run.
+            event.cancel_node = f"Human denied the {event.node_id} step"
+
+
+researcher = Agent(name="researcher", system_prompt="You gather sources.", callback_handler=None)
+analyst = Agent(name="analyst", system_prompt="You analyze the research.", callback_handler=None)
+reviewer = Agent(name="reviewer", system_prompt="You approve or reject the analysis.", callback_handler=None)
+
+builder = GraphBuilder()
+builder.add_node(researcher, "research")
+builder.add_node(analyst, "analysis")
+builder.add_node(reviewer, "review")
+builder.add_edge("research", "analysis")
+builder.add_edge("analysis", "review")
+builder.set_entry_point("research")
+
+# 1. Per-node and overall deadlines so no single node can stall the run.
+builder.set_node_timeout(60)        # each node must finish within 60s
+builder.set_execution_timeout(300)  # the whole graph within 5 minutes
+
+# Gate the high-impact "review" node behind human approval.
+builder.set_hook_providers([SupervisorHook("myapp", gated_node="review")])
+
+graph = builder.build()
+
+# Interrupt/resume loop: the graph pauses at the approval gate and resumes
+# once the human answers.
+result = graph("Research, analyze, and review the Q4 incident")
+while result.status == Status.INTERRUPTED:
+    responses = []
+    for interrupt in result.interrupts:
+        if interrupt.name == "myapp-approval":
+            answer = input(f"Approve the {interrupt.reason['node']} step? (y/N): ")
+            responses.append({
+                "interruptResponse": {
+                    "interruptId": interrupt.id,
+                    "response": answer,
+                },
+            })
+    result = graph(responses)
+
+print(f"Status: {result.status}")
+print(f"Execution order: {[node.node_id for node in result.execution_order]}")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/multi-agent-patterns_imports.ts:supervisor_imports"
+
+--8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:supervisor"
+```
+
+</Tab>
+</Tabs>
+
+### How each guardrail works
+
+- **Per-node deadlines** — <Syntax py="builder.set_node_timeout(seconds)" ts="nodeTimeout" />
+  bounds any single node; <Syntax py="builder.set_execution_timeout(seconds)" ts="timeout" />
+  bounds the whole run. Timeouts are cooperative: a tool that never checks its
+  cancel signal can still run past the deadline.
+- **Cancellation propagation** — setting <Syntax py="event.cancel_node" ts="event.cancel" />
+  to a message cancels the node with that reason recorded, so a denied step
+  stops cleanly instead of failing opaquely.
+- **Approval gate** — <Syntax py="event.interrupt(name, reason=...)" ts="event.interrupt({ name, reason })" />
+  on `BeforeNodeCallEvent` halts the orchestrator before the gated node. The run
+  returns with `Status.INTERRUPTED`; you answer each interrupt by id and resume
+  by invoking the graph again. See [Interrupts in multi-agent systems](../interrupts-multi-agent.md)
+  for the full interrupt/resume contract.
+- **Handoff logging** — because `BeforeNodeCallEvent` fires before every node, a
+  single callback records each transition. If you prefer to consume handoffs
+  from the event stream instead, watch for the `multiagent_handoff` event in
+  [`stream_async`](./graph.md#streaming-events).
+
+The same hook, timeout, and interrupt interfaces work on a [Swarm](./swarm.md),
+so you can apply this supervision to autonomous handoffs as well.
+
+## Shared State Across Multi-Agent Patterns
+
+Both Graph and Swarm support passing shared state to every agent through
+<Syntax py="invocation_state" ts="invocationState" />. This shares context and
+configuration across agents without exposing it to the LLM — use it for things
+like user ids, feature flags, or a database handle, kept separate from the
+data the model should reason about.
+
+<Tabs>
+<Tab label="Python">
 
 The `invocation_state` is automatically propagated to:
 
 - All agents in the pattern via their `**kwargs`
-- Tools via `ToolContext` when using `@tool(context=True)` - see [Python Tools](../tools/custom-tools.md#accessing-state-in-tools)
-- Tool-related hooks (BeforeToolCallEvent, AfterToolCallEvent) - see [Hooks](../agents/hooks.md#accessing-invocation-state-in-hooks)
-
-**Example Usage**
+- Tools via `ToolContext` when using `@tool(context=True)` — see [Python Tools](../tools/custom-tools.md#accessing-state-in-tools)
+- Tool-related hooks (BeforeToolCallEvent, AfterToolCallEvent) — see [Hooks](../agents/hooks.md#accessing-invocation-state-in-hooks)
 
 ```python
-# Same invocation_state works for both patterns
+# The same invocation_state works for both Graph and Swarm
 shared_state = {
     "user_id": "user123",
     "session_id": "sess456",
     "debug_mode": True,
-    "database_connection": db_connection_object
+    "database_connection": db_connection_object,
 }
 
-# Execute with Graph
-result = graph(
-    "Analyze customer data",
-    invocation_state=shared_state
-)
-
-# Execute with Swarm (same shared_state)
-result = swarm(
-    "Analyze customer data", 
-    invocation_state=shared_state
-)
+result = graph("Analyze customer data", invocation_state=shared_state)
+result = swarm("Analyze customer data", invocation_state=shared_state)
 ```
 
-**Accessing Shared State in Tools**
+Access it inside a tool:
 
 ```python
 from strands import tool, ToolContext
@@ -206,55 +344,49 @@ def query_data(query: str, tool_context: ToolContext) -> str:
     debug_mode = tool_context.invocation_state.get("debug_mode", False)
     # Use context for personalized queries...
 ```
+
 </Tab>
 <Tab label="TypeScript">
 
-Both Graph and Swarm support passing per-invocation state to all nodes through the `invocationState` option. This is a mutable `Record<string, unknown>` shared by reference — one node's hooks/tools can read state written by a previous node.
-
-**How Invocation State Works**
-
-Pass `invocationState` as the second argument to `invoke()` or `stream()`:
+Both Graph and Swarm support passing per-invocation state to all nodes through
+the `invocationState` option — a mutable `Record<string, unknown>` shared by
+reference, so one node's hooks and tools can read state written by a previous
+node.
 
 ```typescript
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:invocation_state_graph"
 ```
 
-The `invocationState` is automatically forwarded to:
-
-- Each node's child agent (via `InvokeOptions.invocationState`)
-- Tools via `context.invocationState` in the tool callback
-- All hook events on both the orchestrator and individual agents
-
-**Accessing Invocation State in Tools**
+The `invocationState` is automatically forwarded to each node's child agent,
+to tools via `context.invocationState`, and to all hook events on both the
+orchestrator and the individual agents.
 
 ```typescript
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:invocation_state_tool"
 ```
 
-**MultiAgentState**
-
-In addition to `invocationState`, the orchestrator's `MultiAgentState` is shared across all nodes and provides access to execution progress, node results, and custom application state:
-
-- `results` — all `NodeResult` entries in completion order
-- `nodes` — per-node state (status, results) accessible via `state.node(id)`
-- `steps` — number of node executions so far
-- `app` — a `StateStore` key-value store for custom data shared across hooks, edge handlers, and custom nodes
+Alongside `invocationState`, the orchestrator's `MultiAgentState` is shared
+across all nodes and exposes execution progress (`results`, `nodes`, `steps`)
+and a `StateStore` (`app`) for custom shared data.
 
 ```typescript
 --8<-- "user-guide/sdk/multi-agent/multi-agent-patterns.ts:multi_agent_state"
 ```
+
 </Tab>
 </Tabs>
 
-### Important Distinctions
-
-- **Shared State**: Configuration and objects shared across agents without appearing in prompts. See the language-specific tabs above for details on how shared state works in each SDK.
-- **Pattern-Specific Data Flow**: Each pattern has its own mechanisms for passing data that the LLM should reason about including shared context for swarms and agent inputs for graphs
-
-Use shared state for context and configuration that shouldn't appear in prompts, while using each pattern's specific data flow mechanisms for data the LLM should reason about.
+Use shared state for context and configuration that should not appear in
+prompts; use each pattern's own data flow (shared context for swarms, node
+inputs for graphs) for data the LLM should reason about.
 
 ## Where to go next
 
-New to composing agents? Start with [Agents as tools](./agents-as-tools.md) — the smallest pattern shown above — then reach for a built-in orchestrator once you need structured coordination. Choose by how the execution path is determined: [Graph](./graph.md) when a developer-defined flowchart with branching and loops fits the process, [Swarm](./swarm.md) when specialized agents should hand off autonomously, and [Workflow](./workflow.md) when a fixed task graph should run as a single reusable tool.
-
-To connect agents that run as separate services, see [Agent-to-Agent (A2A)](./agent-to-agent.md).
+Start with [Agents as tools](./agents-as-tools.md) — the smallest step above a
+single agent. Reach for a built-in orchestrator once the order of work matters
+or agents must hand off among themselves: [Graph](./graph.md) for a
+developer-defined flowchart with branching and loops, [Swarm](./swarm.md) for
+autonomous handoffs, and [Workflow](./workflow.md) for a fixed task graph run
+as a reusable tool. To connect agents running as separate services, see
+[Agent-to-Agent (A2A)](./agent-to-agent.md). To add supervision — deadlines,
+cancellation, and approval gates — see [Interrupts in multi-agent systems](../interrupts-multi-agent.md).
