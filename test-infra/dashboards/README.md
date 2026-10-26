@@ -53,6 +53,22 @@ python3 test-infra/dashboards/generate.py --check  # exit 1 if a JSON file is st
 
 `generate.py` uses only the standard library.
 
+## Series headroom check (manual, ReadOnly)
+
+A widget shows at most 500 series and drops the rest silently (limit 1 below), and the publisher's
+`--max-test-names` ceiling guards against a cardinality explosion, not against one partition drifting past the cap.
+The `integ-metrics` CI job has no AWS credentials and the integ test role only has `cloudwatch:PutMetricData`, so the
+per-partition check is manual. After adding many tests or changing the partitions in `generate.py`, run it with
+read-only credentials for the test account:
+
+```sh
+python3 test-infra/dashboards/check_series.py                  # one GetMetricData call per partition (9 today)
+python3 test-infra/dashboards/check_series.py --sdk typescript # one dashboard only
+```
+
+It prints `<sdk> <partition>: <n> series` per partition and exits 1 when any partition is above 400 (`--threshold`)
+or CloudWatch reports `MaxMetricsExceeded`; split that partition in `generate.py` before it reaches 500.
+
 ## CloudWatch limits that shape the layout
 
 These were measured against the account with read-only `GetMetricData` calls and drive every design choice in
