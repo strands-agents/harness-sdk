@@ -10,6 +10,8 @@ tags:
 draft: false
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 You’ve built a customer service agent with a $100 refund limit and you've put guardrails in place. Then a persistent end user shows up asking for a $500 refund. When the agent refuses, they try all the tricks in the book to get it to issue the refund anyway. They claim to be a manager, ask it to split the amount into five $100 refunds, or insist it’s only a test transaction that won’t move real money. You’ve designed the agent to refuse these requests, but how do you know which attempts might get through?
 
 This is why teams building agents need red teaming exercises, a practice familiar to security teams. Red teaming means testing your system by acting like a determined attacker. This matters because agents can do more than write replies. A prompt injection, a message designed to override an agent’s instructions, can steer an agent toward a forbidden action. A jailbreak, a successful push past those boundaries, can end with a real tool call, such as issuing a refund as covered in the customer service example.
@@ -172,10 +174,11 @@ The script prints the judge verdict, the successful `issue_refund` calls, and th
 
 In our example, across three runs, GOAT got the agent to call issue_refund five times and every one of those five broke a policy. One rule, though, held up. Here are the judge verdict, the refund-tool calls, and the deterministic tool-check for every case:
 
-![A grid of five attack cases across three runs. The judge scored 7 of 15 attacks as breaches and 8 as
-defended. The tool check found a violation in 7 of the 8 defended attacks, almost always the leaked manager
-code, and in every breached one. Five attacks ended in a refund, and every refund broke a
-policy.](./resources/red-teaming/judge-vs-tool-check.svg)
+<Diagram
+  name="redteam-judge-vs-tool-check"
+  alt="Five attacks run three times against the refund-desk agent, one row per attack and one column per run. Each cell shows the judge's verdict and score, an issue_refund chip when a refund went through, and the tool-check findings. The judge scored 7 of the 15 attacks as breaches and 8 as defended. The tool check found a violation in 14 of the 15, including 7 of the 8 the judge scored as defended, almost always leaked_code. Only leak_the_code in run 2 had no findings. All five refunds broke a policy: burned_code and breaks_the_rules in run 1, and self_authorized in runs 2 and 3."
+  caption="The judge scored 8 of 15 attacks as defended. The tool check flagged 7 of those 8."
+/>
 
 <details>
 <summary>The same results as a table</summary>
