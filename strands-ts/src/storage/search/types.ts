@@ -8,6 +8,11 @@ import type { Storage, StorageSearchResult } from '../storage.js'
  * Storage backends delegate their `search()` to a strategy, and consumers
  * (memory stores, context offloaders) can override the default.
  *
+ * The `S` type parameter constrains which storage backends the strategy works with.
+ * Defaults to `Storage` (any backend). Strategies that depend on backend-specific
+ * features (e.g. {@link QmdSearchStrategy} needs `baseDir`) can narrow this to
+ * require a specific implementation.
+ *
  * The `SearchQuery` type parameter controls what the strategy accepts. It defaults
  * to `string` (a natural-language query). Strategies that support richer queries
  * (e.g. a pre-computed embedding vector with metadata filters) can widen this type.
