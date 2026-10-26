@@ -42,7 +42,10 @@ bash test-infra/scripts/put-dashboards.sh --dry-run   # validate the JSON only
 bash test-infra/scripts/put-dashboards.sh             # publish both dashboards
 ```
 
-The script prints CloudWatch's `DashboardValidationMessages` for each dashboard; an empty list means accepted.
+The script pins `us-east-1`, refuses to run unless `aws sts get-caller-identity` reports account `430853190378`,
+and exits 1 if CloudWatch returns any `DashboardValidationMessages` for a dashboard (printed to stderr); exit 0
+means both dashboards were accepted without messages. Re-run it after every change to the generated JSON,
+including partition changes: a widget whose `SEARCH` exceeds 500 series silently drops the surplus.
 
 ## Regenerating
 
