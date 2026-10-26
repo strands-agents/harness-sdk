@@ -205,6 +205,9 @@ class BedrockInvokeModel(BedrockModel):
     only; images are supported only in Anthropic messages. Guardrail configuration is unsupported.
     """
 
+    # Invoke relies on the agent to isolate the output tool; it has no native schema enforcement.
+    _supports_structured_output = False
+
     class BedrockInvokeConfig(BaseModelConfig, total=False):
         """Configuration options for ``BedrockInvokeModel``.
 

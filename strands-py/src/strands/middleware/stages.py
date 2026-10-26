@@ -14,6 +14,9 @@ from ..types.events import ModelStopReason, ToolResultEvent
 from .types import MiddlewareStage
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ..agent.invocation_context import InvocationContext
     from ..interrupt import _InterruptState
     from ..models.model import Model
     from ..types.agent import LocalAgent
@@ -52,6 +55,9 @@ class InvokeModelContext:
     model: Model
     projected_input_tokens: int | None = None
     dynamic_trailing_blocks: int = 0
+    structured_output_model: type[BaseModel] | None = None
+    invocation_context: InvocationContext | None = field(default=None, repr=False)
+    """The request this model call belongs to, if any; shared by reference."""
 
     def replace(
         self,
@@ -195,6 +201,8 @@ class ExecuteToolContext:
     cancel_signal: threading.Event = field(repr=False)
     _interrupt_state: _InterruptState = field(repr=False)
     """Agent interrupt state that ``interrupt()`` resolves prior responses from; always supplied by the executor."""
+    invocation_context: InvocationContext | None = field(default=None, kw_only=True, repr=False)
+    """The request this tool call belongs to, if any; the tool receives it on its ``ToolContext``."""
 
     def interrupt(self, name: str, *, reason: Any = None, response: Any = None) -> MiddlewareInterruptResult:
         """Request a human-in-the-loop interrupt.

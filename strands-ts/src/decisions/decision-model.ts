@@ -4,15 +4,18 @@
 
 import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 
+import { unwrapInvocationContext } from '../agent/invocation-context.js'
 import { getServiceName } from '../telemetry/utils.js'
-import type { DecisionInput, DecisionResult, Question } from './types.js'
+import type { AskOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
 /**
  * Abstract base for anything that can answer closed questions.
  *
  * The public `ask` opens a `decision` span, validates the question map, delegates
  * to the subclass `_ask`, records usage and the answer set as span attributes/events,
- * and closes the span. Every implementation is traced identically.
+ * and closes the span. Every implementation is traced identically. Given an
+ * `invocationContext`, `ask` also adds the reported usage to that request once
+ * `_ask` returns.
  */
 export abstract class DecisionModel {
   /**
@@ -21,13 +24,20 @@ export abstract class DecisionModel {
    * @param state - A plain string, a one-shot content list, or a message history.
    * @param questions - Map of identifier → question. The returned `answers` object
    *   is keyed off this same map and statically narrowed per question.
+   * @param options - Per-call options, such as the request to add the decision's usage to.
    * @returns A {@link DecisionResult} whose answers are statically narrowed from
    *   each question's `choices`.
    * @throws Error if `questions` is empty or contains an invalid `question`,
    *   `choices`, or `uncertainty`.
+   * @throws TypeError if `options.invocationContext` was not created by the SDK.
    */
-  async ask<const Q extends Record<string, Question>>(state: DecisionInput, questions: Q): Promise<DecisionResult<Q>> {
+  async ask<const Q extends Record<string, Question>>(
+    state: DecisionInput,
+    questions: Q,
+    options?: AskOptions
+  ): Promise<DecisionResult<Q>> {
     validateQuestions(questions)
+    const invocationContext = unwrapInvocationContext(options?.invocationContext)
 
     const span = trace.getTracer(getServiceName()).startSpan('decision', {
       kind: SpanKind.INTERNAL,
@@ -42,6 +52,7 @@ export abstract class DecisionModel {
 
       const spanAttributes: Record<string, number> = { 'gen_ai.decision.latency_ms': result.metadata.latencyMs }
       if (result.usage !== undefined) {
+        invocationContext?.recordUsage(result.usage)
         spanAttributes['gen_ai.usage.input_tokens'] = result.usage.inputTokens
         spanAttributes['gen_ai.usage.output_tokens'] = result.usage.outputTokens
       }

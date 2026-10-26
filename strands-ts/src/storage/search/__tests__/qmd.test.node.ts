@@ -136,5 +136,144 @@ describe('QmdSearchStrategy', () => {
 
       expect(mockQmdStore.close).not.toHaveBeenCalled()
     })
+
+    it('reopens the index on the next search after close', async () => {
+      const { createStore } = await (import('@tobilu/qmd' as string) as Promise<{
+        createStore: ReturnType<typeof vi.fn>
+      }>)
+      const strategy = new QmdSearchStrategy()
+      await strategy.search(mockStorage, 'first query')
+      await strategy.close()
+
+      await strategy.search(mockStorage, 'second query')
+
+      expect(createStore).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('multiple storage directories', () => {
+    function storageAt(baseDir: string): LocalFileStorage {
+      return { ...mockStorage, baseDir } as unknown as LocalFileStorage
+    }
+
+    function newQmdStore(): typeof mockQmdStore {
+      return {
+        update: vi.fn().mockResolvedValue(undefined),
+        searchLex: vi.fn().mockResolvedValue([]),
+        close: vi.fn().mockResolvedValue(undefined),
+      }
+    }
+
+    async function mockedCreateStore(): Promise<ReturnType<typeof vi.fn>> {
+      const { createStore } = await (import('@tobilu/qmd' as string) as Promise<{
+        createStore: ReturnType<typeof vi.fn>
+      }>)
+      return vi.mocked(createStore)
+    }
+
+    it('keeps one open index per directory when searches alternate', async () => {
+      const createStore = await mockedCreateStore()
+      const storeA = newQmdStore()
+      const storeB = newQmdStore()
+      createStore.mockResolvedValueOnce(storeA).mockResolvedValueOnce(storeB)
+      const strategy = new QmdSearchStrategy()
+      const storageA = storageAt(join(tempDir, 'memory', 'a'))
+      const storageB = storageAt(join(tempDir, 'memory', 'b'))
+
+      await strategy.search(storageA, 'query one')
+      await strategy.search(storageB, 'query two')
+      await strategy.search(storageA, 'query three')
+      await strategy.search(storageB, 'query four')
+
+      expect(createStore).toHaveBeenCalledTimes(2)
+      expect(createStore).toHaveBeenCalledWith(
+        expect.objectContaining({ dbPath: join(tempDir, 'memory', '.a-qmd.sqlite') })
+      )
+      expect(createStore).toHaveBeenCalledWith(
+        expect.objectContaining({ dbPath: join(tempDir, 'memory', '.b-qmd.sqlite') })
+      )
+      expect(storeA.close).not.toHaveBeenCalled()
+      expect(storeB.close).not.toHaveBeenCalled()
+      expect(storeA.searchLex).toHaveBeenCalledTimes(2)
+      expect(storeB.searchLex).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not close one directory index while another directory is searched', async () => {
+      const createStore = await mockedCreateStore()
+      const storeA = newQmdStore()
+      const storeB = newQmdStore()
+      let finishUpdateA!: () => void
+      storeA.update.mockReturnValue(new Promise<void>((resolve) => (finishUpdateA = resolve)))
+      createStore.mockResolvedValueOnce(storeA).mockResolvedValueOnce(storeB)
+      const strategy = new QmdSearchStrategy()
+
+      const searchA = strategy.search(storageAt(join(tempDir, 'memory', 'a')), 'query one')
+      await vi.waitFor(() => expect(storeA.update).toHaveBeenCalled())
+      await strategy.search(storageAt(join(tempDir, 'memory', 'b')), 'query two')
+      finishUpdateA()
+      await searchA
+
+      expect(storeA.close).not.toHaveBeenCalled()
+      expect(storeA.searchLex).toHaveBeenCalledWith('query one')
+    })
+
+    it('opens a directory once when a second search arrives while the first open is in flight', async () => {
+      const createStore = await mockedCreateStore()
+      let finishOpen!: (store: typeof mockQmdStore) => void
+      createStore.mockReturnValueOnce(new Promise((resolve) => (finishOpen = resolve)))
+      const strategy = new QmdSearchStrategy()
+      const storage = storageAt(join(tempDir, 'memory', 'a'))
+
+      const first = strategy.search(storage, 'one')
+      // Start the second search while the first createStore call is pending.
+      await vi.waitFor(() => expect(createStore).toHaveBeenCalled())
+      const second = strategy.search(storage, 'two')
+      finishOpen(newQmdStore())
+      await Promise.all([first, second])
+
+      expect(createStore).toHaveBeenCalledTimes(1)
+    })
+
+    it('closes every open index', async () => {
+      const createStore = await mockedCreateStore()
+      const storeA = newQmdStore()
+      const storeB = newQmdStore()
+      createStore.mockResolvedValueOnce(storeA).mockResolvedValueOnce(storeB)
+      const strategy = new QmdSearchStrategy()
+      await strategy.search(storageAt(join(tempDir, 'memory', 'a')), 'query')
+      await strategy.search(storageAt(join(tempDir, 'memory', 'b')), 'query')
+
+      await strategy.close()
+
+      expect(storeA.close).toHaveBeenCalledTimes(1)
+      expect(storeB.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries opening a directory after a failed open', async () => {
+      const createStore = await mockedCreateStore()
+      createStore.mockRejectedValueOnce(new Error('disk full'))
+      const strategy = new QmdSearchStrategy()
+      const storage = storageAt(join(tempDir, 'memory', 'a'))
+
+      await expect(strategy.search(storage, 'query')).rejects.toThrow('disk full')
+      await strategy.search(storage, 'query')
+
+      expect(createStore).toHaveBeenCalledTimes(2)
+    })
+
+    it('throws when an explicit dbPath is used with a second directory', async () => {
+      const createStore = await mockedCreateStore()
+      const dbPath = join(tempDir, 'index.sqlite')
+      const storageA = storageAt(join(tempDir, 'memory', 'a'))
+      const storageB = storageAt(join(tempDir, 'memory', 'b'))
+      const strategy = new QmdSearchStrategy({ dbPath })
+      await strategy.search(storageA, 'query')
+
+      await expect(strategy.search(storageB, 'query')).rejects.toThrow(
+        `QmdSearchStrategy dbPath '${dbPath}' already indexes '${storageA.baseDir}' and cannot also index '${storageB.baseDir}'`
+      )
+      await strategy.search(storageA, 'query')
+      expect(createStore).toHaveBeenCalledTimes(1)
+    })
   })
 })

@@ -6,6 +6,11 @@ on:
       ref:
         required: true
         type: string
+      local-strands-py:
+        description: 'Run unit tests against the checked-out strands-py instead of the published strands-agents.'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   unit-test:
@@ -42,6 +47,17 @@ jobs:
 
       - name: Install package with dev extras
         run: pip install --no-cache-dir -e '.[dev]'
+
+      - name: Install local strands-py
+        if: inputs.local-strands-py
+        shell: bash
+        env:
+          # A shallow clone has no python/v* tag to derive from, so pin a version inside harness-py's
+          # strands-agents range. hatch-vcs ignores the per-dist `_FOR_<NAME>` form of this variable.
+          SETUPTOOLS_SCM_PRETEND_VERSION: '1.999.0'
+        run: |
+          pip install --no-cache-dir -e '.[dev]' -e '../strands-py[otel]'
+          python -c "import pathlib, strands; p = pathlib.Path(strands.__file__).resolve(); assert pathlib.Path('../strands-py').resolve() in p.parents, p; print('strands from', p)"
 
       - name: Run unit tests
         run: pytest

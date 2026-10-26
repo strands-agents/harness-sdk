@@ -77,9 +77,9 @@ describe('resolveMemory', () => {
     expect(extractionModel(manager)?.getConfig().modelId).toBe('us.amazon.nova-lite-v1:0')
   })
 
-  it('injects memory on every turn, not only on a fresh user ask', async () => {
+  it('leaves the injection trigger at the SDK default (fresh user asks)', async () => {
     const manager = await resolveMemory({ model: DEFAULT, dir: makeTempDir() })
-    expect(injectionTrigger(manager)).toBe('everyTurn')
+    expect(injectionTrigger(manager)).toBeUndefined()
   })
 
   it('builds a recall-only store (searchable, no writes, no extraction) when writable is false', async () => {
@@ -89,7 +89,7 @@ describe('resolveMemory', () => {
     expect(store.writable).toBe(false)
     expect(manager.getTools().map((tool) => tool.name)).toContain('search_memory')
     expect(extractionModel(manager)).toBeUndefined()
-    expect(injectionTrigger(manager)).toBe('everyTurn')
+    expect(injectionTrigger(manager)).toBeUndefined()
   })
 
   it('manages consumer-supplied stores instead of the default file store', async () => {

@@ -148,33 +148,39 @@ class LocalAgent(Protocol):
 
 
 class Limits(TypedDict, total=False):
-    """Per-invocation budget caps for the agent loop.
+    """Limits for the request a top-level ``invoke_async`` / ``stream_async`` call starts.
 
-    Each cap, when set, bounds a single ``invoke_async`` / ``stream_async`` call only;
-    counters are not cumulative across reuses of the same agent. Caps are checked at
-    the top of each loop iteration, so tools requested by the previous turn always run
-    to completion before a cap fires and ``agent.messages`` remains in a reinvokable state.
+    They apply to this agent's loop and to every nested call: agents passed as tools, and
+    any Graph or Swarm you pass the request's ``invocation_context`` to (Graph and Swarm have
+    no ``limits`` option of their own). An agent run by a hand-written tool joins only when
+    the tool forwards ``tool_context.invocation_context`` as ``invocation_context``; otherwise
+    it runs standalone under its own limits. A nested call can also set its own ``limits``:
+    it stops at whichever limit is reached first, its own or the request's.
 
-    Each cap, when set, must be a positive ``int``. Omit any field (or pass ``limits=None``)
-    for no limit on that dimension.
+    Auxiliary calls (summarization, routing, memory extraction, steering, HITL, goal judging,
+    web-fetch) add their tokens to the request's usage, but no limits apply to them. The same
+    holds for an agent that an extension point (a conversation manager, context or routing
+    strategy, or memory extractor) runs with the ``invocation_context`` it receives, unless the
+    extension point also passes ``limits``. Usage starts from zero on each top-level call; pass
+    ``result.invocation_context`` to a later call to continue on the same limits and usage.
 
-    Priority on simultaneous trip (highest first): ``turns``, ``total_tokens``,
-    ``output_tokens``. The corresponding ``stop_reason`` is ``"limit_turns"``,
-    ``"limit_total_tokens"``, or ``"limit_output_tokens"``.
+    Limits are checked before each turn, so tools requested by the previous turn finish first
+    and ``agent.messages`` stays reinvokable. Each limit, when set, must be a positive ``int``;
+    omit a field (or pass ``limits=None``) for no limit on that dimension.
+
+    Priority when several are reached at once (highest first): ``turns``, ``total_tokens``,
+    ``output_tokens``, with ``stop_reason`` ``"limit_turns"``, ``"limit_total_tokens"``, or
+    ``"limit_output_tokens"``.
 
     Attributes:
-        turns: Maximum number of agent loop iterations (turns). One turn is one model
-            call plus any tool execution that follows. Counted against
-            ``len(metrics.latest_agent_invocation.cycles)``.
-        output_tokens: Maximum cumulative model-generated tokens, summed across every
-            model call in the loop (``metrics.latest_agent_invocation.usage["outputTokens"]``).
-            Distinct from per-call provider-level caps, which bound a single model call's
-            output. Soft cap: a single oversized response can overshoot the budget;
-            checked at turn boundaries, not within an individual model call.
-        total_tokens: Maximum cumulative input + output tokens
-            (``metrics.latest_agent_invocation.usage["totalTokens"]``). Each model call's
-            input includes prior turns, so this counter compounds across the run and
-            approximates total token spend. Soft cap, same caveat as ``output_tokens``.
+        turns: Maximum number of turns. One turn is one model call plus any tool execution
+            that follows.
+        output_tokens: Maximum cumulative model-generated tokens across every model call in
+            the request, unlike a provider's per-call cap. Soft limit: a single oversized
+            response can overshoot it, more so when nested calls run in parallel.
+        total_tokens: Maximum cumulative input + output tokens across every model call in the
+            request. Each model call's input includes prior turns, so this compounds across the
+            run and approximates total token spend. Soft limit, same caveat as ``output_tokens``.
     """
 
     turns: int

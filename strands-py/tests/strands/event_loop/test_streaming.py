@@ -2,10 +2,12 @@ import threading
 import unittest.mock
 from typing import cast
 
+import pydantic
 import pytest
 
 import strands
 import strands.event_loop
+from strands.agent.invocation_context import _create_invocation_context
 from strands.types._events import ModelStopReason, TypedEvent
 from strands.types.content import Message, Messages
 from strands.types.streaming import (
@@ -1268,6 +1270,53 @@ async def test_process_stream_redacted(response, exp_events, agenerator, alist):
     assert non_typed_events == []
 
 
+_USAGE_METADATA = {
+    "metadata": {"usage": {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}, "metrics": {"latencyMs": 0}}
+}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_adds_the_call_usage_to_the_invocation_context(agenerator, alist):
+    invocation_context = _create_invocation_context()
+    response = [{"messageStart": {"role": "assistant"}}, {"messageStop": {"stopReason": "end_turn"}}, _USAGE_METADATA]
+
+    await alist(
+        strands.event_loop.streaming.process_stream(agenerator(response), invocation_context=invocation_context)
+    )
+
+    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_adds_the_usage_when_the_consumer_stops_at_the_stop_event(agenerator):
+    invocation_context = _create_invocation_context()
+    response = [{"messageStart": {"role": "assistant"}}, {"messageStop": {"stopReason": "end_turn"}}, _USAGE_METADATA]
+    stream = strands.event_loop.streaming.process_stream(agenerator(response), invocation_context=invocation_context)
+
+    async for event in stream:
+        if "stop" in event:
+            break
+    await stream.aclose()
+
+    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_adds_nothing_to_the_invocation_context_when_the_stream_raises(alist):
+    invocation_context = _create_invocation_context()
+
+    async def failing_stream():
+        yield _USAGE_METADATA
+        raise RuntimeError("stream failed")
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await alist(
+            strands.event_loop.streaming.process_stream(failing_stream(), invocation_context=invocation_context)
+        )
+
+    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+
+
 def _get_message_from_event(event: ModelStopReason) -> Message:
     return cast(Message, event["stop"][1])
 
@@ -1890,3 +1939,24 @@ async def test_stream_messages_forwards_cancel_signal_to_model(agenerator, alist
     await alist(stream)
 
     assert mock_model.stream.call_args.kwargs["cancel_signal"] is cancel_signal
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_forwards_structured_output_model_to_model(agenerator, alist):
+    class Answer(pydantic.BaseModel):
+        value: str
+
+    mock_model = unittest.mock.MagicMock()
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+
+    stream = strands.event_loop.streaming.stream_messages(
+        mock_model,
+        system_prompt=None,
+        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
+        tool_specs=None,
+        structured_output_model=Answer,
+    )
+
+    await alist(stream)
+
+    assert mock_model.stream.call_args.kwargs["structured_output_model"] is Answer

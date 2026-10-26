@@ -18,7 +18,8 @@ import base64
 import re
 import shlex
 import time
-from typing import Any
+import weakref
+from typing import Any, Literal
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -85,6 +86,47 @@ def _curl_command(url: str) -> str:
     )
 
 
+def _powershell_curl_command(url: str) -> str:
+    # The same contract for a sandbox whose shell is PowerShell (the local environment on Windows). ``curl.exe``
+    # because plain ``curl`` is an Invoke-WebRequest alias there; the body is truncated and base64-encoded in
+    # .NET. Errors are written through the console handle, not PowerShell's own error stream, which is
+    # CLIXML-wrapped when stderr is a pipe; the ``try`` also turns a missing curl.exe into a plain exit 127.
+    # ``-LiteralPath`` because ``%TEMP%`` may contain wildcard characters.
+    quoted = "'" + url.replace("'", "''") + "'"
+    return "\n".join(
+        [
+            '$f = Join-Path ([IO.Path]::GetTempPath()) "strands-web-fetch-$([guid]::NewGuid())"',
+            "$s = 127",
+            "try {",
+            f"  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time {_TIMEOUT} "
+            f"-A '{_USER_AGENT}' -o $f --stderr \"$f.err\" -w '%{{content_type}}\\n%{{url_effective}}\\n' {quoted}",
+            "  $s = $LASTEXITCODE",
+            "  if ($s -eq 0) {",
+            "    $in = [IO.File]::OpenRead($f)",
+            f"    try {{ $b = (New-Object IO.BinaryReader $in).ReadBytes([Math]::Min($in.Length, {_MAX_BYTES})) }}"
+            " finally { $in.Dispose() }",
+            "    [Convert]::ToBase64String($b)",
+            '  } elseif (Test-Path -LiteralPath "$f.err") { [Console]::Error.Write([IO.File]::ReadAllText("$f.err")) }',
+            "} catch { if ($s -eq 0) { $s = 1 }; [Console]::Error.Write($_.Exception.Message) }",
+            'Remove-Item -Force -LiteralPath $f, "$f.err" -ErrorAction SilentlyContinue',
+            "exit $s",
+        ]
+    )
+
+
+# The Sandbox contract names no shell dialect, so the only check that holds for every sandbox is to ask: PowerShell
+# prints its edition (``Desktop`` or ``Core``), ``sh`` expands the unset variable to an empty line.
+_SHELL_PROBE = 'echo "${PSEdition}"'
+_shells: weakref.WeakKeyDictionary[Sandbox, Literal["sh", "powershell"]] = weakref.WeakKeyDictionary()
+
+
+async def _shell(sandbox: Sandbox) -> Literal["sh", "powershell"]:
+    if sandbox not in _shells:
+        result = await sandbox.execute(_SHELL_PROBE, timeout=10)
+        _shells[sandbox] = "powershell" if result.stdout.strip() in ("Desktop", "Core") else "sh"
+    return _shells[sandbox]
+
+
 def _decode(data: bytes, content_type: str) -> str:
     match = re.search(r"charset=[\"']?([\w.-]+)", content_type, re.IGNORECASE)
     try:
@@ -101,7 +143,8 @@ def _to_text(data: bytes, content_type: str, resolved_url: str, url: str) -> tup
 
 async def _fetch_curl(sandbox: Sandbox, url: str) -> tuple[str, str]:
     """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails."""
-    result = await sandbox.execute(_curl_command(url), timeout=_TIMEOUT + 5)
+    command = _powershell_curl_command(url) if await _shell(sandbox) == "powershell" else _curl_command(url)
+    result = await sandbox.execute(command, timeout=_TIMEOUT + 5)
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")
     # Two header lines (the content-type line is empty when the header is absent), then the base64 body,

@@ -17,6 +17,10 @@ import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
 import { CitationsBlock } from '../../types/citations.js'
+import { z } from 'zod'
+import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
+import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
+import type { StreamOptions } from '../model.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -141,9 +145,9 @@ describe('AnthropicModel', () => {
     })
 
     it('auto-populates contextWindowLimit from model ID lookup', () => {
-      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'claude-sonnet-4-20250514' })
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         maxTokens: 64_000,
         contextWindowLimit: 1_000_000,
       })
@@ -161,11 +165,11 @@ describe('AnthropicModel', () => {
     it('does not override explicit contextWindowLimit', () => {
       const provider = new AnthropicModel({
         apiKey: 'sk-test',
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         contextWindowLimit: 100_000,
       })
       expect(provider.getConfig()).toStrictEqual({
-        modelId: 'claude-sonnet-4-20250514',
+        modelId: 'claude-sonnet-4-6',
         maxTokens: 64_000,
         contextWindowLimit: 100_000,
       })
@@ -194,15 +198,15 @@ describe('AnthropicModel', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test' })
       expect(provider.getConfig().contextWindowLimit).toBe(1_000_000) // claude-sonnet-4-6 default
 
-      provider.updateConfig({ modelId: 'claude-sonnet-4-20250514' })
-      expect(provider.getConfig().contextWindowLimit).toBe(1_000_000) // claude-sonnet-4-20250514 value
+      provider.updateConfig({ modelId: 'claude-sonnet-4-5-20250929' })
+      expect(provider.getConfig().contextWindowLimit).toBe(200_000) // claude-sonnet-4-5-20250929 value
     })
 
     it('preserves explicit contextWindowLimit when modelId changes', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-test', contextWindowLimit: 50_000 })
       expect(provider.getConfig().contextWindowLimit).toBe(50_000)
 
-      provider.updateConfig({ modelId: 'claude-sonnet-4-20250514' })
+      provider.updateConfig({ modelId: 'claude-sonnet-4-6' })
       expect(provider.getConfig().contextWindowLimit).toBe(50_000) // preserved
     })
   })
@@ -507,6 +511,294 @@ describe('AnthropicModel', () => {
 
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
+    })
+  })
+
+  describe('stale thinking recovery', () => {
+    const bindingMessage =
+      '400 messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.'
+    const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
+    const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+    const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
+      let calls = 0
+      const stream = vi.fn(() =>
+        (async function* () {
+          calls += 1
+          if (calls === 1) throw error
+          if (retryError) throw retryError
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      return { stream, client: { messages: { stream } } as unknown as Anthropic }
+    }
+
+    it('retries once with drop_block and keeps it on for later requests', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({
+        client,
+        modelId: 'm1',
+        betas: ['other-beta'],
+        params: { thinking: { type: 'adaptive' } },
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events[0]).toStrictEqual({ type: 'modelMessageStartEvent', role: 'assistant' })
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('retrying with drop_block'))
+      const expectedOptions = { headers: { 'anthropic-beta': 'other-beta,thinking-binding-controls-2026-08-01' } }
+      expect(stream.mock.calls.map((call: unknown[]) => [(call[0] as any).thinking, call[1]])).toStrictEqual([
+        [{ type: 'adaptive' }, { headers: { 'anthropic-beta': 'other-beta' } }],
+        [dropBlockThinking, expectedOptions],
+      ])
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenCalledTimes(3)
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: dropBlockThinking }), expectedOptions)
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      { name: 'a record', defaultHeaders: { 'anthropic-beta': 'client-beta' }, betas: 'client-beta,' },
+      { name: 'a record with a list value', defaultHeaders: { 'Anthropic-Beta': ['a', 'b'] }, betas: 'a,b,' },
+      {
+        name: 'a Headers instance',
+        defaultHeaders: new Headers({ 'anthropic-beta': 'client-beta' }),
+        betas: 'client-beta,',
+      },
+      { name: 'header tuples', defaultHeaders: [['anthropic-beta', 'client-beta']], betas: 'client-beta,' },
+      { name: 'an undefined value', defaultHeaders: { 'anthropic-beta': undefined }, betas: '' },
+      { name: 'a null value', defaultHeaders: { 'anthropic-beta': null }, betas: '' },
+    ])('keeps betas from client default headers given as $name on the retry', async ({ defaultHeaders, betas }) => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient()
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return client
+      })
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        clientConfig: { defaultHeaders },
+        modelId: 'm1',
+        params: { thinking: { type: 'adaptive' } },
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: dropBlockThinking }), {
+        headers: { 'anthropic-beta': `${betas}thinking-binding-controls-2026-08-01` },
+      })
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a throttle',
+        retryError: Object.assign(new Error('Rate limit exceeded'), { status: 429 }),
+        expected: ModelThrottledError,
+      },
+      {
+        name: 'a context window overflow',
+        retryError: Object.assign(new Error('prompt is too long'), { status: 400 }),
+        expected: ContextWindowOverflowError,
+      },
+    ])('maps $name on the retry to its SDK error', async ({ retryError, expected }) => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient(bindingError, retryError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expected)
+      expect(stream).toHaveBeenCalledTimes(2)
+      warnSpy.mockRestore()
+    })
+
+    it('re-throws a second binding error without retrying again', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient(bindingError, bindingError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledTimes(2)
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a caller-set block_binding',
+        params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
+      },
+      { name: 'no thinking config', params: undefined },
+    ])('re-throws the binding error with $name', async ({ params }) => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('re-throws the binding message on a non-400 error', async () => {
+      const { stream, client } = createRejectingOnceClient(Object.assign(new Error(bindingMessage), { status: 500 }))
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('stops dropping stale thinking after the model changes', async () => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+      await collectIterator(provider.stream(messages))
+
+      provider.updateConfig({ modelId: 'm2' })
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: { type: 'adaptive' } }))
+    })
+  })
+
+  describe('structured output enforcement', () => {
+    /** Builds a 400 the way the SDK does: the message is the JSON-encoded body. */
+    const badRequest = (message: string): Error => {
+      const body = { type: 'error', error: { type: 'invalid_request_error', message } }
+      return Object.assign(new Error(`400 ${JSON.stringify(body)}`), { status: 400, error: body })
+    }
+    const forcedRejection = badRequest('tool_choice: type "tool" and "any" are not supported for this model.')
+    const nativeRejection = badRequest('output_config.format: Extra inputs are not permitted')
+    const bindingError = Object.assign(
+      new Error(
+        '400 messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.'
+      ),
+      { status: 400 }
+    )
+    const schema = z.object({ name: z.string(), age: z.number() })
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Generate a person')] })]
+    const structuredOutputOptions: StreamOptions = {
+      toolSpecs: [
+        { name: 'strands_structured_output', description: 'Output', inputSchema: zodSchemaToJsonSchema(schema) },
+      ],
+      toolChoice: { tool: { name: 'strands_structured_output' } },
+      structuredOutputSchema: schema,
+    }
+
+    /** Creates a client whose stream rejects with each error in turn, then succeeds. */
+    const createRejectingClient = (...errors: Error[]) => {
+      const stream = vi.fn((_request: Anthropic.MessageStreamParams) =>
+        (async function* () {
+          const error = errors.shift()
+          if (error) throw error
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      return { stream, client: { messages: { stream } } as unknown as Anthropic }
+    }
+
+    /** The structured output mechanism a sent Messages request uses. */
+    const mechanismOf = (request: Anthropic.MessageStreamParams): string => {
+      if (request.tool_choice?.type === 'tool') return 'forced'
+      return request.output_config?.format ? 'native' : 'auto'
+    }
+
+    const sentRequests = (
+      stream: ReturnType<typeof createRejectingClient>['stream']
+    ): Anthropic.MessageStreamParams[] => stream.mock.calls.map(([request]) => request)
+    const sentMechanisms = (stream: ReturnType<typeof createRejectingClient>['stream']): string[] =>
+      sentRequests(stream).map(mechanismOf)
+
+    beforeEach(() => {
+      clearStructuredOutputSupport()
+    })
+
+    it.each([
+      { name: 'no rejection', rejections: [], expected: ['forced'] },
+      { name: 'a forced tool choice rejection', rejections: [forcedRejection], expected: ['forced', 'native'] },
+      {
+        name: 'forced and native rejections',
+        rejections: [forcedRejection, nativeRejection],
+        expected: ['forced', 'native', 'auto'],
+      },
+    ])('falls back to the next mechanism after $name and remembers it', async ({ rejections, expected }) => {
+      const { stream, client } = createRejectingClient(...rejections)
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+      expect(sentMechanisms(stream)).toStrictEqual(expected)
+
+      stream.mockClear()
+      await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+      expect(sentMechanisms(stream)).toStrictEqual([expected[expected.length - 1]])
+    })
+
+    it('sends native output with tool_choice none, keeping the tools and other output_config settings', async () => {
+      const { stream, client } = createRejectingClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { output_config: { effort: 'high' } } })
+
+      await collectIterator(provider.stream(messages, { ...structuredOutputOptions, toolChoice: { auto: {} } }))
+
+      const [request] = sentRequests(stream)
+      expect(request?.tool_choice).toStrictEqual({ type: 'none' })
+      expect(request?.output_config).toStrictEqual({
+        effort: 'high',
+        format: { type: 'json_schema', schema: toNativeOutputSchema(zodSchemaToJsonSchema(schema)) },
+      })
+      expect(request?.tools?.map((tool) => tool.name)).toStrictEqual(['strands_structured_output'])
+    })
+
+    it('uses auto tool choice for a schema native output cannot represent', async () => {
+      const { stream, client } = createRejectingClient(forcedRejection)
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+      const recordSchema = z.object({ scores: z.record(z.string(), z.number()) })
+
+      await collectIterator(
+        provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
+      )
+
+      expect(sentMechanisms(stream)).toStrictEqual(['forced', 'auto'])
+      expect(sentRequests(stream)[1]?.tool_choice).toStrictEqual({ type: 'auto' })
+    })
+
+    it('retries with drop_block before trying the next mechanism', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingClient(bindingError, forcedRejection)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { thinking: { type: 'adaptive' } } })
+
+      await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+      expect(
+        sentRequests(stream).map((request) => [mechanismOf(request), 'block_binding' in (request.thinking ?? {})])
+      ).toStrictEqual([
+        ['forced', false],
+        ['forced', true],
+        ['native', true],
+      ])
+      warnSpy.mockRestore()
+    })
+
+    it.each([
+      {
+        name: 'a forced tool choice rejection without a structured output schema',
+        error: forcedRejection,
+        options: { toolChoice: structuredOutputOptions.toolChoice! },
+      },
+      {
+        name: 'an unrelated 400',
+        error: badRequest('something else'),
+        options: structuredOutputOptions,
+      },
+      {
+        name: 'a forced tool choice message on a non-400 error',
+        error: Object.assign(badRequest('tool_choice: type "tool" and "any" are not supported'), { status: 500 }),
+        options: structuredOutputOptions,
+      },
+    ])('re-throws $name without retrying', async ({ error, options }) => {
+      const { stream, client } = createRejectingClient(error)
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(error.message)
+      expect(stream).toHaveBeenCalledOnce()
     })
   })
 

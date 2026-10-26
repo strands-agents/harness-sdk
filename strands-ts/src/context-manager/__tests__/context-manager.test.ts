@@ -194,6 +194,28 @@ describe('ContextManager', () => {
       expect(event.retry).toBe(true)
     })
 
+    it('truncates when a strategy throws', async () => {
+      const messages = Array.from(
+        { length: 10 },
+        (_, i) => new Message({ role: i % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(`msg ${i}`)] })
+      )
+      const strategy = {
+        name: 'failing',
+        apply: async (): Promise<boolean> => {
+          throw new Error('summarizer rejected')
+        },
+      }
+      const cm = new ContextManager({ strategies: [strategy] })
+      const agent = makeMockAgent({ messages, countTokens: async () => 10000, estimateUtilization: () => 1.5 })
+      await cm.initAgent(agent)
+
+      const event = makeOverflowEvent(agent)
+      await invokeTrackedHook(agent, event)
+
+      expect(messages.length).toBeLessThan(10)
+      expect(event.retry).toBe(true)
+    })
+
     it('does not truncate on non-overflow when utilization is below 1.0', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('system')] }),

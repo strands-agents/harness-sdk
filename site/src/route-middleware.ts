@@ -58,7 +58,7 @@ export function filterSidebarByBasePath(entries: SidebarEntry[], basePath: strin
   // group alive in every section.
   const hasBaseMatch = (items: SidebarEntry[]): boolean =>
     items.some((e) =>
-      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false,
+      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false
     )
   const anchored = hasBaseMatch(entries)
 

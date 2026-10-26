@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from strands.storage.in_memory_storage import InMemoryStorage
+from strands.storage.search import StorageSearchResult
+from strands.types.exceptions import StorageError
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 
 
@@ -238,6 +240,66 @@ class TestSearch:
             await custom_store.add(f"Fact number {index}")
         results = await custom_store.search("fact")
         assert len(results) == 2
+
+    @pytest.mark.asyncio
+    async def test_skips_results_whose_read_fails(self):
+        class KeysOnlyStorage:
+            """Custom backend whose search() returns keys without data."""
+
+            async def write(self, key, data):
+                pass
+
+            async def read(self, key):
+                if key.endswith("locked.md"):
+                    raise StorageError(f"Failed to read '{key}'")
+                return b"good entry"
+
+            async def delete(self, key):
+                pass
+
+            async def list(self, query=""):
+                return []
+
+            async def search(self, query):
+                return [
+                    StorageSearchResult(key="memory/keys-only/locked.md", score=2),
+                    StorageSearchResult(key="memory/keys-only/good.md", score=1),
+                ]
+
+        keys_only_store = FileMemoryStore(name="keys-only", storage=KeysOnlyStorage())
+        results = await keys_only_store.search("anything")
+        assert [result.content for result in results] == ["good entry"]
+
+    @pytest.mark.asyncio
+    async def test_fills_max_search_results_when_a_higher_ranked_read_fails(self):
+        class KeysOnlyStorage:
+            """Custom backend whose search() returns keys without data."""
+
+            async def write(self, key, data):
+                pass
+
+            async def read(self, key):
+                if key.endswith("locked.md"):
+                    raise StorageError(f"Failed to read '{key}'")
+                return f"{key} entry".encode()
+
+            async def delete(self, key):
+                pass
+
+            async def list(self, query=""):
+                return []
+
+            async def search(self, query):
+                return [
+                    StorageSearchResult(key="memory/fill/locked.md", score=3),
+                    StorageSearchResult(key="memory/fill/a.md", score=2),
+                    StorageSearchResult(key="memory/fill/b.md", score=1),
+                    StorageSearchResult(key="memory/fill/c.md", score=0.5),
+                ]
+
+        fill_store = FileMemoryStore(name="fill", storage=KeysOnlyStorage(), max_search_results=2)
+        results = await fill_store.search("anything")
+        assert [result.metadata["score"] for result in results] == [2, 1]
 
 
 class TestExtraction:

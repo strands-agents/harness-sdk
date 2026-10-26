@@ -3,6 +3,7 @@ import uuid
 
 import pydantic
 import pytest
+from botocore.exceptions import ClientError
 
 import strands
 from strands import Agent, tool
@@ -237,6 +238,9 @@ def test_invoke_multi_modal_input(streaming_agent, yellow_img):
     assert "yellow" in text
 
 
+_AUDIO_UNSUPPORTED_MESSAGE = "Model does not support audio modality"
+
+
 def test_invoke_audio_input(pineapple_audio):
     model = BedrockModel(
         model_id="mistral.voxtral-small-24b-2507",
@@ -250,7 +254,13 @@ def test_invoke_audio_input(pineapple_audio):
         {"audio": {"format": "mp3", "source": {"bytes": pineapple_audio}}},
     ]
 
-    result = agent(content)
+    try:
+        result = agent(content)
+    except ClientError as error:
+        # A service-side Bedrock rejection, not an SDK defect; the test resumes once Bedrock serves audio again.
+        if _AUDIO_UNSUPPORTED_MESSAGE in str(error):
+            pytest.skip(f"Bedrock rejected audio input: {error}")
+        raise
     text = result.message["content"][0]["text"].lower()
 
     assert "pineapple" in text
@@ -319,7 +329,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
     """Test that messages with reasoningContent are accepted when thinking is explicitly disabled."""
     # First, get a real reasoning response with thinking enabled
     thinking_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "enabled",
@@ -335,7 +345,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
 
     # Now create a model with thinking disabled and use the messages from the thinking session
     disabled_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "disabled",
@@ -532,7 +542,7 @@ def test_prompt_caching_backward_compatibility_no_ttl(quiet_strands_logging):
 class TestCountTokens:
     @pytest.fixture
     def model(self):
-        return BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0", use_native_token_count=True)
+        return BedrockModel(model_id="anthropic.claude-sonnet-4-6", use_native_token_count=True)
 
     @pytest.fixture
     def messages(self):

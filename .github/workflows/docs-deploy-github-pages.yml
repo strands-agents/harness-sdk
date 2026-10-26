@@ -2,6 +2,11 @@ name: "Docs: Deploy to GitHub Pages"
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_changelog_check:
+        description: 'Deploy even if a published release has no changelog entry yet'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,6 +32,27 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Releases must ship with their changelog: merge the open
+      # "docs(changelog): sync release notes" PR first (see CHANGELOG-SYNC.md).
+      - name: Check every release has a changelog entry
+        if: ${{ !inputs.skip_changelog_check }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          missing=0 unverified=0
+          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box; do
+            code=0
+            npm run -s changelog:sync -- --check --source-repo "$repo" || code=$?
+            if [ "$code" = 1 ]; then missing=1; elif [ "$code" != 0 ]; then unverified=1; fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "::error::Merge the open changelog PR before deploying: https://github.com/strands-agents/harness-sdk/pulls?q=is%3Apr+is%3Aopen+head%3Achangelog%2Fsync"
+          fi
+          if [ "$unverified" = 1 ]; then
+            echo "::error::Could not list releases from GitHub; re-run the deploy, or check skip_changelog_check if the API is down."
+          fi
+          [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
       - name: Build CMS
         run: npm run cms:build

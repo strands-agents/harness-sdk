@@ -3,6 +3,7 @@
 from . import agent, models, storage, telemetry, types
 from .agent.agent import Agent
 from .agent.base import AgentBase
+from .agent.invocation_context import InvocationContext, InvocationContextUsage
 from .background_tasks import BackgroundTasksConfig
 from .event_loop._retry import ModelRetryStrategy
 from .interventions import InterventionHandler
@@ -24,6 +25,8 @@ __all__ = [
     "AgentSkills",
     "BackgroundTasksConfig",
     "InterventionHandler",
+    "InvocationContext",
+    "InvocationContextUsage",
     "LocalAgent",
     "agent",
     "models",

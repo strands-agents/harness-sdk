@@ -3,11 +3,13 @@
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from strands import Agent
+from strands.agent.invocation_context import _create_invocation_context
 from strands.models import ClassifierStrategy, ModelRouter, RoutingAttempt, RoutingCandidate
 from strands.models.routing.classifier_strategy import (
     _CLASSIFICATION_OMISSION_MARKER,
@@ -17,6 +19,7 @@ from strands.models.routing.classifier_strategy import (
     _latest_request_text,
 )
 from strands.models.routing.strategy import RoutingContext
+from strands.types.event_loop import Usage
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -28,12 +31,14 @@ class _ClassifierModel(MockedModelProvider):
         output: object | None = None,
         error: Exception | None = None,
         delay: float = 0,
+        usage: Usage | None = None,
     ) -> None:
         super().__init__([])
         self.selected_index = selected_index
         self.output = output
         self.error = error
         self.delay = delay
+        self.usage = usage
         self.calls = 0
         self.prompts: list[Any] = []
         self.system_prompts: list[str] = []
@@ -48,6 +53,8 @@ class _ClassifierModel(MockedModelProvider):
             raise self.error
         output = self.output or output_model(selected_candidate_index=self.selected_index)
         yield {"contentBlockDelta": {"delta": {"text": ""}}}
+        if self.usage is not None:
+            yield {"stop": ("tool_use", {"role": "assistant", "content": []}, self.usage, {"latencyMs": 0})}
         yield {"output": output}
 
 
@@ -479,3 +486,17 @@ def test_constructor_rejects_non_string_system_prompt(system_prompt):
 def test_constructor_rejects_invalid_character_limits(name, value, error_type, match_suffix):
     with pytest.raises(error_type, match=f"{name} {match_suffix}"):
         ClassifierStrategy(_ClassifierModel(), **{name: value})
+
+
+@pytest.mark.asyncio
+async def test_adds_the_classifier_usage_to_the_request_total_even_when_the_request_limit_is_used_up():
+    classifier = _ClassifierModel(selected_index=1, usage={"inputTokens": 4, "outputTokens": 5, "totalTokens": 9})
+    strategy = ClassifierStrategy(classifier)
+    router = ModelRouter(models=[_candidate("first"), _candidate("second")], strategy=strategy)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 5
+
+    selected = await strategy.select(replace(_context(router), invocation_context=request))
+
+    assert selected is router.candidates[1]
+    assert request.usage == {"turns_taken": 5, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}

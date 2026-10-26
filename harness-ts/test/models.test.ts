@@ -203,8 +203,8 @@ describe('resolveModel', () => {
   })
 
   it('rejects a level the provider does not support', async () => {
-    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by this provider')
-    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by model gemini-3.5-flash')
+    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by model gpt-5.6-sol')
   })
 
   it('rejects a level the model does not support', async () => {
@@ -226,6 +226,26 @@ describe('resolveModel', () => {
     expect(model).toBeInstanceOf(Model)
     const params = model.getConfig().params as { thinkingConfig: { thinkingLevel: string } }
     expect(params.thinkingConfig.thinkingLevel).toBe('high')
+  })
+
+  it.each([
+    ['google/gemini-4-argon', 'minimal', 'Supported levels: low, medium, high'],
+    ['google/gemini-3.6-flash', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'low', 'Supported levels: minimal, high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'auto', 'high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'off', 'none'],
+    ['bedrock-mantle/google.gemma-4-31b', 'low', 'Supported levels: high'],
+  ])('resolves the per-model levels for %s with effort %s', async (model, effort, expected) => {
+    if (expected.startsWith('Supported levels')) {
+      await expect(resolve(model, effort)).rejects.toThrow(`not supported by model ${model.split('/')[1]}. ${expected}`)
+      return
+    }
+    const params = (await resolve(model, effort)).getConfig().params as {
+      reasoning?: { effort: string }
+      thinkingConfig?: { thinkingLevel: string }
+    }
+    expect(params.reasoning?.effort ?? params.thinkingConfig?.thinkingLevel).toBe(expected)
   })
 
   it('uses the google model id directly', async () => {
@@ -408,7 +428,9 @@ describe('resolveModel', () => {
   })
 
   it('rejects an unsupported thinking level for bedrock-mantle', async () => {
-    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow(
+      'not supported by model openai.gpt-oss-120b'
+    )
   })
 
   it('adds the Bedrock Web Search tool for bedrock-mantle web_search', async () => {

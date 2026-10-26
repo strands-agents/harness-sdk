@@ -1865,6 +1865,64 @@ async def test_stream_generator_close_does_not_set_caller_cancel_signal(bedrock_
 # ---- structured output
 
 
+@pytest.mark.parametrize("family", ["anthropic", "openai"])
+@pytest.mark.asyncio
+async def test_agent_structured_output_retry_limits_tools(bedrock_client: unittest.mock.Mock, family: str) -> None:
+    # The agent must isolate the output tool for Invoke endpoints without native schema enforcement (#1217).
+    class Person(pydantic.BaseModel):
+        name: str
+
+    if family == "anthropic":
+        responses = [
+            {"content": [{"type": "text", "text": "Ada"}], "stop_reason": "end_turn"},
+            {
+                "content": [{"type": "tool_use", "id": "output", "name": "Person", "input": {"name": "Ada"}}],
+                "stop_reason": "tool_use",
+            },
+        ]
+        params = {"tool_choice": {"type": "auto"}}
+    else:
+        responses = [
+            {"choices": [{"message": {"content": "Ada"}, "finish_reason": "stop"}]},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "output",
+                                    "type": "function",
+                                    "function": {"name": "Person", "arguments": '{"name":"Ada"}'},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+        ]
+        params = {"tool_choice": "auto"}
+    bedrock_client.invoke_model.side_effect = [
+        {"body": unittest.mock.Mock(read=unittest.mock.Mock(return_value=json.dumps(response).encode()))}
+        for response in responses
+    ]
+    model = BedrockInvokeModel(model_id=IMPORTED_ID, model_family=family, streaming=False, params=params)
+    agent = strands.Agent(model=model, tools=[string_length], callback_handler=None)
+
+    result = await agent.invoke_async("Return Ada's name.", structured_output_model=Person)
+
+    assert result.structured_output == Person(name="Ada")
+    requests = [json.loads(call.kwargs["body"]) for call in bedrock_client.invoke_model.call_args_list]
+    tru_tool_names = [
+        [spec["name"] if family == "anthropic" else spec["function"]["name"] for spec in request["tools"]]
+        for request in requests
+    ]
+    exp_tool_names = [[string_length.tool_name, Person.__name__], [Person.__name__]]
+    assert tru_tool_names == exp_tool_names
+    assert model.get_config()["params"] == params
+
+
 @pytest.mark.parametrize("thinking", [None, {"type": "enabled", "budget_tokens": 1024}])
 @pytest.mark.parametrize("cancel_after_stop", [True, False])
 @pytest.mark.asyncio

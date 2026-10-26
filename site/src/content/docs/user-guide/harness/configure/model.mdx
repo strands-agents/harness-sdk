@@ -152,7 +152,8 @@ it once regardless of provider:
 
 A level a provider does not accept fails at construction rather than mid-request. Some
 providers accept finer levels (for example `minimal` or `xhigh`); Strands harness validates against
-the resolved provider's own set, so use the levels that provider documents.
+the resolved provider's set, and the model's where levels differ by model (Bedrock, bedrock-mantle, Gemini), so use
+the levels the provider documents for your model.
 
 Reasoning does not apply to a pre-built `Model` instance: configure reasoning on the
 instance itself when you pass one.

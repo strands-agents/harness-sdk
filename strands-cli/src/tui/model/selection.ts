@@ -7,7 +7,19 @@ import { providerModelExists, type ProviderModelDiscovery } from '../provider/di
 
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
-const GOOGLE_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
+const GOOGLE_EFFORTS = ['low', 'medium', 'high'] as const
+const GOOGLE_MINIMAL_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
+// Per-model levels by provider; mirrors MODEL_LEVELS in harness-ts src/models.ts.
+const MODEL_EFFORTS: Record<string, [string, readonly string[]][]> = {
+  google: [
+    ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
+    ['gemini-3.6-flash', GOOGLE_MINIMAL_EFFORTS],
+    ['gemini-3.5-flash', GOOGLE_MINIMAL_EFFORTS],
+    ['gemini-3-flash-preview', GOOGLE_MINIMAL_EFFORTS],
+    ['gemini-robotics-er-2-preview', GOOGLE_MINIMAL_EFFORTS],
+  ],
+  'bedrock-mantle': [['google.gemma-4-', ['none', 'high']]],
+}
 const BEDROCK_GPT_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_GPT_OSS_EFFORTS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -123,6 +135,10 @@ function effortLevels(modelId: string): readonly string[] {
   const target = resolveModelTarget(modelId)
   if (!supportsThinking(target.specifier)) {
     return []
+  }
+  const modelEfforts = MODEL_EFFORTS[target.provider]?.find(([prefix]) => target.modelId.startsWith(prefix))?.[1]
+  if (modelEfforts) {
+    return modelEfforts
   }
   if (target.provider === 'anthropic') {
     return CLAUDE_EFFORTS

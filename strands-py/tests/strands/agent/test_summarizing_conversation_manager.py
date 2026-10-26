@@ -8,6 +8,10 @@ from strands.agent.conversation_manager.summarizing_conversation_manager import 
     DEFAULT_SUMMARIZATION_PROMPT,
     SummarizingConversationManager,
 )
+from strands.agent.invocation_context import (
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+)
 from strands.hooks.events import BeforeModelCallEvent
 from strands.hooks.registry import HookRegistry
 from strands.models.model import Model
@@ -27,6 +31,13 @@ async def _mock_model_stream(response_text):
     yield {"contentBlockDelta": {"delta": {"text": response_text}}}
     yield {"contentBlockStop": {}}
     yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+async def _mock_model_stream_with_usage(response_text, usage):
+    """Async generator for a text response that also reports token usage."""
+    async for event in _mock_model_stream(response_text):
+        yield event
+    yield {"metadata": {"usage": usage, "metrics": {"latencyMs": 0}}}
 
 
 async def _mock_model_stream_error(error):
@@ -946,3 +957,56 @@ def test_proactive_compression_swallows_errors():
     # Should not throw — proactive compression is best-effort
     registry.invoke_callbacks(event)
     assert len(agent.messages) == 20
+
+
+def test_summarization_usage_joins_the_request_total_even_when_the_request_limit_is_used_up():
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=2)
+    agent = MagicMock()
+    agent.messages = [
+        {"role": "user", "content": [{"text": f"Message {i}"}]}
+        if i % 2 == 0
+        else {"role": "assistant", "content": [{"text": f"Response {i}"}]}
+        for i in range(20)
+    ]
+    agent.model = MagicMock()
+    agent.model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_with_usage(
+            "Summary of conversation", {"inputTokens": 4, "outputTokens": 5, "totalTokens": 9}
+        )
+    )
+    agent.aux_model = agent.model
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 5
+
+    manager.reduce_context(
+        agent,
+        e=ContextWindowOverflowException("overflow"),
+        invocation_context=_create_auxiliary_invocation_context(request),
+    )
+
+    assert agent.messages[0]["content"] == [{"text": "Summary of conversation"}]
+    assert request.usage == {"turns_taken": 5, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}
+
+
+def test_summarization_agent_path_joins_the_request():
+    summary_agent = MagicMock()
+    summary_agent.tool_names = []
+    summary_agent.messages = []
+    summary_agent.return_value.message = {"role": "assistant", "content": [{"text": "Agent summary"}]}
+    manager = SummarizingConversationManager(
+        summary_ratio=0.5, preserve_recent_messages=2, summarization_agent=summary_agent
+    )
+    agent = MagicMock()
+    agent.messages = [
+        {"role": "user", "content": [{"text": f"Message {i}"}]}
+        if i % 2 == 0
+        else {"role": "assistant", "content": [{"text": f"Response {i}"}]}
+        for i in range(20)
+    ]
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 5
+    handed = _create_auxiliary_invocation_context(request)
+
+    manager.reduce_context(agent, e=ContextWindowOverflowException("overflow"), invocation_context=handed)
+
+    assert summary_agent.call_args.kwargs == {"invocation_context": handed}

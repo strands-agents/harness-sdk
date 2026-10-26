@@ -1,14 +1,23 @@
 """Tests for the subagent tool: schema derivation, context modes, interrupts, and safety."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
+import strands
+from strands.agent.agent import Agent
+from strands.agent.invocation_context import _create_invocation_context
 from strands.agent.state import AgentState
+from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+from strands.multiagent._agent_tool_streamer import _INTERRUPTED_TURNS_KEY
 from strands.multiagent.spec import Choice, Fixed, Inherit, Option, Preset
+from strands.session.file_session_manager import FileSessionManager
+from strands.types.event_loop import _limit_stop_message
 from strands.vended_tools.subagent import make_subagent
 from strands.vended_tools.subagent.subagent import _CONTEXT_PREAMBLE, _DEPTH_STATE_KEY
 from strands.vended_tools.subagent.types import GENERALIST
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 class _FakeResult:
@@ -30,16 +39,18 @@ class _FakeChild:
         self.prompts: list = []
         self.invocation_states: list = []
         self.cancel_signals: list = []
+        self.invocation_contexts: list = []
         self.state = AgentState()
         self._interrupt_state = SimpleNamespace(activated=activated, interrupts={})
         self.cancel_signal = threading.Event()
         if cancel_signal_set:
             self.cancel_signal.set()
 
-    async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
+    async def stream_async(self, prompt, invocation_state=None, cancel_signal=None, invocation_context=None):
         self.prompts.append(prompt)
         self.invocation_states.append(invocation_state)
         self.cancel_signals.append(cancel_signal)
+        self.invocation_contexts.append(invocation_context)
         yield {"result": self._results.pop(0)}
 
 
@@ -361,23 +372,99 @@ def test_resolve_context_edge_cases():
 # -- Interrupts, errors, depth ------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_interrupt_propagates_and_resumes():
-    interrupt = SimpleNamespace(id="i1", response=None)
-    first_result = _FakeResult(stop_reason="interrupt", interrupts=[interrupt])
-    child = _FakeChild(first_result, _FakeResult("resumed"), activated=True)
+def _tool_use_message(tool_use_id, name, tool_input):
+    return {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}}],
+    }
 
-    parent = SimpleNamespace(state=AgentState(), messages=[])
-    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
 
-    tool_use = {"toolUseId": "t1", "name": "subagent", "input": {"task": "x"}}
-    events = [event async for event in tool.stream(tool_use, {"agent": parent})]
-    assert events[-1].interrupts == [interrupt]
+def _text_message(text):
+    return {"role": "assistant", "content": [{"text": text}]}
 
-    interrupt.response = "go ahead"
-    child._interrupt_state.interrupts = {"i1": interrupt}
-    events = [event async for event in tool.stream(tool_use, {"agent": parent})]
-    assert _result(events)["content"][0]["text"] == "resumed"
+
+@pytest.fixture
+def confirming_parent(tmp_path):
+    """Build a parent that delegates a confirm-guarded action, sharing one session across rebuilds."""
+    executions = []
+
+    @strands.tool
+    def dangerous_action(target: str) -> str:
+        """Perform an action that requires confirmation."""
+        executions.append(target)
+        return f"done: {target}"
+
+    class ConfirmHook(HookProvider):
+        def register_hooks(self, registry: HookRegistry, **kwargs) -> None:
+            registry.add_callback(BeforeToolCallEvent, self._confirm)
+
+        def _confirm(self, event: BeforeToolCallEvent) -> None:
+            if event.interrupt("confirm", reason="confirm?") != "APPROVE":
+                event.cancel_tool = "not approved"
+
+    def build(child_responses, parent_responses):
+        child_model = MockedModelProvider(child_responses)
+        tool = make_subagent(
+            builder=lambda spec: Agent(
+                model=child_model, tools=[dangerous_action], hooks=[ConfirmHook()], callback_handler=None
+            ),
+            presets={"generalist": GENERALIST},
+        )
+        return Agent(
+            model=MockedModelProvider(parent_responses),
+            tools=[tool],
+            callback_handler=None,
+            session_manager=FileSessionManager("s1", storage_dir=str(tmp_path)),
+        )
+
+    def interrupted():
+        parent = build(
+            [_tool_use_message("c1", "dangerous_action", {"target": "prod"}), _text_message("child done")],
+            [_tool_use_message("t1", "subagent", {"task": "do it"}), _text_message("parent done")],
+        )
+        result = parent("go")
+        assert result.stop_reason == "interrupt"
+        return parent, result.interrupts[0].id
+
+    return build, interrupted, executions
+
+
+def _answer(interrupt_id):
+    return [{"interruptResponse": {"interruptId": interrupt_id, "response": "APPROVE"}}]
+
+
+def test_interrupt_resumes_after_parent_is_rebuilt(confirming_parent):
+    build, interrupted, executions = confirming_parent
+    interrupted_parent, interrupt_id = interrupted()
+    assert interrupt_id.startswith("v1:subagent:t1:")
+    assert set(interrupted_parent._interrupt_state.context[_INTERRUPTED_TURNS_KEY]) == {"t1"}
+
+    # Process boundary: every agent is rebuilt and only the session survives.
+    parent = build([_text_message("child done")], [_text_message("parent done")])
+    result = parent(_answer(interrupt_id))
+
+    assert str(result).strip() == "parent done"
+    assert executions == ["prod"]
+    assert parent.messages[-2]["content"][0]["toolResult"]["content"] == [{"text": "child done\n"}]
+
+
+def test_builder_failure_on_resume_raises_the_interrupt_again_and_keeps_the_turn(confirming_parent):
+    _, interrupted, executions = confirming_parent
+    parent, interrupt_id = interrupted()
+    tool = parent.tool_registry.registry["subagent"]
+    builder = tool._builder
+    tool._builder = Mock(side_effect=ConnectionError("mcp down"))
+
+    result = parent(_answer(interrupt_id))
+
+    assert [(i.id, i.response) for i in result.interrupts] == [(interrupt_id, None)]
+    assert set(parent._interrupt_state.context[_INTERRUPTED_TURNS_KEY]) == {"t1"}
+
+    tool._builder = builder
+    result = parent(_answer(interrupt_id))
+
+    assert str(result).strip() == "parent done"
+    assert executions == ["prod"]
 
 
 @pytest.mark.asyncio
@@ -458,7 +545,7 @@ async def test_cancel_signal_prefers_tool_context():
     tool_use = {"toolUseId": "t1", "name": "subagent", "input": {"task": "x"}}
 
     # With _tool_context → uses its signal.
-    ctx = SimpleNamespace(cancel_signal="ctx-sig")
+    ctx = SimpleNamespace(cancel_signal="ctx-sig", invocation_context=None)
     [e async for e in tool.stream(tool_use, {"agent": parent}, _tool_context=ctx)]
     assert child.cancel_signals[0] == "ctx-sig"
 
@@ -474,12 +561,12 @@ async def test_no_result_from_child_yields_error():
         state = AgentState()
         _interrupt_state = SimpleNamespace(activated=False, interrupts={})
 
-        async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
+        async def stream_async(self, prompt, invocation_state=None, cancel_signal=None, invocation_context=None):
             yield {"data": "not a result"}
 
     tool = make_subagent(builder=lambda spec: _EmptyChild(), presets={"generalist": GENERALIST})
     result = _result(await _events(tool, {"task": "x"}))
-    assert result["status"] == "error" and "no result" in result["content"][0]["text"].lower()
+    assert result["status"] == "error" and result["content"][0]["text"] == "Subagent did not produce a result."
 
 
 @pytest.mark.asyncio
@@ -536,3 +623,47 @@ async def test_render_context_last_n():
     assert "first" not in prompt
     assert "second" not in prompt
     assert "third" in prompt
+
+
+# -- Request-wide invocation context ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_joins_the_request_of_the_tool_call():
+    child = _FakeChild(_FakeResult("done"))
+    invocation_context = _create_invocation_context()
+    tool_context = SimpleNamespace(cancel_signal=None, invocation_context=invocation_context)
+
+    await _events(make_subagent(builder=lambda spec: child), {"task": "x"}, _tool_context=tool_context)
+
+    assert child.invocation_contexts == [invocation_context]
+
+
+@pytest.mark.asyncio
+async def test_run_adds_child_model_usage_to_the_request_usage():
+    child = Agent(
+        model=MockedModelProvider(
+            [{"role": "assistant", "content": [{"text": "child done"}]}],
+            [{"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}],
+        ),
+        callback_handler=None,
+    )
+    invocation_context = _create_invocation_context({"turns": 5})
+    tool_context = SimpleNamespace(cancel_signal=None, invocation_context=invocation_context)
+
+    result = _result(
+        await _events(make_subagent(builder=lambda spec: child), {"task": "x"}, _tool_context=tool_context)
+    )
+
+    assert result["content"][0]["text"].strip() == "child done"
+    assert invocation_context.usage == {"turns_taken": 1, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+async def test_run_reports_a_child_stopped_by_a_limit_as_an_error():
+    child = _FakeChild(_FakeResult("partial", stop_reason="limit_turns"))
+
+    result = _result(await _events(make_subagent(builder=lambda spec: child), {"task": "x"}))
+
+    assert result["status"] == "error"
+    assert result["content"][0]["text"] == _limit_stop_message("subagent", "limit_turns")

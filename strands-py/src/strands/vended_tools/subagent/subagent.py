@@ -12,9 +12,13 @@ import copy
 import logging
 import re
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ...agent.conversation_manager.compression.context_compression import find_valid_trim_point
+from ...multiagent._agent_tool_streamer import (
+    _AgentToolStreamer,
+    _ChildAgentAdapter,
+)
 from ...multiagent.spec import (
     AgentBuilder,
     AgentSpec,
@@ -43,6 +47,7 @@ if TYPE_CHECKING:
     from ... import Agent
 
 _DEPTH_STATE_KEY = "strands.subagent_depth"
+
 
 _FORK_PREAMBLE = (
     "The conversation so far is the parent agent's. You are the subagent it delegated to at this "
@@ -107,8 +112,7 @@ def _build_schema(
 class _SubagentTool(AgentTool):
     """Streams a fresh per-call child and propagates its interrupts to the parent for resume.
 
-    If the parent never answers the interrupt, the child ``Agent`` remains referenced here for
-    the lifetime of this tool instance.
+    An interrupted child's turn is stored on the parent, so it resumes after rehydration.
     """
 
     def __init__(
@@ -122,13 +126,12 @@ class _SubagentTool(AgentTool):
     ) -> None:
         super().__init__()
         self._name = name
+        self._adapter = _ChildAgentAdapter(label="Subagent", agent_name=name)
         self._spec = tool_spec
         self._resolve = resolve
         self._context = context
         self._builder = builder
         self._max_depth = max_depth
-        # Children awaiting a resume, keyed by the tool-use id that interrupted.
-        self._pending: dict[str, Agent] = {}
 
     @property
     def tool_name(self) -> str:
@@ -220,24 +223,16 @@ class _SubagentTool(AgentTool):
     def _error_result(self, tool_use_id: str, text: str) -> ToolResultEvent:
         return ToolResultEvent({"toolUseId": tool_use_id, "status": "error", "content": [{"text": text}]})
 
-    def _prepare_child(self, tool_use_id: str, raw: Mapping[str, Any], parent: Agent | None) -> tuple[Agent, Any] | str:
+    def _prepare_child(
+        self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, tool_streamer: _AgentToolStreamer
+    ) -> tuple[Agent, Any] | str | ToolInterruptEvent | ToolResultEvent:
         """Resolve or resume the child agent and its prompt.
 
-        Returns ``(child, prompt)`` on success, or a ``str`` error message on validation failure.
+        Returns ``(child, prompt)`` on success, a ``str`` error message on validation failure, or the
+        event to yield if the child's stored turn could not be resumed.
         """
-        child = self._pending.get(tool_use_id)
-        if child is not None and child._interrupt_state.activated:
-            prompt: Any = [
-                {
-                    "interruptResponse": {
-                        "interruptId": interrupt.id,
-                        "response": interrupt.response,
-                    }
-                }
-                for interrupt in child._interrupt_state.interrupts.values()
-                if interrupt.response is not None
-            ]
-            return child, prompt
+        if tool_streamer.is_resuming():
+            return self._prepare_resume(tool_use, raw, parent, tool_streamer)
 
         stored_depth = None if parent is None else parent.state.get(_DEPTH_STATE_KEY)
         depth = self._max_depth if stored_depth is None else stored_depth
@@ -256,7 +251,7 @@ class _SubagentTool(AgentTool):
         child.state.set(_DEPTH_STATE_KEY, depth - 1)
         ctx_mode, last_messages = self._resolve_context(raw)
 
-        prompt = task
+        prompt: Any = task
         if ctx_mode == "all":
             messages = self._fork_messages(parent, last_messages)
             if messages:
@@ -275,44 +270,47 @@ class _SubagentTool(AgentTool):
 
         return child, prompt
 
-    def _finalize_result(
-        self,
-        tool_use_id: str,
-        tool_use: ToolUse,
-        child: Agent,
-        result: Any,
-        child_cancel_signal_set: bool,
-    ) -> ToolResultEvent | ToolInterruptEvent:
-        """Map the child's result to the terminal event for the parent."""
-        if result is None:
-            self._pending.pop(tool_use_id, None)
-            return self._error_result(tool_use_id, "Subagent produced no result.")
-        if result.stop_reason == "interrupt" and result.interrupts:
-            self._pending[tool_use_id] = child
-            return ToolInterruptEvent(tool_use, list(result.interrupts))
-        # Immediate cancel (signal set) is an abort → error; the stop tool's deferred cancel
-        # never sets the signal and resolves as a normal completion.
-        if result.stop_reason == "cancelled" and child_cancel_signal_set:
-            self._pending.pop(tool_use_id, None)
-            return self._error_result(tool_use_id, "Subagent was cancelled.")
-        self._pending.pop(tool_use_id, None)
-        return ToolResultEvent(
-            {
-                "toolUseId": tool_use_id,
-                "status": "success",
-                "content": [{"text": str(result)}],
-            }
+    def _prepare_resume(
+        self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, tool_streamer: _AgentToolStreamer
+    ) -> tuple[Agent, Any] | ToolInterruptEvent | ToolResultEvent:
+        """Rebuild the interrupted child from the same tool input and restore its stored turn."""
+        spec = self._resolve(raw)
+        build = self._builder or _default_builder(parent)  # type: ignore[arg-type]
+        child: Agent | None = None
+        try:
+            child = build(spec)
+        except Exception as error:
+            logger.warning(
+                "tool_name=<%s>, tool_use_id=<%s> | failed to rebuild interrupted subagent: %s",
+                self._name,
+                tool_use["toolUseId"],
+                error,
+            )
+        resumed = tool_streamer.resume(
+            self._adapter,
+            child,
+            "Subagent did NOT run and the response was NOT applied: its interrupted turn is not available. "
+            "Do not report the delegated task as completed; if it is still needed, delegate it again.",
         )
+        if resumed is None:
+            return tool_streamer.terminal_event(tool_use)
+        # resume() returns an event when there is no child to resume.
+        return cast("Agent", child), resumed
 
     async def stream(self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any) -> ToolGenerator:
         tool_use_id = tool_use["toolUseId"]
         raw = tool_use.get("input", {}) or {}
         parent = invocation_state.get("agent")
+        tool_streamer = _AgentToolStreamer(
+            interrupt_state=getattr(parent, "_interrupt_state", None),
+            tool_use_id=tool_use_id,
+            namespace="v1:subagent",
+        )
 
         try:
-            prepared = self._prepare_child(tool_use_id, raw, parent)
-            if isinstance(prepared, str):
-                yield self._error_result(tool_use_id, prepared)
+            prepared = self._prepare_child(tool_use, raw, parent, tool_streamer)
+            if not isinstance(prepared, tuple):
+                yield self._error_result(tool_use_id, prepared) if isinstance(prepared, str) else prepared
                 return
             child, prompt = prepared
 
@@ -320,21 +318,16 @@ class _SubagentTool(AgentTool):
             cancel_signal = (
                 tool_context.cancel_signal if tool_context is not None else getattr(parent, "cancel_signal", None)
             )
+            # Join the request of the tool call so the child shares its limits and usage.
+            invocation_context = tool_context.invocation_context if tool_context is not None else None
             child_state = {**invocation_state} if isinstance(invocation_state, dict) else invocation_state
-            result = None
-            # Captured before stream_async's finally clears it.
-            child_cancel_signal_set = False
-            async for event in child.stream_async(prompt, invocation_state=child_state, cancel_signal=cancel_signal):
-                if "result" in event:
-                    result = event["result"]
-                    child_signal = getattr(child, "cancel_signal", None)
-                    child_cancel_signal_set = child_signal is not None and child_signal.is_set()
-                else:
-                    yield ToolStreamEvent(tool_use, event)
-
-            yield self._finalize_result(tool_use_id, tool_use, child, result, child_cancel_signal_set)
+            source = child.stream_async(
+                prompt, invocation_state=child_state, cancel_signal=cancel_signal, invocation_context=invocation_context
+            )
+            async for event in tool_streamer.stream(self._adapter, child, source):
+                yield ToolStreamEvent(tool_use, event)
+            yield tool_streamer.terminal_event(tool_use)
         except Exception as exc:
-            self._pending.pop(tool_use_id, None)
             logger.warning(
                 "tool_name=<%s>, tool_use_id=<%s> | subagent failed: %s",
                 self._name,

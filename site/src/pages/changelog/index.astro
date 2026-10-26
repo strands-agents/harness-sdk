@@ -12,7 +12,7 @@ const allEntries = releases.flatMap((r) => r.data.entries)
 // Counts shown on chips are recomputed client-side per active SDK+language.
 const areaCounts = getAreaCounts(allEntries)
 ---
-<ChangelogLayout title="Changelog" description="Every release across the Strands Agents SDKs.">
+<ChangelogLayout title="Changelog" description="Every release across Strands Agents products.">
   <div class="cl-page">
     <ChangelogHeader />
     <div class="cl-mobile-bar" data-pagefind-ignore>
@@ -67,7 +67,7 @@ const areaCounts = getAreaCounts(allEntries)
   // Client-side faceted filtering. State: SDK (toggle), language (global pref), areas (chips), search.
   // This is a processed (bundled) script, so importing shared config works —
   // no hand-maintained mirror of SDK metadata.
-  import { SDK_META } from '../../config/changelog'
+  import { SDK_META, hasLanguageStreams, type Sdk } from '../../config/changelog'
   import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
 
   const LANG_KEY = LANGUAGE_STORAGE_KEY // shared with the global LanguageToggle
@@ -80,6 +80,7 @@ const areaCounts = getAreaCounts(allEntries)
   const versions = Array.from(root.querySelectorAll<HTMLElement>('.cl-version'))
   const sdkBtns = Array.from(root.querySelectorAll<HTMLElement>('[data-cl-sdk-btn]'))
   const langBtns = Array.from(root.querySelectorAll<HTMLElement>('[data-cl-lang-btn]'))
+  const langRow = root.querySelector<HTMLElement>('[data-cl-lang]')?.closest<HTMLElement>('.cl-control-row')
   const areaBtns = Array.from(root.querySelectorAll<HTMLElement>('[data-cl-area]'))
   const searchInput = root.querySelector<HTMLInputElement>('[data-cl-search]')
   const emptyEl = root.querySelector<HTMLElement>('[data-cl-empty]')
@@ -129,7 +130,7 @@ const areaCounts = getAreaCounts(allEntries)
   // Does a version belong to the current SDK + effective language view?
   function inCurrentStream(v: HTMLElement, lang: string): boolean {
     if (v.dataset.sdk !== state.sdk) return false
-    if (state.sdk === 'sdk') return v.dataset.language === lang
+    if (hasLanguageStreams(state.sdk as Sdk)) return v.dataset.language === lang
     return true
   }
 
@@ -189,6 +190,7 @@ const areaCounts = getAreaCounts(allEntries)
     // Sync the local language toggle: only show languages this SDK ships,
     // and mark the effective one as pressed.
     const sdkLangs = SDK_LANGS[state.sdk]
+    if (langRow) langRow.hidden = sdkLangs.length === 0
     for (const btn of langBtns) {
       const l = btn.dataset.clLangBtn!
       btn.hidden = !sdkLangs.includes(l)
@@ -205,9 +207,9 @@ const areaCounts = getAreaCounts(allEntries)
       if (tsEvals) { v.hidden = true; continue }
       const vSdk = v.dataset.sdk
       const vLang = v.dataset.language
-      // Version-level gate: SDK, and (for harness) one language at a time.
+      // Version-level gate: product, and (for per-language products) one language at a time.
       let show = vSdk === state.sdk
-      if (show && vSdk === 'sdk') show = vLang === lang
+      if (show && hasLanguageStreams(state.sdk as Sdk)) show = vLang === lang
       // "Latest" badge: the newest version in the current stream, so filtering
       // or scrolling can't make you mistake an older release for the newest.
       // Independent of area/search — it marks the stream's true latest.

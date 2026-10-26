@@ -22,6 +22,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator
 from importlib.metadata import version as get_package_version
 from types import SimpleNamespace
@@ -64,7 +65,7 @@ from ._defaults import resolve_config_metadata  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
-from ._validation import _has_location_source, validate_config_keys  # noqa: E402
+from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -646,27 +647,26 @@ class OpenAIResponsesModel(Model):
             An OpenAI compatible messages array.
         """
         formatted_messages: list[dict[str, Any]] = []
+        skipped: Counter[str] = Counter()
 
         for message in messages:
             role = message["role"]
             contents = message["content"]
 
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not yet supported in multi-turn conversations with the Responses API"
-                )
-
-            if any("cachePoint" in content for content in contents):
-                logger.warning("cachePoint content block is not supported by OpenAI Responses | skipping")
-
             filtered_contents = []
             for content in contents:
-                if any(
-                    block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent", "cachePoint"]
-                ):
+                if "reasoningContent" in content:
+                    skipped[
+                        "reasoningContent is not yet supported in multi-turn conversations with the Responses API"
+                    ] += 1
+                    continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by OpenAI Responses | skipping"] += 1
+                    continue
+                if "toolResult" in content or "toolUse" in content:
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
+                    skipped["Location sources are not supported by OpenAI Responses | skipping content block"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -714,6 +714,8 @@ class OpenAIResponsesModel(Model):
 
             formatted_messages.extend(formatted_tool_calls)
             formatted_messages.extend(formatted_tool_messages)
+
+        _log_skipped_blocks(logger, skipped)
 
         return [
             message

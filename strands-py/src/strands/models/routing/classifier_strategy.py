@@ -10,7 +10,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ...agent.invocation_context import InvocationContext
 from ...types.content import Message, Messages, SystemPrompt
+from ...types.event_loop import Usage
 from ..model import Model
 from .router import RoutingCandidate
 from .strategy import RoutingContext
@@ -82,8 +84,12 @@ async def _invoke_classifier(
     model: Model,
     request: str,
     system_prompt: str,
+    invocation_context: InvocationContext | None = None,
 ) -> _ClassifierSelection:
-    """Invoke a model directly and return its structured classification."""
+    """Invoke a model directly and return its structured classification.
+
+    A call that returns normally adds its reported usage to ``invocation_context``.
+    """
     events = model.structured_output(
         _ClassifierSelection,
         [{"role": "user", "content": [{"text": request}]}],
@@ -91,9 +97,16 @@ async def _invoke_classifier(
     )
 
     output: object | None = None
+    usage: Usage | None = None
     async for event in events:
         if isinstance(event, Mapping) and "output" in event:
             output = event["output"]
+        if isinstance(event, Mapping) and "stop" in event:
+            # The terminal ``ModelStopReason`` event carries ``(stop_reason, message, usage, metrics)``.
+            stop: Any = event["stop"]
+            usage = stop[2]
+    if invocation_context is not None and usage is not None:
+        invocation_context._record_usage(usage)
     if not isinstance(output, _ClassifierSelection):
         raise ValueError("classifier returned an invalid structured result")
     return output
@@ -199,6 +212,7 @@ class ClassifierStrategy:
                 self._system_prompt,
                 self._max_agent_instructions_chars,
             ),
+            invocation_context=context.invocation_context,
         )
         if output.selected_candidate_index >= len(context.candidates):
             raise ValueError("classifier selected an unknown candidate")
