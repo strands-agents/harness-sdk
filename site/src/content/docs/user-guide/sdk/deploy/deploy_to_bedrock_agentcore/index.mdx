@@ -1,6 +1,6 @@
 ---
-title: Deploying Strands Agents to Amazon Bedrock AgentCore Runtime
-description: 'Deploy Strands agents to Amazon Bedrock AgentCore Runtime: a serverless, session-isolated platform that scales agents without managing servers.'
+title: Deploy Strands agents to Amazon Bedrock AgentCore Runtime
+description: 'Deploy Strands agents to Amazon Bedrock AgentCore Runtime with the AgentCore CLI: a serverless, session-isolated runtime with no servers to manage.'
 sidebar:
   label: "Overview"
 tags: [deployment, aws, bedrock, agentcore]
@@ -8,43 +8,58 @@ tags: [deployment, aws, bedrock, agentcore]
 
 import { LinkCard, CardGrid } from '@astrojs/starlight/components';
 
-Amazon Bedrock AgentCore Runtime is a serverless runtime for deploying and scaling agents built on any framework, including Strands Agents, LangChain, LangGraph, and CrewAI. It carries any protocol (MCP, A2A) and any model from any provider (Amazon Bedrock, OpenAI, Gemini), and runs multi-modal, real-time, and long-running agents alike.
+Amazon Bedrock AgentCore Runtime is a serverless hosting environment for agents and tools.
+It runs agents built with any framework, including Strands Agents, on any model provider,
+and serves them over HTTP, MCP, A2A, or AG-UI. Each user session runs in its own microVM
+with isolated CPU, memory, and filesystem, sessions can run for up to eight hours, and you
+pay for the resources your agent consumes rather than for provisioned capacity. Through
+AgentCore Identity, users sign in with providers such as Amazon Cognito, Microsoft Entra
+ID, and Okta, and your agent reaches services such as GitHub and Slack with OAuth or API
+keys.
 
-Each user session gets its own dedicated microVM, so state and privileged operations stay isolated between users. Sessions persist, the runtime scales to thousands of concurrent sessions in seconds, and you pay only for actual usage rather than provisioned infrastructure. Through AgentCore Identity, it integrates with identity providers such as Amazon Cognito, Microsoft Entra ID, and Okta, and OAuth providers such as Google and GitHub, so you authenticate with OAuth tokens, API keys, or IAM roles without building custom security infrastructure.
+## How deployment works
+
+These guides deploy with the [AgentCore CLI](https://github.com/aws/agentcore-cli), the
+same in Python and TypeScript. A project declares your runtimes and the AgentCore
+resources they use, such as AgentCore Memory, in `agentcore/agentcore.json`. From there:
+
+- `agentcore create` scaffolds a project from a Strands template, and
+  `agentcore add runtime` registers agent code you already have.
+- `agentcore dev` runs the agent locally with hot reload.
+- `agentcore deploy` packages your code as a zip, provisions the runtime, its IAM role,
+  and the other resources with AWS CDK, and enables CloudWatch Transaction Search for
+  traces. Add a `Dockerfile` to build a container in AWS CodeBuild instead.
+- `agentcore invoke`, `agentcore logs`, and `agentcore traces` talk to the deployed agent
+  and show what it did.
+
+You don't need Docker, a container registry, or hand-written IAM policies.
 
 ## Prerequisites
 
-Before you start, you need:
+- An AWS account with credentials configured, and
+  [permissions for AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)
+- Node.js 20.12 or later for the AgentCore CLI (Node.js 22 or later for TypeScript agents)
+- For Python agents: Python 3.10 or later and
+  [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-- An AWS account with appropriate [permissions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)
-- Python 3.10+ or Node.js 22+
-- Optional: A container engine (Docker, Finch, or Podman) - only required for local testing and advanced deployment scenarios
-
----
-
-
-## Choose Your Language
-
-Pick the language your agent is written in to continue:
+## Choose your language
 
 <CardGrid>
 <LinkCard
-  title="Python Deployment"
-  description="Deploy your Python Strands agent to AgentCore Runtime!"
+  title="Python"
+  description="Deploy a Python Strands agent to AgentCore Runtime."
   href="python/"
 />
 <LinkCard
-  title="TypeScript Deployment"
-  description="Deploy your TypeScript Strands agent to AgentCore Runtime!"
+  title="TypeScript"
+  description="Deploy a TypeScript Strands agent to AgentCore Runtime."
   href="typescript/"
 />
 </CardGrid>
 
+## Additional resources
 
-## Additional Resources
-
-- [Amazon Bedrock AgentCore Runtime Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
-- [Strands Documentation](https://strandsagents.com/latest/)
-- [AWS IAM Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html)
-- [Docker Documentation](https://docs.docker.com/)
-- [Amazon Bedrock AgentCore Observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)
+- [What is Amazon Bedrock AgentCore?](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
+- [Get started with Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-get-started-cli.html)
+- [AgentCore Runtime service contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-service-contract.html)
+- [Amazon Bedrock AgentCore observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)

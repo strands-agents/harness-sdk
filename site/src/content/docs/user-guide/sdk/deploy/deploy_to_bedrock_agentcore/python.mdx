@@ -1,684 +1,336 @@
 ---
-title: Python Deployment to Amazon Bedrock AgentCore Runtime
-description: 'Deploy a Python Strands agent to Amazon Bedrock AgentCore Runtime using the SDK integration wrapper or a custom FastAPI implementation.'
+title: Deploy a Python agent to Amazon Bedrock AgentCore Runtime
+description: 'Deploy a Python Strands agent to Amazon Bedrock AgentCore Runtime with the AgentCore CLI: create a project, test it locally, deploy, invoke, and observe it.'
 sidebar:
   label: "Python"
 tags: [deployment, aws, bedrock, agentcore]
 ---
 
-This guide covers deploying Python-based Strands agents to [Amazon Bedrock AgentCore Runtime](index.md).
+This guide deploys a Python Strands agent to [Amazon Bedrock AgentCore Runtime](index.md)
+with the [AgentCore CLI](https://github.com/aws/agentcore-cli). The CLI scaffolds the
+project, runs the agent locally, packages your code, and provisions the runtime, its IAM
+role, and an AgentCore Memory resource through AWS CDK. You don't need Docker or a
+container registry.
 
 ## Prerequisites
 
-- Python 3.10+
-- AWS account with appropriate [permissions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)
-- Optional: A container engine (Docker, Finch, or Podman) - only required for local testing and advanced deployment scenarios
+- An AWS account with credentials configured, and
+  [permissions for AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)
+- Node.js 20.12 or later, for the AgentCore CLI
+- Python 3.10 or later
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), which the CLI uses to
+  install and run your agent's dependencies
 
----
-
-## Choose Your Deployment Approach
-
-Follow one of the two approaches below, whichever fits your use case. You do not need both.
-
-### SDK Integration
-
-**[Option A: SDK Integration](#option-a-sdk-integration)**
-
-- **Use when**: You want to quickly deploy existing agent functions
-- **Best for**: Simple agents, prototyping, minimal setup
-- **Benefits**: Automatic HTTP server setup, built-in deployment tools
-- **Trade-offs**: Less control over server configuration
-
-### Custom Implementation
-
-**[Option B: Custom Agent](#option-b-custom-agent)**
-
-- **Use when**: You need full control over your agent's HTTP interface
-- **Best for**: Complex agents, custom middleware, production systems
-- **Benefits**: Complete FastAPI control, custom routing, advanced features
-- **Trade-offs**: More setup required, manual server configuration
-
----
-
-## Option A: SDK Integration
-
-The AgentCore Runtime Python SDK provides a lightweight wrapper that helps you deploy your agent functions as HTTP services.
-
-### Step 1: Install the SDK
-
-```bash
-pip install bedrock-agentcore
-```
-
-### Step 2: Prepare Your Agent Code
-
-Basic setup takes three steps.
-
-Import the runtime
-
-```python
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
-```
-
-Initialize the app
-
-```python
-app = BedrockAgentCoreApp()
-```
-
-Decorate your function
-
-```python
-@app.entrypoint
-def invoke(payload):
-    # Your existing code remains unchanged
-    return payload
-
-if __name__ == "__main__":
-    app.run()
-```
-
-Complete Examples
-
-- Basic Example
-
-```python
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from strands import Agent
-
-app = BedrockAgentCoreApp()
-agent = Agent()
-
-@app.entrypoint
-def invoke(payload):
-    """Process user input and return a response"""
-    user_message = payload.get("prompt", "Hello")
-    result = agent(user_message)
-    return {"result": result.message}
-
-if __name__ == "__main__":
-    app.run()
-```
-
-- Streaming Example
-
-```python
-from strands import Agent
-from bedrock_agentcore import BedrockAgentCoreApp
-
-app = BedrockAgentCoreApp()
-agent = Agent()
-
-@app.entrypoint
-async def agent_invocation(payload):
-    """Handler for agent invocation"""
-    user_message = payload.get(
-        "prompt", "No prompt found in input, please guide customer to create a json payload with prompt key"
-    )
-    stream = agent.stream_async(user_message)
-    async for event in stream:
-        print(event)
-        yield (event)
-
-if __name__ == "__main__":
-    app.run()
-```
-
-### Step 3: Test Locally
-
-```bash
-python my_agent.py
-
-# Test with curl:
-curl -X POST http://localhost:8080/invocations \
--H "Content-Type: application/json" \
--d '{"prompt": "Hello world!"}'
-```
-
-### Step 4: Choose Your Deployment Method
-
-> **Choose ONE of the following deployment methods:**
-
-#### Method A: AgentCore CLI (Recommended for quick prototyping)
-
-The [AgentCore CLI](https://github.com/aws/agentcore-cli) provides a streamlined experience for creating, developing, and deploying agents to Amazon Bedrock AgentCore.
-
-Install the CLI
+## Install the AgentCore CLI
 
 ```bash
 npm install -g @aws/agentcore
+agentcore --version
 ```
 
-Create a New Project
+If `agentcore --version` fails or the CLI offers commands such as `configure` and
+`launch`, the older Bedrock AgentCore Starter Toolkit is shadowing it. Run
+`pip uninstall bedrock-agentcore-starter-toolkit` and open a new terminal.
 
-Use the interactive wizard to scaffold a new Strands agent project:
+## Create a project
+
+The CLI deploys to the region in `AWS_REGION` (or your AWS profile's region), and records
+it on the first deploy. Set it, then create a project from the Strands template:
 
 ```bash
-agentcore create
-cd myproject
+export AWS_REGION=us-east-1
+agentcore create --name MyAgent --template agent-python-strands
+cd MyAgent
 ```
 
-The wizard guides you through selecting a framework (Strands Agents), model provider, and agent configuration. It generates a project with the following structure:
+The template creates a runtime named `agent`, adds an AgentCore Memory resource, installs
+the dependencies with `uv sync`, and initializes a Git repository:
 
 ```
-myproject/
+MyAgent/
 ├── agentcore/
-│   ├── agentcore.json      # Resource specifications
-│   └── aws-targets.json    # Deployment targets
-├── app/
-│   └── MyAgent/
-│       ├── main.py         # Agent entry point
-│       ├── pyproject.toml  # Python dependencies
-│       └── model/          # Model configuration
+│   ├── agentcore.json      # Project spec
+│   ├── aws-targets.json    # Deployment account and region
+│   ├── .env.local          # Local-only variables (gitignored)
+│   └── cdk/                # CDK app that deploys the project
+└── app/
+    └── agent/
+        ├── main.py         # Runtime entrypoint and Strands agent
+        ├── model/load.py   # Model configuration
+        ├── memory/session.py
+        └── pyproject.toml  # Dependencies
 ```
 
-Or, if you already have agent code from Step 2, you can integrate it into the generated `main.py`.
+The template uses Amazon Bedrock. To use Anthropic, OpenAI, Gemini, LiteLLM, or an
+OpenAI-compatible endpoint, run `agentcore create` with no flags and choose the provider
+in the wizard. The CLI keeps the API key in `agentcore/.env.local` and provisions it as an
+AgentCore Identity credential when you deploy.
 
-Develop Locally
+## Understand the agent code
+
+`app/agent/main.py` wraps a Strands agent in a `BedrockAgentCoreApp` from the
+[`bedrock-agentcore`](https://github.com/aws/bedrock-agentcore-sdk-python) package. The
+app serves the
+[HTTP contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html)
+AgentCore Runtime expects: `POST /invocations` and `GET /ping` on port 8080. This excerpt
+shows the entrypoint:
+
+```python
+@app.entrypoint
+async def invoke(payload, context):
+    session_id = getattr(context, "session_id", None) or "default-session"
+    prompt, actor_id = parse_payload(payload)
+    agent = _get_agent(session_id, actor_id)
+
+    async for event in agent.stream_async(prompt):
+        ...
+        yield event
+```
+
+The entrypoint reads `prompt` and an optional `actorId` (the end user) from the JSON
+payload, gets one agent per session and user, and streams the agent's model events back as
+server-sent events. Add tools to the `tools` list in the same file, and change the model
+in `model/load.py`.
+
+## Run the agent locally
 
 ```bash
 agentcore dev
 ```
 
-Deploy to AWS
+`agentcore dev` serves the agent on port 8080 with hot reload, using your local AWS
+credentials. Add `--mode browser` to chat with it in the Agent Inspector, or `--port` if
+8080 is taken. In another terminal, send it a prompt:
+
+```bash
+agentcore invoke --runtime agent --local --payload '{"prompt": "What is 21 + 21?"}'
+```
+
+The response streams back as server-sent events, one Strands model event per line:
+
+```
+data: {"event": {"contentBlockDelta": {"delta": {"text": "21 + 21 ="}, ...}}}
+
+data: {"event": {"contentBlockDelta": {"delta": {"text": " 42."}, ...}}}
+```
+
+## Deploy to AgentCore Runtime
 
 ```bash
 agentcore deploy
 ```
 
-Test Your Deployed Agent
+The first deploy takes a few minutes. The CLI records the deployment target in
+`agentcore/aws-targets.json`, bootstraps CDK in the region if needed, enables CloudWatch
+Transaction Search for traces, and deploys a CloudFormation stack named
+`AgentCore-MyAgent-default` with the runtime, its execution role, and the memory. It
+installs your dependencies as ARM64 Linux wheels and uploads them with your code as a zip
+(a CodeZip build). If a deploy fails, run `agentcore deploy --debug` for the full output.
+
+Check what is deployed:
 
 ```bash
-agentcore invoke
+agentcore status
 ```
 
-> **Note**: The AgentCore CLI replaces the previously available `bedrock-agentcore-starter-toolkit`. If you have the old toolkit installed, uninstall it to avoid conflicts:
-> ```bash
-> pip uninstall bedrock-agentcore-starter-toolkit
-> ```
+`agentcore status --json` includes each resource's ARN, which you need to invoke the agent
+from your own code.
 
-#### Method B: Manual Deployment with boto3
+## Invoke the deployed agent
 
-For more control over the deployment process:
+### From the CLI
 
-1. Package your code as a container image and push it to ECR
-2. Create your agent using CreateAgentRuntime:
-
-```python
-import boto3
-
-# Create the client
-client = boto3.client('bedrock-agentcore-control', region_name="us-east-1")
-
-# Call the CreateAgentRuntime operation
-response = client.create_agent_runtime(
-    agentRuntimeName='hello-strands',
-    agentRuntimeArtifact={
-        'containerConfiguration': {
-            # Your ECR image Uri
-            'containerUri': '123456789012.dkr.ecr.us-east-1.amazonaws.com/my-agent:latest'
-        }
-    },
-    networkConfiguration={"networkMode":"PUBLIC"},
-    # Your AgentCore Runtime role arn
-    roleArn='arn:aws:iam::123456789012:role/AgentRuntimeRole'
-)
+```bash
+agentcore invoke --runtime agent --payload '{"prompt": "Hello, what can you do?"}'
 ```
 
-Invoke Your Agent
+Each invocation runs in a session, and each session gets its own microVM. Pass the same
+`--session-id` (33 to 100 characters) to continue a conversation.
+
+### From your application
+
+Call `InvokeAgentRuntime` with boto3. The runtime ARN comes from
+`agentcore status --json`, and the payload and response match the local run above:
 
 ```python
-import boto3
 import json
+import uuid
 
-# Initialize the AgentCore Runtime client
-agent_core_client = boto3.client('bedrock-agentcore')
+import boto3
 
-# Prepare the payload
-payload = json.dumps({"prompt": prompt}).encode()
-
-# Invoke the agent
-response = agent_core_client.invoke_agent_runtime(
-    agentRuntimeArn=agent_arn, # you will get this from deployment
-    runtimeSessionId=session_id, # you will get this from deployment
-    payload=payload
+AGENT_ARN = (
+    "arn:aws:bedrock-agentcore:us-east-1:123456789012:"
+    "runtime/MyAgent_default_agent-a1b2c3d4e5"
 )
+
+client = boto3.client("bedrock-agentcore", region_name="us-east-1")
+
+response = client.invoke_agent_runtime(
+    agentRuntimeArn=AGENT_ARN,
+    runtimeSessionId=str(uuid.uuid4()),
+    contentType="application/json",
+    accept="text/event-stream",
+    payload=json.dumps({"prompt": "What is 40 + 2?", "actorId": "user-1"}),
+)
+
+for line in response["response"].iter_lines():
+    if not line.startswith(b"data: "):
+        continue
+    event = json.loads(line[len(b"data: "):])
+    delta = event.get("event", {}).get("contentBlockDelta", {}).get("delta", {})
+    if "text" in delta:
+        print(delta["text"], end="", flush=True)
+print()
 ```
 
-:::note[Next step: observability]
-Your agent is deployed. You can also set up [Observability](#observability-enablement).
-:::
+Reuse `runtimeSessionId` across calls to keep a conversation in the same session.
 
+## Deploy your own agent code
 
----
-
-## Option B: Custom Agent
-
-> **This section is complete** - follow all steps below if you choose the custom agent approach.
-
-This approach demonstrates how to deploy a custom agent using FastAPI and Docker, following AgentCore Runtime requirements.
-
-**Requirements**
-
-- **FastAPI Server**: Web server framework for handling requests
-- **`/invocations` Endpoint**: POST endpoint for agent interactions (REQUIRED)
-- **`/ping` Endpoint**: GET endpoint for health checks (REQUIRED)
-- **Container Engine**: Docker, Finch, or Podman (required for this example)
-- **Docker Container**: ARM64 containerized deployment package
-
-### Step 1: Quick Start Setup
-
-Install uv
+To deploy an agent you already have, register a runtime for it instead of starting from
+the template. Run this in a project (create one with `agentcore create --name MyProject`
+if you don't have one):
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+agentcore add runtime --name myagent --language python
 ```
 
-Create Project
-
-```bash
-mkdir my-custom-agent && cd my-custom-agent
-uv init --python 3.11
-uv add fastapi 'uvicorn[standard]' pydantic httpx strands-agents
-```
-
-Project Structure example
-
-```
-my-custom-agent/
-├── agent.py                 # FastAPI application
-├── Dockerfile               # ARM64 container configuration
-├── pyproject.toml          # Created by uv init
-└── uv.lock                 # Created automatically by uv
-```
-
-### Step 2: Prepare your agent code
-
-Example: agent.py
+`add runtime` doesn't generate code. It registers the runtime in `agentcore.json` and
+writes `app/myagent/README.md` and `AGENTS.md`, which describe what the code must provide.
+Add an entrypoint at `app/myagent/main.py`:
 
 ```python
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Dict, Any
-from datetime import datetime,timezone
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands import Agent
 
-app = FastAPI(title="Strands Agent Server", version="1.0.0")
+app = BedrockAgentCoreApp()
+agent = Agent()
 
-# Initialize Strands agent
-strands_agent = Agent()
 
-class InvocationRequest(BaseModel):
-    input: Dict[str, Any]
+@app.entrypoint
+async def invoke(payload, context):
+    async for event in agent.stream_async(payload.get("prompt", "")):
+        if "data" in event:
+            yield event["data"]
 
-class InvocationResponse(BaseModel):
-    output: Dict[str, Any]
-
-@app.post("/invocations", response_model=InvocationResponse)
-async def invoke_agent(request: InvocationRequest):
-    try:
-        user_message = request.input.get("prompt", "")
-        if not user_message:
-            raise HTTPException(
-                status_code=400,
-                detail="No prompt found in input. Please provide a 'prompt' key in the input."
-            )
-
-        result = strands_agent(user_message)
-        response = {
-            "message": result.message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "model": "strands-agent",
-        }
-
-        return InvocationResponse(output=response)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent processing failed: {str(e)}")
-
-@app.get("/ping")
-async def ping():
-    return {"status": "Healthy"}
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    app.run()
 ```
 
-### Step 3: Test Locally
+This version streams only the text of the response. Keep the module-level `app` and the
+`app.run()` call: `agentcore dev` serves the `app` object, and the deployed runtime runs
+`main.py` directly. Each session has its own microVM, so a module-level agent keeps one
+conversation per session once deployed.
+
+Declare the dependencies in `app/myagent/pyproject.toml`. The CLI reads only
+`[project].dependencies`, and AgentCore starts Python code with
+`opentelemetry-instrument`, so `aws-opentelemetry-distro` is required:
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "myagent"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "aws-opentelemetry-distro",
+    "bedrock-agentcore",
+    "strands-agents",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+```
+
+Run, deploy, and invoke it like the template agent:
 
 ```bash
-# Run the application
-uv run uvicorn agent:app --host 0.0.0.0 --port 8080
-
-# Test /ping endpoint
-curl http://localhost:8080/ping
-
-# Test /invocations endpoint
-curl -X POST http://localhost:8080/invocations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {"prompt": "What is artificial intelligence?"}
-  }'
+agentcore dev --agent myagent
+agentcore deploy
+agentcore invoke --runtime myagent --payload '{"prompt": "Hello"}'
 ```
 
-### Step 4: Prepare your docker image
+If you need system packages or a dependency that has no ARM64 Linux wheel, add a
+`Dockerfile` to `app/myagent/`. The CLI switches the runtime to a container build, which
+it builds in AWS CodeBuild, so you still don't need Docker to deploy. The generated
+`README.md` has a starting Dockerfile.
 
-Create docker file
+## Use AgentCore Memory
 
-```dockerfile
-# Use uv's ARM64 Python base image
-FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.11-bookworm-slim
-
-WORKDIR /app
-
-# Copy uv files
-COPY pyproject.toml uv.lock ./
-
-# Install dependencies (including strands-agents)
-RUN uv sync --frozen --no-cache
-
-# Copy agent file
-COPY agent.py ./
-
-# Expose port
-EXPOSE 8080
-
-# Run application
-CMD ["uv", "run", "uvicorn", "agent:app", "--host", "0.0.0.0", "--port", "8080"]
-```
-
-Setup Docker buildx
+The template's agent stores each conversation in the AgentCore Memory resource named
+`agentMemory`, and recalls facts, preferences, and summaries about the same `actorId` in
+later sessions. The CLI passes the memory ID to the runtime as `MEMORY_AGENTMEMORY_ID`,
+and `memory/session.py` sets up a Strands session manager from it. For example, tell the
+agent something in one session and ask about it in another:
 
 ```bash
-docker buildx create --use
+agentcore invoke --runtime agent --session-id "$(uuidgen)-session-one" \
+  --payload '{"prompt": "My favourite colour is teal.", "actorId": "sam"}'
+agentcore invoke --runtime agent --session-id "$(uuidgen)-session-two" \
+  --payload '{"prompt": "What is my favourite colour?", "actorId": "sam"}'
 ```
 
-Build and Test Locally
+Long-term memory is extracted in the background, so a fact can take a few minutes to
+appear in a new session. If you don't need memory, remove it and deploy; the agent skips
+memory when `MEMORY_AGENTMEMORY_ID` isn't set:
 
 ```bash
-# Build the image
-docker buildx build --platform linux/arm64 -t my-agent:arm64 --load .
-
-# Test locally with credentials
-docker run --platform linux/arm64 -p 8080:8080 \
-  -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
-  -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
-  -e AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN" \
-  -e AWS_REGION="$AWS_REGION" \
-  my-agent:arm64
+agentcore remove memory --name agentMemory
+agentcore deploy
 ```
 
-Deploy to ECR
+See [AgentCore Memory](../../../../integrations/session-managers/agentcore-memory.md) for
+the session manager's options.
+
+## Observe your agent
+
+The deployed runtime sends logs and traces to CloudWatch without extra setup:
+`aws-opentelemetry-distro` instruments the agent, and `agentcore deploy` enables
+Transaction Search the first time. To keep the CLI from enabling Transaction Search, run
+`agentcore config transactionSearch false`.
+
+Search or tail the runtime's logs (pass `--name` when the project has more than one
+runtime):
 
 ```bash
-# Create ECR repository
-aws ecr create-repository --repository-name my-strands-agent --region us-west-2
-
-# Login to ECR
-aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-west-2.amazonaws.com
-
-# Build and push to ECR
-docker buildx build --platform linux/arm64 -t <account-id>.dkr.ecr.us-west-2.amazonaws.com/my-strands-agent:latest --push .
-
-# Verify the image
-aws ecr describe-images --repository-name my-strands-agent --region us-west-2
+agentcore logs runtime --since 30m --level error
+agentcore logs runtime --tail
 ```
 
-### Step 5: Deploy Agent Runtime
-
-Example: deploy_agent.py
-
-```python
-import boto3
-
-client = boto3.client('bedrock-agentcore-control')
-
-response = client.create_agent_runtime(
-    agentRuntimeName='strands_agent',
-    agentRuntimeArtifact={
-        'containerConfiguration': {
-            'containerUri': '<account-id>.dkr.ecr.us-west-2.amazonaws.com/my-strands-agent:latest'
-        }
-    },
-    networkConfiguration={"networkMode": "PUBLIC"},
-    roleArn='arn:aws:iam::<account-id>:role/AgentRuntimeRole'
-)
-
-print(f"Agent Runtime created successfully!")
-print(f"Agent Runtime ARN: {response['agentRuntimeArn']}")
-print(f"Status: {response['status']}")
-```
-
-Execute python file
+Traces appear two to three minutes after an invocation. List them, then download one:
 
 ```bash
-uv run deploy_agent.py
+agentcore traces runtime list --since 30m
+agentcore traces runtime get <trace-id>
 ```
 
-### Step 6: Invoke Your Agent
+For dashboards across sessions, open the **GenAI Observability** page in the CloudWatch
+console. To connect an invocation to a trace from your own system, pass trace context when
+you invoke: `--trace-parent`, `--trace-id`, and `--baggage` on `agentcore invoke`, or
+`traceParent`, `traceId`, and `baggage` on `invoke_agent_runtime`. See
+[AgentCore observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)
+for the metrics and spans AgentCore records.
 
-Example: invoke_agent.py
+## Clean up
 
-```python
-import boto3
-import json
-
-agent_core_client = boto3.client('bedrock-agentcore', region_name='us-west-2')
-payload = json.dumps({
-    "input": {"prompt": "Explain machine learning in simple terms"}
-})
-
-response = agent_core_client.invoke_agent_runtime(
-    agentRuntimeArn='arn:aws:bedrock-agentcore:us-west-2:<account-id>:runtime/myStrandsAgent-suffix',
-    runtimeSessionId='dfmeoagmreaklgmrkleafremoigrmtesogmtrskhmtkrlshmt',  # Must be 33+ chars
-    payload=payload,
-    qualifier="DEFAULT"
-)
-
-response_body = response['response'].read()
-response_data = json.loads(response_body)
-print("Agent Response:", response_data)
-```
-
-Execute python file
+Remove every resource from the project, then deploy the empty project to delete its stack:
 
 ```bash
-uv run invoke_agent.py
+agentcore remove all --yes
+agentcore deploy --yes
 ```
 
-Expected Response Format
+The runtimes' CloudWatch log groups, named
+`/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT`, stay until you delete them.
 
-```json
-{
-  "output": {
-    "message": {
-      "role": "assistant",
-      "content": [
-        {
-          "text": "# Artificial Intelligence in Simple Terms\n\nArtificial Intelligence (AI) is technology that allows computers to do tasks that normally need human intelligence. Think of it as teaching machines to:\n\n- Learn from information (like how you learn from experience)\n- Make decisions based on what they've learned\n- Recognize patterns (like identifying faces in photos)\n- Understand language (like when I respond to your questions)\n\nInstead of following specific step-by-step instructions for every situation, AI systems can adapt to new information and improve over time.\n\nExamples you might use every day include voice assistants like Siri, recommendation systems on streaming services, and email spam filters that learn which messages are unwanted."
-        }
-      ]
-    },
-    "timestamp": "2025-07-13T01:48:06.740668",
-    "model": "strands-agent"
-  }
-}
-```
+## Additional resources
 
----
-
-## Shared Information
-
-> **This section applies to both deployment approaches** - reference as needed regardless of which option you chose.
-
-### AgentCore Runtime Requirements Summary
-
-- **Platform**: Must be linux/arm64
-- **Endpoints**: `/invocations` POST and `/ping` GET are mandatory
-- **ECR**: Images must be deployed to ECR
-- **Port**: Application runs on port 8080
-- **Strands Integration**: Uses Strands Agent for AI processing
-- **Credentials**: Require AWS credentials for operation
-
-### Best Practices
-
-**Development**
-
-- Test locally before deployment
-- Use version control
-- Keep dependencies updated
-
-**Configuration**
-
-- Use appropriate IAM roles
-- Implement proper error handling
-- Monitor agent performance
-
-**Security**
-
-- Follow the least privilege principle
-- Secure sensitive information
-- Regular security updates
-
-### Troubleshooting
-
-**Deployment Failures**
-
-- Verify AWS credentials are configured correctly
-- Check IAM role permissions
-- Ensure container engine is running (for local testing and container-based deployments)
-
-**Runtime Errors**
-
-- Check CloudWatch logs
-- Verify environment variables
-- Test agent locally first
-
-**Container Issues**
-
-- Verify container engine installation (Docker, Finch, or Podman)
-- Check port configurations
-- Review Dockerfile if customized
-
----
-
-## Observability Enablement
-
-Amazon Bedrock AgentCore provides built-in metrics to monitor your Strands agents. This section explains how to enable observability for your agents to view metrics, spans, and traces in CloudWatch.
-> With AgentCore, you can also view metrics for agents that aren't running in the AgentCore runtime. Additional setup steps are required to configure telemetry outputs for non-AgentCore agents. See the instructions in [Configure Observability for agents hosted outside of the AgentCore runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html#observability-configure-3p) to learn more.
-
-### Step 1: Enable CloudWatch Transaction Search
-
-Before you can view metrics and traces, complete this one-time setup:
-
-**Via AgentCore Console**
-
-Look for the **"Enable Observability"** button when creating a memory resource
-
->If you don't see this button while configuring your agent (for example, if you don't create a memory resource in the console), you must enable observability manually by using the CloudWatch console to enable Transaction Search as described in the following procedure.
-
-**Via CloudWatch Console**
-
-1. Open the CloudWatch console
-2. Navigate to Application Signals (APM) > Transaction search
-3. Choose "Enable Transaction Search"
-4. Select the checkbox to ingest spans as structured logs
-5. Optionally adjust the X-Ray trace indexing percentage (default is 1%)
-6. Choose Save
-
-### Step 2: Add ADOT to Your Strands Agent
-
-Add to your `requirements.txt`:
-```text
-aws-opentelemetry-distro>=0.10.1
-boto3
-```
-
-Or install directly:
-```bash
-pip install aws-opentelemetry-distro>=0.10.1 boto3
-```
-
-Run With Auto-Instrumentation
-
-- For SDK Integration (Option A):
-```bash
-opentelemetry-instrument python my_agent.py
-```
-
-- For Docker Deployment:
-```dockerfile
-CMD ["opentelemetry-instrument", "python", "main.py"]
-```
-
-- For Custom Agent (Option B):
-```dockerfile
-CMD ["opentelemetry-instrument", "uvicorn", "agent:app", "--host", "0.0.0.0", "--port", "8080"]
-```
-
-### Step 3: Viewing Your Agent's Observability Data
-
-1. Open the CloudWatch console
-2. Navigate to the GenAI Observability page
-3. Find your agent service
-4. View traces, metrics, and logs
-
-### Session ID support
-
-To propagate session ID, you need to invoke using session identifier in the OTEL baggage:
-````python
-from opentelemetry import baggage,context
-
-ctx = baggage.set_baggage("session.id", session_id) # Set the session.id in baggage
-context.attach(ctx)
-````
-
-### Enhanced AgentCore observability with custom headers (Optional)
-
-You can invoke your agent with additional HTTP headers to provide enhanced observability options. The following example shows invocations including optional additional header requests for agents hosted in the AgentCore runtime.
-
-```python
-import boto3
-
-def invoke_agent(agent_id, payload, session_id=None):
-    client = boto3.client("bedrock-agentcore", region_name="us-west-2")
-    response = client.invoke_agent_runtime(
-        agentRuntimeArn=f"arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/{agent_id}",
-        runtimeSessionId="12345678-1234-5678-9abc-123456789012",
-        payload=payload
-    )
-    return response
-```
-
-Common Tracing Headers Examples:
-
-| Header | Description | Sample Value |
-|--------|-------------|-------------|
-| `X-Amzn-Trace-Id` | X-Ray format trace ID | `Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1` |
-| `traceparent` | W3C standard tracing header | `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` |
-| `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` | Session identifier | `aea8996f-dcf5-4227-b5ea-f9e9c1843729` |
-| `baggage` | User-defined properties | `userId=alice,serverRegion=us-east-1` |
-
-For more supported headers details, please check [Bedrock AgentCore Runtime Observability Configuration](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html)
-
-### Best Practices
-
-- Use consistent session IDs across related requests
-- Set appropriate sampling rates (1% is default)
-- Monitor key metrics like latency, error rates, and token usage
-- Set up CloudWatch alarms for critical thresholds
-
----
-
-## Notes
-
-- Keep your AgentCore Runtime and Strands packages updated for latest features and security fixes
-
-## Additional Resources
-
-- [Amazon Bedrock AgentCore Runtime Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
-- [Strands Documentation](https://strandsagents.com/latest/)
-- [AWS IAM Documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html)
-- [Docker Documentation](https://docs.docker.com/)
-- [Amazon Bedrock AgentCore Observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)
+- [Get started with Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-get-started-cli.html)
+- [AgentCore CLI on GitHub](https://github.com/aws/agentcore-cli)
+- [Bedrock AgentCore SDK for Python](https://github.com/aws/bedrock-agentcore-sdk-python)
+- [Troubleshoot AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html)
+- [Amazon Bedrock AgentCore samples](https://github.com/awslabs/amazon-bedrock-agentcore-samples)
