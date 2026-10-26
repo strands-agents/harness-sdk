@@ -226,12 +226,11 @@ jobs:
           name: test-artifacts-integ
           path: downloaded-artifacts
 
-      # run-integ-ts.sh leaves one junit report per vitest project
-      # (integ-node.xml, integ-browser.xml); each is published with --project
-      # so the two projects' identically named tests stay separate series.
-      # --max-test-names 1500: integ-node alone has about 850 distinct names,
-      # so the publisher's default ceiling of 1000 leaves too little room; 1500
-      # still catches a cardinality explosion before SEARCH widgets overflow.
+      # The junit classnames carry the vitest project (strands-ts/vitest.config.ts),
+      # so the two projects' identically named tests are separate TestName values.
+      # --max-test-names 1500: the two integ projects publish about 850 names
+      # each, so the publisher's default ceiling of 1000 is below a normal run;
+      # 1500 still catches a cardinality explosion before SEARCH widgets overflow.
       #
       # Do not re-run this job after a partial failure: put_metric_data has no
       # idempotency key, so batches that succeeded before the failure are already
@@ -241,17 +240,10 @@ jobs:
         env:
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
-          shopt -s nullglob
-          reports=(downloaded-artifacts/test-report/junit/integ-*.xml)
-          if [ "${#reports[@]}" -eq 0 ]; then
-            echo "No per-project JUnit report found (integ tests skipped, failed before reporting, or the branch predates per-project reports); nothing to publish."
+          REPORT=downloaded-artifacts/test-report/junit/report.xml
+          if [ ! -f "$REPORT" ]; then
+            echo "No JUnit report found (integ tests skipped or failed before reporting); nothing to publish."
             exit 0
           fi
           pip install --no-cache-dir boto3
-          status=0
-          for report in "${reports[@]}"; do
-            project=$(basename "$report" .xml)
-            python .github/scripts/upload-integ-test-metrics.py "$report" "$REPO_NAME" typescript \
-              --project "$project" --max-test-names 1500 || status=1
-          done
-          exit "$status"
+          python .github/scripts/upload-integ-test-metrics.py "$REPORT" "$REPO_NAME" typescript --max-test-names 1500

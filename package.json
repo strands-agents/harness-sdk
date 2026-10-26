@@ -21,7 +21,7 @@
     "test:all": "npm run test:all -w strands-ts",
     "test:all:coverage": "npm run test:all:coverage -w strands-ts",
     "test:integ": "npm run test:integ -w strands-ts",
-    "test:integ:all": "bash ./test-infra/scripts/run-integ-ts.sh all",
+    "test:integ:all": "npm run test:integ:all -w strands-ts",
     "test:integ:selective": "bash ./test-infra/scripts/run-selective-ts.sh",
     "test:browser:install": "npm run test:browser:install -w strands-ts",
     "test:package": "npm run test:package -w strands-ts",

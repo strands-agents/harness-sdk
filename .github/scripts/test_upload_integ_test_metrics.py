@@ -183,20 +183,18 @@ def test_main_fails_without_publishing_above_the_test_name_ceiling(mod, tmp_path
     )
 
 
-def test_main_prefixes_test_names_with_the_project(mod, tmp_path, monkeypatch):
-    client = FakeCloudWatch()
-    monkeypatch.setattr(mod.boto3, "client", lambda *args, **kwargs: client)
-    argv = ["upload", write_junit(tmp_path, THREE_CASES), "harness-sdk", "typescript", "--project", "integ-browser"]
-    monkeypatch.setattr(sys, "argv", argv)
+def test_test_name_keeps_the_vitest_project_prefix_from_the_classname(mod):
+    results = [
+        mod.TestResult(
+            name="Agent > invoke", classname=f"{project}/test/integ/foo.test.ts", duration=1.0, outcome="passed"
+        )
+        for project in ("integ-node", "integ-browser")
+    ]
 
-    mod.main()
-
-    names = {dims_of(d)["TestName"] for d in client.batches[0] if "TestName" in dims_of(d)}
-    assert names == {
-        "integ-browser/tests_integ.test_a.test_passed",
-        "integ-browser/tests_integ.test_a.test_failed",
-        "integ-browser/tests_integ.test_a.test_skipped",
-    }
+    assert [mod.test_name(result) for result in results] == [
+        "integ-node/test/integ/foo.test.ts.Agent > invoke",
+        "integ-browser/test/integ/foo.test.ts.Agent > invoke",
+    ]
 
 
 def dims_of(datum):
@@ -293,14 +291,14 @@ def test_parse_args_defaults_and_legacy_positionals(mod, monkeypatch):
     legacy = mod.parse_args(["results.xml", "harness-sdk"])
     assert (legacy.xml_file, legacy.repository, legacy.sdk) == ("results.xml", "harness-sdk", "python")
     assert (legacy.event, legacy.branch, legacy.leg, legacy.region) == ("merge_group", "main", "all", "us-east-1")
-    assert (legacy.project, legacy.max_test_names) == (None, 1000)
+    assert legacy.max_test_names == 1000
 
     explicit = mod.parse_args(
         ["r.xml", "harness-sdk", "typescript", "--leg", "mcp-1x", "--branch", "dev", "--event", "push"]
-        + ["--project", "integ-node", "--max-test-names", "1500"]
+        + ["--max-test-names", "1500"]
     )
     assert (explicit.sdk, explicit.leg, explicit.branch, explicit.event) == ("typescript", "mcp-1x", "dev", "push")
-    assert (explicit.project, explicit.max_test_names) == ("integ-node", 1500)
+    assert explicit.max_test_names == 1500
 
 
 NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
