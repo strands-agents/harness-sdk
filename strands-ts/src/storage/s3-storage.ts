@@ -34,12 +34,8 @@ const S3_PAGE_SIZE = 1000
  * @example
  * ```typescript
  * import { S3Storage } from '@strands-agents/sdk/storage'
- * import { S3VectorSearchStrategy } from '@strands-agents/sdk/storage/search'
  *
- * const storage = new S3Storage('my-bucket', {
- *   prefix: 'agents/',
- *   searchStrategy: new S3VectorSearchStrategy(),
- * })
+ * const storage = new S3Storage('my-bucket', { prefix: 'agents/' })
  * await storage.write('sessions/abc/snapshot.json', bytes)
  * ```
  */
@@ -66,11 +62,6 @@ export class S3Storage implements Storage {
     this._region = config?.region
     this._client = config?.s3Client
     this._searchStrategy = config?.searchStrategy
-  }
-
-  /** The S3 bucket this storage writes to. */
-  get bucket(): string {
-    return this._bucket
   }
 
   /** The region override passed in config, or `undefined` when the SDK's resolution chain applies. */

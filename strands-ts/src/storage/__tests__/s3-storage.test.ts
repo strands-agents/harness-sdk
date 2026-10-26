@@ -180,8 +180,7 @@ describe('S3Storage', () => {
       expect(remove).not.toHaveBeenCalled()
     })
 
-    it('exposes bucket and region for strategies to derive defaults from', () => {
-      expect(new S3Storage('my-bucket').bucket).toBe('my-bucket')
+    it('exposes region for strategies to derive client defaults from', () => {
       expect(new S3Storage('my-bucket').region).toBeUndefined()
       expect(new S3Storage('my-bucket', { region: 'eu-west-1' }).region).toBe('eu-west-1')
     })
@@ -211,6 +210,8 @@ describe('S3Storage', () => {
       const cause = new Error('AccessDeniedException')
       const strategy = new S3VectorSearchStrategy({
         embedder: { embed: vi.fn() } as never,
+        vectorBucketName: 'vecs',
+        indexName: 'idx',
         s3VectorsClient: { send: vi.fn() } as never,
       })
       vi.spyOn(strategy, 'remove').mockRejectedValue(cause)

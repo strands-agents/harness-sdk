@@ -3,28 +3,26 @@ import type { S3Storage } from '../s3-storage.js'
 import type { SearchStrategy } from './types.js'
 import type { Embedder } from '../embeddings/embedder.js'
 
-import { StorageError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 
-/** Configuration for {@link S3VectorSearchStrategy}. Every field is optional. */
+/** Configuration for {@link S3VectorSearchStrategy}. */
 export interface S3VectorSearchStrategyConfig {
   /**
+   * Name of an existing S3 Vectors bucket. Not created automatically. Do not share one index
+   * across storages on different buckets: results are filtered by prefix only.
+   */
+  vectorBucketName: string
+  /**
+   * Name of an existing vector index in that bucket. Not created automatically, and its
+   * dimension must match the embedder.
+   */
+  indexName: string
+  /**
    * Produces the embedding vectors. Defaults to a `BedrockEmbedder` (Titan Text Embeddings V2)
-   * in the resolved region, loaded on first use so this module does not import the Bedrock
+   * in the storage's region, loaded on first use so this module does not import the Bedrock
    * provider.
    */
   embedder?: Embedder
-  /**
-   * Name of an existing S3 Vectors bucket. Not created automatically.
-   * Defaults to the storage bucket name suffixed with `-vectors`. Do not share one index
-   * across storages on different buckets: results are filtered by prefix only.
-   */
-  vectorBucketName?: string
-  /**
-   * Name of an existing vector index in that bucket. Not created automatically, and
-   * its dimension must match the embedder. Defaults to `'default'`.
-   */
-  indexName?: string
   /**
    * Maximum number of results to return. Defaults to 10. The limit applies before
    * results are filtered to this storage's prefix (and to a `namespace()` view's prefix),
@@ -32,13 +30,9 @@ export interface S3VectorSearchStrategyConfig {
    */
   maxResults?: number
   /**
-   * AWS region for the S3 Vectors client and the default embedder. Defaults to the
-   * `region` the storage was configured with; when the storage was built from an
-   * `s3Client` instead, the SDK's standard resolution chain applies. Cannot be combined
-   * with `s3VectorsClient`.
+   * Pre-configured S3 Vectors client. Defaults to a client in the storage's `region`, or the
+   * SDK's standard region resolution when the storage has none.
    */
-  region?: string
-  /** Pre-configured S3 Vectors client. Cannot be combined with `region`. */
   s3VectorsClient?: import('@aws-sdk/client-s3vectors').S3VectorsClient
 }
 
@@ -50,48 +44,35 @@ export interface S3VectorSearchStrategyConfig {
  * on search. Only works with `S3Storage`; each storage backend pairs with its own native
  * vector index, and only the {@link Embedder} is shared.
  *
- * Defaults: vector bucket `<bucket>-vectors`, index `default`, Titan Text Embeddings V2,
- * and the storage's region. The vector bucket and index must already exist, with a
- * dimension matching the embedder (1024 for Titan V2). Vectors are keyed by the full object
- * key, so storages sharing a bucket under different prefixes can share one index. Empty and
- * non-UTF-8 values are stored but not indexed, and clear any earlier vector for that key.
- * Attach each instance to a single storage.
+ * The vector bucket and index must already exist, with a dimension matching the embedder
+ * (1024 for the default, Titan Text Embeddings V2). Clients default to the storage's region.
+ * Vectors are keyed by the full object key, so storages sharing a bucket under different
+ * prefixes can share one index. Empty and non-UTF-8 values are stored but not indexed, and
+ * clear any earlier vector for that key. Attach each instance to a single storage.
  *
  * @example
  * ```typescript
  * import { S3Storage } from '@strands-agents/sdk/storage'
  * import { S3VectorSearchStrategy } from '@strands-agents/sdk/storage/search'
  *
- * // Defaults: my-bucket-vectors / default / Titan v2
- * const storage = new S3Storage('my-bucket', { searchStrategy: new S3VectorSearchStrategy() })
- *
- * // Overrides
- * const custom = new S3Storage('my-bucket', {
- *   searchStrategy: new S3VectorSearchStrategy({
- *     vectorBucketName: 'shared-vectors',
- *     indexName: 'agent-a',
- *     embedder: myEmbedder,
- *   }),
+ * const storage = new S3Storage('my-bucket', {
+ *   searchStrategy: new S3VectorSearchStrategy({ vectorBucketName: 'my-vectors', indexName: 'notes' }),
  * })
  * ```
  */
 export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   private readonly _config: S3VectorSearchStrategyConfig
+  private readonly _target: { vectorBucketName: string; indexName: string }
   private _client: import('@aws-sdk/client-s3vectors').S3VectorsClient | undefined
   private _sdk: Promise<typeof import('@aws-sdk/client-s3vectors')> | undefined
   private _embedder: Promise<Embedder> | undefined
 
   /**
-   * @param config - Optional embedder, vector bucket and index, and client settings
-   * @throws {@link StorageError} if both `region` and `s3VectorsClient` are provided
+   * @param config - Vector bucket and index, plus optional embedder and client settings
    */
-  constructor(config: S3VectorSearchStrategyConfig = {}) {
-    if (config.s3VectorsClient && config.region) {
-      throw new StorageError(
-        'Cannot specify both s3VectorsClient and region. Configure the region on the S3VectorsClient instead.'
-      )
-    }
+  constructor(config: S3VectorSearchStrategyConfig) {
     this._config = config
+    this._target = { vectorBucketName: config.vectorBucketName, indexName: config.indexName }
     this._client = config.s3VectorsClient
     if (config.embedder) this._embedder = Promise.resolve(config.embedder)
   }
@@ -114,12 +95,12 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
       return
     }
     const embedder = await this._getEmbedder(storage)
-    const vector = await embedder.embed(text, { purpose: 'document' })
+    const vector = await embedder.embed(text)
     const client = await this._getClient(storage)
     const { PutVectorsCommand } = await this._getSdk()
     await client.send(
       new PutVectorsCommand({
-        ...this._target(storage),
+        ...this._target,
         vectors: [{ key: storage.prefix + key, data: { float32: vector } }],
       })
     )
@@ -135,7 +116,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   async remove(storage: S3Storage, key: string): Promise<void> {
     const client = await this._getClient(storage)
     const { DeleteVectorsCommand } = await this._getSdk()
-    await client.send(new DeleteVectorsCommand({ ...this._target(storage), keys: [storage.prefix + key] }))
+    await client.send(new DeleteVectorsCommand({ ...this._target, keys: [storage.prefix + key] }))
   }
 
   /**
@@ -147,12 +128,12 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    */
   async search(storage: S3Storage, query: string): Promise<StorageSearchResult[]> {
     const embedder = await this._getEmbedder(storage)
-    const queryVector = await embedder.embed(query, { purpose: 'query' })
+    const queryVector = await embedder.embed(query)
     const client = await this._getClient(storage)
     const { QueryVectorsCommand } = await this._getSdk()
     const response = await client.send(
       new QueryVectorsCommand({
-        ...this._target(storage),
+        ...this._target,
         queryVector: { float32: queryVector },
         topK: this._config.maxResults ?? 10,
         returnDistance: true,
@@ -170,21 +151,10 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
     return results
   }
 
-  private _target(storage: S3Storage): { vectorBucketName: string; indexName: string } {
-    return {
-      vectorBucketName: this._config.vectorBucketName ?? `${storage.bucket}-vectors`,
-      indexName: this._config.indexName ?? 'default',
-    }
-  }
-
-  private _region(storage: S3Storage): string | undefined {
-    return this._config.region ?? storage.region
-  }
-
   /** Resolves the configured embedder, or loads the default Bedrock embedder once on first use. */
   private _getEmbedder(storage: S3Storage): Promise<Embedder> {
     this._embedder ??= import('../embeddings/bedrock.js').then(({ BedrockEmbedder }) => {
-      const region = this._region(storage)
+      const region = storage.region
       return new BedrockEmbedder(region ? { region } : undefined)
     })
     return this._embedder
@@ -199,7 +169,7 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   private async _getClient(storage: S3Storage): Promise<import('@aws-sdk/client-s3vectors').S3VectorsClient> {
     if (this._client) return this._client
     const { S3VectorsClient } = await this._getSdk()
-    const region = this._region(storage)
+    const region = storage.region
     this._client = new S3VectorsClient(region ? { region } : {})
     return this._client
   }

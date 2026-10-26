@@ -71,8 +71,7 @@ export class BedrockEmbedder extends Embedder {
   }
 
   /**
-   * Embeds `text` with the configured Titan model. Titan embeds documents and queries the same
-   * way, so `options.purpose` is ignored.
+   * Embeds `text` with the configured Titan model.
    *
    * @param text - The text to embed
    * @returns The embedding vector
