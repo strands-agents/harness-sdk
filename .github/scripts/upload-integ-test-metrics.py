@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import math
 import os
 import re
@@ -29,7 +30,12 @@ TRANSLITERATIONS = {
     "”": '"',
 }
 MAX_DIMENSION_LENGTH = 255
-MAX_TIMESTAMP_AGE_DAYS = 13
+# Hex digits of the SHA-1 of the original name appended when sanitising changed it, so two names that sanitise
+# alike stay distinct series.
+HASH_LENGTH = 6
+# Both junit flavours stamp suites within the run that uploads them (pytest: session start; vitest: report write),
+# so anything older than one day is a forged or stale report and is stamped with the upload time instead.
+MAX_TIMESTAMP_AGE = timedelta(hours=24)
 
 # The only event the dashboards read the per-test context schema for (see build_metric_data).
 CONTEXT_SCHEMA_EVENT = "schedule"
@@ -59,7 +65,7 @@ class TestResult:
 
 def suite_timestamp(attr: str | None, now: datetime) -> datetime:
     """Parse a <testsuite timestamp> (naive = UTC, as on GitHub runners), falling back to `now` when it is missing,
-    unparsable, in the future, or outside CloudWatch's two-week put_metric_data window."""
+    unparsable, in the future, or more than MAX_TIMESTAMP_AGE before `now`."""
     if not attr:
         return now
     try:
@@ -68,7 +74,7 @@ def suite_timestamp(attr: str | None, now: datetime) -> datetime:
         return now
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    if parsed > now or now - parsed > timedelta(days=MAX_TIMESTAMP_AGE_DAYS):
+    if parsed > now or now - parsed > MAX_TIMESTAMP_AGE:
         return now
     return parsed
 
@@ -101,11 +107,16 @@ def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | N
 
 
 def sanitize_test_name(name: str) -> str:
+    """Printable-ASCII TestName of at most MAX_DIMENSION_LENGTH characters; a name that had to change carries a
+    `#<hash>` suffix derived from the original so distinct names cannot collapse into one series."""
     normalized = unicodedata.normalize("NFKC", name)
     for char, replacement in TRANSLITERATIONS.items():
         normalized = normalized.replace(char, replacement)
     ascii_only = "".join(c if 0x20 <= ord(c) <= 0x7E else "?" for c in normalized)
-    return ascii_only[:MAX_DIMENSION_LENGTH]
+    if ascii_only == name and len(name) <= MAX_DIMENSION_LENGTH:
+        return name
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:HASH_LENGTH]
+    return f"{ascii_only[: MAX_DIMENSION_LENGTH - HASH_LENGTH - 1]}#{digest}"
 
 
 def parse_junit_xml(xml_file_path: str) -> list[TestResult] | None:
