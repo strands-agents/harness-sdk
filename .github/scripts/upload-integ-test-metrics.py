@@ -39,6 +39,10 @@ MAX_TIMESTAMP_AGE = timedelta(hours=24)
 
 # The only event the dashboards read the per-test context schema for (see build_metric_data).
 CONTEXT_SCHEMA_EVENT = "schedule"
+# A dashboard SEARCH widget shows at most 500 series and drops the rest silently; the publisher cannot see how the
+# dashboards partition the names, so this is a cardinality-explosion guard (about 2x the Python suite) rather than
+# a per-partition limit. The TypeScript workflow passes a higher value for its larger per-project suites.
+DEFAULT_MAX_TEST_NAMES = 1000
 
 
 class Dimension(TypedDict):
@@ -202,7 +206,16 @@ def _suite_datums(
     ]
 
 
-def build_metric_data(test_results: list[TestResult], repository: str, sdk: str, ctx: RunContext) -> list[MetricDatum]:
+def test_name(test: TestResult, project: str | None) -> str:
+    """TestName dimension value: `<project>/` when the report came from a named vitest project (node and browser
+    projects run the same files, so the bare name would merge their results), then classname and name."""
+    prefix = f"{project}/" if project else ""
+    return sanitize_test_name(f"{prefix}{test.classname}.{test.name}")
+
+
+def build_metric_data(
+    test_results: list[TestResult], repository: str, sdk: str, ctx: RunContext, project: str | None = None
+) -> list[MetricDatum]:
     """Per-test datums on (Repository, SDK, TestName) for every run, the same with (Event, Branch, Leg) for
     nightly runs only, and one set of suite-level Tests* counters per publish.
 
@@ -218,9 +231,8 @@ def build_metric_data(test_results: list[TestResult], repository: str, sdk: str,
     emit_context_schema = ctx.event == CONTEXT_SCHEMA_EVENT
 
     for test in test_results:
-        test_name = sanitize_test_name(f"{test.classname}.{test.name}")
         dimensions: list[Dimension] = [
-            Dimension(Name="TestName", Value=test_name),
+            Dimension(Name="TestName", Value=test_name(test, project)),
             Dimension(Name="Repository", Value=repository),
             Dimension(Name="SDK", Value=sdk),
         ]
@@ -274,6 +286,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Branch dimension; defaults to the PR/merge-queue base or GITHUB_REF_NAME",
     )
     parser.add_argument("--leg", default="all", help="Leg dimension: the matrix leg that produced the report")
+    parser.add_argument("--project", default=None, help="vitest project that produced the report; prefixes TestName")
+    parser.add_argument(
+        "--max-test-names",
+        type=int,
+        default=DEFAULT_MAX_TEST_NAMES,
+        help=f"fail without publishing above this many distinct TestName values (default: {DEFAULT_MAX_TEST_NAMES})",
+    )
     parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
     return parser.parse_args(argv)
 
@@ -289,8 +308,19 @@ def main():
         print("No test results to publish")
         return
 
-    print(f"Found {len(test_results)} test results (event={ctx.event}, branch={ctx.branch}, leg={ctx.leg})")
-    metric_data = build_metric_data(test_results, args.repository, args.sdk, ctx)
+    print(
+        f"Found {len(test_results)} test results "
+        f"(event={ctx.event}, branch={ctx.branch}, leg={ctx.leg}, project={args.project})"
+    )
+    names = {test_name(test, args.project) for test in test_results}
+    if len(names) > args.max_test_names:
+        print(
+            f"::error::{len(names)} distinct TestName values for ({args.repository}, {args.sdk}) exceed "
+            f"--max-test-names {args.max_test_names}; a SEARCH widget shows at most 500 series per partition, "
+            "so check test-infra/dashboards before raising the ceiling"
+        )
+        sys.exit(1)
+    metric_data = build_metric_data(test_results, args.repository, args.sdk, ctx, args.project)
     cloudwatch = boto3.client("cloudwatch", region_name=args.region)
     failed_batches = publish_metrics(metric_data, cloudwatch)
     if failed_batches:

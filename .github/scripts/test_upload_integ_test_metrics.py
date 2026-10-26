@@ -167,6 +167,38 @@ def test_main_succeeds_when_all_batches_publish(mod, tmp_path, monkeypatch):
     assert len(client.batches) == 1
 
 
+def test_main_fails_without_publishing_above_the_test_name_ceiling(mod, tmp_path, monkeypatch, capsys):
+    client = FakeCloudWatch()
+    monkeypatch.setattr(mod.boto3, "client", lambda *args, **kwargs: client)
+    argv = ["upload", write_junit(tmp_path, THREE_CASES), "harness-sdk", "python", "--max-test-names", "2"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+
+    assert exc.value.code == 1
+    assert client.batches == []
+    assert "::error::3 distinct TestName values for (harness-sdk, python) exceed --max-test-names 2" in (
+        capsys.readouterr().out
+    )
+
+
+def test_main_prefixes_test_names_with_the_project(mod, tmp_path, monkeypatch):
+    client = FakeCloudWatch()
+    monkeypatch.setattr(mod.boto3, "client", lambda *args, **kwargs: client)
+    argv = ["upload", write_junit(tmp_path, THREE_CASES), "harness-sdk", "typescript", "--project", "integ-browser"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    mod.main()
+
+    names = {dims_of(d)["TestName"] for d in client.batches[0] if "TestName" in dims_of(d)}
+    assert names == {
+        "integ-browser/tests_integ.test_a.test_passed",
+        "integ-browser/tests_integ.test_a.test_failed",
+        "integ-browser/tests_integ.test_a.test_skipped",
+    }
+
+
 def dims_of(datum):
     return {d["Name"]: d["Value"] for d in datum["Dimensions"]}
 
@@ -261,11 +293,14 @@ def test_parse_args_defaults_and_legacy_positionals(mod, monkeypatch):
     legacy = mod.parse_args(["results.xml", "harness-sdk"])
     assert (legacy.xml_file, legacy.repository, legacy.sdk) == ("results.xml", "harness-sdk", "python")
     assert (legacy.event, legacy.branch, legacy.leg, legacy.region) == ("merge_group", "main", "all", "us-east-1")
+    assert (legacy.project, legacy.max_test_names) == (None, 1000)
 
     explicit = mod.parse_args(
         ["r.xml", "harness-sdk", "typescript", "--leg", "mcp-1x", "--branch", "dev", "--event", "push"]
+        + ["--project", "integ-node", "--max-test-names", "1500"]
     )
     assert (explicit.sdk, explicit.leg, explicit.branch, explicit.event) == ("typescript", "mcp-1x", "dev", "push")
+    assert (explicit.project, explicit.max_test_names) == ("integ-node", 1500)
 
 
 NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
