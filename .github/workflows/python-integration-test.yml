@@ -213,6 +213,11 @@ jobs:
 
       # Each leg is published separately with a Leg dimension; a leg whose upload
       # fails does not stop the others, but the step fails at the end.
+      #
+      # Do not re-run this job after a partial failure: put_metric_data has no
+      # idempotency key, so batches that succeeded before the failure are already
+      # stored and a re-run republishes them, double-counting that run. Fix the
+      # cause and let the next run publish instead.
       - name: Publish test metrics to CloudWatch
         env:
           REPO_NAME: ${{ github.event.repository.name }}
