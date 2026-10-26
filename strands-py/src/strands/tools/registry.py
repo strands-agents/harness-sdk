@@ -312,6 +312,17 @@ class ToolRegistry:
         elif tool_name in self.dynamic_tools:
             del self.dynamic_tools[tool_name]
 
+    def remove(self, tool_name: str) -> None:
+        """Remove a tool by its registered name, including any dynamic registration.
+
+        Does nothing if the tool does not exist.
+
+        Args:
+            tool_name: Name of the tool to remove.
+        """
+        self.registry.pop(tool_name, None)
+        self.dynamic_tools.pop(tool_name, None)
+
     def get_tools_dirs(self) -> list[Path]:
         """Get all tool directory paths.
 

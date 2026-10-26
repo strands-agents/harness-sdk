@@ -29,6 +29,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/subagent/subagent.py
   - path: strands-py/src/strands/vended_tools/stop/stop.py
   - path: strands-py/src/strands/vended_tools/swarm/swarm.py
+  - path: strands-py/src/strands/vended_tools/graph/graph.py
   - path: strands-py/src/strands/vended_tools/python_repl/python_repl.py
 ---
 
@@ -36,7 +37,7 @@ Vended tools are pre-built tools included directly in the Strands Harness SDK fo
 
 They ship as part of the SDK package and are updated alongside it. See [Versioning & Maintenance](#versioning--maintenance) for how changes are communicated and what level of backwards compatibility they maintain.
 
-## Quick start
+## Quickstart
 
 Each tool is imported from its own subpath under `@strands-agents/sdk/vended-tools`, with no additional packages required:
 
@@ -63,6 +64,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
 | [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
+| [Graph](#graph) | Run a team of sub-agents as a directed acyclic graph designed by the model | Python |
 
 ### File editor
 
@@ -817,7 +819,7 @@ By default, the child sees only the task (<Syntax py='context=Fixed("none")' ts=
 
 _Supported in: Python, TypeScript (Node.js, browsers)._
 
-**Example — quick start:**
+**Quickstart example:**
 
 <Tabs>
 <Tab label="TypeScript">
@@ -891,6 +893,60 @@ agent("Review the changes in src/main.py for correctness.")
 </Tabs>
 
 Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/subagent/README.md)
+
+### Graph
+
+Lets your agent design and run a team of sub-agents as a [Graph](../multi-agent/graph.mdx). The model supplies a `task`, a list of `nodes` (each with a unique `name` and its own `instructions`), and `edges` that order them. Nodes with no upstream nodes start in parallel, and each node receives its upstream outputs.
+
+Nodes inherit the caller's model and tools, including MCP tools, except graph tools. Child
+interrupts pause the tool call and resume with the user's response. An interrupted graph
+is saved in the parent agent's interrupt state, so it can resume after the parent is
+restored from a snapshot or session. By default, a call times out after 900 seconds and
+each node after 300 seconds. A running graph cannot be cancelled from the parent agent.
+
+**Example:**
+
+```python
+from strands import Agent
+from strands.vended_tools import graph, http_request
+
+agent = Agent(tools=[graph, http_request])
+agent("Research three competing vector databases in parallel, then write a comparison table.")
+```
+
+Use `make_graph` to set limits (`max_nodes`, `max_edges`, `max_node_executions`,
+`execution_timeout`, `node_timeout`), build each node agent yourself with `builder`, or control
+what the model configures on each node with [axis policies](#axis-policies) over `instructions`,
+`tools`, and `model`.
+
+**Custom configuration:**
+
+```python
+from strands import Agent
+from strands.multiagent import Choice, Preset
+from strands.vended_tools import file_editor, http_request, make_graph
+
+team = make_graph(
+    presets={
+        "researcher": Preset(
+            instructions="Gather facts from the web and cite every source.",
+            tools=["http_request"],
+            description="Finds and summarizes sources.",
+        ),
+        "writer": Preset(
+            instructions="Turn upstream findings into clear prose.",
+            tools=["file_editor"],
+            description="Drafts the final document.",
+        ),
+    },
+    tools=Choice(["http_request", "file_editor"], multiple=True),
+    max_nodes=6,
+    max_edges=10,
+    execution_timeout=600,
+    node_timeout=120,
+)
+agent = Agent(tools=[team, http_request, file_editor])
+```
 
 ---
 
@@ -986,7 +1042,7 @@ Some vended tools let the model configure child agents at runtime. Axis policies
 | <Syntax py="Open()" ts="new Open()" /> | Model writes a free-form value | Yes (string) |
 | <Syntax py="Choice([...], multiple=True)" ts="new Choice([...], true)" /> | Model picks from a set | Yes (enum) |
 
-Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`.
+Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`. When the model omits both `agent_type` and `instructions`, the child uses <Syntax py="default_preset" ts="defaultPreset" />, or the first preset if none is set.
 
 Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent's tools, model, and interventions, so a child's tool calls go through the same approval and authorization checks as the parent's. Each child gets <Syntax py='context_manager="auto"' ts="contextManager: 'auto'" /> (unless its model is stateful) in place of the parent's context-management tools, and accesses the parent's long-term memory through inherited memory tools.
 

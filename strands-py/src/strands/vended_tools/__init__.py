@@ -48,14 +48,18 @@ The :data:`swarm` tool spins up a handoff-based team of sub-agents at runtime an
 it as a :class:`~strands.multiagent.Swarm`; use :func:`make_swarm` to supply presets,
 a custom tool name or description, or a cap on agents per call.
 
+The :data:`graph` tool runs a directed acyclic graph of sub-agents at runtime as a
+:class:`~strands.multiagent.graph.Graph`; use :func:`make_graph` to supply presets,
+a custom tool name or description, or caps on nodes and edges per call.
+
 Example Usage:
     ```python
     from strands import Agent
     from strands.vended_tools import (
-        file_editor, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch
+        file_editor, graph, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch
     )
 
-    agent = Agent(tools=[file_editor, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch])
+    agent = Agent(tools=[file_editor, graph, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch])
     ```
 """
 
@@ -64,6 +68,7 @@ from typing import Any
 
 from ._bash import _RENAME_RATIONALE, make_bash  # noqa: F401  deprecated tool, kept importable until v2.0.0
 from .file_editor import file_editor, make_file_editor
+from .graph import graph, make_graph
 from .handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user, make_handoff_to_user
 from .http_request import http_request, make_http_request
 from .mcp_router import make_mcp_router
@@ -108,9 +113,11 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "HANDOFF_INTERRUPT_NAME",
     "file_editor",
+    "graph",
     "handoff_to_user",
     "http_request",
     "make_file_editor",
+    "make_graph",
     "make_handoff_to_user",
     "make_http_request",
     "make_mcp_router",

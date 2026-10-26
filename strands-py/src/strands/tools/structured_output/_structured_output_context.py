@@ -199,6 +199,6 @@ class StructuredOutputContext:
         Args:
             registry: The tool registry to clean up the tool from.
         """
-        if self.structured_output_tool and self.structured_output_tool.tool_name in registry.dynamic_tools:
-            del registry.dynamic_tools[self.structured_output_tool.tool_name]
+        if self.structured_output_tool:
+            registry.remove(self.structured_output_tool.tool_name)
             logger.debug("Cleaned up structured output tool: %s", self.structured_output_tool.tool_name)
