@@ -89,6 +89,7 @@ STRUCTURAL_PATTERNS=(
   '^strands-ts/test/integ/__fixtures__/'       # shared integ setup/fixtures
   '^strands-ts/test/integ/__resources__/'      # binary assets imported via Vite `?url` (not traced in reverse)
   '^test-infra/scripts/run-selective-ts\.sh$'  # this orchestration script
+  '^test-infra/scripts/run-integ-ts\.sh$'      # per-project vitest runner this script delegates to
   '^\.github/workflows/typescript-'            # TypeScript CI workflows
 )
 STRUCTURAL="$(IFS='|'; echo "${STRUCTURAL_PATTERNS[*]}")"
@@ -104,9 +105,10 @@ if [[ -z "$TS_SOURCE" ]]; then
 fi
 
 # --- Branch 3: selective ---
-# Pass changed source files to Vitest's module-graph tracer, scoped to both
-# integ projects. vitest related exits 0 with "No test files found" when none
-# depend on the changes — a valid skip.
+# Pass changed source files to Vitest's module-graph tracer, one invocation
+# per integ project so each project gets its own junit report (see
+# run-integ-ts.sh). vitest related exits 0 with "No test files found" when
+# none depend on the changes — a valid skip.
 #
 # LOAD-BEARING ASSUMPTION (vitest v4, pinned in strands-ts/package.json): the
 # "no covering spec" case exits 0, not non-zero. The whole "never skip a test
@@ -123,5 +125,4 @@ files=()
 while IFS= read -r f; do
   [[ -n "$f" ]] && files+=("$f")
 done < <(echo "$TS_SOURCE" | sed -E 's#^strands-ts/##')
-( cd strands-ts && npx vitest related "${files[@]}" \
-    --project integ-node --project integ-browser --run )
+bash "$ROOT/test-infra/scripts/run-integ-ts.sh" related "${files[@]}"

@@ -59,11 +59,15 @@ These were measured against the account with read-only `GetMetricData` calls and
 `generate.py`:
 
 1. **One widget returns at most 500 time series across all of its `SEARCH` expressions.** Over that, CloudWatch
-   returns `MaxMetricsExceeded` and silently truncates every aggregate built on the search. Python has about 490
-   tests and TypeScript about 750, so each dashboard has exactly one per-test `SEARCH` per widget and the tests
-   are partitioned by a name token (`models` / `NOT models`; `agent` / `interventions NOT agent` /
-   `NOT agent NOT interventions`). Partitions of the form `X`, `Y NOT X`, `NOT X NOT Y` are disjoint and
-   complete by construction.
+   returns `MaxMetricsExceeded` and silently truncates every aggregate built on the search. Each dashboard
+   therefore has exactly one per-test `SEARCH` per widget and the tests are partitioned by name token so every
+   partition stays under 450 series even while a renamed test's old name is still visible (14 days). Python has
+   about 620 names, partitioned `models` / `NOT models`. TypeScript has about 1,500 names, one per vitest project
+   and test (`TestName` is `<project>/<file>.<title>`), partitioned by project token then name token:
+   `browser agent` / `browser interventions NOT agent` / `browser NOT agent NOT interventions` /
+   `node agent` / `node interventions NOT agent` / `node models NOT agent NOT interventions` /
+   `node NOT agent NOT interventions NOT models`. Partitions of the form `X`, `Y NOT X`, `NOT X NOT Y` are
+   disjoint and complete by construction; a name carrying both project tokens appears in both project groups.
 2. **Metric math cannot combine two arrays of time series** (`failed / runs` with both from `SEARCH` is rejected)
    **and cannot compare an array with a scalar** (`IF(n >= 5, ...)` is rejected). The failure rate therefore
    comes from a single `SEARCH(..., 'Average', ...)` of `TestFailed`, and a "minimum runs" filter cannot be

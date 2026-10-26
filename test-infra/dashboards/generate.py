@@ -42,12 +42,23 @@ MIN_RUNS = 5
 class DashboardSpec:
     sdk: str
     name: str
-    # (label, SEARCH term): disjoint, complete, and < 500 series each. SEARCH tokenizes TestName on
-    # non-alphanumerics, so "models" matches tests_integ.models.* and test/integ/models/*.
+    # (label, SEARCH term): complete and < 450 series each, so the 500-series widget cap holds while renamed tests'
+    # old names stay visible for 14 days. SEARCH tokenizes TestName on non-alphanumerics, so "models" matches
+    # tests_integ.models.* and test/integ/models/*. A name carrying both project tokens appears in both partitions.
     partitions: tuple[tuple[str, str], ...]
     # (label, Leg, SEARCH term) for the nightly tables; every test the nightly run executes is in exactly one cell.
     nightly_partitions: tuple[tuple[str, str, str], ...]
 
+
+TS_PARTITIONS = (
+    ("browser, agent", "browser agent"),
+    ("browser, interventions", "browser interventions NOT agent"),
+    ("browser, other", "browser NOT agent NOT interventions"),
+    ("node, agent", "node agent"),
+    ("node, interventions", "node interventions NOT agent"),
+    ("node, models", "node models NOT agent NOT interventions"),
+    ("node, other", "node NOT agent NOT interventions NOT models"),
+)
 
 SPECS = (
     DashboardSpec(
@@ -65,17 +76,12 @@ SPECS = (
     DashboardSpec(
         sdk="typescript",
         name="StrandsTypescriptIntegTests",
-        partitions=(
-            ("agent", "agent"),
-            ("interventions", "interventions NOT agent"),
-            ("other", "NOT agent NOT interventions"),
-        ),
+        # TestName is `<vitest project>/<file>.<title>`, so `browser` / `node` are the project tokens (integ-browser,
+        # integ-node). `node` also matches *.test.node.ts file names, which is why the node remainder is split once
+        # more on `models` to keep its headroom.
+        partitions=TS_PARTITIONS,
         # TypeScript has a single matrix leg, published as Leg="all".
-        nightly_partitions=(
-            ("agent", "all", "agent"),
-            ("interventions", "all", "interventions NOT agent"),
-            ("other", "all", "NOT agent NOT interventions"),
-        ),
+        nightly_partitions=tuple((label, "all", term) for label, term in TS_PARTITIONS),
     ),
 )
 
