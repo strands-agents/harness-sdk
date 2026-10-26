@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import math
 import os
 import re
 import sys
@@ -72,12 +73,22 @@ def suite_timestamp(attr: str | None, now: datetime) -> datetime:
     return parsed
 
 
+def _duration(attr: str | None) -> float:
+    """A <testcase time> that is missing, unparsable or non-finite becomes 0.0; a NaN or infinite Value makes
+    CloudWatch reject the whole put_metric_data batch."""
+    try:
+        value = float(attr or 0.0)
+    except ValueError:
+        return 0.0
+    return value if math.isfinite(value) else 0.0
+
+
 def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | None:
     name = testcase.get("name")
     classname = testcase.get("classname")
     if not name or not classname:
         return None
-    duration = float(testcase.get("time", 0.0))
+    duration = _duration(testcase.get("time"))
 
     if testcase.find("failure") is not None or testcase.find("error") is not None:
         outcome = "failed"

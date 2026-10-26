@@ -45,6 +45,20 @@ def test_parse_junit_xml_returns_one_result_per_testcase(mod, tmp_path):
     ]
 
 
+@pytest.mark.parametrize("time_attr", ['time=""', 'time="NaN"', 'time="inf"', 'time="-Infinity"', 'time="abc"', ""])
+def test_parse_junit_xml_defaults_malformed_time_to_zero_and_keeps_the_leg(mod, tmp_path, time_attr):
+    body = f'<testcase classname="tests_integ.test_a" name="test_odd" {time_attr}><failure/></testcase>' + THREE_CASES
+
+    results = mod.parse_junit_xml(write_junit(tmp_path, body))
+
+    assert [(r.name, r.outcome, r.duration) for r in results] == [
+        ("test_odd", "failed", 0.0),
+        ("test_passed", "passed", 1.5),
+        ("test_failed", "failed", 2.0),
+        ("test_skipped", "skipped", 0.0),
+    ]
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
