@@ -20,7 +20,8 @@ Top to bottom:
 2. **Suite health**: failed executions and share passing per day over the last 14 days (Metrics Insights), and the
    30-day pass rate and failed-test count from the suite-level `TestsPassed` / `TestsFailed` counters.
 3. **Flaky tests, 30 days**: per group of tests, the 15 tests whose failure rate is strictly between 0.05 and 0.95,
-   sorted by rate, plus the tests that ran fewer than 5 times (whose rate is not trustworthy).
+   sorted by rate, plus the tests that ran fewer than 5 times (whose rate is not trustworthy). The rate is
+   failed / (passed + failed): a skipped execution publishes only `TestSkipped` and is not in the denominator.
 4. **Broken and recently flaky, by week**: the same thresholds applied per week as a 0/1 flag, with one column per
    week and the number of flagged weeks as the summary, so a reader can tell a new problem from an ongoing or fixed
    one.

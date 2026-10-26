@@ -147,12 +147,17 @@ def resolve_branch(env: Mapping[str, str]) -> str:
 
 
 def _test_datums(test: TestResult, dimensions: list[Dimension], timestamp: datetime) -> list[MetricDatum]:
-    values = [
-        ("TestPassed", 1.0 if test.outcome == "passed" else 0.0, "Count"),
-        ("TestFailed", 1.0 if test.outcome == "failed" else 0.0, "Count"),
-        ("TestSkipped", 1.0 if test.outcome == "skipped" else 0.0, "Count"),
-        ("TestDuration", test.duration, "Seconds"),
-    ]
+    """A skipped test publishes only TestSkipped=1: a TestFailed=0 datum would count as an execution in the
+    dashboards' Average/SampleCount of TestFailed, on the same series another matrix leg reports real runs to."""
+    if test.outcome == "skipped":
+        values = [("TestSkipped", 1.0, "Count")]
+    else:
+        values = [
+            ("TestPassed", 1.0 if test.outcome == "passed" else 0.0, "Count"),
+            ("TestFailed", 1.0 if test.outcome == "failed" else 0.0, "Count"),
+            ("TestSkipped", 0.0, "Count"),
+            ("TestDuration", test.duration, "Seconds"),
+        ]
     return [
         MetricDatum(MetricName=name, Dimensions=dimensions, Value=value, Unit=unit, Timestamp=timestamp)
         for name, value, unit in values

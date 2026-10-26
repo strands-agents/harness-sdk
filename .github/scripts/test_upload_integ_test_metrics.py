@@ -179,6 +179,35 @@ def test_nightly_event_emits_both_per_test_schemas(mod):
     assert suite == {"TestsRun": 2.0, "TestsPassed": 1.0, "TestsFailed": 1.0, "TestsSkipped": 0.0}
 
 
+def test_skipped_test_emits_only_test_skipped(mod, pr_ctx):
+    results = results_named(mod, ["skipped", "passed"])
+    results[0].outcome = "skipped"
+
+    data = mod.build_metric_data(results, "repo", "python", pr_ctx)
+
+    skipped = [d for d in data if dims_of(d).get("TestName") == "suite.skipped"]
+    assert [(d["MetricName"], d["Value"]) for d in skipped] == [("TestSkipped", 1.0)]
+    executed = [d["MetricName"] for d in data if dims_of(d).get("TestName") == "suite.passed"]
+    assert executed == ["TestPassed", "TestFailed", "TestSkipped", "TestDuration"]
+    suite = {d["MetricName"]: d["Value"] for d in data if d["MetricName"].startswith("Tests")}
+    assert suite == {"TestsRun": 2.0, "TestsPassed": 1.0, "TestsFailed": 0.0, "TestsSkipped": 1.0}
+
+
+def test_skipped_test_emits_one_test_skipped_per_schema_on_nightly(mod):
+    ctx = mod.RunContext(event="schedule", branch="main", leg="all")
+    results = results_named(mod, ["skipped"])
+    results[0].outcome = "skipped"
+
+    data = mod.build_metric_data(results, "repo", "python", ctx)
+
+    per_test = [d for d in data if "TestName" in dims_of(d)]
+    assert [d["MetricName"] for d in per_test] == ["TestSkipped", "TestSkipped"]
+    assert [set(dims_of(d)) for d in per_test] == [
+        {"TestName", "Repository", "SDK"},
+        {"TestName", "Repository", "SDK", "Event", "Branch", "Leg"},
+    ]
+
+
 @pytest.mark.parametrize(
     ("env", "expected"),
     [
