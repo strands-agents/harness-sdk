@@ -31,21 +31,22 @@ Top to bottom:
    publish the per-test `Event` / `Branch` / `Leg` schema, one series per test and leg. Python needs a table per leg
    because the `all` leg (Python 3.10) skips every bidi test and does not collect the mcp 1.x-only modules.
 
-## Publishing (one-time, Admin)
+## Publishing (manual, maintainers)
 
 The dashboards are not part of the CDK stack: `put-dashboard` is idempotent, overwrites the existing dashboards of
 the same name in place (so the embedding iframes keep working) and needs no stack deploy. From the repo root, with
 credentials that allow `cloudwatch:PutDashboard` in the test account:
 
 ```sh
-bash test-infra/scripts/put-dashboards.sh --dry-run   # validate the JSON only
-bash test-infra/scripts/put-dashboards.sh             # publish both dashboards
+bash test-infra/scripts/put-dashboards.sh --dry-run                   # validate the JSON only
+INTEG_TEST_ACCOUNT_ID=<id> bash test-infra/scripts/put-dashboards.sh  # publish both dashboards
 ```
 
-The script pins `us-east-1`, refuses to run unless `aws sts get-caller-identity` reports account `430853190378`,
-and exits 1 if CloudWatch returns any `DashboardValidationMessages` for a dashboard (printed to stderr); exit 0
-means both dashboards were accepted without messages. Re-run it after every change to the generated JSON,
-including partition changes: a widget whose `SEARCH` exceeds 500 series silently drops the surplus.
+The script pins `us-east-1`, refuses to run unless `aws sts get-caller-identity` reports the account given in
+`INTEG_TEST_ACCOUNT_ID` (the integ test account id is not committed), and exits 1 if CloudWatch returns any
+`DashboardValidationMessages` for a dashboard (printed to stderr); exit 0 means both dashboards were accepted
+without messages. Re-run it after every change to the generated JSON, including partition changes: a widget whose
+`SEARCH` exceeds 500 series silently drops the surplus.
 
 ## Regenerating
 
@@ -56,7 +57,7 @@ python3 test-infra/dashboards/generate.py --check  # exit 1 if a JSON file is st
 
 `generate.py` uses only the standard library.
 
-## Series headroom check (manual, ReadOnly)
+## Series headroom check (manual, read-only credentials)
 
 A widget shows at most 500 series and drops the rest silently (limit 1 below), and the publisher's
 `--max-test-names` ceiling guards against a cardinality explosion, not against one partition drifting past the cap.
