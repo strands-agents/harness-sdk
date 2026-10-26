@@ -96,10 +96,9 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
     }
     const embedder = await this._getEmbedder(storage)
     const vector = await embedder.embed(text)
-    const client = await this._getClient(storage)
-    const { PutVectorsCommand } = await this._getSdk()
+    const { client, sdk } = await this._vectors(storage)
     await client.send(
-      new PutVectorsCommand({
+      new sdk.PutVectorsCommand({
         ...this._target,
         vectors: [{ key: storage.prefix + key, data: { float32: vector } }],
       })
@@ -114,9 +113,8 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    * @param key - The storage key whose vector should be removed
    */
   async remove(storage: S3Storage, key: string): Promise<void> {
-    const client = await this._getClient(storage)
-    const { DeleteVectorsCommand } = await this._getSdk()
-    await client.send(new DeleteVectorsCommand({ ...this._target, keys: [storage.prefix + key] }))
+    const { client, sdk } = await this._vectors(storage)
+    await client.send(new sdk.DeleteVectorsCommand({ ...this._target, keys: [storage.prefix + key] }))
   }
 
   /**
@@ -129,10 +127,9 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   async search(storage: S3Storage, query: string): Promise<StorageSearchResult[]> {
     const embedder = await this._getEmbedder(storage)
     const queryVector = await embedder.embed(query)
-    const client = await this._getClient(storage)
-    const { QueryVectorsCommand } = await this._getSdk()
+    const { client, sdk } = await this._vectors(storage)
     const response = await client.send(
-      new QueryVectorsCommand({
+      new sdk.QueryVectorsCommand({
         ...this._target,
         queryVector: { float32: queryVector },
         topK: this._config.maxResults ?? 10,
@@ -160,18 +157,18 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
     return this._embedder
   }
 
-  /** Loads the S3 Vectors SDK once per instance; later calls reuse the same module. */
-  private _getSdk(): Promise<typeof import('@aws-sdk/client-s3vectors')> {
+  /**
+   * Loads the S3 Vectors SDK once per instance and, unless one was configured, creates the
+   * client on first use in the storage's region.
+   */
+  private async _vectors(storage: S3Storage): Promise<{
+    client: import('@aws-sdk/client-s3vectors').S3VectorsClient
+    sdk: typeof import('@aws-sdk/client-s3vectors')
+  }> {
     this._sdk ??= import('@aws-sdk/client-s3vectors')
-    return this._sdk
-  }
-
-  private async _getClient(storage: S3Storage): Promise<import('@aws-sdk/client-s3vectors').S3VectorsClient> {
-    if (this._client) return this._client
-    const { S3VectorsClient } = await this._getSdk()
-    const region = storage.region
-    this._client = new S3VectorsClient(region ? { region } : {})
-    return this._client
+    const sdk = await this._sdk
+    this._client ??= new sdk.S3VectorsClient(storage.region ? { region: storage.region } : {})
+    return { client: this._client, sdk }
   }
 }
 

@@ -20,11 +20,6 @@ export interface BedrockEmbedderConfig {
    * response shape and are not supported yet; extend {@link Embedder} for those.
    */
   modelId?: 'amazon.titan-embed-text-v2:0' | 'amazon.titan-embed-text-v1' | (string & {})
-  /**
-   * Output vector length, sent to the model as `dimensions`. Titan Text Embeddings V2 accepts
-   * 256, 512 or 1024 (its default). Leave unset for models that do not take the parameter.
-   */
-  dimensions?: number
   /** AWS region override for the Bedrock Runtime client. */
   region?: string
   /** Pre-configured Bedrock Runtime client. Cannot be combined with `region`. */
@@ -51,11 +46,10 @@ export interface BedrockEmbedderConfig {
  */
 export class BedrockEmbedder extends Embedder {
   private readonly _modelId: string
-  private readonly _dimensions: number | undefined
   private readonly _client: BedrockRuntimeClient
 
   /**
-   * @param config - Optional model, output dimension, region, or pre-configured client
+   * @param config - Optional model, region, or pre-configured client
    * @throws {@link StorageError} if both `region` and `bedrockClient` are provided
    */
   constructor(config: BedrockEmbedderConfig = {}) {
@@ -66,7 +60,6 @@ export class BedrockEmbedder extends Embedder {
       )
     }
     this._modelId = config.modelId ?? DEFAULT_EMBEDDER_MODEL_ID
-    this._dimensions = config.dimensions
     this._client = config.bedrockClient ?? new BedrockRuntimeClient(config.region ? { region: config.region } : {})
   }
 
@@ -78,14 +71,12 @@ export class BedrockEmbedder extends Embedder {
    * @throws {@link StorageError} if the model response has no `embedding` array
    */
   async embed(text: string): Promise<number[]> {
-    const body: { inputText: string; dimensions?: number } = { inputText: text }
-    if (this._dimensions !== undefined) body.dimensions = this._dimensions
     const response = await this._client.send(
       new InvokeModelCommand({
         modelId: this._modelId,
         contentType: 'application/json',
         accept: 'application/json',
-        body: JSON.stringify(body),
+        body: JSON.stringify({ inputText: text }),
       })
     )
     const parsed = JSON.parse(new TextDecoder().decode(response.body)) as { embedding?: unknown }

@@ -56,17 +56,6 @@ describe('BedrockEmbedder', () => {
     )
   })
 
-  it('sends a configured output dimension', async () => {
-    mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
-
-    const embedder = new BedrockEmbedder({ dimensions: 256 })
-    await embedder.embed('test')
-
-    expect(MockInvokeModelCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ body: JSON.stringify({ inputText: 'test', dimensions: 256 }) })
-    )
-  })
-
   it('passes any model ID through to Bedrock unchecked', async () => {
     mockSend.mockResolvedValue({ body: new TextEncoder().encode(JSON.stringify({ embedding: [1] })) })
 
