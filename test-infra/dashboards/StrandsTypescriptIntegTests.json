@@ -5,7 +5,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "## Typescript integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed executions / all executions, skips count as not failed). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
+        "markdown": "## Typescript integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed / (passed + failed); a skipped execution publishes only TestSkipped and does not count). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
       },
       "x": 0,
       "y": 0,
@@ -94,7 +94,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Datapoints published, latest hour (about tests x runs)",
+        "title": "Datapoints published, latest hour (executed tests x runs; skips excluded)",
         "region": "us-east-1",
         "view": "singleValue",
         "period": 3600,
@@ -200,7 +200,7 @@
               "expression": "1 - fr",
               "id": "passing",
               "period": 86400,
-              "label": "1 - failed/(all executions incl. skipped)"
+              "label": "1 - failed/(passed + failed)"
             }
           ]
         ],
@@ -325,14 +325,14 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, agent: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "title": "Top 15 flaky tests, 30 days, browser, agent: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" agent', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser agent', 'Average', 2592000)",
               "id": "r",
               "period": 2592000,
               "visible": false
@@ -377,14 +377,14 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, interventions: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "title": "Top 15 flaky tests, 30 days, browser, interventions: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" interventions NOT agent', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser interventions NOT agent', 'Average', 2592000)",
               "id": "r",
               "period": 2592000,
               "visible": false
@@ -429,14 +429,14 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, other: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "title": "Top 15 flaky tests, 30 days, browser, other: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" NOT agent NOT interventions', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser NOT agent NOT interventions', 'Average', 2592000)",
               "id": "r",
               "period": 2592000,
               "visible": false
@@ -481,14 +481,222 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Tests with fewer than 5 runs in 30 days, agent (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "title": "Top 15 flaky tests, 30 days, node, agent: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" agent', 'SampleCount', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node agent', 'Average', 2592000)",
+              "id": "r",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(r - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 60,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, node, interventions: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node interventions NOT agent', 'Average', 2592000)",
+              "id": "r",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(r - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 69,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, node, models: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node models NOT agent NOT interventions', 'Average', 2592000)",
+              "id": "r",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(r - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 78,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, node, other: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node NOT agent NOT interventions NOT models', 'Average', 2592000)",
+              "id": "r",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(r - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 87,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, browser, agent (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser agent', 'SampleCount', 2592000)",
               "id": "n",
               "period": 2592000,
               "visible": false
@@ -510,21 +718,21 @@
         }
       },
       "x": 0,
-      "y": 60,
+      "y": 96,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Tests with fewer than 5 runs in 30 days, interventions (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "title": "Tests with fewer than 5 runs in 30 days, browser, interventions (rates above are unreliable for these; value = runs, 0 = enough runs)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" interventions NOT agent', 'SampleCount', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser interventions NOT agent', 'SampleCount', 2592000)",
               "id": "n",
               "period": 2592000,
               "visible": false
@@ -546,21 +754,21 @@
         }
       },
       "x": 12,
-      "y": 60,
+      "y": 96,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Tests with fewer than 5 runs in 30 days, other (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "title": "Tests with fewer than 5 runs in 30 days, browser, other (rates above are unreliable for these; value = runs, 0 = enough runs)",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" NOT agent NOT interventions', 'SampleCount', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser NOT agent NOT interventions', 'SampleCount', 2592000)",
               "id": "n",
               "period": 2592000,
               "visible": false
@@ -582,7 +790,151 @@
         }
       },
       "x": 0,
-      "y": 66,
+      "y": 102,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, node, agent (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node agent', 'SampleCount', 2592000)",
+              "id": "n",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(4.5 - 10 ^ LOG10(4.5 - n), 0), MAX, DESC, 20)",
+              "id": "low",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 12,
+      "y": 102,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, node, interventions (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node interventions NOT agent', 'SampleCount', 2592000)",
+              "id": "n",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(4.5 - 10 ^ LOG10(4.5 - n), 0), MAX, DESC, 20)",
+              "id": "low",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 108,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, node, models (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node models NOT agent NOT interventions', 'SampleCount', 2592000)",
+              "id": "n",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(4.5 - 10 ^ LOG10(4.5 - n), 0), MAX, DESC, 20)",
+              "id": "low",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 12,
+      "y": 108,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, node, other (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node NOT agent NOT interventions NOT models', 'SampleCount', 2592000)",
+              "id": "n",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(4.5 - 10 ^ LOG10(4.5 - n), 0), MAX, DESC, 20)",
+              "id": "low",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 114,
       "width": 24,
       "height": 6
     },
@@ -592,21 +944,21 @@
         "markdown": "### Broken and recently flaky, by week\nWeek columns show whether a problem is new, ongoing or fixed."
       },
       "x": 0,
-      "y": 72,
+      "y": 120,
       "width": 24,
       "height": 2
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Broken tests by week, agent: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "title": "Broken tests by week, browser, agent: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
         "region": "us-east-1",
         "view": "table",
         "period": 604800,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" agent', 'Average', 604800)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser agent', 'Average', 604800)",
               "id": "r7",
               "period": 604800,
               "visible": false
@@ -628,21 +980,21 @@
         }
       },
       "x": 0,
-      "y": 74,
+      "y": 122,
       "width": 24,
       "height": 8
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Broken tests by week, interventions: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "title": "Broken tests by week, browser, interventions: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
         "region": "us-east-1",
         "view": "table",
         "period": 604800,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" interventions NOT agent', 'Average', 604800)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser interventions NOT agent', 'Average', 604800)",
               "id": "r7",
               "period": 604800,
               "visible": false
@@ -664,21 +1016,21 @@
         }
       },
       "x": 0,
-      "y": 82,
+      "y": 130,
       "width": 24,
       "height": 8
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Broken tests by week, other: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "title": "Broken tests by week, browser, other: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
         "region": "us-east-1",
         "view": "table",
         "period": 604800,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" NOT agent NOT interventions', 'Average', 604800)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser NOT agent NOT interventions', 'Average', 604800)",
               "id": "r7",
               "period": 604800,
               "visible": false
@@ -700,21 +1052,165 @@
         }
       },
       "x": 0,
-      "y": 90,
+      "y": 138,
       "width": 24,
       "height": 8
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Recently flaky by week, agent: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "title": "Broken tests by week, node, agent: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
         "region": "us-east-1",
         "view": "table",
         "period": 604800,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" agent', 'Average', 604800)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node agent', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FLOOR(r7 + 0.05), SUM, DESC, 15)",
+              "id": "broken",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 146,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Broken tests by week, node, interventions: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node interventions NOT agent', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FLOOR(r7 + 0.05), SUM, DESC, 15)",
+              "id": "broken",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 154,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Broken tests by week, node, models: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node models NOT agent NOT interventions', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FLOOR(r7 + 0.05), SUM, DESC, 15)",
+              "id": "broken",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 162,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Broken tests by week, node, other: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node NOT agent NOT interventions NOT models', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FLOOR(r7 + 0.05), SUM, DESC, 15)",
+              "id": "broken",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 170,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, browser, agent: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser agent', 'Average', 604800)",
               "id": "r7",
               "period": 604800,
               "visible": false
@@ -736,21 +1232,21 @@
         }
       },
       "x": 0,
-      "y": 98,
+      "y": 178,
       "width": 24,
       "height": 8
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Recently flaky by week, interventions: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "title": "Recently flaky by week, browser, interventions: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
         "region": "us-east-1",
         "view": "table",
         "period": 604800,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" interventions NOT agent', 'Average', 604800)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser interventions NOT agent', 'Average', 604800)",
               "id": "r7",
               "period": 604800,
               "visible": false
@@ -772,21 +1268,21 @@
         }
       },
       "x": 0,
-      "y": 106,
+      "y": 186,
       "width": 24,
       "height": 8
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Recently flaky by week, other: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "title": "Recently flaky by week, browser, other: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
         "region": "us-east-1",
         "view": "table",
         "period": 604800,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" NOT agent NOT interventions', 'Average', 604800)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" browser NOT agent NOT interventions', 'Average', 604800)",
               "id": "r7",
               "period": 604800,
               "visible": false
@@ -808,7 +1304,151 @@
         }
       },
       "x": 0,
-      "y": 114,
+      "y": 194,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, node, agent: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node agent', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
+              "id": "flaky",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 202,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, node, interventions: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node interventions NOT agent', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
+              "id": "flaky",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 210,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, node, models: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node models NOT agent NOT interventions', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
+              "id": "flaky",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 218,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, node, other: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"typescript\" node NOT agent NOT interventions NOT models', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
+              "id": "flaky",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 226,
       "width": 24,
       "height": 8
     },
@@ -818,21 +1458,21 @@
         "markdown": "### Duration\np90 of each test's TestDuration; the trend is the mean of those p90s per day."
       },
       "x": 0,
-      "y": 122,
+      "y": 234,
       "width": 24,
       "height": 2
     },
     {
       "type": "metric",
       "properties": {
-        "title": "10 slowest tests, p90 duration in seconds over 30 days, agent",
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, browser, agent",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" agent', 'p90', 2592000), MAX, DESC, 10)",
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" browser agent', 'p90', 2592000), MAX, DESC, 10)",
               "id": "slow",
               "period": 2592000
             }
@@ -846,21 +1486,21 @@
         }
       },
       "x": 0,
-      "y": 124,
+      "y": 236,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Mean of per-test p90 duration per day, seconds, agent",
+        "title": "Mean of per-test p90 duration per day, seconds, browser, agent",
         "region": "us-east-1",
         "view": "timeSeries",
         "period": 86400,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" agent', 'p90', 86400)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" browser agent', 'p90', 86400)",
               "id": "d",
               "period": 86400,
               "visible": false
@@ -878,21 +1518,21 @@
         "stacked": false
       },
       "x": 12,
-      "y": 124,
+      "y": 236,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "10 slowest tests, p90 duration in seconds over 30 days, interventions",
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, browser, interventions",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" interventions NOT agent', 'p90', 2592000), MAX, DESC, 10)",
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" browser interventions NOT agent', 'p90', 2592000), MAX, DESC, 10)",
               "id": "slow",
               "period": 2592000
             }
@@ -906,21 +1546,21 @@
         }
       },
       "x": 0,
-      "y": 130,
+      "y": 242,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Mean of per-test p90 duration per day, seconds, interventions",
+        "title": "Mean of per-test p90 duration per day, seconds, browser, interventions",
         "region": "us-east-1",
         "view": "timeSeries",
         "period": 86400,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" interventions NOT agent', 'p90', 86400)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" browser interventions NOT agent', 'p90', 86400)",
               "id": "d",
               "period": 86400,
               "visible": false
@@ -938,21 +1578,21 @@
         "stacked": false
       },
       "x": 12,
-      "y": 130,
+      "y": 242,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "10 slowest tests, p90 duration in seconds over 30 days, other",
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, browser, other",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" NOT agent NOT interventions', 'p90', 2592000), MAX, DESC, 10)",
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" browser NOT agent NOT interventions', 'p90', 2592000), MAX, DESC, 10)",
               "id": "slow",
               "period": 2592000
             }
@@ -966,21 +1606,21 @@
         }
       },
       "x": 0,
-      "y": 136,
+      "y": 248,
       "width": 12,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Mean of per-test p90 duration per day, seconds, other",
+        "title": "Mean of per-test p90 duration per day, seconds, browser, other",
         "region": "us-east-1",
         "view": "timeSeries",
         "period": 86400,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" NOT agent NOT interventions', 'p90', 86400)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" browser NOT agent NOT interventions', 'p90', 86400)",
               "id": "d",
               "period": 86400,
               "visible": false
@@ -998,7 +1638,247 @@
         "stacked": false
       },
       "x": 12,
-      "y": 136,
+      "y": 248,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, node, agent",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node agent', 'p90', 2592000), MAX, DESC, 10)",
+              "id": "slow",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 254,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Mean of per-test p90 duration per day, seconds, node, agent",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node agent', 'p90', 86400)",
+              "id": "d",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "AVG(d)",
+              "id": "mean_p90",
+              "period": 86400,
+              "label": "mean of per-test p90"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 254,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, node, interventions",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node interventions NOT agent', 'p90', 2592000), MAX, DESC, 10)",
+              "id": "slow",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 260,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Mean of per-test p90 duration per day, seconds, node, interventions",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node interventions NOT agent', 'p90', 86400)",
+              "id": "d",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "AVG(d)",
+              "id": "mean_p90",
+              "period": 86400,
+              "label": "mean of per-test p90"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 260,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, node, models",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node models NOT agent NOT interventions', 'p90', 2592000), MAX, DESC, 10)",
+              "id": "slow",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 266,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Mean of per-test p90 duration per day, seconds, node, models",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node models NOT agent NOT interventions', 'p90', 86400)",
+              "id": "d",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "AVG(d)",
+              "id": "mean_p90",
+              "period": 86400,
+              "label": "mean of per-test p90"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 266,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, node, other",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node NOT agent NOT interventions NOT models', 'p90', 2592000), MAX, DESC, 10)",
+              "id": "slow",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 272,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Mean of per-test p90 duration per day, seconds, node, other",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"typescript\" node NOT agent NOT interventions NOT models', 'p90', 86400)",
+              "id": "d",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "AVG(d)",
+              "id": "mean_p90",
+              "period": 86400,
+              "label": "mean of per-test p90"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 272,
       "width": 12,
       "height": 6
     },
@@ -1008,7 +1888,7 @@
         "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge queue, nightly and release runs). Flaky tables: the nightly run on main only, one table per matrix leg and name group."
       },
       "x": 0,
-      "y": 142,
+      "y": 278,
       "width": 24,
       "height": 2
     },
@@ -1054,21 +1934,21 @@
         }
       },
       "x": 0,
-      "y": 144,
+      "y": 280,
       "width": 24,
       "height": 6
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, agent: failure rate strictly between 0.05 and 0.95",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, browser, agent: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" agent', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" browser agent', 'Average', 2592000)",
               "id": "rb",
               "period": 2592000,
               "visible": false
@@ -1106,21 +1986,21 @@
         }
       },
       "x": 0,
-      "y": 150,
+      "y": 286,
       "width": 24,
       "height": 9
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, interventions: failure rate strictly between 0.05 and 0.95",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, browser, interventions: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" interventions NOT agent', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" browser interventions NOT agent', 'Average', 2592000)",
               "id": "rb",
               "period": 2592000,
               "visible": false
@@ -1158,21 +2038,21 @@
         }
       },
       "x": 0,
-      "y": 159,
+      "y": 295,
       "width": 24,
       "height": 9
     },
     {
       "type": "metric",
       "properties": {
-        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, other: failure rate strictly between 0.05 and 0.95",
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, browser, other: failure rate strictly between 0.05 and 0.95",
         "region": "us-east-1",
         "view": "table",
         "period": 2592000,
         "metrics": [
           [
             {
-              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" NOT agent NOT interventions', 'Average', 2592000)",
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" browser NOT agent NOT interventions', 'Average', 2592000)",
               "id": "rb",
               "period": 2592000,
               "visible": false
@@ -1210,7 +2090,215 @@
         }
       },
       "x": 0,
-      "y": 168,
+      "y": 304,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, node, agent: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" node agent', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 313,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, node, interventions: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" node interventions NOT agent', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 322,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, node, models: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" node models NOT agent NOT interventions', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 331,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, node, other: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"typescript\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" node NOT agent NOT interventions NOT models', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 340,
       "width": 24,
       "height": 9
     }

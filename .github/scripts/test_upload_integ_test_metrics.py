@@ -1,6 +1,7 @@
 """Unit tests for upload-integ-test-metrics.py (run with `python -m pytest .github/scripts -q`)."""
 
 import importlib.util
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -45,6 +46,23 @@ def test_parse_junit_xml_returns_one_result_per_testcase(mod, tmp_path):
     ]
 
 
+@pytest.mark.parametrize("time_attr", ['time=""', 'time="NaN"', 'time="inf"', 'time="-Infinity"', 'time="abc"', ""])
+def test_parse_junit_xml_defaults_malformed_time_to_zero_and_keeps_the_leg(mod, tmp_path, time_attr):
+    body = f'<testcase classname="tests_integ.test_a" name="test_odd" {time_attr}><failure/></testcase>' + THREE_CASES
+
+    results = mod.parse_junit_xml(write_junit(tmp_path, body))
+
+    assert [(r.name, r.outcome, r.duration) for r in results] == [
+        ("test_odd", "failed", 0.0),
+        ("test_passed", "passed", 1.5),
+        ("test_failed", "failed", 2.0),
+        ("test_skipped", "skipped", 0.0),
+    ]
+
+
+HASH_SUFFIX = r"#[0-9a-f]{6}$"
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -52,18 +70,29 @@ def test_parse_junit_xml_returns_one_result_per_testcase(mod, tmp_path):
         ("Agent — with em dash", "Agent - with em dash"),
         ("wait… for it", "wait... for it"),
         ("café", "caf?"),
-        ("plain.ascii[param-1]", "plain.ascii[param-1]"),
     ],
 )
-def test_sanitize_test_name_maps_to_printable_ascii(mod, raw, expected):
-    assert mod.sanitize_test_name(raw) == expected
+def test_sanitize_test_name_maps_to_printable_ascii_with_a_hash_suffix(mod, raw, expected):
+    assert re.fullmatch(re.escape(expected) + HASH_SUFFIX, mod.sanitize_test_name(raw))
+
+
+def test_sanitize_test_name_leaves_printable_ascii_unchanged(mod):
+    assert mod.sanitize_test_name("plain.ascii[param-1]") == "plain.ascii[param-1]"
+
+
+def test_sanitize_test_name_keeps_names_that_sanitise_alike_distinct(mod):
+    sanitized = {mod.sanitize_test_name(name) for name in ["café", "cafe", "caf\u00e8"]}
+
+    assert len(sanitized) == 3
+    assert mod.sanitize_test_name("café") == mod.sanitize_test_name("café")
 
 
 def test_sanitize_test_name_caps_at_255_chars(mod):
     sanitized = mod.sanitize_test_name("x" * 300)
 
     assert len(sanitized) == 255
-    assert sanitized == "x" * 255
+    assert re.fullmatch("x" * 248 + HASH_SUFFIX, sanitized)
+    assert sanitized != mod.sanitize_test_name("x" * 301)
 
 
 class FakeCloudWatch:
@@ -138,6 +167,36 @@ def test_main_succeeds_when_all_batches_publish(mod, tmp_path, monkeypatch):
     assert len(client.batches) == 1
 
 
+def test_main_fails_without_publishing_above_the_test_name_ceiling(mod, tmp_path, monkeypatch, capsys):
+    client = FakeCloudWatch()
+    monkeypatch.setattr(mod.boto3, "client", lambda *args, **kwargs: client)
+    argv = ["upload", write_junit(tmp_path, THREE_CASES), "harness-sdk", "python", "--max-test-names", "2"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+
+    assert exc.value.code == 1
+    assert client.batches == []
+    assert "::error::3 distinct TestName values for (harness-sdk, python) exceed --max-test-names 2" in (
+        capsys.readouterr().out
+    )
+
+
+def test_test_name_keeps_the_vitest_project_prefix_from_the_classname(mod):
+    results = [
+        mod.TestResult(
+            name="Agent > invoke", classname=f"{project}/test/integ/foo.test.ts", duration=1.0, outcome="passed"
+        )
+        for project in ("integ-node", "integ-browser")
+    ]
+
+    assert [mod.test_name(result) for result in results] == [
+        "integ-node/test/integ/foo.test.ts.Agent > invoke",
+        "integ-browser/test/integ/foo.test.ts.Agent > invoke",
+    ]
+
+
 def dims_of(datum):
     return {d["Name"]: d["Value"] for d in datum["Dimensions"]}
 
@@ -179,6 +238,35 @@ def test_nightly_event_emits_both_per_test_schemas(mod):
     assert suite == {"TestsRun": 2.0, "TestsPassed": 1.0, "TestsFailed": 1.0, "TestsSkipped": 0.0}
 
 
+def test_skipped_test_emits_only_test_skipped(mod, pr_ctx):
+    results = results_named(mod, ["skipped", "passed"])
+    results[0].outcome = "skipped"
+
+    data = mod.build_metric_data(results, "repo", "python", pr_ctx)
+
+    skipped = [d for d in data if dims_of(d).get("TestName") == "suite.skipped"]
+    assert [(d["MetricName"], d["Value"]) for d in skipped] == [("TestSkipped", 1.0)]
+    executed = [d["MetricName"] for d in data if dims_of(d).get("TestName") == "suite.passed"]
+    assert executed == ["TestPassed", "TestFailed", "TestSkipped", "TestDuration"]
+    suite = {d["MetricName"]: d["Value"] for d in data if d["MetricName"].startswith("Tests")}
+    assert suite == {"TestsRun": 2.0, "TestsPassed": 1.0, "TestsFailed": 0.0, "TestsSkipped": 1.0}
+
+
+def test_skipped_test_emits_one_test_skipped_per_schema_on_nightly(mod):
+    ctx = mod.RunContext(event="schedule", branch="main", leg="all")
+    results = results_named(mod, ["skipped"])
+    results[0].outcome = "skipped"
+
+    data = mod.build_metric_data(results, "repo", "python", ctx)
+
+    per_test = [d for d in data if "TestName" in dims_of(d)]
+    assert [d["MetricName"] for d in per_test] == ["TestSkipped", "TestSkipped"]
+    assert [set(dims_of(d)) for d in per_test] == [
+        {"TestName", "Repository", "SDK"},
+        {"TestName", "Repository", "SDK", "Event", "Branch", "Leg"},
+    ]
+
+
 @pytest.mark.parametrize(
     ("env", "expected"),
     [
@@ -203,11 +291,14 @@ def test_parse_args_defaults_and_legacy_positionals(mod, monkeypatch):
     legacy = mod.parse_args(["results.xml", "harness-sdk"])
     assert (legacy.xml_file, legacy.repository, legacy.sdk) == ("results.xml", "harness-sdk", "python")
     assert (legacy.event, legacy.branch, legacy.leg, legacy.region) == ("merge_group", "main", "all", "us-east-1")
+    assert legacy.max_test_names == 1000
 
     explicit = mod.parse_args(
         ["r.xml", "harness-sdk", "typescript", "--leg", "mcp-1x", "--branch", "dev", "--event", "push"]
+        + ["--max-test-names", "1500"]
     )
     assert (explicit.sdk, explicit.leg, explicit.branch, explicit.event) == ("typescript", "mcp-1x", "dev", "push")
+    assert explicit.max_test_names == 1500
 
 
 NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
@@ -223,6 +314,8 @@ NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
         ("", NOW),
         ("not-a-date", NOW),
         ("2026-10-04T12:00:00", NOW),
+        ("2026-10-23T11:00:00", NOW),
+        ("2026-10-23T13:00:00", datetime(2026, 10, 23, 13, 0, tzinfo=timezone.utc)),
         ("2026-10-25T12:00:00", NOW),
     ],
 )
@@ -230,19 +323,26 @@ def test_suite_timestamp(mod, attr, expected):
     assert mod.suite_timestamp(attr, NOW) == expected
 
 
+def recent(hours_ago: int) -> datetime:
+    """A whole-second UTC stamp inside the 24-hour window suite_timestamp accepts."""
+    return datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=hours_ago)
+
+
 def test_parse_junit_xml_stamps_tests_with_their_suite_time(mod, tmp_path):
-    path = write_junit(tmp_path, THREE_CASES, suite_attrs='timestamp="2026-10-24T10:30:00.000000"')
+    stamp = recent(2)
+    path = write_junit(tmp_path, THREE_CASES, suite_attrs=f'timestamp="{stamp.strftime("%Y-%m-%dT%H:%M:%S.000000")}"')
 
     results = mod.parse_junit_xml(path)
 
-    assert {r.timestamp for r in results} == {datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)}
+    assert {r.timestamp for r in results} == {stamp}
 
 
 def test_parse_junit_xml_stamps_each_vitest_suite_separately(mod, tmp_path):
+    first, second = recent(3), recent(2)
     xml = (
-        '<testsuites><testsuite name="a.test.ts" timestamp="2026-10-24T10:00:00.000Z">'
+        f'<testsuites><testsuite name="a.test.ts" timestamp="{first.strftime("%Y-%m-%dT%H:%M:%S.000Z")}">'
         '<testcase classname="a.test.ts" name="one" time="1"/></testsuite>'
-        '<testsuite name="b.test.ts" timestamp="2026-10-24T11:00:00.000Z">'
+        f'<testsuite name="b.test.ts" timestamp="{second.strftime("%Y-%m-%dT%H:%M:%S.000Z")}">'
         '<testcase classname="b.test.ts" name="two" time="1"/></testsuite></testsuites>'
     )
     path = tmp_path / "report.xml"
@@ -250,18 +350,19 @@ def test_parse_junit_xml_stamps_each_vitest_suite_separately(mod, tmp_path):
 
     results = mod.parse_junit_xml(str(path))
 
-    assert [(r.name, r.timestamp.hour) for r in results] == [("one", 10), ("two", 11)]
+    assert [(r.name, r.timestamp) for r in results] == [("one", first), ("two", second)]
 
 
 def test_parse_junit_xml_accepts_a_bare_testsuite_root(mod, tmp_path):
-    xml = f'<testsuite name="pytest" timestamp="2026-10-24T10:30:00">{THREE_CASES}</testsuite>'
+    stamp = recent(2)
+    xml = f'<testsuite name="pytest" timestamp="{stamp.strftime("%Y-%m-%dT%H:%M:%S")}">{THREE_CASES}</testsuite>'
     path = tmp_path / "report.xml"
     path.write_text(xml, encoding="utf-8")
 
     results = mod.parse_junit_xml(str(path))
 
     assert [r.outcome for r in results] == ["passed", "failed", "skipped"]
-    assert {r.timestamp for r in results} == {datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)}
+    assert {r.timestamp for r in results} == {stamp}
 
 
 def test_parse_junit_xml_without_any_testsuite_stamps_upload_time(mod, tmp_path):
@@ -300,5 +401,5 @@ def test_build_metric_data_uses_sanitized_test_name(mod, pr_ctx):
     data = mod.build_metric_data([result], "harness-sdk", "typescript", pr_ctx)
 
     dims = {d["Name"]: d["Value"] for d in data[0]["Dimensions"]}
-    assert dims["TestName"] == "test/integ/agent.test.ts.tool -> result"
+    assert re.fullmatch(re.escape("test/integ/agent.test.ts.tool -> result") + HASH_SUFFIX, dims["TestName"])
     assert all(0x20 <= ord(c) <= 0x7E for c in dims["TestName"])

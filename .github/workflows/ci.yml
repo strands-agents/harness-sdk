@@ -216,8 +216,8 @@ jobs:
       - run: python -m pytest .github/scripts -q
       - name: Lint
         run: |
-          ruff check .github/scripts/*.py test-infra/dashboards/generate.py
-          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py
+          ruff check .github/scripts/*.py test-infra/dashboards/*.py
+          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py test-infra/dashboards/check_series.py
       - name: Check dashboards are up to date
         run: python test-infra/dashboards/generate.py --check
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
+import math
 import os
 import re
 import sys
@@ -28,10 +30,20 @@ TRANSLITERATIONS = {
     "”": '"',
 }
 MAX_DIMENSION_LENGTH = 255
-MAX_TIMESTAMP_AGE_DAYS = 13
+# Hex digits of the SHA-1 of the original name appended when sanitising changed it, so two names that sanitise
+# alike stay distinct series.
+HASH_LENGTH = 6
+# Both junit flavours stamp suites within the run that uploads them (pytest: session start; vitest: report write),
+# so anything older than one day is a forged or stale report and is stamped with the upload time instead.
+MAX_TIMESTAMP_AGE = timedelta(hours=24)
 
 # The only event the dashboards read the per-test context schema for (see build_metric_data).
 CONTEXT_SCHEMA_EVENT = "schedule"
+# A dashboard SEARCH widget shows at most 500 series and drops the rest silently; the publisher cannot see how the
+# dashboards partition the names, so this is a cardinality-explosion guard (about 2x the Python suite) rather than
+# a per-partition limit. The TypeScript workflow passes a higher value because its two vitest projects each publish
+# their own name for every shared test file.
+DEFAULT_MAX_TEST_NAMES = 1000
 
 
 class Dimension(TypedDict):
@@ -58,7 +70,7 @@ class TestResult:
 
 def suite_timestamp(attr: str | None, now: datetime) -> datetime:
     """Parse a <testsuite timestamp> (naive = UTC, as on GitHub runners), falling back to `now` when it is missing,
-    unparsable, in the future, or outside CloudWatch's two-week put_metric_data window."""
+    unparsable, in the future, or more than MAX_TIMESTAMP_AGE before `now`."""
     if not attr:
         return now
     try:
@@ -67,9 +79,19 @@ def suite_timestamp(attr: str | None, now: datetime) -> datetime:
         return now
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    if parsed > now or now - parsed > timedelta(days=MAX_TIMESTAMP_AGE_DAYS):
+    if parsed > now or now - parsed > MAX_TIMESTAMP_AGE:
         return now
     return parsed
+
+
+def _duration(attr: str | None) -> float:
+    """A <testcase time> that is missing, unparsable or non-finite becomes 0.0; a NaN or infinite Value makes
+    CloudWatch reject the whole put_metric_data batch."""
+    try:
+        value = float(attr or 0.0)
+    except ValueError:
+        return 0.0
+    return value if math.isfinite(value) else 0.0
 
 
 def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | None:
@@ -77,7 +99,7 @@ def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | N
     classname = testcase.get("classname")
     if not name or not classname:
         return None
-    duration = float(testcase.get("time", 0.0))
+    duration = _duration(testcase.get("time"))
 
     if testcase.find("failure") is not None or testcase.find("error") is not None:
         outcome = "failed"
@@ -90,11 +112,16 @@ def _parse_testcase(testcase: ET.Element, timestamp: datetime) -> TestResult | N
 
 
 def sanitize_test_name(name: str) -> str:
+    """Printable-ASCII TestName of at most MAX_DIMENSION_LENGTH characters; a name that had to change carries a
+    `#<hash>` suffix derived from the original so distinct names cannot collapse into one series."""
     normalized = unicodedata.normalize("NFKC", name)
     for char, replacement in TRANSLITERATIONS.items():
         normalized = normalized.replace(char, replacement)
     ascii_only = "".join(c if 0x20 <= ord(c) <= 0x7E else "?" for c in normalized)
-    return ascii_only[:MAX_DIMENSION_LENGTH]
+    if ascii_only == name and len(name) <= MAX_DIMENSION_LENGTH:
+        return name
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:HASH_LENGTH]
+    return f"{ascii_only[: MAX_DIMENSION_LENGTH - HASH_LENGTH - 1]}#{digest}"
 
 
 def parse_junit_xml(xml_file_path: str) -> list[TestResult] | None:
@@ -147,12 +174,17 @@ def resolve_branch(env: Mapping[str, str]) -> str:
 
 
 def _test_datums(test: TestResult, dimensions: list[Dimension], timestamp: datetime) -> list[MetricDatum]:
-    values = [
-        ("TestPassed", 1.0 if test.outcome == "passed" else 0.0, "Count"),
-        ("TestFailed", 1.0 if test.outcome == "failed" else 0.0, "Count"),
-        ("TestSkipped", 1.0 if test.outcome == "skipped" else 0.0, "Count"),
-        ("TestDuration", test.duration, "Seconds"),
-    ]
+    """A skipped test publishes only TestSkipped=1: a TestFailed=0 datum would count as an execution in the
+    dashboards' Average/SampleCount of TestFailed, on the same series another matrix leg reports real runs to."""
+    if test.outcome == "skipped":
+        values = [("TestSkipped", 1.0, "Count")]
+    else:
+        values = [
+            ("TestPassed", 1.0 if test.outcome == "passed" else 0.0, "Count"),
+            ("TestFailed", 1.0 if test.outcome == "failed" else 0.0, "Count"),
+            ("TestSkipped", 0.0, "Count"),
+            ("TestDuration", test.duration, "Seconds"),
+        ]
     return [
         MetricDatum(MetricName=name, Dimensions=dimensions, Value=value, Unit=unit, Timestamp=timestamp)
         for name, value, unit in values
@@ -175,6 +207,12 @@ def _suite_datums(
     ]
 
 
+def test_name(test: TestResult) -> str:
+    """TestName dimension value: classname and name. vitest classnames carry the project (`integ-browser/<file>`),
+    which keeps the node and browser runs of one test file apart."""
+    return sanitize_test_name(f"{test.classname}.{test.name}")
+
+
 def build_metric_data(test_results: list[TestResult], repository: str, sdk: str, ctx: RunContext) -> list[MetricDatum]:
     """Per-test datums on (Repository, SDK, TestName) for every run, the same with (Event, Branch, Leg) for
     nightly runs only, and one set of suite-level Tests* counters per publish.
@@ -191,9 +229,8 @@ def build_metric_data(test_results: list[TestResult], repository: str, sdk: str,
     emit_context_schema = ctx.event == CONTEXT_SCHEMA_EVENT
 
     for test in test_results:
-        test_name = sanitize_test_name(f"{test.classname}.{test.name}")
         dimensions: list[Dimension] = [
-            Dimension(Name="TestName", Value=test_name),
+            Dimension(Name="TestName", Value=test_name(test)),
             Dimension(Name="Repository", Value=repository),
             Dimension(Name="SDK", Value=sdk),
         ]
@@ -247,6 +284,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Branch dimension; defaults to the PR/merge-queue base or GITHUB_REF_NAME",
     )
     parser.add_argument("--leg", default="all", help="Leg dimension: the matrix leg that produced the report")
+    parser.add_argument(
+        "--max-test-names",
+        type=int,
+        default=DEFAULT_MAX_TEST_NAMES,
+        help=f"fail without publishing above this many distinct TestName values (default: {DEFAULT_MAX_TEST_NAMES})",
+    )
     parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
     return parser.parse_args(argv)
 
@@ -263,6 +306,14 @@ def main():
         return
 
     print(f"Found {len(test_results)} test results (event={ctx.event}, branch={ctx.branch}, leg={ctx.leg})")
+    names = {test_name(test) for test in test_results}
+    if len(names) > args.max_test_names:
+        print(
+            f"::error::{len(names)} distinct TestName values for ({args.repository}, {args.sdk}) exceed "
+            f"--max-test-names {args.max_test_names}; a SEARCH widget shows at most 500 series per partition, "
+            "so check test-infra/dashboards before raising the ceiling"
+        )
+        sys.exit(1)
     metric_data = build_metric_data(test_results, args.repository, args.sdk, ctx)
     cloudwatch = boto3.client("cloudwatch", region_name=args.region)
     failed_batches = publish_metrics(metric_data, cloudwatch)
