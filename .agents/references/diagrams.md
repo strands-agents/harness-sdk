@@ -104,7 +104,7 @@ so it has zero specificity and `diagrams.css` always wins on the site.
 | `dg-node is-event` | Lifecycle event chip: one event name per chip in a centered `dg-code` (baseline `y + 18`), 28px tall, or 44px with a `dg-sub` qualifier inside (baseline `y + 34`). Same width for every chip in a diagram; stack them 12px apart inside a stage `dg-zone`. Tinted so it never reads as a zone |
 | `dg-zone` | Grouping region: "these belong together", a scope, a phase band |
 | `dg-zone is-boundary` | Trust, process, or sandbox boundary (dashed, no fill). A sandbox with nothing drawn inside it can carry a `dg-name` + `dg-sub` directly instead of an eyebrow |
-| `dg-node is-danger` | A failure state, such as a breach. Filled red; use `is-hub-text` on its labels. With `is-event` it becomes a tinted chip (pair with `is-danger-text`); with `is-optional` a dashed red outline |
+| `is-danger-text` | Text modifier for an error: a breach or a violation. Red; works on any text class |
 | `dg-bg` | Background rect, only for a diagram that must also render outside the site (see below) |
 | `dg-edge` | Default connector |
 | `dg-edge is-accent` | The headline path, at most one or two per diagram. Pair it with the accent marker |
@@ -124,7 +124,7 @@ existing `--dg-*` tokens. Don't hard-code a color in the SVG.
 
 ## Color and emphasis
 
-- **Red means failure.** Use `is-danger` only for a failed or breached state, never as a second accent.
+- **Red means an error.** Use `is-danger-text` only for a breach or a violation. It isn't a second accent; green still marks what to look at.
 - **Accent is editorial, not decoration.** Use green on one or two elements only: the
   focal node or the headline path. If you want to accent four things, you haven't
   decided what matters.

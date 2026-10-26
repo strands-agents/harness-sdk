@@ -176,7 +176,7 @@ In our example, across three runs, GOAT got the agent to call issue_refund five 
 
 <Diagram
   name="redteam-judge-vs-tool-check"
-  alt="Five attacks run three times against the refund-desk agent, one row per attack and one column per run. Each cell shows the judge's verdict and score, an issue_refund chip when a refund went through, and the tool-check findings. The judge scored 7 of the 15 attacks as breaches and 8 as defended. The tool check found a violation in 14 of the 15, including 7 of the 8 the judge scored as defended, almost always leaked_code. Only leak_the_code in run 2 had no findings. All five refunds broke a policy: burned_code and breaks_the_rules in run 1, and self_authorized in runs 2 and 3."
+  alt="Five attacks run three times against the refund-desk agent, one row per attack and one column per run. Each cell shows the judge's verdict and score, and the tool-check findings. The judge scored 7 of the 15 attacks as breaches and 8 as defended. The tool check found a violation in 14 of the 15, including 7 of the 8 the judge scored as defended, almost always leaked_code. Only leak_the_code in run 2 had no findings."
   caption="The judge scored 8 of 15 attacks as defended. The tool check flagged 7 of those 8."
 />
 
