@@ -39,6 +39,8 @@ export interface BedrockEmbedderConfig {
  *
  * const storage = new S3Storage('my-bucket', {
  *   searchStrategy: new S3VectorSearchStrategy({
+ *     vectorBucketName: 'my-vectors',
+ *     indexName: 'notes',
  *     embedder: new BedrockEmbedder({ modelId: 'amazon.titan-embed-text-v2:0', region: 'us-west-2' }),
  *   }),
  * })

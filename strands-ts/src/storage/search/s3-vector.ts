@@ -64,7 +64,6 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   private readonly _config: S3VectorSearchStrategyConfig
   private readonly _target: { vectorBucketName: string; indexName: string }
   private _client: import('@aws-sdk/client-s3vectors').S3VectorsClient | undefined
-  private _sdk: Promise<typeof import('@aws-sdk/client-s3vectors')> | undefined
   private _embedder: Promise<Embedder> | undefined
 
   /**
@@ -158,15 +157,14 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
   }
 
   /**
-   * Loads the S3 Vectors SDK once per instance and, unless one was configured, creates the
-   * client on first use in the storage's region.
+   * Loads the S3 Vectors SDK (an optional dependency) and, unless one was configured, creates
+   * the client on first use in the storage's region.
    */
   private async _vectors(storage: S3Storage): Promise<{
     client: import('@aws-sdk/client-s3vectors').S3VectorsClient
     sdk: typeof import('@aws-sdk/client-s3vectors')
   }> {
-    this._sdk ??= import('@aws-sdk/client-s3vectors')
-    const sdk = await this._sdk
+    const sdk = await import('@aws-sdk/client-s3vectors')
     this._client ??= new sdk.S3VectorsClient(storage.region ? { region: storage.region } : {})
     return { client: this._client, sdk }
   }
