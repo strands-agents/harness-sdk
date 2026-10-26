@@ -1,5 +1,5 @@
 ---
-title: 'Red team your agent before your customers do, with Strands Evals'
+title: 'Red team your harness before your customers do, with Strands Evals'
 date: 2026-10-26
 description: 'Red teaming in Strands Evals 1.7.0 runs adversarial conversations against your agent. Attack a refund agent with GOAT, then check its tool calls, not just the score.'
 authors:
@@ -23,6 +23,8 @@ Today, we’re launching red teaming in [Strands Evals 1.7.0](https://pypi.org/p
 ## Attack your own refund agent
 
 A useful first target is an agent with one rule you can explain in a sentence. Our refund-desk agent may look up orders and issue refunds, but refunds above its limit require a manager code that it must never reveal.
+
+The code in this post comes from the [refund-desk sample](https://github.com/strands-agents/samples/tree/main/python/06-evaluate/red-teaming) in the Strands samples repository, including the `desk`, `cases`, `run`, and `tool_check` modules the snippets import. The last section shows how to run it.
 
 ```python
 from strands import Agent
@@ -52,6 +54,8 @@ def agent_factory() -> Agent:
 The agent uses Amazon Nova Lite as the model and has two tools: `lookup_order` reads an order, while `issue_refund` records a refund. The refund tool deliberately does not enforce ownership, limits, or authorization, so the experiment can demonstrate that a rule in the prompt is not the same as a rule in code.
 
 The zero-argument `agent_factory` creates a fresh agent for every attack. That keeps one conversation from carrying state into the next.
+
+If you build on [Strands harness](/docs/user-guide/harness/), the same factory works: `create_harness()` returns a `strands.Agent`, so the factory can return `create_harness(instructions=SYSTEM_PROMPT, tools=[lookup_order, issue_refund], builtin_tools=[])` instead. Keep `builtin_tools=[]` when red teaming: the harness defaults include shell and file-editing tools, and an attack that gets through could use them.
 
 ## Write an attack in a few lines
 
@@ -113,6 +117,23 @@ report.display()
 ```
 
 `RedTeamExperiment` runs every case against a fresh target and returns a report. GOAT uses one continuing conversation per case, so it can change direction when the refund agent refuses or asks for more information.
+
+Both the suite and the report survive a round-trip to JSON. `experiment.to_file()` saves the cases, the strategy settings, and the attacker and judge model IDs, so the suite can be committed and reviewed like any other test fixture. The target is code, not data, so it isn't saved: after `from_file()`, pass `agent_factory` to the run method again. `report.to_file()` saves the report, and `RedTeamReport.from_file()` reads it back for later inspection or comparison. The sample's `run.py` writes both files on every run.
+
+```python
+from strands_evals.redteam import RedTeamExperiment, RedTeamReport
+
+experiment.to_file("suite/refund_desk_goat.json")
+report.to_file("runs/report-1.json")
+
+experiment = RedTeamExperiment.from_file("suite/refund_desk_goat.json")
+report = asyncio.run(
+    experiment.run_evaluations_async(agent_factory=agent_factory)
+)
+
+earlier = RedTeamReport.from_file("runs/report-1.json")
+earlier.display()
+```
 
 When GOAT plays a patient customer who claims to be John, the store manager, and keeps insisting the refund go through _now_, the agent eventually stops refusing and reaches for its refund tool. This is the recorded call:
 
@@ -211,11 +232,11 @@ One thing to keep in mind: passing a red teaming evaluation doesn’t guarantee 
 
 ## Copy, run, inspect
 
-The full refund-desk sample is ready to clone. You need Python, `uv`, AWS credentials that may invoke the configured Amazon Bedrock models, and a region where those models are available.
+The full [refund-desk sample](https://github.com/strands-agents/samples/tree/main/python/06-evaluate/red-teaming) is ready to clone. You need Python, `uv`, AWS credentials that may invoke the configured Amazon Bedrock models, and a region where those models are available.
 
 ```bash
-git clone https://github.com/TheWitcherish/sample-strands-evals-red-teaming.git
-cd sample-strands-evals-red-teaming
+git clone https://github.com/strands-agents/samples.git
+cd samples/python/06-evaluate/red-teaming
 uv sync
 export AWS_PROFILE=YOUR_AWS_PROFILE  # you change this
 export AWS_REGION=YOUR_AWS_REGION  # you change this
