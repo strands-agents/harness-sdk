@@ -22,7 +22,7 @@ from strands.decisions import (
 from strands.models.model import Model
 from strands.tools import tool
 from strands.types.content import Messages
-from strands.vended_interventions.hitl import DecisionModelClassifierConfig, HumanInTheLoop
+from strands.vended_interventions.hitl import HumanInTheLoop
 from strands.vended_interventions.hitl.classifier import (
     _DEFAULT_RISK_QUESTION,
     ClassifierResult,
@@ -595,12 +595,7 @@ class TestPublicExports:
         import strands.vended_interventions.hitl as hitl
 
         assert vended.__all__ == ["CedarAuthorization", "HumanInTheLoop"]
-        assert hitl.__all__ == [
-            "DecisionModelClassifierConfig",
-            "HumanInTheLoop",
-            "HumanInTheLoopClassifier",
-            "LLMClassifierConfig",
-        ]
+        assert hitl.__all__ == ["HumanInTheLoop", "HumanInTheLoopClassifier", "LLMClassifierConfig"]
         assert vended.HumanInTheLoop is hitl.HumanInTheLoop
         assert hitl.HumanInTheLoop.name == "strands:human-in-the-loop"
 
@@ -1271,15 +1266,13 @@ def run_with_decision_model(decision_model: DecisionModel, **hitl_kwargs: Any) -
             [tool_use_message("delete_file", tool_input={"path": "/data"}), text_message("Done")]
         ),
         tools=[delete_file],
-        interventions=[
-            HumanInTheLoop(classifier=DecisionModelClassifierConfig(decision_model=decision_model), **hitl_kwargs)
-        ],
+        interventions=[HumanInTheLoop(classifier=decision_model, **hitl_kwargs)],
     )
     return agent("Delete the file"), executed
 
 
 class TestDecisionModelClassifier:
-    """Tests for the ``DecisionModelClassifierConfig`` classifier option."""
+    """Tests for passing a ``DecisionModel`` as the classifier."""
 
     def test_requires_approval_when_answer_is_true(self):
         result, executed = run_with_decision_model(StubDecisionModel(True))
@@ -1317,22 +1310,6 @@ class TestDecisionModelClassifier:
             )
         ]
 
-    @pytest.mark.asyncio
-    async def test_forwards_a_custom_question(self):
-        decision_model = StubDecisionModel(False)
-        classifier = _create_decision_model_risk_classifier(
-            DecisionModelClassifierConfig(decision_model=decision_model, question="Is this call destructive?")
-        )
-        event = MagicMock()
-        event.invocation_context = None
-        event.tool_use = {"name": "read", "input": {}}
-
-        await classifier(event)
-
-        assert decision_model.calls[0][1] == {
-            "requires_approval": {"question": "Is this call destructive?", "choices": "boolean"}
-        }
-
     def test_error_requires_approval(self):
         result, executed = run_with_decision_model(StubDecisionModel(error=RuntimeError("model down")))
 
@@ -1350,9 +1327,7 @@ class TestDecisionModelClassifier:
 
     @pytest.mark.asyncio
     async def test_adds_decision_usage_to_the_request_the_tool_call_belongs_to(self):
-        classifier = _create_decision_model_risk_classifier(
-            DecisionModelClassifierConfig(decision_model=StubDecisionModel(False))
-        )
+        classifier = _create_decision_model_risk_classifier(StubDecisionModel(False))
         request = _create_invocation_context()
         event = MagicMock()
         event.invocation_context = request
@@ -1363,10 +1338,9 @@ class TestDecisionModelClassifier:
         assert result == ClassifierResult(requires_human_in_the_loop=False)
         assert request.usage == {"turns_taken": 0, "inputTokens": 4, "outputTokens": 1, "totalTokens": 5}
 
-    @pytest.mark.parametrize("classifier", [StubDecisionModel(True), "yes"])
-    def test_rejects_a_non_callable_classifier(self, classifier):
-        with pytest.raises(TypeError, match="wrap a DecisionModel in DecisionModelClassifierConfig"):
-            HumanInTheLoop(classifier=classifier)
+    def test_rejects_a_non_callable_classifier(self):
+        with pytest.raises(TypeError, match="got str"):
+            HumanInTheLoop(classifier="yes")
 
     def test_runs_through_a_real_llm_decision_model(self):
         result, executed = run_with_decision_model(LLMDecisionModel(model=AnswerReplayModel("false")))

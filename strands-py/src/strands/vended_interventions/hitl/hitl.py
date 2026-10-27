@@ -11,12 +11,12 @@ import threading
 from collections.abc import Awaitable
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from ...decisions import DecisionModel
 from ...hooks.events import BeforeToolCallEvent
 from ...interventions.actions import Confirm, Deny, InterventionAction, Proceed, default_evaluate
 from ...interventions.handler import InterventionHandler
 from .classifier import (
     ClassifierResult,
-    DecisionModelClassifierConfig,
     HumanInTheLoopClassifier,
     LLMClassifierConfig,
     _create_decision_model_risk_classifier,
@@ -101,7 +101,7 @@ class HumanInTheLoop(InterventionHandler):
     Example:
         ```python
         from strands import Agent, LLMDecisionModel
-        from strands.vended_interventions.hitl import DecisionModelClassifierConfig, HumanInTheLoop
+        from strands.vended_interventions.hitl import HumanInTheLoop
 
         # All tools require approval, agent pauses via interrupt (default)
         agent = Agent(interventions=[HumanInTheLoop()])
@@ -116,9 +116,7 @@ class HumanInTheLoop(InterventionHandler):
         )])
 
         # Risk classification via a DecisionModel, on the model you pass it
-        agent = Agent(model=model, interventions=[HumanInTheLoop(
-            classifier=DecisionModelClassifierConfig(decision_model=LLMDecisionModel(model=model)),
-        )])
+        agent = Agent(model=model, interventions=[HumanInTheLoop(classifier=LLMDecisionModel(model=model))])
 
         # CLI mode - prompts in terminal inline
         agent = Agent(interventions=[HumanInTheLoop(ask="stdio")])
@@ -137,7 +135,7 @@ class HumanInTheLoop(InterventionHandler):
         self,
         *,
         allowed_tools: list[str] | None = None,
-        classifier: bool | LLMClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier | None = None,
+        classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None = None,
         enable_trust: bool = False,
         evaluate_trust: EvaluateCallback | None = None,
         evaluate: EvaluateCallback | None = None,
@@ -156,10 +154,11 @@ class HumanInTheLoop(InterventionHandler):
                 ``allowed_tools``. Omitted/None: all non-allowed tools require approval.
                 ``True``: uses the built-in LLM risk classifier with defaults.
                 ``LLMClassifierConfig``: built-in LLM classifier with custom settings. Kept for
-                backwards compatibility; prefer ``DecisionModelClassifierConfig`` for new code.
-                ``DecisionModelClassifierConfig``: asks any ``DecisionModel`` (e.g.
-                ``LLMDecisionModel``) whether the call requires approval. The decision
-                model brings its own model and does not resolve through ``agent.aux_model``.
+                backwards compatibility; prefer a ``DecisionModel`` for new code.
+                ``DecisionModel`` (e.g. ``LLMDecisionModel``): asked whether the call
+                requires approval, against the same risk criteria as the LLM classifier.
+                The decision model brings its own model and does not resolve through
+                ``agent.aux_model``.
                 An ``Uncertain`` answer requires approval and carries its reason into the
                 approval prompt; a definite answer carries no reason.
                 Custom callable: your own classification logic.
@@ -190,7 +189,7 @@ class HumanInTheLoop(InterventionHandler):
 
         Raises:
             ValueError: If ``allowed_tools`` is a single string rather than a list.
-            TypeError: If ``classifier`` is not a bool, a classifier config, or a callable.
+            TypeError: If ``classifier`` is not a bool, ``LLMClassifierConfig``, ``DecisionModel``, or callable.
 
         Note:
             ``name`` is a fixed class attribute, so at most one ``HumanInTheLoop`` can be
@@ -364,7 +363,7 @@ class HumanInTheLoop(InterventionHandler):
 
     @staticmethod
     def _resolve_classifier(
-        classifier: bool | LLMClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier | None,
+        classifier: bool | LLMClassifierConfig | DecisionModel | HumanInTheLoopClassifier | None,
     ) -> HumanInTheLoopClassifier | None:
         """Resolve the classifier param into a callable or None.
 
@@ -380,11 +379,11 @@ class HumanInTheLoop(InterventionHandler):
             return _create_llm_risk_classifier()
         if isinstance(classifier, LLMClassifierConfig):
             return _create_llm_risk_classifier(classifier)
-        if isinstance(classifier, DecisionModelClassifierConfig):
+        if isinstance(classifier, DecisionModel):
             return _create_decision_model_risk_classifier(classifier)
         if not callable(classifier):
             raise TypeError(
-                f"classifier must be a bool, LLMClassifierConfig, DecisionModelClassifierConfig, or callable, "
-                f"got {type(classifier).__name__} (wrap a DecisionModel in DecisionModelClassifierConfig)"
+                f"classifier must be a bool, LLMClassifierConfig, DecisionModel, or callable, "
+                f"got {type(classifier).__name__}"
             )
         return classifier

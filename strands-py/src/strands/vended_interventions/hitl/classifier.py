@@ -49,7 +49,7 @@ class HumanInTheLoopClassifier(Protocol):
 class LLMClassifierConfig:
     """Configuration for the built-in LLM risk classifier.
 
-    Kept for backwards compatibility. Prefer ``DecisionModelClassifierConfig`` for new code.
+    Kept for backwards compatibility. Prefer passing a ``DecisionModel`` as the classifier for new code.
 
     Args:
         system_prompt: Risk criteria prompt. Defaults to a general-purpose risk prompt.
@@ -59,20 +59,6 @@ class LLMClassifierConfig:
 
     system_prompt: str | None = field(default=None)
     model: Model | None = field(default=None)
-
-
-@dataclass
-class DecisionModelClassifierConfig:
-    """Configuration for a ``DecisionModel``-backed risk classifier.
-
-    Args:
-        decision_model: Decision model that answers whether a tool call requires approval.
-        question: Yes/no question whose "yes" means the call requires approval. The model sees the
-            tool name and JSON input as its state. Defaults to a general-purpose risk question.
-    """
-
-    decision_model: DecisionModel
-    question: str | None = field(default=None)
 
 
 _RISK_CRITERIA = """## When to require approval
@@ -160,24 +146,22 @@ def _create_llm_risk_classifier(config: LLMClassifierConfig | None = None) -> Hu
     return classifier
 
 
-def _create_decision_model_risk_classifier(config: DecisionModelClassifierConfig) -> HumanInTheLoopClassifier:
+def _create_decision_model_risk_classifier(decision_model: DecisionModel) -> HumanInTheLoopClassifier:
     """Create a risk classifier that asks a ``DecisionModel`` whether a tool call requires approval.
 
     An ``Uncertain`` answer requires approval and carries its reason. A definite answer carries no reason.
 
     Args:
-        config: The decision model and optional question to ask it.
+        decision_model: The decision model to ask.
 
     Returns:
         A classifier function backed by the configured decision model.
     """
-    decision_model = config.decision_model
-    question = config.question or _DEFAULT_RISK_QUESTION
 
     async def classifier(event: BeforeToolCallEvent, **kwargs: Any) -> ClassifierResult:
         result = await decision_model.ask(
             _format_tool_call(event),
-            {"requires_approval": {"question": question, "choices": "boolean"}},
+            {"requires_approval": {"question": _DEFAULT_RISK_QUESTION, "choices": "boolean"}},
             invocation_context=event.invocation_context,
         )
         answer = result.answers["requires_approval"]
