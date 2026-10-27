@@ -24,7 +24,7 @@ option is used in practice, follow the links into the configure and tools guides
 | `tools` | `tools` | none | Consumer tools, added alongside the built-ins. See [add tools](../../configure/tools-and-instructions/). |
 | `plugins` | `plugins` | none | Consumer Strands Harness SDK plugins, added alongside the built-in plugins. |
 | `mcp_servers` | `mcpServers` | none | MCP servers to connect: a JSON file path or a mapping. See [MCP servers](../../configure/mcp-servers/). |
-| `builtin_tools` | `builtinTools` | `shell`, `read`, `write`, `edit`, `web_fetch`, `web_search`, `programmatic_tool_caller`, `subagent` | Built-in tools to enable, or `[]` for none. |
+| `builtin_tools` | `builtinTools` | `shell`, `read`, `write`, `edit`, `web_fetch`, `web_search`, `programmatic_tool_caller`, `subagent` | A list pins the built-in tools to enable (`[]` for none); a mapping edits the default set. See [edit the default tool set](../../configure/tools-and-instructions/#edit-the-default-tool-set). |
 | `builtin_tools={"web_fetch": {"model": ...}}` | `builtinTools: { web_fetch: { model } }` | provider default | The summarizer model `web_fetch` runs on. See [web access](../../tools/web-access/). |
 | `caching` | `caching` | `"auto"` (on) | Prompt caching where the provider supports it; off disables what Strands harness configures. |
 | `context_manager` | `contextManager` | `"auto"` | `"auto"`, `"agentic"`, or off. Enables context management and offloading. |
