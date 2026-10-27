@@ -2,9 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Agent } from '@strands-agents/sdk'
+import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { describe, expect, it, vi } from 'vitest'
 
+import { withDiscoveredSkills } from '../src/cli/invocation.js'
 import {
+  AgentSkillsRuntime,
   configuredSkillPaths,
   defaultSkillPaths,
   discoverSkills,
@@ -107,6 +110,55 @@ describe('skill discovery', () => {
       expect(invoke).toHaveBeenCalledWith({ skill_name: 'review' }, { recordDirectToolCall: false })
       await expect(runtime.activate('missing')).resolves.toBeUndefined()
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an AgentSkills instance instead of discovering the default path', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'strands-skills-instance-'))
+    await writeSkill(join(directory, '.agent', 'skills'), 'Default path only')
+    const plugin = new AgentSkills({
+      skills: [
+        new Skill({
+          name: 'kept',
+          description: 'From the instance\u0007',
+          instructions: 'Stay.\u001b[2J',
+          path: '/tmp/kept\u0007',
+          allowedTools: ['read', 'shell\u0007'],
+          license: 'Apache-2.0',
+          compatibility: 'node',
+        }),
+      ],
+    })
+    const invoke = vi.fn(async () => ({ status: 'success' as const, content: [] }))
+    const agent = {
+      appState: { get: () => undefined },
+      tool: { skills: { invoke } },
+    } as unknown as Agent
+    const previous = process.cwd()
+    process.chdir(directory)
+
+    try {
+      const discovered = await withDiscoveredSkills({ skills: plugin }, true)
+      expect(discovered.skills).toBe(plugin)
+
+      const runtime = new AgentSkillsRuntime(plugin, () => agent)
+      await expect(runtime.list()).resolves.toEqual([
+        {
+          name: 'kept',
+          description: 'From the instance',
+          instructions: 'Stay.',
+          active: false,
+          path: '/tmp/kept',
+          allowedTools: ['read', 'shell'],
+          license: 'Apache-2.0',
+          compatibility: 'node',
+        },
+      ])
+      await expect(runtime.activate('KEPT')).resolves.toMatchObject({ name: 'kept', active: true })
+      expect(invoke).toHaveBeenCalledWith({ skill_name: 'kept' }, { recordDirectToolCall: false })
+    } finally {
+      process.chdir(previous)
       await rm(directory, { recursive: true, force: true })
     }
   })

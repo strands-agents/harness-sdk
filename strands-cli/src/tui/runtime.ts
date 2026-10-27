@@ -41,7 +41,13 @@ import {
   restoreSessionAgentDefinition,
 } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
-import { configuredSkillPaths, FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
+import {
+  AgentSkillsRuntime,
+  configuredSkillPaths,
+  FileSkillsRuntime,
+  resolveSkillPaths,
+  type SkillPathsOption,
+} from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
@@ -98,9 +104,15 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
   } = options.agentOptions ?? {}
   // A `SessionManager` instance on `session` is honored like the SDK's `sessionManager`.
   const configuredSessionManager = explicitSessionManager ?? configuredSessionSettings.manager
-  // TODO(skills): `FileSkillsRuntime` only honors string paths; an `AgentSkills` instance falls back to default discovery.
-  const configuredSkillSources: SkillPathsOption =
-    configuredSkills instanceof AgentSkills ? undefined : configuredSkills
+  // An `AgentSkills` instance is the skill source. Discovering paths would drop it.
+  let configuredSkillsPlugin: AgentSkills | undefined
+  let configuredSkillSources: SkillPathsOption
+  if (configuredSkills instanceof AgentSkills) {
+    configuredSkillsPlugin = configuredSkills
+    configuredSkillSources = undefined
+  } else {
+    configuredSkillSources = configuredSkills
+  }
   const sourceDefinition =
     options.project && typeof portableAgentOptions.model === 'string'
       ? {
@@ -251,7 +263,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const restoredAgentOptions = options.project
       ? baseAgentOptions
       : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
-    const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
+    const skillPaths = configuredSkillsPlugin
+      ? []
+      : resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
     const profileSkillPaths = configuredSkillPaths(configuredSkillSources, workspace)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
@@ -279,7 +293,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ...withSession(restoredAgentOptions, { id: sessionId, dir: sessionDirectory }),
       ...(request.seed ? { model: request.seed.model, effort: profileEffort(request.seed.thinking) } : {}),
       ...(request.sessionManager !== undefined ? { sessionManager: request.sessionManager } : {}),
-      skills: skillPaths.length > 0 ? skillPaths : false,
+      skills: configuredSkillsPlugin ?? (skillPaths.length > 0 ? skillPaths : false),
       sandbox,
       interventions: [liveSteering, cedarPermissions, ...configuredInterventions],
     }
@@ -410,7 +424,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         ...(sessionCatalog ? { catalog: sessionCatalog } : {}),
         workspace,
       })
-      const skills = new FileSkillsRuntime(skillPaths, () => runtime.agent)
+      const skills = configuredSkillsPlugin
+        ? new AgentSkillsRuntime(configuredSkillsPlugin, () => runtime.agent)
+        : new FileSkillsRuntime(skillPaths, () => runtime.agent)
       const skillNames = (await skills.list()).map((skill) => skill.name)
       const controller = new ChatController(backend, {
         runtime: {
