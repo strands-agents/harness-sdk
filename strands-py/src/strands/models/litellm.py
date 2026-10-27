@@ -3,6 +3,7 @@
 - Docs: https://docs.litellm.ai/
 """
 
+import base64
 import json
 import logging
 import uuid
@@ -17,7 +18,7 @@ from typing_extensions import Unpack, override
 
 from ..agent.agent_metadata import AgentMetadata
 from ..tools import convert_pydantic_to_tool_spec
-from ..types.content import ContentBlock, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
@@ -247,6 +248,7 @@ class LiteLLMModel(OpenAIModel):
         system_prompt: str | None = None,
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        preserve_reasoning: bool = False,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Format a LiteLLM compatible messages array with cache point support.
@@ -255,15 +257,44 @@ class LiteLLMModel(OpenAIModel):
             messages: List of message objects to be processed by the model.
             system_prompt: System prompt to provide context to the model (for legacy compatibility).
             system_prompt_content: System prompt content blocks to provide context to the model.
+            preserve_reasoning: Whether to replay signed ``reasoningContent`` blocks instead of dropping them.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
             A LiteLLM compatible messages array.
         """
+        if preserve_reasoning:
+            messages = cls._drop_unsigned_reasoning(messages)
+
         formatted_messages = cls._format_system_messages(system_prompt, system_prompt_content=system_prompt_content)
-        formatted_messages.extend(cls._format_regular_messages(messages))
+        formatted_messages.extend(cls._format_regular_messages(messages, preserve_reasoning=preserve_reasoning))
 
         return [message for message in formatted_messages if "content" in message or "tool_calls" in message]
+
+    @classmethod
+    def _drop_unsigned_reasoning(cls, messages: Messages) -> Messages:
+        """Remove reasoning blocks that carry no signature, which Claude rejects on replay."""
+        filtered: Messages = []
+        for message in messages:
+            contents = [
+                content
+                for content in message["content"]
+                if not (
+                    "reasoningContent" in content
+                    and not content["reasoningContent"].get("reasoningText", {}).get("signature")
+                )
+            ]
+            filtered.append(cast(Message, {**message, "content": contents}))
+        return filtered
+
+    @override
+    def _preserve_reasoning_in_history(self) -> bool:
+        """Whether LiteLLM routes to Claude, which accepts signed thinking blocks on replay.
+
+        Other OpenAI-compatible backends (e.g. Moonshot Kimi K2) reject ``type: "thinking"`` blocks.
+        """
+        model_id = str(self.config.get("model_id", "")).lower()
+        return "anthropic" in model_id or "claude" in model_id
 
     @override
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
@@ -282,6 +313,16 @@ class LiteLLMModel(OpenAIModel):
         Raises:
             RuntimeError: If chunk_type is not recognized.
         """
+        if event["chunk_type"] == "content_delta" and event.get("data_type") == "reasoning_signature":
+            return {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": event["data"]}}}}
+
+        if event["chunk_type"] == "content_delta" and event.get("data_type") == "reasoning_redacted":
+            return {
+                "contentBlockDelta": {
+                    "delta": {"reasoningContent": {"redactedContent": base64.b64decode(event["data"])}}
+                }
+            }
+
         chunk = super().format_chunk(event)
 
         if event["chunk_type"] == "metadata":
@@ -461,8 +502,44 @@ class LiteLLMModel(OpenAIModel):
         # (reasoning_content, content, tool_calls attributes) but different object structures
         content_source = choice.delta if is_streaming else choice.message
 
-        # Process reasoning content
-        if hasattr(content_source, "reasoning_content") and content_source.reasoning_content:
+        # Process reasoning. LiteLLM sets thinking_blocks whenever it has Claude's reasoning text and
+        # signature, and reasoning_content is then just that same text concatenated, so prefer the
+        # blocks to avoid emitting the text twice.
+        thinking_blocks = getattr(content_source, "thinking_blocks", None)
+        if isinstance(thinking_blocks, list) and thinking_blocks:
+            chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
+            for chunk in chunks:
+                yield data_type, chunk
+
+            for thinking_block in thinking_blocks:
+                if thinking_block.get("type") == "redacted_thinking":
+                    if data := thinking_block.get("data"):
+                        yield data_type, self.format_chunk(
+                            {
+                                "chunk_type": "content_delta",
+                                "data_type": "reasoning_redacted",
+                                "data": data,
+                            }
+                        )
+                    continue
+
+                if thinking := thinking_block.get("thinking"):
+                    yield data_type, self.format_chunk(
+                        {
+                            "chunk_type": "content_delta",
+                            "data_type": "reasoning_content",
+                            "data": thinking,
+                        }
+                    )
+                if signature := thinking_block.get("signature"):
+                    yield data_type, self.format_chunk(
+                        {
+                            "chunk_type": "content_delta",
+                            "data_type": "reasoning_signature",
+                            "data": signature,
+                        }
+                    )
+        elif hasattr(content_source, "reasoning_content") and content_source.reasoning_content:
             chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
             for chunk in chunks:
                 yield data_type, chunk
