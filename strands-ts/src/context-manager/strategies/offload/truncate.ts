@@ -54,7 +54,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      const truncated = truncateToolResultBlock(block, this._truncateConfig)
+      const truncated = truncateToolResultBlock(block, this._truncateConfig, stashRefs.length > 0)
       if (truncated !== block) {
         return appendStashRefs(truncated, stashRefs)
       }

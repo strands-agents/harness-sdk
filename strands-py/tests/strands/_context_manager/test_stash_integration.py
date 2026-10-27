@@ -156,7 +156,7 @@ class TestDropWithStash:
         assert await strategy.apply(context) is True
         result_text = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
         assert DROPPED_MARKER in result_text
-        assert "ref:" in result_text
+        assert "[refs: tu-1_0, fields/tu-1_0/text]" in result_text
 
 
 class TestEagerStashing:
@@ -280,7 +280,7 @@ class TestSummarizeWithStash:
         assert await strategy.apply(context) is True
         result_text = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
         assert "[Summarized:" in result_text
-        assert "ref:" in result_text
+        assert "[refs: tu-1_0, fields/tu-1_0/text]" in result_text
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_media_offload_marker(self, mock_agent, stash):
@@ -304,6 +304,36 @@ class TestSummarizeWithStash:
 
 class TestStashRefRoundTrip:
     """Tests proving that a ref left by a strategy resolves via the retrieval tool."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("preview_tokens", [100, 750, 2000])
+    async def test_every_field_ref_in_the_preview_resolves(self, mock_agent, stash, preview_tokens):
+        # The stash and the preview split at one shared threshold, whatever the preview budget is (#4741).
+        strategy = Offload.truncate("tool_results", {"preview_tokens": preview_tokens}).when(
+            threshold=preview_tokens + 1
+        )
+        strategy._stash = stash
+        content = [
+            {"text": json.dumps({"output": "a" * 3500, "exit_code": 0})},  # below the split threshold
+            {"text": json.dumps({"output": "\n".join(["b" * 80] * 100), "exit_code": 1})},  # above it
+        ]
+        user_msg = Message(
+            role="user",
+            content=[ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=content))],
+        )
+        await stash.store_message(user_msg)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-1", name="bash", input={}))]),
+            user_msg,
+        ]
+        mock_agent.messages = messages
+        await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash))
+
+        preview = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
+        field_refs = set(re.findall(r"(fields/[^\s\],]+)", preview))
+        assert field_refs == {"fields/tu-1_1/output"}  # listed in the trailing [refs: ...] even when the body elides it
+        assert await stash.retrieve("fields/tu-1_1/output") is not None
 
     @pytest.mark.asyncio
     async def test_truncated_ref_resolves_via_retrieval_tool(self, mock_agent, stash):
@@ -339,12 +369,15 @@ class TestStashRefRoundTrip:
         await strategy.apply(context)
 
         result_text = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
-        ref_match = re.search(r"ref: ([^\s\]]+)", result_text)
-        assert ref_match is not None
-        ref = ref_match.group(1)
+        # The large text was split out: the preview body names the field ref, the trailing refs list both.
+        assert result_text.endswith(" [refs: tu-1_0, fields/tu-1_0/text]")
+        refs = ["fields/tu-1_0/text", "tu-1_0"]
 
         tool = _create_retrieval_tool(stash, max_result_tokens=100_000)
-        retrieval_result = await tool._tool_func({"toolUseId": "t-ret", "input": {"reference": ref}})
-        assert retrieval_result["status"] == "success"
-        parsed = json.loads(retrieval_result["content"][0]["text"])
-        assert parsed["text"] == original_text
+        field_result = await tool._tool_func({"toolUseId": "t-ret", "input": {"reference": refs[0]}})
+        assert field_result["status"] == "success"
+        assert field_result["content"][0]["text"] == original_text
+        block_result = await tool._tool_func({"toolUseId": "t-ret", "input": {"reference": refs[1]}})
+        assert json.loads(block_result["content"][0]["text"]) == {
+            "text": "[ref: fields/tu-1_0/text (1 lines, 50,000 chars)]"
+        }

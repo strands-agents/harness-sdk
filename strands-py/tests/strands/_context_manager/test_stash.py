@@ -194,6 +194,91 @@ class TestStoreMessage:
         assert tru_entries == exp_entries
 
 
+class TestSplitLargeStrings:
+    """Large strings in tool results are stashed as raw text under a field ref (#4741)."""
+
+    BIG = "\n".join(f"line {i}" for i in range(1, 2001))
+
+    @staticmethod
+    def _tool_result_message(content):
+        return Message(
+            role="user",
+            content=[ContentBlock(toolResult=ToolResult(toolUseId="tu", status="success", content=content))],
+        )
+
+    @pytest.mark.asyncio
+    async def test_stores_large_field_as_raw_text_and_marker_in_parent(self, stash, storage):
+        shell_json = json.dumps({"output": self.BIG, "error": "", "exit_code": 0})
+        await stash.store_message(self._tool_result_message([{"text": shell_json}]))
+
+        raw = await storage.read("context/test-session/scopes/agent/test-agent/fields/tu_0/output")
+        assert raw == self.BIG.encode("utf-8")
+        assert await stash.retrieve("fields/tu_0/output") == self.BIG
+        parent = await stash.retrieve("tu_0")
+        assert json.loads(parent["text"]) == {
+            "output": "[ref: fields/tu_0/output (2,000 lines, 18,892 chars)]",
+            "error": "",
+            "exit_code": 0,
+        }
+
+    def test_refs_for_lists_field_refs_after_block_refs(self, stash):
+        message = self._tool_result_message([{"text": "small"}, {"json": {"output": self.BIG, "exit_code": 0}}])
+        assert stash.refs_for(message["content"][0], message, 0) == ["tu_0", "tu_1", "fields/tu_1/output"]
+
+    @pytest.mark.asyncio
+    async def test_small_results_are_stored_as_before(self, stash):
+        item = {"text": json.dumps({"output": "ok", "error": "", "exit_code": 0})}
+        await stash.store_message(self._tool_result_message([item]))
+        assert await stash.retrieve("tu_0") == item
+        assert await stash.list() == ["tu_0"]
+
+    @pytest.mark.asyncio
+    async def test_keep_existing_leaves_field_entries_untouched(self, stash):
+        await stash.store_message(self._tool_result_message([{"text": self.BIG}]))
+        await stash.store_message(self._tool_result_message([{"text": "replaced " * 1000}]), keep_existing=True)
+        assert await stash.retrieve("fields/tu_0/text") == self.BIG
+
+    @pytest.mark.asyncio
+    async def test_keep_existing_skips_a_block_that_is_already_stored_unsplit(self, stash):
+        # A pre-split stash entry (e.g. from before an upgrade) is left as-is and no field is written next to it.
+        await stash.store("tu", 0, json.dumps({"text": self.BIG}).encode("utf-8"))
+        await stash.store_message(self._tool_result_message([{"text": self.BIG}]), keep_existing=True)
+        assert await stash.list() == ["tu_0"]
+
+    @pytest.mark.asyncio
+    async def test_stores_block_unsplit_when_a_field_write_fails(self, stash, storage):
+        original_write = storage.write
+
+        async def failing_write(key, data):
+            if key.endswith("/text"):
+                raise RuntimeError("quota")
+            await original_write(key, data)
+
+        with unittest.mock.patch.object(storage, "write", failing_write):
+            await stash.store_message(self._tool_result_message([{"text": self.BIG}]))
+        assert await stash.retrieve("tu_0") == {"text": self.BIG}
+
+    @pytest.mark.asyncio
+    async def test_round_trips_lone_surrogates(self, stash):
+        text = "x" * 5000 + "\udc80"
+        await stash.store_message(self._tool_result_message([{"text": text}]))
+        assert await stash.retrieve("fields/tu_0/text") == text
+        restored = Stash(InMemoryStorage(), "test-session", "test-agent")
+        await restored.load_snapshot(await stash.take_snapshot())
+        assert await restored.retrieve("fields/tu_0/text") == text
+
+    @pytest.mark.asyncio
+    async def test_snapshot_round_trips_raw_field_entries(self, stash):
+        await stash.store_message(self._tool_result_message([{"json": {"output": self.BIG, "exit_code": 1}}]))
+        snapshot = await stash.take_snapshot()
+        assert snapshot["fields/tu_0/output"] == self.BIG
+
+        restored = Stash(InMemoryStorage(), "test-session", "test-agent")
+        await restored.load_snapshot(snapshot)
+        assert await restored.retrieve("fields/tu_0/output") == self.BIG
+        assert await restored.retrieve("tu_0") == await stash.retrieve("tu_0")
+
+
 class TestNamespacing:
     """Tests for storage namespace isolation."""
 

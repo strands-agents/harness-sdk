@@ -101,6 +101,34 @@ class TestRetrievalTool:
         assert result["status"] == "error"
 
 
+class TestFieldRefRetrieval:
+    """Split-out fields retrieve as raw text, so pattern/line_range index real lines (#4741)."""
+
+    @pytest.mark.asyncio
+    async def test_full_read_and_search_of_a_field(self, stash):
+        output = "\n".join(f"line {i}" for i in range(1, 2001))
+        shell_json = json.dumps({"output": output, "error": "", "exit_code": 0})
+        message = Message(
+            role="user",
+            content=[
+                ContentBlock(toolResult={"toolUseId": "tu", "status": "success", "content": [{"text": shell_json}]})
+            ],
+        )
+        await stash.store_message(message)
+        tool = _create_retrieval_tool(stash)
+
+        full = await tool._tool_func({"toolUseId": "t1", "input": {"reference": "fields/tu_0/output"}})
+        assert full["content"][0]["text"] == output
+        found = await tool._tool_func(
+            {"toolUseId": "t1", "input": {"reference": "fields/tu_0/output", "pattern": "^line 861$"}}
+        )
+        assert "> 861| line 861" in found["content"][0]["text"]
+        span = await tool._tool_func(
+            {"toolUseId": "t1", "input": {"reference": "fields/tu_0/output", "line_range": {"start": 861, "end": 862}}}
+        )
+        assert span["content"][0]["text"] == "[Lines 861-862 of 2000]\n\n  861| line 861\n  862| line 862"
+
+
 class TestExtractText:
     """Tests for _extract_text helper."""
 

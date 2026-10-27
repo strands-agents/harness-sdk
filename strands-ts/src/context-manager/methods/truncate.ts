@@ -6,11 +6,17 @@
 
 import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
+import { splitLargeStrings } from '../split.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
 
-const DEFAULT_PREVIEW_TOKENS = 1000
-const CHARS_PER_TOKEN = 4
+export const DEFAULT_PREVIEW_TOKENS = 1000
+export const CHARS_PER_TOKEN = 4
+/**
+ * Strings at least this long are stashed as their own raw-text entry; shorter ones fit in a default preview anyway.
+ * The preview splits at the same constant so every field ref it shows exists in the stash.
+ */
+export const SPLIT_THRESHOLD_CHARS = DEFAULT_PREVIEW_TOKENS * CHARS_PER_TOKEN
 
 /**
  * Configuration for the truncate method.
@@ -30,12 +36,16 @@ export interface TruncateConfig {
  *
  * @returns The preview string with truncation metadata header, or the original text if already within budget.
  */
-export function buildPreview(fullText: string, blockCount: number, config?: TruncateConfig): string {
+function previewCharsFor(config?: TruncateConfig): number {
   const previewTokens =
     typeof config?.previewTokens === 'number' && Number.isFinite(config.previewTokens)
       ? Math.max(0, config.previewTokens)
       : DEFAULT_PREVIEW_TOKENS
-  const previewChars = previewTokens * CHARS_PER_TOKEN
+  return previewTokens * CHARS_PER_TOKEN
+}
+
+export function buildPreview(fullText: string, blockCount: number, config?: TruncateConfig): string {
+  const previewChars = previewCharsFor(config)
   const previewMode = config?.preview ?? 'headTail'
   const totalChars = fullText.length
 
@@ -67,12 +77,23 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
  * Creates a replacement ToolResultBlock with textual content truncated.
  * Text and JSON blocks are serialized into a preview. Opaque blocks (images, video, documents)
  * are preserved untouched — their payloads cannot be meaningfully previewed as text.
+ * With `split`, large strings are previewed after the blocks, under the field refs the stash stores them at.
  */
-export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): ToolResultBlock {
+export function truncateToolResultBlock(
+  block: ToolResultBlock,
+  config?: TruncateConfig,
+  split = false
+): ToolResultBlock {
   const textual: string[] = []
+  const bodies: string[] = []
   const opaque: ToolResultContent[] = []
 
-  for (const content of block.content) {
+  for (let index = 0; index < block.content.length; index++) {
+    let content = block.content[index]!
+    let fields: Record<string, string> = {}
+    if (split) {
+      ;({ parent: content, fields } = splitLargeStrings(content, `${block.toolUseId}_${index}`, SPLIT_THRESHOLD_CHARS))
+    }
     if (content instanceof TextBlock) {
       textual.push(content.text)
     } else if (content instanceof JsonBlock) {
@@ -80,13 +101,14 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
     } else {
       opaque.push(content)
     }
+    bodies.push(...Object.entries(fields).map(([ref, text]) => `[${ref}]\n${text}`))
   }
 
   if (textual.length === 0) {
     return block
   }
 
-  const fullText = textual.join('\n')
+  const fullText = [...textual, ...bodies].join('\n')
   const preview = buildPreview(fullText, textual.length, config)
 
   if (preview === fullText) {

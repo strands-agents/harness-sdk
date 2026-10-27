@@ -3,6 +3,7 @@ import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { ImageBlock } from '../../types/media.js'
+import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 
 function invoke(retrievalTool: ReturnType<typeof createRetrievalTool>, input: unknown): Promise<unknown> {
   return (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke(input)
@@ -97,5 +98,21 @@ describe('retrieval tool', () => {
 
     const result = (await invoke(retrievalTool, { reference: ref, pattern: 'test' })) as string
     expect(result).toContain('cannot search non-text content')
+  })
+
+  it('retrieves a split-out field as raw text so pattern and line_range index real lines (#4741)', async () => {
+    const output = Array.from({ length: 2000 }, (_, i) => `line ${i + 1}`).join('\n')
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    const content = [new TextBlock(JSON.stringify({ output, error: '', exit_code: 0 }))]
+    await stash.storeMessage(
+      new Message({ role: 'user', content: [new ToolResultBlock({ toolUseId: 'tu', status: 'success', content })] })
+    )
+    const retrievalTool = createRetrievalTool(stash)
+
+    expect(await invoke(retrievalTool, { reference: 'fields/tu_0/output' })).toBe(output)
+    const found = (await invoke(retrievalTool, { reference: 'fields/tu_0/output', pattern: '^line 861$' })) as string
+    expect(found).toContain('> 861| line 861')
+    const span = await invoke(retrievalTool, { reference: 'fields/tu_0/output', line_range: { start: 861, end: 862 } })
+    expect(span).toBe('[Lines 861-862 of 2000]\n\n  861| line 861\n  862| line 862')
   })
 })

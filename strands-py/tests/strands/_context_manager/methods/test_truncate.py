@@ -1,5 +1,7 @@
 """Tests for the truncate method module."""
 
+import json
+
 import pytest
 
 from strands._context_manager.methods.truncate import (
@@ -114,6 +116,41 @@ class TestTruncateToolResult:
         text = "short text"
         tru_result = _build_preview(text, 1, {"preview_tokens": 1000})
         assert tru_result == text
+
+
+class TestTruncateToolResultSplit:
+    """With split=True the preview shows large strings under their stash field refs (#4741)."""
+
+    BIG = "\n".join(f"line {i}" for i in range(1, 2001))
+
+    def test_preview_shows_parent_with_marker_then_field_lines(self):
+        shell_json = json.dumps({"output": self.BIG, "error": "", "exit_code": 0})
+        tool_result = ToolResult(toolUseId="tu", status="success", content=[{"text": shell_json}])
+        preview = _truncate_tool_result(tool_result, {"preview_tokens": 100}, split=True)["content"][0]["text"]
+        assert preview.startswith(
+            "[Truncated: 1 block, ~4,752 tokens]\n\n"
+            '{"output":"[ref: fields/tu_0/output (2,000 lines, 18,892 chars)]","error":"","exit_code":0}\n'
+            "[fields/tu_0/output]\nline 1\nline 2\n"
+        )
+        assert preview.endswith("\nline 1999\nline 2000")
+        assert "\\n" not in preview
+
+    def test_without_split_the_preview_is_the_serialized_text(self):
+        shell_json = json.dumps({"output": self.BIG, "error": "", "exit_code": 0})
+        tool_result = ToolResult(toolUseId="tu", status="success", content=[{"text": shell_json}])
+        preview = _truncate_tool_result(tool_result, {"preview_tokens": 100})["content"][0]["text"]
+        assert "fields/" not in preview
+        assert '{"output": "line 1\\nline 2' in preview
+
+    def test_all_block_markers_come_before_field_bodies(self):
+        tool_result = ToolResult(toolUseId="tu", status="success", content=[{"text": self.BIG}, {"text": self.BIG}])
+        preview = _truncate_tool_result(tool_result, {"preview_tokens": 100}, split=True)["content"][0]["text"]
+        assert preview.startswith(
+            "[Truncated: 2 blocks, ~9,482 tokens]\n\n"
+            "[ref: fields/tu_0/text (2,000 lines, 18,892 chars)]\n"
+            "[ref: fields/tu_1/text (2,000 lines, 18,892 chars)]\n"
+            "[fields/tu_0/text]\nline 1\n"
+        )
 
 
 class TestTruncateTextBlock:
