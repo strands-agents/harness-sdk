@@ -67,7 +67,8 @@ class DecisionModelClassifierConfig:
 
     Args:
         decision_model: Decision model that answers whether a tool call requires approval.
-        question: Question posed to the decision model. Defaults to a general-purpose risk question.
+        question: Yes/no question whose "yes" means the call requires approval. The model sees the
+            tool name and JSON input as its state. Defaults to a general-purpose risk question.
     """
 
     decision_model: DecisionModel

@@ -1363,6 +1363,11 @@ class TestDecisionModelClassifier:
         assert result == ClassifierResult(requires_human_in_the_loop=False)
         assert request.usage == {"turns_taken": 0, "inputTokens": 4, "outputTokens": 1, "totalTokens": 5}
 
+    @pytest.mark.parametrize("classifier", [StubDecisionModel(True), "yes"])
+    def test_rejects_a_non_callable_classifier(self, classifier):
+        with pytest.raises(TypeError, match="wrap a DecisionModel in DecisionModelClassifierConfig"):
+            HumanInTheLoop(classifier=classifier)
+
     def test_runs_through_a_real_llm_decision_model(self):
         result, executed = run_with_decision_model(LLMDecisionModel(model=AnswerReplayModel("false")))
 

@@ -115,9 +115,9 @@ class HumanInTheLoop(InterventionHandler):
             classifier=True,
         )])
 
-        # Risk classification via a DecisionModel
-        agent = Agent(interventions=[HumanInTheLoop(
-            classifier=DecisionModelClassifierConfig(decision_model=LLMDecisionModel()),
+        # Risk classification via a DecisionModel, on the model you pass it
+        agent = Agent(model=model, interventions=[HumanInTheLoop(
+            classifier=DecisionModelClassifierConfig(decision_model=LLMDecisionModel(model=model)),
         )])
 
         # CLI mode - prompts in terminal inline
@@ -158,9 +158,10 @@ class HumanInTheLoop(InterventionHandler):
                 ``LLMClassifierConfig``: built-in LLM classifier with custom settings. Kept for
                 backwards compatibility; prefer ``DecisionModelClassifierConfig`` for new code.
                 ``DecisionModelClassifierConfig``: asks any ``DecisionModel`` (e.g.
-                ``LLMDecisionModel``) whether the call requires approval. An ``Uncertain``
-                answer requires approval and carries its reason into the approval prompt; a
-                definite answer carries no reason.
+                ``LLMDecisionModel``) whether the call requires approval. The decision
+                model brings its own model and does not resolve through ``agent.aux_model``.
+                An ``Uncertain`` answer requires approval and carries its reason into the
+                approval prompt; a definite answer carries no reason.
                 Custom callable: your own classification logic.
             enable_trust: When True, trust responses approve the tool AND remember it
                 in ``agent.state`` for the rest of the session (won't ask again).
@@ -186,6 +187,10 @@ class HumanInTheLoop(InterventionHandler):
                 explicit deny. If it raises, the exception propagates and aborts the run
                 (fail-closed) -- catch and return a deny value inside your callback if you
                 prefer to proceed on error.
+
+        Raises:
+            ValueError: If ``allowed_tools`` is a single string rather than a list.
+            TypeError: If ``classifier`` is not a bool, a classifier config, or a callable.
 
         Note:
             ``name`` is a fixed class attribute, so at most one ``HumanInTheLoop`` can be
@@ -377,4 +382,9 @@ class HumanInTheLoop(InterventionHandler):
             return _create_llm_risk_classifier(classifier)
         if isinstance(classifier, DecisionModelClassifierConfig):
             return _create_decision_model_risk_classifier(classifier)
+        if not callable(classifier):
+            raise TypeError(
+                f"classifier must be a bool, LLMClassifierConfig, DecisionModelClassifierConfig, or callable, "
+                f"got {type(classifier).__name__} (wrap a DecisionModel in DecisionModelClassifierConfig)"
+            )
         return classifier
