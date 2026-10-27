@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
 import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, CachePointBlock } from '../../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+} from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
 
@@ -504,6 +511,74 @@ describe('Tracer', () => {
         { text: 'The answer is 42' },
         { type: 'toolUse', name: 'calc', toolUseId: 'tool-1', input: { expr: '6*7' } },
       ])
+    })
+
+    it('keeps reasoning text as a reasoning part with stable conventions and never exports the signature', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const output = new Message({
+        role: 'assistant',
+        content: [new ReasoningBlock({ text: 'Multiply 17 by 23.', signature: 'sig-secret' }), new TextBlock('391')],
+      })
+
+      tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
+
+      const parsed = JSON.parse(eventAttr(mockSpan.getEvents('gen_ai.choice')[0]!, 'message'))
+      expect(parsed).toStrictEqual([{ type: 'reasoning', text: 'Multiply 17 by 23.' }, { text: '391' }])
+      expect(JSON.stringify(mockSpan.getEvents('gen_ai.choice'))).not.toContain('sig-secret')
+      expect(JSON.stringify(mockSpan.getEvents('gen_ai.client.inference.operation.details'))).not.toContain(
+        'sig-secret'
+      )
+    })
+
+    it('keeps reasoning text as a reasoning part with latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const output = new Message({
+        role: 'assistant',
+        content: [new ReasoningBlock({ text: 'Multiply 17 by 23.', signature: 'sig-secret' }), new TextBlock('391')],
+      })
+
+      tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const outputEvent = detailEvents.find((e) => eventAttr(e, 'gen_ai.output.messages'))
+      const parsed = JSON.parse(eventAttr(outputEvent!, 'gen_ai.output.messages'))
+      expect(parsed).toStrictEqual([
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'reasoning', content: 'Multiply 17 by 23.' },
+            { type: 'text', content: '391' },
+          ],
+          finish_reason: 'end_turn',
+        },
+      ])
+      expect(JSON.stringify(mockSpan.getEvents('gen_ai.choice'))).not.toContain('sig-secret')
+      expect(JSON.stringify(mockSpan.getEvents('gen_ai.client.inference.operation.details'))).not.toContain(
+        'sig-secret'
+      )
+    })
+
+    it('does not export redacted reasoning content', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const output = new Message({
+        role: 'assistant',
+        content: [new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) }), new TextBlock('done')],
+      })
+
+      tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const outputEvent = detailEvents.find((e) => eventAttr(e, 'gen_ai.output.messages'))
+      const parsed = JSON.parse(eventAttr(outputEvent!, 'gen_ai.output.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'reasoningBlock' }, { type: 'text', content: 'done' }])
     })
 
     it('adds output event with latest conventions for mixed content', () => {
