@@ -214,27 +214,25 @@ export function latestPerStream(releases: ChangelogRelease[], sdk: Sdk): Changel
 
 export interface FooterReleases {
   byProduct: Record<Sdk, ChangelogRelease[]>
-  newest: ChangelogRelease | undefined
 }
 
 /**
- * Releases to show in the docs footer. `undefined` means the page is not owned
- * by a product, while `null` means a product does not have its own stream yet.
+ * Releases to show in the docs footer. Pages outside a product (`undefined`)
+ * and products without their own stream (`null`) show none, so a page never
+ * shows another product's release.
  */
 export function footerReleasesForProduct(
   releases: FooterReleases | undefined,
   sdk: Sdk | null | undefined
 ): ChangelogRelease[] {
-  if (!releases || sdk === undefined) return []
-  if (sdk === null) return releases.newest ? [releases.newest] : []
+  if (!releases || !sdk) return []
   return releases.byProduct[sdk]
 }
 
 let footerReleases: Promise<FooterReleases> | undefined
 
 /**
- * Latest release per stream for every product, plus the newest overall, for
- * the docs footer. The footer renders on every page, so the build computes this
+ * Latest release per stream for every product, for the docs footer. The footer renders on every page, so the build computes this
  * once instead of re-reading the collection per page, which nearly doubled peak
  * build memory. Dev skips the cache so content edits show up.
  */
@@ -250,5 +248,5 @@ async function loadFooterReleases(): Promise<FooterReleases> {
   const byProduct = Object.fromEntries(
     sdks.map((sdk) => [sdk, latestPerStream(releases, sdk)])
   ) as FooterReleases['byProduct']
-  return { byProduct, newest: releases[0] }
+  return { byProduct }
 }

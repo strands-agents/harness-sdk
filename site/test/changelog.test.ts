@@ -259,25 +259,27 @@ describe('latestPerStream', () => {
 })
 
 describe('footerReleasesForProduct', () => {
-  const newest = mkRelease('2026-10-21', [], { sdk: 'sdk', language: 'python', version: '1.62.0' })
+  const sdk = mkRelease('2026-10-21', [], { sdk: 'sdk', language: 'python', version: '1.62.0' })
   const box = mkRelease('2026-10-07', [], { sdk: 'box', version: '0.1.0' })
   const releases: FooterReleases = {
     byProduct: {
-      sdk: [newest],
+      sdk: [sdk],
       harness: [],
       cli: [],
       evals: [],
       box: [box],
     },
-    newest,
   }
 
   it('shows no release on pages outside a product', () => {
     expect(footerReleasesForProduct(releases, undefined)).toEqual([])
   })
 
-  it('shows the product stream, or the newest release for a product without a stream', () => {
+  it('shows the product stream', () => {
     expect(footerReleasesForProduct(releases, 'box')).toEqual([box])
-    expect(footerReleasesForProduct(releases, null)).toEqual([newest])
+  })
+
+  it('shows no release for a product without a stream rather than another product', () => {
+    expect(footerReleasesForProduct(releases, null)).toEqual([])
   })
 })

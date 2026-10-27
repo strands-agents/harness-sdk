@@ -20,8 +20,8 @@ export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
  * Release stream for each navbar product, used by the docs footer to show the
  * release of the product being read. Every product label needs an entry (a
  * test enforces it); `null` marks a product with no release stream yet, which
- * falls back to the newest release overall. The `cli` stream has no docs
- * product of its own, so it surfaces only on the changelog.
+ * shows no release. The `cli` stream has no docs product of its own, so it
+ * surfaces only on the changelog.
  */
 export const PRODUCT_RELEASE_STREAM: Record<string, Sdk | null> = {
   Harness: 'harness',
