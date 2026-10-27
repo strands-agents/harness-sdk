@@ -118,7 +118,6 @@ import {
   getAreaCounts,
   formatChangelogDate,
   escapeMarkdownInline,
-  releaseSummary,
   latestPerStream,
   footerReleasesForProduct,
   type FooterReleases,
@@ -211,32 +210,6 @@ const mkRelease = (
     id: `${stream.sdk}-${stream.language}-${date}`,
     data: { date: new Date(date), entries, ...stream },
   }) as unknown as ChangelogRelease
-
-describe('releaseSummary', () => {
-  it('summarizes feature and fix counts without selecting a potentially misleading title', () => {
-    expect(
-      releaseSummary(
-        mkRelease('2026-10-01', [
-          mk({ type: 'breaking', title: 'add swarm tool in TypeScript' }),
-          mk({ type: 'feat', title: 'make the Python middleware system public' }),
-          mk({ type: 'fix', title: 'preserve tool result adjacency' }),
-          mk({ type: 'chore', title: 'refresh dependencies' }),
-        ])
-      )
-    ).toBe('2 features, 1 fix')
-  })
-
-  it('uses other changes only when a release has no features or fixes', () => {
-    expect(
-      releaseSummary(mkRelease('2026-10-01', [mk({ type: 'feat' }), mk({ type: 'fix' }), mk({ type: 'fix' })]))
-    ).toBe('1 feature, 2 fixes')
-    expect(releaseSummary(mkRelease('2026-10-01', [mk({ type: 'docs' }), mk({ type: 'chore' })]))).toBe(
-      '2 other changes'
-    )
-    expect(releaseSummary(mkRelease('2026-10-01', [mk({ type: 'docs' })]))).toBe('1 other change')
-    expect(releaseSummary(mkRelease('2026-10-01'))).toBeUndefined()
-  })
-})
 
 describe('latestPerStream', () => {
   it('keeps the newest release of each language stream for the product', () => {

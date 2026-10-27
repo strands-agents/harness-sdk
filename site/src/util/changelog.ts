@@ -184,21 +184,6 @@ export function formatChangelogDate(date: Date): string {
   return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
-/** Compact aggregate for a release preview, without elevating one entry over the rest. */
-export function releaseSummary(release: ChangelogRelease): string | undefined {
-  const { features, fixes, other } = groupEntries(release.data.entries)
-  const primary = [
-    formatChangeCount(features.length, 'feature'),
-    formatChangeCount(fixes.length, 'fix', 'fixes'),
-  ].filter((summary): summary is string => summary !== undefined)
-  if (primary.length > 0) return primary.join(', ')
-  return formatChangeCount(other.length, 'other change')
-}
-
-function formatChangeCount(count: number, singular: string, plural = `${singular}s`): string | undefined {
-  return count > 0 ? `${count} ${count === 1 ? singular : plural}` : undefined
-}
-
 /**
  * Newest release of each of a product's streams: one per language, or one for
  * single-stream products. Expects newest-first input (see getReleases).
@@ -232,9 +217,9 @@ export function footerReleasesForProduct(
 let footerReleases: Promise<FooterReleases> | undefined
 
 /**
- * Latest release per stream for every product, for the docs footer. The footer renders on every page, so the build computes this
- * once instead of re-reading the collection per page, which nearly doubled peak
- * build memory. Dev skips the cache so content edits show up.
+ * Latest release per stream for every product, for the docs footer. The
+ * footer renders on every page, so the build computes this once instead of
+ * re-reading the collection per page, which nearly doubled peak build memory. Dev skips the cache so content edits show up.
  */
 export function getFooterReleases(): Promise<FooterReleases> {
   if (import.meta.env.DEV) return loadFooterReleases()
