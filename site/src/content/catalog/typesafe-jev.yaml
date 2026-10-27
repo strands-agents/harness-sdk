@@ -1,0 +1,9 @@
+name: TypeSafe Jev
+description: Answer closed questions for Strands agents with TypeSafe's hosted Jev decision model.
+integrationType: decision-model
+maintainedBy: strands
+languages:
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts
+addedDate: 2026-10-26
+# TODO: add docsPage once the decision models guide page exists
