@@ -1,0 +1,8 @@
+name: Inferrail
+description: Self-hosted OpenAI-compatible gateway that gives one Strands agent run a dollar budget via request headers and refuses over-budget calls with HTTP 402.
+integrationType: model-provider
+languages:
+  python: {}
+github: https://github.com/domondi1/inferrail
+docsUrl: https://github.com/domondi1/inferrail/blob/main/docs/recipes/strands-agents-run-budget.md?ref=strands-catalog
+addedDate: 2026-10-01
