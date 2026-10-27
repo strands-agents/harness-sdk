@@ -1,9 +1,5 @@
 import type { APIRoute } from 'astro'
-import { getBase, getSiteOrigin } from '@util/links'
-
-function siteLink(path: string): string {
-  return `${getSiteOrigin()}${getBase()}${path}`
-}
+import { siteLink } from '@util/links'
 
 export const GET: APIRoute = () => {
   const lines = [
