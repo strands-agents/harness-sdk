@@ -4,7 +4,7 @@ import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
 import { getPublishedPosts } from '../util/blog';
 import { formatEventDate, upcomingEvents } from '../util/learn';
-import { getReleases, releaseHeadline, formatChangelogDate } from '../util/changelog';
+import { getReleases, releaseSummary, formatChangelogDate } from '../util/changelog';
 import { streamLabel } from '../config/changelog';
 
 // The old /community/ hub is gone; its "what's new" and events feed now lives
@@ -60,7 +60,7 @@ const changelogHref = pathWithBase('/changelog/');
         <h3 class="community__panel-title community__panel-title--accent">Latest releases</h3>
         <ol class="community__list" role="list">
           {recentReleases.map((release) => {
-            const headline = releaseHeadline(release);
+            const summary = releaseSummary(release);
             return (
               <li class="community__row">
                 <a class="community__row-link" href={changelogHref}>
@@ -68,7 +68,7 @@ const changelogHref = pathWithBase('/changelog/');
                   <span class="community__row-title">
                     {streamLabel(release.data.sdk, release.data.language)} v{release.data.version}
                   </span>
-                  {headline && <span class="community__row-meta community__row-meta--clamp">{headline}</span>}
+                  {summary && <span class="community__row-meta community__row-meta--clamp">{summary}</span>}
                 </a>
               </li>
             );

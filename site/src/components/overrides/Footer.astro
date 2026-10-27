@@ -8,24 +8,28 @@
 import Default from '@astrojs/starlight/components/Footer.astro'
 import { pathWithBase } from '../../util/links'
 import { currentProduct } from '../../util/current-product'
-import { getFooterReleases, releaseSlug, formatChangelogDate } from '../../util/changelog'
+import { footerReleasesForProduct, getFooterReleases, releaseSlug, formatChangelogDate } from '../../util/changelog'
 import { LANGUAGE_META, PRODUCT_RELEASE_STREAM, streamLabel } from '../../config/changelog'
-import { LEGAL_LINKS } from '../../config/footer'
+import {
+  changelogHrefForProduct,
+  documentationIssueHref,
+  issueRepositoryForProduct,
+  LEGAL_LINKS,
+} from '../../config/footer'
 
-const changelogHref = pathWithBase('/changelog/')
+const changelogBaseHref = pathWithBase('/changelog/')
 const pathname = Astro.url.pathname
 // The changelog pages already lead with the latest release.
-const onChangelog = pathname.startsWith(changelogHref)
-const footerReleases = onChangelog ? undefined : await getFooterReleases()
-const productSdk = PRODUCT_RELEASE_STREAM[currentProduct(pathname)?.label ?? '']
-const newest = footerReleases?.newest ? [footerReleases.newest] : []
-const shown = (productSdk && footerReleases?.byProduct[productSdk]) || newest
+const onChangelog = pathname.startsWith(changelogBaseHref)
+const product = currentProduct(pathname)
+const productSdk = product ? PRODUCT_RELEASE_STREAM[product.label] : undefined
+const footerReleases = onChangelog || !product ? undefined : await getFooterReleases()
+const shown = footerReleasesForProduct(footerReleases, productSdk)
+const changelogHref = changelogHrefForProduct(changelogBaseHref, productSdk)
 
 const pageUrl = new URL(pathname, Astro.site).href
-const issueHref = `https://github.com/strands-agents/harness-sdk/issues/new?${new URLSearchParams({
-  template: 'documentation_improvement.yml',
-  'documentation-section': pageUrl,
-})}`
+const issueRepository = issueRepositoryForProduct(product?.label)
+const issueHref = documentationIssueHref(issueRepository, pageUrl)
 ---
 
 <Default />

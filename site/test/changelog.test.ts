@@ -118,8 +118,10 @@ import {
   getAreaCounts,
   formatChangelogDate,
   escapeMarkdownInline,
-  releaseHeadline,
+  releaseSummary,
   latestPerStream,
+  footerReleasesForProduct,
+  type FooterReleases,
   type ChangelogRelease,
 } from '../src/util/changelog'
 
@@ -210,15 +212,29 @@ const mkRelease = (
     data: { date: new Date(date), entries, ...stream },
   }) as unknown as ChangelogRelease
 
-describe('releaseHeadline', () => {
-  it('prefers a feature, then a fix, and ignores other entry types', () => {
+describe('releaseSummary', () => {
+  it('summarizes feature and fix counts without selecting a potentially misleading title', () => {
     expect(
-      releaseHeadline(mkRelease('2026-10-01', [mk({ type: 'fix', title: 'f' }), mk({ type: 'feat', title: 'a' })]))
-    ).toBe('a')
+      releaseSummary(
+        mkRelease('2026-10-01', [
+          mk({ type: 'breaking', title: 'add swarm tool in TypeScript' }),
+          mk({ type: 'feat', title: 'make the Python middleware system public' }),
+          mk({ type: 'fix', title: 'preserve tool result adjacency' }),
+          mk({ type: 'chore', title: 'refresh dependencies' }),
+        ])
+      )
+    ).toBe('2 features, 1 fix')
+  })
+
+  it('uses other changes only when a release has no features or fixes', () => {
     expect(
-      releaseHeadline(mkRelease('2026-10-01', [mk({ type: 'chore', title: 'c' }), mk({ type: 'fix', title: 'f' })]))
-    ).toBe('f')
-    expect(releaseHeadline(mkRelease('2026-10-01', [mk({ type: 'chore', title: 'c' })]))).toBeUndefined()
+      releaseSummary(mkRelease('2026-10-01', [mk({ type: 'feat' }), mk({ type: 'fix' }), mk({ type: 'fix' })]))
+    ).toBe('1 feature, 2 fixes')
+    expect(releaseSummary(mkRelease('2026-10-01', [mk({ type: 'docs' }), mk({ type: 'chore' })]))).toBe(
+      '2 other changes'
+    )
+    expect(releaseSummary(mkRelease('2026-10-01', [mk({ type: 'docs' })]))).toBe('1 other change')
+    expect(releaseSummary(mkRelease('2026-10-01'))).toBeUndefined()
   })
 })
 
@@ -239,5 +255,29 @@ describe('latestPerStream', () => {
       mkRelease('2026-10-01', [], { sdk: 'box', version: '0.1.0' }),
     ]
     expect(latestPerStream(releases, 'box').map((r) => r.data.version)).toEqual(['0.2.0'])
+  })
+})
+
+describe('footerReleasesForProduct', () => {
+  const newest = mkRelease('2026-10-21', [], { sdk: 'sdk', language: 'python', version: '1.62.0' })
+  const box = mkRelease('2026-10-07', [], { sdk: 'box', version: '0.1.0' })
+  const releases: FooterReleases = {
+    byProduct: {
+      sdk: [newest],
+      harness: [],
+      cli: [],
+      evals: [],
+      box: [box],
+    },
+    newest,
+  }
+
+  it('shows no release on pages outside a product', () => {
+    expect(footerReleasesForProduct(releases, undefined)).toEqual([])
+  })
+
+  it('shows the product stream, or the newest release for a product without a stream', () => {
+    expect(footerReleasesForProduct(releases, 'box')).toEqual([box])
+    expect(footerReleasesForProduct(releases, null)).toEqual([newest])
   })
 })

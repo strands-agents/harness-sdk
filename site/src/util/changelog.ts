@@ -127,8 +127,8 @@ function getStreamNeighbors(
   const stream = all.filter((r) => streamKey(r) === key) // `all` is newest-first
   const i = stream.findIndex((r) => r.id === release.id)
   return {
-    newer: i > 0 ? stream[i - 1] ?? null : null,
-    older: i >= 0 && i < stream.length - 1 ? stream[i + 1] ?? null : null,
+    newer: i > 0 ? (stream[i - 1] ?? null) : null,
+    older: i >= 0 && i < stream.length - 1 ? (stream[i + 1] ?? null) : null,
   }
 }
 
@@ -184,13 +184,19 @@ export function formatChangelogDate(date: Date): string {
   return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
-/**
- * Plain-text headline for a compact release preview: the first feature, else
- * the first fix. `highlights` is skipped because it's multi-line markdown.
- */
-export function releaseHeadline(release: ChangelogRelease): string | undefined {
-  const { features, fixes } = groupEntries(release.data.entries)
-  return (features[0] ?? fixes[0])?.title
+/** Compact aggregate for a release preview, without elevating one entry over the rest. */
+export function releaseSummary(release: ChangelogRelease): string | undefined {
+  const { features, fixes, other } = groupEntries(release.data.entries)
+  const primary = [
+    formatChangeCount(features.length, 'feature'),
+    formatChangeCount(fixes.length, 'fix', 'fixes'),
+  ].filter((summary): summary is string => summary !== undefined)
+  if (primary.length > 0) return primary.join(', ')
+  return formatChangeCount(other.length, 'other change')
+}
+
+function formatChangeCount(count: number, singular: string, plural = `${singular}s`): string | undefined {
+  return count > 0 ? `${count} ${count === 1 ? singular : plural}` : undefined
 }
 
 /**
@@ -209,6 +215,19 @@ export function latestPerStream(releases: ChangelogRelease[], sdk: Sdk): Changel
 export interface FooterReleases {
   byProduct: Record<Sdk, ChangelogRelease[]>
   newest: ChangelogRelease | undefined
+}
+
+/**
+ * Releases to show in the docs footer. `undefined` means the page is not owned
+ * by a product, while `null` means a product does not have its own stream yet.
+ */
+export function footerReleasesForProduct(
+  releases: FooterReleases | undefined,
+  sdk: Sdk | null | undefined
+): ChangelogRelease[] {
+  if (!releases || sdk === undefined) return []
+  if (sdk === null) return releases.newest ? [releases.newest] : []
+  return releases.byProduct[sdk]
 }
 
 let footerReleases: Promise<FooterReleases> | undefined
