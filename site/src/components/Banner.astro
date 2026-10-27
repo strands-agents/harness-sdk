@@ -115,7 +115,9 @@ import { pathWithBase } from '../util/links';
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 500;
-    font-size: clamp(30px, 3.6vw, 52px);
+    /* Sized so the headline and the fixed-width install pill fit side by
+       side from 1024px, even with a classic scrollbar. */
+    font-size: clamp(30px, 3.25vw, 52px);
     letter-spacing: 0.1em;
     line-height: 1.2;
     color: var(--banner-headline);
@@ -196,6 +198,10 @@ import { pathWithBase } from '../util/links';
 
     .banner__text {
       align-items: center;
+    }
+
+    .banner__headline {
+      font-size: clamp(30px, 3.6vw, 52px);
     }
 
     .banner__halftone {
