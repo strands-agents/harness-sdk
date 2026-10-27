@@ -148,6 +148,24 @@ describe('ConversationManager', () => {
     expect(voice.dispose).toHaveBeenCalledOnce()
   })
 
+  it('dismisses the voice panel when Start Voice is pressed', async () => {
+    const primary = new ChatController(backend('primary', emptyRun))
+    const voice = fakeVoiceInput()
+    const manager = new ConversationManager(primary, { fork: async () => primary, voice })
+
+    await manager.submit('/voice')
+    const panel = manager.getSnapshot().panel
+    expect(panel).toMatchObject({ kind: 'voice' })
+    const start = panel!.rows.find((row) => row.value === 'voice:start')!
+
+    await manager.activatePanelRow(start)
+
+    expect(voice.start).toHaveBeenCalledOnce()
+    expect(manager.getSnapshot().voice?.status).toBe('listening')
+    expect(manager.getSnapshot().panel).toBeUndefined()
+    await manager.dispose()
+  })
+
   it('publishes voice meter levels without rebuilding the conversation snapshot', async () => {
     const primary = new ChatController(backend('primary', emptyRun))
     const voice = fakeVoiceInput()
