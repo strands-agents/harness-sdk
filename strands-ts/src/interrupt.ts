@@ -205,7 +205,7 @@ export class InterruptState implements InterruptStateData {
       return undefined
     }
 
-    const assistantMessage = Message.fromMessageData(this.pendingToolExecution.assistantMessageData)
+    const assistantMessage = Message._fromSavedData(this.pendingToolExecution.assistantMessageData)
 
     const completedToolResults = new Map<string, ToolResultBlock>()
     for (const [toolUseId, resultData] of Object.entries(this.pendingToolExecution.completedToolResults)) {

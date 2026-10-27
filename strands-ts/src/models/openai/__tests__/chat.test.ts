@@ -4,7 +4,14 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  GuardContentBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
@@ -1827,6 +1834,27 @@ describe('OpenAIModel', () => {
       expect(captured.request!.messages).toEqual([])
 
       warnSpy.mockRestore()
+    })
+  })
+
+  describe('unknown blocks in messages', () => {
+    it('skips unknown blocks in user and assistant messages', async () => {
+      using _warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Hi'), unknownBlock] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request!.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: 'Hi' },
+      ])
     })
   })
 

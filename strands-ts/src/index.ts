@@ -100,6 +100,7 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,

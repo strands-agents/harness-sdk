@@ -1652,6 +1652,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return undefined
       case 'summaryBlock':
         throw new Error(`content_type=<${block.type}> | unsupported type`)
+      case 'unknownBlock':
+        // Reported once when it was loaded.
+        return undefined
     }
   }
 
