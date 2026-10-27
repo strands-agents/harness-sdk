@@ -5,6 +5,7 @@ modified.
 """
 
 import logging
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,11 @@ class ToolWatcher:
     _shared_observer = None
     _watched_dirs: set[str] = set()
     _observer_started = False
-    _registry_handlers: dict[str, dict[int, "ToolWatcher.ToolChangeHandler"]] = {}
+    # One row per watched directory, mapping each live registry to its handler.
+    # Weak keys keep a row from outliving its registry: when an agent and its
+    # watcher are discarded, the entry disappears instead of keeping the registry
+    # alive and dispatching file events into it for the rest of the process.
+    _registry_handlers: dict[str, "weakref.WeakKeyDictionary[ToolRegistry, ToolWatcher.ToolChangeHandler]"] = {}
 
     def __init__(self, tool_registry: ToolRegistry) -> None:
         """Initialize a tool watcher for the given tool registry.
@@ -47,7 +52,9 @@ class ToolWatcher:
             Args:
                 tool_registry: The tool registry to update when tools change.
             """
-            self.tool_registry = tool_registry
+            # Weak on purpose: a strong reference would keep the registry (and
+            # its agent) alive for as long as the shared handler table exists.
+            self._tool_registry = weakref.ref(tool_registry)
 
         def on_modified(self, event: Any) -> None:
             """Reload tool if file modification detected.
@@ -55,6 +62,9 @@ class ToolWatcher:
             Args:
                 event: The file system event that triggered this handler.
             """
+            tool_registry = self._tool_registry()
+            if tool_registry is None:
+                return
             if event.src_path.endswith(".py"):
                 tool_path = Path(event.src_path)
                 tool_name = tool_path.stem
@@ -62,7 +72,7 @@ class ToolWatcher:
                 if tool_name not in ["__init__"]:
                     logger.debug("tool_name=<%s> | tool change detected", tool_name)
                     try:
-                        self.tool_registry.reload_tool(tool_name)
+                        tool_registry.reload_tool(tool_name)
                     except Exception as e:
                         logger.error("tool_name=<%s>, exception=<%s> | failed to reload tool", tool_name, str(e))
 
@@ -88,8 +98,9 @@ class ToolWatcher:
                 tool_name = tool_path.stem
 
                 if tool_name not in ["__init__"]:
-                    # Delegate to all registered handlers for this directory
-                    for handler in ToolWatcher._registry_handlers.get(self.dir_path, {}).values():
+                    # Delegate to all registered handlers for this directory.
+                    # Iterating a snapshot: a registry can be collected mid-loop.
+                    for handler in list(ToolWatcher._registry_handlers.get(self.dir_path, {}).values()):
                         try:
                             handler.on_modified(event)
                         except Exception as e:
@@ -103,7 +114,6 @@ class ToolWatcher:
 
         # Create handler for this instance
         self.tool_change_handler = self.ToolChangeHandler(self.tool_registry)
-        registry_id = id(self.tool_registry)
 
         # Get tools directories to watch
         tools_dirs = self.tool_registry.get_tools_dirs()
@@ -113,10 +123,11 @@ class ToolWatcher:
 
             # Initialize the registry handlers dict for this directory if needed
             if dir_str not in ToolWatcher._registry_handlers:
-                ToolWatcher._registry_handlers[dir_str] = {}
+                ToolWatcher._registry_handlers[dir_str] = weakref.WeakKeyDictionary()
 
-            # Store this handler with its registry id
-            ToolWatcher._registry_handlers[dir_str][registry_id] = self.tool_change_handler
+            # Store this handler keyed by its registry so the entry is dropped
+            # with the registry instead of accumulating for the process lifetime.
+            ToolWatcher._registry_handlers[dir_str][self.tool_registry] = self.tool_change_handler
 
             # Schedule or update the master handler for this directory
             if dir_str not in ToolWatcher._watched_dirs:
