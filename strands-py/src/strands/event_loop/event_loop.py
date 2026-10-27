@@ -930,6 +930,8 @@ async def _handle_tool_execution(
         cancel_message = "Tool execution cancelled"
 
     structured_output_result = None
+    tool_batch_completed = False
+    after_tools_exception: Exception | None = None
     try:
         if cancel_message:
             logger.debug("tool_count=<%d> | cancellation detected before tool execution", len(tool_uses))
@@ -974,6 +976,7 @@ async def _handle_tool_execution(
                 if structured_output_result := structured_output_context.extract_result(tool_uses):
                     yield StructuredOutputEvent(structured_output=structured_output_result)
                     structured_output_context.stop_loop = True
+        tool_batch_completed = True
     finally:
         # Always pair BeforeToolsEvent with AfterToolsEvent, even on cancel/interrupt/error paths.
         tool_result_message: Message = {
@@ -988,7 +991,7 @@ async def _handle_tool_execution(
         )
         try:
             after_tools_event, _ = await agent.hooks.invoke_callbacks_async(after_tools_event)
-        except Exception:
+        except Exception as exception:
             # Persist pending interrupts before re-raising so they aren't lost.
             if interrupts:
                 agent._interrupt_state.pending_tool_execution = PendingToolExecution(
@@ -996,7 +999,9 @@ async def _handle_tool_execution(
                     completed_tool_results=tool_results,
                 )
                 agent._interrupt_state.activate()
-            raise
+            if interrupts or not tool_batch_completed:
+                raise
+            after_tools_exception = exception
 
     invocation_state["event_loop_parent_cycle_id"] = invocation_state["event_loop_cycle_id"]
 
@@ -1024,6 +1029,9 @@ async def _handle_tool_execution(
         agent._interrupt_state.set_pending_tool_results(tool_results)
 
     await agent._append_messages(tool_result_message, invocation_context=invocation_context)
+
+    if after_tools_exception is not None:
+        raise after_tools_exception
 
     yield ToolResultMessageEvent(message=tool_result_message)
 
