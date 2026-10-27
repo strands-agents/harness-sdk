@@ -25,6 +25,7 @@ Strands has several extension points. Each serves a different purpose in the age
 |-----------|---------|------------|
 | **Tools** | Add capabilities to agents: call APIs, access databases, interact with services | [Custom tools](../../user-guide/sdk/tools/custom-tools.md) |
 | **Model providers** | Integrate LLM APIs beyond the built-in providers | [Custom model providers](../../user-guide/sdk/model-providers/custom_model_provider.md) |
+| **Decision models** | Answer closed questions for agents through decision APIs beyond the built-in providers | [Decision models design](https://github.com/strands-agents/harness-sdk/blob/main/team/designs/0020-decision-models.md) |
 | **Plugins** | Extend or modify agent behavior during lifecycle events such as invocations, tool calls, and model calls | [Plugins](../../user-guide/sdk/plugins/index.md) |
 | **Interventions** | Add composable control handlers for authorization, guardrails, and steering with typed actions | [Interventions](../../user-guide/sdk/agents/interventions/index.md) |
 | **Session managers** | Persist conversations to external storage for resumption or sharing | [Session management](../../user-guide/sdk/agents/session-management.md) |
@@ -38,7 +39,7 @@ Tools are the most common extension type. They let agents interact with specific
 The fastest way to create a publishable extension is the [extension template](https://github.com/strands-agents/extension-template). It gives you a ready-made project structure with skeleton implementations for Python and TypeScript, testing setup, and GitHub Actions workflows for publishing.
 
 1. Click "Use this template" on GitHub to create your repository
-2. Run the setup script to customize the project: pick a package name, select which components you need (tool, model provider, plugin, intervention, session manager, conversation manager, memory store, storage), and fill in your author info
+2. Run the setup script to customize the project: pick a package name, select which components you need (tool, model provider, decision model, plugin, intervention, session manager, conversation manager, memory store, storage), and fill in your author info
 3. Install dependencies and run checks
 4. Implement your component logic in the generated files
 
