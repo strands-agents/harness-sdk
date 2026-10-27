@@ -20,6 +20,7 @@ const eventHref = (href?: string) =>
 
 const learnHref = pathWithBase('/docs/learning/how-agents-really-work/');
 const upcomingList = upcoming.slice(0, 4);
+const DISCORD_HREF = 'https://discord.gg/strands';
 ---
 
 <section class="community" aria-label="Community & learning hub">
@@ -50,9 +51,9 @@ const upcomingList = upcoming.slice(0, 4);
       )}
     </div>
 
-    {upcomingList.length > 0 && (
-      <div class="community__panel community__panel--events">
-        <h3 class="community__panel-title community__panel-title--accent">Events</h3>
+    <div class="community__panel community__panel--events">
+      <h3 class="community__panel-title community__panel-title--accent">Events</h3>
+      {upcomingList.length > 0 ? (
         <ul class="community__list" role="list">
           {upcomingList.map((event) => (
             <li class="community__row">
@@ -68,8 +69,19 @@ const upcomingList = upcoming.slice(0, 4);
             </li>
           ))}
         </ul>
-      </div>
-    )}
+      ) : (
+        <p class="community__empty">No upcoming events right now. Check back soon.</p>
+      )}
+      <a class="community__events-cta" href={DISCORD_HREF} target="_blank" rel="noopener">
+        <span class="community__row-kicker">Between events</span>
+        <span class="community__events-cta-title">
+          Ask questions and share what you're building on Discord&nbsp;<span
+            class="community__cta-arrow"
+            set:html={arrow}
+          />
+        </span>
+      </a>
+    </div>
   </div>
 </section>
 
@@ -80,7 +92,7 @@ const upcomingList = upcoming.slice(0, 4);
   }
 
   /* Two-column card: the intro and What's new stack in the left column; Events
-     fills the right column at full height, since it carries more rows. */
+     always fills the right column at full height, even with no upcoming events. */
   .community__card {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -174,6 +186,40 @@ const upcomingList = upcoming.slice(0, 4);
     padding: 32px;
     border-radius: 20px;
     background: color-mix(in srgb, var(--accent-green) 5%, var(--bg));
+  }
+
+  .community__empty {
+    margin: 0;
+    padding: 12px 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
+    color: var(--strands-grey-400);
+  }
+
+  /* Pinned to the bottom so a short or empty list doesn't leave a dead panel. */
+  .community__events-cta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: auto;
+    padding: 20px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--accent-green) 6%, var(--bg));
+    border: 1px solid color-mix(in srgb, var(--accent-green) 20%, transparent);
+    text-decoration: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .community__events-cta:hover {
+    border-color: var(--accent-green);
+  }
+
+  .community__events-cta-title {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.3;
+    color: var(--fg);
   }
 
   /* Softer rules between event rows so they read within the tinted panel. */
