@@ -31,6 +31,27 @@ Top to bottom:
    publish the per-test `Event` / `Branch` / `Leg` schema, one series per test and leg. Python needs a table per leg
    because the `all` leg (Python 3.10) skips every bidi test and does not collect the mcp 1.x-only modules.
 
+## Nightly canary issues
+
+The nightly run of `main` is `.github/workflows/integ-canary.yml`: it calls `python-integration-test.yml` and then
+`typescript-integration-test.yml` (full suite) on the same commit, which publish to CloudWatch as on any other run,
+with `Event=schedule`. The dashboards are only read when someone opens them, so its `report` job then runs
+`.github/scripts/report-integ-canary.py`, which keeps one open issue per SDK labelled `integ-canary`:
+
+- a red run (a failed test, or a matrix leg with no readable JUnit report) opens the issue if none is open;
+- the issue description always shows the latest run: per-leg counts, newly failing, still failing and fixed tests
+  compared with the previous nightly run, and links to both runs and the commits between them;
+- a comment is added only when the set of failing tests or broken legs changes, or the first green run after a red
+  one;
+- the second consecutive green run closes the issue.
+
+Running the canary by hand (`workflow_dispatch` on `main`) also reports, so a maintainer can confirm a fix; it
+publishes with `Event=workflow_dispatch` and so stays out of the nightly-only dashboard tables. Runs on other
+branches test that branch and do not touch the issues. The previous run's results come from its artifacts
+(`gh run download`), so the `report` job needs no AWS access. Re-running it for the same run is a no-op: the issue
+description records the run it describes. To preview an issue without writing to GitHub, download two canary runs'
+artifacts and run the reporter with `--dry-run` (see `--help`).
+
 ## Publishing (manual, maintainers)
 
 The dashboards are not part of the CDK stack: `put-dashboard` is idempotent, overwrites the existing dashboards of
