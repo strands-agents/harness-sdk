@@ -1215,7 +1215,7 @@ class TestBuiltInClassifier:
 class StubDecisionModel(DecisionModel):
     """A decision model that records each ask and returns a canned answer (or raises)."""
 
-    def __init__(self, answer: bool | Uncertain | None = None, *, error: Exception | None = None) -> None:
+    def __init__(self, answer: Any = None, *, error: Exception | None = None) -> None:
         self.answer = answer
         self.error = error
         self.calls: list[tuple[DecisionInput, dict[str, Question]]] = []
@@ -1315,6 +1315,15 @@ class TestDecisionModelClassifier:
 
         assert result.stop_reason == "interrupt"
         assert executed == []
+
+    @pytest.mark.parametrize("answer", ["False", None])
+    def test_non_boolean_answer_requires_approval_and_warns(self, answer, caplog):
+        with caplog.at_level(logging.WARNING):
+            result, executed = run_with_decision_model(StubDecisionModel(answer))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "non-boolean answer" in caplog.text
 
     def test_allowed_tools_bypasses_the_decision_model(self):
         decision_model = StubDecisionModel(True)

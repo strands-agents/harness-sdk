@@ -8,6 +8,7 @@ whether a tool call requires human approval against the same risk criteria.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -18,6 +19,8 @@ from ...agent.invocation_context import _create_auxiliary_invocation_context
 from ...decisions import DecisionModel, Uncertain
 from ...hooks.events import BeforeToolCallEvent
 from ...models import Model
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -167,8 +170,12 @@ def _create_decision_model_risk_classifier(decision_model: DecisionModel) -> Hum
         answer = result.answers["requires_approval"]
         if isinstance(answer, Uncertain):
             return ClassifierResult(requires_human_in_the_loop=True, reason=answer.reason)
-        # Only a definite False skips approval; any other answer fails closed.
-        return ClassifierResult(requires_human_in_the_loop=answer is not False)
+        if not isinstance(answer, bool):
+            logger.warning(
+                "answer=<%r> | decision model returned a non-boolean answer, defaulting to approval required", answer
+            )
+            return ClassifierResult(requires_human_in_the_loop=True)
+        return ClassifierResult(requires_human_in_the_loop=answer)
 
     return classifier
 
