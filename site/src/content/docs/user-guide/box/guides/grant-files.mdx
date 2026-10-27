@@ -131,6 +131,11 @@ the run if one fails:
 - **No write on `PATH` when MCP servers are declared.** In a box with a stdio MCP
   server, a write grant at or above a directory on your `PATH` is refused.
 
+Keep the Box installation directory, `box.toml`, its policy file, and `box_dir`
+outside writable project directories. The agent, tools, and local MCP servers must
+not be able to change these files. Check their filesystem grants and the policy's
+file rules. Box uses these files to start programs and decide what to allow.
+
 Box also refuses grants on these paths:
 
 - **The roots of system and home trees**: `/`, `/Users`, `/home`, `/System`,
@@ -171,3 +176,7 @@ The runtime minimum is the small set of system paths a process needs to start, s
 
 The agent's `workspace` is its starting directory. The agent can change into it, but
 can't read or write it until a list grants it.
+
+Check the agent's file tools, Box's shell or Python, and each declared tool or local
+MCP server. Test an allowed operation and a denied operation through each route you
+use. Repeat these checks after changes to grants or policy.
