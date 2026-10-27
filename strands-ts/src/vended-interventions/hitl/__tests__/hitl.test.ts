@@ -685,7 +685,7 @@ describe('HumanInTheLoop', () => {
   describe('decision model classifier', () => {
     async function invokeWithDecisionModel(
       decisionModel: DecisionModel,
-      config: { question?: string; allowedTools?: string[]; ask?: (prompt: string) => Promise<string> } = {}
+      config: { allowedTools?: string[]; ask?: (prompt: string) => Promise<string> } = {}
     ): Promise<{ stopReason: string; toolExecuted: boolean }> {
       const agentModel = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'deleteFile', toolUseId: 'tool-1', input: { path: '/data' } })
@@ -702,7 +702,7 @@ describe('HumanInTheLoop', () => {
         tools: [tool],
         interventions: [
           new HumanInTheLoop({
-            classifier: { decisionModel, ...(config.question !== undefined && { question: config.question }) },
+            classifier: decisionModel,
             ...(config.allowedTools !== undefined && { allowedTools: config.allowedTools }),
             ...(config.ask !== undefined && { ask: config.ask }),
           }),
@@ -740,15 +740,20 @@ describe('HumanInTheLoop', () => {
       expect(prompts).toEqual([expect.stringContaining('Approve "deleteFile" — path scope unclear?')])
     })
 
-    it('asks about the tool call with the configured question', async () => {
+    it('asks the risk question about the tool call', async () => {
       const decisionModel = new StubDecisionModel(false)
 
-      await invokeWithDecisionModel(decisionModel, { question: 'Is this call risky?' })
+      await invokeWithDecisionModel(decisionModel)
 
       expect(decisionModel.calls).toEqual([
         {
           state: 'Tool: deleteFile\nInput: {\n  "path": "/data"\n}',
-          questions: { requiresApproval: { question: 'Is this call risky?', choices: 'boolean' } },
+          questions: {
+            requiresApproval: {
+              question: expect.stringContaining('Does this AI agent tool call require human approval'),
+              choices: 'boolean',
+            },
+          },
         },
       ])
     })
@@ -769,7 +774,7 @@ describe('HumanInTheLoop', () => {
     })
 
     it('adds the decision usage to the request total', async () => {
-      const humanInTheLoop = new HumanInTheLoop({ classifier: { decisionModel: new StubDecisionModel(false) } })
+      const humanInTheLoop = new HumanInTheLoop({ classifier: new StubDecisionModel(false) })
       const agent = new Agent({ model: new MockMessageModel(), printer: false })
       const invocationContext = new InvocationContextImpl()
       const event = new BeforeToolCallEvent({

@@ -2,12 +2,8 @@ import { InterventionHandler } from '../../interventions/handler.js'
 import { confirm, proceed, defaultEvaluate } from '../../interventions/actions.js'
 import { logger } from '../../logging/logger.js'
 import { createDecisionModelRiskClassifier, createLlmRiskClassifier } from './classifier.js'
-import type {
-  ClassifierResult,
-  DecisionModelClassifierConfig,
-  HumanInTheLoopClassifier,
-  LlmClassifierConfig,
-} from './classifier.js'
+import { DecisionModel } from '../../decisions/decision-model.js'
+import type { ClassifierResult, HumanInTheLoopClassifier, LlmClassifierConfig } from './classifier.js'
 import type { InterventionAction } from '../../interventions/actions.js'
 import type { BeforeToolCallEvent } from '../../hooks/events.js'
 import type { JSONValue } from '../../types/json.js'
@@ -72,13 +68,14 @@ export interface HumanInTheLoopConfig {
    * - **Omitted / `false`**: all non-allowed tools require approval (default behavior).
    * - **`true`**: uses the built-in LLM risk classifier with defaults.
    * - **Config object** (`{ systemPrompt?, model? }`): built-in LLM classifier with custom settings.
-   *   Kept for backwards compatibility; prefer the decision model config for new code.
-   * - **Decision model config** (`{ decisionModel, question? }`): asks any `DecisionModel` (e.g.
-   *   `LLMDecisionModel`) whether the call requires approval. An `Uncertain` answer requires approval
-   *   and carries its reason into the approval prompt; a definite answer carries no reason.
+   *   Kept for backwards compatibility; prefer a `DecisionModel` for new code.
+   * - **`DecisionModel`** (e.g. `LLMDecisionModel`): asked whether the call requires approval, against
+   *   the same risk criteria as the LLM classifier. The decision model brings its own model and does not
+   *   resolve through `agent.auxModel`. An `Uncertain` answer requires approval and carries its reason
+   *   into the approval prompt; a definite answer carries no reason.
    * - **Custom function**: your own sync or async classification logic.
    */
-  classifier?: boolean | LlmClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier
+  classifier?: boolean | LlmClassifierConfig | DecisionModel | HumanInTheLoopClassifier
 
   /**
    * When true, trust responses approve the tool AND remember it
@@ -148,11 +145,10 @@ export interface HumanInTheLoopConfig {
  *   })],
  * })
  *
- * // Risk classification via a DecisionModel
+ * // Risk classification via a DecisionModel, on the model you pass it
  * const agent = new Agent({
- *   interventions: [new HumanInTheLoop({
- *     classifier: { decisionModel: new LLMDecisionModel() },
- *   })],
+ *   model,
+ *   interventions: [new HumanInTheLoop({ classifier: new LLMDecisionModel({ model }) })],
  * })
  *
  * // CLI mode — prompts in terminal inline
@@ -286,12 +282,12 @@ export class HumanInTheLoop extends InterventionHandler {
   }
 
   private _resolveClassifier(
-    classifier: boolean | LlmClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier | undefined
+    classifier: boolean | LlmClassifierConfig | DecisionModel | HumanInTheLoopClassifier | undefined
   ): HumanInTheLoopClassifier | undefined {
     if (!classifier) return undefined
     if (classifier === true) return createLlmRiskClassifier()
     if (typeof classifier === 'function') return classifier
-    if ('decisionModel' in classifier) return createDecisionModelRiskClassifier(classifier)
+    if (classifier instanceof DecisionModel) return createDecisionModelRiskClassifier(classifier)
     return createLlmRiskClassifier(classifier)
   }
 
