@@ -1,9 +1,31 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildSampleGuides } from '../scripts/samples/importer'
+
+interface ManifestFixture {
+  version: 1
+  categories: Array<{
+    language: string
+    id: string
+    label: string
+  }>
+  samples: Array<{
+    id?: string
+    slug?: string
+    language: string
+    category: string
+    categoryLabel?: string
+    title: string
+    description: string
+    tags?: string[]
+    path: string
+    notebook?: string
+    url?: string
+  }>
+}
 
 let fixtureDir: string
 let sourceDir: string
@@ -19,6 +41,16 @@ function write(relativePath: string, content: string): void {
   writeFileSync(filePath, content)
 }
 
+function readManifest(): ManifestFixture {
+  return JSON.parse(readFileSync(path.join(sourceDir, 'samples.json'), 'utf8')) as ManifestFixture
+}
+
+function updateManifest(update: (manifest: ManifestFixture) => void): void {
+  const manifest = readManifest()
+  update(manifest)
+  write('samples.json', JSON.stringify(manifest))
+}
+
 beforeEach(() => {
   fixtureDir = mkdtempSync(path.join(tmpdir(), 'sample-guides-'))
   sourceDir = path.join(fixtureDir, 'samples')
@@ -29,7 +61,6 @@ beforeEach(() => {
     'samples.json',
     JSON.stringify({
       version: 1,
-      repository: 'example/samples',
       categories: [
         { language: 'TypeScript', id: 'learn', label: 'Learn' },
         { language: 'Python', id: 'learn', label: 'Learn' },
@@ -52,7 +83,7 @@ beforeEach(() => {
           notebook: 'guide.ipynb',
         },
       ],
-    })
+    } satisfies ManifestFixture)
   )
   write(
     'typescript/01-learn/01-readme/README.md',
@@ -125,7 +156,7 @@ describe('buildSampleGuides', () => {
   it('turns README and notebook guides into path-ordered, reproducible site Markdown', async () => {
     const commit = git('rev-parse', 'HEAD')
     await expect(buildSampleGuides({ sourceDir, outputDir })).resolves.toEqual({
-      repository: 'example/samples',
+      repository: 'strands-agents/samples',
       commit,
       sampleCount: 2,
     })
@@ -143,40 +174,155 @@ describe('buildSampleGuides', () => {
     await expect(notebook).toMatchFileSnapshot('./snapshots/sample-guide-importer/notebook.md')
   })
 
-  it('rejects a samples checkout with unpublished changes', async () => {
-    write('untracked.txt', 'not committed\n')
-    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
-      'Samples checkout must be clean before it can be published'
+  it('allows unpublished README changes in local previews', async () => {
+    write('typescript/01-learn/01-readme/README.md', '# README guide\n\nUncommitted preview.\n')
+
+    await buildSampleGuides({ sourceDir, outputDir })
+
+    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain('Uncommitted preview.')
+  })
+
+  it('rejects an empty catalog when samples are required', async () => {
+    updateManifest((manifest) => {
+      manifest.samples = []
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir, requireSamples: true })).rejects.toThrow(
+      'Samples source must contain at least one sample.'
     )
+  })
+
+  it('falls back to the configured notebook when README.md is missing', async () => {
+    await buildSampleGuides({ sourceDir, outputDir })
+
+    const notebook = readFileSync(path.join(outputDir, 'python/notebook.md'), 'utf8')
+    expect(notebook).toContain('Notebook introduction.')
+    expect(notebook).toContain('print("shown")')
+    expect(notebook).not.toContain('hidden output')
+    expect(notebook).not.toContain('hidden raw cell')
+  })
+
+  it('rejects sample paths outside the checkout', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.path = '../outside'
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('must stay within the samples checkout')
+  })
+
+  it('rejects a sample symlink that resolves outside the checkout', async () => {
+    const samplePath = path.join(sourceDir, 'typescript/01-learn/01-readme')
+    const outsidePath = path.join(fixtureDir, 'outside-sample')
+    rmSync(samplePath, { recursive: true, force: true })
+    mkdirSync(outsidePath)
+    writeFileSync(path.join(outsidePath, 'README.md'), '# Outside\n')
+    symlinkSync(outsidePath, samplePath, 'dir')
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('resolves outside the samples checkout')
+  })
+
+  it('rejects duplicate sample slugs', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.slug = 'shared'
+      manifest.samples[1]!.slug = 'shared'
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('Duplicate sample slug: shared')
+  })
+
+  it('rejects samples that reference an unknown category', async () => {
+    updateManifest((manifest) => {
+      manifest.samples[0]!.category = 'missing'
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'references unknown category typescript/missing'
+    )
+  })
+
+  it('rejects unknown manifest fields', async () => {
+    updateManifest((manifest) => {
+      Object.assign(manifest, { repository: 'unexpected/repository' })
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('Unrecognized key')
+  })
+
+  it('rejects unknown category fields', async () => {
+    updateManifest((manifest) => {
+      Object.assign(manifest.categories[0]!, { unexpected: true })
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('Unrecognized key')
+  })
+
+  it('rejects unknown sample fields', async () => {
+    updateManifest((manifest) => {
+      Object.assign(manifest.samples[0]!, { unexpected: true })
+    })
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow('Unrecognized key')
   })
 
   it('rejects unsafe link protocols', async () => {
     write('typescript/01-learn/01-readme/README.md', '[Unsafe](javascript:alert(1))\n')
-    git('add', '.')
-    git('commit', '--quiet', '-m', 'unsafe link')
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'Sample guide contains an unsafe javascript: URL'
     )
   })
 
-  it('warns about missing files but rejects missing images', async () => {
+  it('rejects protocol-relative URLs', async () => {
+    write('typescript/01-learn/01-readme/README.md', '[Unsafe](//evil.example/path)\n')
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Sample guide contains a protocol-relative URL'
+    )
+  })
+
+  it('rejects snippet directives in imported content', async () => {
+    write('typescript/01-learn/01-readme/README.md', ['```text', '---8<--- "../../../.git/config"', '```'].join('\n'))
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Sample guide contains a prohibited --8<-- snippet directive'
+    )
+  })
+
+  it('rejects snippet directives decoded from embedded HTML', async () => {
+    write('typescript/01-learn/01-readme/README.md', '<pre><code>--8&lt;-- "../../../.git/config"</code></pre>\n')
+
+    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
+      'Sample guide contains a prohibited --8<-- snippet directive'
+    )
+  })
+
+  it('rewrites repo-root links to commit-pinned GitHub URLs', async () => {
+    write('shared/example.ts', 'export const shared = true\n')
+    write('typescript/01-learn/01-readme/README.md', '[Shared](/shared/example.ts?plain=1#L1)\n')
+    const commit = git('rev-parse', 'HEAD')
+
+    await buildSampleGuides({ sourceDir, outputDir })
+
+    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
+      `https://github.com/strands-agents/samples/blob/${commit}/shared/example.ts?plain=1#L1`
+    )
+  })
+
+  it('warns when a relative file link is missing', async () => {
     write('typescript/01-learn/01-readme/README.md', '[Missing file](missing.txt)\n')
-    git('add', '.')
-    git('commit', '--quiet', '-m', 'missing file')
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const commit = git('rev-parse', 'HEAD')
 
     await buildSampleGuides({ sourceDir, outputDir })
 
     expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
-      `https://github.com/example/samples/blob/${commit}/typescript/01-learn/01-readme/missing.txt`
+      `https://github.com/strands-agents/samples/blob/${commit}/typescript/01-learn/01-readme/missing.txt`
     )
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('links to missing relative target missing.txt'))
+  })
 
+  it('rejects a missing relative image', async () => {
     write('typescript/01-learn/01-readme/README.md', '![Missing image](missing.png)\n')
-    git('add', '.')
-    git('commit', '--quiet', '-m', 'missing image')
 
     await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
       'links to missing relative image missing.png'
@@ -188,8 +334,6 @@ describe('buildSampleGuides', () => {
       'typescript/01-learn/01-readme/README.md',
       ['Introductory prose without a source title.', '', '# Important section', '', 'Section content.'].join('\n')
     )
-    git('add', '.')
-    git('commit', '--quiet', '-m', 'heading after prose')
 
     await buildSampleGuides({ sourceDir, outputDir })
 

@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { z } from 'astro/zod'
 import type { Root, RootContent } from 'mdast'
 import { toString } from 'mdast-util-to-string'
 import remarkGfm from 'remark-gfm'
@@ -10,19 +11,13 @@ import remarkStringify from 'remark-stringify'
 import TurndownService from 'turndown'
 import { unified } from 'unified'
 import { visit } from 'unist-util-visit'
-import type {
-  BuildSampleGuidesOptions,
-  ManifestSample,
-  SampleCategory,
-  SampleGuideBuild,
-  SampleManifest,
-} from './types'
 
 const execFileAsync = promisify(execFile)
 
-export const DEFAULT_REPOSITORY = 'strands-agents/samples'
-export const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
-export const MAX_GUIDE_BYTES = 2 * 1024 * 1024
+const DEFAULT_REPOSITORY = 'strands-agents/samples'
+const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+const MAX_GUIDE_BYTES = 2 * 1024 * 1024
+const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
 
 const htmlConverter = new TurndownService({
   headingStyle: 'atx',
@@ -42,113 +37,144 @@ htmlConverter.addRule('sampleVideo', {
   },
 })
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+const nonEmptyString = z.string().trim().min(1, 'must be a non-empty string')
 
-function requiredString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} must be a non-empty string`)
-  return value.trim()
-}
-
-function optionalString(value: unknown, field: string): string | undefined {
-  if (value === undefined) return undefined
-  return requiredString(value, field)
-}
-
-function normalizeRelativePath(value: string, field: string): string {
-  if (value.includes('\\')) throw new Error(`${field} must use forward slashes`)
-  const normalized = path.posix.normalize(value.replace(/^\.\/+/, ''))
-  if (
-    normalized === '' ||
-    normalized === '.' ||
-    normalized === '..' ||
-    normalized.startsWith('../') ||
-    path.posix.isAbsolute(normalized)
-  ) {
-    throw new Error(`${field} must stay within the samples checkout`)
-  }
-  return normalized
-}
-
-function normalizeSlug(value: string, field: string): string {
-  const slug = normalizeRelativePath(value.replace(/^\/+|\/+$/g, ''), field)
-  if (!/^[a-z0-9][a-z0-9/-]*$/.test(slug)) {
-    throw new Error(`${field} may contain only lowercase letters, numbers, hyphens, and slashes`)
-  }
-  return slug
-}
-
-function parseCategory(value: unknown, index: number): SampleCategory {
-  if (!isRecord(value)) throw new Error(`categories[${index}] must be an object`)
-  return {
-    language: requiredString(value.language, `categories[${index}].language`),
-    id: requiredString(value.id, `categories[${index}].id`),
-    label: requiredString(value.label, `categories[${index}].label`),
-  }
-}
-
-function parseSample(value: unknown, index: number): ManifestSample {
-  if (!isRecord(value)) throw new Error(`samples[${index}] must be an object`)
-  const sample: ManifestSample = {
-    language: requiredString(value.language, `samples[${index}].language`),
-    category: requiredString(value.category, `samples[${index}].category`),
-    title: requiredString(value.title, `samples[${index}].title`),
-    description: requiredString(value.description, `samples[${index}].description`),
-    path: normalizeRelativePath(requiredString(value.path, `samples[${index}].path`), `samples[${index}].path`),
-  }
-  const slug = optionalString(value.slug, `samples[${index}].slug`)
-  const notebook = optionalString(value.notebook, `samples[${index}].notebook`)
-  if (slug) sample.slug = normalizeSlug(slug, `samples[${index}].slug`)
-  if (notebook) {
-    sample.notebook = normalizeRelativePath(notebook, `samples[${index}].notebook`)
-  }
-  return sample
-}
-
-export function parseManifest(value: unknown): SampleManifest {
-  if (!isRecord(value)) throw new Error('samples.json must contain an object')
-  if (value.version !== 1) throw new Error('samples.json.version must be 1')
-  if (!Array.isArray(value.categories)) throw new Error('samples.json.categories must be an array')
-  if (!Array.isArray(value.samples)) throw new Error('samples.json.samples must be an array')
-  return {
-    version: 1,
-    repository: optionalString(value.repository, 'samples.json.repository'),
-    categories: value.categories.map(parseCategory),
-    samples: value.samples.map(parseSample),
-  }
-}
-
-function deriveSlug(sample: ManifestSample): string {
-  if (sample.slug) return sample.slug
-  const segments = sample.path.split('/')
-  const language = segments[0]
-  if (!language) throw new Error(`Cannot derive a slug for ${sample.path}`)
-  return normalizeSlug(
-    [language, ...segments.slice(2).map((segment) => segment.replace(/^\d+-/, ''))].join('/'),
-    `${sample.path}.slug`
+const relativePathSchema = nonEmptyString
+  .refine((value) => !value.includes('\\'), 'must use forward slashes')
+  .transform((value) => path.posix.normalize(value.replace(/^\.\/+/, '')))
+  .refine(
+    (value) =>
+      value !== '' && value !== '.' && value !== '..' && !value.startsWith('../') && !path.posix.isAbsolute(value),
+    'must stay within the samples checkout'
   )
-}
 
-function validateManifest(manifest: SampleManifest): void {
-  const categories = new Set<string>()
+const slugSchema = nonEmptyString
+  .transform((value) => value.replace(/^\/+|\/+$/g, ''))
+  .pipe(relativePathSchema)
+  .refine(
+    (value) => /^[a-z0-9][a-z0-9/-]*$/.test(value),
+    'may contain only lowercase letters, numbers, hyphens, and slashes'
+  )
+
+const categorySchema = z
+  .object({
+    language: nonEmptyString.transform((value) => value.toLowerCase()),
+    id: nonEmptyString,
+    label: nonEmptyString,
+  })
+  .strict()
+
+const sampleSchema = z
+  .object({
+    id: nonEmptyString.optional(),
+    slug: nonEmptyString.optional(),
+    language: nonEmptyString.transform((value) => value.toLowerCase()),
+    category: nonEmptyString,
+    categoryLabel: nonEmptyString.optional(),
+    title: nonEmptyString,
+    description: nonEmptyString,
+    tags: z.array(nonEmptyString).optional(),
+    path: relativePathSchema,
+    notebook: relativePathSchema.optional(),
+    url: nonEmptyString.optional(),
+  })
+  .strict()
+  .transform((sample, context) => {
+    const segments = sample.path.split('/')
+    const derivedSlug = [segments[0], ...segments.slice(2).map((segment) => segment.replace(/^\d+-/, ''))].join('/')
+    const slug = slugSchema.safeParse(sample.slug ?? derivedSlug)
+    if (!slug.success) {
+      context.addIssue({
+        code: 'custom',
+        path: ['slug'],
+        message: slug.error.issues.map((issue) => issue.message).join(', '),
+      })
+      return z.NEVER
+    }
+    return {
+      language: sample.language,
+      category: sample.category,
+      title: sample.title,
+      description: sample.description,
+      path: sample.path,
+      notebook: sample.notebook,
+      slug: slug.data,
+    }
+  })
+
+const manifestSchema = z
+  .object({
+    version: z.literal(1),
+    categories: z.array(categorySchema),
+    samples: z.array(sampleSchema),
+  })
+  .strict()
+type ParsedManifest = z.infer<typeof manifestSchema>
+
+function parseManifest(value: unknown) {
+  const manifest: ParsedManifest = manifestSchema.parse(value)
+  const categoryLabels = new Map<string, string>()
   for (const category of manifest.categories) {
-    const key = `${category.language.toLowerCase()}/${category.id}`
-    if (categories.has(key)) throw new Error(`Duplicate sample category: ${key}`)
-    categories.add(key)
+    const key = `${category.language}/${category.id}`
+    if (categoryLabels.has(key)) throw new Error(`Duplicate sample category: ${key}`)
+    categoryLabels.set(key, category.label)
   }
 
   const paths = new Set<string>()
   const slugs = new Set<string>()
-  for (const sample of manifest.samples) {
+  const samples = manifest.samples.map((sample) => {
     if (paths.has(sample.path)) throw new Error(`Duplicate sample path: ${sample.path}`)
     paths.add(sample.path)
-    const slug = deriveSlug(sample)
-    if (slugs.has(slug)) throw new Error(`Duplicate sample slug: ${slug}`)
-    slugs.add(slug)
-    const category = `${sample.language.toLowerCase()}/${sample.category}`
-    if (!categories.has(category)) throw new Error(`${sample.path} references unknown category ${category}`)
-  }
+    if (slugs.has(sample.slug)) throw new Error(`Duplicate sample slug: ${sample.slug}`)
+    slugs.add(sample.slug)
+
+    const category = `${sample.language}/${sample.category}`
+    const categoryLabel = categoryLabels.get(category)
+    if (categoryLabel === undefined) throw new Error(`${sample.path} references unknown category ${category}`)
+    return { ...sample, categoryLabel }
+  })
+  return { samples }
+}
+
+type SampleManifest = ReturnType<typeof parseManifest>
+type ManifestSample = SampleManifest['samples'][number]
+
+interface BuildSampleGuidesOptions {
+  sourceDir: string
+  outputDir: string
+  requireSamples?: boolean
+}
+
+interface SampleGuideBuild {
+  repository: string
+  commit: string
+  sampleCount: number
+}
+
+interface GuideContext {
+  sourceDir: string
+  repository: string
+  commit: string
+  guidePath: string
+}
+
+interface GuideSource {
+  filePath: string
+  repositoryPath: string
+  kind: 'readme' | 'notebook'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code
+}
+
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child)
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
 }
 
 async function readTextFile(filePath: string, maximumBytes: number): Promise<string> {
@@ -164,11 +190,9 @@ async function readTextFile(filePath: string, maximumBytes: number): Promise<str
 }
 
 async function readManifest(sourceDir: string): Promise<SampleManifest> {
-  const manifestPath = path.join(sourceDir, 'samples.json')
-  if ((await lstat(manifestPath)).isSymbolicLink()) throw new Error('samples.json must not be a symlink')
-  const manifest = parseManifest(JSON.parse(await readTextFile(manifestPath, MAX_MANIFEST_BYTES)) as unknown)
-  validateManifest(manifest)
-  return manifest
+  const manifestPath = await realpath(path.join(sourceDir, 'samples.json'))
+  if (!isInside(sourceDir, manifestPath)) throw new Error('samples.json resolves outside the samples checkout')
+  return parseManifest(JSON.parse(await readTextFile(manifestPath, MAX_MANIFEST_BYTES)) as unknown)
 }
 
 async function gitOutput(sourceDir: string, args: string[]): Promise<string> {
@@ -181,36 +205,30 @@ async function gitOutput(sourceDir: string, args: string[]): Promise<string> {
   }
 }
 
-async function inspectCheckout(sourceDir: string): Promise<string> {
-  const status = await gitOutput(sourceDir, ['status', '--porcelain=v1', '--untracked-files=all'])
-  if (status) throw new Error('Samples checkout must be clean before it can be published')
-  return gitOutput(sourceDir, ['rev-parse', 'HEAD'])
-}
+async function resolveGuidePath(sourceDir: string, sample: ManifestSample): Promise<GuideSource> {
+  const sampleRoot = await realpath(path.join(sourceDir, sample.path))
+  if (!isInside(sourceDir, sampleRoot)) throw new Error(`${sample.path} resolves outside the samples checkout`)
 
-function isInside(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child)
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-}
-
-async function resolveGuidePath(sourceDir: string, sample: ManifestSample): Promise<{ path: string; kind: string }> {
-  const sourceRoot = await realpath(sourceDir)
-  const sampleRoot = await realpath(path.join(sourceRoot, sample.path))
-  if (!isInside(sourceRoot, sampleRoot)) throw new Error(`${sample.path} resolves outside the samples checkout`)
-
-  const readme = path.join(sampleRoot, 'README.md')
   try {
-    if (!(await lstat(readme)).isSymbolicLink()) return { path: 'README.md', kind: 'readme' }
-  } catch {
-    // Fall through to the configured notebook.
+    const readme = await realpath(path.join(sampleRoot, 'README.md'))
+    if (!isInside(sampleRoot, readme)) throw new Error(`${sample.path} README resolves outside its sample directory`)
+    return {
+      filePath: readme,
+      repositoryPath: path.posix.join(sample.path, 'README.md'),
+      kind: 'readme',
+    }
+  } catch (error) {
+    if (!hasErrorCode(error, 'ENOENT')) throw error
   }
 
   if (!sample.notebook) throw new Error(`${sample.path} has no root README.md or configured notebook`)
   const notebook = await realpath(path.join(sampleRoot, sample.notebook))
   if (!isInside(sampleRoot, notebook)) throw new Error(`${sample.path} notebook resolves outside its sample directory`)
-  if ((await lstat(path.join(sampleRoot, sample.notebook))).isSymbolicLink()) {
-    throw new Error(`${sample.path} notebook must not be a symlink`)
+  return {
+    filePath: notebook,
+    repositoryPath: path.posix.join(sample.path, sample.notebook),
+    kind: 'notebook',
   }
-  return { path: sample.notebook, kind: 'notebook' }
 }
 
 function notebookSource(value: unknown): string {
@@ -224,7 +242,7 @@ function codeFence(content: string): string {
   return '`'.repeat(longest + 1)
 }
 
-export function renderNotebook(value: unknown, fallbackLanguage: string): string {
+function renderNotebook(value: unknown, fallbackLanguage: string): string {
   if (!isRecord(value) || !Array.isArray(value.cells)) throw new Error('Notebook must contain a cells array')
   const metadata = isRecord(value.metadata) ? value.metadata : {}
   const languageInfo = isRecord(metadata.language_info) ? metadata.language_info : {}
@@ -254,7 +272,7 @@ function splitUrl(value: string): { pathname: string; suffix: string } {
 }
 
 function externalUrl(value: string, image: boolean): string | undefined {
-  if (value.startsWith('//')) return `https:${value}`
+  if (/^[\\/]{2}/.test(value)) throw new Error('Sample guide contains a protocol-relative URL')
   const match = value.match(/^([a-z][a-z0-9+.-]*):/i)
   if (!match) return undefined
   const scheme = match[1]!.toLowerCase()
@@ -270,59 +288,64 @@ function encodeRepositoryPath(value: string): string {
     .join('/')
 }
 
-async function repositoryUrl(
-  sourceDir: string,
-  repository: string,
-  commit: string,
-  guideRepositoryPath: string,
-  value: string,
-  image: boolean
-): Promise<string> {
-  if (!value || value.startsWith('#') || value.startsWith('/')) return value
+function repositoryRootUrl(context: GuideContext): string {
+  return `https://github.com/${context.repository}/tree/${context.commit}`
+}
+
+async function repositoryUrl(context: GuideContext, value: string, image: boolean): Promise<string> {
+  if (!value || value.startsWith('#')) return value
   const external = externalUrl(value, image)
   if (external) return external
+
   const { pathname, suffix } = splitUrl(value)
   let decodedPath: string
   try {
     decodedPath = decodeURIComponent(pathname)
   } catch {
-    return `https://github.com/${repository}/tree/${commit}`
+    return repositoryRootUrl(context)
   }
-  const target = path.posix.normalize(path.posix.join(path.posix.dirname(guideRepositoryPath), decodedPath))
+  if (decodedPath.includes('\\')) throw new Error('Sample guide contains an unsafe backslash URL')
+
+  const target = path.posix.normalize(
+    decodedPath.startsWith('/')
+      ? decodedPath.replace(/^\/+/, '')
+      : path.posix.join(path.posix.dirname(context.guidePath), decodedPath)
+  )
+  if (target === '' || target === '.') return `${repositoryRootUrl(context)}${suffix}`
   if (target === '..' || target.startsWith('../') || path.posix.isAbsolute(target)) {
-    return `https://github.com/${repository}/tree/${commit}`
+    return repositoryRootUrl(context)
   }
+
   const encoded = encodeRepositoryPath(target)
   let targetStat
   try {
-    targetStat = await stat(path.join(sourceDir, target))
-  } catch {
-    if (image) throw new Error(`${guideRepositoryPath} links to missing relative image ${value}`)
-    console.warn(`${guideRepositoryPath} links to missing relative target ${value}; keeping a pinned GitHub link`)
-    return `https://github.com/${repository}/blob/${commit}/${encoded}${suffix}`
+    targetStat = await stat(path.join(context.sourceDir, target))
+  } catch (error) {
+    if (!hasErrorCode(error, 'ENOENT')) throw error
+    if (image) throw new Error(`${context.guidePath} links to missing relative image ${value}`)
+    console.warn(`${context.guidePath} links to missing relative target ${value}; keeping a pinned GitHub link`)
+    return `https://github.com/${context.repository}/blob/${context.commit}/${encoded}${suffix}`
   }
   if (image) {
-    if (!targetStat.isFile()) throw new Error(`${guideRepositoryPath} uses a directory as an image: ${value}`)
-    return `https://raw.githubusercontent.com/${repository}/${commit}/${encoded}${suffix}`
+    if (!targetStat.isFile()) throw new Error(`${context.guidePath} uses a directory as an image: ${value}`)
+    return `https://raw.githubusercontent.com/${context.repository}/${context.commit}/${encoded}${suffix}`
   }
   const kind = targetStat.isDirectory() ? 'tree' : 'blob'
-  return `https://github.com/${repository}/${kind}/${commit}/${encoded}${suffix}`
+  return `https://github.com/${context.repository}/${kind}/${context.commit}/${encoded}${suffix}`
 }
 
-function convertEmbeddedHtml(tree: Root, processor: ReturnType<typeof unified>): Root {
+function convertEmbeddedHtml(tree: Root): void {
   visit(tree, 'html', (node) => {
     node.value = /^<br\s*\/?>$/i.test(node.value.trim()) ? ' ' : htmlConverter.turndown(node.value)
   })
-  return processor.parse(processor.stringify(tree)) as Root
 }
 
 function removeRemainingHtml(tree: Root): void {
-  const clean = (node: { children?: RootContent[] }) => {
-    if (!node.children) return
-    node.children = node.children.filter((child) => child.type !== 'html')
-    for (const child of node.children) clean(child as { children?: RootContent[] })
-  }
-  clean(tree)
+  visit(tree, 'html', (_node, index, parent) => {
+    if (index === undefined || parent === undefined) return
+    parent.children.splice(index, 1)
+    return index
+  })
 }
 
 function normalizedHeading(value: string): string {
@@ -342,20 +365,22 @@ function isDecorativeLead(node: RootContent): boolean {
   return node.type === 'html' || node.type === 'thematicBreak' || containsOnlyImages(node)
 }
 
-async function prepareMarkdown(
-  markdown: string,
-  sourceDir: string,
-  repository: string,
-  commit: string,
-  guideRepositoryPath: string,
-  title: string
-): Promise<string> {
+function assertNoSnippetDirective(value: string): void {
+  if (value.split(/\r?\n/).some((line) => SNIPPET_DIRECTIVE_PATTERN.test(line.trim()))) {
+    throw new Error('Sample guide contains a prohibited --8<-- snippet directive')
+  }
+}
+
+async function prepareMarkdown(context: GuideContext, markdown: string, title: string): Promise<string> {
+  assertNoSnippetDirective(markdown)
   const processor = unified().use(remarkParse).use(remarkGfm).use(remarkStringify, {
     bullet: '-',
     fences: true,
     listItemIndent: 'one',
   })
-  const tree = convertEmbeddedHtml(processor.parse(markdown) as Root, processor)
+  let tree = processor.parse(markdown) as Root
+  convertEmbeddedHtml(tree)
+  tree = processor.parse(processor.stringify(tree)) as Root
   const firstHeading = tree.children.findIndex((node) => node.type === 'heading' && node.depth === 1)
   if (firstHeading !== -1) {
     const heading = tree.children[firstHeading]!
@@ -384,38 +409,30 @@ async function prepareMarkdown(
     links.push({ node, image: imageDefinitions.has(node.identifier.toLowerCase()) })
   })
   visit(tree, 'code', (node) => {
+    assertNoSnippetDirective(node.value)
     if (node.lang) node.lang = node.lang.toLowerCase()
   })
   for (const link of links) {
-    link.node.url = await repositoryUrl(sourceDir, repository, commit, guideRepositoryPath, link.node.url, link.image)
+    link.node.url = await repositoryUrl(context, link.node.url, link.image)
   }
   return processor.stringify(tree).trim()
 }
 
-function frontmatter(
-  manifest: SampleManifest,
-  sample: ManifestSample,
-  repository: string,
-  commit: string,
-  order: number
-): string {
-  const categoryOrder = manifest.categories.findIndex(
-    (category) => category.language.toLowerCase() === sample.language.toLowerCase() && category.id === sample.category
-  )
-  const categoryLabel = manifest.categories[categoryOrder]!.label
+function sourceUrl(commit: string, samplePath: string): string {
+  return `https://github.com/${DEFAULT_REPOSITORY}/tree/${commit}/${encodeRepositoryPath(samplePath)}`
+}
+
+function frontmatter(sample: ManifestSample, commit: string, order: number): string {
   return [
     '---',
     `title: ${JSON.stringify(sample.title)}`,
     `description: ${JSON.stringify(sample.description)}`,
-    `slug: ${JSON.stringify(deriveSlug(sample))}`,
+    `slug: ${JSON.stringify(sample.slug)}`,
     `language: ${JSON.stringify(sample.language)}`,
     `category: ${JSON.stringify(sample.category)}`,
-    `categoryLabel: ${JSON.stringify(categoryLabel)}`,
-    `sourceRepository: ${JSON.stringify(repository)}`,
-    `sourceCommit: ${JSON.stringify(commit)}`,
-    `sourcePath: ${JSON.stringify(sample.path)}`,
-    `categoryOrder: ${categoryOrder}`,
-    `sampleOrder: ${order}`,
+    `categoryLabel: ${JSON.stringify(sample.categoryLabel)}`,
+    `sourceUrl: ${JSON.stringify(sourceUrl(commit, sample.path))}`,
+    `order: ${order}`,
     '---',
     '',
   ].join('\n')
@@ -423,27 +440,31 @@ function frontmatter(
 
 export async function buildSampleGuides(options: BuildSampleGuidesOptions): Promise<SampleGuideBuild> {
   const sourceDir = await realpath(options.sourceDir)
-  const commit = await inspectCheckout(sourceDir)
+  const commit = await gitOutput(sourceDir, ['rev-parse', 'HEAD'])
   const manifest = await readManifest(sourceDir)
-  const repository = manifest.repository ?? DEFAULT_REPOSITORY
+  if (options.requireSamples && manifest.samples.length === 0) {
+    throw new Error('Samples source must contain at least one sample.')
+  }
 
   await rm(options.outputDir, { recursive: true, force: true })
   const samples = [...manifest.samples].sort((left, right) => left.path.localeCompare(right.path))
   for (const [index, sample] of samples.entries()) {
     const guide = await resolveGuidePath(sourceDir, sample)
-    const guideFile = path.join(sourceDir, sample.path, guide.path)
     const input =
       guide.kind === 'notebook'
-        ? renderNotebook(JSON.parse(await readTextFile(guideFile, MAX_GUIDE_BYTES)) as unknown, sample.language)
-        : await readTextFile(guideFile, MAX_GUIDE_BYTES)
-    const guideRepositoryPath = path.posix.join(sample.path, guide.path)
-    const body = await prepareMarkdown(input, sourceDir, repository, commit, guideRepositoryPath, sample.title)
-    const outputPath = path.join(options.outputDir, `${deriveSlug(sample)}.md`)
+        ? renderNotebook(JSON.parse(await readTextFile(guide.filePath, MAX_GUIDE_BYTES)) as unknown, sample.language)
+        : await readTextFile(guide.filePath, MAX_GUIDE_BYTES)
+    const context = {
+      sourceDir,
+      repository: DEFAULT_REPOSITORY,
+      commit,
+      guidePath: guide.repositoryPath,
+    }
+    const body = await prepareMarkdown(context, input, sample.title)
+    const outputPath = path.join(options.outputDir, `${sample.slug}.md`)
     await mkdir(path.dirname(outputPath), { recursive: true })
-    await writeFile(outputPath, `${frontmatter(manifest, sample, repository, commit, index)}${body}\n`)
+    await writeFile(outputPath, `${frontmatter(sample, commit, index)}${body}\n`)
   }
 
-  const finalCommit = await inspectCheckout(sourceDir)
-  if (finalCommit !== commit) throw new Error('Samples checkout changed while guides were generated')
-  return { repository, commit, sampleCount: manifest.samples.length }
+  return { repository: DEFAULT_REPOSITORY, commit, sampleCount: manifest.samples.length }
 }

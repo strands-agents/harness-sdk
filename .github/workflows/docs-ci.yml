@@ -22,8 +22,8 @@ jobs:
       - name: Checkout samples
         uses: actions/checkout@v7
         with:
-          # Intentionally unpinned: each site build imports the latest samples default branch.
           repository: strands-agents/samples
+          ref: 6226307ed8f6de1face333d3daec638593aeedf3
           path: samples-source
           persist-credentials: false
 

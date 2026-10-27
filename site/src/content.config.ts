@@ -269,11 +269,8 @@ const sampleGuideSchema = z
     language: z.string(),
     category: z.string(),
     categoryLabel: z.string(),
-    sourceRepository: z.string(),
-    sourceCommit: z.string(),
-    sourcePath: z.string(),
-    categoryOrder: z.number().int().nonnegative(),
-    sampleOrder: z.number().int().nonnegative(),
+    sourceUrl: z.string().url(),
+    order: z.number().int().nonnegative(),
   })
   .strict()
 

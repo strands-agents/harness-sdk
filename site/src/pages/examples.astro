@@ -1,30 +1,69 @@
 ---
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { getCollection } from 'astro:content'
-import SampleGuidePage from '../components/samples/SampleGuidePage.astro'
-import { sortSampleGuides } from '../util/sample-guides'
+import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+import { pathWithBase } from '../util/links'
+import { sampleGuidePath, sortSampleGuides } from '../util/sample-guides'
 
 const guides = sortSampleGuides(await getCollection('sampleGuides'))
-const guide = guides[0]
+const defaultGuide =
+  guides.find((entry) => entry.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0]
+const pythonGuide = guides.find((entry) => entry.data.language === 'python')
+const defaultTarget = defaultGuide ? pathWithBase(sampleGuidePath(defaultGuide)) : undefined
+const pythonTarget = pythonGuide ? pathWithBase(sampleGuidePath(pythonGuide)) : defaultTarget
 ---
 
-{
-  guide ? (
-    <SampleGuidePage {guide} {guides} />
-  ) : (
-    <StarlightPage
-      frontmatter={{
-        title: 'Examples',
-        description: 'Runnable Strands agent samples.',
-        editUrl: false,
-      }}
-      hasSidebar={false}
-      sidebar={[]}
-    >
-      <p>Sample guides are not available in this local build.</p>
-      <p>
-        Set <code>SAMPLES_SOURCE_DIR</code> to a clean checkout of the samples repository, then restart the site.
-      </p>
-    </StarlightPage>
-  )
-}
+<StarlightPage
+  frontmatter={{
+    title: 'Examples',
+    description: 'Runnable Strands agent samples.',
+    editUrl: false,
+    pagefind: false,
+  }}
+  hasSidebar={false}
+  sidebar={[]}
+>
+  {
+    defaultTarget ? (
+      <>
+        <div
+          data-sample-guide-redirect
+          data-storage-key={LANGUAGE_STORAGE_KEY}
+          data-default-language={DEFAULT_LANGUAGE_LABEL}
+          data-default-target={defaultTarget}
+          data-python-target={pythonTarget}
+        >
+          <p>Opening examples for your preferred language.</p>
+          <p>
+            <a href={defaultTarget}>Continue to examples</a>
+          </p>
+        </div>
+        <script is:inline>
+          ;(function () {
+            var redirect = document.querySelector('[data-sample-guide-redirect]')
+            if (!redirect) return
+
+            var language = redirect.getAttribute('data-default-language')
+            var storageKey = redirect.getAttribute('data-storage-key')
+            try {
+              if (storageKey) language = localStorage.getItem(storageKey) || language
+            } catch {}
+
+            var target =
+              language === 'Python'
+                ? redirect.getAttribute('data-python-target')
+                : redirect.getAttribute('data-default-target')
+            if (target) window.location.replace(target)
+          })()
+        </script>
+      </>
+    ) : (
+      <>
+        <p>Sample guides are not available in this local build.</p>
+        <p>
+          Set <code>SAMPLES_SOURCE_DIR</code> to a checkout of the samples repository, then restart the site.
+        </p>
+      </>
+    )
+  }
+</StarlightPage>

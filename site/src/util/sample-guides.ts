@@ -4,66 +4,46 @@ import { languageLabel } from './source-links'
 
 export type SampleGuideEntry = CollectionEntry<'sampleGuides'>
 
-const preferredLanguages = ['typescript', 'python']
-
-function languageOrder(language: string): number {
-  const index = preferredLanguages.indexOf(language.toLowerCase())
-  return index === -1 ? preferredLanguages.length : index
-}
-
 export function sortSampleGuides(guides: SampleGuideEntry[]): SampleGuideEntry[] {
-  return [...guides].sort(
-    (left, right) =>
-      languageOrder(left.data.language) - languageOrder(right.data.language) ||
-      left.data.categoryOrder - right.data.categoryOrder ||
-      left.data.sampleOrder - right.data.sampleOrder
-  )
+  return [...guides].sort((left, right) => left.data.order - right.data.order)
 }
 
-export function findDefaultSampleGuide(guides: SampleGuideEntry[]): SampleGuideEntry {
-  const guide = sortSampleGuides(guides)[0]
-  if (!guide) throw new Error('The generated sample guide collection is empty')
-  return guide
+export function sampleGuidePath(guide: SampleGuideEntry): string {
+  return `/examples/${guide.data.slug}/`
 }
 
-export function sampleGuidePath(guide: SampleGuideEntry, defaultGuide: SampleGuideEntry): string {
-  return guide.id === defaultGuide.id ? '/examples/' : `/examples/${guide.data.slug}/`
-}
+export function buildSampleGuideSidebar(guides: SampleGuideEntry[]) {
+  const languages = new Map<string, Map<string, { label: string; guides: SampleGuideEntry[] }>>()
 
-export function sampleSourceUrl(guide: SampleGuideEntry): string {
-  const sourcePath = guide.data.sourcePath
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
-  return `https://github.com/${guide.data.sourceRepository}/tree/${guide.data.sourceCommit}/${sourcePath}`
-}
+  for (const guide of guides) {
+    let categories = languages.get(guide.data.language)
+    if (!categories) {
+      categories = new Map()
+      languages.set(guide.data.language, categories)
+    }
 
-export function buildSampleGuideSidebar(guides: SampleGuideEntry[], defaultGuide: SampleGuideEntry) {
-  const sorted = sortSampleGuides(guides)
-  const languages = [...new Set(sorted.map((guide) => guide.data.language))]
-  return languages.map((language) => {
-    const languageGuides = sorted.filter((guide) => guide.data.language === language)
-    const categories = [...new Set(languageGuides.map((guide) => guide.data.category))]
+    let category = categories.get(guide.data.category)
+    if (!category) {
+      category = { label: guide.data.categoryLabel, guides: [] }
+      categories.set(guide.data.category, category)
+    }
+    category.guides.push(guide)
+  }
+
+  return [...languages].map(([language, categories]) => {
     return {
       label: languageLabel(language),
       collapsed: false,
-      items: categories.map((category) => {
-        const categoryGuides = languageGuides.filter((guide) => guide.data.category === category)
-        return {
-          label: categoryGuides[0]?.data.categoryLabel ?? category,
-          collapsed: false,
-          items: categoryGuides.map((guide) => ({
-            label: guide.data.title,
-            link: sampleGuidePath(guide, defaultGuide),
-          })),
-        }
-      }),
+      items: [...categories.values()].map((category) => ({
+        label: category.label,
+        collapsed: false,
+        items: category.guides.map((guide) => ({
+          label: guide.data.title,
+          link: sampleGuidePath(guide),
+        })),
+      })),
     }
   })
-}
-
-export function sampleGuideHref(guide: SampleGuideEntry, defaultGuide: SampleGuideEntry): string {
-  return pathWithBase(sampleGuidePath(guide, defaultGuide))
 }
 
 export function isSampleGuidePath(pathname: string): boolean {

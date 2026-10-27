@@ -32,6 +32,7 @@ async function main(): Promise<void> {
   const result = await buildSampleGuides({
     sourceDir: path.resolve(source),
     outputDir,
+    requireSamples: process.env.SAMPLES_REQUIRE_SOURCE === '1',
   })
   console.log(`samples: wrote ${result.sampleCount} guides from ${result.repository}@${result.commit}`)
 }

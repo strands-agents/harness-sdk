@@ -40,15 +40,12 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 ### 3. Generated Sample Guides (`scripts/samples/`, `src/pages/examples/`)
 
-**What it does:** Imports the samples repository's `samples.json` catalog and each sample's root README or configured notebook into `.build/samples/pages`. A separate `sampleGuides` content collection renders the generated Markdown with Starlight's native page layout, heading links, and Expressive Code blocks.
+The build imports the samples repository's `samples.json` catalog and guide content into `.build/samples/pages`.
 
-**Build ownership:** The samples repository owns sample code, guide content, and catalog metadata. This site owns the importer, routes, navigation, and presentation. CI, preview, and production builds check out `strands-agents/samples` and set `SAMPLES_SOURCE_DIR`, so a later site build automatically includes merged sample changes. The samples repository is a build input only and does not run in production.
+- Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
+- Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
 
-**Reproducibility and safety:** The importer requires a clean Git checkout, records its exact commit in every generated page, rejects paths outside the checkout, ignores notebook outputs and raw cells, converts safe HTML content and media to Markdown, rejects unsafe URL schemes, and rewrites relative links and images to commit-pinned GitHub URLs. Missing file links emit a warning so a stale reference does not block publishing; missing images fail the build because they would visibly break the guide.
-
-**Local development:** Run `SAMPLES_SOURCE_DIR=/path/to/samples npm run dev` to develop with a local clean checkout, or use the same environment variable with `npm run build`. Without a source, the generated collection is cleared and `/examples/` explains how to configure it instead of showing stale content. Deployment workflows set `SAMPLES_REQUIRE_SOURCE=1`, so production fails when the checkout is missing.
-
-**Routes and navigation:** `/examples/` renders the first guide in manifest-derived order. Other entries use `/examples/{sample-slug}/`. Every page receives the same language and category sidebar, and the route middleware preserves that generated sidebar instead of applying the regular product filter.
+The importer warns when a guide links to a missing file and fails when a guide references a missing image.
 
 ### 4. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
 
