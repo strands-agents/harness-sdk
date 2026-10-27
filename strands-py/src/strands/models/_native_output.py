@@ -7,6 +7,7 @@ from the event loop (AnthropicModel) and from a worker thread (BedrockModel); co
 
 import logging
 import warnings
+import weakref
 from collections.abc import Set
 from typing import Any, Literal
 
@@ -21,8 +22,13 @@ STRUCTURED_OUTPUT_MECHANISMS: tuple[StructuredOutputMechanism, ...] = ("forced",
 # Mechanisms each model was learned to reject, keyed by (provider, model_id), so later requests skip them.
 _UNSUPPORTED_MECHANISMS: dict[tuple[str, str], set[StructuredOutputMechanism]] = {}
 
-# Output models whose schema a model's native output rejected, as (provider, model_id, output_model).
-_REJECTED_NATIVE_SCHEMAS: set[tuple[str, str, type[BaseModel]]] = set()
+# Output models whose schema a model's native output rejected, as output_model ->
+# {(provider, model_id)}. Weakly keyed so dynamically created models
+# (pydantic.create_model, distinct classes on every call) are released with their
+# last strong reference instead of accumulating for the life of the process.
+_REJECTED_NATIVE_SCHEMAS: "weakref.WeakKeyDictionary[type[BaseModel], set[tuple[str, str]]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 # String formats native structured output accepts; others are moved into the field description.
 _SUPPORTED_STRING_FORMATS = frozenset(
@@ -63,7 +69,7 @@ def unsupported_mechanisms(
 ) -> Set[StructuredOutputMechanism]:
     """The structured output mechanisms a model was learned to reject for an output model in this process."""
     unsupported = _UNSUPPORTED_MECHANISMS.get((provider, model_id), set())
-    if (provider, model_id, output_model) in _REJECTED_NATIVE_SCHEMAS:
+    if (provider, model_id) in _REJECTED_NATIVE_SCHEMAS.get(output_model, set()):
         return unsupported | {"native"}
     return unsupported
 
@@ -137,7 +143,7 @@ def handle_rejected_mechanism(
         should surface unchanged.
     """
     if mechanism == "native" and any(signal in message for signal in _NATIVE_OUTPUT_REJECTED_MESSAGES):
-        _REJECTED_NATIVE_SCHEMAS.add((provider, model_id, output_model))
+        _REJECTED_NATIVE_SCHEMAS.setdefault(output_model, set()).add((provider, model_id))
         warnings.warn(
             f"Native structured output rejected {output_model.__name__} ({message}); using auto tool choice instead",
             stacklevel=2,
