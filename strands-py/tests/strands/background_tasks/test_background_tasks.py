@@ -10,7 +10,7 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from strands import Agent, ToolContext, tool
-from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent
+from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeModelCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
 from strands.tools.tools import PythonAgentTool
@@ -536,6 +536,82 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
         assert "_background_execution" not in _schema_properties(tool_spec)
 
 
+# Regression: https://github.com/strands-agents/harness-sdk/issues/5210
+@pytest.mark.asyncio
+async def test_cancelled_execution_settles_default_invocation() -> None:
+    @tool(name="work")
+    async def work() -> str:
+        """Await a cancelled asynchronous operation."""
+        operation = asyncio.create_task(asyncio.sleep(60))
+        operation.cancel()
+        return await operation
+
+    agent = _background_agent(work, responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")])
+
+    result = await asyncio.wait_for(agent.invoke_async("Run work."), timeout=1)
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "end_turn"
+    assert tru_stop_reason == exp_stop_reason
+    tru_result = _delivered_result(agent)
+    exp_result = {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [
+            {
+                "json": {
+                    "task_id": ANY,
+                    "tool_use_id": "work-use",
+                    "tool_name": "work",
+                    "status": "cancelled",
+                    "created_at": ANY,
+                    "last_updated_at": ANY,
+                }
+            }
+        ],
+    }
+    assert tru_result == exp_result
+    assert _persisted_tasks(agent) is None
+
+
+def test_origin_loop_shutdown_settles_background_execution() -> None:
+    started = asyncio.Event()
+    cancelled = threading.Event()
+
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until the originating event loop shuts down."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+        finally:
+            cancelled.set()
+
+    agent = _background_agent(
+        work,
+        responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")],
+        wait_for_completion=False,
+    )
+
+    async def first_invocation() -> None:
+        await agent.invoke_async("Run work.")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+    asyncio.run(first_invocation())
+    assert cancelled.is_set()
+
+    async def next_invocation() -> None:
+        await asyncio.wait_for(_wait_for_task_status(agent, "cancelled"), timeout=1)
+        await agent.invoke_async("Continue.")
+
+    asyncio.run(next_invocation())
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+    assert _persisted_tasks(agent) is None
+
+
 @pytest.mark.asyncio
 async def test_delivers_work_that_finishes_between_invocations() -> None:
     released = asyncio.Event()
@@ -845,3 +921,87 @@ def test_direct_tool_calls_run_in_the_foreground() -> None:
     exp_result = {"toolUseId": ANY, "status": "success", "content": [{"text": "done"}]}
     assert tru_result == exp_result
     assert _persisted_tasks(agent) is None
+
+
+@pytest.mark.asyncio
+async def test_runs_queued_work_under_the_request_that_submitted_it_even_after_it_returned() -> None:
+    released = asyncio.Event()
+
+    @tool(name="blocker")
+    async def blocker() -> str:
+        """Hold the only execution slot."""
+        await released.wait()
+        return "unblocked"
+
+    probe_contexts: list[Any] = []
+
+    @tool(name="probe", context=True)
+    def probe(tool_context: ToolContext) -> str:
+        """Record the request it runs under."""
+        probe_contexts.append(tool_context.invocation_context)
+        return "probed"
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "blocker-use",
+                            "name": "blocker",
+                            "input": {"_background_execution": True},
+                        }
+                    },
+                    {"toolUse": {"toolUseId": "probe-use", "name": "probe", "input": {"_background_execution": True}}},
+                ],
+            },
+            _assistant_text("Tasks admitted."),
+        ]
+    )
+    agent = Agent(
+        model=model,
+        tools=[blocker, probe],
+        background_tasks={"wait_for_completion": False, "max_concurrency": 1},
+        callback_handler=None,
+    )
+    submitting_contexts: list[Any] = []
+    agent.hooks.add_callback(BeforeModelCallEvent, lambda event: submitting_contexts.append(event.invocation_context))
+
+    await agent.invoke_async("Run both.")
+    assert probe_contexts == []
+
+    released.set()
+    for _ in range(100):
+        if probe_contexts:
+            break
+        await asyncio.sleep(0.01)
+
+    assert submitting_contexts[0] is not None
+    assert probe_contexts == [submitting_contexts[0]]
+
+
+@pytest.mark.asyncio
+async def test_hands_after_tool_call_hooks_the_request_that_submitted_the_task() -> None:
+    @tool(name="work")
+    def work(value: str) -> str:
+        """Perform work."""
+        return f"done:{value}"
+
+    model = MockedModelProvider(
+        [
+            _assistant_tool_use("work", "work-use", {"value": "background", "_background_execution": True}),
+            _assistant_text("Task admitted."),
+            _assistant_text("Result received."),
+        ]
+    )
+    agent = Agent(model=model, tools=[work], background_tasks={"agentic": [work]}, callback_handler=None)
+    submitting_contexts: list[Any] = []
+    after_tool_contexts: list[Any] = []
+    agent.hooks.add_callback(BeforeModelCallEvent, lambda event: submitting_contexts.append(event.invocation_context))
+    agent.hooks.add_callback(AfterToolCallEvent, lambda event: after_tool_contexts.append(event.invocation_context))
+
+    await agent.invoke_async("Run work.")
+
+    assert submitting_contexts[0] is not None
+    assert after_tool_contexts == [submitting_contexts[0]]

@@ -6,14 +6,16 @@ from urllib.parse import quote
 import pytest
 
 import strands
-from strands.agent._agent_as_tool import _INTERRUPTED_TURNS_KEY, _AgentAsTool
+from strands.agent._agent_as_tool import _AgentAsTool
 from strands.agent.agent import Agent
 from strands.agent.agent_result import AgentResult
-from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+from strands.hooks import AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.interrupt import Interrupt, _InterruptState
+from strands.multiagent._agent_tool_streamer import _INTERRUPTED_TURNS_KEY
 from strands.session.file_session_manager import FileSessionManager
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.types._events import AgentAsToolStreamEvent, ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
+from strands.types.event_loop import _limit_stop_message
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -168,7 +170,7 @@ async def test_stream_passes_input_to_agent(tool, mock_agent, tool_use, agent_re
     async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("hello", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with("hello", cancel_signal=None, invocation_context=None)
 
 
 @pytest.mark.asyncio
@@ -183,7 +185,7 @@ async def test_stream_empty_input(tool, mock_agent, agent_result):
     async for _ in tool.stream(empty_tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with("", cancel_signal=None, invocation_context=None)
 
 
 @pytest.mark.asyncio
@@ -198,7 +200,7 @@ async def test_stream_string_input(tool, mock_agent, agent_result):
     async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("direct string", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with("direct string", cancel_signal=None, invocation_context=None)
 
 
 @pytest.mark.asyncio
@@ -489,6 +491,25 @@ async def test_stream_preserves_context_when_explicitly_true(fake_agent):
 
     assert len(fake_agent.messages) >= 1
     assert fake_agent.state.get("key") == "value"
+
+
+@pytest.mark.asyncio
+async def test_stream_blank_input_returns_error_and_preserved_context_still_works():
+    sub_agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}]),
+        callback_handler=None,
+    )
+    tool = _AgentAsTool(sub_agent, name="sub_agent", description="desc", preserve_context=True)
+
+    blank_events = [event async for event in tool.stream({"toolUseId": "t1", "name": "sub_agent", "input": {}}, {})]
+    valid_events = [
+        event async for event in tool.stream({"toolUseId": "t2", "name": "sub_agent", "input": {"input": "hi"}}, {})
+    ]
+
+    assert blank_events[-1].tool_result["status"] == "error"
+    assert "Input prompt is blank" in blank_events[-1].tool_result["content"][0]["text"]
+    assert valid_events[-1].tool_result["status"] == "success"
+    assert sub_agent.messages[0]["content"] == [{"text": "hi"}]
 
 
 def test_preserve_context_false_rejects_session_manager(fake_agent):
@@ -1266,3 +1287,89 @@ async def test_stream_resume_maps_only_this_calls_responses_when_the_tool_use_id
     tru_prompt = fake_agent.stream_async.call_args[0][0]
     exp_prompt = [{"interruptResponse": {"interruptId": "interrupt-1", "response": "APPROVE"}}]
     assert tru_prompt == exp_prompt
+
+
+# -- Request-wide invocation context -------------------------------------------
+
+
+def _usage(output_tokens):
+    return {"inputTokens": 0, "outputTokens": output_tokens, "totalTokens": output_tokens}
+
+
+def _inner_tool_use(text="hi"):
+    return {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "tu-1", "name": "inner", "input": {"input": text}}}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_folds_inner_agent_usage_into_parent_request_total():
+    inner = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "inner-done"}]}], [_usage(60)]),
+        name="inner",
+        description="inner agent",
+        callback_handler=None,
+    )
+    seen = []
+    inner.hooks.add_callback(
+        BeforeModelCallEvent, lambda event: seen.append(event.invocation_context.usage["outputTokens"])
+    )
+    outer = Agent(
+        model=MockedModelProvider(
+            [_inner_tool_use(), {"role": "assistant", "content": [{"text": "outer-done"}]}], [_usage(60), _usage(10)]
+        ),
+        tools=[inner.as_tool()],
+        callback_handler=None,
+    )
+
+    await outer.invoke_async("run inner")
+
+    assert seen == [60]
+
+
+@pytest.mark.asyncio
+async def test_stream_trips_limit_that_only_parent_plus_child_total_exceeds():
+    inner = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "inner-done"}]}], [_usage(60)]),
+        name="inner",
+        description="inner agent",
+        callback_handler=None,
+    )
+    outer = Agent(
+        model=MockedModelProvider(
+            [_inner_tool_use(), {"role": "assistant", "content": [{"text": "outer-done"}]}], [_usage(60), _usage(60)]
+        ),
+        tools=[inner.as_tool()],
+        callback_handler=None,
+    )
+
+    result = await outer.invoke_async("run inner", limits={"output_tokens": 100})
+
+    assert result.stop_reason == "limit_output_tokens"
+
+
+@pytest.mark.asyncio
+async def test_stream_returns_error_result_when_child_stops_on_shared_limit():
+    inner = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "never reached"}]}]),
+        name="inner",
+        description="inner agent",
+        callback_handler=None,
+    )
+    outer = Agent(
+        model=MockedModelProvider([_inner_tool_use()], [_usage(60)]), tools=[inner.as_tool()], callback_handler=None
+    )
+    tool_results = []
+    outer.hooks.add_callback(AfterToolCallEvent, lambda event: tool_results.append(event.result))
+
+    result = await outer.invoke_async("run inner", limits={"output_tokens": 50})
+
+    assert result.stop_reason == "limit_output_tokens"
+    assert tool_results == [
+        {
+            "toolUseId": "tu-1",
+            "status": "error",
+            "content": [{"text": _limit_stop_message("inner", "limit_output_tokens")}],
+        }
+    ]

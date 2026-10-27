@@ -512,7 +512,7 @@ def test_agent__call__(
     )
 
     callback_handler.assert_called()
-    conversation_manager_spy.apply_management.assert_called_with(agent)
+    conversation_manager_spy.apply_management.assert_called_with(agent, invocation_context=unittest.mock.ANY)
 
 
 def test_agent__call__passes_invocation_state(mock_model, agent, tool, mock_event_loop_cycle, agenerator):
@@ -2077,6 +2077,43 @@ def test_agent_with_list_of_message_and_content_block():
     agent = Agent(model=model)
     with pytest.raises(ValueError, match="Input prompt must be of type: `str | list[Contentblock] | Messages | None`."):
         agent([{"role": "user", "content": [{"text": "hello"}]}, {"text", "hello"}])
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "",
+        "  \n",
+        [{"text": ""}],
+        [{"text": " "}, {"text": "\n"}],
+        [{"role": "user", "content": [{"text": ""}]}],
+        [{"role": "user", "content": []}],
+    ],
+)
+def test_agent_rejects_blank_prompt_without_breaking_later_calls(prompt):
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "world!"}]}])
+    agent = Agent(model=model)
+
+    with pytest.raises(ValueError, match="Input prompt is blank"):
+        agent(prompt)
+
+    assert agent.messages == []
+    assert str(agent("hello")) == "world!\n"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        [{"text": "hello"}, {"text": ""}],
+        [{"text": ""}, {"image": {"format": "png", "source": {"bytes": b"img"}}}],
+        [{"role": "user", "content": [{"text": "hello"}]}, {"role": "assistant", "content": [{"text": ""}]}],
+    ],
+)
+def test_agent_accepts_prompt_with_some_non_blank_content(prompt):
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "world!"}]}])
+    agent = Agent(model=model)
+
+    assert str(agent(prompt)) == "world!\n"
 
 
 def test_agent__call__handles_none_invocation_state(mock_model, agent):
@@ -4015,9 +4052,7 @@ def test_baggage_attributes_nested_agent_override_and_restore():
                 },
                 {
                     "role": "assistant",
-                    "content": [
-                        {"toolUse": {"toolUseId": "t2", "name": "inner_agent", "input": {"user_message": "hi"}}}
-                    ],
+                    "content": [{"toolUse": {"toolUseId": "t2", "name": "inner_agent", "input": {"input": "hi"}}}],
                 },
                 {
                     "role": "assistant",

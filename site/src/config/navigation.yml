@@ -124,8 +124,8 @@ products:
     pages:
       - label: Overview
         href: /docs/user-guide/sdk/
-      - label: "Quickstart: Python"
-        href: /docs/user-guide/sdk/quickstart/python/
+      - label: Quickstart
+        href: /docs/user-guide/sdk/quickstart/overview/
       - label: Add tools
         href: /docs/user-guide/sdk/tools/
       - label: Long-term memory
@@ -141,8 +141,8 @@ products:
     pages:
       - label: Overview
         href: /docs/user-guide/box/
-      - label: Getting started
-        href: /docs/user-guide/box/getting-started/
+      - label: Quickstart
+        href: /docs/user-guide/box/quickstart/
       - label: Write a policy
         href: /docs/user-guide/box/guides/write-a-policy/
       - label: Security model
@@ -512,7 +512,7 @@ sidebar:
         items:
           - label: "Overview"
             slug: docs/user-guide/box
-          - docs/user-guide/box/getting-started
+          - docs/user-guide/box/quickstart
       - label: How-to guides
         items:
           - docs/user-guide/box/guides/run-strands-harness

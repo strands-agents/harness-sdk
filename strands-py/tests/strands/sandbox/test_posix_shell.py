@@ -357,6 +357,16 @@ async def test_handles_unicode_content(sandbox):
 
 
 @pytest.mark.asyncio
+async def test_backslash_in_filename_is_literal(sandbox):
+    # Contract: on POSIX, ``\`` in a path is a legal filename character, not a
+    # separator. Containment logic in tools above the sandbox relies on this.
+    await sandbox.write_text("weird\\name.txt", "ok")
+    assert await sandbox.read_text("weird\\name.txt") == "ok"
+    entries = await sandbox.list_files(".")
+    assert any(entry.name == "weird\\name.txt" for entry in entries)
+
+
+@pytest.mark.asyncio
 async def test_handles_shell_metacharacters_in_content(sandbox):
     content = "$(rm -rf /) `whoami` && || $HOME"
     await sandbox.write_text("meta.txt", content)

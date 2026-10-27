@@ -58,8 +58,11 @@ export const DEFAULT_CONTEXT_WINDOW_LIMIT = 200_000
  *
  * For Bedrock models with cross-region prefixes (e.g. `us.`, `eu.`, `global.`),
  * {@link getContextWindowLimit} strips the prefix before lookup so only the base model ID is needed here.
+ *
+ * Exported for the integ drift test only; not part of the public barrel.
+ * @internal
  */
-const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
+export const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   // Anthropic (direct API)
   'claude-sonnet-4-6': 1_000_000,
   'claude-sonnet-4-20250514': 1_000_000,
@@ -134,7 +137,44 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   'zai.glm-5': 200_000,
   'zai.glm-5.3': 1_000_000,
 
+  // Bedrock OpenAI (Bedrock cards publish 128K for gpt-oss; OpenAI publishes 131,072)
+  'openai.gpt-oss-120b': 128_000,
+  'openai.gpt-oss-120b-1:0': 128_000,
+  'openai.gpt-oss-20b': 128_000,
+  'openai.gpt-oss-20b-1:0': 128_000,
+  'openai.gpt-oss-safeguard-120b': 128_000,
+  'openai.gpt-oss-safeguard-20b': 128_000,
+  'openai.gpt-6-astra': 1_050_000,
+  'openai.gpt-6.1-sol': 1_000_000, // Bedrock card: 1M shared window, 131,072 max output
+  'openai.gpt-6-sol': 1_050_000,
+  'openai.gpt-6-luna': 1_050_000,
+  'openai.gpt-5.6-sol': 1_050_000,
+  'openai.gpt-5.6-terra': 1_050_000,
+  'openai.gpt-5.6-luna': 1_050_000,
+  'openai.gpt-5.5': 1_050_000,
+  'openai.gpt-5.4': 1_050_000,
+  // Bedrock Mistral
+  'mistral.mistral-large-3-675b-instruct': 256_000,
+  'mistral.ministral-3-14b-instruct': 128_000,
+  'mistral.ministral-3-8b-instruct': 128_000,
+  'mistral.ministral-3-3b-instruct': 128_000,
+  'mistral.magistral-small-2509': 128_000,
+  'mistral.pixtral-large-2502-v1:0': 128_000,
+  'mistral.mistral-small-2402-v1:0': 32_000,
+  'mistral.mistral-large-2402-v1:0': 32_000,
+
+  // Bedrock Google Gemma
+  'google.gemma-4-31b': 256_000,
+  'google.gemma-4-26b-a4b': 256_000,
+  'google.gemma-4-e2b': 128_000,
+
+  // Bedrock xAI
+  'xai.grok-4.7': 524_288,
+  'xai.grok-4.6': 500_000,
+  'xai.grok-4.3': 1_000_000,
+
   // OpenAI
+  'chat-latest': 272_000, // rolling alias for the current ChatGPT model: input budget (400k - 128k out); may change
   'gpt-6-astra': 1_050_000,
   'gpt-6.1-sol': 1_050_000,
   'gpt-6-sol': 1_050_000,
@@ -167,8 +207,13 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   'o3-pro': 200_000,
   'o4-mini': 200_000,
   o1: 200_000,
+  'gpt-oss-120b': 131_072,
+  'gpt-oss-20b': 131_072,
 
   // Google Gemini
+  'gemini-4-argon': 1_048_576,
+  'gemini-3.8-flash': 1_048_576,
+  'gemini-3.7-flash': 1_048_576, // deprecated alias of gemini-3.8-flash
   'gemini-2.5-flash': 1_048_576,
   'gemini-2.5-flash-lite': 1_048_576,
   'gemini-2.5-pro': 1_048_576,
@@ -189,7 +234,7 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
  *
  * @see https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html
  */
-const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au', 'jp', 'us-gov'])
+const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au', 'in', 'jp', 'us-gov'])
 
 /**
  * Looks up the context window limit for a model ID.

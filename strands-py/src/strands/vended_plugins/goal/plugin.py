@@ -3,7 +3,7 @@
 Validates the agent's response after each invocation; if it doesn't satisfy
 the goal, feeds validator feedback back as a user message and re-enters the
 agent loop via ``AfterInvocationEvent.resume``. Loops until validation passes,
-``max_attempts`` is reached, or ``timeout`` elapses.
+``max_attempts`` is reached, ``timeout`` elapses, or one of the request's ``limits`` is reached.
 
 Example:
     ```python
@@ -47,6 +47,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from ...agent.invocation_context import (
+    InvocationContext,
+    _create_auxiliary_invocation_context,
+    _reached_limit,
+    _unwrap_invocation_context,
+)
 from ...hooks.events import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent
 from ...plugins import Plugin
 from ...types._snapshot import Snapshot
@@ -94,8 +100,9 @@ class Validator(Protocol):
         ...
 
 
-GoalStopReason = Literal["satisfied", "max_attempts", "timeout"]
-"""Why a goal run ended."""
+GoalStopReason = Literal["satisfied", "max_attempts", "timeout", "limit"]
+"""Why a goal run ended. ``"limit"`` means one of the request's ``limits`` was reached, so no
+further attempt could run."""
 
 
 @dataclass
@@ -141,6 +148,9 @@ class _RunState:
     result: GoalResult | None = None
     resumed: bool = False
     initial_snapshot: Snapshot | None = None
+    # The latest assistant message when the current pass started, to tell whether the pass
+    # produced a new answer.
+    answer_before_pass: Message | None = None
 
 
 # Two GoalLoops on one agent both write event.resume in AfterInvocation — only the
@@ -307,8 +317,12 @@ class GoalLoop(Plugin):
             existing = self._runs.get(event.agent)
             if existing and existing.resumed:
                 existing.resumed = False
+                existing.answer_before_pass = _last_assistant_message(event.agent.messages)
                 return
-            self._runs[event.agent] = _RunState(start_time=time.monotonic())
+            self._runs[event.agent] = _RunState(
+                start_time=time.monotonic(),
+                answer_before_pass=_last_assistant_message(event.agent.messages),
+            )
 
         agent.add_hook(_before_invocation, BeforeInvocationEvent)
 
@@ -336,13 +350,23 @@ class GoalLoop(Plugin):
                 return
 
             response = _last_assistant_message(event.agent.messages)
+            invocation_context = _unwrap_invocation_context(event.invocation_context)
+            # The request's limit stopped this pass before it produced a new answer, so there is
+            # nothing to grade.
+            if (
+                response is run.answer_before_pass
+                and invocation_context is not None
+                and _reached_limit(invocation_context) is not None
+            ):
+                _finish_run(run, "limit")
+                return
             if not response:
                 return
 
             attempt_number = len(run.attempts) + 1
 
             try:
-                outcome = await validator(response)
+                outcome = await validator(response, event.invocation_context)
             except Exception as e:
                 logger.warning("plugin=<%s>, error=<%s> | validator threw", self._name, e)
                 outcome = ValidationOutcome(passed=False, feedback=f"Validator error: {e}")
@@ -361,6 +385,9 @@ class GoalLoop(Plugin):
             if attempt_number >= self._max_attempts:
                 _finish_run(run, "max_attempts")
                 return
+            if invocation_context is not None and _reached_limit(invocation_context) is not None:
+                _finish_run(run, "limit")
+                return
 
             if run.initial_snapshot:
                 event.agent.load_snapshot(run.initial_snapshot)
@@ -370,12 +397,16 @@ class GoalLoop(Plugin):
 
         agent.add_hook(_after_invocation, AfterInvocationEvent)
 
-    def _build_validator(self, host_agent: Agent) -> Callable[[Message], Awaitable[ValidationOutcome]]:
+    def _build_validator(
+        self, host_agent: Agent
+    ) -> Callable[[Message, InvocationContext | None], Awaitable[ValidationOutcome]]:
         """Compile the configured goal into the canonical async validator shape."""
         if self._validator:
             validator_fn = self._validator
 
-            async def _fn_validator(response: Message) -> ValidationOutcome:
+            async def _fn_validator(
+                response: Message, invocation_context: InvocationContext | None = None
+            ) -> ValidationOutcome:
                 result = validator_fn(response, host_agent)
                 if inspect.isawaitable(result):
                     result = await result
@@ -386,7 +417,9 @@ class GoalLoop(Plugin):
         goal_description = self._goal
         assert goal_description is not None
 
-        async def _judge_validator(_response: Message) -> ValidationOutcome:
+        async def _judge_validator(
+            _response: Message, invocation_context: InvocationContext | None = None
+        ) -> ValidationOutcome:
             from ...agent.agent import Agent as _Agent
 
             judge = _Agent(
@@ -395,7 +428,10 @@ class GoalLoop(Plugin):
                 system_prompt=self._judge_system_prompt,
                 structured_output_model=JudgeOutcome,
             )
-            result = await judge.invoke_async(build_judge_prompt(goal_description, host_agent.messages))
+            result = await judge.invoke_async(
+                build_judge_prompt(goal_description, host_agent.messages),
+                invocation_context=_create_auxiliary_invocation_context(invocation_context),
+            )
             if result.structured_output and isinstance(result.structured_output, JudgeOutcome):
                 return ValidationOutcome(
                     passed=result.structured_output.passed,

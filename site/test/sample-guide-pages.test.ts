@@ -48,17 +48,26 @@ function expectPersistentSidebar(
 }
 
 describe('generated sample guide pages', () => {
-  it('redirects /examples/ to the first guide for the stored language preference', () => {
-    const defaultGuide =
-      guides.find((guide) => guide.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0]
-    const pythonGuide = guides.find((guide) => guide.data.language === 'python') ?? defaultGuide
+  it('renders the expected /examples/ landing state for the available sample source', () => {
     const page = builtPage()
     const redirect = page.querySelector('[data-sample-guide-redirect]')
 
-    expect(defaultGuide).toBeDefined()
-    expect(pythonGuide).toBeDefined()
     expect(page.querySelector('#_top')?.textContent.trim()).toBe('Examples')
     expect(page.querySelector('html[data-has-sidebar]')).toBeNull()
+
+    if (guides.length === 0) {
+      expect(redirect).toBeNull()
+      expect(page.textContent).toContain('Sample guides are not available in this local build.')
+      expect(page.textContent).toContain('SAMPLES_SOURCE_DIR')
+      return
+    }
+
+    const defaultGuide =
+      guides.find((guide) => guide.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0]
+    const pythonGuide = guides.find((guide) => guide.data.language === 'python') ?? defaultGuide
+
+    expect(defaultGuide).toBeDefined()
+    expect(pythonGuide).toBeDefined()
     expect(redirect?.getAttribute('data-storage-key')).toBe(LANGUAGE_STORAGE_KEY)
     expect(redirect?.getAttribute('data-default-language')).toBe(DEFAULT_LANGUAGE_LABEL)
     expect(redirect?.getAttribute('data-default-target')).toBe(sampleGuideHref(defaultGuide!))
@@ -81,7 +90,11 @@ describe('generated sample guide pages', () => {
   it('renders fenced code with Expressive Code', () => {
     const guide = guides.find((entry) => entry.data.slug === 'typescript/first-agent')
 
-    expect(guide).toBeDefined()
+    if (!guide) {
+      expect(guides).toHaveLength(0)
+      return
+    }
+
     expect(builtPage(guide).querySelector('.expressive-code')).not.toBeNull()
   })
 })

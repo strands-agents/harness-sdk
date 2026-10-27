@@ -24,8 +24,11 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       harness-py: ${{ steps.filter.outputs.harness-py }}
       harness-ts: ${{ steps.filter.outputs.harness-ts }}
+      strands-py-src: ${{ steps.filter.outputs.strands-py-src }}
+      strands-ts-src: ${{ steps.filter.outputs.strands-ts-src }}
       strands-cli: ${{ steps.filter.outputs.strands-cli }}
       pr-metrics: ${{ steps.filter.outputs.pr-metrics }}
+      integ-metrics: ${{ steps.filter.outputs.integ-metrics }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
@@ -60,6 +63,14 @@ jobs:
               - 'harness-ts/**/!(*.md)'
               - '.github/workflows/harness-ts-*'
               - '.github/workflows/ci.yml'
+            # SDK runtime sources: changes here also run the harness suites against the local SDK.
+            strands-py-src:
+              - 'strands-py/src/**/!(*.md)'
+              - 'strands-py/pyproject.toml'
+            strands-ts-src:
+              - 'strands-ts/src/**/!(*.md)'
+              - 'strands-ts/package.json'
+              - 'strands-ts/tsconfig.base.json'
             strands-cli:
               - 'strands-cli/**/!(*.md)'
               - '.github/workflows/harness-cli-*'
@@ -70,6 +81,11 @@ jobs:
               - '.github/workflows/ci.yml'
               # Defines the test:pr-metrics script this job runs.
               - 'package.json'
+            integ-metrics:
+              - '.github/scripts/upload-integ-test-metrics.py'
+              - '.github/scripts/test_upload_integ_test_metrics.py'
+              - 'test-infra/dashboards/**'
+              - '.github/workflows/ci.yml'
 
   dependency-review:
     name: Dependency Review
@@ -129,22 +145,24 @@ jobs:
   harness-python:
     name: Harness Python
     needs: detect-changes
-    if: needs.detect-changes.outputs.harness-py == 'true'
+    if: needs.detect-changes.outputs.harness-py == 'true' || needs.detect-changes.outputs.strands-py-src == 'true'
     uses: ./.github/workflows/harness-py-test-lint.yml
     permissions:
       contents: read
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-strands-py: ${{ needs.detect-changes.outputs.strands-py-src == 'true' }}
 
   harness-typescript:
     name: Harness TypeScript
     needs: detect-changes
-    if: needs.detect-changes.outputs.harness-ts == 'true'
+    if: needs.detect-changes.outputs.harness-ts == 'true' || needs.detect-changes.outputs.strands-ts-src == 'true'
     uses: ./.github/workflows/harness-ts-test-lint.yml
     permissions:
       contents: read
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-strands-ts: ${{ needs.detect-changes.outputs.strands-ts-src == 'true' }}
 
   cli:
     name: Strands CLI
@@ -179,14 +197,38 @@ jobs:
       - name: Check formatting
         run: npx --yes prettier@3 --check '.github/scripts/pr-metrics/*.mjs'
 
+  integ-metrics:
+    name: Integ Metrics
+    needs: detect-changes
+    if: needs.detect-changes.outputs.integ-metrics == 'true'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install publisher dependencies
+        run: pip install --no-cache-dir boto3 pytest 'ruff>=0.16.0,<0.17.0'
+      - run: python -m pytest .github/scripts -q
+      - name: Lint
+        run: |
+          ruff check .github/scripts/*.py test-infra/dashboards/*.py
+          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py test-infra/dashboards/check_series.py
+      - name: Check dashboards are up to date
+        run: python test-infra/dashboards/generate.py --check
+
   ci-gate:
     name: CI Gate
     if: always()
-    needs: [detect-changes, dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics]
+    needs: [detect-changes, dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics]
     runs-on: strands-agents_ubuntu-latest_4-core
     permissions: {}
     steps:
       - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics
+          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics
           jobs: ${{ toJSON(needs) }}

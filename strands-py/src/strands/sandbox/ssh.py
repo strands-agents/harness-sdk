@@ -5,6 +5,7 @@ Mirrors ``strands-ts/src/sandbox/ssh.ts``.
 
 import re
 import shlex
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -185,12 +186,19 @@ class SshSandbox(PosixShellSandbox):
         Returns:
             The tools bound to this sandbox, with descriptions naming the remote host.
         """
-        return [
-            make_file_editor(
+        # Suppress the ``make_file_editor`` deprecation warning for this internal
+        # construction: the sandbox retains file_editor until it migrates to the
+        # new read/write/edit vended tools. A user-facing ``make_file_editor``
+        # call still warns.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            file_editor_tool = make_file_editor(
                 sandbox=self,
                 name="sandbox_file_editor",
                 description=f'{DEFAULT_FILE_EDITOR_DESCRIPTION} Files are on host "{self.host}".',
-            ),
+            )
+        return [
+            file_editor_tool,
             make_shell(
                 sandbox=self,
                 name="sandbox_shell",

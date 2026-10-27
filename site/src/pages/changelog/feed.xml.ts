@@ -15,7 +15,10 @@ export const GET: APIRoute = async (context) => {
       pubDate: r.data.date,
       description:
         r.data.highlights ||
-        r.data.entries.slice(0, 5).map((e) => `• ${e.title}`).join('\n') ||
+        r.data.entries
+          .slice(0, 5)
+          .map((e) => `• ${e.title}`)
+          .join('\n') ||
         `Release ${r.data.version}`,
       // Link to the on-site detail page (the canonical home for the release),
       // not the GitHub release — keeps readers on the docs site.

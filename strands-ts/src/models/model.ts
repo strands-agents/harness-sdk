@@ -14,6 +14,7 @@ import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import type { AgentMetadata } from '../agent/agent-metadata.js'
+import type { z } from 'zod'
 import {
   ModelContentBlockDeltaEvent,
   ModelContentBlockStartEvent,
@@ -255,6 +256,13 @@ export interface StreamOptions {
 
   /** Metadata of the invoking agent, supplied per request. */
   agentMetadata?: AgentMetadata
+
+  /**
+   * Schema this call must produce, set by the agent on its structured output retry so the provider can choose how to
+   * enforce it. The response must then be either a call to the tool named in `toolChoice` or a final text response
+   * whose text is exactly one JSON object that validates against this schema.
+   */
+  structuredOutputSchema?: z.ZodSchema
 }
 
 /**

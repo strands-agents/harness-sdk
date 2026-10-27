@@ -31,6 +31,7 @@ from .in_process._manager import InProcessTaskManager, _MiddlewareInterrupt
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -198,12 +199,19 @@ class _BackgroundTasks(Plugin):
         invocation_state: dict[str, Any],
         pass_id: str,
         tool_instance: AgentTool,
+        invocation_context: InvocationContext | None = None,
     ) -> ToolResult:
-        """Admit one background tool call and return its dispatch acknowledgement."""
+        """Admit one background tool call and return its dispatch acknowledgement.
+
+        The task keeps ``invocation_context``, the request that submitted it, even if it starts
+        after that request returned.
+        """
         if self._agent.cancel_signal.is_set():
             return _tool_error(tool_use, "Tool execution cancelled")
         try:
-            task = await self._manager.submit(tool_use, invocation_state, pass_id, tool_instance)
+            task = await self._manager.submit(
+                tool_use, invocation_state, pass_id, tool_instance, invocation_context=invocation_context
+            )
         except Exception as error:
             logger.warning("error=<%s> | background task admission failed", error)
             return _tool_error(tool_use, "Background task admission failed")
