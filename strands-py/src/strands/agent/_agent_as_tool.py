@@ -100,6 +100,7 @@ class _AgentAsTool(AgentTool):
         # restore it before each invocation. This mirrors GraphNode.reset_executor_state().
         self._initial_messages: Messages = []
         self._initial_state: AgentState = AgentState()
+        self._initial_model_state: dict[str, Any] = {}
         # Serialize access so _reset_agent_state + stream_async are atomic.
         # threading.Lock (not asyncio.Lock) because run_async() may create
         # separate event loops in different threads.
@@ -114,6 +115,7 @@ class _AgentAsTool(AgentTool):
                 )
             self._initial_messages = copy.deepcopy(agent.messages)
             self._initial_state = AgentState(agent.state.get())
+            self._initial_model_state = copy.deepcopy(agent._model_state)
 
     @property
     def agent(self) -> Agent:
@@ -311,7 +313,7 @@ class _AgentAsTool(AgentTool):
     def _reset_agent_state(self, tool_use_id: str) -> None:
         """Reset the wrapped agent to its initial state.
 
-        Restores messages, state and interrupt state to the values captured at construction time.
+        Restores messages, agent state and model state to the construction-time baseline and clears interrupt state.
         This mirrors the pattern used by ``GraphNode.reset_executor_state()``.
 
         Args:
@@ -324,6 +326,7 @@ class _AgentAsTool(AgentTool):
         )
         self._agent.messages = copy.deepcopy(self._initial_messages)
         self._agent.state = AgentState(self._initial_state.get())
+        self._agent._model_state = copy.deepcopy(self._initial_model_state)
         self._agent._interrupt_state = _InterruptState()
 
     @override
