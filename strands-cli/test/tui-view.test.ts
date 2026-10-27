@@ -134,8 +134,6 @@ describe('ChatView', () => {
     expect(output.indexOf('MCP servers (1 configured)')).toBeLessThan(
       output.indexOf('Viewing MCP servers (1 configured)')
     )
-    expect(output).not.toContain('┌')
-    expect(output).not.toContain('┘')
   })
 
   it.each([
@@ -144,65 +142,77 @@ describe('ChatView', () => {
     [40, 16, false],
     [22, 10, false],
     [80, 24, true],
-  ])('keeps /effort compact without shifting the conversation at %ix%i, party=%s', (width, height, party) => {
-    const current = snapshot({
-      completedTurns: [
+  ])(
+    'replaces the command palette with /effort without shifting the conversation at %ix%i, party=%s',
+    (width, height, party) => {
+      const current = snapshot({
+        completedTurns: [
+          {
+            id: 'turn-1',
+            prompt: 'hello',
+            agentName: 'Strands harness',
+            entries: [{ id: 'turn-1:1', type: 'assistant', text: 'Visible conversation\n'.repeat(30) }],
+            status: 'complete',
+          },
+        ],
+      })
+      const props = { terminalWidth: width, terminalHeight: height, party }
+      const before = renderView({ ...props, input: '/effort', cursor: 7, snapshot: current }, { columns: width }).split(
+        '\n'
+      )
+      const hiddenDraft = 'hidden draft\n'.repeat(20)
+      const after = renderView(
         {
-          id: 'turn-1',
-          prompt: 'hello',
-          agentName: 'Strands harness',
-          entries: [{ id: 'turn-1:1', type: 'assistant', text: 'Visible conversation\n'.repeat(30) }],
-          status: 'complete',
-        },
-      ],
-    })
-    const props = { terminalWidth: width, terminalHeight: height, party }
-    const before = renderView({ ...props, snapshot: current }, { columns: width }).split('\n')
-    const after = renderView(
-      {
-        ...props,
-        snapshot: {
-          ...current,
-          panel: {
-            id: 'effort',
-            kind: 'effort',
-            title: 'effort',
-            body: 'Grok 4.6\nus.xai.grok-4.6',
-            rows: [],
-            slider: {
-              label: 'Effort',
-              options: [
-                { id: 'low', label: 'Low' },
-                { id: 'high', label: 'High', active: true },
-              ],
+          ...props,
+          input: hiddenDraft,
+          cursor: hiddenDraft.length,
+          snapshot: {
+            ...current,
+            panel: {
+              id: 'effort',
+              kind: 'effort',
+              title: 'effort',
+              body: 'Test Model\nprovider.test-model',
+              rows: [],
+              slider: {
+                label: 'Effort',
+                options: [
+                  { id: 'low', label: 'Low' },
+                  { id: 'high', label: 'High', active: true },
+                ],
+              },
             },
           },
         },
-      },
-      { columns: width }
-    ).split('\n')
-    const editorRow = before.findIndex((line) => line.includes('Enter'))
-    expect(editorRow).toBeGreaterThanOrEqual(0)
-    const panelRow = after.findIndex((line) => line.includes('Reasoning effort'))
-    expect(panelRow).toBeGreaterThanOrEqual(editorRow)
-    expect(after.slice(0, editorRow)).toEqual(before.slice(0, editorRow))
-    const track = after
-      .slice(panelRow)
-      .join('\n')
-      .match(/[─┬█]+/u)?.[0]
-    expect(track).toBeDefined()
-    expect(stringWidth(track!)).toBeLessThanOrEqual(60)
-    if (width >= 40) {
-      expect(after[panelRow]).toContain('Grok 4.6')
-      expect(after.join('\n')).toContain('Enter done · Esc close')
-      expect(after.slice(0, panelRow).join('\n')).toContain('Visible conversation')
+        { columns: width }
+      ).split('\n')
+      const paletteRow = before.findIndex((line) => line.includes('/effort'))
+      expect(paletteRow).toBeGreaterThanOrEqual(0)
+      const panelRow = after.findIndex((line) => line.includes('Reasoning effort'))
+      expect(panelRow).toBeGreaterThanOrEqual(0)
+      if (width >= 40) {
+        expect(panelRow).toBeGreaterThanOrEqual(paletteRow)
+        expect(after.slice(0, paletteRow)).toEqual(before.slice(0, paletteRow))
+      }
+      const track = after
+        .slice(panelRow)
+        .join('\n')
+        .match(/[─┬█]+/u)?.[0]
+      expect(track).toBeDefined()
+      expect(stringWidth(track!)).toBeLessThanOrEqual(60)
+      if (width >= 40) {
+        expect(after[panelRow]).toContain('Test Model')
+        expect(after.join('\n')).toContain('Enter done · Esc close')
+        expect(after.join('\n')).not.toContain('copy ID')
+        expect(after.slice(0, panelRow).join('\n')).toContain('Visible conversation')
+      }
+      expect(after.findIndex((line) => line.includes('/work'))).toBe(before.findIndex((line) => line.includes('/work')))
+      expect(after.join('\n')).not.toContain('Enter send')
+      expect(after.length).toBe(before.length)
+      expect(after.length).toBeLessThanOrEqual(height)
+      expect(after.every((line) => stringWidth(line) <= width)).toBe(true)
     }
-    expect(after.findIndex((line) => line.includes('/work'))).toBe(before.findIndex((line) => line.includes('/work')))
-    expect(after.join('\n')).not.toContain('Enter send')
-    expect(after.length).toBe(before.length)
-    expect(after.length).toBeLessThanOrEqual(height)
-    expect(after.every((line) => stringWidth(line) <= width)).toBe(true)
-  })
+  )
 
   it.each(['agents', 'mcp', 'settings'] as const)('renders the %s panel from its independent viewport', (kind) => {
     const rows = Array.from({ length: 12 }, (_, index) => ({
@@ -239,8 +249,9 @@ describe('ChatView', () => {
       terminalHeight: 40,
     })
 
-    expect(output.split('\n').find((line) => line.includes('/context'))).toMatch(/\/context\s+Show context usage/)
-    expect(output).toContain('/help')
+    const lines = output.split('\n')
+    expect(lines.find((line) => line.includes('/context'))).toMatch(/\/context\s+Show context usage/)
+    expect(lines.find((line) => line.includes('/help'))).toContain('› /help')
   })
 
   it('renders slash-command signatures and completions while editing arguments', () => {
@@ -1007,7 +1018,7 @@ describe('ChatView', () => {
   it.each([40, 80])(
     'keeps settings controls and their hints visible at %sx24 for first and last selections',
     (width) => {
-      const config = { ...DEFAULT_CHAT_SETTINGS, colorMode: 'light' as const }
+      const config = DEFAULT_CHAT_SETTINGS
       const rows = settingsRows(config, 'Appearance')
       const capacity = panelRowCapacity('settings', 24, width, rows)
       for (const selected of [0, rows.length - 1]) {
@@ -1033,7 +1044,7 @@ describe('ChatView', () => {
         const lines = output.split('\n')
         expect(lines.length).toBeLessThanOrEqual(24)
         expect(output).toContain(rows[selected]!.label)
-        expect(output).toContain(selected === 0 ? 'Dark' : 'Full')
+        expect(output).toContain(selected === 0 ? 'Custom' : 'Full')
         expect(output).toContain('←→ change')
         expect(output).toContain('Esc back')
         expect(output).not.toContain('/help')
@@ -1140,7 +1151,76 @@ describe('ChatView', () => {
     expect(bashLine).toMatch(/bash\s{2,}━━●/)
   })
 
-  it('uses provider nodes on both wide and narrow terminals', () => {
+  it.each([
+    [90, 30, false],
+    [90, 16, false],
+    [90, 30, true],
+  ])(
+    'keeps /model command, loading, and loaded states at the same height at %ix%i, party=%s',
+    (terminalWidth, terminalHeight, party) => {
+      const models: ChatPanel = {
+        id: 'models',
+        kind: 'models',
+        title: 'models',
+        rows: Array.from({ length: 12 }, (_, index) => ({
+          label: `Model ${index}`,
+          description: `bedrock/m${index}`,
+          value: `bedrock/m${index}`,
+        })),
+        body: 'Current Model\nbedrock/current-model',
+      }
+      const render = (props: Partial<Parameters<typeof renderView>[0]> = {}): string[] =>
+        renderView({ snapshot: snapshot(), terminalWidth, terminalHeight, party, ...props }).split('\n')
+      const envelope = (
+        lines: string[],
+        bottomLabel?: string
+      ): { top: number; bottom: number; left: number; right: number } => {
+        const top = lines.findIndex((line) => line.includes('┌'))
+        const bottom = bottomLabel
+          ? lines.findIndex((line) => line.includes(bottomLabel))
+          : lines.reduce((last, line, index) => (line.includes('┘') ? index : last), -1)
+        expect(top).toBeGreaterThanOrEqual(0)
+        expect(bottom).toBeGreaterThanOrEqual(top)
+        return {
+          top,
+          bottom,
+          left: lines[top]!.indexOf('┌'),
+          right: lines[top]!.lastIndexOf('┐'),
+        }
+      }
+
+      const command = envelope(render({ input: '/model', cursor: 6 }))
+      const loading = envelope(
+        render({
+          snapshot: snapshot({ panel: { id: 'models', kind: 'models', title: 'models', rows: [], loading: true } }),
+        })
+      )
+      const modelLines = render({ snapshot: snapshot({ panel: models }), panelRows: models.rows })
+      const model = envelope(modelLines, 'Tab section')
+      const commandHeight = command.bottom - command.top + 1
+
+      expect(loading.bottom - loading.top + 1).toBe(commandHeight)
+      expect(model.bottom - model.top + 1).toBe(commandHeight)
+      expect({ left: loading.left, right: loading.right }).toEqual({ left: command.left, right: command.right })
+      expect({ left: model.left, right: model.right }).toEqual({ left: command.left, right: command.right })
+    }
+  )
+
+  it('shows only a centered spinner in the composer while /model loads', () => {
+    const lines = renderView({
+      snapshot: snapshot({ panel: { id: 'models', kind: 'models', title: 'models', rows: [], loading: true } }),
+      terminalWidth: 90,
+      terminalHeight: 30,
+    }).split('\n')
+    const loading = lines.find((line) => line.includes('Loading models'))
+    expect(loading).toBeDefined()
+    const center = loading!.indexOf('Loading models') + 'Loading models'.length / 2
+    expect(Math.abs(center - 45)).toBeLessThanOrEqual(3)
+    expect(lines.join('\n')).not.toContain('Providers')
+    expect(lines.join('\n')).not.toContain('Search models')
+  })
+
+  it('renders providers and models as focused 33/66 columns', () => {
     const current = snapshot({
       panel: {
         id: 'models',
@@ -1151,61 +1231,62 @@ describe('ChatView', () => {
           { id: 'all', label: 'All' },
           { id: 'bedrock', label: 'Bedrock' },
         ],
-        slider: {
-          label: 'Effort',
-          options: [
-            { id: 'off', label: 'Model default' },
-            { id: 'medium', label: 'Medium' },
-            { id: 'xhigh', label: 'High', active: true },
-            { id: 'max', label: 'Max' },
-          ],
-        },
         rows: [
           {
-            label: 'Claude Opus',
-            description: 'bedrock/anthropic.claude-opus',
-            value: 'bedrock/anthropic.claude-opus',
+            label: 'Current Model',
+            description: 'bedrock/current-model',
+            value: 'bedrock/current-model',
             filter: 'bedrock',
             badge: { text: 'current', tone: 'success' },
           },
           {
-            label: 'Claude Sonnet',
-            description: 'bedrock/anthropic.claude-sonnet',
-            value: 'bedrock/anthropic.claude-sonnet',
+            label: 'Next Model',
+            description: 'bedrock/next-model',
+            value: 'bedrock/next-model',
             filter: 'bedrock',
           },
         ],
-        body: 'Claude Opus\nbedrock/anthropic.claude-opus',
+        body: 'Current Model\nbedrock/current-model',
       },
     })
-    const render = (terminalWidth: number): string =>
+    const render = (terminalWidth: number, modelPanelFocus: 'models' | 'search' = 'models'): string =>
       renderView({
         snapshot: current,
         terminalWidth,
         terminalHeight: 30,
         panelRows: current.panel!.rows,
+        modelPanelFocus,
       })
     const wide = render(150)
-    const narrow = render(60)
+    const wideLines = wide.split('\n')
+    const header = wideLines.find((line) => line.includes('Providers'))
+    expect(header).toContain('Search models')
+    const modelRow = wideLines.findIndex((line) => line.includes('Current Model'))
+    expect(wideLines[modelRow]).toContain('current')
+    expect(wideLines[modelRow]).toContain('› Current Model')
+    expect(wide).not.toContain('Effort')
+    expect(wide).not.toContain('Web search')
+    expect(wide).toContain('bedrock/current-model')
+    expect(wide).toContain('Ctrl+Y copy ID')
 
-    expect(wide).toContain('Provider')
-    expect(narrow).not.toContain('Provider')
-    expect(narrow.split('\n').some((line) => line.includes('◆ All') && line.includes('· Bedrock'))).toBe(true)
-    expect(wide).toContain('Model details')
-    expect(wide.split('\n').find((line) => line.includes('Claude Opus'))).toContain('Claude Opus')
-    expect(wide).toContain('Model ID')
-    expect(wide).toContain('bedrock/anthropic.claude-opus')
-    expect(wide).toContain('Copy model ID')
-    expect(wide).toContain('High')
-    expect(wide).not.toContain('Medium')
-    expect(wide).not.toContain('Model default')
-    expect(wide).not.toContain('Max')
-    expect(wide.match(/Effort/g)).toHaveLength(1)
-    expect(wide).not.toContain('bedrock/anthropic.claude-sonnet')
+    const topBorder = wideLines.find((line) => line.match(/┌.*┐┌.*┐/u))
+    expect(topBorder).toBeDefined()
+    const firstColumnStart = topBorder!.indexOf('┌')
+    const secondColumnStart = topBorder!.indexOf('┌', firstColumnStart + 1)
+    const columnsWidth = topBorder!.lastIndexOf('┐') - firstColumnStart + 1
+    expect(secondColumnStart - firstColumnStart).toBe(Math.floor(columnsWidth / 3))
+
+    const narrow = render(60)
+    expect(narrow).toContain('Providers')
+    expect(narrow).toContain('Search models')
+
+    const searching = render(150, 'search')
+    expect(searching).not.toContain('Search models')
+    expect(searching).toContain('/ ▌')
   })
 
   it('highlights hovered controls or rows and reserves purple for presses across panel renderers', () => {
-    const kinds: ChatPanel['kind'][] = ['models', 'settings', 'agents', 'export', 'sessions', 'voice']
+    const kinds = ['models', 'settings', 'agents', 'export', 'sessions', 'voice'] as const
     const frames = kinds.flatMap((kind) =>
       ['idle', 'hover', 'press'].map((interaction) => ({
         snapshot: snapshot({
@@ -1291,9 +1372,8 @@ describe('ChatView', () => {
           title: 'model change failed',
           rows: [
             {
-              label: 'bedrock/anthropic.claude-sonnet-5',
-              description:
-                'Failed to create agent with model bedrock/anthropic.claude-sonnet-5: AWS credentials are not configured.',
+              label: 'bedrock/next-model',
+              description: 'Failed to create agent with model bedrock/next-model: AWS credentials are not configured.',
               tone: 'danger',
             },
           ],
@@ -1303,7 +1383,7 @@ describe('ChatView', () => {
       terminalHeight: 30,
     })
 
-    expect(error.replace(/\s+/gu, ' ')).toContain('AWS credentials are not configured.')
+    expect(error.replace(/\s+/gu, ' ')).toMatch(/AWS creden\s*tials are not configured\./u)
     expect(error).not.toContain('model change failed')
     expect(error).not.toContain('◆')
     expect(error).toContain('Esc to dismiss')

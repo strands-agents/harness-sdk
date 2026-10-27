@@ -108,6 +108,11 @@ describe('frog palettes', () => {
 
     expect(dark).toContain(`;2;${rgb.join(';')}m`)
     expect(light).not.toBe(dark)
+    if (theme === 'green') {
+      expect(dark).toContain(';2;235;255;241m')
+      expect(light).toContain(';2;7;28;17m')
+      expect(light).toContain(';2;90;179;110m')
+    }
   })
 
   it('keeps Cyborg blue and red lights and Spectre red eyes', () => {

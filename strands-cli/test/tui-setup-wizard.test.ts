@@ -1057,8 +1057,8 @@ describe('setup theme', () => {
     const openThemePicker = vi.fn()
     const setupRows = wizardSettingsRows(DEFAULT_CHAT_SETTINGS, update, openThemePicker, 'all')
     const regularRows = settingsRows(DEFAULT_CHAT_SETTINGS)
-    const theme = setupRows[1]!
-    const regularTheme = regularRows[1]!.control
+    const theme = setupRows[0]!
+    const regularTheme = regularRows[0]!.control
 
     expect(setupRows.map(({ label }) => label)).toEqual(regularRows.map(({ label }) => label))
     expect(regularTheme?.kind).toBe('segmented')
@@ -1096,7 +1096,7 @@ describe('setup theme', () => {
       await instance.waitUntilRenderFlush()
       await press('\u0013')
       await vi.waitFor(() => expect(frame).toContain('Auto-Discovery'))
-      expect(frame).toContain('Color mode')
+      expect(frame).not.toContain('Color mode')
       expect(frame).toContain('Transcript spacing')
       expect(frame).not.toContain('Presentation')
       await press('\t')
@@ -1144,15 +1144,16 @@ describe('setup theme', () => {
       await press('\r')
       await vi.waitFor(() => expect(frame).toContain('Custom'))
       const themeLines = frame.split('\n')
-      const colorModeLine = themeLines.find((line) => /Auto.*Light.*Dark/u.test(line))
       const firstThemeLine = themeLines.find((line) => line.includes('Classic'))
       expect(firstThemeLine).toMatch(/Classic.*Minimal.*Homeland/u)
       expect(themeLines.find((line) => line.includes('Merlin'))).toMatch(/Merlin.*Kikker.*Cyborg/u)
       expect(themeLines.find((line) => line.includes('Spectre'))).toMatch(/Spectre.*Custom/u)
-      expect(colorModeLine).toBeDefined()
       expect(themeLines.every((line) => stringWidth(line) <= 120)).toBe(true)
-      await press('\u001b[B')
-      await press('\u001b[D')
+      const customRow = themeLines.findIndex((line) => line.includes('Custom'))
+      const customColumn = stringWidth(themeLines[customRow]!.slice(0, themeLines[customRow]!.indexOf('Custom'))) + 1
+      await press(mouseInputSequence(0, customColumn, customRow + 1, 'M'))
+      await press(mouseInputSequence(3, customColumn, customRow + 1, 'm'))
+      await vi.waitFor(() => expect(frame).toContain('Customize theme'))
       await press('\t')
       await press('\t')
       await press('\t')

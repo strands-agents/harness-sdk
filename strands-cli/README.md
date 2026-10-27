@@ -210,11 +210,11 @@ models on `bedrock-mantle`, Anthropic). On a model without native search the Too
 
 ## Appearance
 
-`/settings` offers **Auto**, **Light**, and **Dark** color modes. Auto uses the terminal's
-`COLORFGBG` background hint when available and otherwise defaults to dark.
+The CLI observes the terminal's reported background color and automatically uses a matching
+high-contrast palette, defaulting to a dark background when unavailable.
 Choose **Theme** to preview Classic, Minimal, Homeland, Merlin, Kikker, Cyborg, Spectre,
 or Custom. Arrow keys and clicks preview; Enter applies; Esc cancels.
-Custom supports separate light and dark colors, a base theme, and per-variant reset.
+Custom lets you choose accent and frog colors over a base theme.
 Saved Magma selections migrate to Classic.
 The welcome banner shrinks with the terminal, keeping the composer visible.
 `/settings` also links to `/setup` for providers and the default agent.
