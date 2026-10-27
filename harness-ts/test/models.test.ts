@@ -538,6 +538,13 @@ describe('resolveModel', () => {
     expect(model.getConfig().cacheConfig).toBeUndefined()
   })
 
+  it.each([true, false])('configures OpenAI caching=%s without changing reasoning or search', async (caching) => {
+    const model = await resolve('openai/gpt-5.6-sol', 'high', true, caching)
+    const config = model.getConfig()
+    expect(config.cacheConfig).toEqual(caching ? { strategy: 'auto' } : undefined)
+    expect(config.params).toEqual({ reasoning: { effort: 'high' }, tools: [{ type: 'web_search' }] })
+  })
+
   it('warns instead of throwing when caching is explicitly requested on a Model instance', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })

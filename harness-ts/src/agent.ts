@@ -138,9 +138,9 @@ export interface HarnessAgentOptions extends Omit<
    */
   backgroundTasks?: boolean | BackgroundTasksConfig
   /**
-   * Enables prompt caching to save cost and latency where the provider supports it (Bedrock and
-   * Anthropic direct set cache points and cached tools; OpenAI, Google, and bedrock-mantle cache
-   * automatically server-side). Defaults to on. `false`/`null` turns off what the harness configures, and
+   * Enables prompt caching to save cost and latency where the provider supports it. Bedrock,
+   * Anthropic direct, and OpenAI receive SDK cache config; Google and bedrock-mantle cache
+   * automatically server-side. Defaults to on. `false`/`null` turns off what the harness configures, and
    * has no effect where caching is automatic. On a pre-built `Model`/`ModelRouter` the option is
    * not applied; the harness warns once and passes the instance through — configure caching on the
    * instance.

@@ -1,8 +1,8 @@
 """Shared prompt-caching translation for OpenAI model providers.
 
 OpenAI caches prompt prefixes automatically server-side and routes reads on a caller-supplied
-``prompt_cache_key``. It exposes no cache-point placement knobs, so of ``CacheConfig`` only
-``cache_key`` (and, when it already names a valid retention literal, ``ttl``) maps onto the request.
+``prompt_cache_key``. This helper maps routing and retention settings; the Responses provider
+also places explicit message checkpoints on models that support them.
 """
 
 import warnings
@@ -15,8 +15,8 @@ from .model import CacheConfig
 # OpenAI's prompt_cache_retention accepts only these literals. ttl maps through only on an exact
 # match - the SDK never guesses a conversion from an arbitrary duration string.
 #
-# prompt_cache_retention is deprecated in openai 2.54.0 in favor of prompt_cache_options.ttl, whose only
-# accepted value today is "30m" - so "24h"/"in_memory" remain expressible only through this field.
+# Legacy retention literals remain supported here. New Responses TTLs can be passed through
+# native params.prompt_cache_options.ttl without changing existing CacheConfig behavior.
 _RETENTION_LITERALS = frozenset({"in_memory", "24h"})
 
 
@@ -36,7 +36,11 @@ def _resolve_cache_key(cache_config: CacheConfig, agent_metadata: AgentMetadata 
 
 
 def apply_cache_config(
-    request: dict[str, Any], cache_config: CacheConfig | None, agent_metadata: AgentMetadata | None = None
+    request: dict[str, Any],
+    cache_config: CacheConfig | None,
+    agent_metadata: AgentMetadata | None = None,
+    *,
+    supports_message_caching: bool = False,
 ) -> None:
     """Map a ``CacheConfig`` onto an OpenAI request in place.
 
@@ -54,6 +58,7 @@ def apply_cache_config(
         request: The request dict being assembled; mutated in place.
         cache_config: The provider's configured cache settings, if any.
         agent_metadata: The invoking agent's metadata, used to derive a routing key when one is unset.
+        supports_message_caching: Whether the caller implements the message-checkpoint opt-out.
     """
     if cache_config is None:
         return
@@ -72,4 +77,8 @@ def apply_cache_config(
                 stacklevel=4,
             )
 
-    warn_on_cache_config_not_supported(cache_config, "OpenAI", supported={"cache_key", "ttl"})
+    supported = {"cache_key", "ttl"}
+    if supports_message_caching:
+        # strategy gates message checkpoints: only "auto" places them.
+        supported.update({"messages_ttl", "strategy"})
+    warn_on_cache_config_not_supported(cache_config, "OpenAI", supported=supported)

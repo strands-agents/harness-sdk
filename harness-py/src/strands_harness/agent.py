@@ -330,9 +330,9 @@ def create_harness(
             compatible tool. The invocation waits for completion and continues with the result.
             Pass ``False`` to disable Background Tasks, or provide a policy to control other tools,
             concurrency, completion, and timeouts.
-        caching: Enables prompt caching to save cost and latency where the provider supports it
-            (Bedrock and Anthropic direct set cache points and cached tools; OpenAI, Gemini, and
-            bedrock-mantle cache automatically server-side). Defaults to on. ``False``/``None`` turns
+        caching: Enables prompt caching to save cost and latency where the provider supports it.
+            Bedrock, Anthropic direct, and OpenAI receive SDK cache config; Gemini and bedrock-mantle
+            cache automatically server-side. Defaults to on. ``False``/``None`` turns
             off what the harness configures, and has no effect where caching is automatic. Explicitly
             enabling caching (``"auto"`` or ``True``) on a provider without it raises; on a pre-built
             ``Model`` instance it is ignored with a warning (configure it on the instance). Any other

@@ -33,6 +33,11 @@ import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
+import {
+  cacheResponsesMessages,
+  formatCacheableResponsesMessages,
+  supportsResponsesCheckpoints,
+} from './responses-cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
@@ -59,7 +64,10 @@ export function formatResponsesRequest(
   options: StreamOptions | undefined,
   stateful: boolean
 ): ResponseCreateParamsStreaming {
-  const input = formatResponsesMessages(messages)
+  const cacheMessages = cacheResponsesMessages(config.modelId ?? DEFAULT_RESPONSES_MODEL_ID, config.cacheConfig)
+  const { input, hasCheckpoints } = cacheMessages
+    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks ?? 0, formatResponsesMessages)
+    : { input: formatResponsesMessages(messages), hasCheckpoints: false }
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -126,7 +134,20 @@ export function formatResponsesRequest(
   if (config.maxTokens !== undefined) request.max_output_tokens = config.maxTokens
   if (config.topP !== undefined) request.top_p = config.topP
 
-  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
+  if (cacheMessages && (hasCheckpoints || (options?.dynamicTrailingBlocks ?? 0) > 0)) {
+    // Explicit mode keeps the temporary suffix out of the cache. Without a durable checkpoint or a
+    // temporary suffix, leave the implicit breakpoint so the request still caches. Caller-supplied
+    // mode, TTL and diagnostics take precedence.
+    const nativeCacheOptions = config.params?.prompt_cache_options as Record<string, unknown> | undefined
+    Object.assign(request, { prompt_cache_options: { mode: 'explicit', ...nativeCacheOptions } })
+  }
+
+  applyCacheConfig(
+    request,
+    config.cacheConfig,
+    options?.agentMetadata,
+    supportsResponsesCheckpoints(request.model ?? DEFAULT_RESPONSES_MODEL_ID)
+  )
 
   return request
 }
