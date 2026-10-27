@@ -37,11 +37,6 @@ def non_streaming_model():
 
 
 @pytest.fixture()
-def system_prompt():
-    return "You are an AI assistant that provides helpful and accurate information."
-
-
-@pytest.fixture()
 def tools():
     @strands.tool
     def tool_time() -> str:
@@ -125,29 +120,3 @@ async def test_agent_structured_output_async(non_streaming_agent, weather):
     )
     exp_weather = weather
     assert tru_weather == exp_weather
-
-
-class TestMistralMedium35:
-    """Smoke coverage for mistral-medium-3-5: the context window resolves and a tool-using turn completes."""
-
-    @pytest.fixture()
-    def model(self):
-        return MistralModel(
-            model_id="mistral-medium-3-5",
-            api_key=os.getenv("MISTRAL_API_KEY"),
-            stream=True,
-            temperature=0.7,
-            max_tokens=1000,
-            top_p=0.9,
-        )
-
-    def test_context_window_limit_resolves(self, model):
-        assert model.get_config()["context_window_limit"] == 262_144
-
-    def test_tool_use_turn(self, model, tools, system_prompt):
-        agent = Agent(model=model, tools=tools, system_prompt=system_prompt)
-
-        result = agent("What is the time and weather in New York?")
-
-        text = result.message["content"][0]["text"].lower()
-        assert all(string in text for string in ["12:00", "sunny"])

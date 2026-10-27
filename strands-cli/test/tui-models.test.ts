@@ -11,6 +11,7 @@ import {
   profileEffort,
   resolveModelTarget,
   effortDisplayLabel,
+  effortOptions,
   validateModelSelection,
   type EffortInput,
 } from '../src/tui/model/selection.js'
@@ -255,6 +256,15 @@ describe('AgentModelRuntime thinking controls', () => {
         .listEfforts()
         .map((option) => option.id)
     ).toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  })
+
+  it.each([
+    ['google/gemini-4-argon', ['low', 'medium', 'high']],
+    ['google/gemini-3.6-flash', ['minimal', 'low', 'medium', 'high']],
+    ['google/gemini-3.1-flash-lite-image', ['minimal', 'high']],
+    ['bedrock-mantle/google.gemma-4-31b', ['none', 'high']],
+  ])('offers the per-model effort levels the harness accepts for %s', (modelId, expected) => {
+    expect(effortOptions(modelId, 'auto').map((option) => option.id)).toEqual(expected)
   })
 
   it('offers the xAI Grok effort levels accepted by the Bedrock resolver', () => {

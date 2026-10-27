@@ -97,7 +97,20 @@ _BEDROCK_GPT_OSS_LEVELS = ("low", "medium", "high")
 _BEDROCK_QWEN_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
 _BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
-_GOOGLE_LEVELS = ("minimal", "low", "medium", "high")
+_GOOGLE_LEVELS = ("low", "medium", "high")
+_GOOGLE_MINIMAL_LEVELS = ("minimal", "low", "medium", "high")
+# Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
+# Gemma 4 on Mantle only reasons at ``high``.
+_MODEL_LEVELS = {
+    "google": (
+        ("gemini-3.1-flash-lite-image", ("minimal", "high")),
+        ("gemini-3.6-flash", _GOOGLE_MINIMAL_LEVELS),
+        ("gemini-3.5-flash", _GOOGLE_MINIMAL_LEVELS),
+        ("gemini-3-flash-preview", _GOOGLE_MINIMAL_LEVELS),
+        ("gemini-robotics-er-2-preview", _GOOGLE_MINIMAL_LEVELS),
+    ),
+    "bedrock-mantle": (("google.gemma-4-", ("none", "high")),),
+}
 
 _ADAPTIVE_THINKING_SINCE = {"opus": (4, 6), "sonnet": (4, 6), "haiku": (5, 5)}
 _EXTENDED_THINKING_SINCE = {"opus": (4, 5), "sonnet": (4, 5), "haiku": (4, 5)}
@@ -328,11 +341,16 @@ def _check_effort(effort: object) -> None:
     raise ValueError(f"Unknown effort {effort!r}. Choose one of: {', '.join(EFFORT_LEVELS)}.")
 
 
+def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    rows = _MODEL_LEVELS.get(provider_name, ())
+    return next((levels for prefix, levels in rows if model_id.startswith(prefix)), default)
+
+
 def _effort(
     effort: Effort,
     recommended: str | None,
     levels: tuple[str, ...],
-    subject: str = "this provider",
+    subject: str,
 ) -> str | None:
     """Map ``effort`` onto the provider's ``levels``; ``"off"`` is ``None`` where the provider has no ``none``."""
     _check_effort(effort)
@@ -481,11 +499,14 @@ def resolve_model(
         )
     levels = provider.thinking_levels
     recommended = provider.recommended_thinking
-    subject = "this provider"
     if provider_name == "anthropic" and _claude_thinking_mode(name) is None:
-        levels, recommended, subject = (), None, f"model {name}"
+        levels, recommended = (), None
+    else:
+        levels = _model_levels(provider_name, name, levels)
     level = (
-        _bedrock_effort(name, effort) if provider_name == "bedrock" else _effort(effort, recommended, levels, subject)
+        _bedrock_effort(name, effort)
+        if provider_name == "bedrock"
+        else _effort(effort, recommended, levels, f"model {name}")
     )
     native_search = web_search and _has_web_search(provider_name, name)
     return provider.build(name, level, native_search, caching and provider.caching and not unsupported_caching)

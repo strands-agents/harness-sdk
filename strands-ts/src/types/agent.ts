@@ -143,8 +143,9 @@ export interface InvokeOptions {
   /**
    * Limits for the whole request this `invoke()` / `stream()` call starts. They
    * apply to this agent's loop and to every nested call: agents passed as tools,
-   * and any Graph or Swarm you pass the request's `invocationContext` to (Graph and
-   * Swarm have no `limits` option of their own). An agent run by a hand-written
+   * and any Graph or Swarm you pass the request's `invocationContext` to. A Graph
+   * or Swarm can also start a limited request itself through
+   * {@link MultiAgentInvokeOptions.limits}. An agent run by a hand-written
    * tool joins only when the tool forwards {@link ToolContext.invocationContext} as
    * {@link InvokeOptions.invocationContext}; otherwise it runs standalone under its
    * own limits. A nested call can also set its own `limits`: it stops at

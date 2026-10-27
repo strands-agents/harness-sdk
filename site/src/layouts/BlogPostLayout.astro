@@ -150,6 +150,22 @@ const extraHead: HeadEntry[] = [
     transform-origin: left;
   }
 
+  @media (max-width: 49.9375rem), (max-height: 31rem) {
+    .reading-progress {
+      transition: top 0.2s ease;
+    }
+
+    :global(html[data-header-hidden]) .reading-progress {
+      top: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reading-progress {
+      transition: none;
+    }
+  }
+
   :global(html[data-embed]) .reading-progress {
     display: none;
   }

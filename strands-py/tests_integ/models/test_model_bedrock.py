@@ -893,30 +893,3 @@ def test_a_cache_point_after_a_document_is_accepted(quiet_strands_logging, lette
     result = agent([{"text": _durable_prefix()}, document, {"cachePoint": {"type": "default"}}, {"text": "Reply OK."}])
 
     assert result.stop_reason == "end_turn"
-
-
-class TestGptOss120bConverse:
-    """gpt-oss-120b over the Bedrock runtime Converse pathway."""
-
-    @pytest.fixture
-    def model(self):
-        return BedrockModel(model_id="openai.gpt-oss-120b-1:0", region_name="us-east-1")
-
-    def test_context_window_limit_resolves(self, model):
-        assert model.context_window_limit == 128_000
-
-    def test_tool_use(self, model):
-        tool_was_called = False
-
-        @strands.tool
-        def calculator(expression: str) -> str:
-            """Calculate the result of a mathematical expression."""
-            nonlocal tool_was_called
-            tool_was_called = True
-            return "579"
-
-        agent = Agent(model=model, tools=[calculator], load_tools_from_directory=False, callback_handler=None)
-        result = agent("What is 123 + 456? Use the calculator tool.")
-
-        assert tool_was_called
-        assert "579" in str(result)

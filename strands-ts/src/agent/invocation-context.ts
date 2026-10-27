@@ -1,4 +1,4 @@
-import type { InvokeLimits } from '../types/agent.js'
+import { LIMITS_KEYS, type InvokeLimits } from '../types/agent.js'
 import type { StopReason } from '../types/messages.js'
 import { accumulateUsage, createEmptyUsage, type Usage } from '../models/streaming.js'
 
@@ -77,6 +77,52 @@ export class InvocationContextImpl implements InvocationContext {
   recordTurn(): void {
     this.usage.turnsTaken += 1
     this.limitingParent?.recordTurn()
+  }
+}
+
+/**
+ * Joins the request given in `options.invocationContext`, or starts a new request
+ * with the call's limits. A nested call that sets its own `limits` gets child
+ * state, bound by both its own limits and the request's.
+ *
+ * @param options - The call's options, if any
+ * @returns The state of the request to run the call in
+ * @throws TypeError if `options.limits` is invalid, or the handle was not created by the SDK
+ * @internal
+ */
+export function resolveInvocationContext(
+  options: { invocationContext?: InvocationContext; limits?: InvokeLimits } | undefined
+): InvocationContextImpl {
+  validateLimits(options?.limits)
+  const inherited = unwrapInvocationContext(options?.invocationContext)
+  if (!inherited) return new InvocationContextImpl(options?.limits)
+  return options?.limits === undefined ? inherited : new InvocationContextImpl(options.limits, inherited)
+}
+
+/**
+ * Validates limits so bad input fails fast instead of being silently ignored
+ * (`NaN`, `Infinity`) or stopping the call at once (zero, negative). Each limit,
+ * when set, must be a positive finite number; fractional values are allowed. An
+ * unrecognized key throws, since a mistyped limit name would otherwise apply no
+ * limit at all.
+ */
+function validateLimits(limits: InvokeLimits | undefined): void {
+  if (!limits) return
+  const recognizedKeys = new Set<string>(LIMITS_KEYS)
+  const unrecognizedKeys = Object.keys(limits)
+    .filter((key) => !recognizedKeys.has(key))
+    .sort()
+  if (unrecognizedKeys.length > 0) {
+    throw new TypeError(
+      `limits keys [${unrecognizedKeys.join(', ')}] are not recognized limits, ` +
+        `expected one of ${LIMITS_KEYS.map((key) => `'${key}'`).join(', ')}`
+    )
+  }
+  for (const key of LIMITS_KEYS) {
+    const value = limits[key]
+    if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+      throw new TypeError(`limits.${key} must be a positive finite number, got ${value}`)
+    }
   }
 }
 

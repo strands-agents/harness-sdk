@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from .._async import run_async
 from ..agent import AgentResult
@@ -19,6 +19,9 @@ from ..interrupt import Interrupt
 from ..types.event_loop import Metrics, Usage
 from ..types.multiagent import MultiAgentInput
 from ..types.traces import AttributeValue
+
+if TYPE_CHECKING:
+    from ..agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +146,12 @@ class NodeResult:
 
 @dataclass
 class MultiAgentResult:
-    """Result from multi-agent execution with accumulated metrics."""
+    """Result from multi-agent execution with accumulated metrics.
+
+    Attributes:
+        invocation_context: The request this run belonged to; its ``usage`` covers the whole request,
+            including nodes and any enclosing call.
+    """
 
     status: Status = Status.PENDING
     results: dict[str, NodeResult] = field(default_factory=lambda: {})
@@ -152,6 +160,7 @@ class MultiAgentResult:
     execution_count: int = 0
     execution_time: int = 0
     interrupts: list[Interrupt] = field(default_factory=list)
+    invocation_context: "InvocationContext | None" = field(default=None, repr=False, compare=False)
 
     def __str__(self) -> str:
         """Return a human-readable string representation of the multi-agent result.

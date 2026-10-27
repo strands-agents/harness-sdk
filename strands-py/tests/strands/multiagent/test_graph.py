@@ -2629,7 +2629,7 @@ def test_graph_interrupt_on_agent(agenerator):
 
     assert len(multiagent_result.results) == 1
 
-    agent.stream_async.assert_called_once_with(responses, invocation_state={})
+    agent.stream_async.assert_called_once_with(responses, invocation_state={}, invocation_context=ANY)
 
 
 def test_graph_interrupt_on_multiagent(agenerator):
@@ -2723,7 +2723,7 @@ def test_graph_interrupt_on_multiagent(agenerator):
 
     assert len(multiagent_result.results) == 1
 
-    multiagent.stream_async.assert_called_once_with(responses, {})
+    multiagent.stream_async.assert_called_once_with(responses, {}, invocation_context=ANY)
 
 
 @pytest.mark.asyncio

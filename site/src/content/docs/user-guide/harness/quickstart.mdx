@@ -8,15 +8,47 @@ sidebar:
   label: "Quickstart"
 ---
 
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
 Strands harness is a state-of-the-art, fully assembled agent harness. You can get started in a few
 different ways:
 
-- **[Set up with your coding agent](#set-up-with-your-coding-agent)** — paste a prompt into
+- **[Set up with your coding agent](#set-up-with-your-coding-agent)**: paste a prompt into
   Codex, Claude Code, or Kiro and let it guide you through the setup.
-- **[Build an agent with the CLI](#build-an-agent-with-the-cli)** — connect a model provider in
+- **[Build an agent with the CLI](#build-an-agent-with-the-cli)**: connect a model provider in
   the terminal and start chatting, then export to Python or TypeScript when you're ready.
-- **[Use it as a library](#use-it-as-a-library)** — install the Python or TypeScript package
+- **[Use it as a library](#use-it-as-a-library)**: install the Python or TypeScript package
   and write a few lines yourself.
+
+Building with another Strands project? Each one has its own starting point.
+
+<CardGrid>
+<LinkCard
+  title="Strands Harness SDK quickstart"
+  description="Build an agent harness from the ground up in Python or TypeScript."
+  href="../../sdk/quickstart/overview/"
+/>
+<LinkCard
+  title="Strands Box quickstart"
+  description="Put an agent in a sandbox on macOS, watch it refuse a write, and add a permit."
+  href="../../box/quickstart/"
+/>
+<LinkCard
+  title="Strands Shell quickstart"
+  description="Install Strands Shell and run your first sandboxed command."
+  href="../../shell/quickstart/"
+/>
+<LinkCard
+  title="Strands Evals quickstart"
+  description="Score an agent with a built-in evaluator and read the results."
+  href="../../evals-sdk/quickstart/"
+/>
+<LinkCard
+  title="Strands Labs"
+  description="Explore experimental projects for robotics, world models, benchmarks, and more."
+  href="../../../labs/"
+/>
+</CardGrid>
 
 ## Set up with your coding agent
 
@@ -76,10 +108,10 @@ first agent in a few lines. The source lives on GitHub:
 
 <Tabs>
   <Tab label="Python">
-    [`harness-py`](https://github.com/strands-agents/harness-sdk/tree/main/harness-py) — the Python package.
+    [`harness-py`](https://github.com/strands-agents/harness-sdk/tree/main/harness-py)
   </Tab>
   <Tab label="TypeScript">
-    [`harness-ts`](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts) — the TypeScript package.
+    [`harness-ts`](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts)
   </Tab>
 </Tabs>
 
@@ -275,7 +307,7 @@ the same conversation:
 
 See [persist sessions](../configure/sessions/) for how session
 storage works and how it differs from long-term memory. The CLI persists sessions the same
-way — resume one with `strands --session-id api-design`.
+way: resume one with `strands --session-id api-design`.
 
 ## The agent you get
 

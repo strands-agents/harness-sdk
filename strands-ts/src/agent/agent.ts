@@ -5,7 +5,6 @@ import {
   type InvokableAgent,
   type InvokeArgs,
   type InvokeOptions,
-  LIMITS_KEYS,
   type LocalAgent,
   type localAgentSymbol,
 } from '../types/agent.js'
@@ -29,14 +28,14 @@ import { McpClient } from '../mcp/index.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
-import { normalizeError, ConcurrentInvocationError, StructuredOutputError } from '../errors.js'
+import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
 import { ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import { ModelPlugin } from '../plugins/model-plugin.js'
 import { totalPromptTokens, isModelStreamEvent } from '../models/streaming.js'
-import { InvocationContextImpl, reachedLimit, unwrapInvocationContext } from './invocation-context.js'
+import { InvocationContextImpl, reachedLimit, resolveInvocationContext } from './invocation-context.js'
 import { ToolRegistry } from '../registry/tool-registry.js'
 import { StateStore } from '../state-store.js'
 import { serializeStateSerializable, loadStateSerializable } from '../types/serializable.js'
@@ -926,34 +925,6 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Validates {@link InvokeOptions.limits} so bad input fails fast instead of
-   * being silently ignored (`NaN`, `Infinity`) or stopping the call at once
-   * (zero, negative). Each limit, when set, must be a positive finite number;
-   * fractional values are allowed. An unrecognized key throws, since a mistyped
-   * limit name would otherwise apply no limit at all.
-   */
-  private _validateLimits(options: InvokeOptions | undefined): void {
-    if (!options?.limits) return
-    const { limits } = options
-    const recognizedKeys = new Set<string>(LIMITS_KEYS)
-    const unrecognizedKeys = Object.keys(limits)
-      .filter((key) => !recognizedKeys.has(key))
-      .sort()
-    if (unrecognizedKeys.length > 0) {
-      throw new TypeError(
-        `limits keys [${unrecognizedKeys.join(', ')}] are not recognized limits, ` +
-          `expected one of ${LIMITS_KEYS.map((key) => `'${key}'`).join(', ')}`
-      )
-    }
-    for (const key of LIMITS_KEYS) {
-      const value = limits[key]
-      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
-        throw new TypeError(`limits.${key} must be a positive finite number, got ${value}`)
-      }
-    }
-  }
-
-  /**
    * Builds the {@link AgentResult} for a call that stopped because a limit was
    * reached. When the request had already reached a limit before this call
    * appended anything, `lastMessage` is an empty assistant message rather than
@@ -997,20 +968,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (limitStopReason === undefined) return true
     logger.debug(`limit=<${limitStopReason}> | ignoring resume because the request reached its limit`)
     return false
-  }
-
-  /**
-   * Joins the request given in `options.invocationContext`, or starts a new request
-   * with this call's limits. A nested call that sets its own `limits` gets child
-   * state, bound by both its own limits and the request's.
-   *
-   * @param options - The per-invocation options, if any
-   * @returns The state of the request to run this call in
-   */
-  private _resolveInvocationContext(options: InvokeOptions | undefined): InvocationContextImpl {
-    const inherited = unwrapInvocationContext(options?.invocationContext)
-    if (!inherited) return new InvocationContextImpl(options?.limits)
-    return options?.limits === undefined ? inherited : new InvocationContextImpl(options.limits, inherited)
   }
 
   /**
@@ -1258,8 +1215,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       const invocationState: InvocationState = options?.invocationState ?? {}
       const resolvedOptions: InvokeOptions = options?.invocationState ? options : { ...options, invocationState }
 
-      this._validateLimits(options)
-      const invocationContext = this._resolveInvocationContext(options)
+      const invocationContext = resolveInvocationContext(options)
 
       let currentArgs: InvokeArgs = args
 
@@ -1770,23 +1726,27 @@ export class Agent implements LocalAgent, InvokableAgent {
             assistantMessage = pendingExecution.assistantMessage
             completedToolResults = pendingExecution.completedToolResults
           } else {
-            const modelResult = yield* this._invokeModel(invocationState, invocationContext, structuredOutputChoice)
+            const modelResult = yield* this._invokeModel(
+              invocationState,
+              invocationContext,
+              structuredOutputChoice,
+              structuredOutputChoice && structuredOutputSchema
+            )
 
             if (modelResult.stopReason !== 'toolUse') {
-              // Schema set, we already forced, and the model still refused.
-              // Throw before closing the span so the cycle span records the error.
-              if (structuredOutputTool && structuredOutputChoice) {
-                throw new StructuredOutputError(
-                  'The model failed to invoke the structured output tool even after it was forced.'
-                )
-              }
+              // Validate before closing the span so the cycle span records a failure.
+              const structuredOutput = this._structuredOutputFromText(
+                modelResult.message,
+                structuredOutputTool,
+                structuredOutputChoice
+              )
 
               closeCycle()
 
               // Schema set, model ignored the tool — drop the response and force the tool next cycle.
               // Appending the plain-text turn here would leave the conversation ending on an
               // assistant message, which providers like Bedrock reject as assistant prefill.
-              if (structuredOutputTool) {
+              if (structuredOutputTool && !structuredOutputChoice) {
                 structuredOutputChoice = { tool: { name: STRUCTURED_OUTPUT_TOOL_NAME } }
                 logger.debug(
                   'structured output schema set but model responded with plain text; forcing tool use on next cycle'
@@ -1794,13 +1754,14 @@ export class Agent implements LocalAgent, InvokableAgent {
                 continue
               }
 
-              // Normal end of turn.
+              // Normal end of turn, carrying any structured output the retry returned as text.
               yield this._appendMessage(modelResult.message, invocationState, invocationContext)
               result = new AgentResult({
                 invocationContext,
                 stopReason: modelResult.stopReason,
                 lastMessage: modelResult.message,
                 traces: this._tracer.localTraces,
+                ...(structuredOutput !== undefined && { structuredOutput }),
                 metrics: this._meter.metrics,
                 invocationState,
               })
@@ -2042,6 +2003,25 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Validates the text that ended the structured output retry, which may be JSON when the provider could not force
+   * the tool.
+   *
+   * @param message - The assistant message that ended the turn without a tool call
+   * @param structuredOutputTool - The structured output tool, if a schema is set
+   * @param structuredOutputChoice - The tool choice the turn was forced with, if it was the retry
+   * @returns The validated structured output, or undefined if the turn was not the structured output retry
+   * @throws StructuredOutputError if the retry produced no valid structured output
+   */
+  private _structuredOutputFromText(
+    message: Message,
+    structuredOutputTool: StructuredOutputTool | undefined,
+    structuredOutputChoice: ToolChoice | undefined
+  ): JSONValue | undefined {
+    if (!structuredOutputTool || !structuredOutputChoice) return undefined
+    return structuredOutputTool.resultFromText(message)
+  }
+
+  /**
    * Extracts the validated structured output result from tool execution.
    *
    * @param toolUseMessage - The assistant message containing tool use blocks
@@ -2156,6 +2136,16 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @returns Array of messages to append to the conversation
    */
   private _normalizeInput(args?: InvokeArgs): Message[] {
+    const messages = this._messagesFromInput(args)
+    for (const message of messages) {
+      if (message.role === 'user' && message.content.every(isBlankTextBlock)) {
+        throw new TypeError('Input prompt is blank. Provide non-blank text or at least one non-text content block.')
+      }
+    }
+    return messages
+  }
+
+  private _messagesFromInput(args?: InvokeArgs): Message[] {
     if (args !== undefined) {
       if (typeof args === 'string') {
         // String input: wrap in TextBlock and create user Message
@@ -2214,12 +2204,14 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * @param args - Optional arguments for invoking the model
    * @param toolChoice - Optional tool choice to force specific tool usage
+   * @param structuredOutputSchema - Schema the call must produce, passed on the structured output retry
    * @returns Object containing the assistant message, stop reason, and optional redaction message
    */
   private async *_invokeModel(
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl,
-    toolChoice?: ToolChoice
+    toolChoice?: ToolChoice,
+    structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
     const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
@@ -2315,7 +2307,8 @@ export class Agent implements LocalAgent, InvokableAgent {
           selectedModel,
           invokedModelRef,
           toolChoice,
-          projectedInputTokens
+          projectedInputTokens,
+          structuredOutputSchema
         )
         const routedModel = this._modelRouter?.getRoutedModel(this, invocationState) ?? selectedModel
         const model = invokedModelRef.model ?? selectedModel
@@ -2405,6 +2398,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param selectedModel - Model the chain starts with; middleware may replace it
    * @param invokedModelRef - Slot filled with the model the terminal actually invoked
    * @param toolChoice - Optional tool choice to force specific tool usage
+   * @param projectedInputTokens - Estimated input token count for this call
+   * @param structuredOutputSchema - Schema the call must produce, passed on the structured output retry
    * @returns StreamAggregatedResult from the model (or middleware short-circuit)
    */
   private async *_invokeModelWithMiddleware(
@@ -2413,7 +2408,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     selectedModel: Model,
     invokedModelRef: InvokedModelRef,
     toolChoice?: ToolChoice,
-    projectedInputTokens?: number
+    projectedInputTokens?: number,
+    structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     const context: InvokeModelContext = {
       agent: this,
@@ -2424,6 +2420,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),
+      ...(structuredOutputSchema !== undefined && { structuredOutputSchema }),
       invocationContext,
     }
 
@@ -2462,6 +2459,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             // Omitted when zero, so an ordinary call's options are unchanged.
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
             ...(self.sessionManager ? { agentMetadata: { sessionId: self.sessionId } } : {}),
+            ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -2845,6 +2843,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     const lastMessage = this.messages[this.messages.length - 1]
     return lastMessage?.role === 'user'
   }
+}
+
+/**
+ * Most providers reject a user turn with no content, and once it is in history every later call fails too.
+ */
+function isBlankTextBlock(block: ContentBlock): boolean {
+  return block.type === 'textBlock' && block.text.trim() === ''
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'

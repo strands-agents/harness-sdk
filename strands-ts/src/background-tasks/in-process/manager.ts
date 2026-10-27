@@ -239,6 +239,7 @@ export class InProcessTaskManager implements BackgroundTaskManager {
 function toolTaskOutcome(resultBlock: ToolResultBlock): InProcessTaskExecutionOutcome {
   const result = resultBlock.toJSON().toolResult
   if (resultBlock.status === 'success') return { status: 'completed', result }
+  if (resultBlock.error?.name === 'AbortError') return { status: 'cancelled' }
   return {
     status: 'failed',
     failure: {

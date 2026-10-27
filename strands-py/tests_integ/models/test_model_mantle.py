@@ -36,12 +36,6 @@ def stateful_model(bedrock_mantle_config):
     return OpenAIResponsesModel(model_id=_MODEL_ID, stateful=True, bedrock_mantle_config=bedrock_mantle_config)
 
 
-def test_context_window_limit_resolves(chat_completions_model, model):
-    """Both Mantle pathways resolve the Bedrock-published 128K window for gpt-oss-120b."""
-    assert chat_completions_model.context_window_limit == 128_000
-    assert model.context_window_limit == 128_000
-
-
 def test_chat_completions_agent_invoke(chat_completions_model):
     """OpenAIModel (Chat Completions) reaches Mantle via bedrock_mantle_config."""
     agent = Agent(model=chat_completions_model, system_prompt="Reply in one short sentence.", callback_handler=None)

@@ -5,6 +5,7 @@ import {
   ConverseStreamCommand,
   CountTokensCommand,
   ValidationException,
+  type ConverseStreamCommandInput,
 } from '@aws-sdk/client-bedrock-runtime'
 import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
@@ -20,6 +21,9 @@ import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+import { z } from 'zod'
+import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
+import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
 
 /**
  * Helper function to mock BedrockRuntimeClient implementation with customizable config.
@@ -1484,6 +1488,177 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    describe('structured output enforcement', () => {
+      const forcedRejection = new ValidationException({
+        message:
+          "This model doesn't support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and try again.",
+        $metadata: {},
+      })
+      const nativeRejection = new ValidationException({
+        message: "This model doesn't support the outputConfig field. Remove outputConfig and try again.",
+        $metadata: {},
+      })
+      const thinking = { type: 'adaptive' }
+      const schema = z.object({ name: z.string(), age: z.number() })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Generate a person')] })]
+      const structuredOutputOptions: StreamOptions = {
+        toolSpecs: [
+          { name: 'strands_structured_output', description: 'Output', inputSchema: zodSchemaToJsonSchema(schema) },
+        ],
+        toolChoice: { tool: { name: 'strands_structured_output' } },
+        structuredOutputSchema: schema,
+      }
+      const emptyStream = (): { stream: AsyncIterable<unknown> } => ({
+        stream: (async function* (): AsyncGenerator<unknown> {})(),
+      })
+
+      const sentRequests = (
+        command: typeof ConverseStreamCommand | typeof ConverseCommand = ConverseStreamCommand
+      ): ConverseStreamCommandInput[] => vi.mocked(command).mock.calls.map((call) => call[0])
+
+      /** The structured output mechanism a sent Converse request uses. */
+      const mechanismOf = (request: ConverseStreamCommandInput): string => {
+        if (request.toolConfig?.toolChoice && 'tool' in request.toolConfig.toolChoice) return 'forced'
+        return request.outputConfig?.textFormat ? 'native' : 'auto'
+      }
+
+      /** Mocks send to reject with each error in turn, then return an empty response. */
+      const mockRejections = (...errors: Error[]): ReturnType<typeof vi.fn> => {
+        const mockSend = vi.fn()
+        for (const error of errors) mockSend.mockRejectedValueOnce(error)
+        mockSend.mockImplementation(async () => emptyStream())
+        mockBedrockClientImplementation({ send: mockSend })
+        return mockSend
+      }
+
+      beforeEach(() => {
+        clearStructuredOutputSupport()
+      })
+
+      it.each([
+        { name: 'no rejection', rejections: [], expected: ['forced'] },
+        { name: 'a forced tool choice rejection', rejections: [forcedRejection], expected: ['forced', 'native'] },
+        {
+          name: 'forced and native rejections',
+          rejections: [forcedRejection, nativeRejection],
+          expected: ['forced', 'native', 'auto'],
+        },
+      ])('falls back to the next mechanism after $name and remembers it', async ({ rejections, expected }) => {
+        mockRejections(...rejections)
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(expected)
+
+        vi.mocked(ConverseStreamCommand).mockClear()
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual([expected[expected.length - 1]])
+      })
+
+      it('falls back on a non-streaming request', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(forcedRejection)
+          .mockResolvedValue({
+            output: { message: { role: 'assistant', content: [{ text: '{"name": "John", "age": 30}' }] } },
+            stopReason: 'end_turn',
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', stream: false })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests(ConverseCommand).map(mechanismOf)).toStrictEqual(['forced', 'native'])
+      })
+
+      it('skips native output for a schema it cannot represent', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({ modelId: 'm1' })
+        const recordSchema = z.object({ scores: z.record(z.string(), z.number()) })
+
+        await collectIterator(
+          provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
+        )
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('surfaces an unrelated validation error without retrying', async () => {
+        const mockSend = mockRejections(new ValidationException({ message: 'Malformed input request', $metadata: {} }))
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await expect(collectIterator(provider.stream(messages, structuredOutputOptions))).rejects.toThrow(
+          'Malformed input request'
+        )
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('retries the next mechanism with drop_block when its replayed thinking is stale', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const bindingError = new ValidationException({
+          message:
+            'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.',
+          $metadata: {},
+        })
+        mockRejections(forcedRejection, bindingError)
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(
+          sentRequests().map((request) => [mechanismOf(request), request.additionalModelRequestFields])
+        ).toStrictEqual([
+          ['forced', undefined],
+          ['native', { thinking }],
+          [
+            'native',
+            {
+              thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+              anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+            },
+          ],
+        ])
+        warnSpy.mockRestore()
+      })
+
+      it.each([
+        { name: 'native', rejections: [forcedRejection] },
+        { name: 'auto', rejections: [forcedRejection, nativeRejection] },
+      ])('sends $name with auto tool choice, keeping the thinking config forcing strips', async ({ rejections }) => {
+        mockRejections(...rejections)
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        const request = sentRequests().at(-1)
+        expect(request?.toolConfig?.toolChoice).toStrictEqual({ auto: {} })
+        expect(request?.additionalModelRequestFields).toStrictEqual({ thinking })
+      })
+
+      it('sends native output with the converted schema, keeping other outputConfig settings', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({ modelId: 'm1', additionalArgs: { outputConfig: { effort: 'high' } } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().at(-1)?.outputConfig).toStrictEqual({
+          effort: 'high',
+          textFormat: {
+            type: 'json_schema',
+            structure: {
+              jsonSchema: {
+                schema: JSON.stringify(toNativeOutputSchema(zodSchemaToJsonSchema(schema))),
+                name: 'strands_structured_output',
+              },
+            },
+          },
+        })
+      })
+    })
+
     describe('stale thinking recovery', () => {
       const bindingError = new ValidationException({
         message:
