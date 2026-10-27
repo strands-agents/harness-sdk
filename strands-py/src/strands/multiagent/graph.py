@@ -803,8 +803,6 @@ class Graph(MultiAgentBase):
             ready_nodes = [self.nodes[node_id] for node_id in self._interrupt_state.context["completed_nodes"]]
             ready_nodes.extend(self.state.interrupted_nodes)
 
-            self.state.interrupted_nodes.clear()
-
         elif self._resume_from_session:
             ready_nodes = self._resume_next_nodes
 
@@ -821,6 +819,9 @@ class Graph(MultiAgentBase):
                 self.state.status = Status.FAILED
                 logger.debug("reason=<%s> | stopping execution", reason)
                 return  # Let the top-level exception handler deal with it
+
+            if self._interrupt_state.activated:
+                self.state.interrupted_nodes.clear()
 
             current_batch = ready_nodes.copy()
             ready_nodes.clear()
