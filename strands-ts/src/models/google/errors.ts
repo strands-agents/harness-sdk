@@ -4,6 +4,7 @@
  * @internal This module is not part of the public API.
  */
 
+import { ApiError } from '@google/genai'
 import { logger } from '../../logging/logger.js'
 
 /**
@@ -42,7 +43,7 @@ export const ERROR_STATUS_MAP: Record<string, ErrorStatusConfig> = {
 }
 
 /**
- * Classifies a Google GenAI API error based on status and message patterns.
+ * Classifies a Google GenAI API error based on HTTP code, status, and message patterns.
  * Returns the error type if recognized, undefined otherwise.
  *
  * @param error - The error to classify
@@ -51,6 +52,11 @@ export const ERROR_STATUS_MAP: Record<string, ErrorStatusConfig> = {
  * @internal
  */
 export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
+  // A non-JSON 429 body carries the reason phrase as its status, so classify on the HTTP code
+  if (error instanceof ApiError && error.status === 429) {
+    return 'throttling'
+  }
+
   if (!error.message) {
     return undefined
   }
