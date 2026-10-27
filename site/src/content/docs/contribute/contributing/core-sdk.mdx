@@ -53,14 +53,14 @@ git clone https://github.com/strands-agents/harness-sdk.git
 cd harness-sdk/strands-py
 ```
 
-We use [hatch](https://hatch.pypa.io/) for Python development. Hatch manages virtual environments, dependencies, testing, and formatting. Enter the virtual environment and install pre-commit hooks:
+We use [hatch](https://hatch.pypa.io/) for Python development. Hatch manages virtual environments, dependencies, testing, and formatting. Enter the virtual environment, then install the repository's git hooks from the repository root (this needs Node.js and npm):
 
 ```bash
 hatch shell
-pre-commit install -t pre-commit -t commit-msg
+(cd .. && npm ci)           # Install the Husky git hooks
 ```
 
-The pre-commit hooks run code formatters, linters, tests, and commit message validation before each commit.
+The pre-commit hook runs ruff lint and format checks on your staged files under `strands-py/` (this needs [uv](https://docs.astral.sh/uv/)), plus the TypeScript SDK checks. It doesn't run mypy or `hatch test`, so run `hatch run prepare` before you open a pull request.
 
 Verify your setup by running the tests:
 
@@ -139,7 +139,7 @@ After making your changes, submit them for review:
 5. **Submit a pull request** referencing the issue number in the description
 6. **Respond to feedback**: we review within a few days and may request changes
 
-The pre-commit hooks catch issues before you push, but you can also run checks manually.
+The pre-commit hook catches lint and format issues when you commit; the checks in step 3 cover the rest.
 
 ## Related guides
 
