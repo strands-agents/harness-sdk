@@ -25,7 +25,12 @@ describe('@strands-agents/harness/internal', () => {
       'resolveInterventions',
       'resolveBuiltinTools',
       'EFFORT_LEVELS',
+      'HARNESS_AGENT_CONFIG_KEYS',
+      'DEFAULT_BUILTIN_PLUGINS',
+      'DEFAULT_CONTEXT_MANAGER',
+      'DEFAULT_EFFORT',
       'DEFAULT_MEMORY_DIR',
+      'DEFAULT_MODEL',
       'DEFAULT_SKILLS_DIR',
     ]) {
       expect(root, name).not.toHaveProperty(name)

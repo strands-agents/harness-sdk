@@ -79,10 +79,11 @@ await createHarness({
 Resolution is asynchronous because model providers are loaded on demand. You only need the
 peer dependency for the provider you actually use.
 
-For a JSON-compatible definition, use `defineHarnessAgentConfig()` and pass the result through
-`harnessAgentOptionsFromConfig()`. Executable values such as custom tools, models, intervention
-handlers, sandboxes, and other live `AgentConfig` fields are represented by module references;
-malformed or wrong-language references fail instead of being ignored.
+For a JSON-compatible definition, pass it through `harnessAgentOptionsFromConfig()`, which validates
+it. Keys you omit stay unset, so `createHarness` applies its own defaults. Executable values such as
+custom tools, models, intervention handlers, sandboxes, and other live `AgentConfig` fields are
+represented by module references; malformed or wrong-language references fail instead of being
+ignored.
 
 > **Want a terminal command instead of code?** The [`strands` CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli)
 > wraps this same agent. Install it with `npm install -g @strands-agents/cli` for a `strands` command.
