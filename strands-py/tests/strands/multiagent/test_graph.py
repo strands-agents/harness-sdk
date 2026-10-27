@@ -2535,6 +2535,68 @@ def test_graph_interrupt_on_before_node_call_event(interrupt_hook):
     assert multiagent_result.execution_time >= first_execution_time
 
 
+def test_graph_interrupted_node_survives_execution_limit_hit_on_resume():
+    """A limit hit on the resume call keeps the interrupted node pending so a retry can run it.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/5341: the interrupted
+    node used to be cleared from state before the limit check, so a retry with a raised limit
+    reported COMPLETED without ever running the node.
+    """
+    write_agent = create_mock_agent("write", "Draft written")
+    review_agent = create_mock_agent("review", "Review approved")
+
+    class ApprovalHook(HookProvider):
+        def __init__(self):
+            self.decision = None
+
+        def register_hooks(self, registry):
+            registry.add_callback(BeforeNodeCallEvent, self.approve)
+
+        def approve(self, event):
+            if event.node_id == "review" and self.decision is None:
+                self.decision = event.interrupt("review-approval", reason="approve?")
+
+    approval_hook = ApprovalHook()
+    builder = GraphBuilder()
+    builder.add_node(write_agent, "write")
+    builder.add_node(review_agent, "review")
+    builder.add_edge("write", "review")
+    builder.set_entry_point("write")
+    builder.set_hook_providers([approval_hook])
+    graph = builder.build()
+
+    multiagent_result = graph("draft a post")
+    assert multiagent_result.status == Status.INTERRUPTED
+
+    # The write node's single execution already meets the limit.
+    graph.max_node_executions = 1
+    interrupt = multiagent_result.interrupts[0]
+    responses = [
+        {
+            "interruptResponse": {
+                "interruptId": interrupt.id,
+                "response": "approve",
+            },
+        },
+    ]
+
+    multiagent_result = graph(responses)
+    assert multiagent_result.status == Status.FAILED
+    tru_node_ids = [node.node_id for node in graph.state.interrupted_nodes]
+    exp_node_ids = ["review"]
+    assert tru_node_ids == exp_node_ids
+    assert "review" not in multiagent_result.results
+
+    # Raising the limit and retrying runs the node.
+    graph.max_node_executions = 100
+    multiagent_result = graph(responses)
+    assert multiagent_result.status == Status.COMPLETED
+    assert [node.node_id for node in graph.state.interrupted_nodes] == []
+    tru_message = multiagent_result.results["review"].result.message["content"][0]["text"]
+    exp_message = "Review approved"
+    assert tru_message == exp_message
+
+
 def test_graph_interrupt_on_agent(agenerator):
     exp_interrupts = [
         Interrupt(
