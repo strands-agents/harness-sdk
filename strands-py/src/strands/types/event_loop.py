@@ -14,6 +14,9 @@ class Usage(TypedDict, total=False):
         totalTokens: Total number of tokens (input + output).
         cacheReadInputTokens: Number of tokens read from cache (optional).
         cacheWriteInputTokens: Number of tokens written to cache (optional).
+        cacheWriteInputTokensByTtl: Cache-write tokens split by the TTL of the cache point
+            that held them (e.g. {"1h": 2560, "5m": 1024}). 1h and 5m writes price
+            differently, so the total alone cannot be costed (optional).
     """
 
     inputTokens: Required[int]
@@ -21,6 +24,7 @@ class Usage(TypedDict, total=False):
     totalTokens: Required[int]
     cacheReadInputTokens: int
     cacheWriteInputTokens: int
+    cacheWriteInputTokensByTtl: dict[str, int]
 
 
 class Metrics(TypedDict, total=False):

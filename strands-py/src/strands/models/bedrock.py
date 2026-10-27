@@ -201,6 +201,28 @@ def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
     return {**fields, "anthropic_beta": betas, "thinking": thinking}
 
 
+def _usage_with_cache_ttl_details(usage: Any) -> Any:
+    """Return ``usage`` with Bedrock's per-TTL cache-write split as ``cacheWriteInputTokensByTtl``.
+
+    Bedrock reports how many cache-write tokens each cache-point TTL held in ``cacheDetails``
+    (one entry per TTL, e.g. ``5m`` / ``1h``). 1h and 5m writes price differently, so the total
+    ``cacheWriteInputTokens`` alone cannot be costed (#5257). The input is returned unchanged
+    when Bedrock reports no details.
+    """
+    if not isinstance(usage, dict):
+        return usage
+    details = usage.get("cacheDetails")
+    if not isinstance(details, list):
+        return usage
+    by_ttl: dict[str, int] = {}
+    for entry in details:
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str) and isinstance(entry.get("inputTokens"), int):
+            by_ttl[entry["name"]] = entry["inputTokens"]
+    if not by_ttl:
+        return usage
+    return {**usage, "cacheWriteInputTokensByTtl": by_ttl}
+
+
 class BedrockModel(Model):
     """AWS Bedrock model provider implementation.
 
@@ -1678,6 +1700,15 @@ class BedrockModel(Model):
                         response["stream"].close()
                         break
 
+                    if "metadata" in chunk and "usage" in chunk["metadata"]:
+                        chunk = {
+                            **chunk,
+                            "metadata": {
+                                **chunk["metadata"],
+                                "usage": _usage_with_cache_ttl_details(chunk["metadata"]["usage"]),
+                            },
+                        }
+
                     if "messageStop" in chunk:
                         last_stop_reason = chunk["messageStop"].get("stopReason")
 
@@ -1856,7 +1887,7 @@ class BedrockModel(Model):
         if "usage" in response or "metrics" in response or "trace" in response:
             metadata: StreamEvent = {"metadata": {}}
             if "usage" in response:
-                metadata["metadata"]["usage"] = response["usage"]
+                metadata["metadata"]["usage"] = _usage_with_cache_ttl_details(response["usage"])
             if "metrics" in response:
                 metadata["metadata"]["metrics"] = response["metrics"]
             if "trace" in response:
