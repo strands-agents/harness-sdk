@@ -20,6 +20,7 @@ import {
   ConverseStreamCommand,
   CountTokensCommand,
   type ConverseStreamCommandInput,
+  type OutputConfig,
   type ConverseStreamMetadataEvent as BedrockConverseStreamMetadataEvent,
   type ConverseStreamOutput,
   type InferenceConfiguration,
@@ -71,6 +72,15 @@ import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
 import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from './strict-schema.js'
+import {
+  handleRejectedMechanism,
+  structuredOutputMechanisms,
+  toNativeOutputSchema,
+  type StructuredOutputMechanism,
+} from './native-output.js'
+import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
+import type { z } from 'zod'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
@@ -726,11 +736,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      // Format the request for Bedrock
-      const request = this._formatRequest(messages, options)
       if (this._config.stream !== false) {
         // Create and send the command
-        const response = await this._send(request, (input) => {
+        const response = await this._sendRequest(messages, options, (input) => {
           const command = new ConverseStreamCommand(input)
           return options?.cancelSignal
             ? this._client.send(command, { abortSignal: options.cancelSignal })
@@ -777,7 +785,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }
         }
       } else {
-        const response = await this._send(request, (input) => {
+        const response = await this._sendRequest(messages, options, (input) => {
           const command = new ConverseCommand(input)
           return options?.cancelSignal
             ? this._client.send(command, { abortSignal: options.cancelSignal })
@@ -798,6 +806,71 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       // Re-throw other errors as-is
       throw error
     }
+  }
+
+  /**
+   * Formats and sends the request, with the strongest structured output mechanism the model accepts when the call
+   * must produce a schema.
+   *
+   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
+   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
+   * same order but resends through stream(), since its rejection arrives inside the stream.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendRequest<T>(
+    messages: Message[],
+    options: StreamOptions | undefined,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    const schema = options?.structuredOutputSchema
+    const modelId = this._config.modelId
+    if (!schema || !modelId) {
+      return this._send(this._formatRequest(messages, options), send)
+    }
+
+    const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema)
+    for (const mechanism of mechanisms.slice(0, -1)) {
+      try {
+        return await this._send(this._structuredOutputRequest(messages, options, mechanism, schema), send)
+      } catch (error) {
+        if (!recordRejectedMechanism(error, mechanism, modelId, schema)) throw error
+      }
+    }
+    const fallback = mechanisms[mechanisms.length - 1] ?? 'auto'
+    return this._send(this._structuredOutputRequest(messages, options, fallback, schema), send)
+  }
+
+  /**
+   * Formats the request for a structured output mechanism.
+   *
+   * Converse has no tool choice that rules out tool calls, so on native and auto the model may still call another
+   * tool; the agent loop runs it and the retry continues with the same mechanism.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options, whose tool choice forces the structured output tool
+   * @param mechanism - The mechanism to enforce structured output with
+   * @param schema - The schema the response must produce
+   * @returns Formatted Bedrock request
+   */
+  private _structuredOutputRequest(
+    messages: Message[],
+    options: StreamOptions,
+    mechanism: StructuredOutputMechanism,
+    schema: z.ZodSchema
+  ): ConverseStreamCommandInput {
+    if (mechanism === 'forced') {
+      return this._formatRequest(messages, options)
+    }
+    // Formatted with auto tool choice, which also keeps the thinking config forcing strips.
+    const request = this._formatRequest(messages, { ...options, toolChoice: { auto: {} } })
+    if (mechanism === 'native') {
+      request.outputConfig = { ...request.outputConfig, ...nativeOutputConfig(schema) }
+    }
+    return request
   }
 
   /**
@@ -2173,6 +2246,32 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     return events
   }
+}
+
+/** Builds the Converse outputConfig that constrains the response to the schema. */
+function nativeOutputConfig(schema: z.ZodSchema): OutputConfig {
+  const nativeSchema = toNativeOutputSchema(zodSchemaToJsonSchema(schema))
+  return {
+    textFormat: {
+      type: 'json_schema',
+      structure: { jsonSchema: { schema: JSON.stringify(nativeSchema), name: STRUCTURED_OUTPUT_TOOL_NAME } },
+    },
+  }
+}
+
+/**
+ * Records a structured output rejection, so the request should be resent with the next mechanism.
+ *
+ * @returns True if the rejection was recorded; false if the error is unrelated and should surface unchanged
+ */
+function recordRejectedMechanism(
+  error: unknown,
+  mechanism: StructuredOutputMechanism,
+  modelId: string,
+  schema: z.ZodSchema
+): boolean {
+  if (!(error instanceof Error) || error.name !== 'ValidationException') return false
+  return handleRejectedMechanism('bedrock', modelId, mechanism, schema, error.message)
 }
 
 /**

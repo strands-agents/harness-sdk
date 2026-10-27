@@ -170,6 +170,18 @@ async def test_read_nonexistent_file_raises(sandbox, tmp_path):
         await sandbox.read_file(str(tmp_path / "nope.txt"))
 
 
+@pytest.mark.skipif(WINDOWS, reason="`\\` is a path separator on Windows, not a filename character")
+@pytest.mark.asyncio
+async def test_backslash_in_filename_is_literal(sandbox, tmp_path):
+    # Contract: on POSIX, ``\`` in a path is a legal filename character, not a
+    # separator. Containment logic in tools above the sandbox relies on this.
+    file = str(tmp_path / "weird\\name.txt")
+    await sandbox.write_text(file, "ok")
+    assert await sandbox.read_text(file) == "ok"
+    entries = await sandbox.list_files(str(tmp_path))
+    assert any(entry.name == "weird\\name.txt" for entry in entries)
+
+
 # ---- remove ----
 
 

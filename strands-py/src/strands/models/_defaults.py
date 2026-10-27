@@ -108,6 +108,15 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
     "openai.gpt-oss-20b-1:0": 128_000,
     "openai.gpt-oss-safeguard-120b": 128_000,
     "openai.gpt-oss-safeguard-20b": 128_000,
+    "openai.gpt-6-astra": 1_050_000,
+    "openai.gpt-6.1-sol": 1_000_000,  # Bedrock card: 1M shared window, 131,072 max output
+    "openai.gpt-6-sol": 1_050_000,
+    "openai.gpt-6-luna": 1_050_000,
+    "openai.gpt-5.6-sol": 1_050_000,
+    "openai.gpt-5.6-terra": 1_050_000,
+    "openai.gpt-5.6-luna": 1_050_000,
+    "openai.gpt-5.5": 1_050_000,
+    "openai.gpt-5.4": 1_050_000,
     # Bedrock Mistral
     "mistral.mistral-large-3-675b-instruct": 256_000,
     "mistral.ministral-3-14b-instruct": 128_000,

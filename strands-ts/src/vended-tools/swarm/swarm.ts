@@ -8,8 +8,9 @@
  */
 
 import type { Agent } from '../../agent/agent.js'
-import type { Interrupt } from '../../interrupt.js'
+import { InterruptError, type InterruptState } from '../../interrupt.js'
 import { logger } from '../../logging/logger.js'
+import { AgentToolStreamer, ChildMultiAgentAdapter } from '../../multiagent/agent-tool-streamer.js'
 import {
   _defaultBuilder,
   _resolveSpecs,
@@ -17,6 +18,7 @@ import {
   Inherit,
   Open,
   type AgentBuilder,
+  type AgentSpec,
   type Choice,
   type Fixed,
   type Preset,
@@ -24,11 +26,10 @@ import {
 } from '../../multiagent/spec.js'
 import { NodeResultEvent } from '../../multiagent/events.js'
 import type { MultiAgentInput } from '../../multiagent/multiagent.js'
-import { Status, type NodeResult } from '../../multiagent/state.js'
+import type { MultiAgentResult, NodeResult } from '../../multiagent/state.js'
 import { Swarm, type SwarmConfig } from '../../multiagent/swarm.js'
 import { tool } from '../../tools/tool-factory.js'
-import type { InvokableTool, Tool, ToolContext } from '../../tools/tool.js'
-import { InterruptResponseContent } from '../../types/interrupt.js'
+import type { InvokableTool, Tool } from '../../tools/tool.js'
 import type { JSONSchema, JSONValue } from '../../types/json.js'
 import {
   DEFAULT_SWARM_DESCRIPTION,
@@ -39,15 +40,24 @@ import {
 } from './types.js'
 import type { SwarmInput } from './types.js'
 
-/** Interrupted swarms awaiting a resume, keyed by the tool-use id that started them. */
-type PendingSwarms = Map<string, { swarm: Swarm; interrupts: Interrupt[] }>
-
 /** Every swarm tool created, so children lose all of them regardless of name or instance. */
 const SWARM_TOOLS = new WeakSet<Tool>()
 
+const SWARM_ADAPTER = new ChildMultiAgentAdapter({
+  label: 'Swarm',
+  render: (result): string => renderOutput(result.results),
+})
+
+const UNAVAILABLE_MESSAGE =
+  'Swarm did NOT run and the response was NOT applied: its interrupted turn is not available. ' +
+  'Do not report the task as completed; if it is still needed, start the swarm again.'
+
 /** Options for {@link makeSwarm}. Unset repetitive-handoff limits fall back to the {@link Swarm} defaults. */
 export interface MakeSwarmOptions extends SwarmConfig {
-  /** Turns a resolved spec into an agent. Defaults to a builder that inherits from the parent. */
+  /**
+   * Turns a resolved spec into an agent. Defaults to a builder that inherits from the parent. Called again with
+   * the same spec when an interrupted swarm resumes, so it must give each spec the same agent id.
+   */
   builder?: AgentBuilder
   /** Named roles the model selects via `agent_type`. @defaultValue `{}` */
   presets?: Record<string, Preset>
@@ -77,8 +87,8 @@ export interface MakeSwarmOptions extends SwarmConfig {
  * Creates a `swarm` tool whose schema is derived from the axis policies and presets.
  *
  * The model defines the agents it needs at runtime. Agents never receive a swarm tool, so
- * swarms do not nest. An agent's interrupt is raised on the parent; the interrupted swarm is
- * held in memory until resumed, so it cannot be resumed after a process restart.
+ * swarms do not nest. An agent's interrupt is raised on the parent and can be resumed after the
+ * parent is restored from a snapshot.
  *
  * @param options - Configuration options.
  * @returns A tool that spins up and runs a {@link Swarm}. Invalid input, or a swarm that does not complete,
@@ -127,30 +137,69 @@ export function makeSwarm({
 
   const axes: ResolveSpecAxes = { presets, defaultPreset, instructions, tools, model }
   const limits: SwarmConfig = { maxSteps, timeout, nodeTimeout, ...handoffLimits }
-  const pending: PendingSwarms = new Map()
 
   const swarmTool = tool({
     name,
     description,
     inputSchema: buildSchema({ ...axes, maxAgents }),
     callback: async function* (input, toolContext) {
-      const interrupted = pending.get(toolContext.toolUse.toolUseId)
-      let swarm: Swarm
-      let swarmInput: MultiAgentInput
-      if (interrupted) {
-        swarm = interrupted.swarm
-        swarmInput = interrupted.interrupts.map(
-          (interrupt) =>
-            new InterruptResponseContent({
-              interruptId: interrupt.id,
-              response: interruptParent(toolContext, interrupt),
-            })
-        )
-      } else {
-        const build = builder ?? _defaultBuilder(toolContext.agent as unknown as Agent)
-        ;({ swarm, swarmInput } = buildSwarm(input, { axes, builder: build, maxAgents, limits }))
+      const toolUseId = toolContext.toolUse.toolUseId
+      const streamer = new AgentToolStreamer<MultiAgentResult>({
+        interruptState: (toolContext.agent as unknown as { _interruptState?: InterruptState })._interruptState,
+        toolUseId,
+        namespace: 'swarm',
+      })
+      const { task, specs, entryIndex } = resolveSwarm(input, { axes, maxAgents })
+      const build = builder ?? _defaultBuilder(toolContext.agent as unknown as Agent)
+      let agents: Agent[]
+      try {
+        agents = buildAgents(specs, build)
+      } catch (error) {
+        if (!streamer.isResuming()) throw error
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn(`tool_use_id=<${toolUseId}>, error=<${message}> | failed to rebuild interrupted swarm`)
+        await streamer.resume(SWARM_ADAPTER, undefined, UNAVAILABLE_MESSAGE)
+        return raiseUnfinished(streamer)
       }
-      return yield* streamSwarm(swarm, swarmInput, toolContext, pending)
+
+      // A stable id lets the stored turn be loaded into the swarm rebuilt on resume.
+      const swarm = new Swarm({
+        id: `swarm:${encodeURIComponent(toolUseId)}`,
+        nodes: agents,
+        start: agents[entryIndex]!.id,
+        ...limits,
+      })
+      let swarmInput: MultiAgentInput = task
+      if (streamer.isResuming()) {
+        const resumed = await streamer.resume(SWARM_ADAPTER, swarm, UNAVAILABLE_MESSAGE)
+        if (resumed === undefined) return raiseUnfinished(streamer)
+        swarmInput = resumed
+      }
+      logger.debug(`task=<${task.slice(0, 120)}>, agents=<${agents.length}> | starting swarm`)
+      // Step and time limits throw, so node results are collected as they stream to keep the partial output.
+      const nodeResults: NodeResult[] = []
+      const { invocationState, cancelSignal, invocationContext } = toolContext
+      const gen = swarm.stream(swarmInput, {
+        invocationState: { ...invocationState },
+        cancelSignal,
+        ...(invocationContext && { invocationContext }),
+      })
+      try {
+        for await (const event of streamer.stream(SWARM_ADAPTER, swarm, gen)) {
+          if (event instanceof NodeResultEvent) nodeResults.push(event.result)
+          yield event as unknown as JSONValue
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(`Swarm stopped before completing (${message}). Partial output:\n${renderOutput(nodeResults)}`, {
+          cause: error,
+        })
+      }
+
+      if (streamer.interrupts !== undefined || streamer.error !== undefined) {
+        raiseUnfinished(streamer)
+      }
+      return renderOutput(streamer.result!.results)
     },
   })
   SWARM_TOOLS.add(swarmTool)
@@ -197,15 +246,15 @@ function buildSchema(axes: ResolveSpecAxes & { maxAgents: number }): JSONSchema 
 }
 
 /**
- * Builds a fresh swarm from the model's input.
+ * Resolves and validates the model's input.
  *
- * @returns The swarm and the task to run it on.
- * @throws Error if the task is missing, the agent specs are invalid, or the swarm cannot be constructed.
+ * @returns The task, the agent specs, and the index of the entry-point agent.
+ * @throws Error if the task is missing or the agent specs are invalid.
  */
-function buildSwarm(
+function resolveSwarm(
   input: unknown,
-  config: { axes: ResolveSpecAxes; builder: AgentBuilder; maxAgents: number; limits: SwarmConfig }
-): { swarm: Swarm; swarmInput: MultiAgentInput } {
+  config: { axes: ResolveSpecAxes; maxAgents: number }
+): { task: string; specs: AgentSpec[]; entryIndex: number } {
   const raw = (input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<
     string,
     unknown
@@ -223,9 +272,18 @@ function buildSwarm(
   if (entryIndex === -1) {
     throw new Error(`entry_point ${JSON.stringify(entryPoint)} does not match any agent name.`)
   }
+  return { task, specs, entryIndex }
+}
 
-  const agents = specs.map((spec) => {
-    const agent = config.builder(spec)
+/**
+ * Builds the swarm's agents, stripping every swarm tool so swarms do not nest.
+ *
+ * @returns One agent per spec.
+ * @throws Error if the builder fails.
+ */
+function buildAgents(specs: AgentSpec[], builder: AgentBuilder): Agent[] {
+  return specs.map((spec) => {
+    const agent = builder(spec)
     for (const agentTool of agent.toolRegistry.list()) {
       if (SWARM_TOOLS.has(agentTool)) {
         agent.toolRegistry.remove(agentTool.name)
@@ -233,74 +291,19 @@ function buildSwarm(
     }
     return agent
   })
-
-  const swarm = new Swarm({ nodes: agents, start: agents[entryIndex]!.id, ...config.limits })
-  logger.debug(`task=<${task.slice(0, 120)}>, agents=<${agents.length}> | starting swarm`)
-  return { swarm, swarmInput: task }
 }
 
 /**
- * Streams the swarm's events and returns its output as the tool result.
+ * Raises the streamer's unfinished terminal state.
  *
- * An interrupted swarm is held in `pending` under the tool-use id and its first interrupt is raised.
- *
- * @returns One `name: output` line per participating agent.
- * @throws InterruptError if the swarm is interrupted.
- * @throws Error with the partial output if the swarm does not complete.
+ * @throws InterruptError if the swarm stopped on interrupts.
+ * @throws Error with the streamer's error message otherwise.
  */
-async function* streamSwarm(
-  swarm: Swarm,
-  swarmInput: MultiAgentInput,
-  toolContext: ToolContext,
-  pending: PendingSwarms
-): AsyncGenerator<JSONValue, string> {
-  const { toolUse, invocationState, cancelSignal } = toolContext
-  // Step and time limits throw, so node results are collected as they stream to keep the partial output.
-  const nodeResults: NodeResult[] = []
-  const gen = swarm.stream(swarmInput, { invocationState: { ...invocationState }, cancelSignal })
-  let next
-  try {
-    next = await gen.next()
-    while (!next.done) {
-      if (next.value instanceof NodeResultEvent) nodeResults.push(next.value.result)
-      yield next.value as unknown as JSONValue
-      next = await gen.next()
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Swarm stopped before completing (${message}). Partial output:\n${renderOutput(nodeResults)}`, {
-      cause: error,
-    })
-  } finally {
-    pending.delete(toolUse.toolUseId)
+function raiseUnfinished(streamer: AgentToolStreamer<MultiAgentResult>): never {
+  if (streamer.interrupts?.length) {
+    throw new InterruptError(streamer.interrupts)
   }
-
-  const result = next.value
-  if (result.status === Status.INTERRUPTED && result.interrupts?.length) {
-    pending.set(toolUse.toolUseId, { swarm, interrupts: result.interrupts })
-    interruptParent(toolContext, result.interrupts[0]!)
-  }
-  const output = renderOutput(result.results)
-  if (result.status !== Status.COMPLETED) {
-    const reason = result.error ? `: ${result.error.message}` : ''
-    throw new Error(`Swarm stopped before completing (status=${result.status}${reason}). Partial output:\n${output}`)
-  }
-  return output
-}
-
-/**
- * Raises an agent's interrupt on the parent, or returns the parent's answer when resuming.
- *
- * Raising for the first unanswered interrupt surfaces them to the user one per resume.
- *
- * @returns The parent's response to the interrupt.
- * @throws InterruptError if the parent has not answered it yet.
- */
-function interruptParent(toolContext: ToolContext, interrupt: Interrupt): JSONValue {
-  return toolContext.interrupt({
-    name: interrupt.id,
-    reason: { name: interrupt.name, ...(interrupt.reason !== undefined && { reason: interrupt.reason }) },
-  })
+  throw new Error(streamer.error)
 }
 
 /**

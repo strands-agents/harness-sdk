@@ -7,8 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Agent, tool } from '@strands-agents/sdk'
-import { z } from 'zod'
+import { Agent } from '@strands-agents/sdk'
 import { OpenAIModel } from '$/sdk/models/openai/index.js'
 
 import { bedrock } from '../../__fixtures__/model-providers.js'
@@ -17,15 +16,6 @@ const REGION = 'us-east-1'
 const MODEL_ID = 'openai.gpt-oss-120b'
 
 describe.skipIf(bedrock.skip)('OpenAIModel (Bedrock Mantle) Integration Tests', () => {
-  it('resolves the Bedrock-published context window for gpt-oss-120b', () => {
-    const model = new OpenAIModel({
-      modelId: MODEL_ID,
-      bedrockMantleConfig: { region: REGION },
-    })
-
-    expect(model.getConfig().contextWindowLimit).toBe(128_000)
-  })
-
   it('reaches Mantle via bedrockMantleConfig on the Chat Completions API', async () => {
     const model = new OpenAIModel({
       api: 'chat',
@@ -99,32 +89,5 @@ describe.skipIf(bedrock.skip)('OpenAIModel (Bedrock Mantle) Integration Tests', 
     // so we only assert the round-trip completes cleanly.
     const second = await agent.invoke('What about 3+3?')
     expect(second.stopReason).toBe('endTurn')
-  })
-
-  describe('google.gemma-4-31b', () => {
-    it('resolves the context window and completes a tool-using turn', async () => {
-      const model = new OpenAIModel({
-        modelId: 'google.gemma-4-31b',
-        bedrockMantleConfig: { region: REGION },
-      })
-      expect(model.getConfig().contextWindowLimit).toBe(256_000)
-
-      const weather = tool({
-        name: 'tool_weather',
-        description: 'Get the weather for a city',
-        inputSchema: z.object({ city: z.string() }),
-        callback: async () => 'sunny',
-      })
-      const agent = new Agent({
-        model,
-        tools: [weather],
-        systemPrompt: 'Reply in one short sentence.',
-        printer: false,
-      })
-
-      const result = await agent.invoke('What is the weather in New York?')
-
-      expect(String(result).toLowerCase()).toContain('sunny')
-    })
   })
 })

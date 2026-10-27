@@ -13,6 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
+from ...agent.invocation_context import _create_auxiliary_invocation_context
 from ...hooks.events import BeforeToolCallEvent
 from ...models import Model
 
@@ -122,7 +123,11 @@ def _create_llm_risk_classifier(config: LLMClassifierConfig | None = None) -> Hu
             f"Tool: {tool_use['name']}\n"
             f"Input: {json.dumps(tool_use['input'], indent=2)}"
         )
-        result = await inner.invoke_async(prompt, structured_output_model=_RiskDecision)
+        result = await inner.invoke_async(
+            prompt,
+            structured_output_model=_RiskDecision,
+            invocation_context=_create_auxiliary_invocation_context(event.invocation_context),
+        )
         decision = result.structured_output
         if not isinstance(decision, _RiskDecision):
             raise ValueError(f"LLM risk classifier produced no structured output (stop_reason={result.stop_reason!r})")

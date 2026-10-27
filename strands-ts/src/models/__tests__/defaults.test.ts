@@ -92,6 +92,21 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('global.openai.gpt-oss-120b')).toBe(128_000)
   })
 
+  it('resolves Bedrock GPT ids, which are not derivable from the OpenAI-hosted rows', () => {
+    expect(getContextWindowLimit('openai.gpt-6-astra')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-6.1-sol')).toBe(1_000_000)
+    expect(getContextWindowLimit('openai.gpt-6-sol')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-6-luna')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.6-sol')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.6-terra')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.6-luna')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.5')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.4')).toBe(1_050_000)
+    expect(getContextWindowLimit('us.openai.gpt-5.5')).toBe(1_050_000)
+    expect(getContextWindowLimit('global.openai.gpt-6.1-sol')).toBe(1_000_000)
+    expect(getContextWindowLimit('in.openai.gpt-5.6-luna')).toBe(1_050_000)
+  })
+
   it('strips Bedrock cross-region prefix before lookup', () => {
     expect(getContextWindowLimit('us.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-sonnet-4-6')).toBe(1_000_000)

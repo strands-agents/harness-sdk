@@ -1,0 +1,8 @@
+name: Magic Hour
+description: Generate and retrieve AI images with Magic Hour’s hosted MCP server using Strands Agents’ native Python client.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/magichourhq/magic-hour-mcp
+docsUrl: https://docs.magichour.ai/integration/strands-agents
+addedDate: 2026-10-23

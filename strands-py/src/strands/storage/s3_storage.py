@@ -61,7 +61,7 @@ class S3Storage:
             raise StorageError("Cannot specify both region_name and boto_session")
 
         self._bucket = bucket
-        normalized = _normalize_prefix(prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
         self._prefix = f"{normalized}/" if normalized else ""
         self._region_name = region_name
         self._boto_session = boto_session

@@ -14,6 +14,7 @@ import pytest
 
 from strands import Agent
 from strands.agent import AgentResult
+from strands.agent.invocation_context import _create_invocation_context
 from strands.agent.state import AgentState
 from strands.experimental.tools import stop
 from strands.interrupt import Interrupt, _InterruptState
@@ -83,7 +84,7 @@ def _patch(result=None, events=()):
     if result is None:
         result = _result()
 
-    async def _stream(task, invocation_state=None):
+    async def _stream(task, invocation_state=None, invocation_context=None):
         for event in events:
             yield event
         yield {"type": "multiagent_result", "result": result}
@@ -164,7 +165,9 @@ class TestSwarmToolExecution:
         with _patch(events=events) as cls:
             out = [e async for e in swarm.stream(tool_use, invocation_state)]
         # The parent's request_state is not forwarded to children.
-        cls.return_value.stream_async.assert_called_once_with("go", invocation_state={"agent": parent, "user_key": "v"})
+        cls.return_value.stream_async.assert_called_once_with(
+            "go", invocation_state={"agent": parent, "user_key": "v"}, invocation_context=None
+        )
         # The decorator also streams the final yield before wrapping it as the result.
         streamed = [e["tool_stream_event"]["data"] for e in out if isinstance(e, ToolStreamEvent)]
         assert streamed == [*events, "writer: Done!"]
@@ -206,10 +209,24 @@ class TestSwarmToolExecution:
         assert "status=failed" in str(exc.value) and "partial" in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_runs_the_swarm_in_the_request_of_the_tool_call(self):
+        invocation_context = _create_invocation_context()
+        tool_context = ToolContext(
+            tool_use={"name": "swarm", "toolUseId": "id", "input": {}},
+            agent=_mock_parent(),
+            invocation_state={},
+            invocation_context=invocation_context,
+        )
+        with _patch() as cls:
+            await _run(swarm, task="go", agents=[_spec("a", instructions="Do.")], tool_context=tool_context)
+
+        assert cls.return_value.stream_async.call_args.kwargs["invocation_context"] is invocation_context
+
+    @pytest.mark.asyncio
     async def test_missing_result_raises(self):
         with _patch() as cls:
 
-            async def _no_result(task, invocation_state=None):
+            async def _no_result(task, invocation_state=None, invocation_context=None):
                 yield {"type": "multiagent_node_start", "node_id": "a", "node_type": "agent"}
 
             cls.return_value.stream_async = Mock(side_effect=_no_result)
