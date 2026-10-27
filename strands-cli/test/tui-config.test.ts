@@ -340,7 +340,11 @@ describe('CliConfigStore', () => {
     )
     await writeFile(
       join(directory, '.env.local'),
-      ['OLLAMA_HOST=http://local:11434', 'LITELLM_BASE_URL=http://local:4000'].join('\n')
+      [
+        'OLLAMA_HOST=http://local:11434',
+        'LITELLM_BASE_URL=http://local:4000',
+        'OPENAI_BASE_URL=http://local:2455/v1',
+      ].join('\n')
     )
     vi.stubEnv('GEMINI_API_KEY', 'process-key')
     const config = CliConfigStore.memory({}, {}, { providerEnvironment: { LITELLM_MODEL: 'stored-model' } })
@@ -351,6 +355,7 @@ describe('CliConfigStore', () => {
       OLLAMA_HOST: { value: 'http://local:11434', source: '.env.local' },
       OLLAMA_MODEL: { value: '${UNEXPANDED_MODEL}', source: '.env' },
       LITELLM_BASE_URL: { value: 'http://local:4000', source: '.env.local' },
+      OPENAI_BASE_URL: { value: 'http://local:2455/v1', source: '.env.local' },
       LITELLM_MODEL: { value: 'stored-model', source: 'config' },
     })
     expect(config.providerEnvironment()).not.toHaveProperty('UNRELATED_SECRET')
