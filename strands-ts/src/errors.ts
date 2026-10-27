@@ -41,9 +41,10 @@ export class ContextWindowOverflowError extends ModelError {
    * Creates a new ContextWindowOverflowError.
    *
    * @param message - Error message describing the context overflow
+   * @param options - Optional error options including the provider cause
    */
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'ContextWindowOverflowError'
   }
 }
