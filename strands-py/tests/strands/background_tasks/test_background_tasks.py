@@ -20,7 +20,7 @@ from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
-_MANAGE_TOOL_NAME = "strands_manage_background_task"
+_MANAGE_TOOL_NAME = "manage_background_task"
 
 
 def _assistant_text(text: str) -> dict[str, Any]:
