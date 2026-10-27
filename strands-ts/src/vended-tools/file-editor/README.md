@@ -1,26 +1,12 @@
 # File Editor Tool
 
-A filesystem editor tool for viewing, creating, and editing files programmatically. Provides string replacement, line insertion, and directory viewing with security validation.
+A filesystem editor for viewing, creating, and editing files. All I/O routes through the agent's configured `Sandbox`, so isolation is a property of the sandbox rather than the tool.
 
-## ⚠️ Security Warning
+The tool exposes six commands: `view` (file contents with line numbers, or a two-level directory listing), `create` (refuses to overwrite), `str_replace` (exact-match; ambiguous matches require `replace_all: true`), `insert` (0-indexed line insertion), `find_line` (returns every matching line, up to a cap, with optional whitespace-tolerant `fuzzy` matching), and `undo_edit` (single-step, in-memory revert of the most recent edit for a path). Paths must be absolute and free of `..` segments. Binary files and files above the size cap are rejected with a clean error.
 
-**This tool reads and writes files at arbitrary absolute paths without sandboxing or workspace restrictions.**
+Undo history is per calling agent — two agents sharing one editor instance never see each other's snapshots. The pre-edit snapshot is captured only after the write to disk succeeds, so a transient write failure leaves the previous undo entry retryable.
 
-- Only use with trusted input
-- File operations execute with the full permissions of the Node.js process
-- For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
-- Never expose this tool to untrusted users or untrusted prompt input without additional security measures
-
-## Features
-
-- **View files** with line numbers and optional line range support
-- **Create files** with initial content
-- **String-based find and replace** with uniqueness validation
-- **Line-based text insertion** at any position
-- **Directory viewing** up to 2 levels deep (configurable)
-- **Configurable file size limits** (default 1MB)
-
-## Installation
+## Usage
 
 ```typescript
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
@@ -34,73 +20,18 @@ const agent = new Agent({
 await agent.invoke('Create a file /tmp/notes.txt with "# My Notes"')
 ```
 
-## Commands
+## Customization
 
-### `view`
+`makeFileEditor` accepts:
 
-View file contents with line numbers or list directory contents (up to 2 levels deep).
-
-**Parameters:**
-
-- `path` (string, required): Absolute path to file or directory
-- `view_range` (optional): `[start_line, end_line]` (1-indexed, end can be -1 for EOF)
-
-### `create`
-
-Create a new file with content. Creates parent directories if needed.
-
-**Parameters:**
-
-- `path` (string, required): Absolute path for new file
-- `file_text` (string, required): Initial content
-
-### `str_replace`
-
-Replace an exact string match in a file. The string must appear exactly once.
-
-**Parameters:**
-
-- `path` (string, required): Absolute path to file
-- `old_str` (string, required): Exact string to find
-- `new_str` (string, optional): Replacement string
-
-### `insert`
-
-Insert text at a specific line number (0-indexed).
-
-**Parameters:**
-
-- `path` (string, required): Absolute path to file
-- `insert_line` (number, required): Line number for insertion (0 = beginning)
-- `new_str` (string, required): Text to insert
-
-## Example Usage
+- `root` (string, optional): confines every operation to an absolute directory. Applies a string-level check and, when the target exists on the local filesystem, a `realpath`-based symlink check. `root` must resolve on the local host — a container-side path in a Docker/SSH sandbox fails closed because the local process cannot canonicalize container-side symlinks. Route through the sandbox without `root` and rely on the sandbox's own path policy, or construct the editor inside the sandbox.
+- `maxFileSize` (number, optional): byte cap on files that can be read or written, and on the projected byte size of any edit's output. Defaults to 1 MB.
+- `maxUndoEntries` (number, optional): maximum distinct paths retained in the per-agent in-memory undo history. Defaults to 32.
+- `maxUndoBytes` (number, optional): approximate byte cap on the per-agent undo history. Defaults to 32 MB.
+- `name`, `description`: override the tool's registered name and description.
 
 ```typescript
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
-import { Agent, BedrockModel } from '@strands-agents/sdk'
+import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 
-const agent = new Agent({
-  model: new BedrockModel({ region: 'us-east-1' }),
-  tools: [fileEditor],
-})
-
-// Agent can use natural language
-await agent.invoke('Create /tmp/config.json with {"debug": false}')
-await agent.invoke('Replace "debug": false with "debug": true in /tmp/config.json')
-await agent.invoke('View lines 1-20 of /tmp/config.json')
+const editor = makeFileEditor({ root: '/workspace', maxFileSize: 5 * 1024 * 1024 })
 ```
-
-## Security
-
-- Requires absolute paths (must start with `/`)
-- Blocks directory traversal attempts (`..`)
-- File size limits (default 1MB)
-- Clear error messages
-
-## Limitations
-
-- Node.js only (uses filesystem APIs)
-- Text files only (UTF-8 encoded)
-- Exact string matching (no regex)
-- History is session-scoped
