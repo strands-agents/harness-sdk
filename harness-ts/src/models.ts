@@ -18,11 +18,10 @@
  */
 
 import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
-import { DEFAULT_MODEL } from './defaults.js'
+import { DEFAULT_MAX_TOKENS, DEFAULT_MODEL } from './defaults.js'
 import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
 
-const ANTHROPIC_MAX_TOKENS = 32_000
 // Claude calls the search directly (not from code execution), so results come back as citations
 // and the tool works on every Claude model, not only those with programmatic tool calling. The
 // type is a dated version; the current ones are listed at
@@ -58,6 +57,65 @@ function claudeMaxTokens(modelId: string): number | undefined {
     return pinned
   }
   return Object.entries(CLAUDE_MAX_TOKENS).find(([needle]) => modelId.includes(needle))?.[1]
+}
+
+const PROVIDERS_WITH_DEFAULT_MAX_TOKENS: ReadonlySet<string> = new Set([
+  'anthropic',
+  'openai',
+  'bedrock-mantle',
+  'google',
+])
+
+function checkMaxTokens(maxTokens: unknown): void {
+  if (maxTokens !== undefined && !(typeof maxTokens === 'number' && Number.isInteger(maxTokens) && maxTokens > 0)) {
+    throw new Error(`maxTokens must be a positive integer, got ${JSON.stringify(maxTokens)}.`)
+  }
+}
+
+function modelMaxTokens(providerName: string, name: string): number | undefined {
+  return providerName === 'bedrock' || providerName === 'anthropic' ? claudeMaxTokens(name) : undefined
+}
+
+function takesDefaultMaxTokens(providerName: string, name: string): boolean {
+  if (PROVIDERS_WITH_DEFAULT_MAX_TOKENS.has(providerName)) {
+    return true
+  }
+  const family = bedrockFamily(name)
+  return providerName === 'bedrock' && family.startsWith('anthropic.') && claudeThinkingMode(family) !== null
+}
+
+function defaultCap(providerName: string, name: string, ceiling: number | undefined): number | undefined {
+  if (ceiling !== undefined) {
+    return Math.min(DEFAULT_MAX_TOKENS, ceiling)
+  }
+  return takesDefaultMaxTokens(providerName, name) ? DEFAULT_MAX_TOKENS : undefined
+}
+
+function resolveMaxTokens(providerName: string, name: string, requested: number | undefined): number | undefined {
+  const ceiling = modelMaxTokens(providerName, name)
+  if (requested === undefined) {
+    return defaultCap(providerName, name, ceiling)
+  }
+  const limit = ceiling === undefined ? requested : Math.min(requested, ceiling)
+  if (limit < requested) {
+    warnOnce(
+      `model=<${providerName}/${name}>, max_tokens=<${requested}>, limit=<${limit}> | maxTokens is above the model output limit | using the limit`
+    )
+  }
+  if (limit > DEFAULT_MAX_TOKENS) {
+    warnOnce(
+      `model=<${providerName}/${name}>, max_tokens=<${limit}>, default=<${DEFAULT_MAX_TOKENS}> | maxTokens is above the harness default | each model call can generate up to maxTokens output tokens`
+    )
+  }
+  return limit
+}
+
+export function defaultMaxTokens(model: Model | ModelRouter | string | undefined): number | undefined {
+  if (model instanceof Model || model instanceof ModelRouter) {
+    return undefined
+  }
+  const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
+  return defaultCap(providerName, name, modelMaxTokens(providerName, name))
 }
 
 // Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
@@ -119,6 +177,8 @@ const EXTENDED_THINKING_BUDGETS: Readonly<Record<string, number>> = {
   xhigh: 32_768,
   max: 49_152,
 }
+const MIN_THINKING_BUDGET = 1_024
+const EXTENDED_THINKING_ANSWER_TOKENS = 8_192
 
 function atLeast(version: [number, number], floor: [number, number] | undefined): boolean {
   if (floor === undefined) {
@@ -156,7 +216,17 @@ function claudeThinking(effort: string): Record<string, unknown> {
 }
 
 function claudeExtendedThinking(effort: string, maxTokens: number): Record<string, unknown> {
-  const budget = Math.min(EXTENDED_THINKING_BUDGETS[effort] ?? EXTENDED_THINKING_BUDGETS.high!, maxTokens - 1)
+  const answerTokens = Math.min(EXTENDED_THINKING_ANSWER_TOKENS, Math.floor(maxTokens / 2))
+  const budget = Math.min(
+    EXTENDED_THINKING_BUDGETS[effort] ?? EXTENDED_THINKING_BUDGETS.high!,
+    maxTokens - answerTokens
+  )
+  if (budget < MIN_THINKING_BUDGET) {
+    throw new Error(
+      `maxTokens=${maxTokens} leaves no room for extended thinking, which needs a budget of at least ` +
+        `${MIN_THINKING_BUDGET} tokens. Pass a larger maxTokens, or effort: 'off'.`
+    )
+  }
   return { thinking: { type: 'enabled', budget_tokens: budget } }
 }
 
@@ -195,13 +265,13 @@ function bedrockEffort(modelId: string, effort: Effort): string | null {
   return resolveEffort(effort, levels.length > 0 ? 'high' : null, levels, `Bedrock model ${modelId}`)
 }
 
-function bedrockThinking(modelId: string, effort: string | null): JSONValue | undefined {
+function bedrockThinking(modelId: string, effort: string | null, maxTokens: number | undefined): JSONValue | undefined {
   if (effort === null) {
     return undefined
   }
   const family = bedrockFamily(modelId)
   if (family.startsWith('anthropic.')) {
-    return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
+    return claudeThinkingBlock(family, effort, maxTokens ?? DEFAULT_MAX_TOKENS) as JSONValue
   }
   if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
     return { reasoning: { effort } }
@@ -218,13 +288,18 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   return undefined
 }
 
-async function bedrock(modelId: string, effort: string | null, _webSearch: boolean, caching: boolean): Promise<Model> {
+async function bedrock(
+  modelId: string,
+  effort: string | null,
+  _webSearch: boolean,
+  caching: boolean,
+  maxTokens: number | undefined
+): Promise<Model> {
   const { BedrockModel } = await import('@strands-agents/sdk/models/bedrock')
   // The 'auto' strategy injects cache points (messages and tools) for Anthropic model ids on
   // Bedrock, and is a no-op for models that don't support caching.
   const cacheConfig = caching ? { strategy: 'auto' as const } : undefined
-  const thinking = bedrockThinking(modelId, effort)
-  const maxTokens = claudeMaxTokens(modelId)
+  const thinking = bedrockThinking(modelId, effort, maxTokens)
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION
   return new BedrockModel({
     modelId,
@@ -235,22 +310,34 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   })
 }
 
-async function anthropic(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
+async function anthropic(
+  modelId: string,
+  effort: string | null,
+  webSearch: boolean,
+  caching: boolean,
+  maxTokens: number | undefined
+): Promise<Model> {
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
 
   const cacheConfig = caching ? { strategy: 'auto' as const } : undefined
-  const maxTokens = claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS
+  const limit = maxTokens ?? DEFAULT_MAX_TOKENS
   return new AnthropicModel({
     modelId,
-    maxTokens,
+    maxTokens: limit,
     ...(cacheConfig ? { cacheConfig } : {}),
-    ...(effort === null ? {} : { params: claudeThinkingBlock(modelId, effort, maxTokens) }),
+    ...(effort === null ? {} : { params: claudeThinkingBlock(modelId, effort, limit) }),
     ...(webSearch ? { anthropicTools: [ANTHROPIC_WEB_SEARCH] } : {}),
   })
 }
 
 // `_caching` is unused: OpenAI caches server-side with no opt-in.
-async function openai(modelId: string, effort: string | null, webSearch: boolean, _caching: boolean): Promise<Model> {
+async function openai(
+  modelId: string,
+  effort: string | null,
+  webSearch: boolean,
+  _caching: boolean,
+  maxTokens: number | undefined
+): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const params: Record<string, unknown> = {}
   if (effort !== null) {
@@ -260,7 +347,11 @@ async function openai(modelId: string, effort: string | null, webSearch: boolean
   if (webSearch) {
     params.tools = [{ type: 'web_search' }]
   }
-  return new OpenAIModel(Object.keys(params).length === 0 ? { modelId } : { modelId, params })
+  return new OpenAIModel({
+    modelId,
+    ...(Object.keys(params).length === 0 ? {} : { params }),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  })
 }
 
 // `_caching` is unused: Mantle caches server-side automatically.
@@ -268,7 +359,8 @@ async function bedrockMantle(
   modelId: string,
   effort: string | null,
   webSearch: boolean,
-  _caching: boolean
+  _caching: boolean,
+  maxTokens: number | undefined
 ): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const params: Record<string, unknown> = {}
@@ -282,6 +374,7 @@ async function bedrockMantle(
     modelId,
     bedrockMantleConfig: {},
     ...(Object.keys(params).length === 0 ? {} : { params }),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
   })
 }
 
@@ -290,23 +383,40 @@ function modelLevels(providerName: string, modelId: string, fallback: readonly s
 }
 
 // `_caching` is unused: Gemini caches implicitly server-side (models 2.5 and newer).
-async function gemini(modelId: string, effort: string | null, webSearch: boolean, _caching: boolean): Promise<Model> {
+async function gemini(
+  modelId: string,
+  effort: string | null,
+  webSearch: boolean,
+  _caching: boolean,
+  maxTokens: number | undefined
+): Promise<Model> {
   const { GoogleModel } = await import('@strands-agents/sdk/models/google')
+  const params: Record<string, unknown> = {
+    ...(effort === null ? {} : { thinkingConfig: { thinkingLevel: effort } }),
+    ...(maxTokens === undefined ? {} : { maxOutputTokens: maxTokens }),
+  }
   return new GoogleModel({
     modelId,
-    ...(effort === null ? {} : { params: { thinkingConfig: { thinkingLevel: effort } } }),
+    ...(Object.keys(params).length === 0 ? {} : { params }),
     // `builtInTools` is appended alongside functionDeclarations, so search coexists with tools.
     ...(webSearch ? { builtInTools: [{ googleSearch: {} }] } : {}),
   })
 }
 
-async function ollama(modelId: string, _effort: string | null, _webSearch: boolean, _caching: boolean): Promise<Model> {
+async function ollama(
+  modelId: string,
+  _effort: string | null,
+  _webSearch: boolean,
+  _caching: boolean,
+  maxTokens: number | undefined
+): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   return new OpenAIModel({
     api: 'chat',
     modelId,
     apiKey: process.env.OLLAMA_API_KEY ?? 'ollama',
     clientConfig: { baseURL: openAICompatibleBaseUrl(process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434') },
+    ...(maxTokens !== undefined ? { params: { max_tokens: maxTokens } } : {}),
   })
 }
 
@@ -315,7 +425,8 @@ async function litellm(
   modelId: string,
   _effort: string | null,
   _webSearch: boolean,
-  _caching: boolean
+  _caching: boolean,
+  maxTokens: number | undefined
 ): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   return new OpenAIModel({
@@ -325,6 +436,7 @@ async function litellm(
     clientConfig: {
       baseURL: openAICompatibleBaseUrl(process.env.LITELLM_BASE_URL ?? 'http://127.0.0.1:4000'),
     },
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
   })
 }
 
@@ -333,7 +445,13 @@ function openAICompatibleBaseUrl(value: string): string {
 }
 
 interface Provider {
-  build: (modelId: string, effort: string | null, webSearch: boolean, caching: boolean) => Promise<Model>
+  build: (
+    modelId: string,
+    effort: string | null,
+    webSearch: boolean,
+    caching: boolean,
+    maxTokens: number | undefined
+  ) => Promise<Model>
   recommended: string | null
   levels: readonly string[]
   // Native web search is enabled through model config on the providers whose SDK exposes a
@@ -434,8 +552,10 @@ export async function resolveModel(
   effort: Effort = 'auto',
   webSearch = false,
   caching = false,
-  cachingExplicit = false
+  cachingExplicit = false,
+  maxTokens?: number
 ): Promise<Model | ModelRouter> {
+  checkMaxTokens(maxTokens)
   if (model instanceof Model || model instanceof ModelRouter) {
     // The instance's provider is unknown, so none of these can be applied; the caller configures
     // them on the instance. Warn (once) and pass the instance through, never throw.
@@ -446,6 +566,11 @@ export async function resolveModel(
     }
     if (caching && cachingExplicit) {
       warnOnce('prompt caching not applied to a pre-built Model instance or ModelRouter; configure it on the instance')
+    }
+    if (maxTokens !== undefined) {
+      warnOnce(
+        `maxTokens ${maxTokens} not applied to a pre-built Model instance or ModelRouter; configure it on the instance`
+      )
     }
     return model
   }
@@ -497,7 +622,8 @@ export async function resolveModel(
       ? bedrockEffort(name, effort)
       : resolveEffort(effort, recommended, levels, `model ${name}`),
     nativeSearch,
-    caching && provider.caching && !unsupportedCaching
+    caching && provider.caching && !unsupportedCaching,
+    resolveMaxTokens(providerName, name, maxTokens)
   )
 }
 

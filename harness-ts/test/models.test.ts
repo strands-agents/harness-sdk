@@ -3,6 +3,7 @@ import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
+  defaultMaxTokens,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
@@ -10,7 +11,7 @@ import {
   supportsWebSearch,
 } from '../src/models.js'
 import type { Effort } from '../src/types/agent.js'
-import { DEFAULT_EFFORT } from '../src/defaults.js'
+import { DEFAULT_EFFORT, DEFAULT_MAX_TOKENS } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
 const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
@@ -25,9 +26,20 @@ function resolve(
   effort: Effort = 'auto',
   webSearch = false,
   caching = false,
-  cachingExplicit = false
+  cachingExplicit = false,
+  maxTokens?: number
 ): Promise<Model> {
-  return resolveModel(model, DEFAULT, effort, webSearch, caching, cachingExplicit) as Promise<Model>
+  return resolveModel(model, DEFAULT, effort, webSearch, caching, cachingExplicit, maxTokens) as Promise<Model>
+}
+
+function captureWarnings(): ReturnType<typeof vi.fn> {
+  const warn = vi.fn()
+  configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
+  return warn
+}
+
+function at(config: object, path: readonly string[]): unknown {
+  return path.reduce<unknown>((value, key) => (value as Record<string, unknown> | undefined)?.[key], config)
 }
 
 describe('resolveModel', () => {
@@ -264,13 +276,13 @@ describe('resolveModel', () => {
     const model = await resolve('anthropic/claude-opus-4-8')
     const config = model.getConfig()
     expect(config.modelId).toBe('claude-opus-4-8')
-    expect(config.maxTokens).toBe(128_000)
+    expect(config.maxTokens).toBe(DEFAULT_MAX_TOKENS)
     const params = config.params as { thinking: unknown }
     expect(params.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
   })
 
-  it('gives anthropic haiku its own tier max tokens', async () => {
-    const model = await resolve('anthropic/claude-haiku-4-5-20251001')
+  it('clamps anthropic haiku max tokens to its tier limit', async () => {
+    const model = await resolve('anthropic/claude-haiku-4-5-20251001', 'auto', false, false, false, 100_000)
     expect(model.getConfig().maxTokens).toBe(64_000)
   })
 
@@ -279,14 +291,102 @@ describe('resolveModel', () => {
     expect(model.getConfig().maxTokens).toBe(32_000)
   })
 
-  it('gives a bedrock claude model tier max tokens', async () => {
+  it('gives a bedrock claude model the default max tokens', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8')
-    expect(model.getConfig().maxTokens).toBe(128_000)
+    expect(model.getConfig().maxTokens).toBe(DEFAULT_MAX_TOKENS)
   })
 
-  it('gives a bedrock claude haiku model its own tier max tokens', async () => {
-    const model = await resolve('bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0')
+  it('clamps bedrock claude haiku max tokens to its tier limit', async () => {
+    const model = await resolve(
+      'bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      'auto',
+      false,
+      false,
+      false,
+      100_000
+    )
     expect(model.getConfig().maxTokens).toBe(64_000)
+  })
+
+  it.each([
+    ['bedrock/global.anthropic.claude-opus-5', ['maxTokens']],
+    ['bedrock/global.anthropic.claude-mythos-5-1', ['maxTokens']],
+    ['anthropic/claude-opus-5', ['maxTokens']],
+    ['anthropic/claude-mythos-1', ['maxTokens']],
+    ['openai/gpt-5.6-sol', ['maxTokens']],
+    ['bedrock-mantle/openai.gpt-5.6-sol', ['maxTokens']],
+    ['google/gemini-3.5-flash', ['params', 'maxOutputTokens']],
+  ] as const)('caps each model call on %s at the default max tokens', async (spec, path) => {
+    expect(at((await resolve(spec)).getConfig(), path)).toBe(DEFAULT_MAX_TOKENS)
+  })
+
+  it.each([
+    'bedrock/amazon.nova-2-lite-v1:0',
+    'bedrock/openai.gpt-oss-120b-1:0',
+    'bedrock/anthropic.claude-3-haiku-20240307-v1:0',
+    'ollama/llama3',
+    'litellm/gpt-4o',
+  ])('sends no default max tokens to %s, whose output limit is unknown', async (spec) => {
+    const config = (await resolve(spec, 'off')).getConfig()
+    expect(config.maxTokens).toBeUndefined()
+    expect(at(config, ['params', 'maxOutputTokens'])).toBeUndefined()
+  })
+
+  it.each([
+    ['bedrock/global.anthropic.claude-opus-5', ['maxTokens']],
+    ['bedrock/amazon.nova-pro-v1:0', ['maxTokens']],
+    ['anthropic/claude-opus-5', ['maxTokens']],
+    ['openai/gpt-5.6-sol', ['maxTokens']],
+    ['bedrock-mantle/openai.gpt-5.6-sol', ['maxTokens']],
+    ['google/gemini-3.5-flash', ['params', 'maxOutputTokens']],
+    ['ollama/llama3', ['params', 'max_tokens']],
+    ['litellm/gpt-4o', ['maxTokens']],
+  ] as const)('sends an explicit max tokens to %s', async (spec, path) => {
+    expect(at((await resolve(spec, 'off', false, false, false, 8_000)).getConfig(), path)).toBe(8_000)
+  })
+
+  it('sends the ollama cap as max_tokens, the field ollama reads, not max_completion_tokens', async () => {
+    const config = (await resolve('ollama/llama3', 'off', false, false, false, 8_000)).getConfig()
+    expect(config.maxTokens).toBeUndefined()
+    expect(config.params).toEqual({ max_tokens: 8_000 })
+  })
+
+  it('clamps max tokens above the model output limit and warns', async () => {
+    const warn = captureWarnings()
+    const model = await resolve('bedrock/global.anthropic.claude-opus-5', 'auto', false, false, false, 500_000)
+    expect(model.getConfig().maxTokens).toBe(128_000)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('above the model output limit'))
+  })
+
+  it('warns when max tokens is above the default', async () => {
+    const warn = captureWarnings()
+    const model = await resolve('openai/gpt-5.6-sol', 'auto', false, false, false, 64_000)
+    expect(model.getConfig().maxTokens).toBe(64_000)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('above the harness default'))
+  })
+
+  it.each([undefined, 8_000, DEFAULT_MAX_TOKENS])('does not warn for max tokens %s', async (maxTokens) => {
+    const warn = captureWarnings()
+    await resolve('bedrock/global.anthropic.claude-opus-5', 'auto', false, false, false, maxTokens)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it.each([0, -1, 1.5, Number.NaN, '8000', true])('rejects max tokens %s even for a Model instance', async (value) => {
+    const maxTokens = value as unknown as number
+    await expect(
+      resolve('bedrock/global.anthropic.claude-opus-5', 'auto', false, false, false, maxTokens)
+    ).rejects.toThrow('maxTokens must be a positive integer')
+    await expect(
+      resolve(new BedrockModel({ modelId: 'anything' }), 'auto', false, false, false, maxTokens)
+    ).rejects.toThrow('maxTokens must be a positive integer')
+  })
+
+  it('warns that max tokens is not applied to a Model instance', async () => {
+    const warn = captureWarnings()
+    const instance = new BedrockModel({ modelId: 'anything' })
+    expect(await resolve(instance, 'auto', false, false, false, 8_000)).toBe(instance)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('maxTokens 8000 not applied'))
+    expect(instance.getConfig().maxTokens).toBeUndefined()
   })
 
   const ADAPTIVE = {
@@ -348,9 +448,29 @@ describe('resolveModel', () => {
     ['xhigh', 32_768],
     ['max', 49_152],
   ] as const)('maps %s to a budget of %d that the api accepts', async (level, budget) => {
-    const config = (await resolve('bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', level)).getConfig()
+    const config = (
+      await resolve('bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', level, false, false, false, 64_000)
+    ).getConfig()
     expect(config.additionalRequestFields).toEqual({ thinking: { type: 'enabled', budget_tokens: budget } })
     expect(budget).toBeLessThan(config.maxTokens!)
+  })
+
+  it.each(['xhigh', 'max'] as const)('keeps room for the answer under the default max tokens at %s', async (level) => {
+    const config = (await resolve('bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', level)).getConfig()
+    expect(config.maxTokens).toBe(DEFAULT_MAX_TOKENS)
+    expect(config.additionalRequestFields).toEqual({
+      thinking: { type: 'enabled', budget_tokens: DEFAULT_MAX_TOKENS - 8_192 },
+    })
+  })
+
+  it('rejects a max tokens too small for extended thinking', async () => {
+    const haiku = 'bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0'
+    await expect(resolve(haiku, 'auto', false, false, false, 1_000)).rejects.toThrow(
+      'leaves no room for extended thinking'
+    )
+    const config = (await resolve(haiku, 'off', false, false, false, 1_000)).getConfig()
+    expect(config.maxTokens).toBe(1_000)
+    expect(config.additionalRequestFields).toBeUndefined()
   })
 
   it.each([
@@ -367,14 +487,14 @@ describe('resolveModel', () => {
     ['claude-haiku-4.5', 64_000],
     ['claude-haiku-5-5', 128_000],
   ] as const)('gives %s a max tokens ceiling of %d', async (modelId, maxTokens) => {
-    const model = await resolve(`bedrock/global.anthropic.${modelId}`)
+    const model = await resolve(`bedrock/global.anthropic.${modelId}`, 'auto', false, false, false, 1_000_000)
     expect(model.getConfig().maxTokens).toBe(maxTokens)
   })
 
   it('clamps a version-led id against the anthropic-direct fallback', async () => {
     const model = await resolve('anthropic/claude-4-5-haiku', 'max')
     expect(model.getConfig().maxTokens).toBe(32_000)
-    expect(model.getConfig().params).toEqual({ thinking: { type: 'enabled', budget_tokens: 31_999 } })
+    expect(model.getConfig().params).toEqual({ thinking: { type: 'enabled', budget_tokens: 23_808 } })
   })
 
   it.each(ADAPTIVE_CLAUDE)('sends the adaptive block to %s', async (modelId) => {
@@ -398,14 +518,14 @@ describe('resolveModel', () => {
     expect(model.getConfig().params).toBeUndefined()
   })
 
-  it('gives a bedrock claude sonnet model tier max tokens', async () => {
+  it('gives a bedrock claude sonnet model the default max tokens', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-sonnet-5')
-    expect(model.getConfig().maxTokens).toBe(128_000)
+    expect(model.getConfig().maxTokens).toBe(DEFAULT_MAX_TOKENS)
   })
 
-  it('gives a bedrock claude fable model tier max tokens', async () => {
+  it('gives a bedrock claude fable model the default max tokens', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-fable-5')
-    expect(model.getConfig().maxTokens).toBe(128_000)
+    expect(model.getConfig().maxTokens).toBe(DEFAULT_MAX_TOKENS)
   })
 
   it('does not force max tokens on a non-claude bedrock model', async () => {
@@ -622,6 +742,24 @@ describe('default effort', () => {
     expect(config).not.toHaveProperty('additionalRequestFields')
     expect(config).not.toHaveProperty('params')
     await expect(resolve(spec, 'high')).rejects.toThrow(/not supported/)
+  })
+})
+
+describe('defaultMaxTokens', () => {
+  it.each([
+    [undefined, DEFAULT_MAX_TOKENS],
+    ['bedrock/global.anthropic.claude-mythos-5-1', DEFAULT_MAX_TOKENS],
+    ['anthropic/claude-opus-5', DEFAULT_MAX_TOKENS],
+    ['google/gemini-3.5-flash', DEFAULT_MAX_TOKENS],
+    ['bedrock/anthropic.claude-3-haiku-20240307-v1:0', undefined],
+    ['bedrock/amazon.nova-pro-v1:0', undefined],
+    ['ollama/llama3', undefined],
+  ] as const)('reports the cap the harness applies to %s', (model, expected) => {
+    expect(defaultMaxTokens(model)).toBe(expected)
+  })
+
+  it('reports no cap for a Model instance', () => {
+    expect(defaultMaxTokens(new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' }))).toBeUndefined()
   })
 })
 

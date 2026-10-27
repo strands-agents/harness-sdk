@@ -10,6 +10,8 @@ export const DEFAULT_CONTEXT_MANAGER = 'auto'
 
 export const DEFAULT_CACHING = 'auto'
 
+export const DEFAULT_MAX_TOKENS = 32_000
+
 export const DEFAULT_BUILTIN_TOOLS = [
   'shell',
   'read',

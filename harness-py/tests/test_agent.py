@@ -15,6 +15,7 @@ from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 from strands.sandbox.docker import DockerSandbox
 from strands.session import SnapshotSessionManager
 from strands.storage import InMemoryStorage, LocalFileStorage
+from strands.types.exceptions import MaxTokensReachedException
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_plugins.skills import AgentSkills
 from strands.vended_tools.file_editor import make_file_editor
@@ -22,7 +23,7 @@ from strands.vended_tools.shell import make_shell
 
 from strands_harness import BUILTIN_TOOL_NAMES, HARNESS_CONTRACT, create_harness
 from strands_harness import agent as agent_module
-from strands_harness.defaults import DEFAULT_BUILTIN_TOOLS, DEFAULT_SUBAGENT_MAX_DEPTH
+from strands_harness.defaults import DEFAULT_BUILTIN_TOOLS, DEFAULT_MAX_TOKENS, DEFAULT_SUBAGENT_MAX_DEPTH
 from strands_harness.models import resolve_web_fetch_model
 from strands_harness.options import _memory_config, _normalize_builtin_tools
 from strands_harness.tools.subagent import build_default_subagent
@@ -116,6 +117,33 @@ class _RetrievingModel(Model):
         yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(tool_input)}}}}
         yield {"contentBlockStop": {}}
         yield {"messageStop": {"stopReason": "tool_use"}}
+
+
+class _TruncatingModel(Model):
+    def __init__(self) -> None:
+        self._config = {"model_id": "truncating-model", "context_window_limit": 1_000_000}
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        raise NotImplementedError
+        yield
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockStart": {"start": {}}}
+        yield {"contentBlockDelta": {"delta": {"text": "cut off"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "max_tokens"}}
+
+
+def _truncating_harness(monkeypatch, **kwargs):
+    monkeypatch.setattr(agent_module, "resolve_model", lambda *_, **__: _TruncatingModel())
+    return create_harness(model="bedrock/global.anthropic.claude-opus-5", session=False, memory=False, **kwargs)
 
 
 def test_defaults():
@@ -671,6 +699,42 @@ def test_effort_off_drops_reasoning():
 def test_effort_level_is_validated_against_the_model():
     with pytest.raises(ValueError, match="not supported by Bedrock model"):
         create_harness(effort="minimal")
+
+
+def test_max_tokens_defaults_to_the_harness_cap():
+    agent = create_harness()
+    assert agent.model.config["max_tokens"] == DEFAULT_MAX_TOKENS
+
+
+def test_max_tokens_is_applied_to_the_model():
+    agent = create_harness(model="openai/gpt-5.6-sol", max_tokens=8_000)
+    assert agent.model.config["params"]["max_output_tokens"] == 8_000
+
+
+def test_max_tokens_is_validated():
+    with pytest.raises(ValueError, match="max_tokens must be a positive integer"):
+        create_harness(max_tokens=0)
+
+
+def test_hitting_the_default_max_tokens_warns(monkeypatch, caplog):
+    agent = _truncating_harness(monkeypatch)
+    with caplog.at_level(logging.WARNING, logger="strands_harness.agent"), pytest.raises(MaxTokensReachedException):
+        agent("write a long essay")
+    assert any("harness default max_tokens" in r.message for r in caplog.records)
+
+
+def test_hitting_an_explicit_max_tokens_does_not_warn_about_the_default(monkeypatch, caplog):
+    agent = _truncating_harness(monkeypatch, max_tokens=8_000)
+    with caplog.at_level(logging.WARNING, logger="strands_harness.agent"), pytest.raises(MaxTokensReachedException):
+        agent("write a long essay")
+    assert not any("harness default max_tokens" in r.message for r in caplog.records)
+
+
+def test_model_instance_hitting_its_limit_does_not_warn_about_the_default(caplog):
+    agent = create_harness(model=_TruncatingModel(), session=False, memory=False)
+    with caplog.at_level(logging.WARNING, logger="strands_harness.agent"), pytest.raises(MaxTokensReachedException):
+        agent("write a long essay")
+    assert not any("harness default max_tokens" in r.message for r in caplog.records)
 
 
 def test_explicit_context_manager_wins():
@@ -1249,6 +1313,11 @@ def test_subagent_child_inherits_explicit_web_search():
     spec = AgentSpec(task="x", tools=["read"])
     child = parent.tool_registry.registry["subagent"]._builder(spec)
     assert child.model.config["params"]["tools"] == [{"type": "web_search"}]
+
+
+def test_subagent_child_inherits_max_tokens():
+    child = _build_subagent_child(max_tokens=8_000)
+    assert child.model.config["max_tokens"] == 8_000
 
 
 def test_subagent_child_can_sub_delegate():

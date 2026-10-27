@@ -10,6 +10,8 @@ DEFAULT_CONTEXT_MANAGER = "auto"
 
 DEFAULT_CACHING = "auto"
 
+DEFAULT_MAX_TOKENS = 32_000
+
 BUILTIN_TOOL_NAMES: tuple[BuiltinToolName, ...] = (
     "shell",
     "read",

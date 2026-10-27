@@ -59,6 +59,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 await createHarness({
   model: 'bedrock/global.anthropic.claude-opus-5', // "provider/name", a bare Bedrock id, or a Model instance
   effort: 'auto', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+  maxTokens: undefined, // output cap for each model call (undefined = 32_000)
   instructions: undefined, // domain text appended to the system prompt
   tools: undefined, // your tools, added alongside the built-ins
   plugins: undefined, // your Strands plugins, added alongside the built-in ones
@@ -151,6 +152,19 @@ await createHarness({ effort: 'high' }) // minimal | low | medium | high | xhigh
 await createHarness({ effort: 'auto' }) // the provider's recommended level (high where supported), the default
 await createHarness({ effort: 'off' }) // reasoning off (the provider's `none` level where it has one)
 ```
+
+Each model call stops at `maxTokens` output tokens. The default is 32,000:
+
+```typescript
+await createHarness({ maxTokens: 8_000 }) // a lower cap
+await createHarness({ maxTokens: 64_000 }) // a higher cap, which logs a warning
+```
+
+The harness sends the lower of `maxTokens` and the output limit of the model, when it knows that
+limit. Claude 4 and later on Bedrock, and all Anthropic, OpenAI, bedrock-mantle, and Google models,
+get the default. Other Bedrock models, Ollama, and LiteLLM get only a value that you set, because the
+harness does not know their limits. When a model call stops at the default cap, the harness logs a warning.
+`maxTokens` does not apply to a `Model` instance. Set the cap on the instance itself.
 
 ## Giving it your own instructions and tools
 

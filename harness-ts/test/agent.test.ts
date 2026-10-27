@@ -10,6 +10,7 @@ import {
   BeforeModelCallEvent,
   FileStorage as SessionFileStorage,
   type InterventionHandler,
+  MaxTokensError,
   McpClient,
   MemoryManager,
   type Message,
@@ -34,6 +35,7 @@ import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 
 import { createHarness } from '../src/agent.js'
+import { DEFAULT_MAX_TOKENS } from '../src/defaults.js'
 import { HARNESS_CONTRACT } from '../src/prompt.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-caller.js'
@@ -156,6 +158,47 @@ class RetrievingModel extends Model {
     yield { type: 'modelContentBlockStopEvent' }
     yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
   }
+}
+
+class TruncatingModel extends Model {
+  private _config: BaseModelConfig = { modelId: 'truncating-model', contextWindowLimit: 1_000_000 }
+
+  updateConfig(modelConfig: BaseModelConfig): void {
+    this._config = { ...this._config, ...modelConfig }
+  }
+
+  getConfig(): BaseModelConfig {
+    return this._config
+  }
+
+  async *stream(): AsyncGenerator<ModelStreamEvent> {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'cut off' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }
+  }
+}
+
+const QUIET_HARNESS: HarnessAgentOptions = {
+  session: false,
+  builtinTools: [],
+  builtinPlugins: [],
+  memory: false,
+  skills: false,
+  printer: false,
+}
+
+async function truncatingHarness(options: HarnessAgentOptions = {}): Promise<Agent> {
+  const agent = await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5', ...QUIET_HARNESS, ...options })
+  agent.model = new TruncatingModel()
+  return agent
+}
+
+function captureWarnings(): ReturnType<typeof vi.fn> {
+  const warn = vi.fn()
+  configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
+  return warn
 }
 
 const tempDirs: string[] = []
@@ -518,6 +561,41 @@ describe('createHarness', () => {
   it('sends no reasoning fields when effort is off', async () => {
     const agent = await createHarness({ effort: 'off' })
     expect(agent.model.getConfig().additionalRequestFields).toBeUndefined()
+  })
+
+  it('caps the model at the default max tokens', async () => {
+    const agent = await createHarness()
+    expect(agent.model.getConfig().maxTokens).toBe(DEFAULT_MAX_TOKENS)
+  })
+
+  it('applies an explicit max tokens to the model', async () => {
+    const agent = await createHarness({ model: 'openai/gpt-5.6-sol', maxTokens: 8_000 })
+    expect(agent.model.getConfig().maxTokens).toBe(8_000)
+  })
+
+  it('rejects a max tokens that is not a positive integer', async () => {
+    await expect(createHarness({ maxTokens: 0 })).rejects.toThrow('maxTokens must be a positive integer')
+  })
+
+  it('warns when a model call hits the default max tokens', async () => {
+    const warn = captureWarnings()
+    const agent = await truncatingHarness()
+    await expect(agent.invoke('Write a long essay.')).rejects.toThrow(MaxTokensError)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('harness default maxTokens'))
+  })
+
+  it('does not warn about the default when an explicit max tokens is hit', async () => {
+    const warn = captureWarnings()
+    const agent = await truncatingHarness({ maxTokens: 8_000 })
+    await expect(agent.invoke('Write a long essay.')).rejects.toThrow(MaxTokensError)
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('harness default maxTokens'))
+  })
+
+  it('does not warn about the default when a Model instance hits its limit', async () => {
+    const warn = captureWarnings()
+    const agent = await createHarness({ model: new TruncatingModel(), ...QUIET_HARNESS })
+    await expect(agent.invoke('Write a long essay.')).rejects.toThrow(MaxTokensError)
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('harness default maxTokens'))
   })
 
   it('lets an explicit context manager win', async () => {
@@ -955,6 +1033,11 @@ describe('subagent delegate (built child)', () => {
     const child = await buildChild({ memory: { dir: makeTempDir() } }, new AgentSpec('x'))
     expect(child.memoryManager).toBeInstanceOf(MemoryManager)
     expect(storeOf(child.memoryManager as MemoryManager).writable).toBe(false)
+  })
+
+  it('builds the child with the parent max tokens', async () => {
+    const child = await buildChild({ maxTokens: 8_000 }, new AgentSpec('x'))
+    expect(child.model.getConfig().maxTokens).toBe(8_000)
   })
 
   it('builds the child with sessions forced off', async () => {

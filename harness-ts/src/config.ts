@@ -274,6 +274,7 @@ export interface HarnessAgentConfig {
   model: string
   modelModule: HarnessModuleReference | null
   effort: Effort
+  maxTokens: number | null
   tools: readonly HarnessModuleReference[]
   subagents: readonly HarnessModuleReference[]
   mcpServers: Record<string, unknown> | string
@@ -301,6 +302,7 @@ export const DEFAULT_HARNESS_AGENT_CONFIG: HarnessAgentConfig = {
   model: DEFAULT_MODEL,
   modelModule: null,
   effort: DEFAULT_EFFORT,
+  maxTokens: null,
   tools: [],
   subagents: [],
   mcpServers: {},
@@ -374,6 +376,7 @@ export async function harnessAgentOptionsFromConfig(
     ...(config.instructions ? { instructions: config.instructions } : {}),
     model: model ?? config.model,
     effort: config.effort,
+    ...(config.maxTokens === null ? {} : { maxTokens: config.maxTokens }),
     // Specialist agents declared as `subagents` module refs are wired the same way as any tool: each
     // is exposed via `Agent.asTool()` and appended to `tools` (the harness has no separate subagents param).
     ...(tools.length > 0 || subagents.length > 0
@@ -726,6 +729,12 @@ const HarnessAgentConfigSchema = z.object({
   effort: z
     .enum(EFFORT_LEVELS, { error: `must be one of: ${EFFORT_LEVELS.join(', ')}.` })
     .default(DEFAULT_HARNESS_AGENT_CONFIG.effort),
+  maxTokens: z
+    .number({ error: 'must be a positive integer or null.' })
+    .int('must be a positive integer or null.')
+    .positive('must be a positive integer or null.')
+    .nullable()
+    .default(null),
   tools: moduleReferencesSchema('tool'),
   subagents: moduleReferencesSchema('subagent'),
   mcpServers: z

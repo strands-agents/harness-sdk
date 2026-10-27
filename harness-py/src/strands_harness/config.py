@@ -52,6 +52,7 @@ DEFAULT_HARNESS_AGENT_CONFIG: dict[str, Any] = {
     "model": defaults.DEFAULT_MODEL,
     "modelModule": None,
     "effort": defaults.DEFAULT_EFFORT,
+    "maxTokens": None,
     "tools": [],
     "subagents": [],
     "mcpServers": {},
@@ -157,6 +158,8 @@ def harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") 
     builtin_tools = _builtin_tools_kwarg(config["builtinTools"], root)
     if builtin_tools is not None:
         kwargs["builtin_tools"] = builtin_tools
+    if config["maxTokens"] is not None:
+        kwargs["max_tokens"] = config["maxTokens"]
     if not config["caching"]:
         kwargs["caching"] = False
     if config["builtinPlugins"] != list(defaults.DEFAULT_BUILTIN_PLUGINS):
@@ -407,6 +410,11 @@ class _HarnessAgentConfig(_Model):
     model: NonBlankStr
     model_module: _ModelReference | None
     effort: Effort
+    max_tokens: _one_of(
+        "Input should be a positive integer or null",
+        (int, Annotated[int, Field(gt=0)]),
+        (type(None), None),
+    )
     tools: list[_reference("tool")]
     subagents: list[_reference("subagent")]
     mcp_servers: _one_of(_MCP_SERVERS_SHAPE, (dict, _JsonObject), (str, _non_blank_str(_MCP_SERVERS_SHAPE)))
