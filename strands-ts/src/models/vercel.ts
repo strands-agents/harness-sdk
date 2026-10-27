@@ -24,13 +24,14 @@ import type {
   LanguageModelV3ToolResultPart,
   LanguageModelV3Usage,
   SharedV3ProviderOptions,
+  SharedV3ProviderMetadata,
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
 import type { SystemPrompt, StopReason } from '../types/messages.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import type { ModelStreamEvent, Usage } from './streaming.js'
-import { Message, TextBlock, type ToolResultContent } from '../types/messages.js'
-import { encodeBase64, ImageBlock, DocumentBlock, VideoBlock } from '../types/media.js'
+import { Message, TextBlock, type ReasoningBlock, type ToolResultContent } from '../types/messages.js'
+import { decodeBase64, encodeBase64, ImageBlock, DocumentBlock, VideoBlock } from '../types/media.js'
 import {
   Model,
   resolveCacheSection,
@@ -158,7 +159,7 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    const prompt = formatMessages(messages, options?.systemPrompt)
+    const prompt = formatMessages(messages, options?.systemPrompt, reasoningOptionsKey(this._provider.provider))
     const tools = options?.toolSpecs ? formatTools(options.toolSpecs) : undefined
     const toolChoice = options?.toolChoice ? formatToolChoice(options.toolChoice) : undefined
 
@@ -565,12 +566,23 @@ function* mapStreamPart(part: LanguageModelV3StreamPart): Generator<ModelStreamE
       yield new ModelContentBlockStartEvent({ type: 'modelContentBlockStartEvent' })
       break
 
-    case 'reasoning-delta':
-      yield new ModelContentBlockDeltaEvent({
-        type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', text: part.delta },
-      })
+    case 'reasoning-delta': {
+      // The AI SDK delivers a reasoning signature (and Bedrock redacted reasoning) as an
+      // empty-text delta carrying provider metadata; forward it so the assembled block keeps it.
+      const { signature, redactedData } = reasoningMetadata(part.providerMetadata)
+      if (part.delta || signature || redactedData) {
+        yield new ModelContentBlockDeltaEvent({
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'reasoningContentDelta',
+            ...(part.delta && { text: part.delta }),
+            ...(signature && { signature }),
+            ...(redactedData && { redactedContent: decodeBase64(redactedData) }),
+          },
+        })
+      }
       break
+    }
 
     case 'reasoning-end':
       yield new ModelContentBlockStopEvent({ type: 'modelContentBlockStopEvent' })
@@ -677,9 +689,55 @@ function mapUsage(usage: LanguageModelV3Usage): Usage {
 }
 
 /**
+ * Extracts the reasoning signature and redacted reasoning a provider attached to a
+ * stream part as provider metadata, keyed by the provider's own name.
+ */
+function reasoningMetadata(providerMetadata: SharedV3ProviderMetadata | undefined): {
+  signature?: string
+  redactedData?: string
+} {
+  for (const options of Object.values(providerMetadata ?? {})) {
+    if (!options || typeof options !== 'object') continue
+    const { signature, redactedData } = options as { signature?: unknown; redactedData?: unknown }
+    return {
+      ...(typeof signature === 'string' && { signature }),
+      ...(typeof redactedData === 'string' && { redactedData }),
+    }
+  }
+  return {}
+}
+
+/**
+ * Maps the Vercel provider name to the `providerOptions` key its adapter reads reasoning
+ * metadata from. Providers whose adapters drop reasoning without metadata (everything but
+ * these two today) get no key, so nothing is attached for them.
+ */
+function reasoningOptionsKey(providerName: string): string | undefined {
+  if (providerName === 'amazon-bedrock') return 'bedrock'
+  if (providerName === 'anthropic') return 'anthropic'
+  return undefined
+}
+
+/**
+ * Builds the `providerOptions` that make the AI SDK forward a stored reasoning block,
+ * or `undefined` when the block carries no signature or redacted data.
+ */
+function reasoningProviderOptions(block: ReasoningBlock, key?: string): SharedV3ProviderOptions | undefined {
+  if (!key) return undefined
+  const options: { signature?: string; redactedData?: string } = {}
+  if (block.signature) options.signature = block.signature
+  if (block.redactedContent) options.redactedData = encodeBase64(block.redactedContent)
+  return Object.keys(options).length > 0 ? { [key]: options } : undefined
+}
+
+/**
  * Converts Strands messages + system prompt to LanguageModelV3 prompt format.
  */
-function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): LanguageModelV3Prompt {
+function formatMessages(
+  messages: Message[],
+  systemPrompt?: SystemPrompt,
+  reasoningKey?: string
+): LanguageModelV3Prompt {
   const prompt: LanguageModelV3Prompt = []
 
   if (systemPrompt) {
@@ -729,7 +787,7 @@ function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): Langu
     if (message.role === 'user') {
       formatUserMessage(message, prompt, toolNameMap)
     } else if (message.role === 'assistant') {
-      formatAssistantMessage(message, prompt)
+      formatAssistantMessage(message, prompt, reasoningKey)
     }
   }
 
@@ -790,7 +848,7 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
  * @param message - The assistant message to format
  * @param prompt - The prompt array to push formatted messages into
  */
-function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt): void {
+function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt, reasoningKey?: string): void {
   const content: Array<
     LanguageModelV3TextPart | LanguageModelV3FilePart | LanguageModelV3ReasoningPart | LanguageModelV3ToolCallPart
   > = []
@@ -800,11 +858,21 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
       case 'textBlock':
         content.push({ type: 'text', text: block.text })
         break
-      case 'reasoningBlock':
-        if (block.text) {
-          content.push({ type: 'reasoning', text: block.text })
+      case 'reasoningBlock': {
+        // The AI SDK forwards a reasoning part to the provider only when it carries a signature
+        // or redacted data; text-only reasoning is silently dropped. Attach the stored signature
+        // under the current provider's key. Cross-provider history replay is not guarded here
+        // (#4779 tracks provenance); a provider switch replays under the new provider's key.
+        const reasoningOptions = reasoningProviderOptions(block, reasoningKey)
+        if (block.text || reasoningOptions) {
+          content.push({
+            type: 'reasoning',
+            text: block.text ?? '',
+            ...(reasoningOptions && { providerOptions: reasoningOptions }),
+          })
         }
         break
+      }
       case 'toolUseBlock':
         content.push({
           type: 'tool-call',
