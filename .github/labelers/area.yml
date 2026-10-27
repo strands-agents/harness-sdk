@@ -8,6 +8,7 @@ instructions: |
   Provider-specific bugs (Bedrock, OpenAI, Anthropic, Gemini, Ollama, etc.) belong to area-model.
   Issues about hook lifecycle events belong to area-hooks even if they mention tools or agents.
   Middleware (agent.add_middleware, stage handlers that wrap model invocation or tool execution) belongs to area-middleware, not area-hooks.
+  Retry configured on the model (ModelRetryStrategy, backoff, retry budgets) belongs to area-model; retry written as a middleware handler belongs to area-middleware.
   Guardrails, content filtering, steering handlers, and Cedar authorization belong to area-interventions, not area-hooks.
   DecisionModel issues belong to area-decisions. When a decision model drives another feature (model routing, interventions, tool selection, memory filtering), list area-decisions first and the consuming area second.
   AgentSkills, Skill loading, and skill sources belong to area-skills, not area-tool. Strands skill bundles and plugins for coding agents (.agents/skills, .claude-plugin, .cursor-plugin, Claude Code, Codex, Cursor) are area-devx, never area-skills.
