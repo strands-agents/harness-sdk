@@ -380,7 +380,7 @@ function splitToolResultMedia(
 export function mapChatChunkToEvents(
   chunk: { choices: unknown[] },
   state: ChatStreamState,
-  activeToolCalls: Map<number, boolean>
+  activeToolCalls: Map<number, ModelStreamEvent[]>
 ): ModelStreamEvent[] {
   const events: ModelStreamEvent[] = []
 
@@ -421,15 +421,24 @@ export function mapChatChunkToEvents(
       }
 
       if (toolCall.id && toolCall.function?.name) {
-        events.push({
+        if (state.textContentBlockStarted) {
+          events.push({ type: 'modelContentBlockStopEvent' })
+          state.textContentBlockStarted = false
+        }
+        activeToolCalls.set(toolCall.index, [])
+        const target = activeToolCalls.size === 1 ? events : activeToolCalls.get(toolCall.index)!
+        target.push({
           type: 'modelContentBlockStartEvent',
           start: { type: 'toolUseStart', name: toolCall.function.name, toolUseId: toolCall.id },
         })
-        activeToolCalls.set(toolCall.index, true)
       }
 
-      if (toolCall.function?.arguments) {
-        events.push({
+      const pending = activeToolCalls.get(toolCall.index)
+      if (pending && toolCall.function?.arguments) {
+        // SDK content blocks are serial. Stream the first call immediately;
+        // hold siblings by provider index until that block can close.
+        const target = activeToolCalls.keys().next().value === toolCall.index ? events : pending
+        target.push({
           type: 'modelContentBlockDeltaEvent',
           delta: { type: 'toolUseInputDelta', input: toolCall.function.arguments },
         })
@@ -443,7 +452,8 @@ export function mapChatChunkToEvents(
       state.textContentBlockStarted = false
     }
 
-    for (const [index] of activeToolCalls) {
+    for (const [index, pending] of activeToolCalls) {
+      events.push(...pending)
       events.push({ type: 'modelContentBlockStopEvent' })
       activeToolCalls.delete(index)
     }
