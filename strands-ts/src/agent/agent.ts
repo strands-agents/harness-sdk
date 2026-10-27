@@ -26,9 +26,10 @@ import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
+import { ToolProvider, isToolProvider } from '../tools/tool-provider.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
-import { normalizeError, ConcurrentInvocationError } from '../errors.js'
+import { normalizeError, ConcurrentInvocationError, ToolValidationError } from '../errors.js'
 import { Model } from '../models/model.js'
 import { ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
@@ -137,7 +138,7 @@ import type { BackgroundTasksConfig } from '../background-tasks/types.js'
  * {@link Agent.asTool}, so they can be passed directly without calling
  * `.asTool()` explicitly.
  */
-export type ToolList = (Tool | McpClient | Agent | ToolList)[]
+export type ToolList = (Tool | McpClient | Agent | ToolProvider | ToolList)[]
 
 /**
  * Strategy for executing tool calls that the model emits in a single assistant turn.
@@ -533,6 +534,8 @@ export class Agent implements LocalAgent, InvokableAgent {
   private readonly _interventionRegistry: InterventionRegistry
   private _toolRegistry: ToolRegistry
   private _mcpClients: McpClient[]
+  private _toolProviders: ToolProvider[]
+  private _providerToolsLoaded: boolean = false
   private _initialized: boolean
   private _isInvoking: boolean = false
   private _abortController = new AbortController()
@@ -604,12 +607,13 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._conversationManager = resolveConversationManager(config?.contextManager, config?.conversationManager)
     }
 
-    const { tools, mcpClients } = flattenTools(config?.tools ?? [])
+    const { tools, mcpClients, toolProviders } = flattenTools(config?.tools ?? [])
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
     this._toolRegistry = new ToolRegistry(tools)
     this._mcpClients = mcpClients
+    this._toolProviders = toolProviders
 
     // Initialize hooks registry
     this._hooksRegistry = new HookRegistryImplementation()
@@ -873,6 +877,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       })
     )
 
+    await this._loadProviderTools()
+
     // Register tools vended by the sandbox. The host default vends nothing. A tool
     // is skipped if the user already registered one with that name.
     if (this._sandbox) {
@@ -1116,8 +1122,57 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Registers this agent's registry as a consumer of each tool provider, then loads and registers
+   * their tools in config order once every load has settled, so tool order is independent of load
+   * latency. All-or-nothing: on failure no provider tools stay registered, so `initialize()` can be retried.
+   */
+  private async _loadProviderTools(): Promise<void> {
+    if (this._providerToolsLoaded) {
+      return
+    }
+    for (const provider of this._toolProviders) {
+      this._toolRegistry.addProvider(provider)
+    }
+    const loaded = await Promise.all(
+      this._toolProviders.map(async (provider) => ({ provider, tools: await provider.loadTools() }))
+    )
+    const providedTools = loaded.flatMap(({ provider, tools }) => tools.map((tool) => ({ provider, tool })))
+    const registered: string[] = []
+    try {
+      for (const { provider, tool } of providedTools) {
+        this._addProviderTool(provider, tool)
+        registered.push(tool.name)
+      }
+    } catch (error) {
+      registered.forEach((name) => this._toolRegistry.remove(name))
+      throw error
+    }
+    this._providerToolsLoaded = true
+  }
+
+  private _addProviderTool(provider: ToolProvider, tool: Tool): void {
+    try {
+      this._toolRegistry.add(tool)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new ToolValidationError(
+        `provider=<${provider.constructor.name}> | failed to register provided tool: ${reason}`
+      )
+    }
+  }
+
+  /**
    * Runs the agent's shutdown procedures at end of life. Safe to call more
    * than once, and a no-op when there is nothing to release.
+   *
+   * Releases every {@link ToolProvider} registered via `tools` (removing this agent's tool
+   * registry as a consumer, which lets a provider with no other consumers release its own
+   * resources) in addition to flushing the memory manager. Both run even if one of them fails,
+   * so a provider that throws while releasing never prevents the memory manager from flushing;
+   * the first failure (if any) is thrown once both have settled.
+   *
+   * Treat the agent as end-of-life afterwards: tools vended by a released provider may no longer
+   * work. Construct a new `Agent` instance to continue.
    *
    * Call it directly when you own the agent's lifecycle (e.g. draining on a shutdown signal), or bind
    * the agent with `await using` to run it automatically on scope exit.
@@ -1130,7 +1185,14 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   async shutdown(): Promise<void> {
-    await this.memoryManager?.flush()
+    const results = await Promise.allSettled([
+      this._toolRegistry.cleanup(),
+      this.memoryManager?.flush() ?? Promise.resolve(),
+    ])
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure) {
+      throw failure.reason
+    }
   }
 
   /**
@@ -2895,23 +2957,27 @@ function normalizeToolUseNames(messages: Message[]): Message[] {
  * @param tools - Tools or nested arrays of tools
  * @returns Flat array of tools and MCP clients
  */
-function flattenTools(toolList: ToolList): { tools: Tool[]; mcpClients: McpClient[] } {
+function flattenTools(toolList: ToolList): { tools: Tool[]; mcpClients: McpClient[]; toolProviders: ToolProvider[] } {
   const tools: Tool[] = []
   const mcpClients: McpClient[] = []
+  const toolProviders: ToolProvider[] = []
 
   for (const item of toolList) {
     if (Array.isArray(item)) {
-      const { tools: nestedTools, mcpClients: nestedMcpClients } = flattenTools(item)
-      tools.push(...nestedTools)
-      mcpClients.push(...nestedMcpClients)
+      const flattened = flattenTools(item)
+      tools.push(...flattened.tools)
+      mcpClients.push(...flattened.mcpClients)
+      toolProviders.push(...flattened.toolProviders)
     } else if (item instanceof Agent) {
       tools.push(item.asTool())
     } else if (item instanceof McpClient) {
       mcpClients.push(item)
+    } else if (isToolProvider(item)) {
+      toolProviders.push(item)
     } else {
       tools.push(item)
     }
   }
 
-  return { tools, mcpClients }
+  return { tools, mcpClients, toolProviders }
 }
