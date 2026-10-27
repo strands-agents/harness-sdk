@@ -19,7 +19,7 @@ instructions: |
   Issues scoped to Strands harness (title prefix "Harness:", harness-py, harness-ts, create_harness, createHarness) get area-harness first, then the concrete subsystem. Issues scoped to the strands CLI (title prefix "CLI:", strands-cli, the `strands` command, the terminal UI) get area-cli first, then the concrete subsystem.
   Requests to move ("uplevel") harness code into the core SDK are core SDK work: list the core area first and area-harness second. Example: "Uplevel the harness web_fetch tool into core vended tools" -> area-tool, then area-harness.
   area-language is only for new language SDKs beyond Python and TypeScript. Do not use it for issues specific to Python or TypeScript, ports between them ([PORT]), or OS/platform support such as Windows.
-  The strands-mcp server and the Claude Code, Codex, and Cursor plugins for building with Strands belong to area-devx, not area-mcp.
+  The Claude Code, Codex, and Cursor plugins for building with Strands belong to area-devx, not area-mcp. The strands-mcp docs server (strands-mcp/) belongs to area-mcp.
   area-community is NOT a catch-all. Use it only for repo health, governance, contributor process, release process, and CI dependency bumps. If no area clearly applies, assign no area label rather than defaulting to area-community.
   area-devx covers how it feels to use the SDK: papercuts, confusing or awkward public APIs, error-message quality, ergonomics, surprising behavior that does not match what a developer would reasonably expect, and usability of the developer-facing interface. It is appropriate even for a specific subsystem when the issue is about that subsystem's public API being confusing, awkward, or surprising to use (as opposed to a clear functional bug in its internal behavior). It is NOT a catch-all for any generic "make it better" request that lacks a concrete usability concern.
   Order matters: list the most important label first, because at most 2 labels are kept. Rank by specificity — concrete feature areas (area-mcp, area-model, area-agent, area-persistence, etc.) come before softer cross-cutting labels (area-devx, area-community) that are not tied to one feature area. When an issue reports a bug in a concrete area, that area takes priority.
@@ -47,7 +47,7 @@ labels:
   area-decisions:
     description: "Decision models: DecisionModel, LLMDecisionModel, System One decision models, decision-gated routing, interventions, and tool selection"
   area-devx:
-    description: "Developer experience: papercuts, confusing or awkward public APIs, error messages, ergonomics, surprising behavior that doesn't match expectations, helper methods, usability of the SDK's developer-facing interface, strands-mcp, and the coding-agent plugins"
+    description: "Developer experience: papercuts, confusing or awkward public APIs, error messages, ergonomics, surprising behavior that doesn't match expectations, helper methods, usability of the SDK's developer-facing interface, and the coding-agent plugins"
   area-harness:
     description: "Strands harness (harness-py/, harness-ts/, strands-harness, @strands-agents/harness): create_harness/createHarness, benchmarked defaults, bundled tools and plugins, model effort levels, harness config"
   area-hil:
@@ -59,7 +59,7 @@ labels:
   area-language:
     description: "New language SDKs beyond Python and TypeScript (Ruby, .NET, Rust, Go, etc.)"
   area-mcp:
-    description: "Model Context Protocol in the SDK: MCP clients, MCP transport, MCP tools, mcp_router, Streamable HTTP"
+    description: "Model Context Protocol in the SDK: MCP clients, MCP transport, MCP tools, mcp_router, Streamable HTTP, and the strands-mcp docs server"
   area-memory:
     description: "Cross-session memory: MemoryManager, MemoryStore backends (FileMemoryStore, BedrockKnowledgeBaseStore), memory extraction, memory search/add tools, memory injection"
   area-middleware:
