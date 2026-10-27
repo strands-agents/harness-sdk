@@ -1,0 +1,9 @@
+name: Fikra API
+description: Hosted OpenAI-compatible inference with open-weight models DeepSeek-first (DeepSeek, GLM, Kimi, Qwen), per-token USD pricing from $0.045/1M.
+integrationType: model-provider
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/Fikra-API/deepseek-quickstarts
+docsUrl: https://github.com/Fikra-API/deepseek-quickstarts#strands-agents
+addedDate: 2026-10-20
