@@ -19,7 +19,7 @@ Example:
     ```
 """
 
-from .classifier import HumanInTheLoopClassifier, LLMClassifierConfig
+from .classifier import DecisionModelClassifierConfig, HumanInTheLoopClassifier, LLMClassifierConfig
 from .hitl import HumanInTheLoop
 
-__all__ = ["HumanInTheLoop", "HumanInTheLoopClassifier", "LLMClassifierConfig"]
+__all__ = ["DecisionModelClassifierConfig", "HumanInTheLoop", "HumanInTheLoopClassifier", "LLMClassifierConfig"]

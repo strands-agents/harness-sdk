@@ -14,7 +14,14 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from ...hooks.events import BeforeToolCallEvent
 from ...interventions.actions import Confirm, Deny, InterventionAction, Proceed, default_evaluate
 from ...interventions.handler import InterventionHandler
-from .classifier import ClassifierResult, HumanInTheLoopClassifier, LLMClassifierConfig, _create_llm_risk_classifier
+from .classifier import (
+    ClassifierResult,
+    DecisionModelClassifierConfig,
+    HumanInTheLoopClassifier,
+    LLMClassifierConfig,
+    _create_decision_model_risk_classifier,
+    _create_llm_risk_classifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +100,8 @@ class HumanInTheLoop(InterventionHandler):
 
     Example:
         ```python
-        from strands import Agent
-        from strands.vended_interventions.hitl import HumanInTheLoop
+        from strands import Agent, LLMDecisionModel
+        from strands.vended_interventions.hitl import DecisionModelClassifierConfig, HumanInTheLoop
 
         # All tools require approval, agent pauses via interrupt (default)
         agent = Agent(interventions=[HumanInTheLoop()])
@@ -106,6 +113,11 @@ class HumanInTheLoop(InterventionHandler):
         agent = Agent(interventions=[HumanInTheLoop(
             allowed_tools=["read_file", "list_dir"],
             classifier=True,
+        )])
+
+        # Risk classification via a DecisionModel
+        agent = Agent(interventions=[HumanInTheLoop(
+            classifier=DecisionModelClassifierConfig(decision_model=LLMDecisionModel()),
         )])
 
         # CLI mode - prompts in terminal inline
@@ -125,7 +137,7 @@ class HumanInTheLoop(InterventionHandler):
         self,
         *,
         allowed_tools: list[str] | None = None,
-        classifier: bool | LLMClassifierConfig | HumanInTheLoopClassifier | None = None,
+        classifier: bool | LLMClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier | None = None,
         enable_trust: bool = False,
         evaluate_trust: EvaluateCallback | None = None,
         evaluate: EvaluateCallback | None = None,
@@ -143,7 +155,12 @@ class HumanInTheLoop(InterventionHandler):
             classifier: Determines how approval decisions are made for tools not in
                 ``allowed_tools``. Omitted/None: all non-allowed tools require approval.
                 ``True``: uses the built-in LLM risk classifier with defaults.
-                ``LLMClassifierConfig``: built-in LLM classifier with custom settings.
+                ``LLMClassifierConfig``: built-in LLM classifier with custom settings. Kept for
+                backwards compatibility; prefer ``DecisionModelClassifierConfig`` for new code.
+                ``DecisionModelClassifierConfig``: asks any ``DecisionModel`` (e.g.
+                ``LLMDecisionModel``) whether the call requires approval. An ``Uncertain``
+                answer requires approval and carries its reason into the approval prompt; a
+                definite answer carries no reason.
                 Custom callable: your own classification logic.
             enable_trust: When True, trust responses approve the tool AND remember it
                 in ``agent.state`` for the rest of the session (won't ask again).
@@ -342,7 +359,7 @@ class HumanInTheLoop(InterventionHandler):
 
     @staticmethod
     def _resolve_classifier(
-        classifier: bool | LLMClassifierConfig | HumanInTheLoopClassifier | None,
+        classifier: bool | LLMClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier | None,
     ) -> HumanInTheLoopClassifier | None:
         """Resolve the classifier param into a callable or None.
 
@@ -358,4 +375,6 @@ class HumanInTheLoop(InterventionHandler):
             return _create_llm_risk_classifier()
         if isinstance(classifier, LLMClassifierConfig):
             return _create_llm_risk_classifier(classifier)
+        if isinstance(classifier, DecisionModelClassifierConfig):
+            return _create_decision_model_risk_classifier(classifier)
         return classifier
