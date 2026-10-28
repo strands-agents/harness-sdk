@@ -33,6 +33,51 @@ async def test_read_offset_and_limit(ctx, tmp_path):
     assert "Showing lines 3-4 of 10" in out
 
 
+async def test_trailing_newline_does_not_add_a_line(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    content = "\n".join(f"line{i}" for i in range(1, 72)) + "\n"
+    ack = await write._tool_func(path=path, content=content, tool_context=ctx)
+    assert ack == f"Wrote 71 lines to {path}."
+    out = await read._tool_func(path=path, tool_context=ctx)
+    assert out.endswith("    71\tline71")
+    out = await read._tool_func(path=path, limit=1, tool_context=ctx)
+    assert "Showing lines 1-1 of 71" in out
+    out = await read._tool_func(path=path, offset=72, tool_context=ctx)
+    assert out == "[File has 71 lines; offset 72 is past the end.]"
+
+
+async def test_default_limit_fits_a_2000_line_file(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    await write._tool_func(path=path, content="x\n" * 2000, tool_context=ctx)
+    out = await read._tool_func(path=path, tool_context=ctx)
+    assert "Showing lines" not in out
+    assert out.endswith("  2000\tx")
+
+
+async def test_read_keeps_genuine_blank_lines(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    await write._tool_func(path=path, content="a\n\nb\n\n", tool_context=ctx)
+    out = await read._tool_func(path=path, tool_context=ctx)
+    assert out == "     1\ta\n     2\t\n     3\tb\n     4\t"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [("", 0), ("a", 1), ("a\n", 1), ("\n", 1), ("a\nb", 2), ("a\n\n", 2), ("a\r\nb\r\n", 2)],
+)
+async def test_write_line_count(ctx, tmp_path, content, expected):
+    path = str(tmp_path / "f.txt")
+    ack = await write._tool_func(path=path, content=content, tool_context=ctx)
+    assert ack == f"Wrote {expected} lines to {path}."
+    assert (tmp_path / "f.txt").read_bytes() == content.encode()
+
+
+async def test_read_empty_file(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    await write._tool_func(path=path, content="", tool_context=ctx)
+    assert await read._tool_func(path=path, tool_context=ctx) == f"[File {path} is empty.]"
+
+
 async def test_edit_replaces_unique_occurrence(ctx, tmp_path):
     path = str(tmp_path / "f.txt")
     await write._tool_func(path=path, content="one\ntwo\nthree\n", tool_context=ctx)
