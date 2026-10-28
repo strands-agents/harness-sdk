@@ -9,7 +9,8 @@ import { LocalFileStorage } from '../../src/storage/local-file-storage.js'
 const qmdAvailable = await import('@tobilu/qmd' as string).then(() => true).catch(() => false)
 
 describe('QmdSearchStrategy', () => {
-  describe.skipIf(!qmdAvailable)('integration', () => {
+  // Tests share tempDir/strategy through afterEach, so they must not overlap.
+  describe.skipIf(!qmdAvailable)('integration', { concurrent: false }, () => {
     let tempDir: string
     let strategy: QmdSearchStrategy
 

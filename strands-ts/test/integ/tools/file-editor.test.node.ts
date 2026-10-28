@@ -7,7 +7,8 @@ import * as path from 'path'
 import { tmpdir } from 'os'
 import { bedrock } from '../__fixtures__/model-providers.js'
 
-describe.skipIf(bedrock.skip)('FileEditor Tool Integration', () => {
+// Tests share testDir through beforeEach/afterEach, so they must not overlap.
+describe.skipIf(bedrock.skip)('FileEditor Tool Integration', { concurrent: false }, () => {
   let testDir: string
 
   // Shared agent configuration for all tests
