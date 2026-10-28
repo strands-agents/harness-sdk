@@ -100,8 +100,9 @@ export default defineConfig({
             './test/integ/__fixtures__/_setup-test.ts',
             './test/integ/__fixtures__/register-node-defaults.ts',
           ],
+          // vitest 4 never applied concurrent: true here; the integ tests are not yet safe to overlap.
           sequence: {
-            concurrent: true,
+            concurrent: false,
           },
         },
       },
@@ -130,8 +131,9 @@ export default defineConfig({
           },
           globalSetup: './test/integ/__fixtures__/_setup-global.ts',
           setupFiles: './test/integ/__fixtures__/_setup-test.ts',
+          // vitest 4 never applied concurrent: true here; the integ tests are not yet safe to overlap.
           sequence: {
-            concurrent: true,
+            concurrent: false,
           },
         },
       },

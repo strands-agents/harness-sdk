@@ -1,4 +1,4 @@
-import { describe, it, expect, inject, beforeAll, type TestContext } from 'vitest'
+import { describe, it, expect, inject, beforeAll, onTestFinished } from 'vitest'
 import { BedrockAgentClient, DeleteKnowledgeBaseDocumentsCommand } from '@aws-sdk/client-bedrock-agent'
 import { BedrockAgentRuntimeClient } from '@aws-sdk/client-bedrock-agent-runtime'
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers'
@@ -103,7 +103,7 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
    * `onTestFinished`): registering a finished-hook from inside a finished-hook is unreliable in
    * vitest, and the captured ids aren't known until the test body has run anyway.
    */
-  function captureAddedIds(onTestFinished: TestContext['onTestFinished'], store: BedrockKnowledgeBaseStore): string[] {
+  function captureAddedIds(store: BedrockKnowledgeBaseStore): string[] {
     const { knowledgeBaseId, customDataSourceId } = config()
     const ids: string[] = []
     const orig = store.add.bind(store)
@@ -130,14 +130,10 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
   }
 
   /** Seeds a fact directly, waits for it to index, and registers cleanup. Returns the document id. */
-  async function seedFact(
-    onTestFinished: TestContext['onTestFinished'],
-    store: BedrockKnowledgeBaseStore,
-    content: string
-  ): Promise<string> {
+  async function seedFact(store: BedrockKnowledgeBaseStore, content: string): Promise<string> {
     const { knowledgeBaseId, customDataSourceId } = config()
     const { documentId } = await store.add(content)
-    cleanupCustomDocument(onTestFinished, agentClient, knowledgeBaseId, customDataSourceId, documentId)
+    cleanupCustomDocument(agentClient, knowledgeBaseId, customDataSourceId, documentId)
     await waitForIndexed(agentClient, knowledgeBaseId, customDataSourceId, {
       dataSourceType: 'CUSTOM',
       custom: { id: documentId },
@@ -193,11 +189,11 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
   // ---------------------------------------------------------------------------
 
   describe.skipIf(shouldSkip())('extraction', () => {
-    it('extracts and stores a fact with InvocationTrigger (fires every turn, no flush)', async ({ onTestFinished }) => {
+    it('extracts and stores a fact with InvocationTrigger (fires every turn, no flush)', async () => {
       const store = makeStore('integ-mm-extract-invocation', {
         extraction: { trigger: [new InvocationTrigger()] },
       })
-      const ids = captureAddedIds(onTestFinished, store)
+      const ids = captureAddedIds(store)
       const memoryManager = new MemoryManager({ stores: [store], searchToolConfig: false })
       const agent = new Agent({ model: bedrock.createModel({ maxTokens: 1024 }), memoryManager, printer: false })
 
@@ -214,11 +210,11 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
       await memoryManager.flush()
     }, 120_000)
 
-    it('honors IntervalTrigger cadence (extracts every 2 turns, not before, no flush)', async ({ onTestFinished }) => {
+    it('honors IntervalTrigger cadence (extracts every 2 turns, not before, no flush)', async () => {
       const store = makeStore('integ-mm-extract-interval', {
         extraction: { trigger: [new IntervalTrigger({ turns: 2 })] },
       })
-      const ids = captureAddedIds(onTestFinished, store)
+      const ids = captureAddedIds(store)
       const memoryManager = new MemoryManager({ stores: [store], searchToolConfig: false })
       const agent = new Agent({ model: bedrock.createModel({ maxTokens: 1024 }), memoryManager, printer: false })
 
@@ -237,11 +233,9 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
       await memoryManager.flush()
     }, 120_000)
 
-    it('flush() force-saves on demand when the trigger has not fired (extraction: true, every 5 turns)', async ({
-      onTestFinished,
-    }) => {
+    it('flush() force-saves on demand when the trigger has not fired (extraction: true, every 5 turns)', async () => {
       const store = makeStore('integ-mm-extract-true', { extraction: true })
-      const ids = captureAddedIds(onTestFinished, store)
+      const ids = captureAddedIds(store)
       const memoryManager = new MemoryManager({ stores: [store], searchToolConfig: false })
       const agent = new Agent({ model: bedrock.createModel({ maxTokens: 1024 }), memoryManager, printer: false })
 
@@ -265,10 +259,10 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
   // ---------------------------------------------------------------------------
 
   describe.skipIf(shouldSkip())('injection', () => {
-    it('folds a <memory> block into the model input and never touches durable history', async ({ onTestFinished }) => {
+    it('folds a <memory> block into the model input and never touches durable history', async () => {
       const store = makeStore('integ-mm-inject')
       const fact = willowFact()
-      await seedFact(onTestFinished, store, fact.text)
+      await seedFact(store, fact.text)
 
       const memoryManager = new MemoryManager({ stores: [store], injection: true, searchToolConfig: false })
       const agent = new Agent({ model: bedrock.createModel({ maxTokens: 1024 }), memoryManager, printer: false })
@@ -298,13 +292,13 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
       expect(getMessageText(result.lastMessage)).toContain(fact.answer)
     }, 120_000)
 
-    it('injects from multiple stores with per-store source attribution', async ({ onTestFinished }) => {
+    it('injects from multiple stores with per-store source attribution', async () => {
       const storeA = makeStore('alpha')
       const storeB = makeStore('beta')
       const willow = willowFact()
       const dove = doveFact()
-      await seedFact(onTestFinished, storeA, willow.text)
-      await seedFact(onTestFinished, storeB, dove.text)
+      await seedFact(storeA, willow.text)
+      await seedFact(storeB, dove.text)
 
       const memoryManager = new MemoryManager({
         stores: [storeA, storeB],
@@ -335,10 +329,10 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
   // ---------------------------------------------------------------------------
 
   describe.skipIf(shouldSkip())('search_memory tool', () => {
-    it('the model retrieves a seeded fact via the search_memory tool', async ({ onTestFinished }) => {
+    it('the model retrieves a seeded fact via the search_memory tool', async () => {
       const store = makeStore('integ-mm-search-tool')
       const fact = doveFact()
-      await seedFact(onTestFinished, store, fact.text)
+      await seedFact(store, fact.text)
 
       const memoryManager = new MemoryManager({ stores: [store], injection: false })
       const agent = new Agent({ model: bedrock.createModel({ maxTokens: 1024 }), memoryManager, printer: false })
@@ -352,12 +346,12 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
       expect(getMessageText(result.lastMessage)).toContain(fact.answer)
     }, 120_000)
 
-    it('routes a search across multiple stores and finds the fact wherever it lives', async ({ onTestFinished }) => {
+    it('routes a search across multiple stores and finds the fact wherever it lives', async () => {
       const storeA = makeStore('integ-mm-search-a')
       const storeB = makeStore('integ-mm-search-b')
       // Fact lives only in store B — the manager must fan out across both.
       const fact = doveFact()
-      await seedFact(onTestFinished, storeB, fact.text)
+      await seedFact(storeB, fact.text)
 
       const memoryManager = new MemoryManager({ stores: [storeA, storeB], injection: false })
       const agent = new Agent({ model: bedrock.createModel({ maxTokens: 1024 }), memoryManager, printer: false })
@@ -378,9 +372,9 @@ describe('BedrockKnowledgeBaseStore MemoryManager E2E', () => {
   // ---------------------------------------------------------------------------
 
   describe.skipIf(shouldSkip())('add_memory tool', () => {
-    it('the model persists a fact via the add_memory tool', async ({ onTestFinished }) => {
+    it('the model persists a fact via the add_memory tool', async () => {
       const store = makeStore('integ-mm-add-tool')
-      const ids = captureAddedIds(onTestFinished, store)
+      const ids = captureAddedIds(store)
 
       const memoryManager = new MemoryManager({
         stores: [store],

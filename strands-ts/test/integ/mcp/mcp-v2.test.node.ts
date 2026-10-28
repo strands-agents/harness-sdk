@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi, type TestContext } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest'
 import { McpClient, Agent } from '@strands-agents/sdk'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
@@ -23,7 +23,7 @@ describe('MCP v2 Integration Tests', () => {
     await httpServerInfo?.close()
   }, 30000)
 
-  function createStdioClient(onTestFinished: TestContext['onTestFinished'], options: McpClientOptions = {}): McpClient {
+  function createStdioClient(options: McpClientOptions = {}): McpClient {
     const client = new McpClient({
       applicationName: 'test-mcp-stdio',
       transport: new StdioClientTransport({ command: 'npx', args: ['tsx', serverPath] }),
@@ -34,10 +34,8 @@ describe('MCP v2 Integration Tests', () => {
   }
 
   describe('filtering and prefixing through Agent', () => {
-    it('registers a prefixed filtered tool and executes it through the direct Agent tool API', async ({
-      onTestFinished,
-    }) => {
-      const client = createStdioClient(onTestFinished, { prefix: 'filtered', toolFilters: { allowed: ['echo'] } })
+    it('registers a prefixed filtered tool and executes it through the direct Agent tool API', async () => {
+      const client = createStdioClient({ prefix: 'filtered', toolFilters: { allowed: ['echo'] } })
       const agent = new Agent({ tools: [client], model: new MockMessageModel() })
 
       await agent.initialize()
@@ -50,8 +48,8 @@ describe('MCP v2 Integration Tests', () => {
       })
     })
 
-    it('reuses one filtered and prefixed client across two Agents', async ({ onTestFinished }) => {
-      const client = createStdioClient(onTestFinished, { prefix: 'shared', toolFilters: { allowed: ['echo'] } })
+    it('reuses one filtered and prefixed client across two Agents', async () => {
+      const client = createStdioClient({ prefix: 'shared', toolFilters: { allowed: ['echo'] } })
       const agent1 = new Agent({ tools: [client], model: new MockMessageModel() })
       const agent2 = new Agent({ tools: [client], model: new MockMessageModel() })
 
@@ -66,14 +64,9 @@ describe('MCP v2 Integration Tests', () => {
       expect(result2.content).toEqual([{ type: 'textBlock', text: 'Agent 2' }])
     })
 
-    it('registers two distinct prefixes without collisions and invokes each raw server tool', async ({
-      onTestFinished,
-    }) => {
-      const echoClient = createStdioClient(onTestFinished, { prefix: 'server1', toolFilters: { allowed: ['echo'] } })
-      const calculatorClient = createStdioClient(onTestFinished, {
-        prefix: 'server2',
-        toolFilters: { allowed: ['calculator'] },
-      })
+    it('registers two distinct prefixes without collisions and invokes each raw server tool', async () => {
+      const echoClient = createStdioClient({ prefix: 'server1', toolFilters: { allowed: ['echo'] } })
+      const calculatorClient = createStdioClient({ prefix: 'server2', toolFilters: { allowed: ['calculator'] } })
       const agent = new Agent({ tools: [echoClient, calculatorClient], model: new MockMessageModel() })
 
       await agent.initialize()
@@ -95,7 +88,7 @@ describe('MCP v2 Integration Tests', () => {
     { name: 'stdio', createClient: createStdioClient },
     {
       name: 'Streamable HTTP',
-      createClient: (onTestFinished: TestContext['onTestFinished']): McpClient => {
+      createClient: (): McpClient => {
         const client = new McpClient({
           applicationName: 'test-mcp-http',
           transport: new StreamableHTTPClientTransport(new URL(httpServerInfo.url)),
@@ -107,15 +100,15 @@ describe('MCP v2 Integration Tests', () => {
   ]
 
   describe.each(transports)('$name transport', ({ createClient }) => {
-    it('negotiates protocol revision 2026-07-28', async ({ onTestFinished }) => {
-      const client = createClient(onTestFinished)
+    it('negotiates protocol revision 2026-07-28', async () => {
+      const client = createClient()
       await client.listTools()
       expect(client.client.getNegotiatedProtocolVersion()).toBe('2026-07-28')
     })
 
-    it('agent can use multiple MCP tools in a conversation', async ({ onTestFinished }) => {
+    it('agent can use multiple MCP tools in a conversation', async () => {
       const model = new MockMessageModel()
-      const agent = new Agent({ tools: [createClient(onTestFinished)], model })
+      const agent = new Agent({ tools: [createClient()], model })
       for (const { name, input } of [
         { name: 'echo', input: { message: 'Multi-turn test' } },
         { name: 'calculator', input: { operation: 'add', a: 15, b: 27 } },
@@ -131,25 +124,25 @@ describe('MCP v2 Integration Tests', () => {
       expect(getToolResultText(agent.messages)).toBe('Multi-turn test Result: 42')
     }, 60000)
 
-    it('agent handles MCP tool errors gracefully', async ({ onTestFinished }) => {
+    it('agent handles MCP tool errors gracefully', async () => {
       const model = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'error_tool', toolUseId: 'error', input: {} })
         .addTurn({ type: 'textBlock', text: 'Error handled' })
-      const agent = new Agent({ tools: [createClient(onTestFinished)], model })
+      const agent = new Agent({ tools: [createClient()], model })
       await expect(agent.invoke('Test error handling')).resolves.toMatchObject({ stopReason: 'endTurn' })
       expect(countToolResults(agent.messages, 'error')).toBe(1)
     }, 30000)
   })
 
   describe('elicitation', () => {
-    it('agent can use MCP tool that requests elicitation with a live model', async ({ onTestFinished }) => {
+    it('agent can use MCP tool that requests elicitation with a live model', async () => {
       const elicitationCallback: ElicitationCallback = vi.fn().mockResolvedValue({
         action: 'accept',
         content: { confirmed: true },
       })
       const agent = new Agent({
         systemPrompt: 'You are a helpful assistant. Use the confirm_action tool when asked to confirm something.',
-        tools: [createStdioClient(onTestFinished, { elicitationCallback })],
+        tools: [createStdioClient({ elicitationCallback })],
         model: bedrock.createModel({ maxTokens: 300 }),
       })
 

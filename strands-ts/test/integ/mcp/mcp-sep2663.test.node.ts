@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi, type TestContext } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest'
 import { McpClient, Agent } from '@strands-agents/sdk'
 import { resolve } from 'node:path'
 import { MockMessageModel } from '$/sdk/__fixtures__/mock-message-model.js'
@@ -10,12 +10,7 @@ import type { ElicitationCallback, TasksConfig } from '@strands-agents/sdk'
 
 const MODERN_PROTOCOL_VERSION = '2026-07-28'
 
-function createClient(
-  onTestFinished: TestContext['onTestFinished'],
-  serverUrl: string,
-  appName: string,
-  tasksConfig?: TasksConfig
-): McpClient {
+function createClient(serverUrl: string, appName: string, tasksConfig?: TasksConfig): McpClient {
   const client = new McpClient({
     applicationName: appName,
     url: serverUrl,
@@ -37,11 +32,11 @@ describe('MCP SEP-2663 Integration Tests', () => {
   }, 30000)
 
   describe('McpClient.callTool() with Task-Enabled Server', () => {
-    it('preserves direct tool results when task support is enabled', async ({ onTestFinished }) => {
+    it('preserves direct tool results when task support is enabled', async () => {
       const serverInfo = await startTaskHTTPServer()
       onTestFinished(() => serverInfo.close())
 
-      const client = createClient(onTestFinished, serverInfo.url, 'test-direct-result-client', {})
+      const client = createClient(serverInfo.url, 'test-direct-result-client', {})
       const tools = await client.listTools()
       const directTool = tools.find((tool) => tool.name === 'direct_result')
       if (!directTool) throw new Error('direct_result tool not found')
@@ -52,13 +47,11 @@ describe('MCP SEP-2663 Integration Tests', () => {
       expect(serverInfo.requests.filter((request) => request.method === 'tasks/get')).toEqual([])
     }, 30000)
 
-    it('returns a task handle without polling and supports explicit lifecycle operations', async ({
-      onTestFinished,
-    }) => {
+    it('returns a task handle without polling and supports explicit lifecycle operations', async () => {
       const serverInfo = await startTaskHTTPServer()
       onTestFinished(() => serverInfo.close())
 
-      const client = createClient(onTestFinished, serverInfo.url, 'test-task-lifecycle-client', {})
+      const client = createClient(serverInfo.url, 'test-task-lifecycle-client', {})
       const tools = await client.listTools()
       const cancellableTool = tools.find((tool) => tool.name === 'cancellable_task')
       if (!cancellableTool) throw new Error('cancellable_task tool not found')
@@ -111,7 +104,7 @@ describe('MCP SEP-2663 Integration Tests', () => {
       )
     }, 30000)
 
-    it.for([
+    it.each([
       {
         name: 'instant_task',
         input: { value: 'hello from instant task' },
@@ -122,24 +115,28 @@ describe('MCP SEP-2663 Integration Tests', () => {
         input: { duration: 300, message: 'Long task completed successfully!' },
         text: 'Long task completed successfully!',
       },
-    ])('extracts result from $name', { timeout: 30000 }, async ({ name, input, text }, { onTestFinished }) => {
+    ])(
+      'extracts result from $name',
+      async ({ name, input, text }) => {
+        if (!taskServerInfo) throw new Error('Task server not started')
+
+        const client = createClient(taskServerInfo.url, 'test-task-client', {})
+        await client.connect()
+        const tools = await client.listTools()
+        const taskTool = tools.find((tool) => tool.name === name)
+        expect(taskTool).toBeDefined()
+
+        await expect(client.callTool(taskTool!, input)).resolves.toMatchObject({
+          content: [{ type: 'text', text }],
+        })
+      },
+      30000
+    )
+
+    it('throws error for failed tasks (MCP SDK behavior)', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
-      const client = createClient(onTestFinished, taskServerInfo.url, 'test-task-client', {})
-      await client.connect()
-      const tools = await client.listTools()
-      const taskTool = tools.find((tool) => tool.name === name)
-      expect(taskTool).toBeDefined()
-
-      await expect(client.callTool(taskTool!, input)).resolves.toMatchObject({
-        content: [{ type: 'text', text }],
-      })
-    })
-
-    it('throws error for failed tasks (MCP SDK behavior)', async ({ onTestFinished }) => {
-      if (!taskServerInfo) throw new Error('Task server not started')
-
-      const client = createClient(onTestFinished, taskServerInfo.url, 'test-task-client', {})
+      const client = createClient(taskServerInfo.url, 'test-task-client', {})
       await client.connect()
       const tools = await client.listTools()
       const failingTool = tools.find((t) => t.name === 'failing_task')
@@ -150,7 +147,7 @@ describe('MCP SEP-2663 Integration Tests', () => {
       )
     }, 30000)
 
-    it('handles task elicitation through tasks/update and returns the final result', async ({ onTestFinished }) => {
+    it('handles task elicitation through tasks/update and returns the final result', async () => {
       const serverInfo = await startTaskHTTPServer()
       onTestFinished(() => serverInfo.close())
 
@@ -195,10 +192,10 @@ describe('MCP SEP-2663 Integration Tests', () => {
       }
     }, 30000)
 
-    it('translates a server-cancelled task consistently', async ({ onTestFinished }) => {
+    it('translates a server-cancelled task consistently', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
-      const client = createClient(onTestFinished, taskServerInfo.url, 'test-cancelled-task-client', {})
+      const client = createClient(taskServerInfo.url, 'test-cancelled-task-client', {})
       const tools = await client.listTools()
       const cancelledTool = tools.find((tool) => tool.name === 'cancelled_task')
       if (!cancelledTool) throw new Error('cancelled_task tool not found')
@@ -277,10 +274,10 @@ describe('MCP SEP-2663 Integration Tests', () => {
   })
 
   describe('Agent Integration with Task Tools', () => {
-    it('agent can use task tools in a conversation with a live model', async ({ onTestFinished }) => {
+    it('agent can use task tools in a conversation with a live model', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
-      const client = createClient(onTestFinished, taskServerInfo.url, 'test-agent-task-client', {})
+      const client = createClient(taskServerInfo.url, 'test-agent-task-client', {})
       const model = bedrock.createModel({ maxTokens: 300 })
       const agent = new Agent({
         systemPrompt:
@@ -296,10 +293,10 @@ describe('MCP SEP-2663 Integration Tests', () => {
       expect(countToolResults(agent.messages, 'success')).toBeGreaterThan(0)
     }, 60000)
 
-    it('agent handles task tool errors gracefully', async ({ onTestFinished }) => {
+    it('agent handles task tool errors gracefully', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
-      const client = createClient(onTestFinished, taskServerInfo.url, 'test-agent-task-client', {})
+      const client = createClient(taskServerInfo.url, 'test-agent-task-client', {})
       const model = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'failing_task', toolUseId: 'failed-task', input: {} })
         .addTurn({ type: 'textBlock', text: 'Task error handled' })
@@ -310,10 +307,10 @@ describe('MCP SEP-2663 Integration Tests', () => {
       expect(countToolResults(agent.messages, 'error')).toBe(1)
     }, 60000)
 
-    it('agent can use multiple task tools in a multi-turn conversation', async ({ onTestFinished }) => {
+    it('agent can use multiple task tools in a multi-turn conversation', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
-      const client = createClient(onTestFinished, taskServerInfo.url, 'test-agent-multi-task-client', {})
+      const client = createClient(taskServerInfo.url, 'test-agent-multi-task-client', {})
       const model = new MockMessageModel()
       const agent = new Agent({ tools: [client], model })
       for (const { name, input } of [
