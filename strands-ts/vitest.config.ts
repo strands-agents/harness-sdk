@@ -1,23 +1,9 @@
 import { defineConfig } from 'vitest/config'
-import { JUnitReporter } from 'vitest/reporters'
 import { playwright } from '@vitest/browser-playwright'
 import * as path from 'node:path'
 import { fileURLToPath } from 'url'
-import type { Task } from 'vitest'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-// The integ-node and integ-browser projects run the same test files, so a classname
-// of just the file path makes the metrics publisher merge the two projects' results
-// into one series. vitest 4's junit classnameTemplate has no project placeholder
-// ({displayName} arrives in vitest 5 and replaces this subclass), so prefix the
-// classname with the project name here: `integ-browser/test/integ/x.test.ts`.
-class ProjectJUnitReporter extends JUnitReporter {
-  override writeTasks(tasks: Task[], filename: string): Promise<void> {
-    const project = tasks[0]?.file?.projectName
-    return super.writeTasks(tasks, project ? `${project}/${filename}` : filename)
-  }
-}
 
 // Conditionally exclude bash tool from coverage on Windows
 // since tests are skipped on Windows (bash not available)
@@ -31,10 +17,16 @@ export default defineConfig({
     unstubEnvs: true,
     reporters: [
       'default',
-      new ProjectJUnitReporter({
-        outputFile: 'test/.artifacts/test-report/junit/report.xml',
-        includeConsoleOutput: true,
-      }),
+      // integ-node and integ-browser run the same files; the project prefix keeps their metrics series apart.
+      [
+        'junit',
+        {
+          outputFile: 'test/.artifacts/test-report/junit/report.xml',
+          includeConsoleOutput: true,
+          classnameTemplate: '{displayName}/{filename}',
+          suiteNameTemplate: '{displayName}/{filename}',
+        },
+      ],
       ['json', { outputFile: 'test/.artifacts/test-report/json/report.json' }],
     ],
     projects: [
@@ -74,6 +66,8 @@ export default defineConfig({
           // Retry so a flaky test doesn't block a release; a genuinely broken
           // test still fails after the retries and holds the gate.
           retry: 2,
+          // Type tests run in unit-node; this project has no tsconfig of its own.
+          typecheck: { enabled: false },
           browser: {
             enabled: true,
             provider: playwright(),
