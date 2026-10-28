@@ -4,6 +4,7 @@ import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
 import { getPublishedPosts } from '../util/blog';
 import { formatEventDate, upcomingEvents } from '../util/learn';
+import { DISCORD_HREF } from '../config/community';
 
 // The old /community/ hub is gone; its "what's new" and events feed now lives
 // here on the homepage. Events are filtered to upcoming ones at build time.
@@ -20,7 +21,6 @@ const eventHref = (href?: string) =>
 
 const learnHref = pathWithBase('/docs/learning/how-agents-really-work/');
 const upcomingList = upcoming.slice(0, 4);
-const DISCORD_HREF = 'https://discord.gg/strands';
 ---
 
 <section class="community" aria-label="Community & learning hub">

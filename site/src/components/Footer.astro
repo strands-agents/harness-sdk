@@ -5,6 +5,7 @@ import shape from '../assets/next-steps/shape.svg?raw';
 import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
 import InstallCommand from './InstallCommand.astro';
 import { pathWithBase } from '../util/links';
+import { DISCORD_HREF } from '../config/community';
 
 interface Props {
   // Render the green curved transition above the footer. On by default so every
@@ -51,7 +52,7 @@ const columns = [
       { label: 'Integrations', href: pathWithBase('/integrations/') },
       { label: 'GitHub', href: 'https://github.com/strands-agents', external: true },
       { label: 'Labs', href: pathWithBase('/docs/labs/') },
-      { label: 'Discord', href: 'https://discord.gg/strands', external: true },
+      { label: 'Discord', href: DISCORD_HREF, external: true },
     ],
   },
   {

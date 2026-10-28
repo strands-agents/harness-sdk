@@ -1,5 +1,6 @@
 ---
 import { pathWithBase } from '../../util/links'
+import { DISCORD_HREF } from '../../config/community'
 import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
 ---
 
@@ -9,7 +10,7 @@ import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/languag
   <a href={pathWithBase('/docs/labs/')}>Labs projects →</a>
   <a href={pathWithBase('/docs/contribute/')}>Contribute →</a>
   <a id="keep-going-api-link" href={pathWithBase('/docs/api/typescript/')}>API reference →</a>
-  <a href="https://discord.gg/strands">Join Discord →</a>
+  <a href={DISCORD_HREF}>Join Discord →</a>
 </div>
 
 <script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>
