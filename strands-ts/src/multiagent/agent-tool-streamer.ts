@@ -87,8 +87,8 @@ export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
     if (result.stopReason === 'interrupt') {
       return result.interrupts?.length ? [...result.interrupts] : `${this.label} interrupted without any interrupts`
     }
-    if (result.stopReason === 'cancelled') {
-      return `${this.label} cancelled`
+    if (result.stopReason === 'cancelled' || result.stopReason === 'superseded') {
+      return `${this.label} ${result.stopReason}`
     }
     if (LIMIT_STOP_REASONS.has(result.stopReason)) {
       return limitStopMessage(this._name, result.stopReason)

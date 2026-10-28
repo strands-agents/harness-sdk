@@ -1122,6 +1122,7 @@ describe('toJSON serialization completeness', () => {
     'tool',
     'cancel',
     'retry',
+    'result',
     'invocationState',
     'selectedTool',
     'resume',
