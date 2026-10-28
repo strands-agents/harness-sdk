@@ -1,5 +1,6 @@
 ---
 import { Icon, Badge } from '@astrojs/starlight/components';
+import { languageCodeForLabel } from '../../util/source-links'
 
 interface Props {
   sublist: any[];
@@ -19,8 +20,7 @@ function hasCurrentChild(entries: any[]): boolean {
 
 // Top-level Python / TypeScript groups follow the header language toggle (see Sidebar.astro).
 function sidebarLang(label: string): string | undefined {
-  const lang = label.toLowerCase()
-  return lang === 'python' || lang === 'typescript' ? lang : undefined
+  return languageCodeForLabel(label)
 }
 ---
 

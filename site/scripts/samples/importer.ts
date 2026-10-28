@@ -14,7 +14,8 @@ import { visit } from 'unist-util-visit'
 
 const execFileAsync = promisify(execFile)
 
-const DEFAULT_REPOSITORY = 'strands-agents/samples'
+// Generated links intentionally target the canonical repository, including builds from local forks.
+const CANONICAL_SAMPLES_REPOSITORY = 'strands-agents/samples'
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
@@ -64,6 +65,7 @@ const categorySchema = z
   })
   .strict()
 
+// Other catalog consumers use the accepted metadata omitted by the rendering transform below.
 const sampleSchema = z
   .object({
     id: nonEmptyString.optional(),
@@ -419,7 +421,7 @@ async function prepareMarkdown(context: GuideContext, markdown: string, title: s
 }
 
 function sourceUrl(commit: string, samplePath: string): string {
-  return `https://github.com/${DEFAULT_REPOSITORY}/tree/${commit}/${encodeRepositoryPath(samplePath)}`
+  return `https://github.com/${CANONICAL_SAMPLES_REPOSITORY}/tree/${commit}/${encodeRepositoryPath(samplePath)}`
 }
 
 function frontmatter(sample: ManifestSample, commit: string, order: number): string {
@@ -440,6 +442,7 @@ function frontmatter(sample: ManifestSample, commit: string, order: number): str
 
 export async function buildSampleGuides(options: BuildSampleGuidesOptions): Promise<SampleGuideBuild> {
   const sourceDir = await realpath(options.sourceDir)
+  // Published builds use fresh checkouts; local previews may include unpublished content at this HEAD.
   const commit = await gitOutput(sourceDir, ['rev-parse', 'HEAD'])
   const manifest = await readManifest(sourceDir)
   if (options.requireSamples && manifest.samples.length === 0) {
@@ -456,7 +459,7 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
         : await readTextFile(guide.filePath, MAX_GUIDE_BYTES)
     const context = {
       sourceDir,
-      repository: DEFAULT_REPOSITORY,
+      repository: CANONICAL_SAMPLES_REPOSITORY,
       commit,
       guidePath: guide.repositoryPath,
     }
@@ -466,5 +469,5 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
     await writeFile(outputPath, `${frontmatter(sample, commit, index)}${body}\n`)
   }
 
-  return { repository: DEFAULT_REPOSITORY, commit, sampleCount: manifest.samples.length }
+  return { repository: CANONICAL_SAMPLES_REPOSITORY, commit, sampleCount: manifest.samples.length }
 }

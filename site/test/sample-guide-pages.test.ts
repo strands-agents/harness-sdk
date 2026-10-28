@@ -20,10 +20,6 @@ function builtPage(guide?: SampleGuideEntry) {
   return parse(readFileSync(new URL(`../dist/${relativePath}`, import.meta.url), 'utf8'))
 }
 
-function sidebarHrefs(page: ReturnType<typeof parse>): Set<string> {
-  return new Set(page.querySelectorAll('.sidebar-content a').map((link) => link.getAttribute('href') ?? ''))
-}
-
 function sampleGuideHref(guide: SampleGuideEntry): string {
   return pathWithBase(sampleGuidePath(guide))
 }
@@ -38,8 +34,19 @@ function expectPersistentSidebar(
   expect(page.querySelector('.sidebar-content a[aria-current="page"]')?.getAttribute('href')).toBe(
     sampleGuideHref(currentGuide)
   )
-  const hrefs = sidebarHrefs(page)
-  for (const guide of guides) expect(hrefs.has(sampleGuideHref(guide)), guide.id).toBe(true)
+  const expectedHrefs = guides.map(sampleGuideHref)
+  const expectedHrefSet = new Set(expectedHrefs)
+  const orderedHrefs = page
+    .querySelectorAll('.sidebar-content a')
+    .map((link) => link.getAttribute('href') ?? '')
+    .filter((href) => expectedHrefSet.has(href))
+  expect(orderedHrefs).toEqual(expectedHrefs)
+
+  const expectedLanguages = [...new Set(guides.map((guide) => guide.data.language))]
+  const sidebarLanguages = page
+    .querySelectorAll('.section-group[data-sidebar-lang]')
+    .map((group) => group.getAttribute('data-sidebar-lang'))
+  expect(sidebarLanguages).toEqual(expectedLanguages)
 
   const mobileHrefs = new Set(
     page.querySelectorAll('.mobile-menu__pages a').map((link) => link.getAttribute('href') ?? '')
