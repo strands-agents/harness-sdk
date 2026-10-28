@@ -6,6 +6,11 @@ on:
       ref:
         required: true
         type: string
+      local-strands-ts:
+        description: 'Build, lint, and test against the checked-out strands-ts instead of the published @strands-agents/sdk.'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test-lint:
@@ -24,7 +29,7 @@ jobs:
       contents: read
     # harness-ts installs standalone against the published @strands-agents/sdk (pinned in its own
     # package-lock.json), NOT the sibling strands-ts source, so it is not a member of the repo-root
-    # npm workspace. Building against the local SDK is tracked as follow-up monorepo work.
+    # npm workspace. `local-strands-ts` swaps in a tarball packed from the sibling source.
     defaults:
       run:
         working-directory: harness-ts
@@ -43,6 +48,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install local strands-ts
+        if: inputs.local-strands-ts
+        shell: bash
+        # Packed rather than linked so the SDK's dependencies resolve inside harness-ts's own tree.
+        # The stamped version only has to satisfy harness-ts's @strands-agents/sdk peer range.
+        run: |
+          set -euo pipefail
+          (cd .. && npm ci --no-audit --no-fund)
+          TARBALL=$(cd ../strands-ts && npm version 1.999.0 --no-git-tag-version >/dev/null && npm pack --silent --pack-destination "$RUNNER_TEMP")
+          npm install --no-save --no-audit --no-fund "$RUNNER_TEMP/$TARBALL"
+          node -e "const v = require('./node_modules/@strands-agents/sdk/package.json').version; if (v !== '1.999.0') throw new Error('expected local SDK, got ' + v); console.log('@strands-agents/sdk', v)"
 
       - name: Build
         run: npm run build

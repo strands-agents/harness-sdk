@@ -1,0 +1,781 @@
+{
+  "$comment": "Shared model info: what the SDKs know about models, as ModelInfo records. Edit here; each SDK copies it on install and build (see shared/README.md), and its tests check the copy matches.",
+  "defaults": {
+    "limits": {
+      "contextWindow": 200000
+    }
+  },
+  "models": {
+    "claude-sonnet-4-6": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-sonnet-4-20250514": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-sonnet-4-5": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": true
+      }
+    },
+    "claude-opus-4-6": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-opus-4-7": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-opus-4-8": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "claude-opus-5": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": true
+      }
+    },
+    "claude-opus-5-5": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true
+      }
+    },
+    "claude-fable-5": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-fable-5-1": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false
+      }
+    },
+    "claude-sonnet-5": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "claude-sonnet-5-5": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true
+      }
+    },
+    "claude-haiku-5-5": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": true
+      }
+    },
+    "claude-opus-4-5": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-opus-4-20250514": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-opus-4-1": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-haiku-4-5": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-7-sonnet-20250219": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-5-sonnet-20241022": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 8192
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-5-sonnet-20240620": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 8192
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-5-haiku-20241022": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 8192
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-opus-20240229": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 4096
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-haiku-20240307": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 4096
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-7-sonnet-20240620": {
+      "limits": {
+        "contextWindow": 200000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-3-sonnet-20240229": {
+      "limits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 4096
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "claude-mythos-preview": {
+      "limits": {
+        "contextWindow": 1000000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
+      }
+    },
+    "amazon.nova-pro-v1:0": {
+      "limits": {
+        "contextWindow": 300000
+      },
+      "capabilities": {
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "amazon.nova-lite-v1:0": {
+      "limits": {
+        "contextWindow": 300000
+      },
+      "capabilities": {
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "amazon.nova-micro-v1:0": {
+      "limits": {
+        "contextWindow": 128000
+      },
+      "capabilities": {
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "amazon.nova-premier-v1:0": {
+      "limits": {
+        "contextWindow": 1000000
+      },
+      "capabilities": {
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "amazon.nova-2-lite-v1:0": {
+      "limits": {
+        "contextWindow": 1000000
+      },
+      "capabilities": {
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "amazon.nova-2-pro-preview-20251202-v1:0": {
+      "limits": {
+        "contextWindow": 1000000
+      },
+      "capabilities": {
+        "forcedToolChoice": true,
+        "nativeStructuredOutput": false
+      }
+    },
+    "zai.glm-4.7": {
+      "limits": {
+        "contextWindow": 203000
+      }
+    },
+    "zai.glm-4.7-flash": {
+      "limits": {
+        "contextWindow": 203000
+      }
+    },
+    "zai.glm-5": {
+      "limits": {
+        "contextWindow": 200000
+      }
+    },
+    "zai.glm-5.3": {
+      "limits": {
+        "contextWindow": 1000000
+      }
+    },
+    "gpt-6-astra": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-6.1-sol": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "openai.gpt-6.1-sol": {
+      "limits": {
+        "contextWindow": 1000000
+      }
+    },
+    "gpt-6-sol": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-6-luna": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.6": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.6-sol": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.6-terra": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.6-luna": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.5": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.5-pro": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.4": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.4-pro": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "gpt-5.4-mini": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5.4-nano": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5.2": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5.2-pro": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5.1": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5-mini": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5-nano": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-5-pro": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "gpt-4.1": {
+      "limits": {
+        "contextWindow": 1047576
+      }
+    },
+    "gpt-4.1-mini": {
+      "limits": {
+        "contextWindow": 1047576
+      }
+    },
+    "gpt-4.1-nano": {
+      "limits": {
+        "contextWindow": 1047576
+      }
+    },
+    "gpt-4o": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "gpt-4o-mini": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "gpt-4-turbo": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "o3": {
+      "limits": {
+        "contextWindow": 200000
+      }
+    },
+    "o3-mini": {
+      "limits": {
+        "contextWindow": 200000
+      }
+    },
+    "o3-pro": {
+      "limits": {
+        "contextWindow": 200000
+      }
+    },
+    "o4-mini": {
+      "limits": {
+        "contextWindow": 200000
+      }
+    },
+    "o1": {
+      "limits": {
+        "contextWindow": 200000
+      }
+    },
+    "gemini-2.5-flash": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-2.5-flash-lite": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-2.5-pro": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-2.0-flash": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-2.0-flash-lite": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3-pro-preview": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3-flash-preview": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.6-flash": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.5-flash": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.5-flash-lite": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.1-flash-lite": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.1-pro-preview": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.1-flash-lite-preview": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "mistral-large-latest": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "mistral-large-2512": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "mistral-large-3": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "mistral-medium-latest": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "mistral-medium-2505": {
+      "limits": {
+        "contextWindow": 131072
+      }
+    },
+    "mistral-small-latest": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "mistral-small-3-2-2506": {
+      "limits": {
+        "contextWindow": 131072
+      }
+    },
+    "openai.gpt-oss-120b": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "openai.gpt-oss-20b": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "openai.gpt-oss-safeguard-120b": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "openai.gpt-oss-safeguard-20b": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "mistral.mistral-large-3-675b-instruct": {
+      "limits": {
+        "contextWindow": 256000
+      }
+    },
+    "mistral.ministral-3-14b-instruct": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "mistral.ministral-3-8b-instruct": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "mistral.ministral-3-3b-instruct": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "mistral.magistral-small-2509": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "mistral.pixtral-large-2502": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "mistral.mistral-small-2402": {
+      "limits": {
+        "contextWindow": 32000
+      }
+    },
+    "mistral.mistral-large-2402": {
+      "limits": {
+        "contextWindow": 32000
+      }
+    },
+    "google.gemma-4-31b": {
+      "limits": {
+        "contextWindow": 256000
+      }
+    },
+    "google.gemma-4-26b-a4b": {
+      "limits": {
+        "contextWindow": 256000
+      }
+    },
+    "google.gemma-4-e2b": {
+      "limits": {
+        "contextWindow": 128000
+      }
+    },
+    "xai.grok-4.7": {
+      "limits": {
+        "contextWindow": 524288
+      }
+    },
+    "xai.grok-4.6": {
+      "limits": {
+        "contextWindow": 500000
+      }
+    },
+    "xai.grok-4.3": {
+      "limits": {
+        "contextWindow": 1000000
+      }
+    },
+    "chat-latest": {
+      "limits": {
+        "contextWindow": 272000
+      }
+    },
+    "gpt-oss-120b": {
+      "limits": {
+        "contextWindow": 131072
+      }
+    },
+    "gpt-oss-20b": {
+      "limits": {
+        "contextWindow": 131072
+      }
+    },
+    "gemini-4-argon": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.8-flash": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-3.7-flash": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "codestral-2508": {
+      "limits": {
+        "contextWindow": 256000
+      }
+    },
+    "codestral-latest": {
+      "limits": {
+        "contextWindow": 256000
+      }
+    },
+    "mistral-large-4-0": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "mistral-large-4": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "mistral-medium-3-5": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "mistral-medium-3": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "ministral-14b-2512": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "ministral-14b-latest": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "ministral-8b-2512": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "ministral-8b-latest": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    },
+    "ministral-3b-2512": {
+      "limits": {
+        "contextWindow": 131072
+      }
+    },
+    "ministral-3b-latest": {
+      "limits": {
+        "contextWindow": 131072
+      }
+    },
+    "mistral-small-2603": {
+      "limits": {
+        "contextWindow": 262144
+      }
+    }
+  }
+}

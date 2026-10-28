@@ -104,6 +104,59 @@ describe('BackgroundTasks', () => {
     })
   })
 
+  describe('background tool cancellation', () => {
+    // AbortError from a tool is delivered as cancellation (#5426).
+    it.each(['DOMException', 'Error'])('delivers %s AbortError and finishes the invocation', async (errorForm) => {
+      const work = tool({
+        name: 'work',
+        description: 'Await an aborted operation.',
+        inputSchema: z.object({}),
+        callback: async () => {
+          const controller = new AbortController()
+          if (errorForm === 'Error') controller.abort(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          else controller.abort()
+          controller.signal.throwIfAborted()
+          return 'unreachable'
+        },
+      })
+      const model = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'work',
+          toolUseId: 'work-use',
+          input: { _background_execution: true },
+        })
+        .addTurn({ type: 'textBlock', text: 'Task admitted.' })
+        .addTurn({ type: 'textBlock', text: 'Cancellation received.' })
+      const agent = new Agent({ model, tools: [work], backgroundTasks: { agentic: [work] }, printer: false })
+
+      const result = await agent.invoke('Run work.')
+
+      expect(result.stopReason).toBe('endTurn')
+      const [delivery] = deliveries(agent)
+      expect(deliveries(agent)).toHaveLength(1)
+      expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
+        type: 'toolResultBlock',
+        toolUseId: delivery!.toolUseId,
+        status: 'success',
+        content: [
+          {
+            type: 'jsonBlock',
+            json: {
+              taskId: delivery!.toolUseId,
+              toolUseId: 'work-use',
+              toolName: 'work',
+              status: 'cancelled',
+              createdAt: expect.any(String),
+              lastUpdatedAt: expect.any(String),
+            },
+          },
+        ],
+      })
+      expect(persistedTasks(agent)).toBeUndefined()
+    })
+  })
+
   it('applies always and never policies per tool', async () => {
     const executions: string[] = []
     const seenInputs: unknown[] = []

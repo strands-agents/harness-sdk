@@ -5,6 +5,7 @@ import {
   ConverseStreamCommand,
   CountTokensCommand,
   ValidationException,
+  type ConverseStreamCommandInput,
 } from '@aws-sdk/client-bedrock-runtime'
 import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
@@ -20,6 +21,9 @@ import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+import { z } from 'zod'
+import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
+import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
 
 /**
  * Helper function to mock BedrockRuntimeClient implementation with customizable config.
@@ -403,6 +407,15 @@ describe('BedrockModel', () => {
       })
     })
 
+    it('auto-populates contextWindowLimit from the modelInfo override over the shared value', () => {
+      const provider = new BedrockModel({
+        modelId: 'anthropic.claude-sonnet-4-6',
+        modelInfo: { limits: { contextWindow: 500_000 } },
+      })
+      expect(provider.getConfig().contextWindowLimit).toBe(500_000)
+      expect(provider.modelInfo.limits?.contextWindow).toBe(500_000)
+    })
+
     it('does not override explicit contextWindowLimit', () => {
       const provider = new BedrockModel({
         modelId: 'anthropic.claude-sonnet-4-6',
@@ -419,6 +432,59 @@ describe('BedrockModel', () => {
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'unknown.model-v1:0',
       })
+    })
+  })
+
+  describe('info', () => {
+    it('reads cache points for Claude model ids from the shared model info', () => {
+      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it('leaves caching unknown for other model ids', () => {
+      const provider = new BedrockModel({ modelId: 'amazon.nova-pro-v1:0' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+    })
+
+    it('does not auto-cache a Claude id the shared model info does not list', async () => {
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-future-9', cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    it('injects auto cache points on a model the info override says takes them', async () => {
+      const provider = new BedrockModel({
+        modelId: 'amazon.nova-pro-v1:0',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('skips auto cache points on a Claude model the info override marks unsupported', async () => {
+      const provider = new BedrockModel({
+        modelId: 'us.anthropic.claude-sonnet-4-6',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
     })
   })
 
@@ -495,7 +561,7 @@ describe('BedrockModel', () => {
     it('formats the request to bedrock properly', async () => {
       const provider = new BedrockModel({
         region: 'us-west-2',
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         maxTokens: 1024,
         temperature: 0.7,
         topP: 0.9,
@@ -530,7 +596,7 @@ describe('BedrockModel', () => {
         MyExtraArg: 'ExtraArg',
         additionalModelRequestFields: ['World!'],
         additionalModelResponseFieldPaths: ['Hello!'],
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         messages: [
           {
             role: 'user',
@@ -1484,6 +1550,199 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    describe('structured output enforcement', () => {
+      const forcedRejection = new ValidationException({
+        message:
+          "This model doesn't support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and try again.",
+        $metadata: {},
+      })
+      const nativeRejection = new ValidationException({
+        message: "This model doesn't support the outputConfig field. Remove outputConfig and try again.",
+        $metadata: {},
+      })
+      const thinking = { type: 'adaptive' }
+      const schema = z.object({ name: z.string(), age: z.number() })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Generate a person')] })]
+      const structuredOutputOptions: StreamOptions = {
+        toolSpecs: [
+          { name: 'strands_structured_output', description: 'Output', inputSchema: zodSchemaToJsonSchema(schema) },
+        ],
+        toolChoice: { tool: { name: 'strands_structured_output' } },
+        structuredOutputSchema: schema,
+      }
+      const emptyStream = (): { stream: AsyncIterable<unknown> } => ({
+        stream: (async function* (): AsyncGenerator<unknown> {})(),
+      })
+
+      const sentRequests = (
+        command: typeof ConverseStreamCommand | typeof ConverseCommand = ConverseStreamCommand
+      ): ConverseStreamCommandInput[] => vi.mocked(command).mock.calls.map((call) => call[0])
+
+      /** The structured output mechanism a sent Converse request uses. */
+      const mechanismOf = (request: ConverseStreamCommandInput): string => {
+        if (request.toolConfig?.toolChoice && 'tool' in request.toolConfig.toolChoice) return 'forced'
+        return request.outputConfig?.textFormat ? 'native' : 'auto'
+      }
+
+      /** Mocks send to reject with each error in turn, then return an empty response. */
+      const mockRejections = (...errors: Error[]): ReturnType<typeof vi.fn> => {
+        const mockSend = vi.fn()
+        for (const error of errors) mockSend.mockRejectedValueOnce(error)
+        mockSend.mockImplementation(async () => emptyStream())
+        mockBedrockClientImplementation({ send: mockSend })
+        return mockSend
+      }
+
+      beforeEach(() => {
+        clearStructuredOutputSupport()
+      })
+
+      it.each([
+        { name: 'no rejection', rejections: [], expected: ['forced'] },
+        { name: 'a forced tool choice rejection', rejections: [forcedRejection], expected: ['forced', 'native'] },
+        {
+          name: 'forced and native rejections',
+          rejections: [forcedRejection, nativeRejection],
+          expected: ['forced', 'native', 'auto'],
+        },
+      ])('falls back to the next mechanism after $name and remembers it', async ({ rejections, expected }) => {
+        mockRejections(...rejections)
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(expected)
+
+        vi.mocked(ConverseStreamCommand).mockClear()
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual([expected[expected.length - 1]])
+      })
+
+      it('falls back on a non-streaming request', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(forcedRejection)
+          .mockResolvedValue({
+            output: { message: { role: 'assistant', content: [{ text: '{"name": "John", "age": 30}' }] } },
+            stopReason: 'end_turn',
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', stream: false })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests(ConverseCommand).map(mechanismOf)).toStrictEqual(['forced', 'native'])
+      })
+
+      it('skips native output for a schema it cannot represent', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({ modelId: 'm1' })
+        const recordSchema = z.object({ scores: z.record(z.string(), z.number()) })
+
+        await collectIterator(
+          provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
+        )
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('starts at native output for a model the shared model info says cannot be forced', async () => {
+        const mockSend = mockRejections()
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(1)
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+      })
+
+      it('skips native output when the info override says the model lacks it', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          modelInfo: { capabilities: { nativeStructuredOutput: false } },
+        })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('surfaces an unrelated validation error without retrying', async () => {
+        const mockSend = mockRejections(new ValidationException({ message: 'Malformed input request', $metadata: {} }))
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await expect(collectIterator(provider.stream(messages, structuredOutputOptions))).rejects.toThrow(
+          'Malformed input request'
+        )
+        expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('retries the next mechanism with drop_block when its replayed thinking is stale', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const bindingError = new ValidationException({
+          message:
+            'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.',
+          $metadata: {},
+        })
+        mockRejections(forcedRejection, bindingError)
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(
+          sentRequests().map((request) => [mechanismOf(request), request.additionalModelRequestFields])
+        ).toStrictEqual([
+          ['forced', undefined],
+          ['native', { thinking }],
+          [
+            'native',
+            {
+              thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+              anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+            },
+          ],
+        ])
+        warnSpy.mockRestore()
+      })
+
+      it.each([
+        { name: 'native', rejections: [forcedRejection] },
+        { name: 'auto', rejections: [forcedRejection, nativeRejection] },
+      ])('sends $name with auto tool choice, keeping the thinking config forcing strips', async ({ rejections }) => {
+        mockRejections(...rejections)
+        const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        const request = sentRequests().at(-1)
+        expect(request?.toolConfig?.toolChoice).toStrictEqual({ auto: {} })
+        expect(request?.additionalModelRequestFields).toStrictEqual({ thinking })
+      })
+
+      it('sends native output with the converted schema, keeping other outputConfig settings', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({ modelId: 'm1', additionalArgs: { outputConfig: { effort: 'high' } } })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(sentRequests().at(-1)?.outputConfig).toStrictEqual({
+          effort: 'high',
+          textFormat: {
+            type: 'json_schema',
+            structure: {
+              jsonSchema: {
+                schema: JSON.stringify(toNativeOutputSchema(zodSchemaToJsonSchema(schema))),
+                name: 'strands_structured_output',
+              },
+            },
+          },
+        })
+      })
+    })
+
     describe('stale thinking recovery', () => {
       const bindingError = new ValidationException({
         message:
@@ -2762,6 +3021,18 @@ describe('BedrockModel', () => {
         expect(cachePoints()).toStrictEqual([undefined, undefined])
       })
 
+      it('warns through warnOnce when auto finds no caching support', async () => {
+        const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: {} })
+
+        await collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([undefined, undefined])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('does not support automatic caching')
+        )
+      })
+
       it('applies the shared ttl to both sections', async () => {
         // Bedrock requires checkpoint TTLs to be non-increasing across toolConfig then messages, which
         // equal values satisfy.
@@ -3255,7 +3526,6 @@ describe('BedrockModel', () => {
     })
 
     it('logs warning and disables caching for non-caching models', async () => {
-      const warnSpy = vi.spyOn(console, 'warn')
       const provider = new BedrockModel({
         modelId: 'amazon.titan-text-express-v1',
         cacheConfig: { strategy: 'auto' },
@@ -3268,7 +3538,10 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       // Verify warning was logged
-      expect(warnSpy).toHaveBeenCalled()
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('does not support automatic caching')
+      )
 
       // Verify no cache points were added
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
@@ -3281,8 +3554,6 @@ describe('BedrockModel', () => {
         ],
         system: [{ text: 'You are a helpful assistant' }],
       })
-
-      warnSpy.mockRestore()
     })
 
     it('enables caching with anthropic strategy for application inference profiles', async () => {

@@ -321,6 +321,11 @@ export class MultiAgentState implements StateSerializable {
    * @internal — not part of the public state shape; orchestrator-owned.
    */
   _pendingInput?: MultiAgentInput
+  /**
+   * The request the current run belongs to (`undefined` before a run starts), so
+   * edge handlers and custom nodes can read its usage. Not serialized.
+   */
+  declare readonly invocationContext?: InvocationContext
   private readonly _nodes: Map<string, NodeState>
 
   constructor(data?: { nodeIds?: string[] }) {
@@ -349,6 +354,21 @@ export class MultiAgentState implements StateSerializable {
    */
   get nodes(): ReadonlyMap<string, NodeState> {
     return this._nodes
+  }
+
+  /**
+   * Binds this state to the request a run executes in.
+   *
+   * @param invocationContext - The run's request
+   * @internal
+   */
+  _bindInvocationContext(invocationContext: InvocationContext): void {
+    // Non-enumerable, so it stays out of equality checks, spreads, and enumeration of the state.
+    Object.defineProperty(this, 'invocationContext', {
+      value: invocationContext,
+      enumerable: false,
+      configurable: true,
+    })
   }
 
   /** Returns the serialized state as a JSON value. */

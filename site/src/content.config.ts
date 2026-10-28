@@ -192,10 +192,7 @@ const blogSchema = z.object({
 })
 
 // Regex rejects protocol-relative URLs like //evil.com and /\evil.com that startsWith('/') would accept.
-const internalHref = z.string().regex(
-  /^\/(?![/\\])/,
-  'course hrefs must be site-relative (start with a single /)',
-)
+const internalHref = z.string().regex(/^\/(?![/\\])/, 'course hrefs must be site-relative (start with a single /)')
 
 export const courseSchema = z.object({
   title: z.string(),

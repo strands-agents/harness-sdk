@@ -5,6 +5,7 @@
  * ```typescript
  * import {
  *   bash,
+ *   edit,
  *   fileEditor,
  *   handoffToUser,
  *   httpRequest,
@@ -24,6 +25,7 @@
  */
 
 export * from './bash/index.js'
+export * from './edit/index.js'
 export * from './file-editor/index.js'
 export * from './handoff-to-user/index.js'
 export * from './mcp-router/index.js'

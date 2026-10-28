@@ -1,16 +1,20 @@
 // --8<-- [start:basic_import]
 import { Agent } from '@strands-agents/sdk'
 import { bash } from '@strands-agents/sdk/vended-tools/bash'
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
+import { edit } from '@strands-agents/sdk/vended-tools/edit'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
 import { notebook, makeNotebook } from '@strands-agents/sdk/vended-tools/notebook'
 // --8<-- [end:basic_import]
+import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import {
   SessionManager,
   FileStorage,
   InterruptResponseContent,
 } from '@strands-agents/sdk'
-import { handoffToUser, HANDOFF_INTERRUPT_NAME } from '@strands-agents/sdk/vended-tools/handoff-to-user'
+import {
+  handoffToUser,
+  HANDOFF_INTERRUPT_NAME,
+} from '@strands-agents/sdk/vended-tools/handoff-to-user'
 import { sleep, makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
 import { pythonRepl, makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
@@ -19,7 +23,13 @@ import { webFetch, makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fet
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { makeMcpRouter } from '@strands-agents/sdk/vended-tools'
 import { makeA2AClient } from '@strands-agents/sdk/vended-tools/a2a-client'
-import { ClientFactory, DefaultAgentCardResolver, JsonRpcTransportFactory, RestTransportFactory, createAuthenticatingFetchWithRetry } from '@a2a-js/sdk/client'
+import {
+  ClientFactory,
+  DefaultAgentCardResolver,
+  JsonRpcTransportFactory,
+  RestTransportFactory,
+  createAuthenticatingFetchWithRetry,
+} from '@a2a-js/sdk/client'
 import { Choice, Option, Preset } from '@strands-agents/sdk/multiagent'
 import { subagent, makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
 import { swarm, makeSwarm } from '@strands-agents/sdk/vended-tools/swarm'
@@ -29,7 +39,7 @@ import { Fixed, Inherit } from '@strands-agents/sdk/multiagent'
 async function agentWithVendedToolsExample() {
   // --8<-- [start:agent_with_vended_tools]
   const agent = new Agent({
-    tools: [bash, fileEditor, httpRequest, notebook],
+    tools: [bash, edit, httpRequest, notebook],
   })
   // --8<-- [end:agent_with_vended_tools]
 }
@@ -62,6 +72,17 @@ async function bashSessionPersistenceExample() {
   await agent.invoke('Restart the bash session')
   await agent.invoke('Run: echo $MY_VAR') // Variable will be empty
   // --8<-- [end:bash_session]
+}
+
+// Edit example
+async function editExample() {
+  // --8<-- [start:edit_example]
+  const agent = new Agent({
+    tools: [edit],
+  })
+
+  await agent.invoke("In /tmp/hello.txt, replace 'world' with 'Strands'.")
+  // --8<-- [end:edit_example]
 }
 
 // File editor example
@@ -203,17 +224,18 @@ async function sleepCustomExample() {
 async function pythonReplExample() {
   // --8<-- [start:python_repl_example]
   const agent = new Agent({ tools: [pythonRepl] })
-  await agent.invoke('Use python_repl to compute the first 10 Fibonacci numbers and print them.')
+  await agent.invoke(
+    'Use python_repl to compute the first 10 Fibonacci numbers and print them.'
+  )
   // --8<-- [end:python_repl_example]
 }
 
 // Python REPL tool with a bound sandbox and custom interpreter
 async function pythonReplCustomExample() {
   // --8<-- [start:python_repl_custom_example]
-  const pythonRepl = makePythonRepl(
-    new DockerSandbox({ container: 'my-container' }),
-    { language: 'python3.12' }
-  )
+  const pythonRepl = makePythonRepl(new DockerSandbox({ container: 'my-container' }), {
+    language: 'python3.12',
+  })
   const agent = new Agent({ tools: [pythonRepl] })
   // --8<-- [end:python_repl_custom_example]
 }
@@ -265,7 +287,10 @@ async function mcpRouterExample() {
   // --8<-- [start:mcp_router_example]
   const mcpRouter = makeMcpRouter({
     servers: {
-      files: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'] },
+      files: {
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+      },
       'my-api': { url: 'https://mcp.example.com/mcp' },
     },
     maxConnections: 5,
@@ -273,7 +298,7 @@ async function mcpRouterExample() {
   const agent = new Agent({ tools: [mcpRouter] })
   await agent.invoke(
     "Connect to 'files', list its tools, " +
-    'call the read_file tool on /tmp/hello.txt, then disconnect.'
+      'call the read_file tool on /tmp/hello.txt, then disconnect.'
   )
   // --8<-- [end:mcp_router_example]
 }
@@ -291,13 +316,16 @@ async function a2aClientExample() {
       // No auth needed
       'https://agent.example.com',
       // Custom ClientFactory for authenticated requests
-      ['https://researcher.example.com', new ClientFactory({
-        transports: [
-          new JsonRpcTransportFactory({ fetchImpl: authFetch }),
-          new RestTransportFactory({ fetchImpl: authFetch }),
-        ],
-        cardResolver: new DefaultAgentCardResolver({ fetchImpl: authFetch }),
-      })],
+      [
+        'https://researcher.example.com',
+        new ClientFactory({
+          transports: [
+            new JsonRpcTransportFactory({ fetchImpl: authFetch }),
+            new RestTransportFactory({ fetchImpl: authFetch }),
+          ],
+          cardResolver: new DefaultAgentCardResolver({ fetchImpl: authFetch }),
+        }),
+      ],
     ],
   })
 
@@ -348,7 +376,9 @@ async function subagentCustomExample() {
 async function swarmExample() {
   // --8<-- [start:swarm_example]
   const agent = new Agent({ tools: [swarm] })
-  await agent.invoke('Research the pros and cons of microservices vs monoliths and write a summary')
+  await agent.invoke(
+    'Research the pros and cons of microservices vs monoliths and write a summary'
+  )
   // --8<-- [end:swarm_example]
 }
 
@@ -368,7 +398,11 @@ async function swarmCustomExample() {
       }),
     },
     defaultPreset: 'researcher',
-    instructions: new Choice(['You are a researcher.', 'You are a writer.', 'You are an editor.']),
+    instructions: new Choice([
+      'You are a researcher.',
+      'You are a writer.',
+      'You are an editor.',
+    ]),
     tools: new Inherit(),
     model: new Fixed('us.amazon.nova-pro-v1:0'),
     maxAgents: 5,

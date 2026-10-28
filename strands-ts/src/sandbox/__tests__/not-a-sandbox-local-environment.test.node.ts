@@ -14,8 +14,8 @@ const REL_ABS = path.join(process.cwd(), REL_NAME)
 const PRINT_CWD = WINDOWS ? '(Get-Location).Path' : 'pwd'
 const FAIL_WITH_STDERR = WINDOWS ? "[Console]::Error.WriteLine('oops'); exit 3" : 'echo oops >&2; exit 3'
 const PRINT_GREETING = WINDOWS ? 'echo $env:GREETING' : 'echo "$GREETING"'
-const PYTHON = WINDOWS ? 'python' : 'python3'
-// PowerShell and Windows Python end lines with \r\n.
+const INTERPRETER = 'node'
+// PowerShell ends lines with \r\n.
 const EOL = WINDOWS ? '\r\n' : '\n'
 
 describe('NotASandboxLocalEnvironment', () => {
@@ -59,9 +59,9 @@ describe('NotASandboxLocalEnvironment', () => {
 
   describe('executeCode', () => {
     it('runs code through the named interpreter', async () => {
-      const result = await sandbox.executeCode('print(2 + 2)', PYTHON, { cwd: TEST_DIR })
+      const result = await sandbox.executeCode('console.log(2 + 2)', INTERPRETER, { cwd: TEST_DIR })
       expect(result.exitCode).toBe(0)
-      expect(result.stdout).toBe(`4${EOL}`)
+      expect(result.stdout.trim()).toBe('4')
     })
 
     it('rejects a language with invalid characters', async () => {
@@ -69,10 +69,10 @@ describe('NotASandboxLocalEnvironment', () => {
     })
 
     it('applies the env option', async () => {
-      const result = await sandbox.executeCode('import os; print(os.environ["GREETING"])', PYTHON, {
+      const result = await sandbox.executeCode('console.log(process.env.GREETING)', INTERPRETER, {
         env: { GREETING: 'hi' },
       })
-      expect(result.stdout).toBe(`hi${EOL}`)
+      expect(result.stdout.trim()).toBe('hi')
     })
 
     it('reports a missing interpreter as exit 127', async () => {
@@ -157,6 +157,16 @@ describe('NotASandboxLocalEnvironment', () => {
 
     it('throws when reading a nonexistent file', async () => {
       await expect(sandbox.readFile(path.join(TEST_DIR, 'nope.txt'))).rejects.toThrow()
+    })
+
+    // Contract: on POSIX, `\` in a path is a legal filename character, not a
+    // separator. Containment logic in tools above the sandbox relies on this.
+    it.skipIf(WINDOWS)('treats a backslash in a filename as a literal character', async () => {
+      const file = path.join(TEST_DIR, 'weird\\name.txt')
+      await sandbox.writeText(file, 'ok')
+      expect(await sandbox.readText(file)).toBe('ok')
+      const entries = await sandbox.listFiles(TEST_DIR)
+      expect(entries.some((entry) => entry.name === 'weird\\name.txt')).toBe(true)
     })
   })
 

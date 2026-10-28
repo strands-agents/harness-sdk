@@ -13,6 +13,7 @@ import strands
 import strands.middleware._registry
 import strands.telemetry
 from strands import Agent
+from strands.agent.invocation_context import _create_invocation_context
 from strands.event_loop._retry import ModelRetryStrategy
 from strands.experimental.checkpoint import Checkpoint
 from strands.hooks import (
@@ -26,7 +27,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
-from strands.telemetry.metrics import EventLoopMetrics
+from strands.telemetry.metrics import EventLoopMetrics, Trace
 from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from strands.tools.registry import ToolRegistry
@@ -191,6 +192,23 @@ def mock_tracer():
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_limit_stop_with_empty_history_yields_empty_assistant_message(agent, model, alist):
+    agent.messages.clear()
+    invocation_context = _create_invocation_context({"turns": 1})
+    invocation_context._usage["turns_taken"] = 1
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(
+        agent=agent, invocation_state={}, invocation_context=invocation_context
+    )
+    events = await alist(stream)
+
+    stop_reason, message, _, _, _, _, _ = events[-1]["stop"]
+    assert stop_reason == "limit_turns"
+    assert message == {"role": "assistant", "content": []}
+    model.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_event_loop_cycle_text_response(
     agent,
     model,
@@ -216,6 +234,62 @@ async def test_event_loop_cycle_text_response(
     exp_request_state = {}
 
     assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pass_positionally", [False, True], ids=["keyword", "positional"])
+async def test_event_loop_cycle_accepts_the_deprecated_limits_argument(
+    agent, model, agenerator, alist, pass_positionally
+):
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+    limits = {"turns": 1}
+
+    with pytest.warns(DeprecationWarning, match="limits=.*deprecated"):
+        stream = (
+            strands.event_loop.event_loop.event_loop_cycle(agent, {}, None, limits)
+            if pass_positionally
+            else strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}, limits=limits)
+        )
+        events = await alist(stream)
+
+    assert events[-1]["stop"][0] == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_recurse_event_loop_accepts_the_deprecated_limits_argument(agent, model, agenerator, alist):
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+
+    with pytest.warns(DeprecationWarning, match="limits=.*deprecated"):
+        events = await alist(
+            strands.event_loop.event_loop.recurse_event_loop(
+                agent, {"event_loop_cycle_trace": Trace("cycle")}, None, {"turns": 1}
+            )
+        )
+
+    assert events[-1]["stop"][0] == "end_turn"
+
+
+def test_deprecated_limits_bind_the_cycle_on_top_of_the_request():
+    request = _create_invocation_context({"turns": 5})
+
+    with pytest.warns(DeprecationWarning):
+        cycle_context = strands.event_loop.event_loop._resolve_cycle_invocation_context(request, {"turns": 1})
+
+    assert (cycle_context._take_turn(), cycle_context._take_turn(), request.usage["turns_taken"]) == (
+        None,
+        "limit_turns",
+        1,
+    )
 
 
 @pytest.mark.asyncio

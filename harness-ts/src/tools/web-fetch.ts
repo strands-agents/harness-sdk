@@ -87,6 +87,49 @@ function curlCommand(url: string): string {
   )
 }
 
+function powershellCurlCommand(url: string): string {
+  // The same contract for a sandbox whose shell is PowerShell (the local environment on Windows). `curl.exe`
+  // because plain `curl` is an Invoke-WebRequest alias there; the body is truncated and base64-encoded in
+  // .NET. Errors are written through the console handle, not PowerShell's own error stream, which is
+  // CLIXML-wrapped when stderr is a pipe; the `try` also turns a missing curl.exe into a plain exit 127.
+  // `-LiteralPath` because `%TEMP%` may contain wildcard characters.
+  const quoted = `'${url.replace(/'/g, "''")}'`
+  return [
+    '$f = Join-Path ([IO.Path]::GetTempPath()) "strands-web-fetch-$([guid]::NewGuid())"',
+    '$s = 127',
+    'try {',
+    `  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
+      `-A '${USER_AGENT}' -o $f --stderr "$f.err" -w '%{content_type}\\n%{url_effective}\\n' ${quoted}`,
+    '  $s = $LASTEXITCODE',
+    '  if ($s -eq 0) {',
+    '    $in = [IO.File]::OpenRead($f)',
+    `    try { $b = (New-Object IO.BinaryReader $in).ReadBytes([Math]::Min($in.Length, ${MAX_BYTES})) }` +
+      ' finally { $in.Dispose() }',
+    '    [Convert]::ToBase64String($b)',
+    '  } elseif (Test-Path -LiteralPath "$f.err") { [Console]::Error.Write([IO.File]::ReadAllText("$f.err")) }',
+    '} catch { if ($s -eq 0) { $s = 1 }; [Console]::Error.Write($_.Exception.Message) }',
+    'Remove-Item -Force -LiteralPath $f, "$f.err" -ErrorAction SilentlyContinue',
+    'exit $s',
+  ].join('\n')
+}
+
+// The Sandbox contract names no shell dialect, so the only check that holds for every sandbox is to ask: PowerShell
+// prints its edition (`Desktop` or `Core`), `sh` expands the unset variable to an empty line.
+/** @internal Exported for tests. */
+export const SHELL_PROBE = 'echo "${PSEdition}"'
+const shells = new WeakMap<Sandbox, 'sh' | 'powershell'>()
+
+/** @internal Exported for tests. */
+export async function shellOf(sandbox: Sandbox): Promise<'sh' | 'powershell'> {
+  let shell = shells.get(sandbox)
+  if (!shell) {
+    const result = await sandbox.execute(SHELL_PROBE, { timeout: 10 })
+    shell = ['Desktop', 'Core'].includes(result.stdout.trim()) ? 'powershell' : 'sh'
+    shells.set(sandbox, shell)
+  }
+  return shell
+}
+
 function decode(data: Uint8Array, contentType: string): string {
   const charset = /charset=["']?([\w.-]+)/i.exec(contentType)?.[1] ?? 'utf-8'
   try {
@@ -106,7 +149,8 @@ function toText(data: Uint8Array, contentType: string, resolvedUrl: string, url:
 
 /** Fetch a validated `url` with `curl` inside `sandbox`; throws when curl fails. */
 async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
-  const result = await sandbox.execute(curlCommand(url), { timeout: TIMEOUT_SECONDS + 5 })
+  const command = (await shellOf(sandbox)) === 'powershell' ? powershellCurlCommand(url) : curlCommand(url)
+  const result = await sandbox.execute(command, { timeout: TIMEOUT_SECONDS + 5 })
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `curl exited with code ${result.exitCode}`)
   }

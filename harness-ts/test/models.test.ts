@@ -145,8 +145,8 @@ describe('resolveModel', () => {
     )
   })
 
-  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
-    'resolves Astra effort for %s',
+  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra', 'us.openai.gpt-6.1-sol'])(
+    'resolves Astra and 6.1 Sol effort without none for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
         ['auto', 'high'],
@@ -156,14 +156,54 @@ describe('resolveModel', () => {
         const model = await resolve(`bedrock/${modelId}`, thinking)
         expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
       }
-      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toEqual({
-        reasoning: { effort: 'none' },
-      })
+      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toBeUndefined()
       await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
         "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
       )
     }
   )
+
+  // https://github.com/strands-agents/harness-sdk/issues/5191
+  it.each(['openai.gpt-5.4', 'us.openai.gpt-5.4', 'openai.gpt-5.5', 'us.openai.gpt-5.5', 'global.openai.gpt-5.5'])(
+    'resolves GPT-5.4/5.5 effort without max for %s',
+    async (modelId) => {
+      for (const [thinking, effort] of [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ] as const) {
+        const model = await resolve(`bedrock/${modelId}`, thinking)
+        expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+      }
+      for (const thinking of ['minimal', 'max'] as const) {
+        await expect(resolve(`bedrock/${modelId}`, thinking)).rejects.toThrow(
+          "Supported levels: low, medium, high, xhigh (or 'auto', 'off')."
+        )
+      }
+    }
+  )
+
+  it.each([
+    'openai.gpt-5.6-cyber',
+    'us.openai.gpt-6-sol',
+    'us.openai.gpt-6.1-terra',
+    'openai.gpt-daybreak-blue-5.6-sol',
+    'us.openai.gpt-daybreak-blue-5.6-sol',
+  ])('resolves every GPT-5.6, GPT-6, and Daybreak effort for %s', async (modelId) => {
+    for (const [thinking, effort] of [
+      ['auto', 'high'],
+      ['low', 'low'],
+      ['max', 'max'],
+      ['off', 'none'],
+    ] as const) {
+      const model = await resolve(`bedrock/${modelId}`, thinking)
+      expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+    }
+    await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
+      "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
+    )
+  })
 
   it('uses the Qwen Bedrock reasoning field and levels', async () => {
     const model = await resolve('bedrock/qwen.qwen3-32b-v1:0', 'minimal')
@@ -203,8 +243,8 @@ describe('resolveModel', () => {
   })
 
   it('rejects a level the provider does not support', async () => {
-    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by this provider')
-    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by model gemini-3.5-flash')
+    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by model gpt-5.6-sol')
   })
 
   it('rejects a level the model does not support', async () => {
@@ -226,6 +266,26 @@ describe('resolveModel', () => {
     expect(model).toBeInstanceOf(Model)
     const params = model.getConfig().params as { thinkingConfig: { thinkingLevel: string } }
     expect(params.thinkingConfig.thinkingLevel).toBe('high')
+  })
+
+  it.each([
+    ['google/gemini-4-argon', 'minimal', 'Supported levels: low, medium, high'],
+    ['google/gemini-3.6-flash', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'low', 'Supported levels: minimal, high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'auto', 'high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'off', 'none'],
+    ['bedrock-mantle/google.gemma-4-31b', 'low', 'Supported levels: high'],
+  ])('resolves the per-model levels for %s with effort %s', async (model, effort, expected) => {
+    if (expected.startsWith('Supported levels')) {
+      await expect(resolve(model, effort)).rejects.toThrow(`not supported by model ${model.split('/')[1]}. ${expected}`)
+      return
+    }
+    const params = (await resolve(model, effort)).getConfig().params as {
+      reasoning?: { effort: string }
+      thinkingConfig?: { thinkingLevel: string }
+    }
+    expect(params.reasoning?.effort ?? params.thinkingConfig?.thinkingLevel).toBe(expected)
   })
 
   it('uses the google model id directly', async () => {
@@ -408,7 +468,9 @@ describe('resolveModel', () => {
   })
 
   it('rejects an unsupported thinking level for bedrock-mantle', async () => {
-    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow(
+      'not supported by model openai.gpt-oss-120b'
+    )
   })
 
   it('adds the Bedrock Web Search tool for bedrock-mantle web_search', async () => {
@@ -682,6 +744,7 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6-astra')).toBe(true)
     // https://github.com/strands-agents/harness-sdk/issues/5187
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6.1-sol')).toBe(true)
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
     expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
   })

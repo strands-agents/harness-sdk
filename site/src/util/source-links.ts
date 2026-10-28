@@ -43,7 +43,7 @@ export function resolveLanguage(link: SourceLink): string {
   if (inferred) return inferred
   throw new Error(
     `sourceLink "${link.path}" has an unrecognized file extension; ` +
-      `add it to EXTENSION_TO_LANGUAGE or set "language" explicitly on the link.`,
+      `add it to EXTENSION_TO_LANGUAGE or set "language" explicitly on the link.`
   )
 }
 
