@@ -1734,6 +1734,7 @@ class Agent(AgentBase, LocalAgent):
 
             agent_result: AgentResult | None = None
             caught_error: BaseException | None = None
+            invoke_events: AsyncGenerator[TypedEvent, None] | None = None
             try:
                 yield InitEventLoopEvent()
 
@@ -1758,17 +1759,18 @@ class Agent(AgentBase, LocalAgent):
                     # so a dead cycle's retained response cannot resolve a fresh gate.
                     _interrupts=dict(self._interrupt_state.interrupts) if self._interrupt_state.activated else {},
                 )
+                invoke_events = self._middleware_registry.invoke(
+                    AgentStreamStage,
+                    middleware_context,
+                    self._make_agent_stream_terminal(
+                        structured_output_context,
+                        invocation_context,
+                        pass_progress,
+                        continuation_event,
+                    ),
+                )
                 try:
-                    async for event in self._middleware_registry.invoke(
-                        AgentStreamStage,
-                        middleware_context,
-                        self._make_agent_stream_terminal(
-                            structured_output_context,
-                            invocation_context,
-                            pass_progress,
-                            continuation_event,
-                        ),
-                    ):
+                    async for event in invoke_events:
                         if isinstance(event, EventLoopStopEvent):
                             agent_result = AgentResult(*event["stop"])
                             agent_result.invocation_context = invocation_context
@@ -1827,6 +1829,9 @@ class Agent(AgentBase, LocalAgent):
                 caught_error = error
                 raise
             finally:
+                if invoke_events is not None:
+                    await invoke_events.aclose()
+
                 if not self._interrupt_state.activated:
                     self._interrupt_state.end_interrupt_cycle()
 
@@ -1941,25 +1946,28 @@ class Agent(AgentBase, LocalAgent):
 
             # Execute the event loop cycle with retry logic for context limits
             events = self._execute_event_loop_cycle(ctx.invocation_state, structured_output_context, invocation_context)
-            async for event in events:
-                if isinstance(event, EventLoopStopEvent):
-                    pass_progress.event_loop_produced_result = True
+            try:
+                async for event in events:
+                    if isinstance(event, EventLoopStopEvent):
+                        pass_progress.event_loop_produced_result = True
 
-                # Signal from the model provider that the message sent by the user should be redacted,
-                # likely due to a guardrail.
-                if (
-                    isinstance(event, ModelStreamChunkEvent)
-                    and event.chunk
-                    and event.chunk.get("redactContent")
-                    and event.chunk["redactContent"].get("redactUserContentMessage")
-                ):
-                    self.messages[-1]["content"] = self._redact_user_content(
-                        self.messages[-1]["content"],
-                        str(event.chunk["redactContent"]["redactUserContentMessage"]),
-                    )
-                    if self._session_manager:
-                        self._session_manager.redact_latest_message(self.messages[-1], self)
-                yield event
+                    # Signal from the model provider that the message sent by the user should be redacted,
+                    # likely due to a guardrail.
+                    if (
+                        isinstance(event, ModelStreamChunkEvent)
+                        and event.chunk
+                        and event.chunk.get("redactContent")
+                        and event.chunk["redactContent"].get("redactUserContentMessage")
+                    ):
+                        self.messages[-1]["content"] = self._redact_user_content(
+                            self.messages[-1]["content"],
+                            str(event.chunk["redactContent"]["redactUserContentMessage"]),
+                        )
+                        if self._session_manager:
+                            self._session_manager.redact_latest_message(self.messages[-1], self)
+                    yield event
+            finally:
+                await events.aclose()
 
         return terminal
 
@@ -1998,8 +2006,11 @@ class Agent(AgentBase, LocalAgent):
                 structured_output_context=structured_output_context,
                 invocation_context=invocation_context,
             )
-            async for event in events:
-                yield event
+            try:
+                async for event in events:
+                    yield event
+            finally:
+                await events.aclose()
 
         except ContextWindowOverflowException as e:
             # Try reducing the context size and retrying
@@ -2017,8 +2028,11 @@ class Agent(AgentBase, LocalAgent):
                 self._session_manager.sync_agent(self)
 
             events = self._execute_event_loop_cycle(invocation_state, structured_output_context, invocation_context)
-            async for event in events:
-                yield event
+            try:
+                async for event in events:
+                    yield event
+            finally:
+                await events.aclose()
 
         finally:
             if structured_output_context:
