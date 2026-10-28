@@ -128,7 +128,7 @@ from .invocation_context import (
     _create_invocation_context,
     _invocation_context_kwargs,
     _reached_limit,
-    _unwrap_invocation_context,
+    _resolve_invocation_context,
 )
 from .state import AgentState
 
@@ -1513,7 +1513,7 @@ class Agent(AgentBase, LocalAgent):
                     yield event["data"]
             ```
         """
-        resolved_invocation_context = self._resolve_invocation_context(limits, invocation_context)
+        resolved_invocation_context = _resolve_invocation_context(limits, invocation_context)
 
         begin = self._concurrency.begin(idempotency_token)
 
@@ -2151,23 +2151,6 @@ class Agent(AgentBase, LocalAgent):
                 trace_attributes["error"] = error
 
             self.tracer.end_agent_span(**trace_attributes)
-
-    @staticmethod
-    def _resolve_invocation_context(
-        limits: Limits | None, invocation_context: InvocationContext | None
-    ) -> InvocationContext:
-        """Join the request in ``invocation_context``, or start a new request with this call's limits.
-
-        A nested call that sets its own ``limits`` gets child state, bound by both its own limits
-        and the request's.
-
-        Raises:
-            TypeError: If ``invocation_context`` was not created by the SDK, or ``limits`` is invalid.
-        """
-        inherited = _unwrap_invocation_context(invocation_context)
-        if inherited is None:
-            return _create_invocation_context(limits)
-        return inherited if limits is None else _create_invocation_context(limits, inherited)
 
     @staticmethod
     def _should_resume(event: AfterInvocationEvent, invocation_context: InvocationContext) -> bool:
