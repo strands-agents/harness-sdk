@@ -16,7 +16,10 @@ import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 
 // --8<-- [start:handoff_to_user_import]
 import { Agent, InterruptResponseContent } from '@strands-agents/sdk'
-import { handoffToUser, HANDOFF_INTERRUPT_NAME } from '@strands-agents/sdk/vended-tools/handoff-to-user'
+import {
+  handoffToUser,
+  HANDOFF_INTERRUPT_NAME,
+} from '@strands-agents/sdk/vended-tools/handoff-to-user'
 // --8<-- [end:handoff_to_user_import]
 
 // --8<-- [start:http_request_import]
@@ -56,6 +59,17 @@ import { Agent } from '@strands-agents/sdk'
 import { makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
 // --8<-- [end:sleep_custom_import]
 
+// --8<-- [start:python_repl_import]
+import { Agent } from '@strands-agents/sdk'
+import { pythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+// --8<-- [end:python_repl_import]
+
+// --8<-- [start:python_repl_custom_import]
+import { Agent } from '@strands-agents/sdk'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
+import { makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
+// --8<-- [end:python_repl_custom_import]
+
 // --8<-- [start:stop_import]
 import { Agent } from '@strands-agents/sdk'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
@@ -76,3 +90,44 @@ import { Agent } from '@strands-agents/sdk'
 import { makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 // --8<-- [end:web_fetch_custom_import]
+
+// --8<-- [start:mcp_router_import]
+import { Agent } from '@strands-agents/sdk'
+import { makeMcpRouter } from '@strands-agents/sdk/vended-tools/mcp-router'
+// --8<-- [end:mcp_router_import]
+
+// --8<-- [start:a2a_client_import]
+import { Agent } from '@strands-agents/sdk'
+import {
+  ClientFactory,
+  DefaultAgentCardResolver,
+  JsonRpcTransportFactory,
+  RestTransportFactory,
+  createAuthenticatingFetchWithRetry,
+} from '@a2a-js/sdk/client'
+import { makeA2AClient } from '@strands-agents/sdk/vended-tools/a2a-client'
+// --8<-- [end:a2a_client_import]
+
+// --8<-- [start:subagent_import]
+import { Agent } from '@strands-agents/sdk'
+import { subagent } from '@strands-agents/sdk/vended-tools/subagent'
+// --8<-- [end:subagent_import]
+
+// --8<-- [start:subagent_custom_import]
+import { Agent } from '@strands-agents/sdk'
+import { Choice, Option, Preset } from '@strands-agents/sdk/multiagent'
+import { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
+// --8<-- [end:subagent_custom_import]
+
+// --8<-- [start:swarm_import]
+import { Agent } from '@strands-agents/sdk'
+import { swarm } from '@strands-agents/sdk/vended-tools/swarm'
+// --8<-- [end:swarm_import]
+
+// --8<-- [start:swarm_custom_import]
+import { Agent } from '@strands-agents/sdk'
+import { Choice, Fixed, Inherit, Preset } from '@strands-agents/sdk/multiagent'
+import { makeSwarm } from '@strands-agents/sdk/vended-tools/swarm'
+import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
+import { webFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
+// --8<-- [end:swarm_custom_import]

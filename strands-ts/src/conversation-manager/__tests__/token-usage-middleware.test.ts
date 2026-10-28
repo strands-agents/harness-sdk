@@ -5,11 +5,12 @@ import type { InvokeModelContext } from '../../middleware/stages.js'
 import type { Model } from '../../models/model.js'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { withDefaultLocale } from '../../__fixtures__/locale-helpers.js'
 
 function createMockModel(contextWindowLimit?: number): Model {
-  return {
-    getConfig: () => ({ contextWindowLimit }),
-  } as unknown as Model
+  const model = new MockMessageModel()
+  if (contextWindowLimit !== undefined) model.updateConfig({ contextWindowLimit })
+  return model
 }
 
 function createContext(overrides: Partial<InvokeModelContext> = {}): InvokeModelContext {
@@ -144,6 +145,18 @@ describe('createTokenUsageMiddleware', () => {
     expect(statusBlock.text).toContain('<context-status>')
     expect(statusBlock.text).toContain('50.0%')
     expect(statusBlock.text).toContain('200,000')
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/4681
+  it('formats token counts the same regardless of the host locale', async () => {
+    const middleware = createTokenUsageMiddleware()
+    const context = createContext({ projectedInputTokens: 100_000 })
+
+    const result = await withDefaultLocale('en-IN', () => middleware(context))
+
+    const statusBlock = (result.messages[0]! as Message).content[1] as TextBlock
+    expect(statusBlock.text).toContain('<used>100,000 / 200,000 tokens (50.0%)</used>')
+    expect(statusBlock.text).toContain('<remaining>~100,000 tokens</remaining>')
   })
 
   it('preserves message metadata', async () => {

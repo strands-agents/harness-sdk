@@ -17,6 +17,10 @@ import { contextColor, detailLines, permissionLines } from '../src/tui/view/pres
 import { PromptEditor } from '../src/tui/view/prompt-editor.js'
 import { SettingsControl } from '../src/tui/view/settings-panel.js'
 import { detectColorMode, getTheme, Text, ThemeProvider } from '../src/tui/view/theme.js'
+import { ChatView } from '../src/tui/view/chat-view.js'
+import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
+import { CliConfigStore } from '../src/tui/config.js'
+import { snapshot } from './fixtures/chat-snapshot.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
 const colorLevel = chalk.level
@@ -52,6 +56,7 @@ describe('theme resolution', () => {
     for (const mode of ['light', 'dark'] as const) {
       const theme = getTheme(settings(mode, name))
       expect(theme.mode).toBe(mode)
+      expect(theme.canvas).toBeUndefined()
       for (const key of name === 'green' ? THEME_COLOR_KEYS : (['accent', 'frog'] as const)) {
         expect(theme[key]).toMatch(/^#[\da-f]{6}$/i)
       }
@@ -122,6 +127,72 @@ describe('terminal background detection', () => {
 })
 
 describe('themed Ink output', () => {
+  it.each(['light', 'dark'] as const)('leaves the terminal canvas unpainted in %s mode', async (mode) => {
+    const appearance = { ...settings(mode), animations: false }
+    for (const screen of ['chat', 'setup'] as const) {
+      const input = ttyInput()
+      const output = ttyOutput(120, 45)
+      let frame = ''
+      output.on('data', (chunk: Buffer) => {
+        if (chunk.toString().includes('\n')) frame = chunk.toString()
+      })
+      const children =
+        screen === 'chat'
+          ? h(ChatView, {
+              snapshot: snapshot({ settings: appearance }),
+              input: '',
+              cursor: 0,
+              terminalWidth: 120,
+              terminalHeight: 45,
+            })
+          : h(SetupWizard, {
+              config: CliConfigStore.memory({}, appearance),
+              checkForUpdate: async () => undefined,
+              onComplete: () => {},
+            })
+      const instance = render(h(ThemeProvider, { settings: appearance, children }), {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        debug: true,
+        interactive: true,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      })
+      try {
+        await instance.waitUntilRenderFlush()
+        expect(frame, screen).toContain('\n')
+        expect(frame.split('\n')[0], `${screen} canvas`).not.toMatch(/\[(?:48;|4[0-7]m|10[0-7]m)/u)
+      } finally {
+        instance.unmount()
+      }
+    }
+  })
+
+  it('paints a canvas only when the active custom theme explicitly specifies one', () => {
+    const appearance: ChatSettings = {
+      ...settings('dark', 'custom'),
+      animations: false,
+      customTheme: { base: 'green', light: {}, dark: { background: '#123456' } },
+    }
+    expect(getTheme(appearance).canvas).toBe('#123456')
+    expect(getTheme({ ...appearance, colorMode: 'light' }).canvas).toBeUndefined()
+    const frame = renderToString(
+      h(ThemeProvider, {
+        settings: appearance,
+        children: h(ChatView, {
+          snapshot: snapshot({ settings: appearance }),
+          input: '',
+          cursor: 0,
+          terminalWidth: 80,
+          terminalHeight: 24,
+        }),
+      }),
+      { columns: 80 }
+    )
+    expect(frame.split('\n')[0]).toContain(ansi('#123456', true))
+  })
+
   it('restores the explicit foreground after composer commands', () => {
     const theme = getTheme(settings('light'))
     const input = '/model improve the response'
@@ -132,11 +203,10 @@ describe('themed Ink output', () => {
           input,
           cursor: input.length,
           actionableCommandToken: '/model',
-          agentName: 'Strands harness',
         }),
       })
     )
-    expect(output).toContain(`${ansi(theme.hover)}/model${ansi(theme.foreground)} improve the respons`)
+    expect(output).toContain(`${ansi(theme.accent)}/model${ansi(theme.foreground)} improve the respons`)
   })
 
   it('preserves an explicit text background through nested styles inside a panel', () => {
@@ -201,7 +271,7 @@ describe('themed Ink output', () => {
           h(Markdown, {
             children: '# Heading **bold**\n\n`code` and [link](https://example.com)\n\n> Quote\n\n- item',
           }),
-          h(PromptEditor, { input: 'draft', cursor: 2, agentName: 'Strands harness', width: 60 }),
+          h(PromptEditor, { input: 'draft', cursor: 2, width: 60 }),
           h(MediaView, {
             content: { type: 'document', name: 'Notes', format: 'txt', source: { type: 'text', text: 'preview' } },
           }),

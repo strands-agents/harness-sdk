@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.vended_plugins.steering.core.action import Guide, Interrupt, Proceed
 from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteeringHandler, _LLMSteering
 from strands.vended_plugins.steering.handlers.llm.mappers import DefaultPromptMapper
@@ -165,8 +166,8 @@ async def test_steer_uses_custom_model(mock_agent_class):
 
 @pytest.mark.asyncio
 @patch("strands.agent.Agent")
-async def test_steer_uses_agent_model_when_no_custom_model(mock_agent_class):
-    """Test steer method uses agent's model when no custom model provided."""
+async def test_steer_uses_agent_aux_model_when_no_custom_model(mock_agent_class):
+    """Test steer method uses the agent's aux model when no custom model provided."""
     system_prompt = "Test prompt"
     handler = LLMSteeringHandler(system_prompt)
 
@@ -179,11 +180,12 @@ async def test_steer_uses_agent_model_when_no_custom_model(mock_agent_class):
 
     agent = Mock()
     agent.model = Mock()
+    agent.aux_model = Mock()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     await handler.steer_before_tool(agent=agent, tool_use=tool_use)
 
-    mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=agent.model, callback_handler=None)
+    mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=agent.aux_model, callback_handler=None)
 
 
 def test_llm_steering_model():
@@ -198,3 +200,28 @@ def test_llm_steering_invalid_decision():
     """Test _LLMSteering with invalid decision raises validation error."""
     with pytest.raises(ValueError):
         _LLMSteering(decision="invalid", reason="Test reason")
+
+
+@pytest.mark.asyncio
+@patch("strands.agent.Agent")
+async def test_steering_call_joins_the_request_the_tool_call_belongs_to(mock_agent_class):
+    """The steering agent's usage adds to the request, which does not limit it."""
+    handler = LLMSteeringHandler("Test prompt")
+
+    mock_steering_agent = Mock()
+    mock_agent_class.return_value = mock_steering_agent
+    mock_result = Mock()
+    mock_result.structured_output = _LLMSteering(decision="proceed", reason="safe")
+    mock_steering_agent.return_value = mock_result
+
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    await handler.steer_before_tool(
+        agent=Mock(), tool_use={"name": "test_tool", "input": {}}, invocation_context=request
+    )
+
+    handed = mock_steering_agent.call_args.kwargs["invocation_context"]
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}

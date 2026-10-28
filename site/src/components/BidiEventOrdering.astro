@@ -1,0 +1,284 @@
+---
+type Scenario = 'conversation' | 'tools' | 'barge-in' | 'restarts'
+
+interface Props {
+  scenario?: Scenario
+}
+
+interface DiagramEvent {
+  event: string
+  column: 0 | 1 | 2 | 'all'
+  y: number
+  detail?: string
+}
+
+interface Diagram {
+  title: string
+  description: string
+  columns: string[]
+  columnWidths?: number[]
+  height: number
+  lifelines: string[]
+  events: DiagramEvent[]
+  labels?: { text: string; x: number; y: number }[]
+  arrows?: string[]
+}
+
+const { scenario = 'conversation' } = Astro.props
+const boxHeight = 44
+const detailBoxHeight = 64
+const firstEventY = 168
+const rowHeight = 54
+const assistantEvents = [
+  'BidiResponseStartEvent',
+  'BidiAudioStartEvent',
+  'BidiTranscriptStartEvent',
+  'BidiAudioDeltaEvent',
+  'BidiTranscriptDeltaEvent',
+  'BidiAudioStopEvent',
+  'BidiTranscriptStopEvent',
+  'BidiTranscriptBlockEvent',
+  'BidiUsageEvent',
+  'BidiResponseStopEvent',
+]
+const userEvents = [
+  { event: 'BidiTranscriptStartEvent', row: 0 },
+  { event: 'BidiTranscriptDeltaEvent', row: 1 },
+  { event: 'BidiTranscriptStopEvent', row: 2 },
+  { event: 'BidiTranscriptBlockEvent', row: 3 },
+]
+const lastEventBottom = firstEventY + (assistantEvents.length - 1) * rowHeight + boxHeight
+const continuationY = lastEventBottom + rowHeight + 40
+const connectionStopY = lastEventBottom + rowHeight + 80
+
+const diagrams: Record<Scenario, Diagram> = {
+  conversation: {
+    title: 'Audio and transcript event ordering',
+    description:
+      'Two columns show a user transcript and an assistant response containing audio and transcript events. ' +
+      'Each content stream follows its own start, delta, and stop sequence. Transcript blocks follow transcript stop. ' +
+      'All assistant content finishes before response stop, with token usage shown immediately before it. ' +
+      'Nova Sonic can report usage outside response boundaries. ' +
+      'User transcripts can interleave independently; aligned rows do not imply timing. ' +
+      'Breaks in the lifelines indicate that the conversation can continue ' +
+      'before a connection-stop event signals the end of the conversation.',
+    columns: ['User transcript', 'Assistant response'],
+    height: connectionStopY + boxHeight + 6,
+    lifelines: [135, 405].map(
+      (x) => `M ${x} 50 V ${continuationY - 10} M ${x} ${continuationY + 10} V ${connectionStopY}`
+    ),
+    events: [
+      { event: 'BidiConnectionStartEvent', column: 'all', y: 62 },
+      { event: 'BidiConnectionStopEvent', column: 'all', y: connectionStopY },
+      ...userEvents.map(({ event, row }): DiagramEvent => ({ event, column: 0, y: firstEventY + row * rowHeight })),
+      ...assistantEvents.map((event, row): DiagramEvent => ({ event, column: 1, y: firstEventY + row * rowHeight })),
+    ],
+    labels: [{ text: 'Conversation continues', x: 270, y: continuationY }],
+  },
+  tools: {
+    title: 'Tool execution can continue after response stop',
+    description:
+      'An assistant response requests a group of tools, which run concurrently. Tools can emit intermediate output. ' +
+      'In this example the response stops before the tools finish. Each tool emits a result, then the agent records ' +
+      'all results in a tool result message.',
+    columns: ['Assistant response', 'Tool execution'],
+    height: 502,
+    lifelines: ['M 135 50 V 300', 'M 405 50 V 432'],
+    events: [
+      { event: 'BidiResponseStartEvent', column: 0, y: 62 },
+      { event: 'BidiToolUseBlocksEvent', column: 0, y: 116 },
+      { event: 'ToolStreamEvent', column: 1, y: 224, detail: 'Zero or more per tool' },
+      { event: 'BidiResponseStopEvent', column: 0, y: 300 },
+      { event: 'ToolResultEvent', column: 1, y: 358, detail: 'One per tool' },
+      { event: 'ToolResultMessageEvent', column: 1, y: 432, detail: 'All results recorded' },
+    ],
+    labels: [{ text: 'Start requested tools', x: 270, y: 184 }],
+    arrows: ['M 135 204 H 405'],
+  },
+  'barge-in': {
+    title: 'Barge-in during a response',
+    description:
+      'Barge-in signals interrupted model output, including audio, text, or other content. This audio example ' +
+      'shows response start, audio start, and audio delta events, followed by BidiBargeInEvent, audio stop, ' +
+      'and response stop. For audio output, clear buffered audio when barge-in arrives. ' +
+      'Barge-in must occur between response start and response stop.',
+    columns: ['Assistant response'],
+    height: 382,
+    lifelines: ['M 135 50 V 332'],
+    events: [
+      { event: 'BidiResponseStartEvent', column: 0, y: 62 },
+      { event: 'BidiAudioStartEvent', column: 0, y: 116 },
+      { event: 'BidiAudioDeltaEvent', column: 0, y: 170 },
+      { event: 'BidiBargeInEvent', column: 0, y: 224 },
+      { event: 'BidiAudioStopEvent', column: 0, y: 278 },
+      { event: 'BidiResponseStopEvent', column: 0, y: 332 },
+    ],
+  },
+  restarts: {
+    title: 'Scheduled and timeout connection restarts',
+    description:
+      'Two alternative paths lead to a replacement connection. A scheduled restart is preceded by a warning. ' +
+      'A timeout restart needs no warning. Either path emits a restart event before replacing the connection. ' +
+      'A successful replacement emits a connection start with a new connection ID.',
+    columns: ['Scheduled restart', 'Timeout'],
+    height: 398,
+    lifelines: ['M 135 50 V 284 H 405 V 50'],
+    events: [
+      { event: 'BidiConnectionWarningEvent', column: 0, y: 62 },
+      { event: 'BidiConnectionRestartEvent', column: 0, y: 168, detail: 'reason: "scheduled"' },
+      { event: 'BidiConnectionRestartEvent', column: 1, y: 168, detail: 'reason: "timeout"' },
+      { event: 'BidiConnectionStartEvent', column: 'all', y: 328, detail: 'New connection_id' },
+    ],
+    labels: [{ text: 'Replace connection', x: 270, y: 260 }],
+    arrows: ['M 270 284 V 326'],
+  },
+}
+
+const diagram = diagrams[scenario]
+const columnWidths = diagram.columnWidths ?? diagram.columns.map(() => 270)
+const diagramWidth = columnWidths.reduce((total, width) => total + width, 0)
+const columnCenters = columnWidths.map(
+  (width, column) => columnWidths.slice(0, column).reduce((total, value) => total + value, 0) + width / 2
+)
+const isWide = diagram.columns.length > 2
+const id = `bidi-event-ordering-${scenario}`
+---
+
+<div
+  class="event-ordering-container"
+  tabindex={isWide ? 0 : undefined}
+  role={isWide ? 'region' : undefined}
+  aria-label={isWide ? diagram.title : undefined}
+>
+  <svg
+    class:list={['event-ordering', { 'event-ordering-wide': isWide }]}
+    style={{ width: `${diagramWidth}px` }}
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox={`0 0 ${diagramWidth} ${diagram.height}`}
+    data-scenario={scenario}
+    role="img"
+    aria-labelledby={`${id}-title ${id}-description`}
+  >
+    <title id={`${id}-title`}>{diagram.title}</title>
+    <desc id={`${id}-description`}>{diagram.description}</desc>
+
+    {diagram.arrows && (
+      <defs>
+        <marker id={`${id}-arrow`} viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+          <path d="M 0 0 L 8 4 L 0 8" fill="var(--sl-color-gray-3)" />
+        </marker>
+      </defs>
+    )}
+
+    <g class="lifelines">
+      {diagram.lifelines.map((d) => <path d={d} />)}
+    </g>
+
+    <g class="column-titles">
+      {diagram.columns.map((title, column) => (
+        <g>
+          <rect
+            x={columnCenters[column] - columnWidths[column] / 2 + 6}
+            y="6"
+            width={columnWidths[column] - 12}
+            height={boxHeight}
+            rx="2"
+          />
+          <text x={columnCenters[column]} y="28">{title}</text>
+        </g>
+      ))}
+    </g>
+
+    <g class="content-events">
+      {diagram.events.map(({ event, column, y, detail }) => {
+        const center = column === 'all' ? diagramWidth / 2 : columnCenters[column]
+        const width = column === 'all' ? diagramWidth - 12 : columnWidths[column] - 12
+        const x = center - width / 2
+        const height = detail ? detailBoxHeight : boxHeight
+        return (
+          <g data-event={event} data-column={column}>
+            <rect x={x} y={y} width={width} height={height} />
+            {(event.startsWith('BidiAudio') || event.startsWith('BidiTranscript')) && (
+              <rect class="event-accent" x={x} y={y} width="6" height={height} />
+            )}
+            <text x={center} y={y + (detail ? 22 : height / 2)}>{event}</text>
+            {detail && <text class="detail" x={center} y={y + 44}>{detail}</text>}
+          </g>
+        )
+      })}
+    </g>
+
+    <g class="arrows">
+      {diagram.arrows?.map((d) => <path d={d} marker-end={`url(#${id}-arrow)`} />)}
+    </g>
+
+    {diagram.labels?.map(({ text, x, y }) => <text class="annotation" x={x} y={y}>{text}</text>)}
+  </svg>
+</div>
+
+<style>
+  .event-ordering-container {
+    overflow-x: auto;
+  }
+
+  .event-ordering {
+    display: block;
+    margin-inline: auto;
+    max-width: 100%;
+    height: auto;
+    font-family: var(--sl-font);
+    font-size: 16px;
+  }
+
+  .event-ordering-wide {
+    min-width: 600px;
+  }
+
+  text {
+    fill: var(--sl-color-text);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+
+  .lifelines {
+    fill: none;
+    stroke: var(--sl-color-gray-4);
+  }
+
+  .column-titles rect {
+    fill: var(--sl-color-accent-low);
+    stroke: var(--sl-color-accent);
+  }
+
+  .content-events rect {
+    fill: var(--sl-color-gray-6);
+    stroke: var(--sl-color-gray-5);
+  }
+
+  .content-events .event-accent {
+    stroke: none;
+  }
+
+  [data-event^='BidiAudio'] .event-accent {
+    fill: #2563eb;
+  }
+
+  [data-event^='BidiTranscript'] .event-accent {
+    fill: #ea580c;
+  }
+
+  .detail {
+    fill: var(--sl-color-gray-3);
+    font-size: 14px;
+  }
+
+  .arrows {
+    fill: none;
+    stroke: var(--sl-color-gray-3);
+  }
+
+  .annotation {
+    fill: var(--sl-color-text);
+    font-size: 14px;
+  }
+</style>

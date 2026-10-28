@@ -19,6 +19,26 @@ const redirectCases: Array<{ description: string; input: string; expected: strin
     expected: 'docs/user-guide/sdk',
   },
   {
+    description: 'sdk/bidirectional-streaming/ renamed to sdk/bidi/',
+    input: 'docs/user-guide/sdk/bidirectional-streaming/models/bedrock',
+    expected: 'docs/user-guide/sdk/bidi/models/bedrock',
+  },
+  {
+    description: 'sdk/bidirectional-streaming section root -> sdk/bidi',
+    input: 'docs/user-guide/sdk/bidirectional-streaming',
+    expected: 'docs/user-guide/sdk/bidi',
+  },
+  {
+    description: 'concepts/bidirectional-streaming/ -> sdk/bidi/ in one hop',
+    input: 'docs/user-guide/concepts/bidirectional-streaming/quickstart',
+    expected: 'docs/user-guide/sdk/bidi/quickstart',
+  },
+  {
+    description: 'harness/bidirectional-streaming/ -> sdk/bidi/ in one hop',
+    input: 'docs/user-guide/harness/bidirectional-streaming/events',
+    expected: 'docs/user-guide/sdk/bidi/events',
+  },
+  {
     description: 'legacy example tutorial -> /examples/ catalog',
     input: 'docs/examples/python/multi_agent_example',
     expected: 'examples',
@@ -166,6 +186,12 @@ const urlCases: Array<{ description: string; path: string; expected: string | nu
     description: 'renamed page without trailing slash',
     path: '/latest/documentation/docs/user-guide/concepts/tools/python-tools',
     expected: 'docs/user-guide/sdk/tools/custom-tools',
+  },
+  {
+    description: 'external redirect does not inherit the source trailing slash',
+    path: '/latest/documentation/docs/examples/cdk/deploy_to_apprunner/',
+    expected:
+      'https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/cdk/deploy_to_apprunner/README.md',
   },
   // we don't rewrite these because they're subject to change quite a bit
   {

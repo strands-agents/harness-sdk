@@ -11,6 +11,8 @@ sourceLinks:
   - path: strands-ts/src/agent/agent-delegation.ts
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 ## The concept: agents as tools
 
 When one agent needs expertise outside its focus, wrap a specialized agent as a callable tool and let an orchestrator agent delegate to it. This creates a hierarchical structure:
@@ -24,17 +26,10 @@ This mirrors how a manager coordinates specialists on a team, each bringing focu
 
 Strands provides three ways to implement agents as tools: pass agents directly in the `tools` array for the simplest setup, use <Syntax py=".as_tool()" ts=".asTool()" /> to customize tool name, description, or context behavior, and use the `@tool` decorator or `tool()` function for full control over how the agent is invoked.
 
-```mermaid
-flowchart TD
-    User([User]) <--> Orchestrator["Orchestrator Agent"]
-    Orchestrator --> RA["Research Assistant"]
-    Orchestrator --> PA["Product Recommendation Assistant"]
-    Orchestrator --> TA["Trip Planning Assistant"]
-
-    RA --> Orchestrator
-    PA --> Orchestrator
-    TA --> Orchestrator
-```
+<Diagram
+  name="agents-as-tools"
+  alt="Agents as tools. A user talks to an orchestrator agent, which calls three specialist agents as tools: research_assistant, product_recommendation_assistant, and trip_planning_assistant. Each specialist's answer returns to the orchestrator as a tool result; the orchestrator may call several specialists before it combines their answers and replies to the user."
+/>
 
 ### Passing agents directly
 
@@ -53,18 +48,21 @@ research_agent = Agent(
     factual, well-sourced information in response to research questions.
     Always cite your sources when possible.""",
     tools=[http_request],
+    callback_handler=None,
 )
 
 product_agent = Agent(
     system_prompt="""You are a specialized product recommendation assistant.
     Provide personalized product suggestions based on user preferences.""",
     tools=[http_request],
+    callback_handler=None,
 )
 
 travel_agent = Agent(
     system_prompt="""You are a specialized travel planning assistant.
     Create detailed travel itineraries based on user preferences.""",
     tools=[http_request],
+    callback_handler=None,
 )
 
 # Create the orchestrator: agents are automatically converted to tools
@@ -87,6 +85,8 @@ orchestrator = Agent(
 ```
 </Tab>
 </Tabs>
+
+Each specialist sets <Syntax py="callback_handler=None" ts="printer: false" /> so that only the orchestrator writes to the console. Without it, the specialist's default handler prints its own response alongside the orchestrator's output, and with [delegation](#delegation) the specialist's text appears twice.
 
 ### Customizing agent tools
 
@@ -138,6 +138,8 @@ orchestrator = Agent(
 </Tab>
 </Tabs>
 
+This setting also decides where a sub-agent's [interrupt](../interrupts.md) waits to be resumed. With <Syntax py="preserve_context=False" ts="preserveContext: false" /> the orchestrator stores the interrupted turn, so it can be resumed after a restart. With <Syntax py="preserve_context=True" ts="preserveContext: true" /> the sub-agent keeps its own state, so give it its own session manager for that.
+
 ### Creating custom agent tools
 
 For more control over how the agent is invoked, such as custom pre/post-processing, error handling, or passing multiple parameters, create a custom tool that wraps an agent:
@@ -169,7 +171,8 @@ def research_assistant(query: str) -> str:
     try:
         research_agent = Agent(
             system_prompt=RESEARCH_ASSISTANT_PROMPT,
-            tools=[http_request]
+            tools=[http_request],
+            callback_handler=None,
         )
 
         response = research_agent(query)
@@ -208,6 +211,7 @@ def product_recommendation_assistant(query: str) -> str:
             system_prompt="""You are a specialized product recommendation assistant.
             Provide personalized product suggestions based on user preferences.""",
             tools=[http_request, dialog],
+            callback_handler=None,
         )
         # Implementation with response handling
         # ...
@@ -231,6 +235,7 @@ def trip_planning_assistant(query: str) -> str:
             system_prompt="""You are a specialized travel planning assistant.
             Create detailed travel itineraries based on user preferences.""",
             tools=[http_request],
+            callback_handler=None,
         )
         # Implementation with response handling
         # ...
@@ -349,6 +354,7 @@ billing_agent = Agent(
     description="Answers billing questions: charges, refunds, and invoices.",
     system_prompt="You handle billing questions with precision.",
     structured_output_model=BillingResponse,
+    callback_handler=None,
 )
 
 orchestrator = Agent(

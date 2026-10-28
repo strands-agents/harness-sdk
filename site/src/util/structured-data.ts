@@ -21,7 +21,7 @@ export function baseSchemas(siteUrl: string) {
     // modal with no query-parameter URL — a SearchAction target would be fake.
     {
       '@type': 'WebSite',
-      name: 'Strands Agents SDK',
+      name: 'Strands Agents',
       url: siteUrl,
       publisher: { '@type': 'Organization', name: 'Strands Agents', url: siteUrl },
     },

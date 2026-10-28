@@ -1,7 +1,7 @@
 ---
 /**
  * Global Python/TypeScript language toggle, rendered identically in the header
- * right-cluster and the mobile menu. Reads/writes the shared AutoSyncTabs
+ * (full and collapsed), the mobile menu, and the mobile "On this page" bar. Reads/writes the shared AutoSyncTabs
  * localStorage key so the toggle and inline code tabs stay in sync, and on
  * language-specific pages navigates to the counterpart resolved at build time
  * (see util/language-switch.ts). Event-channel and key details are inline below.
@@ -80,7 +80,7 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
 <style>
   /* Icon pill toggle.
      One control with identical sizing everywhere it appears — the header, the
-     mobile menu, and the homepage code cards. Each option shows the language's
+     mobile menu, the "On this page" bar, and the homepage code cards. Each option shows the language's
      logo; the text label is kept for screen readers only. */
   .language-toggle {
     display: inline-flex;

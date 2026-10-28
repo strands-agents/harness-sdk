@@ -371,7 +371,7 @@ export class Tracer {
 
       const span = this._startSpan({
         name: 'chat',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
@@ -445,7 +445,7 @@ export class Tracer {
 
       const span = this._startSpan({
         name: `execute_tool ${tool.name}`,
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
@@ -917,7 +917,7 @@ export class Tracer {
       const attributes: Record<string, AttributeValue> = { 'agent_loop.cycle_id': cycleId }
       const span = this._startSpan({
         name: 'execute_agent_loop_cycle',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         ...(this._agentSpan && { parentSpan: this._agentSpan }),
       })
       this._addEventMessages(span, messages)

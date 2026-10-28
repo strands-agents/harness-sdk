@@ -10,9 +10,7 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.agent.conversation_manager.summarizing_conversation_manager import SummarizingConversationManager
 from strands.agent.state import AgentState
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiAgentStopEvent
-from strands.experimental.bidi.models import BidiModel
+from strands.bidi.agent import BidiAgent
 from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
 from strands.session.file_session_manager import FileSessionManager
@@ -716,45 +714,9 @@ def test_bidi_agent_messages_with_offset_zero(existing_session_manager, mock_bid
     assert len(mock_bidi_agent.messages) == 5
 
 
-def test_bidi_session_shared_methods_round_trip(session_manager, mock_repository):
-    agent = BidiAgent(
-        model=Mock(spec=BidiModel),
-        agent_id="bidi",
-        messages=[{"role": "user", "content": [{"text": "Hello"}], "tracking_id": "initial"}],
-        session_manager=session_manager,
-    )
-    session_manager.append_message(
-        {"role": "assistant", "content": [{"text": "Secret"}], "tracking_id": "response"}, agent
-    )
-    redacted_message = {"role": "assistant", "content": [{"text": "Redacted"}], "tracking_id": "response"}
-    session_manager.redact_latest_message(redacted_message, agent)
-    agent.state.set("saved", "state")
-    session_manager.sync_agent(agent)
-
-    # Bidi history is restored even when the provider manages its own conversation.
-    restored_model = Mock(spec=BidiModel, stateful=True)
-    restored_manager = RepositorySessionManager("test-session", mock_repository)
-    restored = BidiAgent(model=restored_model, agent_id="bidi", session_manager=restored_manager)
-
-    assert restored.state.get() == {"saved": "state"}
-    assert restored.messages == [agent.messages[0], redacted_message]
-
-    next_message = {"role": "user", "content": [{"text": "Next"}]}
-    restored_manager.append_message(next_message, restored)
-    tru_messages = [
-        (message.message_id, message.to_message()) for message in mock_repository.list_messages("test-session", "bidi")
-    ]
-    exp_messages = [(0, agent.messages[0]), (1, redacted_message), (2, next_message)]
-    assert tru_messages == exp_messages
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("agent_type", "after_event_type"), [(Agent, AfterInvocationEvent), (BidiAgent, BidiAgentStopEvent)]
-)
-async def test_register_hooks_persists_messages_and_state(session_manager, agent_type, after_event_type):
-    model_kwargs = {"model": Mock(spec=BidiModel)} if agent_type is BidiAgent else {}
-    agent = agent_type(agent_id="shared", session_manager=session_manager, **model_kwargs)
+async def test_register_hooks_persists_messages_and_state(session_manager):
+    agent = Agent(agent_id="shared", session_manager=session_manager)
     message = {"role": "user", "content": [{"text": "Hello"}], "tracking_id": "message-1"}
     agent.state.set("saved", "state")
     await agent._append_messages(message)
@@ -770,7 +732,7 @@ async def test_register_hooks_persists_messages_and_state(session_manager, agent
     assert tru_messages == exp_messages
 
     agent.state.set("completed", True)
-    await agent.hooks.invoke_callbacks_async(after_event_type(agent=agent))
+    await agent.hooks.invoke_callbacks_async(AfterInvocationEvent(agent=agent))
 
     tru_state = session_manager.session_repository.read_agent("test-session", "shared").state
     exp_state = {"saved": "state", "completed": True}

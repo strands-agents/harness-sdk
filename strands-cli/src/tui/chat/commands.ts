@@ -40,24 +40,29 @@ export const LOCAL_COMMAND_NAMES = new Set(LOCAL_COMMANDS.map((command) => comma
 
 export interface CommandAssistance {
   readonly signature?: string
+  readonly message?: string
   readonly completions: readonly LocalCommandSpec[]
 }
 
-export function commandAssistance(input: string): CommandAssistance | undefined {
+export function commandAssistance(input: string, actionableCommandToken?: string): CommandAssistance | undefined {
   const match = input.match(/^\/([^\s]*)(?:\s([\s\S]*))?$/)
   if (!match) {
     return undefined
   }
   const name = (match[1] ?? '').toLowerCase()
   const argument = match[2]
+  if (name === 'frog' || name === 'strands' || name === 'party') {
+    return { message: "hmm... you've discovered an ancient secret...", completions: [] }
+  }
+  const unknownCommand = actionableCommandToken ? undefined : { message: 'not found', completions: [] }
   if (argument === undefined) {
     const completions = LOCAL_COMMANDS.filter((command) => command.name.startsWith(name))
-    return completions.length > 0 ? { completions } : undefined
+    return completions.length > 0 ? { completions } : unknownCommand
   }
 
   const command = LOCAL_COMMANDS.find((candidate) => candidate.name === name)
   if (!command) {
-    return undefined
+    return unknownCommand
   }
   const completions = argumentCompletions(name, argument)
   if (argument.length > 0 && completions.length === 0) {

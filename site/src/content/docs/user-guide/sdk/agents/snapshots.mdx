@@ -308,7 +308,7 @@ casual_snapshot = agent.take_snapshot(preset="session")
 
 ## Relationship to Session Management
 
-[Session management](./session-management.mdx) handles persistence automatically: it saves and restores state at the right lifecycle points without you writing any persistence code. The snapshot-based session managers (`SnapshotSessionManager` in Python, `SessionManager` in TypeScript) persist these same snapshots to a [Storage](../storage.mdx) backend and support time-travel restore from immutable checkpoints. Snapshots give you manual control: you decide when to capture state, what to include, and where to store it. Use session management when you want hands-off persistence, and snapshots when you need precise control over save points.
+[Session management](./session-management.mdx) handles persistence automatically: it saves and restores state at the right lifecycle points without you writing any persistence code. The snapshot-based session managers (`SnapshotSessionManager` in Python, `SessionManager` in TypeScript) persist these same snapshots to a [Storage](../storage/index.mdx) backend and support time-travel restore from immutable checkpoints. Snapshots give you manual control: you decide when to capture state, what to include, and where to store it. Use session management when you want hands-off persistence, and snapshots when you need precise control over save points.
 
 ## See Also
 

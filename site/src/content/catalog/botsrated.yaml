@@ -1,0 +1,8 @@
+name: botsrated
+description: Hosted MCP server and pre-payment check for x402 sellers — compare a seller's payTo and price with BotsRated's signed probe receipts and paid test-buys before your agent pays it.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/botsrated/botsrated
+docsUrl: https://github.com/botsrated/botsrated/blob/main/integrations/strands/README.md
+addedDate: 2026-10-23

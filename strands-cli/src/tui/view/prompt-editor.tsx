@@ -3,9 +3,9 @@ import stringWidth from 'string-width'
 
 import {
   DEFAULT_MAX_PROMPT_ROWS,
-  MIN_PROMPT_HEIGHT,
   MIN_PROMPT_ROWS,
   PROMPT_PADDING_WIDTH,
+  promptEditorHeight,
   promptViewport,
   type PromptViewportRow,
 } from '../terminal/composer.js'
@@ -38,46 +38,48 @@ export function PromptEditor({
   cursor,
   panelStatus,
   busyStatus,
-  agentName,
   actionableCommandToken,
   width = 80,
   maxRows = DEFAULT_MAX_PROMPT_ROWS,
+  maxHeight = Infinity,
   party = false,
   partyFrame = 0,
   animateCursor = true,
+  children,
 }: {
   input: string
   cursor: number
   panelStatus?: string
   busyStatus?: string
-  agentName: string
   actionableCommandToken?: string
   width?: number
   maxRows?: number
+  maxHeight?: number
   party?: boolean
   partyFrame?: number
   animateCursor?: boolean
+  children?: ReactNode
 }): ReactElement {
   const theme = useTheme()
   const status = busyStatus ?? panelStatus
-  if (status) {
+  const height = promptEditorHeight(input, cursor, width, maxRows, Boolean(status && !children), party, maxHeight)
+  if (children || status) {
     return (
-      <PromptSurface width={width} height={MIN_PROMPT_HEIGHT} party={party} partyFrame={partyFrame}>
-        <Text {...(busyStatus ? { color: theme.accent } : { dimColor: true })}>{status}</Text>
+      <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame}>
+        {children ?? <Text {...(busyStatus ? { color: theme.accent } : { dimColor: true })}>{status}</Text>}
       </PromptSurface>
     )
   }
   const shellMode = input.startsWith('!')
-  const promptPrefix = shellMode ? '◆ shell ' : '◆ '
+  const promptPrefix = shellMode ? '◆ shell ' : ''
   const prefixWidth = stringWidth(promptPrefix)
   const continuationPrefix = ' '.repeat(prefixWidth)
   const rows = promptViewport(
     input,
     cursor,
     width - prefixWidth - PROMPT_PADDING_WIDTH,
-    Math.max(MIN_PROMPT_ROWS, maxRows)
+    Math.max(1, Math.min(Math.max(MIN_PROMPT_ROWS, maxRows), height - (party ? 2 : 0)))
   )
-  const height = Math.max(MIN_PROMPT_HEIGHT, rows.length + (party && input ? 2 : 1))
   return (
     <PromptSurface width={width} height={height} party={party} partyFrame={partyFrame}>
       {input ? (
@@ -95,16 +97,24 @@ export function PromptEditor({
         ))
       ) : (
         <Box height={1} flexShrink={0}>
-          <Text color={theme.accent} bold>
-            {'◆ '}
-          </Text>
-          <Text>
+          <Text wrap="truncate-end">
             <BlinkingCursor animate={animateCursor} />
-            <Text dimColor>Message {agentName}</Text>
+            <Text dimColor>{promptPlaceholder(width - prefixWidth - PROMPT_PADDING_WIDTH - 1 - (party ? 2 : 0))}</Text>
           </Text>
         </Box>
       )}
     </PromptSurface>
+  )
+}
+
+function promptPlaceholder(width: number): string {
+  return (
+    [
+      'Enter to send • Ctrl+J for newline • / for commands',
+      'Enter send • Ctrl+J newline • / commands',
+      'Enter send • / commands',
+      'Enter send',
+    ].find((hint) => stringWidth(hint) <= width) ?? 'Enter'
   )
 }
 
@@ -131,6 +141,7 @@ function PromptSurface({
         flexShrink={0}
         paddingX={1}
         flexDirection="column"
+        overflow="hidden"
       >
         {children}
       </Box>
@@ -139,7 +150,7 @@ function PromptSurface({
   const innerWidth = Math.max(1, width - 2)
   const innerHeight = height - 2
   return (
-    <Box height={height} width={width} flexShrink={0} flexDirection="column">
+    <Box height={height} width={width} flexShrink={0} flexDirection="column" overflow="hidden">
       <PartyBorder length={width} frame={partyFrame} top />
       <Box height={innerHeight} width={width} flexShrink={0}>
         <PartyBorder length={innerHeight} offset={2 * width + innerHeight} frame={partyFrame} reverse vertical />
@@ -221,16 +232,16 @@ function EditorRow({
   const afterHighlight = row.after.slice(0, afterHighlightLength)
   return (
     <Text wrap="truncate-end">
-      {beforeHighlight ? <Text color={theme.hover}>{beforeHighlight}</Text> : null}
+      {beforeHighlight ? <Text color={theme.accent}>{beforeHighlight}</Text> : null}
       {row.before.slice(token.length)}
       {row.current === undefined ? null : (
         <BlinkingCursor
           character={row.current}
           animate={animateCursor}
-          {...(currentOffset < token.length ? { color: theme.hover } : {})}
+          {...(currentOffset < token.length ? { color: theme.accent } : {})}
         />
       )}
-      {afterHighlight ? <Text color={theme.hover}>{afterHighlight}</Text> : null}
+      {afterHighlight ? <Text color={theme.accent}>{afterHighlight}</Text> : null}
       {row.after.slice(afterHighlightLength)}
     </Text>
   )

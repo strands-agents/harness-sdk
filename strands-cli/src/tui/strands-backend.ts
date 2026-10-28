@@ -177,6 +177,10 @@ export class StrandsChatBackend implements ChatBackend {
     }
   }
 
+  async forkStash(): Promise<Record<string, JSONValue> | undefined> {
+    return this._runtime.agent.contextManager?.stash?.takeSnapshot()
+  }
+
   async captureConversation(): Promise<Snapshot> {
     return this._runtime.agent.takeSnapshot({ include: ['messages', 'state'] })
   }

@@ -1,0 +1,10 @@
+name: langsmith
+description: LangSmith tracing for Strands agents — exports the SDK's OpenTelemetry spans in a LangSmith-compatible format for debugging and monitoring.
+integrationType: observability
+maintainedBy: partner
+languages:
+  python:
+    package: langsmith[strands-agents]
+github: https://github.com/langchain-ai/langsmith-sdk
+docsUrl: https://docs.langchain.com/langsmith/trace-with-strands-agents
+addedDate: 2026-10-01

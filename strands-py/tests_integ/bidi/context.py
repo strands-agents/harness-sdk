@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from strands.experimental.bidi.agent import BidiAgent
+    from strands.bidi.agent import BidiAgent
 
     from .generators.audio import AudioGenerator
 
@@ -213,7 +213,7 @@ class BidirectionalTestContext:
                 text = event.get("delta", "")
                 if text:
                     texts.append(text)
-            elif event.get("type") == "bidi_transcript_stop":
+            elif event.get("type") == "bidi_transcript_block":
                 text = event.get("transcript", "")
                 if text:
                     texts.append(text)

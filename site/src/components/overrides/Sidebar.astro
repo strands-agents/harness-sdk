@@ -185,10 +185,8 @@ const staticSlug = isLearning
 </style>
 
 <script>
-  // Sidebar search behavior is context-aware. Catalog pages (integrations,
-  // examples) own the input via their own scripts to live-filter cards; here
-  // we only handle the docs-page case: focusing the box opens the site-wide
-  // search (Pagefind), since there are no on-page cards to filter.
+  // Catalog pages (integrations, examples) own the input via their own scripts
+  // to live-filter cards; here we only handle the docs-page case.
   const sidebarSearch = document.querySelector<HTMLInputElement>('[data-sidebar-search]')
   const isCatalogPage = !!document.querySelector('.cat-grid')
   const sidebarNav = document.querySelector<HTMLElement>('.sidebar-content')

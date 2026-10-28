@@ -12,7 +12,7 @@
 # `addedDate` on the group (pages set it in frontmatter) and the badge derives
 # from it for 30 days.
 #
-# IA: the docs are organized around products (Strands harness, SDK, Shell,
+# IA: the docs are organized around products (Strands harness, SDK, Shell, Box,
 # Evals SDK). Each product's basePath(s) scope the left sidebar (via
 # route-middleware) to just that product's pages, and every product's sidebar
 # follows the same shape: Get started -> Build guides -> Run guides ->
@@ -36,6 +36,7 @@ navbar:
     href: /docs/user-guide/sdk/
     basePath:
       - /docs/user-guide/sdk/
+      - /docs/user-guide/build-with-ai/
       # The "choosing a foundation" decision and the migration guides live with
       # the Strands Harness SDK — they compare and migrate onto the Strands Harness SDK.
       - /docs/user-guide/migrate/
@@ -46,6 +47,10 @@ navbar:
     href: /docs/user-guide/shell/
     basePath:
       - /docs/user-guide/shell/
+  - label: Box
+    href: /docs/user-guide/box/
+    basePath:
+      - /docs/user-guide/box/
   - label: Evals
     href: /docs/user-guide/evals-sdk/
     basePath:
@@ -119,14 +124,31 @@ products:
     pages:
       - label: Overview
         href: /docs/user-guide/sdk/
-      - label: "Quickstart: Python"
-        href: /docs/user-guide/sdk/quickstart/python/
+      - label: Quickstart
+        href: /docs/user-guide/sdk/quickstart/overview/
       - label: Add tools
         href: /docs/user-guide/sdk/tools/
       - label: Long-term memory
         href: /docs/user-guide/sdk/memory/overview/
       - label: Deploy to production
         href: /docs/user-guide/sdk/deploy/operating-agents-in-production/
+  - label: Box
+    accent: purple
+    name: Strands Box
+    slug: "/box"
+    href: /docs/user-guide/box/
+    description: An agent sandbox that pairs OS containment with Dogwood policy.
+    pages:
+      - label: Overview
+        href: /docs/user-guide/box/
+      - label: Quickstart
+        href: /docs/user-guide/box/quickstart/
+      - label: Write a policy
+        href: /docs/user-guide/box/guides/write-a-policy/
+      - label: Security model
+        href: /docs/user-guide/box/security/
+      - label: box.toml reference
+        href: /docs/user-guide/box/reference/configuration/
   - label: Shell
     accent: yellow
     name: Strands Shell
@@ -214,13 +236,13 @@ sidebar:
             slug: docs/user-guide/sdk/quickstart/python
           - label: "Quickstart"
             slug: docs/user-guide/sdk/quickstart/typescript
+          - docs/user-guide/build-with-ai
       - label: Migrate
         items:
           - label: "Choosing an agent foundation"
             slug: docs/user-guide/migrate/choosing-an-agent-foundation
-          # Draft — hidden until the LangGraph migration guide is ready to publish.
-          # - label: "Migrate from LangGraph"
-          #   slug: docs/user-guide/migrate/langgraph
+          - label: "Migrate from LangGraph"
+            slug: docs/user-guide/migrate/langgraph
           - label: "Migrate from OpenAI"
             slug: docs/user-guide/migrate/openai
       - label: Build guides
@@ -257,8 +279,6 @@ sidebar:
             slug: docs/user-guide/sdk/agents/interventions/human-in-the-loop
           - label: "Coordinate multiple agents"
             slug: docs/user-guide/sdk/multi-agent/multi-agent-patterns
-          - label: "Build a voice agent"
-            slug: docs/user-guide/sdk/bidirectional-streaming/quickstart
       - label: Run guides
         items:
           - label: Deploy to production
@@ -309,8 +329,11 @@ sidebar:
             slug: docs/user-guide/sdk/agents/lifecycle-controls
           - label: "State"
             slug: docs/user-guide/sdk/agents/state
-          - label: "Storage"
-            slug: docs/user-guide/sdk/storage
+          - label: Storage
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/sdk/storage
+              - docs/user-guide/sdk/storage/search-strategies
           - label: "Snapshots"
             slug: docs/user-guide/sdk/agents/snapshots
           - label: "Prompts"
@@ -319,8 +342,8 @@ sidebar:
             slug: docs/user-guide/sdk/agents/hooks
           - label: "Hook events"
             slug: docs/user-guide/sdk/agents/hooks-events
-          - label: "Conversation management"
-            slug: docs/user-guide/sdk/agents/conversation-management
+          - label: "Middleware"
+            slug: docs/user-guide/sdk/agents/middleware
           - label: Context management
             items:
               - label: "Overview"
@@ -331,6 +354,8 @@ sidebar:
               - docs/user-guide/sdk/context-management/context-estimation
           - label: "Retry strategies"
             slug: docs/user-guide/sdk/agents/retry-strategies
+          - label: "Structured output"
+            slug: docs/user-guide/sdk/agents/structured-output-behavior
           - label: Interrupts
             items:
               - label: "Overview"
@@ -367,6 +392,7 @@ sidebar:
             addedDate: 2026-06-17
             items:
               - docs/user-guide/sdk/memory/test-memory-store
+              - docs/user-guide/sdk/memory/file-memory-store
               - docs/user-guide/sdk/memory/bedrock-knowledge-base
           - label: Plugins
             items:
@@ -407,25 +433,36 @@ sidebar:
               - docs/user-guide/sdk/streaming/async-iterators
               - docs/user-guide/sdk/streaming/callback-handlers
               - docs/user-guide/sdk/streaming/events
-          - label: Realtime
+          - label: Voice
             items:
               - label: "Overview"
-                slug: docs/user-guide/sdk/bidirectional-streaming
-              - docs/user-guide/sdk/bidirectional-streaming/agent
-              - docs/user-guide/sdk/bidirectional-streaming/models/bedrock
-              - docs/user-guide/sdk/bidirectional-streaming/models/google
-              - docs/user-guide/sdk/bidirectional-streaming/models/openai
-              - docs/user-guide/sdk/bidirectional-streaming/io
-              - docs/user-guide/sdk/bidirectional-streaming/events
-              - docs/user-guide/sdk/bidirectional-streaming/barge-in
-              - docs/user-guide/sdk/bidirectional-streaming/hooks
-              - docs/user-guide/sdk/bidirectional-streaming/session-management
-              - docs/user-guide/sdk/bidirectional-streaming/observability
+                slug: docs/user-guide/sdk/bidi
+              - docs/user-guide/sdk/bidi/quickstart
+              - docs/user-guide/sdk/bidi/agent
+              - label: Models
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/bidi/models
+                  - docs/user-guide/sdk/bidi/models/bedrock
+                  - docs/user-guide/sdk/bidi/models/google
+                  - docs/user-guide/sdk/bidi/models/openai/realtime
+                  - docs/user-guide/sdk/bidi/models/openai/live
+              - docs/user-guide/sdk/bidi/tools
+              - docs/user-guide/sdk/bidi/io
+              - docs/user-guide/sdk/bidi/content
+              - docs/user-guide/sdk/bidi/events
+              - docs/user-guide/sdk/bidi/hooks
+              - docs/user-guide/sdk/bidi/session-management
+              - docs/user-guide/sdk/bidi/interrupts
+              - docs/user-guide/sdk/bidi/observability
+          - label: "Conversation management"
+            slug: docs/user-guide/sdk/agents/conversation-management
           - label: Experimental
             items:
               - docs/user-guide/sdk/experimental/agent-config
       - label: Reference
         items:
+          - docs/user-guide/sdk/versioning-and-support
           # Both API references carry the same label; the sidebar shows only the
           # one matching the header language toggle (see Sidebar.astro).
           - label: "API reference"
@@ -465,6 +502,42 @@ sidebar:
         items:
           - label: "Reference"
             slug: docs/user-guide/shell/reference
+
+  - label: Box
+    items:
+      - label: Get started
+        badge:
+          text: Pre-release
+          variant: caution
+        items:
+          - label: "Overview"
+            slug: docs/user-guide/box
+          - docs/user-guide/box/quickstart
+      - label: How-to guides
+        items:
+          - docs/user-guide/box/guides/run-strands-harness
+          - docs/user-guide/box/guides/run-claude-code
+          - docs/user-guide/box/guides/run-codex-cli
+          - docs/user-guide/box/guides/run-pi
+          - docs/user-guide/box/guides/grant-files
+          - docs/user-guide/box/guides/network-and-credentials
+          - docs/user-guide/box/guides/add-a-tool
+          - docs/user-guide/box/guides/write-a-policy
+          - docs/user-guide/box/guides/write-shell-policy
+          - docs/user-guide/box/guides/record-telemetry
+          - docs/user-guide/box/guides/strands-cli-telemetry
+      - label: Security
+        items:
+          - label: "Security model"
+            slug: docs/user-guide/box/security
+          - docs/user-guide/box/security/agent-and-tool-containment
+      - label: Reference
+        items:
+          - docs/user-guide/box/reference/configuration
+          - docs/user-guide/box/reference/cli
+          - docs/user-guide/box/reference/policy-actions
+          - docs/user-guide/box/reference/shell
+          - docs/user-guide/box/reference/python
 
   - label: Evals SDK
     items:
@@ -532,6 +605,8 @@ sidebar:
                   - docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator
               - label: "Deterministic"
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
+              - label: "Structured output similarity"
+                slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors
@@ -555,6 +630,7 @@ sidebar:
               - docs/user-guide/evals-sdk/red-teaming/quickstart
               - docs/user-guide/evals-sdk/red-teaming/strategies
               - docs/user-guide/evals-sdk/red-teaming/custom_cases
+              - docs/user-guide/evals-sdk/red-teaming/custom_task
               - docs/user-guide/evals-sdk/red-teaming/evaluators
               - docs/user-guide/evals-sdk/red-teaming/reading_the_report
           - docs/user-guide/evals-sdk/chaos_testing
@@ -600,36 +676,39 @@ sidebar:
           - label: PyWebRTC Audio
             href: https://github.com/strands-labs/pywebrtc-audio
             external: true
+          - label: Strands Decider
+            href: https://github.com/strands-labs/strands-decider
+            external: true
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning
         items:
-          - label: "Lesson 1: How Agents Really Work"
+          - label: "Lesson 1: How agents really work"
             slug: docs/learning/how-agents-really-work
-          - label: "Lesson 2: Switching Model Providers"
+          - label: "Lesson 2: Switching model providers"
             slug: docs/learning/switching-model-providers
-          - label: "Lesson 3: Give Your Agent Tools Using MCP"
+          - label: "Lesson 3: Give your agent tools using MCP"
             slug: docs/learning/give-your-agent-tools-using-mcp
-          - label: "Lesson 4: Adding Callbacks & Response Streaming"
+          - label: "Lesson 4: Adding callbacks & response streaming"
             slug: docs/learning/adding-callbacks-and-response-streaming
-          - label: "Lesson 5: Control Your Agent With Hooks"
+          - label: "Lesson 5: Control your agent with hooks"
             slug: docs/learning/control-your-agent-with-hooks
-          - label: "Lesson 6: Agent Plugins & Skills"
+          - label: "Lesson 6: Agent plugins & skills"
             slug: docs/learning/agent-plugins-and-skills
-          - label: "Lesson 7: Improve Agent Reliability With Strands Steering"
+          - label: "Lesson 7: Improve agent reliability with Strands steering"
             slug: docs/learning/improve-agent-reliability-with-strands-steering
-          - label: "Lesson 8: Context Engineering & Conversation Management"
+          - label: "Lesson 8: Context engineering & conversation management"
             slug: docs/learning/context-engineering-and-conversation-management
-          - label: "Lesson 9: Persistent Memory With Session Managers"
+          - label: "Lesson 9: Persistent memory with session managers"
             slug: docs/learning/persistent-memory-with-session-managers
-          - label: "Lesson 10: Multi-Agent Patterns: Agents as Tools"
+          - label: "Lesson 10: Multi-agent patterns: agents as tools"
             slug: docs/learning/multi-agent-patterns-agents-as-tools
-          - label: "Lesson 11: Multi-Agent Patterns: Graph Workflows"
+          - label: "Lesson 11: Multi-agent patterns: graph workflows"
             slug: docs/learning/multi-agent-patterns-graph-workflows
-          - label: "Lesson 12: Multi-Agent Patterns: Agent Swarms"
+          - label: "Lesson 12: Multi-agent patterns: agent swarms"
             slug: docs/learning/multi-agent-patterns-agent-swarms
-          - label: "Lesson 13: Evaluating Agents"
+          - label: "Lesson 13: Evaluating agents"
             slug: docs/learning/evaluating-agents
-          - label: "Lesson 14: Deploying Agents to the Cloud"
+          - label: "Lesson 14: Deploying agents to the cloud"
             slug: docs/learning/deploying-agents-to-the-cloud
 
 github:
@@ -650,6 +729,9 @@ github:
         - label: Shell
           href: https://github.com/strands-agents/shell
           icon: SH
+        - label: Box
+          href: https://github.com/strands-agents/box
+          icon: BX
     - title: Organizations
       links:
         - label: strands-agents

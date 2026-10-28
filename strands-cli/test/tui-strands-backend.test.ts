@@ -2,7 +2,14 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Agent, Message, TextBlock, type AgentResult, type AgentStreamEvent } from '@strands-agents/sdk'
+import {
+  Agent,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  type AgentResult,
+  type AgentStreamEvent,
+} from '@strands-agents/sdk'
 import { resolveModel } from '@strands-agents/harness/internal'
 
 import { BackgroundAgentActivityStore } from '../src/tui/background/activity.js'
@@ -80,6 +87,31 @@ describe('StrandsChatBackend', () => {
     const fork = backend.forkState()
     expect(fork.messages).toEqual(agent.messages)
     expect(fork.messages[0]).not.toBe(agent.messages[0])
+  })
+
+  it('hands a fork the context manager stash so it can retrieve content offloaded before the fork', async () => {
+    const offloaded = new ToolResultBlock({
+      toolUseId: 'tooluse-1',
+      status: 'success',
+      content: [new TextBlock('full tool output')],
+    })
+    const agent = new Agent({
+      printer: false,
+      contextManager: 'auto',
+      messages: [new Message({ role: 'user', content: [offloaded] })],
+    })
+    await agent.initialize()
+    const backend = new StrandsChatBackend(new AgentModelRuntime(agent, { sessionId: 'session-1' }))
+
+    await expect(backend.forkStash()).resolves.toEqual({ 'tooluse-1_0': { text: 'full tool output' } })
+  })
+
+  it('hands a fork no stash when context management is off', async () => {
+    const agent = new Agent({ printer: false, contextManager: false })
+    await agent.initialize()
+    const backend = new StrandsChatBackend(new AgentModelRuntime(agent, { sessionId: 'session-1' }))
+
+    await expect(backend.forkStash()).resolves.toBeUndefined()
   })
 
   it('rejects permission changes when no permission policy is configured', async () => {

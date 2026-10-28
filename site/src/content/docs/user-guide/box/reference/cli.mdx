@@ -1,0 +1,107 @@
+---
+title: Strands Box CLI reference
+description: Commands, flags, exit codes, signals, and environment variables for the box (strands-box) command-line tool.
+sidebar:
+  label: "CLI"
+---
+
+Box ships one command and installs nothing: run it from the directory you downloaded
+it to. `box` (named `strands-box` in a source build) runs a box.
+
+## `box`
+
+```text
+box run --config <FILE> [-- <WORKLOAD>...]
+box policy generate-schema --config <FILE> --output-dir <DIR>
+box --version
+box --help
+```
+
+`box` and `strands-box` are the same program. `--version` prints
+`strands-box <version>`.
+
+`strands-box` expects its two helpers, the trampoline
+(`strands-box-contain-trampoline`) and the alias (`strands-box-sock-alias`), to sit in
+its own directory, and stops if one is missing when it needs it. Keep all three
+downloaded files in one directory outside the project.
+
+### `run`
+
+Starts a box from a `box.toml` and runs its workload in the foreground.
+
+| Argument | Description |
+|---|---|
+| `--config <FILE>` | Required. The `box.toml` to run. A relative path resolves against the current directory. |
+| `-- <WORKLOAD>...` | Arguments appended to `[agent] command`. Put them after `--`. |
+
+`--config` must be a regular file with one hard link. Box doesn't search for a
+configuration file.
+
+The workload inherits the terminal's stdin, stdout, and stderr. Box's own messages go
+to stderr, prefixed with `strands-box:`. At startup it prints:
+
+1. `box <id> created · config <path>` or `box <id> updated · config <path>` when the
+   configuration or policy changed, or `box <id> alias image refreshed` when only the
+   alias needed replacing.
+2. Each credential-store path a grant exposes.
+3. Each policy load warning.
+4. `starting workload`.
+5. For each tool and the agent, its direct grants, the runtime minimum, and the
+   effective `HOME` and `PATH`, with any warnings about them.
+
+**Exit status**
+
+| Status | Meaning |
+|---|---|
+| The workload's status | The workload ran and exited. |
+| `128 + N` | The workload ended on signal `N`. |
+| `1` | Box refused or failed before or while running. A `strands-box: error:` or `strands-box: refusing to run:` message explains why. |
+| `2` | Invalid arguments. |
+
+A workload can also exit `1` or `2`, so read stderr to tell a Box failure from a
+workload failure.
+
+**Signals**
+
+| Signal | Effect |
+|---|---|
+| `SIGINT` | Forwarded to the workload's process group. |
+| `SIGTERM`, `SIGHUP` | Stops the workload's process group: `SIGTERM`, then `SIGKILL` after a one-second grace period. |
+
+To stop a box, end its workload or its `box run` process. One `box run` owns a
+`box_dir` at a time; a second fails with `box <name> is already running`.
+
+### `policy generate-schema`
+
+Writes the policy schema for a configuration, including a typed action for each tool
+its MCP servers list.
+
+| Argument | Description |
+|---|---|
+| `--config <FILE>` | Required. The `box.toml` whose MCP servers to include. |
+| `--output-dir <DIR>` | Required. Where to write `actions.cedarschema` and `events.dwschema`. |
+
+```bash
+box policy generate-schema --config box.toml --output-dir schema
+```
+
+```text
+Generated /Users/me/src/my-service/schema/actions.cedarschema
+Generated /Users/me/src/my-service/schema/events.dwschema
+```
+
+This command starts each stdio MCP server **outside any sandbox**, as you, to call
+`initialize` and `tools/list`. It calls each remote server directly, with its real
+credential; a remote server's credential must use header placement. Run it only for
+servers you trust. Exits `0` on success and `1` on failure.
+
+### Environment
+
+| Variable | Use |
+|---|---|
+| `HOME` | Required. Expands `~/` and sets the workload's default `HOME`. |
+| `PATH` | Resolves bare command names and stdio MCP programs. |
+| `XDG_STATE_HOME` | Locates Box's machine state. Defaults to `~/.local/state`. |
+| Each `env://NAME` reference | The real secret for that binding. Read at startup. |
+| `CREDSD_SOCKET` | The credsd socket. Defaults to `/var/run/credsd/credsd.sock` on macOS and `/run/credsd/credsd.sock` on Linux. |
+| `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE` | Where `aws://` profiles are read. |

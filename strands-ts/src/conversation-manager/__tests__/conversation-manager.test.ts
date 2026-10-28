@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import {
   ConversationManager,
   type ConversationManagerReduceOptions,
@@ -9,10 +10,9 @@ import { Agent } from '../../agent/agent.js'
 import { Message, TextBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
+import { InvocationContextImpl, unwrapInvocationContext } from '../../agent/invocation-context.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import type { BaseModelConfig } from '../../models/model.js'
-import { Model } from '../../models/model.js'
 import { warnOnce } from '../../logging/warn-once.js'
 
 vi.mock('../../logging/warn-once.js', () => ({
@@ -156,14 +156,48 @@ describe('ConversationManager', () => {
       expect(receivedArgs).toHaveLength(1)
       expect(receivedArgs[0]!.error).toBe(error)
       expect(receivedArgs[0]!.agent).toBe(mockAgent)
+      expect(receivedArgs[0]!.model).toBe(event.model)
+    })
+
+    it('passes reduce a handle that counts toward the request usage without its limits', async () => {
+      const receivedArgs: ConversationManagerReduceOptions[] = []
+      class CapturingManager extends ConversationManager {
+        readonly name = 'test:capturing'
+        reduce(args: ConversationManagerReduceOptions): boolean {
+          receivedArgs.push(args)
+          return false
+        }
+      }
+      const manager = new CapturingManager()
+      const mockAgent = createMockAgent()
+      manager.initAgent(mockAgent)
+      const request = new InvocationContextImpl({ turns: 1 })
+      request.usage.turnsTaken = 1
+
+      await invokeTrackedHook(
+        mockAgent,
+        new AfterModelCallEvent({
+          agent: mockAgent,
+          model: {} as any,
+          attemptCount: 1,
+          error: new ContextWindowOverflowError('overflow'),
+          invocationState: {},
+          invocationContext: request,
+        })
+      )
+
+      const handed = unwrapInvocationContext(receivedArgs[0]!.invocationContext)!
+      handed.recordUsage({ inputTokens: 1, outputTokens: 2, totalTokens: 3 })
+      expect({ limits: handed.limits, requestUsage: request.usage }).toEqual({
+        limits: undefined,
+        requestUsage: { turnsTaken: 1, inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      })
     })
   })
 
   describe('proactiveCompression', () => {
-    const mockModel = {
-      getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-      estimateUtilization: Model.prototype.estimateUtilization,
-    } as any
+    const mockModel = new TestModelProvider() as any
+    mockModel.updateConfig({ contextWindowLimit: 1000 })
 
     it('always registers a BeforeModelCallEvent hook regardless of proactiveCompression setting', () => {
       const manager = new TestConversationManager()
@@ -295,10 +329,7 @@ describe('ConversationManager', () => {
       const mockAgent = createMockAgent({ messages })
       manager.initAgent(mockAgent)
 
-      const modelWithoutLimit = {
-        getConfig: () => ({}) as BaseModelConfig,
-        estimateUtilization: Model.prototype.estimateUtilization,
-      } as any
+      const modelWithoutLimit = new TestModelProvider() as any
       // 150000/200000 = 0.75 >= 0.7 — should trigger with the 200k default
       const event = new BeforeModelCallEvent({
         agent: mockAgent,
@@ -320,10 +351,7 @@ describe('ConversationManager', () => {
       const mockAgent = createMockAgent()
       manager.initAgent(mockAgent)
 
-      const modelWithoutLimit = {
-        getConfig: () => ({}) as BaseModelConfig,
-        estimateUtilization: Model.prototype.estimateUtilization,
-      } as any
+      const modelWithoutLimit = new TestModelProvider() as any
       // 100000/200000 = 0.5 < 0.7 — should NOT trigger
       const event = new BeforeModelCallEvent({
         agent: mockAgent,

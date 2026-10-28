@@ -145,8 +145,8 @@ describe('resolveModel', () => {
     )
   })
 
-  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
-    'resolves Astra effort for %s',
+  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra', 'us.openai.gpt-6.1-sol'])(
+    'resolves Astra and 6.1 Sol effort without none for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
         ['auto', 'high'],
@@ -156,14 +156,54 @@ describe('resolveModel', () => {
         const model = await resolve(`bedrock/${modelId}`, thinking)
         expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
       }
-      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toEqual({
-        reasoning: { effort: 'none' },
-      })
+      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toBeUndefined()
       await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
         "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
       )
     }
   )
+
+  // https://github.com/strands-agents/harness-sdk/issues/5191
+  it.each(['openai.gpt-5.4', 'us.openai.gpt-5.4', 'openai.gpt-5.5', 'us.openai.gpt-5.5', 'global.openai.gpt-5.5'])(
+    'resolves GPT-5.4/5.5 effort without max for %s',
+    async (modelId) => {
+      for (const [thinking, effort] of [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ] as const) {
+        const model = await resolve(`bedrock/${modelId}`, thinking)
+        expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+      }
+      for (const thinking of ['minimal', 'max'] as const) {
+        await expect(resolve(`bedrock/${modelId}`, thinking)).rejects.toThrow(
+          "Supported levels: low, medium, high, xhigh (or 'auto', 'off')."
+        )
+      }
+    }
+  )
+
+  it.each([
+    'openai.gpt-5.6-cyber',
+    'us.openai.gpt-6-sol',
+    'us.openai.gpt-6.1-terra',
+    'openai.gpt-daybreak-blue-5.6-sol',
+    'us.openai.gpt-daybreak-blue-5.6-sol',
+  ])('resolves every GPT-5.6, GPT-6, and Daybreak effort for %s', async (modelId) => {
+    for (const [thinking, effort] of [
+      ['auto', 'high'],
+      ['low', 'low'],
+      ['max', 'max'],
+      ['off', 'none'],
+    ] as const) {
+      const model = await resolve(`bedrock/${modelId}`, thinking)
+      expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+    }
+    await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
+      "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
+    )
+  })
 
   it('uses the Qwen Bedrock reasoning field and levels', async () => {
     const model = await resolve('bedrock/qwen.qwen3-32b-v1:0', 'minimal')
@@ -203,8 +243,8 @@ describe('resolveModel', () => {
   })
 
   it('rejects a level the provider does not support', async () => {
-    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by this provider')
-    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by model gemini-3.5-flash')
+    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by model gpt-5.6-sol')
   })
 
   it('rejects a level the model does not support', async () => {
@@ -226,6 +266,26 @@ describe('resolveModel', () => {
     expect(model).toBeInstanceOf(Model)
     const params = model.getConfig().params as { thinkingConfig: { thinkingLevel: string } }
     expect(params.thinkingConfig.thinkingLevel).toBe('high')
+  })
+
+  it.each([
+    ['google/gemini-4-argon', 'minimal', 'Supported levels: low, medium, high'],
+    ['google/gemini-3.6-flash', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'low', 'Supported levels: minimal, high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'auto', 'high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'off', 'none'],
+    ['bedrock-mantle/google.gemma-4-31b', 'low', 'Supported levels: high'],
+  ])('resolves the per-model levels for %s with effort %s', async (model, effort, expected) => {
+    if (expected.startsWith('Supported levels')) {
+      await expect(resolve(model, effort)).rejects.toThrow(`not supported by model ${model.split('/')[1]}. ${expected}`)
+      return
+    }
+    const params = (await resolve(model, effort)).getConfig().params as {
+      reasoning?: { effort: string }
+      thinkingConfig?: { thinkingLevel: string }
+    }
+    expect(params.reasoning?.effort ?? params.thinkingConfig?.thinkingLevel).toBe(expected)
   })
 
   it('uses the google model id directly', async () => {
@@ -301,6 +361,10 @@ describe('resolveModel', () => {
     'global.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-5',
     'global.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-haiku-5-5',
+    'au.anthropic.claude-haiku-5-5',
+    'anthropic.claude-haiku-5-5',
+    'global.anthropic.claude-haiku-6',
     'global.anthropic.claude-fable-5',
     'global.anthropic.claude-fable-5-1',
     'anthropic.claude-mythos-preview',
@@ -339,18 +403,16 @@ describe('resolveModel', () => {
     ['claude-opus-4.5', 64_000],
     ['claude-opus-4-8', 128_000],
     ['claude-opus-5', 128_000],
+    ['claude-haiku-4-5-20251001-v1:0', 64_000],
+    ['claude-haiku-4.5', 64_000],
+    ['claude-haiku-5-5', 128_000],
   ] as const)('gives %s a max tokens ceiling of %d', async (modelId, maxTokens) => {
     const model = await resolve(`bedrock/global.anthropic.${modelId}`)
     expect(model.getConfig().maxTokens).toBe(maxTokens)
   })
 
-  it.each(['claude-haiku-latest', 'claude-haiku'])('falls open to extended, not adaptive, for %s', async (modelId) => {
-    const model = await resolve(`bedrock/global.anthropic.${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toEqual(EXTENDED)
-  })
-
-  it('clamps the budget below a small max tokens', async () => {
-    const model = await resolve('anthropic/claude-haiku', 'max')
+  it('clamps a version-led id against the anthropic-direct fallback', async () => {
+    const model = await resolve('anthropic/claude-4-5-haiku', 'max')
     expect(model.getConfig().maxTokens).toBe(32_000)
     expect(model.getConfig().params).toEqual({ thinking: { type: 'enabled', budget_tokens: 31_999 } })
   })
@@ -406,7 +468,9 @@ describe('resolveModel', () => {
   })
 
   it('rejects an unsupported thinking level for bedrock-mantle', async () => {
-    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow(
+      'not supported by model openai.gpt-oss-120b'
+    )
   })
 
   it('adds the Bedrock Web Search tool for bedrock-mantle web_search', async () => {
@@ -468,12 +532,24 @@ describe('resolveModel', () => {
     expect(model.getConfig().builtInTools).toBeUndefined()
   })
 
+  it('adds the anthropic web_search server tool as a direct call', async () => {
+    const model = await resolve('anthropic/claude-opus-4-8', 'high', true)
+    expect(model.getConfig().anthropicTools).toEqual([
+      { type: 'web_search_20260318', name: 'web_search', allowed_callers: ['direct'] },
+    ])
+    expect(model.getConfig().params).toHaveProperty('thinking')
+  })
+
+  it('omits anthropic server tools when web_search is off', async () => {
+    const model = await resolve('anthropic/claude-opus-4-8', 'high', false)
+    expect(model.getConfig()).not.toHaveProperty('anthropicTools')
+  })
+
   it('never adds a native search tool where the model has none', async () => {
     // The factory only passes web_search for models that have it; the builders never add the tool elsewhere.
     for (const id of ['bedrock-mantle/qwen.qwen3-32b-v1:0', 'bedrock-mantle/openai.gpt-oss-120b-1:0']) {
       expect((await resolve(id, 'high', true)).getConfig().params).not.toHaveProperty('tools')
     }
-    expect((await resolve('anthropic/claude-opus-4-8', 'high', true)).getConfig()).not.toHaveProperty('anthropicTools')
   })
 
   it('warns instead of throwing when an effort level is requested on a Model instance', async () => {
@@ -643,7 +719,7 @@ describe('supportsThinking', () => {
     expect(supportsThinking(`bedrock/global.anthropic.${modelId}`)).toBe(thinks)
   })
 
-  it.each(['claude-opus-latest', 'claude-sonnet-latest', 'claude-opus-100'])(
+  it.each(['claude-opus-latest', 'claude-sonnet-latest', 'claude-haiku-latest', 'claude-haiku', 'claude-opus-100'])(
     'fails open to adaptive for %s, whose version does not parse',
     async (modelId) => {
       expect(supportsThinking(`bedrock/global.anthropic.${modelId}`)).toBe(true)
@@ -666,13 +742,16 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch('google/gemini-3.5-flash')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-5.6-luna')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6-astra')).toBe(true)
+    // https://github.com/strands-agents/harness-sdk/issues/5187
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-6.1-sol')).toBe(true)
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
     expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
   })
 
-  it('is false for bedrock and anthropic', () => {
+  it('is false for bedrock but true for anthropic direct', () => {
     expect(supportsWebSearch('bedrock/global.anthropic.claude-opus-4-8')).toBe(false)
-    expect(supportsWebSearch('anthropic/claude-opus-4-8')).toBe(false)
+    expect(supportsWebSearch('anthropic/claude-opus-4-8')).toBe(true)
   })
 
   it('uses the default model provider for undefined', () => {

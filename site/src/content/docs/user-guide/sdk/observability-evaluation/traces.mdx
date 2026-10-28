@@ -310,6 +310,7 @@ Common visualization options include:
 3. **AWS X-Ray**: For AWS-based applications
 4. **Zipkin**: Lightweight distributed tracing
 5. **Opik**: For evaluating and optimizing multi-agent systems
+6. **Confident AI**: For tracing, online evals, and annotation queues
 
 ## Local Development Setup
 
@@ -402,6 +403,69 @@ agent = Agent(
 ```
 </Tab>
 </Tabs>
+
+### Baggage Propagation
+
+Baggage attributes propagate key-value pairs across process boundaries via the W3C `baggage` header. Unlike trace attributes, baggage is not stamped onto spans by default. It travels through the OTel context and is available to downstream services.
+
+<Tabs>
+<Tab label="Python">
+Pass `baggage_attributes` to the `Agent`:
+
+```python
+agent = Agent(
+    system_prompt="You are a helpful assistant.",
+    baggage_attributes={
+        "tenant.id": "acme",
+        "env": "production",
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+Pass `baggageAttributes` to the `Agent`:
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:baggage_propagation_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:baggage_propagation"
+```
+</Tab>
+</Tabs>
+
+If you also want baggage recorded on spans, enable the baggage span processor. Pass a predicate (or a list of predicates) that takes a baggage key and returns true to record only matching entries.
+
+<Tabs>
+<Tab label="Python">
+Call `setup_baggage_processor()` on `StrandsTelemetry`:
+
+```python
+from strands.telemetry import StrandsTelemetry
+
+strands_telemetry = StrandsTelemetry()
+strands_telemetry.setup_otlp_exporter()
+strands_telemetry.setup_baggage_processor(lambda key: key in {"tenant.id", "env"})
+```
+
+Requires the `strands-agents[otel]` extra.
+</Tab>
+
+<Tab label="TypeScript">
+Pass `baggageProcessor` to `setupTracer()`:
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:baggage_span_processor_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:baggage_span_processor"
+```
+
+Requires `npm install @opentelemetry/baggage-span-processor`. `baggageProcessor` is ignored when you pass your own `provider`.
+</Tab>
+</Tabs>
+
+:::caution
+Without a predicate, *every* baggage entry is stamped onto every span, including values extracted from inbound `baggage` request headers.
+:::
 
 ### Custom Spans
 
@@ -550,13 +614,11 @@ There are several ways to send traces, metrics, and logs to CloudWatch. Please v
 
 ## Third-party observability backends
 
-Because Strands emits standard OpenTelemetry spans, you can point them at whichever observability backend you already use. Set the OTLP endpoint and headers (see [Environment Variables](#environment-variables)) to your provider, or follow the provider's own Strands guide:
+Because Strands emits standard OpenTelemetry spans, you can point them at whichever observability backend you already use. Set the OTLP endpoint and headers (see [Environment Variables](#environment-variables)) to your provider, or follow the provider's own Strands guide.
 
-| Backend | Integration guide |
-|---------|-------------------|
-| Langfuse | [Observability for Strands Agents with Langfuse](https://langfuse.com/docs/integrations/strands-agents) |
-| Arize Phoenix | [Strands Agents Tracing](https://arize.com/docs/phoenix/integrations/python/strands-agents/strands-agents-tracing) |
-| Braintrust | [Strands Agent SDK](https://www.braintrust.dev/docs/integrations/sdk-integrations/strands-agent) |
-| LangSmith | [Trace Strands Agents applications](https://docs.langchain.com/langsmith/trace-with-strands-agents) |
+See the [Observability section of the integrations
+page](/integrations/?type=observability) for backends with a Strands integration, such
+as Langfuse, Arize Phoenix, Braintrust, LangSmith, and Confident AI, with language support
+and a link to each provider's guide.
 
 Any OpenTelemetry-compatible backend works the same way: Strands does not require a specific provider, so you keep your existing tracing setup when you adopt it.

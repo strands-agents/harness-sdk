@@ -87,8 +87,6 @@ export interface ChatSettings {
   skillDiscovery: boolean
   /** Allow agents to discover and message other live conversations. */
   agentMessaging: boolean
-  /** Open the setup screen when starting an interactive session. */
-  setupOnLaunch: boolean
   /** Send one anonymous usage ping per interactive start (see README → Telemetry). */
   telemetry: boolean
 }
@@ -104,7 +102,6 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   mcpDiscovery: false,
   skillDiscovery: false,
   agentMessaging: true,
-  setupOnLaunch: true,
   telemetry: true,
 }
 
@@ -118,7 +115,6 @@ export type SettingKey =
   | 'mcpDiscovery'
   | 'skillDiscovery'
   | 'agentMessaging'
-  | 'setupOnLaunch'
   | 'telemetry'
 
 export interface SettingDefinition {
@@ -220,16 +216,6 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
-    key: 'setupOnLaunch',
-    label: 'Launch into Setup by default',
-    section: 'General',
-    control: 'toggle',
-    options: [
-      { label: 'On', value: true },
-      { label: 'Off', value: false },
-    ],
-  },
-  {
     key: 'telemetry',
     label: 'Usage ping (telemetry)',
     section: 'General',
@@ -263,8 +249,6 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.agentMessaging
         ? 'on · lets live conversations discover and message each other · applies at next launch'
         : 'off · conversations stay isolated · applies at next launch'
-    case 'setupOnLaunch':
-      return settings.setupOnLaunch ? 'on · applies at next launch' : 'off · applies at next launch'
     case 'telemetry':
       return settings.telemetry
         ? 'on · one anonymous ping per launch: CLI version, provider, built-in tools and plugins · applies at next launch'
@@ -324,7 +308,6 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     mcpDiscovery: booleanSetting('mcpDiscovery'),
     skillDiscovery: booleanSetting('skillDiscovery'),
     agentMessaging: booleanSetting('agentMessaging'),
-    setupOnLaunch: booleanSetting('setupOnLaunch'),
     telemetry: booleanSetting('telemetry'),
   }
 }
@@ -414,7 +397,6 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'mcpDiscovery':
     case 'skillDiscovery':
     case 'agentMessaging':
-    case 'setupOnLaunch':
     case 'telemetry':
       return { [name]: !current[name] }
     case 'toolOutput':

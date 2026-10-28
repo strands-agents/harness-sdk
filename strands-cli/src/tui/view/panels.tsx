@@ -20,7 +20,7 @@ import {
 } from './presentation.js'
 import { AgentsPanel } from './agents-panel.js'
 import { ExportPanel } from './export-panel.js'
-import { EffortSlider, ModelPicker } from './model-panel.js'
+import { ModelPicker } from './model-panel.js'
 import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
@@ -75,7 +75,6 @@ export function ResourcePanel({
   onFilterElement,
   onSearchElement,
   onSliderElement,
-  commandDeckHeight,
 }: {
   panel: ChatPanel
   context: ChatContextUsage
@@ -103,7 +102,6 @@ export function ResourcePanel({
   onFilterElement?: (id: string, element: DOMElement | null) => void
   onSearchElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void
-  commandDeckHeight?: number
 }): ReactElement {
   const palette = useTheme()
   const { surface, warning, selection, accent } = palette
@@ -122,7 +120,7 @@ export function ResourcePanel({
               ? 60
               : checklist
                 ? 96
-                : panel.kind === 'context' || panel.kind === 'effort'
+                : panel.kind === 'context'
                   ? 52
                   : panel.kind === 'permission' && panel.diff
                     ? 100
@@ -229,34 +227,6 @@ export function ResourcePanel({
         {...(onSearchElement ? { onSearchElement } : {})}
         {...(onSliderElement ? { onSliderElement } : {})}
       />
-    )
-  }
-  if (panel.kind === 'effort' && panel.slider) {
-    const [modelName = '', modelId = ''] = panel.body?.split('\n') ?? []
-    return (
-      <PanelOverlay
-        width={width}
-        {...(commandDeckHeight !== undefined ? { bottomOffset: commandDeckHeight + 1 } : {})}
-        {...(onPanelElement ? { onElement: onPanelElement } : {})}
-      >
-        <Box flexDirection="column" alignItems="center" overflow="hidden">
-          <Text bold color={accent} wrap="truncate-end">
-            Reasoning effort
-          </Text>
-          <Text dimColor wrap="truncate-end">
-            {modelName || modelId}
-          </Text>
-          <EffortSlider
-            slider={panel.slider}
-            width={Math.max(18, Math.min(36, width - 8))}
-            compact={false}
-            pressed={pressedSlider}
-            {...(hoveredSlider !== undefined ? { hovered: hoveredSlider } : {})}
-            focused
-            {...(onSliderElement ? { onElement: onSliderElement } : {})}
-          />
-        </Box>
-      </PanelOverlay>
     )
   }
   if (panel.kind === 'context') {

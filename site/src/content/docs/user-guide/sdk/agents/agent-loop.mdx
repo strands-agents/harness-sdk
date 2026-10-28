@@ -8,6 +8,8 @@ sourceLinks:
   - path: strands-ts/src/agent/agent.ts
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 A language model can answer questions. An agent can *do things*. The agent loop is what makes that difference possible.
 
 When a model receives a request it cannot fully address with its training alone, it needs to reach out into the world: read files, query databases, call APIs, execute code. The agent loop is the orchestration layer that enables this. It manages the cycle of reasoning and action that allows a model to tackle problems requiring multiple steps, external information, or real-world side effects.
@@ -28,19 +30,10 @@ on top of it. The loop ships with the controls a production agent needs:
 
 The agent loop operates on a simple principle: invoke the model, check if it wants to use a tool, execute the tool if so, then invoke the model again with the result. Repeat until the model produces a final response.
 
-```mermaid
-flowchart LR
-    A[Input & Context] --> Loop
-
-    subgraph Loop[" "]
-        direction TB
-        B["Reasoning (LLM)"] --> C["Tool Selection"]
-        C --> D["Tool Execution"]
-        D --> B
-    end
-
-    Loop --> E[Response]
-```
+<Diagram
+  name="agent-loop"
+  alt="The agent loop. A request goes to the model. While the model asks for tools, the agent runs them and sends the results back to the model; every pass adds to the conversation history. When the model makes no tool calls, its message becomes the response."
+/>
 
 The diagram shows the recursive structure at the heart of the loop. The model reasons, selects a tool, the tool executes, and the result feeds back into the model for another round of reasoning. This cycle continues until the model decides it has enough information to respond.
 
@@ -263,6 +256,13 @@ To cap how much work an agent does in a single invocation, pass
 a `limits` object. You can bound turns (loop iterations), output
 tokens, or total tokens. All three are optional.
 
+Set a turn limit, a total-token limit, or both on any
+long-running or autonomous agent. No limit applies unless you
+pass one, so the agent keeps going until the model stops
+requesting tools, and every turn resends the conversation so far.
+Prompt caching makes that resend cheaper, but cached tokens still
+count toward the total-token limit.
+
 <Tabs>
   <Tab label="Python">
 
@@ -289,6 +289,12 @@ tokens, or total tokens. All three are optional.
   The same parameter works with `invoke_async` and
   `stream_async`. Each cap must be a positive `int`.
 
+  Token limits count only this agent's own model calls. An agent
+  it calls as a tool, and a conversation manager's summarization
+  calls, run outside these limits and do not add to them. To bound
+  an agent used as a tool, call it from a tool you write and pass
+  `limits` to that call.
+
   </Tab>
   <Tab label="TypeScript">
 
@@ -298,6 +304,14 @@ tokens, or total tokens. All three are optional.
 
   The same option works with `stream`. Each cap must be a
   positive finite number.
+
+  Limits cover the whole request. Agents passed as tools share the
+  request's limits and usage. An agent that your own tool invokes
+  joins the request only when the tool passes along
+  `context.invocationContext`; otherwise it runs under its own
+  limits. Auxiliary model calls, such as a conversation manager's
+  summarization, add their tokens to the usage but are not bound
+  by the limits.
 
   </Tab>
 </Tabs>
@@ -311,6 +325,13 @@ reinvokable state.
 
 Limits apply to the current invocation only. A reused agent
 starts each call with fresh counters.
+
+The total-token limit adds up the total tokens each model call
+reports. On Amazon Bedrock, Anthropic, OpenAI, and Google Gemini,
+that total counts prompt-cache reads and writes in full, so a
+cached turn uses as much of the limit as an uncached one. The
+limit caps tokens, not cost. To send less on each turn instead,
+see [context management](../context-management.mdx).
 
 When multiple caps trip simultaneously, the reported stop reason
 follows priority order: turns, then total tokens, then output

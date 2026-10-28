@@ -14,8 +14,8 @@ const t = (text: string) => ({ text });
 // Each card can define an `expanded` payload. When present, the `+` button
 // toggles between the compact and expanded view. When absent, the `+` remains
 // a no-op and the card stays compact. `header` groups the card under a
-// workflow stage (Develop / Secure / Evaluate); `defaultOpen` renders the
-// card expanded on load.
+// workflow stage (Start / Build / Secure / Control / Validate / Explore);
+// `defaultOpen` renders the card expanded on load.
 const cards = [
   {
     slug: '/harness',
@@ -106,6 +106,46 @@ const cards = [
         { lineNo: 10, tokens: [t('')] },
         { lineNo: 11, tokens: [kw('const'), t(' agent = '), kw('new'), t(' Agent({ model: '), str(`"${DEFAULT_SONNET_MODEL}"`), t(', tools: [searchDocs] })')] },
         { lineNo: 12, tokens: [kw('await'), t(' agent.invoke('), str('"Find the pricing guide"'), t(')')] },
+      ],
+    },
+  },
+  {
+    slug: '/box',
+    header: 'Secure',
+    color: 'var(--card-accent-purple)',
+    description: 'An agent sandbox that pairs OS containment with Dogwood policy.',
+    tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
+    expanded: {
+      description:
+        'Strands Box is an open source sandbox for AI agents. It runs an agent such as the Strands CLI, Claude Code, or Codex CLI on your Mac, inside a sandbox the operating system enforces and under a Dogwood policy that decides its shell commands, file operations, network requests, and MCP calls. Box is in preview, so pin your version.',
+      features: [
+        {
+          title: 'Enforced by the operating system',
+          body: 'Seatbelt on macOS sets which files and programs the agent can reach. Each tool and local MCP server runs in its own sandbox.',
+        },
+        {
+          title: 'Rules that depend on history',
+          body: 'Dogwood rules can depend on what the box already recorded: allow git push only after the tests pass, or block uploads after the agent reads customer data.',
+        },
+        {
+          title: 'Credentials injected at the gateway',
+          body: 'The egress gateway replaces credential placeholders with the real API keys and signs AWS requests. The agent holds only the placeholder.',
+        },
+      ],
+      viewMoreHref: pathWithBase('/docs/user-guide/box/'),
+      codePy: [
+        { lineNo: 1, tokens: [kw('@id'), t('('), str('"no_deletes"'), t(')')] },
+        { lineNo: 2, tokens: [kw('forbid'), t(' (principal, action == Box::Action::'), str('"fs:delete"'), t(', resource);')] },
+        { lineNo: 3, tokens: [t('')] },
+        { lineNo: 4, tokens: [kw('@id'), t('('), str('"push_after_tests"'), t(')')] },
+        { lineNo: 5, tokens: [kw('forbid'), t(' (principal, action == Box::Action::'), str('"shell:spawn"'), t(', resource)')] },
+        { lineNo: 6, tokens: [kw('when'), t(' { context.input.program == '), str('"git"'), t(' &&')] },
+        { lineNo: 7, tokens: [t('       context.input has arg1 && context.input.arg1 == '), str('"push"'), t(' }')] },
+        { lineNo: 8, tokens: [kw('unless temporal'), t(' {')] },
+        { lineNo: 9, tokens: [t('  '), kw('formerly within'), t(' 1h (Box::Action::'), str('"shell:spawn"'), t('::response{')] },
+        { lineNo: 10, tokens: [t('    input.program: '), str('"npm"'), t(', input.arg1: '), str('"test"'), t(', output.status: 0')] },
+        { lineNo: 11, tokens: [t('  })')] },
+        { lineNo: 12, tokens: [t('};')] },
       ],
     },
   },
@@ -430,8 +470,8 @@ const cards = [
     align-items: center;
     gap: 32px;
     width: 100%;
-    /* Cards row spans the full diagram width (1332px). Four equal-width
-       cards + three 24px gaps share it proportionally. */
+    /* Cards grid spans the full diagram width (1332px): three equal-width
+       cards per row, with 24px gaps. */
     max-width: 1332px;
   }
 
@@ -499,7 +539,7 @@ const cards = [
 
   .toolkit__cards-grid {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 24px;
     width: 100%;
     /* Ease the column reflow when a card opens/closes so the expand isn't an
@@ -527,29 +567,23 @@ const cards = [
     color: var(--fg);
   }
 
-  /* When a card is expanded, its section widens to 2fr (the other two stay
+  /* When a card is expanded, its column widens to 2fr (the other two stay
      1fr) so the expanded body fits description+features on the left and the
-     terminal on the right. The wide track follows whichever card is open
-     (1st–3rd), so expansion looks right no matter which card the user picks.
-     Compact cards keep their 200px height (align-self: start stops them
-     stretching to the expanded card's row height). */
+     terminal on the right. The wide track follows the open card's column
+     (3n+1 to 3n+3), so expansion looks right no matter which card the user
+     picks. Compact cards keep their 200px height (align-self: start stops
+     them stretching to the expanded card's row height). */
   .toolkit__cards-grid:has(.toolkit__card.is-open) .toolkit__section {
     align-self: start;
   }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(1) .toolkit__card.is-open) {
-    grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 1) .toolkit__card.is-open) {
+    grid-template-columns: 2fr 1fr 1fr;
   }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(2) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 2fr 1fr 1fr 1fr;
+  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 2) .toolkit__card.is-open) {
+    grid-template-columns: 1fr 2fr 1fr;
   }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 1fr 2fr 1fr 1fr;
-  }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(4) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 1fr 1fr 2fr 1fr;
-  }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(5) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 1fr 1fr 1fr 2fr;
+  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 3) .toolkit__card.is-open) {
+    grid-template-columns: 1fr 1fr 2fr;
   }
 
   .toolkit__card {
@@ -641,6 +675,13 @@ const cards = [
     border: none;
     color: var(--accent);
     cursor: pointer;
+  }
+
+  /* 44px hit area around the 16px icon. */
+  .toolkit__card-open::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
   }
 
   .toolkit__card-open-icon {
@@ -811,7 +852,7 @@ const cards = [
     border: none;
     color: var(--terminal-fg, var(--strands-grey-600));
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     cursor: pointer;
   }
@@ -842,7 +883,7 @@ const cards = [
   .toolkit__card-terminal-code {
     margin: 0;
     padding: 16px 20px;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
     color: var(--terminal-fg, var(--fg));
     background: transparent;
@@ -852,7 +893,7 @@ const cards = [
     margin: 0;
     padding: 16px 20px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
     color: var(--strands-grey-600);
     background: transparent;
@@ -932,11 +973,9 @@ const cards = [
        squeezing the rest. */
     .toolkit__cards-grid,
     .toolkit__cards-grid:has(.toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(1) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(2) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(4) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(5) .toolkit__card.is-open) {
+    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 1) .toolkit__card.is-open),
+    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 2) .toolkit__card.is-open),
+    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 3) .toolkit__card.is-open) {
       grid-template-columns: 1fr;
     }
 
@@ -1040,9 +1079,12 @@ const cards = [
       margin-top: 6px;
     }
 
+    .toolkit__card-tag {
+      font-size: 12px;
+    }
+
     .toolkit__card-terminal-code {
       padding: 12px 14px;
-      font-size: 10px;
     }
 
     .toolkit__card-view-more {
@@ -1098,11 +1140,15 @@ const cards = [
     .forEach((btn) => {
       attachCopyButton(btn, {
         label: btn.querySelector<HTMLElement>('.toolkit__card-terminal-copy-label'),
-        getText: () =>
-          btn
+        getText: () => {
+          const code = btn
             .closest<HTMLElement>('.toolkit__card-terminal')
-            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code')
-            ?.innerText ?? '',
+            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code');
+          if (!code) return '';
+          return Array.from(code.querySelectorAll<HTMLElement>('.toolkit__card-terminal-line'))
+            .map((line) => line.textContent ?? '')
+            .join('\n');
+        },
         track: {
           surface: 'code:toolkit',
           detail: () =>

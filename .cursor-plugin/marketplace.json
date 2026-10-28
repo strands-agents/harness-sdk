@@ -1,0 +1,26 @@
+{
+  "name": "strands-agents",
+  "owner": {
+    "name": "Strands Agents",
+    "url": "https://github.com/strands-agents"
+  },
+  "plugins": [
+    {
+      "name": "strands",
+      "source": "./.agents/skills/strands",
+      "displayName": "Strands Agents",
+      "description": "Build, extend, evaluate, and migrate applications with Strands Agents.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Strands Agents"
+      },
+      "category": "Developer Tools",
+      "tags": [
+        "agents",
+        "python",
+        "typescript"
+      ],
+      "homepage": "https://strandsagents.com/docs/user-guide/build-with-ai/"
+    }
+  ]
+}

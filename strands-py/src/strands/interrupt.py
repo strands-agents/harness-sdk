@@ -18,7 +18,8 @@ class Interrupt:
     """Represents an interrupt that can pause agent execution for human-in-the-loop workflows.
 
     Attributes:
-        id: Unique identifier.
+        id: Unique identifier. Treat as opaque: pass it back to resume the agent, do not parse or
+            construct it.
         name: User defined name.
         reason: User provided reason for raising the interrupt.
         response: Human response provided when resuming the agent after an interrupt.

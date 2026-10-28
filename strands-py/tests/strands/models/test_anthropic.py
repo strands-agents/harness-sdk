@@ -13,6 +13,7 @@ import pytest
 import strands
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
+from strands.tools import convert_pydantic_to_tool_spec
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 WEB_SEARCH_TOOL = {"type": "web_search_20260318", "name": "web_search", "max_uses": 3}
@@ -92,7 +93,7 @@ def test__init__model_configs(anthropic_client, model_id, max_tokens):
 def test__init__auto_populates_context_window_limit(anthropic_client):
     _ = anthropic_client
 
-    model = AnthropicModel(model_id="claude-sonnet-4-20250514", max_tokens=1)
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
     assert model.get_config().get("context_window_limit") == 1_000_000
 
@@ -100,7 +101,7 @@ def test__init__auto_populates_context_window_limit(anthropic_client):
 def test__init__explicit_context_window_limit_not_overridden(anthropic_client):
     _ = anthropic_client
 
-    model = AnthropicModel(model_id="claude-sonnet-4-20250514", max_tokens=1, context_window_limit=100_000)
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1, context_window_limit=100_000)
 
     assert model.get_config().get("context_window_limit") == 100_000
 
@@ -385,6 +386,62 @@ def test_format_request_with_reasoning(model, model_id, max_tokens):
                         "type": "thinking",
                     },
                 ],
+            },
+        ],
+        "model": model_id,
+        "tools": [],
+    }
+
+    assert tru_request == exp_request
+
+
+def test_format_request_drops_unsigned_reasoning(model, model_id, max_tokens, caplog):
+    """Reasoning text replayed from another model family carries no signature, which Anthropic rejects."""
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "reasoning_text"}}},
+                {"reasoningContent": {"reasoningText": {"text": "more_reasoning_text"}}},
+                {"text": "answer"},
+            ],
+        },
+    ]
+
+    tru_request = model.format_request(messages)
+    exp_request = {
+        "max_tokens": max_tokens,
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [{"text": "answer", "type": "text"}],
+            },
+        ],
+        "model": model_id,
+        "tools": [],
+    }
+
+    assert tru_request == exp_request
+    assert caplog.text.count("Unsigned reasoning content is not supported by Anthropic") == 1
+
+
+def test_format_request_with_redacted_reasoning(model, model_id, max_tokens):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"reasoningContent": {"redactedContent": b"redacted_reasoning"}}],
+        },
+    ]
+
+    tru_request = model.format_request(messages)
+    exp_request = {
+        "max_tokens": max_tokens,
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [{"data": "cmVkYWN0ZWRfcmVhc29uaW5n", "type": "redacted_thinking"}],
             },
         ],
         "model": model_id,
@@ -1055,47 +1112,160 @@ async def test_stream_bad_request_error(anthropic_client, model):
         await anext(model.stream(messages))
 
 
+def _thinking_binding_error():
+    return anthropic.BadRequestError(
+        "messages.1.content.0: Invalid `signature` in `thinking` block. "
+        "The block is bound to a different conversation.",
+        response=unittest.mock.Mock(),
+        body=None,
+    )
+
+
+def _message_start_stream():
+    event = unittest.mock.Mock(type="message_start", model_dump=lambda: {"type": "message_start"})
+    final_message = unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {}))
+    return generate_mock_stream_context([event], final_message=final_message)
+
+
 @pytest.mark.asyncio
-async def test_structured_output(anthropic_client, model, test_output_model_cls, alist):
+async def test_stream_retries_with_drop_block_on_thinking_binding_error(anthropic_client, alist, messages, caplog):
+    anthropic_client.default_headers = {"anthropic-beta": "client-beta"}
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), _message_start_stream()]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.anthropic"):
+        tru_events = await alist(model.stream(messages))
+
+    assert tru_events == [{"messageStart": {"role": "assistant"}}]
+    assert "retrying with drop_block" in caplog.text
+
+    first_request, retry_request = [call.kwargs for call in anthropic_client.messages.stream.call_args_list]
+    assert first_request["thinking"] == {"type": "adaptive"}
+    assert "extra_headers" not in first_request
+    exp_thinking = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    exp_headers = {"anthropic-beta": "client-beta,thinking-binding-controls-2026-08-01"}
+    assert retry_request["thinking"] == exp_thinking
+    assert retry_request["extra_headers"] == exp_headers
+
+    anthropic_client.messages.stream.reset_mock(side_effect=True)
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+
+    await alist(model.stream(messages))
+
+    anthropic_client.messages.stream.assert_called_once()
+    assert anthropic_client.messages.stream.call_args.kwargs["thinking"] == exp_thinking
+    assert anthropic_client.messages.stream.call_args.kwargs["extra_headers"] == exp_headers
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
+        {"temperature": 1},
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(anthropic_client, messages, params):
+    anthropic_client.messages.stream.side_effect = _thinking_binding_error()
+    model = AnthropicModel(model_id="m1", max_tokens=1, params=params)
+
+    with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
+        await anext(model.stream(messages))
+
+    anthropic_client.messages.stream.assert_called_once()
+    assert model._drop_stale_thinking_model_id is None
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_drop_block_once_when_params_override_model(anthropic_client, alist, messages):
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), _thinking_binding_error()]
+    model = AnthropicModel(
+        model_id="m1", max_tokens=1, params={"model": "m1-override", "thinking": {"type": "adaptive"}}
+    )
+
+    with pytest.raises(anthropic.BadRequestError, match="bound to a different conversation"):
+        await alist(model.stream(messages))
+
+    assert anthropic_client.messages.stream.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("retry_error", "exp_exception"),
+    [
+        (anthropic.RateLimitError("rate limit", response=unittest.mock.Mock(), body=None), ModelThrottledException),
+        (
+            anthropic.BadRequestError("input is too long", response=unittest.mock.Mock(), body=None),
+            ContextWindowOverflowException,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist, messages, retry_error, exp_exception):
+    anthropic_client.messages.stream.side_effect = [_thinking_binding_error(), retry_error]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+
+    with pytest.raises(exp_exception):
+        await alist(model.stream(messages))
+
+    assert anthropic_client.messages.stream.call_count == 2
+
+
+def test_format_request_drops_stale_thinking_only_for_remembered_model(anthropic_client, messages):
+    _ = anthropic_client
+    model = AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        params={"thinking": {"type": "adaptive"}, "extra_headers": {"anthropic-beta": "other-beta"}},
+    )
+    model._drop_stale_thinking_model_id = "m1"
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert tru_request["extra_headers"] == {"anthropic-beta": "other-beta,thinking-binding-controls-2026-08-01"}
+
+    model.update_config(model_id="m2")
+
+    assert model.format_request(messages)["thinking"] == {"type": "adaptive"}
+
+
+def _stream_events(*payloads):
+    return [
+        unittest.mock.Mock(
+            type=payload["type"],
+            index=payload.get("index"),
+            message=unittest.mock.Mock(stop_reason=payload.get("message", {}).get("stop_reason")),
+            model_dump=lambda payload=payload: copy.deepcopy(payload),
+        )
+        for payload in payloads
+    ]
+
+
+@pytest.mark.parametrize(
+    ("content_block", "delta", "stop_reason"),
+    [
+        (
+            {"type": "tool_use", "id": "123", "name": "TestOutputModel"},
+            {"type": "input_json_delta", "partial_json": '{"name": "John", "age": 30}'},
+            "tool_use",
+        ),
+        ({"type": "text", "text": ""}, {"type": "text_delta", "text": '{"name": "John", "age": 30}'}, "end_turn"),
+    ],
+    ids=["tool_use", "native_json_text"],
+)
+@pytest.mark.asyncio
+async def test_structured_output(
+    anthropic_client, model, test_output_model_cls, alist, content_block, delta, stop_reason
+):
     messages = [{"role": "user", "content": [{"text": "Generate a person"}]}]
 
-    events = [
-        unittest.mock.Mock(type="message_start", model_dump=unittest.mock.Mock(return_value={"type": "message_start"})),
-        unittest.mock.Mock(
-            type="content_block_start",
-            index=0,
-            model_dump=unittest.mock.Mock(
-                return_value={
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "tool_use", "id": "123", "name": "TestOutputModel"},
-                }
-            ),
-        ),
-        unittest.mock.Mock(
-            type="content_block_delta",
-            index=0,
-            model_dump=unittest.mock.Mock(
-                return_value={
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "input_json_delta", "partial_json": '{"name": "John", "age": 30}'},
-                },
-            ),
-        ),
-        unittest.mock.Mock(
-            type="content_block_stop",
-            index=0,
-            model_dump=unittest.mock.Mock(return_value={"type": "content_block_stop", "index": 0}),
-        ),
-        unittest.mock.Mock(
-            type="message_stop",
-            message=unittest.mock.Mock(stop_reason="tool_use"),
-            model_dump=unittest.mock.Mock(
-                return_value={"type": "message_stop", "message": {"stop_reason": "tool_use"}}
-            ),
-        ),
-    ]
+    events = _stream_events(
+        {"type": "message_start"},
+        {"type": "content_block_start", "index": 0, "content_block": content_block},
+        {"type": "content_block_delta", "index": 0, "delta": delta},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_stop", "message": {"stop_reason": stop_reason}},
+    )
 
     anthropic_client.messages.stream.return_value = generate_mock_stream_context(
         events,
@@ -1112,6 +1282,112 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
     tru_result = events[-1]
     exp_result = {"output": test_output_model_cls(name="John", age=30)}
     assert tru_result == exp_result
+
+
+FORCED_TOOL_CHOICE_REJECTION = 'tool_choice: type "tool" and "any" are not supported for this model'
+NATIVE_OUTPUT_REJECTION = "output_config.format: Extra inputs are not permitted"
+
+
+def _bad_request(message):
+    return anthropic.BadRequestError(message, response=unittest.mock.Mock(), body=None)
+
+
+def _mechanism(request):
+    """The structured output mechanism a sent Messages request uses."""
+    if request["tool_choice"]["type"] == "tool":
+        return "forced"
+    return "native" if "format" in request.get("output_config", {}) else "auto"
+
+
+@pytest.fixture
+def stream_structured_output(test_output_model_cls, alist, messages):
+    async def stream_structured_output(model, tool_choice=None):
+        tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+        await alist(
+            model.stream(messages, [tool_spec], tool_choice=tool_choice, structured_output_model=test_output_model_cls)
+        )
+
+    return stream_structured_output
+
+
+@pytest.mark.parametrize(
+    ("rejections", "exp_mechanisms"),
+    [
+        ([], ["forced"]),
+        ([FORCED_TOOL_CHOICE_REJECTION], ["forced", "native"]),
+        ([FORCED_TOOL_CHOICE_REJECTION, NATIVE_OUTPUT_REJECTION], ["forced", "native", "auto"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_structured_output_falls_back_to_next_mechanism(
+    anthropic_client, model, stream_structured_output, rejections, exp_mechanisms
+):
+    anthropic_client.messages.stream.side_effect = [*map(_bad_request, rejections), _message_start_stream()]
+
+    await stream_structured_output(model, {"tool": {"name": "TestOutputModel"}})
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in anthropic_client.messages.stream.call_args_list]
+    assert tru_mechanisms == exp_mechanisms
+
+    anthropic_client.messages.stream.reset_mock(side_effect=True)
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+
+    await stream_structured_output(model, {"tool": {"name": "TestOutputModel"}})
+
+    anthropic_client.messages.stream.assert_called_once()
+    assert _mechanism(anthropic_client.messages.stream.call_args.kwargs) == exp_mechanisms[-1]
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_native_keeps_tools_and_output_config(
+    anthropic_client, stream_structured_output, test_output_model_cls
+):
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"output_config": {"effort": "high"}})
+
+    await stream_structured_output(model)
+
+    tru_request = anthropic_client.messages.stream.call_args.kwargs
+    exp_output_config = {
+        "effort": "high",
+        "format": {"type": "json_schema", "schema": anthropic.transform_schema(test_output_model_cls)},
+    }
+    assert tru_request["tool_choice"] == {"type": "none"}
+    assert tru_request["output_config"] == exp_output_config
+    assert [tool["name"] for tool in tru_request["tools"]] == ["TestOutputModel"]
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_without_native_output_sdk_support(
+    anthropic_client, model, stream_structured_output, monkeypatch
+):
+    monkeypatch.setattr(strands.models.anthropic, "_SDK_SUPPORTS_NATIVE_OUTPUT", False)
+    anthropic_client.messages.stream.return_value = _message_start_stream()
+
+    with pytest.warns(UserWarning, match=r"requires anthropic>=0\.77\.0"):
+        await stream_structured_output(model)
+
+    assert _mechanism(anthropic_client.messages.stream.call_args.kwargs) == "auto"
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_retries_drop_block_before_next_mechanism(
+    anthropic_client, stream_structured_output
+):
+    anthropic_client.messages.stream.side_effect = [
+        _thinking_binding_error(),
+        _bad_request(FORCED_TOOL_CHOICE_REJECTION),
+        _message_start_stream(),
+    ]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+
+    await stream_structured_output(model, {"tool": {"name": "TestOutputModel"}})
+
+    tru_requests = [
+        (_mechanism(call.kwargs), "block_binding" in call.kwargs["thinking"])
+        for call in anthropic_client.messages.stream.call_args_list
+    ]
+    assert tru_requests == [("forced", False), ("forced", True), ("native", True)]
 
 
 def test_config_validation_warns_on_unknown_keys(anthropic_client, captured_warnings):
@@ -2001,14 +2277,13 @@ class TestPromptCaching:
 
         assert self._breakpoints(model.format_request(messages)) == []
 
-    def test_unknown_strategy_disables_caching(self, model, messages, caplog):
-        caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    def test_unknown_strategy_disables_caching(self, model, messages):
         model.update_config(cache_config=CacheConfig(strategy="nonsense"))
 
-        request = model.format_request(messages)
+        with pytest.warns(UserWarning, match="unknown cache strategy"):
+            request = model.format_request(messages)
 
         assert self._breakpoints(request) == []
-        assert "unknown cache strategy" in caplog.text
 
     def test_manual_cache_point_ttl_is_honored(self, model):
         """A hand-placed cache point carries its own TTL; ``cache_config`` need not be set."""
@@ -2833,3 +3108,18 @@ async def test_stream_logs_server_tool_error(anthropic_client, model, alist, cap
     await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
 
     assert "error_code=<max_uses_exceeded>" in caplog.text
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]

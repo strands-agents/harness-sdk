@@ -312,6 +312,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       )
       if (request.seed && request.restoreSeedMessages !== false) {
         agent.messages = [...request.seed.messages]
+        // The fork has its own session id, so the `[ref: …]` in the copied messages resolve only against a
+        // copy of the source's stash.
+        if (request.seed.stash) await agent.contextManager?.stash?.loadSnapshot(request.seed.stash)
         await agent.sessionManager?.saveSnapshot({
           target: agent,
           isLatest: true,
@@ -512,10 +515,11 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         if (!seed || !context) {
           throw new Error('Only Strands-backed conversations can be forked.')
         }
+        const stash = await source.backend.forkStash?.()
         return createController({
           workspace: context.workspace,
           sessionDirectory: context.sessionDirectory,
-          seed,
+          seed: { ...seed, ...(stash && { stash }) },
           settings: source.getSnapshot().settings,
         })
       },

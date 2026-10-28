@@ -39,7 +39,7 @@ const breadcrumbLabels: Record<string, string> = {
   'multi-agent': 'Multi-Agent',
   'model-providers': 'Model Providers',
   'streaming': 'Streaming',
-  'bidirectional-streaming': 'Voice & Realtime',
+  'bidi': 'Voice',
   'deploy': 'Deploy',
   'safety-security': 'Safety & Security',
   'observability-evaluation': 'Observability',
@@ -130,7 +130,7 @@ const structuredData = {
 
 {head.map(({ tag: Tag, attrs, content }) => <Tag {...attrs} set:html={content} />)}
 
-<!-- Favicon: an SVG that adapts to light/dark mode via prefers-color-scheme. -->
+<!-- Favicon: green frog on a black tile so it stays legible on light backgrounds. -->
 <link rel="icon" type="image/svg+xml" href={faviconHref} />
 
 <!-- Raw markdown twin of this page, for LLMs and tooling -->

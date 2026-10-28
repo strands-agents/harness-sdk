@@ -1,0 +1,173 @@
+---
+title: Grant the workload files and directories
+description: Give a box's agent and tools read, write, list, and exec access to host paths with box.toml filesystem lists, and gate interpreter file access with fs policy rules.
+sidebar:
+  label: "Grant files and directories"
+---
+
+A box starts with almost nothing on the filesystem. You widen it in two places, and
+which one you need depends on how the workload touches the file:
+
+| Route | Example | What decides |
+|---|---|---|
+| The agent's own system calls | The harness's file-edit tool writes `src/main.rs` | `[agent.filesystem]` in `box.toml` |
+| A tool's own system calls | `git` reads `.git/config` | `[tool.<name>.filesystem]` in `box.toml` |
+| A command in the box's shell or Python | `cat README.md`, `open("data.csv")` | `fs:*` rules in the policy |
+
+A `box.toml` grant is one of the sandbox grants: the operating system enforces it, and
+no policy decision or record covers it. A shell or Python file operation is a policy decision,
+recorded like every other. A harness with its own file tools, such as Claude Code or
+Codex CLI, can use both: a box for it grants the project in `box.toml` and permits it
+in `policy.dw`. To have the policy decide every file, grant the project only in `list`.
+The harness's file tools then fail, and it falls back to its shell, as
+[Run Claude Code](run-claude-code.md) and [Run Codex CLI](run-codex-cli.md) show.
+
+## Grant paths to the agent
+
+Add lists to `[agent.filesystem]`:
+
+```toml
+[agent.filesystem]
+read  = ["~/src/my-service", "~/.local/share/claude/versions/2.1.286"]
+write = ["~/src/my-service"]
+exec  = ["~/.local/share/claude/versions/2.1.286"]
+deny  = ["~/src/my-service/secrets"]
+```
+
+The agent table takes eight lists:
+
+| List | A directory entry grants | A file entry grants |
+|---|---|---|
+| `read` | Read of everything below it | Read of that file |
+| `write` | Write of everything below it | Write of that file |
+| `read_file` | Refused: use `read` | Read of that file |
+| `write_file` | Refused | Write of that existing file |
+| `list` | Directory listings and `stat`, no content | Refused |
+| `metadata` | `stat` only | Refused |
+| `exec` | Running every binary below it | Running that executable |
+| `deny` | Subtracts the tree from every other grant | Subtracts the file |
+
+`write` doesn't include read on macOS. List a path in both `read` and `write` when the
+agent edits files there.
+
+## Grant paths to a tool
+
+Each `[tool.<name>]` takes its own `filesystem` table with six of the lists: `read`,
+`write`, `read_file`, `write_file`, `list`, and `deny`. A tool can't take `metadata`,
+because it can test for and read the metadata of paths across your home by default, or
+`exec`, because on macOS it can run any binary it can reach, and load code it writes into
+its writable grants. A stdio MCP server's `[mcp.<name>.filesystem]` takes the same six
+lists, and `box run` refuses `metadata` and `exec` in either table by name.
+
+```toml
+[tool.git.filesystem]
+read  = ["~/src/my-service", "/Library/Developer/CommandLineTools"]
+write = ["~/src/my-service"]
+```
+
+On macOS, a tool whose program runs an Apple `/usr/bin` stub, such as `/usr/bin/git`,
+`/usr/bin/python3`, `cc`, or `make`, directly or through a child process, needs the
+active developer directory in its `read` list, as above. `xcode-select -p` prints the
+directory.
+
+A tool's grants are its own. Granting a path to `git` doesn't grant it to the agent,
+and the reverse holds too. [Add a tool](add-a-tool.md) covers the rest of a tool table.
+
+## Permit interpreter file access in the policy
+
+The box's shell and Python raise an `fs:read`, `fs:write`, `fs:delete`, or `fs:move`
+decision for each file operation, on the resolved path. Permit a tree with a path
+condition:
+
+```text
+@id("project_read")
+permit (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/src/my-service" ||
+  context.input.path like "~/src/my-service/*"
+};
+
+@id("project_write")
+permit (principal, action == Box::Action::"fs:write", resource)
+when { context.input.path like "~/src/my-service/*" };
+```
+
+Write a path under your home as `~/…`, and a directory without a trailing slash. Box
+refuses to load a rule that spells either one another way, because it could never
+match.
+
+Always give an `fs:read` permit a path condition. Box refuses no credential path
+for the interpreters on its own, so `permit fs:read` with no `when` lets a shell command read
+`~/.aws` and `~/.ssh`. To protect a file's content, forbid `fs:delete` on it as well as
+`fs:write`: a rename that overwrites the file counts as a delete of the destination.
+
+A path the shell doesn't bind to a real directory lives in the shell's memory for one
+command, and is gone when the command ends. The shell writes at most 10 MiB to such a
+file. The write that crosses the limit fails with
+`file size limit exceeded (10485760 bytes)`. A file in the project, or in another bound
+directory, has no limit from the shell.
+
+The [policy action reference](../reference/policy-actions.md#filesystem) lists every
+`fs:*` operation. For the Python side, see
+[Python in a box](../reference/python.md#file-operations).
+
+## Rules every path entry follows
+
+Box checks every `box.toml` filesystem entry before the workload starts, and refuses
+the run if one fails:
+
+- **Spelling.** Absolute, or starting with `~/`. No `..`, no glob characters (`*`, `?`,
+  `[`, `]`, `{`, `}`), no control characters, and no duplicates. A directory entry
+  already covers everything below it.
+- **The path exists** and isn't a symbolic link. On macOS, a `deny` entry can name a
+  path that doesn't exist yet.
+- **The spelling is canonical**, the path the kernel checks. On macOS write
+  `/private/tmp/work`, not `/tmp/work`. The refusal names the canonical spelling.
+- **No nesting.** Two grants of the same operation can't overlap, and a `deny` can't
+  cover a grant entirely.
+- **Not the box's own directory.** An entry can't reach into `box_dir`, and, except in
+  `metadata`, can't enclose it. `read = ["~/boxes"]` is refused when `box_dir` is
+  `/Users/me/boxes/x`.
+- **No write on `PATH` when MCP servers are declared.** In a box with a stdio MCP
+  server, a write grant at or above a directory on your `PATH` is refused.
+
+Box also refuses grants on these paths:
+
+- **The roots of system and home trees**: `/`, `/Users`, `/home`, `/System`,
+  `/Library`, `/usr`, `/etc`, `/private`, `/tmp`, `/var`, and similar. A path inside
+  one, such as `/Library/Developer/CommandLineTools`, can be granted.
+- **Machine secrets**: password databases, system keychains, `sudoers`, and the TCC
+  database, and the paths inside them.
+- **Trees that enclose a credential store**: a grant such as `read = ["~"]` that
+  contains `~/.aws`, `~/.ssh`, `~/.gnupg`, `~/.netrc`, `~/.docker`, `~/.kube`,
+  `~/.config/gcloud`, `~/.mozilla`, `~/Library/Keychains`, or a Chrome or Firefox
+  profile directory.
+
+A `read`, `write`, `read_file`, or `write_file` entry that names a credential store or
+a path inside one is allowed, and Box announces it at startup:
+
+```text
+strands-box: [agent]: exposes ~/.aws/config (read_file)
+```
+
+## Check what you granted
+
+Box prints the agent's and each tool's grants on stderr when the box starts, before the
+agent runs. It doesn't print `deny` entries, or the grants of MCP servers:
+
+```text
+strands-box: [agent] runs /Users/me/bin/claude with no policy decision over these paths:
+  read        /Users/me/src/my-service
+  write       /Users/me/src/my-service
+  exec        /Users/me/bin/claude  (command, implicit)
+strands-box: [agent] runtime minimum, added by Core:
+  ...
+  enter       /Users/me/src/my-service  (workspace, entry only)
+strands-box: [agent] HOME=/Users/me PATH=...
+```
+
+The runtime minimum is the small set of system paths a process needs to start, such as
+`/System/Library` and `/dev/null` on macOS. Box adds it to every box and lists it here.
+
+The agent's `workspace` is its starting directory. The agent can change into it, but
+can't read or write it until a list grants it.

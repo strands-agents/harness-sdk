@@ -23,6 +23,13 @@ const PYTHON_API_PATTERN = /^(\.\.\/)*api-reference\/python\/([^#]+)\.md(#(.+))?
 const TS_API_PATTERN = /^(\.\.\/)*api-reference\/typescript\/(?:classes|interfaces)\/([^.]+)\.html(#(.+))?$/
 
 /**
+ * Map a strands.experimental.bidi module path to its strands.bidi equivalent.
+ */
+function resolveExperimentalBidiModule(modulePath: string): string {
+  return modulePath.replace(/^strands\.experimental\.bidi(?=\.|$)/, 'strands.bidi')
+}
+
+/**
  * Check if a link is an old-style API reference link that needs conversion.
  */
 export function isOldApiLink(link: string): boolean {
@@ -65,10 +72,10 @@ export function convertPythonApiLink(link: string): string | null {
       const symbolPart = hashContent.slice(modulePrefix.length)
       if (symbolPart.startsWith('.')) {
         // There's a symbol after the module path
-        return `@api/python/${modulePrefix}#${symbolPart.slice(1)}`
+        return `@api/python/${resolveExperimentalBidiModule(modulePrefix)}#${symbolPart.slice(1)}`
       } else if (symbolPart === '') {
         // Hash points to the module itself
-        return `@api/python/${modulePrefix}`
+        return `@api/python/${resolveExperimentalBidiModule(modulePrefix)}`
       }
     }
 
@@ -85,7 +92,7 @@ export function convertPythonApiLink(link: string): string | null {
       }
     }
 
-    const modulePath = hashParts.slice(0, moduleEndIndex).join('.')
+    const modulePath = resolveExperimentalBidiModule(hashParts.slice(0, moduleEndIndex).join('.'))
     const symbol = hashParts.slice(moduleEndIndex).join('.')
 
     if (symbol) {
@@ -95,7 +102,7 @@ export function convertPythonApiLink(link: string): string | null {
     }
   } else {
     // No hash - convert path to dotted module notation
-    const modulePath = 'strands.' + pathPart.split('/').join('.')
+    const modulePath = resolveExperimentalBidiModule('strands.' + pathPart.split('/').join('.'))
     return `@api/python/${modulePath}`
   }
 }

@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from ..agent.state import AgentState
@@ -31,10 +32,12 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
     not the unified :class:`~strands.storage.storage.Storage` protocol. It does not resolve
     from the agent-level ``storage`` parameter. For snapshot-based persistence that integrates
     with agent-level storage, use :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager`.
-    """
 
-    # Process-global to avoid repeated log noise when multiple instances see agent-level storage.
-    _warned_storage_ignored: bool = False
+    This manager does not support an agent ``context_manager``. Each message is persisted once, so
+    the edits a context manager makes to history (truncated tool results, in-place summaries) and
+    its stash of offloaded content are not saved, and a restore reloads the unreduced history. Use
+    :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` with a context manager.
+    """
 
     def __init__(
         self,
@@ -119,8 +122,8 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
     def sync_agent(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Serialize and update the agent into the session repository.
 
-        For Agent, only updates if state or internal state has changed. BidiAgent is
-        written on every sync, preserving its existing persistence behavior.
+        For Agent, only updates if state or internal state has changed. Other LocalAgent
+        implementations are written on every sync.
 
         Args:
             agent: Agent to sync to the session.
@@ -129,7 +132,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         from ..agent.agent import Agent
 
         if not isinstance(agent, Agent):
-            # Prune held records so tracking state stays bounded for long-lived BidiAgent sessions.
+            # Prune held records so tracking state stays bounded.
             self._prune_held_records(agent)
             self.session_repository.update_agent(self.session_id, SessionAgent.from_agent(agent))
             return
@@ -216,12 +219,12 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         """
         from ..agent.agent import Agent
 
-        if not RepositorySessionManager._warned_storage_ignored and agent.storage is not None:
-            RepositorySessionManager._warned_storage_ignored = True
-            logger.warning(
-                "agent_id=<%s> | agent-level storage is set but RepositorySessionManager does not use it;"
-                " use SnapshotSessionManager for unified storage integration",
-                agent.agent_id,
+        if agent.storage is not None:
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                "Agent-level storage is set, but RepositorySessionManager does not use it; use"
+                " SnapshotSessionManager for unified storage integration",
+                stacklevel=1,
             )
         if agent.agent_id in self._latest_agent_message:
             raise SessionException("The `agent_id` of an agent must be unique in a session.")

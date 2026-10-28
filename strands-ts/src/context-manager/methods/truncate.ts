@@ -49,11 +49,11 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
   const head = fullText.slice(0, headChars)
   const tail = tailChars > 0 ? fullText.slice(-tailChars) : ''
   const elided = totalChars - headChars - tailChars
-  const marker = `[... ${elided.toLocaleString()} chars elided ...]`
+  const marker = `[... ${elided.toLocaleString('en-US')} chars elided ...]`
   const preview = [head, marker, tail].filter(Boolean).join('\n\n')
 
   const result =
-    `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString()} tokens]\n\n` +
+    `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString('en-US')} tokens]\n\n` +
     preview
 
   if (result.length >= totalChars) {

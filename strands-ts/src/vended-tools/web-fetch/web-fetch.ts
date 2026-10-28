@@ -1,6 +1,8 @@
 import { z } from 'zod'
 
 import { Agent } from '../../agent/agent.js'
+import { createAuxiliaryInvocationContext } from '../../agent/invocation-context.js'
+import type { InvokeOptions } from '../../types/agent.js'
 import { tool } from '../../tools/tool-factory.js'
 import { htmlToMarkdown } from './extract.js'
 import { type MakeWebFetchOptions, WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from './types.js'
@@ -42,10 +44,10 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
   const { mode = 'agentic', model: analystModel } = options
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
   const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
-  if (maxBytes <= 0) {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
     throw new Error(`maxBytes must be a positive number, got ${maxBytes}`)
   }
-  if (maxContentChars <= 0) {
+  if (!Number.isFinite(maxContentChars) || maxContentChars <= 0) {
     throw new Error(`maxContentChars must be a positive number, got ${maxContentChars}`)
   }
 
@@ -83,7 +85,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
         throw new Error('web_fetch: agentic mode requires a non-empty prompt.')
       }
 
-      const effectiveModel = analystModel ?? context?.agent.model
+      const effectiveModel = analystModel ?? context?.agent.auxModel
       if (!effectiveModel) {
         throw new Error(
           'web_fetch: agentic mode requires a model. ' + 'Pass model to makeWebFetch or call the tool from an agent.'
@@ -91,7 +93,11 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
       }
 
       const signal = context?.cancelSignal ?? null
-      const invokeOptions = context?.cancelSignal ? { cancelSignal: context.cancelSignal } : {}
+      const auxiliaryInvocationContext = createAuxiliaryInvocationContext(context?.invocationContext)
+      const invokeOptions: InvokeOptions = {
+        ...(context?.cancelSignal && { cancelSignal: context.cancelSignal }),
+        ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
+      }
       const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
 
       const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')

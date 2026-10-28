@@ -346,7 +346,8 @@ export class PythonBackend implements ChatBackend {
     )
     try {
       const snapshot = await this._request({ type: 'snapshot' })
-      await target._request({ type: 'seed', snapshot: snapshot.finalText })
+      const stash = await this._request({ type: 'stash' })
+      await target._request({ type: 'seed', snapshot: snapshot.finalText, stash: stash.finalText })
       return target
     } catch (error) {
       await target.dispose()

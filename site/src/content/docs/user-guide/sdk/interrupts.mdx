@@ -9,25 +9,14 @@ sourceLinks:
   - path: strands-ts/src/types/interrupt.ts
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 When your agent needs human approval or input before it continues, raise an interrupt. The agent stops its loop and hands control back to you along with the pending interrupt. You provide a response, and the agent resumes from the point where it stopped. You can raise interrupts from hook callbacks or from tool definitions. The general flow looks as follows:
 
-<div class="interrupt-flow">
-
-```mermaid
-flowchart TD
-    A[Invoke Agent] --> B[Execute Hook/Tool]
-    B --> C{Interrupts Raised?}
-    C -->|No| D[Continue Agent Loop]
-    C -->|Yes| E[Stop Agent Loop]
-    E --> F[Return Interrupts]
-    F --> G[Respond to Interrupts]
-    G --> H[Execute Hook/Tool with Responses]
-    H --> I{New Interrupts?}
-    I -->|Yes| E
-    I -->|No| D
-```
-
-</div>
+<Diagram
+  name="interrupts-resume-loop"
+  alt="Interrupt and resume. Your application sends a request to the agent, where a hook or tool runs. If it raises interrupts, the agent stops and returns them to your application, which collects a response for each one and resumes the agent with them. The hook or tool runs again with those responses; if it raises new interrupts, the cycle repeats. When no interrupts are raised, the agent loop continues."
+/>
 
 ## Hooks
 

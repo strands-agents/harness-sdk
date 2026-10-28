@@ -1,5 +1,4 @@
-import re
-import shlex
+import base64
 import shutil
 import threading
 import time
@@ -28,26 +27,43 @@ class _Sandbox:
 
     def __init__(self, body=b"", content_type="text/html", url="https://example.com/final", stderr="", exit_code=0):
         self.body = body
-        self.result = ExecutionResult(exit_code=exit_code, stdout=f"{content_type}\n{url}\n", stderr=stderr)
+        self.content_type = content_type
+        self.url = url
+        self.stderr = stderr
+        self.exit_code = exit_code
         self.commands = []
-        self.files = {}
 
     async def execute(self, command, **kwargs):
         self.commands.append(command)
-        if command.startswith("rm -f "):
-            for path in shlex.split(command)[2:]:
-                self.files.pop(path, None)
-            return ExecutionResult(exit_code=0, stdout="", stderr="")
-        if self.result.exit_code == 0:
-            self.files[re.search(r"-o (\S+)", command).group(1).strip("'")] = self.body
-        return self.result
-
-    async def read_file(self, path):
-        return self.files[path]
+        if command == web_fetch_module._SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="\n", stderr="")
+        if self.exit_code != 0:
+            return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
+        # What the shell pipeline prints: the two trailer lines, then base64(1) output (wrapped at 76 columns).
+        encoded = base64.b64encode(self.body).decode()
+        wrapped = "\n".join(encoded[i : i + 76] for i in range(0, len(encoded), 76))
+        return ExecutionResult(exit_code=0, stdout=f"{self.content_type}\n{self.url}\n{wrapped}\n", stderr=self.stderr)
 
     @property
     def curl(self):
-        return next(c for c in self.commands if c.startswith("curl "))
+        return next(c for c in self.commands if c.startswith("f=$(mktemp") and "curl " in c)
+
+
+class _PowerShellSandbox(_Sandbox):
+    """Fake sandbox whose shell is Windows PowerShell: the probe reports the edition and output lines end in CRLF."""
+
+    async def execute(self, command, **kwargs):
+        self.commands.append(command)
+        if command == web_fetch_module._SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
+        if self.exit_code != 0:
+            return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
+        encoded = base64.b64encode(self.body).decode()
+        return ExecutionResult(exit_code=0, stdout=f"{self.content_type}\r\n{self.url}\r\n{encoded}\r\n", stderr="")
+
+    @property
+    def curl(self):
+        return next(c for c in self.commands if "curl.exe " in c)
 
 
 def _context(sandbox):
@@ -192,8 +208,11 @@ async def test_fetch_text_runs_curl_in_the_sandbox_and_reads_the_final_hop():
         " -- '",
     ):
         assert flag in command
-    # The body file is removed afterwards.
-    assert sandbox.commands[-1].startswith("rm -f ") and sandbox.files == {}
+    # One shell probe, then one round-trip: the shell picks the scratch file, returns the body as base64, and
+    # removes the file itself.
+    assert sandbox.commands == [web_fetch_module._SHELL_PROBE, command]
+    assert command.startswith("f=$(mktemp -t strands-web-fetch.XXXXXX) && ")
+    assert command.endswith('| base64; s=$?; rm -f "$f"; exit $s')
 
 
 async def test_fetch_text_handles_a_missing_content_type():
@@ -204,8 +223,8 @@ async def test_fetch_text_handles_a_missing_content_type():
 
 
 async def test_fetch_text_truncates_the_body_in_the_sandbox():
-    command = web_fetch_module._curl_command("https://example.com", "/tmp/f")
-    assert f"&& head -c {web_fetch_module._MAX_BYTES} /tmp/f > /tmp/f.part && mv -f /tmp/f.part /tmp/f" in command
+    command = web_fetch_module._curl_command("https://example.com")
+    assert f'&& head -c {web_fetch_module._MAX_BYTES} "$f" | base64' in command
     assert "--max-filesize" not in command
 
 
@@ -231,7 +250,42 @@ async def test_fetch_text_surfaces_curl_errors_and_still_cleans_up():
     sandbox = _Sandbox(stderr="curl: (22) The requested URL returned error: 404\n", exit_code=22)
     with pytest.raises(RuntimeError, match=r"\(22\).*404"):
         await web_fetch_module._fetch_text(sandbox, "https://example.com/missing", "curl")
-    assert sandbox.commands[-1].startswith("rm -f ")
+    assert len(sandbox.commands) == 2
+
+
+async def test_fetch_text_probes_the_shell_once_per_sandbox():
+    sandbox = _Sandbox(body=b"page", content_type="text/plain")
+    await web_fetch_module._fetch_text(sandbox, "https://example.com/a", "curl")
+    await web_fetch_module._fetch_text(sandbox, "https://example.com/b", "curl")
+    assert sandbox.commands.count(web_fetch_module._SHELL_PROBE) == 1
+    assert len(sandbox.commands) == 3
+    assert await web_fetch_module._shell(_PowerShellSandbox()) == "powershell"
+
+
+async def test_fetch_text_runs_curl_exe_through_powershell_and_reads_crlf_output():
+    sandbox = _PowerShellSandbox(body="Hello wörld".encode(), content_type="text/plain; charset=utf-8")
+    resolved, text = await web_fetch_module._fetch_text(sandbox, "https://example.com/it's", "curl")
+    assert (resolved, text) == ("https://example.com/final", "Hello wörld")
+    command = sandbox.curl
+    assert "\n  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time " in command
+    # The URL is a single-quoted PowerShell literal (no expansion), with its own quotes doubled.
+    assert command.count("'https://example.com/it''s'") == 1
+    assert "$([guid]::NewGuid())" in command and "strands-web-fetch-" in command
+    assert f".ReadBytes([Math]::Min($in.Length, {web_fetch_module._MAX_BYTES}))" in command
+    assert command.endswith("exit $s")
+    # Failures reach stderr through the console handle rather than PowerShell's CLIXML-wrapped error stream, and a
+    # curl.exe that cannot run is exit 127.
+    assert "\n$s = 127\ntry {\n" in command
+    assert "} catch { if ($s -eq 0) { $s = 1 }; [Console]::Error.Write($_.Exception.Message) }" in command
+    # Both the stderr check and the cleanup take the temp path literally (%TEMP% may contain wildcards).
+    assert command.count("-LiteralPath") == 2
+    assert "mktemp" not in command and "&&" not in command
+
+
+async def test_fetch_text_surfaces_powershell_curl_errors():
+    sandbox = _PowerShellSandbox(stderr="curl: (22) The requested URL returned error: 404\r\n", exit_code=22)
+    with pytest.raises(RuntimeError, match=r"\(22\).*404"):
+        await web_fetch_module._fetch_text(sandbox, "https://example.com/missing", "curl")
 
 
 @pytest.mark.skipif(shutil.which("curl") is None, reason="curl not installed")
@@ -285,7 +339,13 @@ async def test_fetch_text_end_to_end_through_the_local_environment():
         _, huge = await web_fetch_module._fetch_text(sandbox, f"{base}/huge", "curl")
         assert huge == "x" * web_fetch_module._MAX_CHARS
         assert await web_fetch_module._fetch_text(sandbox, f"{base}/notype", "curl") == (f"{base}/notype", "a < b")
-        assert (await sandbox.execute("ls /tmp | grep -c strands-web-fetch")).stdout.strip() == "0"
+        # Same scratch directory the tool derives, asked in the shell the local environment actually runs.
+        leftovers = (
+            "(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'strands-web-fetch*' | Measure-Object).Count"
+            if await web_fetch_module._shell(sandbox) == "powershell"
+            else 'ls "${TMPDIR:-/tmp}" | grep -c strands-web-fetch'
+        )
+        assert (await sandbox.execute(leftovers)).stdout.strip() == "0"
         with pytest.raises(RuntimeError, match="404"):
             await web_fetch_module._fetch_text(sandbox, f"{base}/missing", "curl")
     finally:
@@ -419,9 +479,9 @@ def test_resolve_web_fetch_model_keeps_haiku_for_anthropic_on_bedrock():
 
 def test_resolve_web_fetch_model_reuses_main_model_for_unknown_bedrock_family(caplog):
     with caplog.at_level("WARNING"):
-        model = resolve_web_fetch_model("bedrock/amazon.nova-pro-v1:0", None)
+        model = resolve_web_fetch_model("bedrock/cohere.command-r-plus-v1:0", None)
     assert isinstance(model, BedrockModel)
-    assert model.get_config()["model_id"] == "amazon.nova-pro-v1:0"
+    assert model.get_config()["model_id"] == "cohere.command-r-plus-v1:0"
     assert "could not identify the Bedrock model family" in caplog.text
 
 

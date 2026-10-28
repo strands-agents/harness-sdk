@@ -12,7 +12,7 @@
  * port into the core SDK later; keep it minimal and SDK-idiomatic.
  */
 
-import { randomUUID } from 'node:crypto'
+import { Buffer } from 'node:buffer'
 import { TextDecoder } from 'node:util'
 
 import { Agent, type Model, type Sandbox, tool, type Tool } from '@strands-agents/sdk'
@@ -72,19 +72,62 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function curlCommand(url: string, output: string): string {
+function curlCommand(url: string): string {
   // -g keeps `{}`/`[]` in the URL literal; --proto/--proto-redir keep the request and any redirect on
   // http(s) (curl would otherwise follow a redirect to ftp://); --fail turns HTTP errors into a non-zero
-  // exit; -sS keeps curl's own error text on stderr. The body goes to a file (stdout is decoded text,
-  // which would lose the charset and split multi-byte characters) and is truncated in the sandbox before
-  // it is read back; stdout carries only the final hop's content type and URL.
-  const out = shellQuote(output)
-  const part = shellQuote(`${output}.part`)
+  // exit; -sS keeps curl's own error text on stderr. The body is spooled to a file the shell picks with
+  // mktemp (so the path only ever has to make sense inside the sandbox), truncated there, and returned over
+  // stdout as base64: ASCII survives the chunked stdout decoding that raw bytes would not, and the charset is
+  // applied once here. stdout is the final hop's content type and URL, then the base64 body.
   return (
+    `f=$(mktemp -t strands-web-fetch.XXXXXX) && ` +
     `curl -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
-    `-A ${shellQuote(USER_AGENT)} -o ${out} -w '%{content_type}\\n%{url_effective}' -- ${shellQuote(url)} ` +
-    `&& head -c ${MAX_BYTES} ${out} > ${part} && mv -f ${part} ${out}`
+    `-A ${shellQuote(USER_AGENT)} -o "$f" -w '%{content_type}\\n%{url_effective}\\n' -- ${shellQuote(url)} ` +
+    `&& head -c ${MAX_BYTES} "$f" | base64; s=$?; rm -f "$f"; exit $s`
   )
+}
+
+function powershellCurlCommand(url: string): string {
+  // The same contract for a sandbox whose shell is PowerShell (the local environment on Windows). `curl.exe`
+  // because plain `curl` is an Invoke-WebRequest alias there; the body is truncated and base64-encoded in
+  // .NET. Errors are written through the console handle, not PowerShell's own error stream, which is
+  // CLIXML-wrapped when stderr is a pipe; the `try` also turns a missing curl.exe into a plain exit 127.
+  // `-LiteralPath` because `%TEMP%` may contain wildcard characters.
+  const quoted = `'${url.replace(/'/g, "''")}'`
+  return [
+    '$f = Join-Path ([IO.Path]::GetTempPath()) "strands-web-fetch-$([guid]::NewGuid())"',
+    '$s = 127',
+    'try {',
+    `  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
+      `-A '${USER_AGENT}' -o $f --stderr "$f.err" -w '%{content_type}\\n%{url_effective}\\n' ${quoted}`,
+    '  $s = $LASTEXITCODE',
+    '  if ($s -eq 0) {',
+    '    $in = [IO.File]::OpenRead($f)',
+    `    try { $b = (New-Object IO.BinaryReader $in).ReadBytes([Math]::Min($in.Length, ${MAX_BYTES})) }` +
+      ' finally { $in.Dispose() }',
+    '    [Convert]::ToBase64String($b)',
+    '  } elseif (Test-Path -LiteralPath "$f.err") { [Console]::Error.Write([IO.File]::ReadAllText("$f.err")) }',
+    '} catch { if ($s -eq 0) { $s = 1 }; [Console]::Error.Write($_.Exception.Message) }',
+    'Remove-Item -Force -LiteralPath $f, "$f.err" -ErrorAction SilentlyContinue',
+    'exit $s',
+  ].join('\n')
+}
+
+// The Sandbox contract names no shell dialect, so the only check that holds for every sandbox is to ask: PowerShell
+// prints its edition (`Desktop` or `Core`), `sh` expands the unset variable to an empty line.
+/** @internal Exported for tests. */
+export const SHELL_PROBE = 'echo "${PSEdition}"'
+const shells = new WeakMap<Sandbox, 'sh' | 'powershell'>()
+
+/** @internal Exported for tests. */
+export async function shellOf(sandbox: Sandbox): Promise<'sh' | 'powershell'> {
+  let shell = shells.get(sandbox)
+  if (!shell) {
+    const result = await sandbox.execute(SHELL_PROBE, { timeout: 10 })
+    shell = ['Desktop', 'Core'].includes(result.stdout.trim()) ? 'powershell' : 'sh'
+    shells.set(sandbox, shell)
+  }
+  return shell
 }
 
 function decode(data: Uint8Array, contentType: string): string {
@@ -106,26 +149,16 @@ function toText(data: Uint8Array, contentType: string, resolvedUrl: string, url:
 
 /** Fetch a validated `url` with `curl` inside `sandbox`; throws when curl fails. */
 async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
-  const output = `/tmp/strands-web-fetch-${randomUUID().replaceAll('-', '')}`
-  let contentType: string
-  let resolvedUrl: string
-  let data: Uint8Array
-  try {
-    const result = await sandbox.execute(curlCommand(url, output), { timeout: TIMEOUT_SECONDS + 5 })
-    if (result.exitCode !== 0) {
-      throw new Error(result.stderr.trim() || `curl exited with code ${result.exitCode}`)
-    }
-    // The trailer is the last two lines; the content-type line is empty when the header is absent.
-    const lines = result.stdout.replace(/\n+$/, '').split('\n')
-    resolvedUrl = (lines.pop() ?? '').trim()
-    contentType = (lines.pop() ?? '').trim()
-    data = await sandbox.readFile(output)
-  } finally {
-    await sandbox
-      .execute(`rm -f ${shellQuote(output)} ${shellQuote(`${output}.part`)}`, { timeout: 10 })
-      .catch(() => undefined)
+  const command = (await shellOf(sandbox)) === 'powershell' ? powershellCurlCommand(url) : curlCommand(url)
+  const result = await sandbox.execute(command, { timeout: TIMEOUT_SECONDS + 5 })
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `curl exited with code ${result.exitCode}`)
   }
-  return toText(data, contentType, resolvedUrl, url)
+  // Two header lines (the content-type line is empty when the header is absent), then the base64 body,
+  // which base64(1) may wrap; whitespace is not part of the encoding.
+  const [contentType = '', resolvedUrl = '', ...body] = result.stdout.split('\n')
+  const data = new Uint8Array(Buffer.from(body.join('').replace(/\s+/g, ''), 'base64'))
+  return toText(data, contentType.trim(), resolvedUrl.trim(), url)
 }
 
 /** Fetch a validated `url` from the harness process with global `fetch` (bypasses the sandbox). */

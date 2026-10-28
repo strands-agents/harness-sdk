@@ -26,6 +26,13 @@ permit (
 
 permit (
   principal,
+  action == Action::"retrieve_context",
+  resource
+);
+
+// Vended by a ContextOffloader (one a project adds, or an older harness release).
+permit (
+  principal,
   action == Action::"retrieve_offloaded_content",
   resource
 );

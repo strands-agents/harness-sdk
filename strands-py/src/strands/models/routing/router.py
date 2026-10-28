@@ -54,17 +54,20 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from ..._middleware.stages import InvokeModelStage
+from ...agent.invocation_context import _create_auxiliary_invocation_context
 from ...hooks.events import AfterInvocationEvent, AfterModelCallEvent, BeforeInvocationEvent
 from ...hooks.registry import HookOrder
+from ...middleware.stages import InvokeModelStage
 from ...plugins.plugin import Plugin
 from ..model import Model
 from .fallback_strategy import FallbackStrategy
 from .strategy import RoutingAttempt, RoutingContext, RoutingStrategy
 
 if TYPE_CHECKING:
-    from ..._middleware.stages import InvokeModelContext
     from ...agent.agent import Agent
+    from ...agent.invocation_context import InvocationContext
+    from ...middleware.stages import InvokeModelContext
+    from ...types.agent import LocalAgent
     from ...types.content import Messages, SystemPrompt
     from ...types.tools import ToolSpec
 
@@ -205,7 +208,7 @@ class ModelRouter(Plugin):
         if agent._model_router is not self:
             raise ValueError("ModelRouter must be passed through Agent(model=...), not plugins=[...]")
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, self._selection_middleware())
+        agent.add_middleware(InvokeModelStage.Input, self._selection_middleware())
         # Fallback must see whether ModelRetryStrategy (DEFAULT) already claimed the retry.
         agent.hooks.add_callback(AfterModelCallEvent, self._on_model_result, order=HookOrder.MODEL_ROUTING)
         # One invocation_state dict can span several Before/After pairs, because Agent._run_loop
@@ -298,6 +301,7 @@ class ModelRouter(Plugin):
                     context.system_prompt,
                     context.tool_specs,
                     context.invocation_state,
+                    context.invocation_context,
                 )
                 candidate, model = await self._open(routing_context)
                 # The opening candidate counts as used for this round.
@@ -340,7 +344,9 @@ class ModelRouter(Plugin):
         count.
         """
         while True:
-            routing_context = self._routing_context_from_agent(event.agent, event.invocation_state, state.attempts)
+            routing_context = self._routing_context_from_agent(
+                event.agent, event.invocation_state, event.invocation_context, state.attempts
+            )
             try:
                 # Validated inside the try: a model error is already pending, so a broken answer must
                 # not replace it. The opening choice has nothing pending and lets the error surface.
@@ -401,7 +407,7 @@ class ModelRouter(Plugin):
         if _get_routing_state(event.invocation_state, key) is not None:
             del event.invocation_state[key]
 
-    def _state_key(self, agent: Agent) -> str:
+    def _state_key(self, agent: LocalAgent) -> str:
         """Scope routing state to one agent/router pair.
 
         One ``invocation_state`` can serve several agents, and one router several agents, so neither
@@ -418,7 +424,11 @@ class ModelRouter(Plugin):
         return f"{_ROUTING_KEY_PREFIX}:{id(agent):x}:{id(self):x}"
 
     def _routing_context_from_agent(
-        self, agent: Agent, invocation_state: Mapping[str, Any], attempts: Sequence[RoutingAttempt] = ()
+        self,
+        agent: Agent,
+        invocation_state: Mapping[str, Any],
+        invocation_context: InvocationContext | None = None,
+        attempts: Sequence[RoutingAttempt] = (),
     ) -> RoutingContext:
         """Build a ``RoutingContext`` from the agent, matching the shapes middleware passes."""
         system_prompt = (
@@ -429,6 +439,7 @@ class ModelRouter(Plugin):
             system_prompt,
             agent.tool_registry.get_all_tool_specs(),
             invocation_state,
+            invocation_context,
             attempts,
         )
 
@@ -438,6 +449,7 @@ class ModelRouter(Plugin):
         system_prompt: SystemPrompt | None,
         tool_specs: Sequence[ToolSpec],
         invocation_state: Mapping[str, Any],
+        invocation_context: InvocationContext | None = None,
         attempts: Sequence[RoutingAttempt] = (),
     ) -> RoutingContext:
         """Build a ``RoutingContext`` over this router's candidates.
@@ -453,6 +465,7 @@ class ModelRouter(Plugin):
             candidates=self._candidates,
             invocation_state=invocation_state,
             attempts=tuple(attempts),
+            invocation_context=_create_auxiliary_invocation_context(invocation_context),
         )
 
 

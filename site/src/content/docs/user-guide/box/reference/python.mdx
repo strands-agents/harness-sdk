@@ -1,0 +1,240 @@
+---
+title: Python in a box
+description: How a box runs the agent's Python scripts in Monty, the modules and file operations a script can use, fetch() for HTTP, the limits and exit statuses, and the rules to write.
+sidebar:
+  label: "Python (Monty)"
+---
+
+A box runs the agent's Python scripts in [Monty](https://github.com/pydantic/monty), an
+interpreter for a subset of Python. Policy decides each file operation a script makes,
+and the egress gateway decides each request a script sends with `fetch()`.
+
+## Example
+
+The workspace is `~/src/project`, and it holds `notes.txt` and an empty `out` directory.
+The agent runs:
+
+```bash
+python3 -c "from pathlib import Path
+text = Path('notes.txt').read_text()
+Path('out/notes.txt').write_text(text.upper())
+print('wrote', len(text))"
+```
+
+To let the script read the project and write in `out`, permit both in `policy.dw`:
+
+```text
+@id("project_read")
+permit (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/src/project" ||
+  context.input.path like "~/src/project/*"
+};
+
+@id("out_write")
+permit (principal, action == Box::Action::"fs:write", resource)
+when {
+  context.input.path like "~/src/project/out/*" &&
+  context.input.operation == Box::FsWriteOperation::"write_content"
+};
+```
+
+The script writes `~/src/project/out/notes.txt` and exits `0`. Example output:
+
+```text
+wrote 18
+```
+
+## Python support
+
+A script imports `asyncio`, `base64`, `binascii`, `collections`, `copy`, `dataclasses`,
+`datetime`, `functools`, `itertools`, `json`, `math`, `os`, `pathlib`, `random`, `re`,
+`sys`, `time`, `typing`, and `unicodedata`. Any other module, including `subprocess`,
+`socket`, `urllib`, and every package from PyPI, raises `ModuleNotFoundError`.
+
+A name that Monty doesn't define, such as `input()`, `memoryview()`, or `__import__()`,
+raises `NameError`. Each script runs in a new interpreter, so a variable that one script
+sets is undefined in the next. An uncaught exception prints
+`<exception type>: <message>` on stderr.
+
+## Running a script
+
+| | The `python3` or `python` alias | `python` or `python3` in Strands Shell |
+|---|---|---|
+| Example | `python3 -c "print(6*7)"`, run by the harness | `python3 report.py` in Strands Shell, such as `zsh -c 'python3 report.py'` |
+| Forms | `-c SOURCE`, or one `SCRIPT` file | `-c SOURCE`, one `SCRIPT` file, `--version` or `-V`, and `--help` or `-h` |
+| Script file | Read with the agent's own access, so a list in `[agent.filesystem]` must grant it | Read by Strands Shell, under an `fs:read` decision |
+| Policy decisions | The script's file operations | `shell:exec` for the command, `fs:read` for a script file, and the script's file operations |
+
+In Strands Shell, `python` and `python3` always run Monty, the box's Python, even when the
+operator's `PATH` holds the host OS's Python, and `python3 --version` prints
+`Monty (Strands-Box Python subset)`. Strands Shell refuses these forms with exit status
+`2`:
+
+- `python` alone, or `python` that reads its source from stdin, such as a pipe or a
+  heredoc.
+- `python -`.
+- Any argument after the `-c` source or the script file.
+
+## File operations
+
+Each file operation is one decision, on `context.input.path` and
+`context.input.operation`. A relative path is rooted at the workspace, and a path under
+the operator's home starts with `~/`.
+
+| Python | Action | `operation` |
+|---|---|---|
+| `Path.read_text()`, `Path.read_bytes()`, `open(path)`, `open(path, "rb")` | `fs:read` | `read_content` |
+| `Path.write_text()`, `Path.write_bytes()`, and `open()` in a mode that writes or appends | `fs:write` | `write_content` |
+| `os.stat()`, `Path.exists()`, `Path.is_file()`, `Path.is_dir()`, `Path.is_symlink()` | `fs:read` | `read_metadata` |
+| `os.listdir()`, `Path.iterdir()` | `fs:read` | `enumerate` |
+| `Path.mkdir()` | `fs:write` | `create_dir` |
+| `Path.unlink()`, `Path.rmdir()` | `fs:delete` | `remove_file`, `remove_dir` |
+| `Path.rename(destination)` | `fs:read` on the source, `fs:move` on each path, and `fs:delete` on a destination that exists | `read_content`, `rename`, and `remove_file` or `remove_dir` |
+
+Each read or write on a handle from `open()` is decided again. `os.stat()` returns the
+real size and file type, with `st_uid` and `st_gid` set to `0` and `st_nlink` set to
+`1`.
+
+These raise an error whatever the policy says:
+
+| Python | Raises | Use instead |
+|---|---|---|
+| `Path.resolve()`, `Path.absolute()` | `RuntimeError: Path.resolve: not supported by this box's Python (Monty)` | The path as written |
+| `os.getenv()`, `os.environ` | `RuntimeError: 'os.getenv' is not supported in this environment` | A value in the script's source |
+| `Path.mkdir(parents=True)` | `PermissionError` | One `mkdir()` for each level |
+| A path outside the operator's home and the workspace | `PermissionError: <path>: outside this box's home and every declared bind` | A path under the operator's home or the workspace |
+| A path that is a symbolic link, or has one in it | `PermissionError: <path>: resolves to a different path, so it is not the identity policy judged` | The path of the file the link points to |
+| The box directory, or the `box.toml` and `policy.dw` this run loaded | `PermissionError: <path>: resolves into trusted Box state, which no policy may open`, or `resolves to an authority source that this run loaded` | A path outside the box directory |
+
+## Time and randomness
+
+Each call in this table takes no policy decision.
+
+| Python | Returns |
+|---|---|
+| `datetime.datetime.now()` | The current time in UTC, with no time zone |
+| `datetime.datetime.now(tz)` | The current time in `tz` |
+| `datetime.date.today()` | The current date in UTC |
+| `time.time()` | Seconds since the Unix epoch |
+| `time.monotonic()` | A clock that only moves forward |
+| `os.urandom(n)` | `n` random bytes, up to 1 MiB |
+| `time.sleep(seconds)`, `asyncio.sleep(seconds)` | After the wait. Two concurrent sleeps take the sum of their waits. |
+
+## `fetch()`
+
+`fetch()` sends one HTTP request through the box's egress gateway, and returns the
+response. It's a built-in name, and needs no import.
+
+```python
+fetch(url, method="GET", headers=None, body=None)
+```
+
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `url` | `str` | required | An `http` or `https` URL. |
+| `method` | `str` | `"GET"` | The HTTP method. |
+| `headers` | `dict` of `str` to `str` | `None` | The request headers. |
+| `body` | `str` or `bytes` | `None` | The request body. |
+
+Each argument is positional or a keyword. The return value is a `dict`:
+
+| Key | Type | Value |
+|---|---|---|
+| `status` | `int` | The HTTP status. |
+| `headers` | `dict` | The response headers, by lowercase name. A repeated header is one value, joined with `, `, and `set-cookie` values are joined with a newline. |
+| `body` | `str` | The response body. |
+
+```python
+r = fetch("https://api.github.com/zen", headers={"User-Agent": "notes-script"})
+print(r["status"], r["body"])
+```
+
+Example output:
+
+```text
+200 Mind your words, they are important.
+```
+
+| Error | Cause |
+|---|---|
+| `TypeError` | No `url`, an argument of the wrong type, an unknown keyword, more than four positional arguments, or one argument given twice. Nothing is sent. |
+| `OSError: access denied: <host>` | The URL's scheme isn't `http` or `https`, or its host is `localhost` or a literal loopback, private, or link-local address. Nothing is sent. |
+| `OSError: error sending request for url (<url>)` | No `net:connect` permit matches the host, so the connection is refused before any HTTP is sent. |
+| `OSError` | The response body is larger than 1 MiB. |
+| Status `403`, with header `x-strands-box-egress: refused` | `net:connect` is permitted, and the gateway refused the request. The body says why. The script receives it as a response, and must check `status`. A `403` without the header comes from the server. |
+
+## Limits and exit statuses
+
+| Limit | When a script passes it |
+|---|---|
+| 10,000 calls that Box answers, such as file operations and `fetch()` | `RuntimeError`, which the script can't catch |
+| 180 seconds of sleep in total | `TimeoutError`, at once, from the sleep that would pass it |
+| 128 MiB in one allocation | `MemoryError`, which the script can't catch |
+| 1 MiB from one `os.urandom()` | `ValueError` |
+| 1 MiB in one `fetch()` response body | `OSError` |
+
+| Exit status | Meaning |
+|---|---|
+| `0` | The script completed. |
+| `1` | The script raised an exception it didn't catch, including a policy refusal and a limit. |
+| `2` | Strands Shell route only: a form the command refuses. |
+| `125` | Box didn't run the script to its end: Box failed, or the script ran longer than the alias waits for it. |
+| `126` | Strands Shell route only: policy refused `shell:exec` for the command. |
+
+## Policy
+
+Monty raises only `fs:read`, `fs:write`, `fs:delete`, and `fs:move`. A file operation
+that no `permit` matches is refused. Put a path condition on each `fs:*` permit, as in
+the [Example](#example): an `fs:read` permit with no path condition reads every file
+under the operator's home through Monty. A `forbid` refuses a path whatever another rule
+permits:
+
+```text
+@id("no_keys")
+forbid (principal, action in [Box::Action::"fs:read", Box::Action::"fs:write"], resource)
+when { context.input.path like "~/.ssh/*" || context.input.path like "~/.aws/*" };
+```
+
+To run `python` and `python3` in Strands Shell, permit `shell:exec` for them:
+
+```text
+@id("python_in_shell")
+permit (principal, action == Box::Action::"shell:exec", resource)
+when { ["python", "python3"].contains(context.input.program) };
+```
+
+The egress gateway decides each `fetch()` with `net:connect` and `http:request`, as for
+the agent's own requests. To permit a host, write the rules in
+[Allow a host](../guides/network-and-credentials.md#allow-a-host).
+
+| Action | Field | Value |
+|---|---|---|
+| `fs:read`, `fs:write`, `fs:delete`, `fs:move` | `context.input.path` | The path. See [File operations](#file-operations). |
+| | `context.input.operation` | `Box::FsReadOperation`, `Box::FsWriteOperation`, `Box::FsDeleteOperation`, or `Box::FsMoveOperation`, with a value from the [File operations](#file-operations) table |
+| `shell:exec` | `context.input.program` | `python` or `python3`, as typed |
+| `net:connect` | `context.input.host`, `context.input.port` | The `fetch()` URL's host and port |
+| `http:request` | `context.input.host`, `context.input.method`, `context.input.path` | The `fetch()` URL's host, the method, and the URL path |
+
+## Troubleshooting
+
+| The script sees | Cause | Fix |
+|---|---|---|
+| `PermissionError: policy denied this operation on '<path>' [default-deny]` | No `permit` matches the operation. | Add a `permit` for the action on that path, with `~/` for a path under the operator's home. |
+| `PermissionError: policy denied this operation on '<path>' [policy: <id>]` | The rule with that `@id` refused the operation. | Change the rule, or the path. |
+| `OSError: error sending request for url (<url>)` | No `net:connect` permit matches the host, so the connection is refused before any HTTP is sent. | Permit `net:connect` and `http:request` for the host. |
+| `fetch()` returns status `403` with header `x-strands-box-egress: refused` | `net:connect` is permitted, and no `http:request` permit matches. The body says why. | Permit `http:request` for the host and path. |
+| `strands-shell: effect denied: policy denied this operation on 'python'`, exit status `126` | No `shell:exec` permit names the command. | Permit `shell:exec` for `python` and `python3`. |
+
+The decision log records each decision with the rule's `@id`, as
+[Check what policy decided](../guides/write-a-policy.md#check-what-policy-decided)
+shows.
+
+## See also
+
+- [How Box runs Python scripts](https://github.com/strands-agents/box/blob/main/docs/design/monty.md),
+  in the Box repository: the routes, the steps for each file operation, and the residual
+  risk.
+- [Strands Shell in a box](shell.md): the shell that runs `python` and `python3`.
+- [Network and credentials](../guides/network-and-credentials.md): the rules for a host,
+  and a credential that the gateway adds to a request.

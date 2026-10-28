@@ -2,6 +2,12 @@
 
 Skills for this repository. See [agentskills.io](https://agentskills.io/home) for the general format.
 
+## Build with Strands
+
+| Skill | Purpose |
+|-------|---------|
+| **strands** | Helps coding agents choose, scaffold, extend, and migrate applications with Strands Agents. Includes focused entry points for scaffolding an agent, adding a tool, connecting an MCP server, and porting from LangGraph. Claude Code discovers `strands` in this repository through the tracked `.claude/skills` symlink; the four focused entry points under `strands/skills/` load only when the directory is installed as a plugin. |
+
 ## PR workflow
 
 | Skill | Purpose |
@@ -17,7 +23,9 @@ Skills for this repository. See [agentskills.io](https://agentskills.io/home) fo
 | **docs-writer** | Drafts or rewrites documentation pages following the project's voice and structure guidelines. |
 | **docs-reviewer** | Reviews drafts for voice consistency, structure, and terminology before PR submission. |
 | **docs-audit** | Assesses published pages for quality, accuracy, and voice compliance. |
+| **docs-verifier** | Verifies every code example and factual claim on a page against the repo source, citing the `file:line` behind each claim, and type-checks or runs the code blocks. |
 | **docs-planner** | Identifies documentation gaps and prioritizes the backlog. |
+| **docs-diagrams** | Designs and draws theme-aware SVG diagrams for the docs following `references/diagrams.md`, then screenshots them in light and dark mode to verify. |
 
 ## Code review
 
@@ -42,7 +50,7 @@ Create a directory under `.agents/skills/<skill-name>/` with at least a `SKILL.m
 ```
 
 Guidelines:
-- Name skills as `{domain}-{action}` (e.g. `pr-create`, `docs-audit`)
+- Name contributor-workflow skills as `{domain}-{action}` (e.g. `pr-create`, `docs-audit`); user-facing skills such as `strands` are named for the product
 - Keep instructions specific to this repo — reference actual file paths and conventions
 - If a workflow involves unreliable CLI commands, bundle a tested script rather than inlining commands
 - The `description` field is what the agent uses to decide whether to load the skill — make it specific about trigger conditions

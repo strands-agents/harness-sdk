@@ -184,6 +184,19 @@ describe('HTML to Markdown Conversion', () => {
       expect(markdown).not.toContain('script')
     })
 
+    it('should replace a diagram figure with its description', () => {
+      const html =
+        '<p>Before</p><figure class="dg-figure" data-diagram="agent-loop">' +
+        '<svg role="img" aria-label="The model calls tools until it responds."><text>Model</text><text>TOOL CALLS</text></svg>' +
+        '<figcaption>One pass of the loop.</figcaption></figure><p>After</p>'
+      const markdown = htmlToMarkdown(html)
+
+      expect(markdown).toContain('> **Diagram:** The model calls tools until it responds.')
+      expect(markdown).toContain('> One pass of the loop.')
+      expect(markdown).not.toContain('TOOL CALLS')
+      expect(markdown).toMatch(/Before[\s\S]*Diagram[\s\S]*After/)
+    })
+
     it('should remove lite-youtube elements so no bare [Play] link appears', () => {
       const html = `
         <p>*<a href="https://www.youtube.com/watch?v=abc123">Watch on YouTube</a>*</p>

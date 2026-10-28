@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from strands.storage import S3Storage
+from strands.storage.storage import _NAMESPACED, StorageSearchResult
 from strands.types.exceptions import StorageError
 
 
@@ -84,6 +85,61 @@ class TestS3Storage:
         await ns.write("key", b"value")
         assert await ns.read("key") == b"value"
         assert await storage.read("scope/key") == b"value"
+
+    @pytest.mark.asyncio
+    async def test_namespace_returns_scoped_instance(self, s3_bucket):
+        storage = S3Storage("test-bucket", prefix="agents", boto_session=s3_bucket)
+        scoped = storage.namespace("memory/agent/")
+        await scoped.write("notes.md", b"hello")
+
+        assert isinstance(scoped, S3Storage)
+        assert getattr(scoped, "_namespaced", None) is _NAMESPACED
+        assert await storage.list("") == ["memory/agent/notes.md"]
+        assert await scoped.list("") == ["notes.md"]
+        assert await storage.namespace("memory").namespace("agent").read("notes.md") == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_namespace_shares_client(self, storage):
+        scoped = storage.namespace("a").namespace("b")
+        assert scoped._get_client() is storage._get_client()
+
+    @pytest.mark.asyncio
+    async def test_namespace_search_is_scoped(self, storage):
+        await storage.write("other/memory-agent-notes.md", b"unrelated")
+        scoped = storage.namespace("memory/agent")
+        await scoped.write("deploy.md", b"blue green deploys")
+        await scoped.write("theme.md", b"dark mode")
+
+        results = await scoped.search("memory agent deploy")
+
+        assert [result.key for result in results] == ["deploy.md"]
+
+    @pytest.mark.asyncio
+    async def test_namespace_keeps_subclass_overrides_and_shares_client(self, s3_bucket):
+        class TaggedStorage(S3Storage):
+            async def search(self, query: str) -> list[StorageSearchResult]:
+                return [StorageSearchResult(key=f"custom:{query}", score=1.0)]
+
+        parent = TaggedStorage("test-bucket", boto_session=s3_bucket)
+        scoped = parent.namespace("memory")
+        await scoped.write("k", b"v")
+
+        assert isinstance(scoped, TaggedStorage)
+        assert [result.key for result in await scoped.search("q")] == ["custom:q"]
+        assert scoped._get_client() is parent._get_client()
+        assert await parent.read("memory/k") == b"v"
+
+    @pytest.mark.asyncio
+    async def test_namespace_passes_scoped_instance_to_strategy(self, s3_bucket):
+        strategy = AsyncMock()
+        strategy.search.return_value = []
+        scoped = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=strategy).namespace("memory")
+
+        await scoped.write("deploy.md", b"x")
+        await scoped.search("query")
+
+        strategy.index.assert_awaited_once_with(scoped, "deploy.md", b"x")
+        strategy.search.assert_awaited_once_with(scoped, "query")
 
     def test_rejects_both_region_and_session(self):
         import boto3
@@ -235,6 +291,16 @@ class TestS3StorageWithPrefix:
         client = s3_bucket.client("s3")
         response = client.get_object(Bucket="test-bucket", Key="agents/data/key")
         assert response["Body"].read() == b"hello"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("prefix", ["agents/data/", "/agents//data//"])
+    async def test_prefix_with_extra_slashes_maps_to_the_same_keys(self, s3_bucket, prefix):
+        await S3Storage("test-bucket", prefix=prefix, boto_session=s3_bucket).write("key", b"hello")
+
+        client = s3_bucket.client("s3")
+        response = client.get_object(Bucket="test-bucket", Key="agents/data/key")
+        assert response["Body"].read() == b"hello"
+        assert await S3Storage("test-bucket", prefix=prefix, boto_session=s3_bucket).list() == ["key"]
 
     @pytest.mark.asyncio
     async def test_list_strips_prefix(self, prefixed_storage):

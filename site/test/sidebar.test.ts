@@ -209,7 +209,6 @@ describe('Sidebar Generation from navigation.yml', () => {
       { label: 'Manage the context window', slug: 'docs/user-guide/sdk/context-management' },
       { label: 'Pause for input and control', slug: 'docs/user-guide/sdk/agents/interventions/human-in-the-loop' },
       { label: 'Coordinate multiple agents', slug: 'docs/user-guide/sdk/multi-agent/multi-agent-patterns' },
-      { label: 'Build a voice agent', slug: 'docs/user-guide/sdk/bidirectional-streaming/quickstart' },
     ])
   })
 })

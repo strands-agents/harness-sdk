@@ -179,7 +179,8 @@ describe('e2e', () => {
     await agent.invoke(`${TESTING} Say hi in one word.`)
     const entries = readdirSync(sessionDir, { recursive: true, withFileTypes: true })
     expect(entries.some((entry) => entry.isFile() && entry.name === 'snapshot_latest.json')).toBe(true)
-    const minted = entries.filter((entry) => entry.isDirectory() && /^[0-9a-f]{8}$/.test(entry.name))
+    // Each session is a top-level folder; its stash repeats the id further down.
+    const minted = readdirSync(sessionDir).filter((name) => /^[0-9a-f]{8}$/.test(name))
     expect(minted).toHaveLength(1)
   })
 

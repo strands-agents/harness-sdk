@@ -8,6 +8,10 @@ from strands.agent.conversation_manager.summarizing_conversation_manager import 
     DEFAULT_SUMMARIZATION_PROMPT,
     SummarizingConversationManager,
 )
+from strands.agent.invocation_context import (
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+)
 from strands.hooks.events import BeforeModelCallEvent
 from strands.hooks.registry import HookRegistry
 from strands.models.model import Model
@@ -29,6 +33,13 @@ async def _mock_model_stream(response_text):
     yield {"messageStop": {"stopReason": "end_turn"}}
 
 
+async def _mock_model_stream_with_usage(response_text, usage):
+    """Async generator for a text response that also reports token usage."""
+    async for event in _mock_model_stream(response_text):
+        yield event
+    yield {"metadata": {"usage": usage, "metrics": {"latencyMs": 0}}}
+
+
 async def _mock_model_stream_error(error):
     """Async generator that raises an exception, simulating a model failure."""
     raise error
@@ -38,10 +49,11 @@ async def _mock_model_stream_error(error):
 class MockAgent:
     """Mock agent for testing summarization.
 
-    In the default path (no summarization_agent) the manager now calls
-    ``agent.model.stream()`` directly, so the model attribute must return a
-    proper async iterable.  When used as a *summarization_agent* the manager
-    still calls ``agent("…")``, so the ``__call__`` interface is kept.
+    In the default path (no summarization_agent) the manager calls
+    ``agent.aux_model.stream()`` directly, so the model attribute must return a
+    proper async iterable; ``aux_model`` mirrors the real agent's default of
+    ``model``. When used as a *summarization_agent* the manager still calls
+    ``agent("…")``, so the ``__call__`` interface is kept.
     """
 
     def __init__(self, summary_response="This is a summary of the conversation."):
@@ -50,6 +62,7 @@ class MockAgent:
         self.messages = []
         self.model = Mock()
         self.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(self.summary_response))
+        self.aux_model = self.model
         self.call_tracker = Mock()
         self.tool_registry = Mock()
         self.tool_names = []
@@ -206,6 +219,7 @@ def test_reduce_context_raises_on_summarization_failure():
     failing_agent = Mock()
     failing_agent.model = Mock()
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
+    failing_agent.aux_model = failing_agent.model
     failing_agent_messages: Messages = [
         {"role": "user", "content": [{"text": "Message 1"}]},
         {"role": "assistant", "content": [{"text": "Response 1"}]},
@@ -265,6 +279,7 @@ def test_generate_summary_raises_on_model_failure():
     failing_agent = Mock()
     failing_agent.model = Mock()
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
+    failing_agent.aux_model = failing_agent.model
 
     manager = SummarizingConversationManager()
 
@@ -498,6 +513,7 @@ def test_default_path_does_not_modify_agent_state_on_exception():
     mock_agent.model.stream = Mock(
         side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Summarization failed"))
     )
+    mock_agent.aux_model = mock_agent.model
 
     messages: Messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -757,7 +773,7 @@ def test_summarizing_conversation_manager_properly_records_removed_message_count
     assert manager.removed_message_count == 0
 
     manager.reduce_context(agent)
-    # Assert the oldest message is the sumamry message
+    # Assert the oldest message is the summary message
     assert manager._summary_message["content"][0]["text"] == "Summary"
     # There are 8 messages in the agent messages array, since half will be summarized,
     # 4 will remain plus 1 summary message = 5
@@ -866,9 +882,9 @@ def _make_summarizing_threshold_agent(messages, summary_response="Summary of con
     agent.messages = messages
     agent.model = MagicMock()
     agent.model.context_window_limit = context_window_limit
-    agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_response))
+    agent.aux_model = agent.model
     return agent
 
 
@@ -930,9 +946,9 @@ def test_proactive_compression_swallows_errors():
     agent.messages = messages
     agent.model = MagicMock()
     agent.model.context_window_limit = 1000
-    agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model failed")))
+    agent.aux_model = agent.model
 
     registry = HookRegistry()
     manager.register_hooks(registry)
@@ -941,3 +957,56 @@ def test_proactive_compression_swallows_errors():
     # Should not throw — proactive compression is best-effort
     registry.invoke_callbacks(event)
     assert len(agent.messages) == 20
+
+
+def test_summarization_usage_joins_the_request_total_even_when_the_request_limit_is_used_up():
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=2)
+    agent = MagicMock()
+    agent.messages = [
+        {"role": "user", "content": [{"text": f"Message {i}"}]}
+        if i % 2 == 0
+        else {"role": "assistant", "content": [{"text": f"Response {i}"}]}
+        for i in range(20)
+    ]
+    agent.model = MagicMock()
+    agent.model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_with_usage(
+            "Summary of conversation", {"inputTokens": 4, "outputTokens": 5, "totalTokens": 9}
+        )
+    )
+    agent.aux_model = agent.model
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 5
+
+    manager.reduce_context(
+        agent,
+        e=ContextWindowOverflowException("overflow"),
+        invocation_context=_create_auxiliary_invocation_context(request),
+    )
+
+    assert agent.messages[0]["content"] == [{"text": "Summary of conversation"}]
+    assert request.usage == {"turns_taken": 5, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}
+
+
+def test_summarization_agent_path_joins_the_request():
+    summary_agent = MagicMock()
+    summary_agent.tool_names = []
+    summary_agent.messages = []
+    summary_agent.return_value.message = {"role": "assistant", "content": [{"text": "Agent summary"}]}
+    manager = SummarizingConversationManager(
+        summary_ratio=0.5, preserve_recent_messages=2, summarization_agent=summary_agent
+    )
+    agent = MagicMock()
+    agent.messages = [
+        {"role": "user", "content": [{"text": f"Message {i}"}]}
+        if i % 2 == 0
+        else {"role": "assistant", "content": [{"text": f"Response {i}"}]}
+        for i in range(20)
+    ]
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 5
+    handed = _create_auxiliary_invocation_context(request)
+
+    manager.reduce_context(agent, e=ContextWindowOverflowException("overflow"), invocation_context=handed)
+
+    assert summary_agent.call_args.kwargs == {"invocation_context": handed}

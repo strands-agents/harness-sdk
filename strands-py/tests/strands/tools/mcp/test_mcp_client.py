@@ -301,6 +301,46 @@ def test_call_tool_sync_no_progress_callback_by_default(mock_transport, mock_ses
         assert_session_call_tool_once_with(mock_session, "test_tool", {})
 
 
+def test_client_meta_forwarded_on_tool_calls(mock_transport, mock_session):
+    """Test that the client-level meta is sent with tool calls that pass no per-call meta."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    with MCPClient(mock_transport["transport_callable"], meta={"com.example/request_id": "abc-123"}) as client:
+        result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={})
+
+        assert result["status"] == "success"
+        # Trace context may be merged on top, so assert our key survives.
+        assert received_meta["com.example/request_id"] == "abc-123"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_async_per_call_meta_overrides_client_meta(mock_transport, mock_session):
+    """Test that a per-call meta takes precedence over the client-level one."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    with MCPClient(mock_transport["transport_callable"], meta={"com.example/request_id": "client"}) as client:
+        result = await client.call_tool_async(
+            tool_use_id="test-123", name="test_tool", arguments={}, meta={"com.example/request_id": "per-call"}
+        )
+
+        assert result["status"] == "success"
+        assert received_meta["com.example/request_id"] == "per-call"
+
+
 def test_call_tool_sync_pre_set_cancel_signal_skips_request(mock_transport, mock_session):
     """Test a pre-set cancellation signal short-circuits before sending a request."""
     cancel_signal = threading.Event()
@@ -1153,6 +1193,43 @@ def test_mcp_client_state_reset_after_timeout():
     assert client._background_thread_session is None
     assert client._background_thread_event_loop is None
     assert not client._init_future.done()  # New future created
+
+
+def test_stop_raises_when_connection_errors_after_initialization(mock_transport, mock_session):
+    """An error raised on the background thread after initialization surfaces from stop()."""
+    connection_error = RuntimeError("connection dropped")
+    mock_transport["transport_cm"].__aexit__.side_effect = connection_error
+
+    client = MCPClient(mock_transport["transport_callable"])
+    client.start()
+
+    with pytest.raises(RuntimeError, match="Connection to the MCP server was closed") as exc_info:
+        client.stop(None, None, None)
+
+    assert exc_info.value.__cause__ is connection_error
+
+
+def test_background_thread_drains_in_flight_tasks_on_connection_error(mock_transport, mock_session):
+    """A task still running on the background loop completes before the loop shuts down after a
+    connection error, so a caller blocked on that task's result is not left hanging. See issue #4403.
+    """
+    mock_transport["transport_cm"].__aexit__.side_effect = RuntimeError("connection dropped")
+
+    client = MCPClient(mock_transport["transport_callable"])
+    client.start()
+
+    in_flight_task_completed = threading.Event()
+
+    async def in_flight_work():
+        await asyncio.sleep(0.2)
+        in_flight_task_completed.set()
+
+    asyncio.run_coroutine_threadsafe(in_flight_work(), client._background_thread_event_loop)
+
+    with pytest.raises(RuntimeError, match="Connection to the MCP server was closed"):
+        client.stop(None, None, None)
+
+    assert in_flight_task_completed.is_set()
 
 
 def test_call_tool_sync_image_content(mock_transport, mock_session):

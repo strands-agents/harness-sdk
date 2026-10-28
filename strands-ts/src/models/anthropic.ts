@@ -9,13 +9,22 @@ import {
   type CacheConfig,
   type ResolvedCacheSection,
 } from '../models/model.js'
+import { lookupModelInfo } from '../models/model-info.js'
+import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
+import {
+  handleRejectedMechanism,
+  structuredOutputMechanisms,
+  toNativeOutputSchema,
+  type StructuredOutputMechanism,
+} from './native-output.js'
+import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
-import { encodeBase64 } from '../types/media.js'
+import { encodeBase64, decodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
@@ -84,11 +93,65 @@ function mergeUsage(target: Record<string, number>, source: object): void {
   }
 }
 
+/** The stream options to format the request with: the requested ones, or auto when the mechanism does not force. */
+function mechanismOptions(
+  options: StreamOptions | undefined,
+  mechanism: StructuredOutputMechanism | undefined
+): StreamOptions | undefined {
+  if (mechanism !== 'native' && mechanism !== 'auto') return options
+  return { ...options, toolChoice: { auto: {} } }
+}
+
+/**
+ * Constrains the response to the schema, keeping other `output_config` settings.
+ *
+ * `tool_choice` none keeps the tools array unchanged while ruling out tool calls, so the response is the JSON object.
+ */
+function withNativeOutput(
+  request: Anthropic.MessageStreamParams,
+  mechanism: StructuredOutputMechanism | undefined,
+  options: StreamOptions | undefined
+): Anthropic.MessageStreamParams {
+  if (mechanism !== 'native' || !options?.structuredOutputSchema) return request
+  const schema = toNativeOutputSchema(
+    zodSchemaToJsonSchema(options.structuredOutputSchema)
+  ) as Anthropic.JSONOutputFormat['schema']
+  return {
+    ...request,
+    tool_choice: { type: 'none' },
+    output_config: { ...request.output_config, format: { type: 'json_schema', schema } },
+  }
+}
+
+/**
+ * The provider's error text. The SDK's error message is the JSON-encoded response body, which escapes quotes in the
+ * text, so the body's own message is read when present.
+ */
+function apiErrorMessage(error: unknown): string {
+  const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
+  return typeof message === 'string' ? message : normalizeError(error).message
+}
+
+/**
+ * Reads the `anthropic-beta` values from client default headers, skipping the `undefined` and `null` values
+ * the SDK leaves out of the request.
+ */
+function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+  if (!headers) return []
+  const rows: Iterable<readonly unknown[]> =
+    headers instanceof Headers || Array.isArray(headers) ? headers : Object.entries(headers)
+  return [...rows]
+    .filter(([name]) => typeof name === 'string' && name.toLowerCase() === 'anthropic-beta')
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
+}
+
 export interface AnthropicModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens the model can generate in a response.
    *
-   * @defaultValue 64000 — subject to change between versions.
+   * @defaultValue the model's `maxOutputTokens` from the model info, else 64000 — subject to change between versions.
    * Set this explicitly to avoid unexpected changes.
    */
   maxTokens?: number
@@ -142,14 +205,16 @@ export interface AnthropicModelOptions extends AnthropicModelConfig {
 export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
   private _client: Anthropic
+  private _dropStaleThinkingModelId: string | undefined
+  private _clientBetas: string[]
 
   constructor(options?: AnthropicModelOptions) {
     super()
     const { apiKey, client, clientConfig, ...modelConfig } = options || {}
+    this._clientBetas = headerBetas(clientConfig?.defaultHeaders)
 
     this._config = {
       modelId: MODEL_DEFAULTS.anthropic.modelId,
-      maxTokens: MODEL_DEFAULTS.anthropic.maxTokens,
       ...modelConfig,
     }
 
@@ -160,7 +225,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
 
     if (modelConfig.maxTokens === undefined) {
-      warnOnce(logger, defaultMaxTokensWarningMessage(MODEL_DEFAULTS.anthropic.maxTokens))
+      warnOnce(logger, defaultMaxTokensWarningMessage(this._resolvedMaxTokens()))
     }
 
     if (client) {
@@ -189,7 +254,24 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   getConfig(): AnthropicModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId)
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
+    const config = resolveConfigMetadata(this._config, modelId)
+    return config.maxTokens === undefined ? { ...config, maxTokens: this._resolvedMaxTokens() } : config
+  }
+
+  /**
+   * The `maxTokens` to send: the user's value, else the model's output ceiling from the `modelInfo`
+   * override or the shared model info, else the fixed default. Resolved on each read so it follows
+   * `updateConfig({ modelId })`. Reads the layers directly because `modelInfo` itself reads `getConfig()`.
+   */
+  private _resolvedMaxTokens(): number {
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
+    return (
+      this._config.maxTokens ??
+      this._config.modelInfo?.limits?.maxOutputTokens ??
+      lookupModelInfo(modelId).limits?.maxOutputTokens ??
+      MODEL_DEFAULTS.anthropic.maxTokens
+    )
   }
 
   /**
@@ -239,11 +321,18 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @returns Async iterable of streaming events
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    let thinking: Anthropic.ThinkingConfigParam | undefined
+    let continuations = 0
+    const mechanism = this._structuredOutputMechanism(options)
     try {
-      let request = this._formatRequest(messages, options)
+      let request = withNativeOutput(
+        this._formatRequest(messages, mechanismOptions(options, mechanism)),
+        mechanism,
+        options
+      )
+      thinking = request.thinking
       const requestOptions = this._buildRequestOptions()
       const usage = createEmptyUsage()
-      let continuations = 0
 
       while (true) {
         const stream = requestOptions
@@ -304,7 +393,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
                   type: 'modelContentBlockDeltaEvent',
                   delta: {
                     type: 'reasoningContentDelta',
-                    redactedContent: event.content_block.data as unknown as Uint8Array,
+                    redactedContent: decodeBase64(event.content_block.data),
                   },
                 }
               } else {
@@ -417,6 +506,28 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
     } catch (unknownError) {
+      if (
+        continuations === 0 &&
+        (unknownError as { status?: number }).status === 400 &&
+        isThinkingBindingError(unknownError) &&
+        thinkingWithDropBlock(thinking)
+      ) {
+        // Stale blocks stay in history, so drop_block stays on for every later request to this model.
+        logger.warn(
+          `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
+        )
+        this._dropStaleThinkingModelId = this._config.modelId
+        yield* this.stream(messages, options)
+        return
+      }
+
+      // A mechanism is rejected on a turn's first request, before any event is yielded; continuations reuse an
+      // accepted one. So the request can be resent with the next mechanism, the same order BedrockModel tries.
+      if (continuations === 0 && this._recordRejectedMechanism(unknownError, mechanism, options)) {
+        yield* this.stream(messages, options)
+        return
+      }
+
       const error = normalizeError(unknownError)
 
       const lowered = error.message.toLowerCase()
@@ -435,10 +546,43 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
+  /** Chooses the strongest structured output mechanism not yet rejected for this model. */
+  private _structuredOutputMechanism(options: StreamOptions | undefined): StructuredOutputMechanism | undefined {
+    const schema = options?.structuredOutputSchema
+    if (!schema || !this._config.modelId) return undefined
+    return structuredOutputMechanisms('anthropic', this._config.modelId, options.toolChoice, schema, this.modelInfo)[0]
+  }
+
+  /**
+   * Records a structured output rejection, so the request should be resent with the next mechanism.
+   *
+   * @returns True if the rejection was recorded; false if the error is unrelated and should surface unchanged
+   */
+  private _recordRejectedMechanism(
+    error: unknown,
+    mechanism: StructuredOutputMechanism | undefined,
+    options: StreamOptions | undefined
+  ): boolean {
+    const schema = options?.structuredOutputSchema
+    const modelId = this._config.modelId
+    if (!mechanism || !schema || !modelId || (error as { status?: number }).status !== 400) return false
+    return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
+  }
+
   private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
-    const betas = this._config.betas
-    if (!betas || betas.length === 0) return undefined
+    let betas = this._config.betas ?? []
+    if (this._dropsStaleThinking()) {
+      // Request headers replace client headers of the same name, so betas set on the client are carried over.
+      if (betas.length === 0) betas = this._clientBetas
+      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
+    }
+    if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
+  }
+
+  /** Whether a binding error already turned drop_block on for the configured model. */
+  private _dropsStaleThinking(): boolean {
+    return this._dropStaleThinkingModelId === this._config.modelId
   }
 
   /** Resolves a cache section, disabled when `cacheConfig` is unset or its strategy is unknown. */
@@ -451,6 +595,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const strategy = cacheConfig.strategy ?? 'auto'
     if (strategy !== 'auto' && strategy !== 'anthropic') {
       logger.warn(`strategy=<${strategy}> | unknown cache strategy, prompt caching disabled`)
+      return { enabled: false }
+    }
+    if (strategy === 'auto' && this.modelInfo.capabilities?.promptCaching === 'unsupported') {
+      warnOnce(
+        logger,
+        `model_id=<${this._config.modelId}> | cacheConfig is enabled but the model info says this model does not support prompt caching, ignoring`
+      )
       return { enabled: false }
     }
 
@@ -551,7 +702,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
     const request: Anthropic.MessageStreamParams = {
       model: this._config.modelId,
-      max_tokens: this._config.maxTokens ?? MODEL_DEFAULTS.anthropic.maxTokens,
+      max_tokens: this._resolvedMaxTokens(),
       messages: this._formatMessages(messages, messagesCache, cacheTargetMessage, options?.dynamicTrailingBlocks ?? 0),
       stream: true,
     }
@@ -601,6 +752,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.topP !== undefined) request.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     if (this._config.params) Object.assign(request, this._config.params)
+    const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
+    if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
     if (tools.length > 0) request.tools = tools
     else delete request.tools
@@ -842,7 +995,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         } else if (block.redactedContent) {
           return {
             type: 'redacted_thinking',
-            data: block.redactedContent,
+            data: encodeBase64(block.redactedContent),
           } as unknown as Anthropic.ContentBlockParam
         }
         return undefined

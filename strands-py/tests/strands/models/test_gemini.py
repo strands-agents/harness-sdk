@@ -15,6 +15,7 @@ def gemini_client():
     with unittest.mock.patch.object(strands.models.gemini.genai, "Client") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.aio = unittest.mock.AsyncMock()
+        mock_client.vertexai = False
         yield mock_client
 
 
@@ -214,6 +215,38 @@ async def test_stream_request_with_image(gemini_client, model, model_id):
                 "role": "user",
             },
         ],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.parametrize(
+    ("video_format", "mime_type"),
+    [
+        ("flv", "video/x-flv"),
+        ("mkv", "video/x-matroska"),
+        ("mov", "video/quicktime"),
+        ("mpeg", "video/mpeg"),
+        ("mpg", "video/mpeg"),
+        ("mp4", "video/mp4"),
+        ("three_gp", "video/3gpp"),
+        ("webm", "video/webm"),
+        ("wmv", "video/x-ms-wmv"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_request_with_video(video_format, mime_type, gemini_client, model, model_id):
+    messages = [
+        {
+            "role": "user",
+            "content": [{"video": {"format": video_format, "source": {"bytes": b"video"}}}],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [{"parts": [{"inline_data": {"data": "dmlkZW8=", "mime_type": mime_type}}], "role": "user"}],
         "model": model_id,
     }
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
@@ -1177,6 +1210,22 @@ async def test_stream_response_throttled_exception(gemini_client, model, message
 
 
 @pytest.mark.asyncio
+async def test_stream_response_throttled_exception_non_json_body(gemini_client, model, messages):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/4523.
+
+    For a 429 with a non-JSON body, google-genai sets status to the HTTP reason phrase; the 429
+    code alone must be enough to classify it as throttling.
+    """
+    body = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
+    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
+        429, {"message": body, "status": "Too Many Requests"}
+    )
+
+    with pytest.raises(ModelThrottledException, match="RESOURCE_EXHAUSTED"):
+        await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
 async def test_stream_response_context_overflow_exception(gemini_client, model, messages):
     gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
         400,
@@ -1294,7 +1343,120 @@ async def test_stream_request_with_gemini_tools_and_function_tools(gemini_client
                     ]
                 },
                 {"code_execution": {}},
-            ]
+            ],
+            "tool_config": {"include_server_side_tool_invocations": True},
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_sets_server_side_flag_with_tool_choice(gemini_client, messages, tool_spec, model_id):
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+
+    await anext(model.stream(messages, tool_specs=[tool_spec], tool_choice={"auto": {}}))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+            "tool_config": {
+                "function_calling_config": {"mode": "AUTO"},
+                "include_server_side_tool_invocations": True,
+            },
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_flag_skipped_on_vertex_ai(gemini_client, messages, tool_spec, model_id):
+    """Vertex AI does not support include_server_side_tool_invocations, so the flag is omitted."""
+    gemini_client.vertexai = True
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+
+    await anext(model.stream(messages, tool_specs=[tool_spec]))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.parametrize(
+    ("params_tool_config", "exp_tool_config"),
+    [
+        (
+            {"function_calling_config": {"mode": "NONE"}},
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": True},
+        ),
+        (
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": False},
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": False},
+        ),
+    ],
+    ids=["merges-flag", "preserves-explicit-false"],
+)
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_flag_with_params_tool_config(
+    gemini_client, messages, tool_spec, model_id, params_tool_config, exp_tool_config
+):
+    """The flag is merged into a dict tool_config, but an explicit value is preserved."""
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(
+        model_id=model_id,
+        gemini_tools=[google_search_tool],
+        params={"tool_config": params_tool_config},
+    )
+
+    await anext(model.stream(messages, tool_specs=[tool_spec]))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+            "tool_config": exp_tool_config,
         },
         "contents": [{"parts": [{"text": "test"}], "role": "user"}],
         "model": model_id,
@@ -1753,3 +1915,67 @@ class TestCountTokens:
         gemini_client.aio.models.count_tokens.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "finish_reason,stop_reason",
+    [("STOP", "end_turn"), ("SAFETY", "guardrail_intervened"), ("RECITATION", "content_filtered")],
+)
+async def test_stream_response_without_usage_metadata(
+    gemini_client, model, messages, agenerator, alist, finish_reason, stop_reason
+):
+    response = genai.types.GenerateContentResponse.model_validate(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "Hello"}]},
+                    "finishReason": finish_reason,
+                }
+            ]
+        }
+    )
+    assert response.usage_metadata is None
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator([response])
+
+    chunks = await alist(model.stream(messages))
+
+    assert {"contentBlockDelta": {"delta": {"text": "Hello"}}} in chunks
+    assert chunks[-1] == {"messageStop": {"stopReason": stop_reason}}
+    assert not any("metadata" in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_empty_usage_metadata_is_preserved(gemini_client, model, messages, agenerator, alist):
+    response = genai.types.GenerateContentResponse.model_validate(
+        {
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {},
+        }
+    )
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator([response])
+
+    chunks = await alist(model.stream(messages))
+
+    assert chunks[-1] == {
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 0},
+        }
+    }
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model._format_request(messages, None, None, None)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by Gemini" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by Gemini" in messages_logged[1]

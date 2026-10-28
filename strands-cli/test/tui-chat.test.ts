@@ -1877,7 +1877,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('opens setup through /setup and settings after appearance updates', async () => {
+  it('keeps /setup available after appearance updates', async () => {
     const requestSetup = vi.fn()
     const controller = new ChatController(backend(), { requestSetup })
 
@@ -1890,11 +1890,8 @@ describe('ChatController', () => {
     await controller.activatePanelRow({ label: '', description: '', value: 'colorMode=light' })
     await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
     const rows = controller.getSnapshot().panel?.rows ?? []
-    const setupIndex = rows.findIndex((row) => row.value === 'setup')
-    const setup = rows[setupIndex]
-    expect(setup).toMatchObject({ label: 'Setup', description: 'Providers and agent ›' })
-    expect(rows.map(({ value }) => value)).toEqual(['setupOnLaunch', 'setup', 'telemetry'])
-    expect(await controller.activatePanelRow(setup!)).toBe(true)
+    expect(rows.map(({ value }) => value)).toEqual(['telemetry'])
+    await controller.submit('/setup')
     expect(requestSetup).toHaveBeenCalledOnce()
   })
 

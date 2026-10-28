@@ -1,0 +1,305 @@
+---
+title: Write a policy and check what it decided
+description: Write Dogwood permit and forbid rules for a box, add temporal rules that depend on earlier actions, fix load errors, and read decision records to see what policy decided.
+sidebar:
+  label: "Write a policy"
+---
+
+A box's policy decides the actions that go through Box: shell commands, file operations
+in the shell or Python, tool starts, network requests through the gateway, and MCP
+requests other than the protocol handshake. You
+write it in [Dogwood](https://dogwood-policy.github.io/dogwood/), which is Cedar with
+temporal operators, and point `box.toml` at it:
+
+```toml
+policy = "policy.dw"
+```
+
+A relative `policy` path resolves against the directory that holds `box.toml`. Without
+a `policy` key, every action is denied.
+
+The box reads the policy when it starts, and a running box keeps the policy it loaded
+until it ends. To apply an edit, run the box again. An edit keeps the recorded history,
+so an unchanged `when temporal` clause keeps its count across the edit and the restart.
+
+## How rules combine
+
+Policy is deny-by-default, and a `forbid` beats every `permit`:
+
+- An action that no `permit` matches is denied, by the rule `<default-deny>`.
+- An action that a `permit` matches is allowed, unless a `forbid` also matches.
+
+So permit what the workload needs, and forbid the exceptions inside those permits.
+
+Every rule scopes by `action` and conditions on `context.input`. The principal and
+resource are fixed, so write them bare:
+
+```text
+@id("shell_commands")
+@description("Permit every command Strands Shell implements itself.")
+permit (principal, action == Box::Action::"shell:exec", resource);
+
+@id("no_deletes")
+@description("Refuse every delete, whatever another rule permits.")
+forbid (principal, action == Box::Action::"fs:delete", resource);
+```
+
+Give every rule an `@id`. The id names the rule in denial messages and decision
+records, and Box refuses to load two rules that share one. When a `forbid` denies an
+action, its `@description` text appears in the denial message the workload sees, so you
+can tell the agent what to do instead.
+
+The [action reference](../reference/policy-actions.md) lists every action and its
+`context.input` fields.
+
+## Write a starting policy
+
+This policy permits the agent's model requests to Amazon Bedrock in `us-west-2`,
+shell edits in one project, and five local `git` subcommands. The box also needs the
+matching `box.toml` grants:
+
+```text
+@id("model_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" &&
+  context.input.port == 443
+};
+
+@id("model_request")
+permit (principal, action == Box::Action::"http:request", resource)
+when {
+  context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" &&
+  context.input.port == 443
+};
+
+@id("shell_commands")
+permit (principal, action == Box::Action::"shell:exec", resource);
+
+@id("project_read")
+permit (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/src/my-service" ||
+  context.input.path like "~/src/my-service/*"
+};
+
+@id("project_write")
+permit (principal, action in [Box::Action::"fs:write", Box::Action::"fs:move"], resource)
+when { context.input.path like "~/src/my-service/*" };
+
+@id("git_local")
+permit (principal, action == Box::Action::"shell:spawn", resource)
+when {
+  context.input.program == "git" &&
+  context.input has arg1 &&
+  ["status", "diff", "log", "add", "commit"].contains(context.input.arg1)
+};
+```
+
+List the subcommands you allow, rather than forbidding the one you don't. `arg1` is the
+first argument, so `git -C . push`, `git --no-pager push`, and `git -c x=y push` all
+have an option there: a `forbid` on `arg1 == "push"` misses them, and this permit
+refuses them.
+
+`git` also needs a `[tool.git]` table. On macOS, `/usr/bin/git` hands off to the
+Command Line Tools' `git`, and that hand-off fails in the tool's sandbox. Put the
+Command Line Tools `git` itself on the path, as
+[Write policy for shell commands](write-shell-policy.md#step-4-allow-a-program-on-your-path)
+shows.
+
+The gateway doesn't refuse cloud metadata endpoints on its own, so a policy reaches
+them unless it forbids them. Copy the `metadata_hosts` and
+`metadata_addresses` rules from the
+[action reference](../reference/policy-actions.md#refuse-cloud-metadata-endpoints).
+
+## Write rules that depend on history
+
+A temporal rule decides based on what the box already recorded. Add a
+`when temporal { … }` or `unless temporal { … }` clause to a `permit` or `forbid`.
+Box keeps the history in `box_dir` across restarts.
+
+This rule allows at most one successful service restart every ten minutes:
+
+```text
+@id("restart")
+permit (principal, action == Box::Action::"http:request", resource)
+when {
+  context.input.host == "ops.example.com" &&
+  context.input.method == "POST" &&
+  context.input.path == "/services/service123/restart"
+};
+
+@id("restart_cooldown")
+forbid (principal, action == Box::Action::"http:request", resource)
+when {
+  context.input.host == "ops.example.com" &&
+  context.input.method == "POST" &&
+  context.input.path == "/services/service123/restart"
+}
+when temporal {
+  formerly within 10m (
+    Box::Action::"http:request"::response{
+      input.host: "ops.example.com",
+      input.method: "POST",
+      input.path: "/services/service123/restart",
+      output.status: 200
+    }
+  )
+};
+```
+
+An event pattern names one action and one event:
+
+| Event | Recorded when |
+|---|---|
+| `::request` | The action is asked for, including attempts that policy denied |
+| `::response` | The action ran; carries `output` fields such as `output.status` |
+| `::error` | The action failed after it was allowed |
+
+This page uses `formerly within`, which matches an event in a time window, and
+`count … where`, which counts matching events. The
+[Dogwood guide](https://dogwood-policy.github.io/dogwood/) defines every temporal
+operator.
+
+Two rules keep a temporal policy correct:
+
+- **Key a precondition on `::response`.** A denied attempt still records a `::request`
+  event. A rule keyed on `::request` counts refusals, so a refused retry restarts the
+  cooldown.
+- **Write a cap as a `forbid`.** A permit can't narrow another permit, so a `permit`
+  with `count < N` doesn't stop the action past the cap. Box refuses a capped `permit`
+  beside a `permit` for the same action with no condition, and warns when the other
+  `permit` has a condition.
+
+Windows are capped at 24 hours; a longer window doesn't load.
+
+A capped write budget, as a `forbid`:
+
+```text
+@id("write_budget")
+forbid (principal, action == Box::Action::"fs:write", resource)
+when { context.input.operation == Box::FsWriteOperation::"write_content" }
+when temporal {
+  exists (total: Long). (
+    (count for (t: Timepoint). where (
+      formerly within 1h (
+        Box::Action::"fs:write"::response{
+          input.path: _,
+          input.operation: Box::FsWriteOperation::"write_content",
+          output.result: Box::FsResponseResult::"completed"
+        } && tp(t)
+      )
+    )) == total && total >= 100
+  )
+};
+```
+
+## Fix a policy that won't load
+
+`box run` validates the policy before the workload starts. A policy that fails stops
+the run with exit status `1`. In a box with a stdio MCP server, Box checks
+syntax, macro expansion, and provider use up front, and checks the rest once it knows
+the servers' tools:
+
+```text
+strands-box: error: policy file /Users/me/my-box/policy.dw will not load: …
+```
+
+| Message starts with | Fix |
+|---|---|
+| `failed to parse policy source` | A syntax error. If the message goes on `dogwood: information providers are not enabled in this build`, the policy calls an information provider: remove the call. |
+| `policy references unknown action` | Check the action name against the action reference. |
+| `policy fails schema validation` | A field name or type is wrong, or an optional field such as `arg1` is read without a `has` guard. |
+| `policy compares an inert literal` | Spell a home path `~/…`, and a directory without a trailing slash. |
+| `policy gives one @id to more than one rule` | Give each rule its own `@id`. |
+| `policy writes a cap as a permit` | Rewrite the temporal `permit` as a `forbid` that fires at or above the cap. |
+| `policy names only a reserved action` | A rule scoped only to `fs:other` can never match. Name `fs:read`, `fs:write`, `fs:delete`, or `fs:move`. |
+| `MCP discovery ended with unresolved policies` | A rule names an MCP tool, or a tool argument, that the server doesn't list. Check the names with `box policy generate-schema`. |
+| `policy staging failed` | The policy history in `box_dir` and the box record disagree. Remove `box_dir` to start again, which discards the history. |
+
+Warnings print as `strands-box: warning: …` and don't stop the run. One flags a
+`program` literal that contains `/`: compare `program_path` instead.
+
+## Check what policy decided
+
+The workload sees each denial as an error message that names the action's resource and
+the deciding rule. Each message is one line; these are wrapped to fit:
+
+```text
+policy denied this operation on '~/src/my-service/notes.txt' [policy: no_deletes]:
+  Refuse every delete, whatever another rule permits.
+policy denied this operation on 'api.example.com:443/upload' [default-deny]:
+  No permit policy matched this request.
+```
+
+In the shell the denied command fails and prints the denial, and Python raises
+`PermissionError`. On the network, a refused `net:connect` stops the connection before
+any HTTP is sent: `curl` prints `error sending request` and exits `6`, and Python's
+`fetch()` raises `OSError`. A refused `http:request` returns HTTP `403` with the policy
+message.
+
+Box also writes decision records for permits and denials, on a best-effort basis.
+Records arrive in batches, a moment after the decision, and a failed batch is lost, so
+the log is for diagnosis. A `when temporal` rule reads the box's own history, which is a
+separate store.
+Without `[telemetry]`
+tables, records go to `<box_dir>/private/telemetry/records.jsonl`. Each
+line is one OTLP JSON export. A decision is a log record whose event name is
+`strands.box.policy.decision`, with these attributes:
+
+| Attribute | Value |
+|---|---|
+| `strands.box.policy.action` | The action, such as `fs:read` |
+| `strands.box.policy.resource` | The path for `fs:*`, `host:port` for `net:connect`, `host:port/path` for `http:request`, the program for `shell:exec`, `program_path` for `shell:spawn`, or `server/<tool>` for `mcp:call` |
+| `strands.box.policy.verdict` | `permit` or `deny` |
+| `strands.box.policy.cause` | `permitted`, `forbidden`, `no_match`, `policy_pending`, `internal_fault`, or `enforcement` |
+| `strands.box.policy.rule` | The deciding rule's `@id`, `policy_<index>` for a rule without one, `<default-deny>`, `<policy-pending>`, or `enforcement:<gate>` |
+
+This `jq` command prints one line per decision:
+
+```bash
+jq -r '.resourceLogs[]?.scopeLogs[]?.logRecords[]?
+  | [.attributes[]? | {(.key): (.value | to_entries[0].value)}] | add
+  | select(."strands.box.policy.action")
+  | [."strands.box.policy.verdict", ."strands.box.policy.action",
+     ."strands.box.policy.rule", ."strands.box.policy.resource"] | @tsv' \
+  <box_dir>/private/telemetry/records.jsonl
+```
+
+To send records to a file of your own, see
+[Record decisions and telemetry](record-telemetry.md), which also lists every key a
+record carries.
+
+Box has no command that evaluates a policy without running a box. To test rules, keep a
+test box whose agent is `/bin/bash`, and run commands through the box's shell with
+`zsh -c`. Arguments after `--` are appended to the agent's command:
+
+```toml
+name = "policy-test"
+box_dir = "/Users/me/.box/policy-test"
+policy = "policy.dw"
+
+[agent]
+command = ["/bin/bash", "--norc"]
+workspace = "/Users/me/src/my-service"
+
+[agent.filesystem]
+read = ["/Users/me/src/my-service"]
+```
+
+```bash
+./box-core/box run --config test-box.toml -- -c 'zsh -c "rm notes.txt"'
+```
+
+The inner `zsh` is the box's Strands Shell. With a `shell:exec` permit in the policy,
+`rm` raises an `fs:delete` decision, and a denial prints on stderr. The parent of
+`box_dir` must exist before the first run.
+
+## Write policies with an agent
+
+The Box repository includes an `authoring-box-policy` agent skill that teaches a coding
+agent the action vocabulary, the temporal rules above, and a validate-by-loading loop.
+Point the agent at the skill's
+[`SKILL.md`](https://raw.githubusercontent.com/strands-agents/box/main/.agents/skills/authoring-box-policy/SKILL.md),
+or install it from `.agents/skills/authoring-box-policy` in the
+[Box repository](https://github.com/strands-agents/box).

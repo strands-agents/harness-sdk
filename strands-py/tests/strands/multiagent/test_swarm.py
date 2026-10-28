@@ -2463,4 +2463,4 @@ def test_swarm_interrupt_on_agent(agenerator):
     exp_status = Status.COMPLETED
     assert tru_status == exp_status
 
-    agent.stream_async.assert_called_once_with(responses, invocation_state={})
+    agent.stream_async.assert_called_once_with(responses, invocation_state={}, invocation_context=ANY)

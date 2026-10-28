@@ -80,9 +80,17 @@
       "types": "./dist/src/vended-tools/bash/index.d.ts",
       "default": "./dist/src/vended-tools/bash/index.js"
     },
+    "./vended-tools/python-repl": {
+      "types": "./dist/src/vended-tools/python-repl/index.d.ts",
+      "default": "./dist/src/vended-tools/python-repl/index.js"
+    },
     "./vended-tools/sleep": {
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
       "default": "./dist/src/vended-tools/sleep/index.js"
+    },
+    "./vended-tools/a2a-client": {
+      "types": "./dist/src/vended-tools/a2a-client/index.d.ts",
+      "default": "./dist/src/vended-tools/a2a-client/index.js"
     },
     "./experimental/vended-tools/stop": {
       "types": "./dist/src/experimental/vended-tools/stop/index.d.ts",
@@ -91,6 +99,18 @@
     "./vended-tools/web-fetch": {
       "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
       "default": "./dist/src/vended-tools/web-fetch/index.js"
+    },
+    "./vended-tools/mcp-router": {
+      "types": "./dist/src/vended-tools/mcp-router/index.d.ts",
+      "default": "./dist/src/vended-tools/mcp-router/index.js"
+    },
+    "./vended-tools/subagent": {
+      "types": "./dist/src/vended-tools/subagent/index.d.ts",
+      "default": "./dist/src/vended-tools/subagent/index.js"
+    },
+    "./vended-tools/swarm": {
+      "types": "./dist/src/vended-tools/swarm/index.d.ts",
+      "default": "./dist/src/vended-tools/swarm/index.js"
     },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
@@ -164,6 +184,10 @@
       "types": "./dist/src/storage/search/index.d.ts",
       "default": "./dist/src/storage/search/index.js"
     },
+    "./storage/embeddings/bedrock": {
+      "types": "./dist/src/storage/embeddings/bedrock.d.ts",
+      "default": "./dist/src/storage/embeddings/bedrock.js"
+    },
     "./storage/search/qmd": {
       "node": {
         "types": "./dist/src/storage/search/qmd.d.ts",
@@ -190,6 +214,8 @@
     }
   },
   "scripts": {
+    "prepare": "node -e \"require('fs').copyFileSync('../shared/model-info.json','src/models/model-info.json')\"",
+    "prebuild": "node -e \"require('fs').copyFileSync('../shared/model-info.json','src/models/model-info.json')\"",
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",
@@ -234,6 +260,7 @@
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
+    "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws-sdk/client-secrets-manager": "^3.1078.0",
     "@aws-sdk/client-ssm": "^3.1078.0",
     "@aws-sdk/client-sts": "^3.1078.0",
@@ -243,9 +270,11 @@
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/baggage-span-processor": "^0.5.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
     "@opentelemetry/resources": "^2.8.0",
@@ -269,7 +298,7 @@
     "tsx": "^4.22.5",
     "turndown": "^7.2.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -283,10 +312,11 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
+    "@modelcontextprotocol/ext-tasks": "^0.2.2",
     "@smithy/fetch-http-handler": "^5.8.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.1132.0",
     "@types/json-schema": "^7.0.15",
-    "uuid": "^14.0.2",
+    "uuid": "^14.0.3",
     "yaml": "^2.9.1"
   },
   "peerDependencies": {
@@ -296,12 +326,14 @@
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
+    "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@google/genai": "^2.6.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/baggage-span-processor": "^0.5.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
     "@opentelemetry/resources": "^2.8.0",
@@ -313,7 +345,7 @@
     "express": "^5.1.0",
     "openai": "^6.45.0",
     "turndown": "^7.2.4",
-    "zod": "^4.1.12"
+    "zod": "^4.5.4"
   },
   "peerDependenciesMeta": {
     "@a2a-js/sdk": {
@@ -343,6 +375,9 @@
     "@aws-sdk/client-s3": {
       "optional": true
     },
+    "@aws-sdk/client-s3vectors": {
+      "optional": true
+    },
     "@google/genai": {
       "optional": true
     },
@@ -365,6 +400,9 @@
       "optional": true
     },
     "@opentelemetry/exporter-metrics-otlp-http": {
+      "optional": true
+    },
+    "@opentelemetry/baggage-span-processor": {
       "optional": true
     },
     "@cedar-policy/cedar-wasm": {

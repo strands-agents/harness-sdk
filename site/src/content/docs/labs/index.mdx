@@ -1,6 +1,6 @@
 ---
 title: Strands Labs
-description: 'Explore Strands Labs, the experimental arm of Strands Agents: open source projects covering robotics, world models, agentic benchmarks, harness optimization, and audio processing.'
+description: 'Explore Strands Labs, the experimental arm of Strands Agents: open source projects covering robotics, world models, agentic benchmarks, harness optimization, audio processing, and decision models.'
 sidebar:
   label: "Overview"
 ---
@@ -11,8 +11,8 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 Strands Agents: open source projects that take the core SDK into new problem
 spaces. Where the SDK gives you the agent loop, tool use, model providers, and
 multi-agent patterns, Labs applies that foundation to areas like physical
-robotics, world models, agentic benchmarking, harness optimization, and
-real-time audio.
+robotics, world models, agentic benchmarking, harness optimization, real-time
+audio, and fast decision models.
 
 Labs projects are published to package repositories and work alongside the SDK
 today. They move faster and cover more surface area than the core SDK, so expect
@@ -53,6 +53,11 @@ lives in its own repository under the
     title="PyWebRTC Audio"
     href="https://github.com/strands-labs/pywebrtc-audio"
     description="Python bindings for WebRTC audio processing: echo cancellation, noise suppression, gain control, and voice activity detection, with a working Strands BidiAgent integration."
+  />
+  <LinkCard
+    title="Strands Decider"
+    href="https://github.com/strands-labs/strands-decider"
+    description="A small, fast decision model, or system one model, for agentic workflows. Pick between options or rate on a scale faster than an LLM, with a calibrated confidence on every decision."
   />
 </CardGrid>
 

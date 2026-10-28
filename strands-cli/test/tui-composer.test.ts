@@ -24,10 +24,12 @@ describe('prompt editor input', () => {
   })
 
   it('reports the rendered editor height for command-deck layout', () => {
-    expect(promptEditorHeight('', 0, 80, 8)).toBe(3)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8)).toBe(5)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 3)).toBe(4)
-    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8, true)).toBe(3)
+    expect(promptEditorHeight('', 0, 80, 8)).toBe(7)
+    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8)).toBe(7)
+    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 3)).toBe(7)
+    expect(promptEditorHeight('one\ntwo\nthree\nfour', 18, 80, 8, true)).toBe(7)
+    expect(promptEditorHeight('', 0, 80, 8, false, true)).toBe(9)
+    expect(promptEditorHeight('', 0, 80, 8, true, true)).toBe(9)
   })
 
   it('handles the DEL byte that Ink reports for Backspace', () => {
@@ -56,17 +58,22 @@ describe('prompt editor input', () => {
     })
   })
 
-  it('renders the caret before the empty editor placeholder', () => {
-    const output = renderToString(
-      createElement(PromptEditor, {
-        input: '',
-        cursor: 0,
-        agentName: 'Strands harness',
-        animateCursor: false,
-      })
+  it.each([
+    [80, 'Enter to send • Ctrl+J for newline • / for commands'],
+    [50, 'Enter send • Ctrl+J newline • / commands'],
+    [40, 'Enter send • / commands'],
+    [22, 'Enter send'],
+  ])('fits placeholder guidance on one row at %i columns', (width, hint) => {
+    const empty = renderToString(createElement(PromptEditor, { input: '', cursor: 0, width, animateCursor: false }), {
+      columns: width,
+    })
+    expect(empty).toContain(`▌${hint}`)
+    const typing = renderToString(
+      createElement(PromptEditor, { input: 'draft', cursor: 5, width, animateCursor: false }),
+      { columns: width }
     )
-
-    expect(output).toContain('◆ ▌Message Strands harness')
+    expect(typing).not.toContain('Enter')
+    expect(empty.split('\n')).toHaveLength(typing.split('\n').length)
   })
 
   it('marks bang commands as shell execution', () => {
@@ -74,7 +81,6 @@ describe('prompt editor input', () => {
       createElement(PromptEditor, {
         input: '!pwd',
         cursor: 4,
-        agentName: 'Strands harness',
       })
     )
 
@@ -104,14 +110,11 @@ describe('prompt editor input', () => {
       createElement(PromptEditor, {
         input: '123456789',
         cursor: 9,
-        agentName: 'Strands harness',
         width: 8,
       })
     )
 
-    expect(output).toContain('◆ 1234')
-    expect(output).toContain('  5678')
-    expect(output).toContain('  9')
+    expect(output).toContain(' 123456\n 789')
   })
 
   it('follows the cursor after reaching the configured row cap', () => {
@@ -119,15 +122,12 @@ describe('prompt editor input', () => {
       createElement(PromptEditor, {
         input: 'one\ntwo\nthree\nfour',
         cursor: 18,
-        agentName: 'Strands harness',
         maxRows: 3,
       })
     )
 
     expect(output).not.toContain('one')
-    expect(output).toContain('◆ two')
-    expect(output).toContain('  three')
-    expect(output).toContain('  four')
+    expect(output).toContain(' two\n three\n four')
   })
 
   it('reveals earlier multiline input when the cursor moves back', () => {
@@ -138,7 +138,7 @@ describe('prompt editor input', () => {
     ])
   })
 
-  it('colors an actionable command token purple without coloring its argument', () => {
+  it('colors an actionable command token with the accent without coloring its argument', () => {
     const level = chalk.level
     chalk.level = 3
     try {
@@ -146,12 +146,11 @@ describe('prompt editor input', () => {
         createElement(PromptEditor, {
           input: '/model improve the response',
           cursor: 26,
-          agentName: 'Strands harness',
           actionableCommandToken: '/model',
         })
       )
       expect(output).toContain(
-        '\u001b[38;2;192;132;252m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
+        '\u001b[38;2;104;245;138m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
       )
     } finally {
       chalk.level = level

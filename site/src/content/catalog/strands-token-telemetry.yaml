@@ -1,6 +1,6 @@
 name: strands-token-telemetry
 description: Emits Strands agent token usage as CloudWatch EMF metrics for cost visibility and capacity planning.
-integrationType: plugin
+integrationType: observability
 maintainedBy: partner
 languages:
   python:

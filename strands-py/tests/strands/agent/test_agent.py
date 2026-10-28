@@ -30,6 +30,7 @@ from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToo
 from strands.interrupt import Interrupt, PendingToolExecution
 from strands.memory import MemoryManager, MemoryManagerConfig
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
+from strands.models.routing import ModelRouter
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.tracer import Tracer, serialize
 from strands.types._events import EventLoopStopEvent, ModelStreamEvent
@@ -314,6 +315,49 @@ def test_agent__init__with_string_model_id():
     assert agent.model.config["model_id"] == "nonsense"
 
 
+def test_agent__init__aux_model_defaults_to_model(mock_model):
+    agent = Agent(model=mock_model)
+
+    assert agent.aux_model is mock_model
+
+
+def test_agent__init__aux_model_explicit(mock_model):
+    aux_model = MockedModelProvider([])
+    agent = Agent(model=mock_model, aux_model=aux_model)
+
+    assert agent.aux_model is aux_model
+    assert agent.model is mock_model
+
+
+def test_agent__init__aux_model_with_string_model_id(mock_model):
+    agent = Agent(model=mock_model, aux_model="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    assert isinstance(agent.aux_model, BedrockModel)
+    assert agent.aux_model.config["model_id"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+def test_agent__init__aux_model_rejects_model_router():
+    with pytest.raises(TypeError, match="aux_model must be a Model, a Bedrock model id, or None, got ModelRouter"):
+        Agent(aux_model=ModelRouter([MockedModelProvider([])]))
+
+
+def test_agent_aux_model_setter(mock_model):
+    agent = Agent(model=mock_model)
+    aux_model = MockedModelProvider([])
+
+    agent.aux_model = aux_model
+    assert agent.aux_model is aux_model
+
+    agent.aux_model = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert isinstance(agent.aux_model, BedrockModel)
+
+    agent.aux_model = None
+    assert agent.aux_model is mock_model
+
+    with pytest.raises(TypeError, match="aux_model must be a Model"):
+        agent.aux_model = ModelRouter([MockedModelProvider([])])
+
+
 def test_agent__init__nested_tools_flattening(tool_decorated, tool_module, tool_imported, tool_registry):
     _ = tool_registry
     # Nested structure: [tool_decorated, [tool_module, [tool_imported]]]
@@ -468,7 +512,7 @@ def test_agent__call__(
     )
 
     callback_handler.assert_called()
-    conversation_manager_spy.apply_management.assert_called_with(agent)
+    conversation_manager_spy.apply_management.assert_called_with(agent, invocation_context=unittest.mock.ANY)
 
 
 def test_agent__call__passes_invocation_state(mock_model, agent, tool, mock_event_loop_cycle, agenerator):
@@ -2033,6 +2077,43 @@ def test_agent_with_list_of_message_and_content_block():
     agent = Agent(model=model)
     with pytest.raises(ValueError, match="Input prompt must be of type: `str | list[Contentblock] | Messages | None`."):
         agent([{"role": "user", "content": [{"text": "hello"}]}, {"text", "hello"}])
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "",
+        "  \n",
+        [{"text": ""}],
+        [{"text": " "}, {"text": "\n"}],
+        [{"role": "user", "content": [{"text": ""}]}],
+        [{"role": "user", "content": []}],
+    ],
+)
+def test_agent_rejects_blank_prompt_without_breaking_later_calls(prompt):
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "world!"}]}])
+    agent = Agent(model=model)
+
+    with pytest.raises(ValueError, match="Input prompt is blank"):
+        agent(prompt)
+
+    assert agent.messages == []
+    assert str(agent("hello")) == "world!\n"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        [{"text": "hello"}, {"text": ""}],
+        [{"text": ""}, {"image": {"format": "png", "source": {"bytes": b"img"}}}],
+        [{"role": "user", "content": [{"text": "hello"}]}, {"role": "assistant", "content": [{"text": ""}]}],
+    ],
+)
+def test_agent_accepts_prompt_with_some_non_blank_content(prompt):
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "world!"}]}])
+    agent = Agent(model=model)
+
+    assert str(agent(prompt)) == "world!\n"
 
 
 def test_agent__call__handles_none_invocation_state(mock_model, agent):
@@ -3829,3 +3910,169 @@ async def test_agent_span_ends_on_generator_exit():
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.UNSET
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
+def test_baggage_attributes_default_empty():
+    """When baggage_attributes is not provided, no extra baggage is stamped."""
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "hi"}]}]), callback_handler=None
+    )
+    assert agent.baggage_attributes == {}
+
+
+@pytest.mark.asyncio
+async def test_baggage_attributes_isolation_across_concurrent_agents():
+    """Interleaved agents must each see only their own baggage_attributes inside tools."""
+    from opentelemetry import baggage as baggage_api
+
+    seen_a: dict = {}
+    seen_b: dict = {}
+
+    gate_a, gate_b = asyncio.Event(), asyncio.Event()
+
+    @strands.tool
+    async def tool_a() -> str:
+        """Tool for agent A: capture baggage, then interleave with agent B."""
+        seen_a["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        gate_a.set()
+        await gate_b.wait()
+        return "done"
+
+    @strands.tool
+    async def tool_b() -> str:
+        """Tool for agent B: capture baggage, then interleave with agent A."""
+        seen_b["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        gate_b.set()
+        await gate_a.wait()
+        return "done"
+
+    def _tool_then_text(tool_name):
+        return MockedModelProvider(
+            [
+                {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t", "name": tool_name, "input": {}}}]},
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        )
+
+    agent_a = Agent(
+        model=_tool_then_text("tool_a"),
+        tools=[tool_a],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "acme"},
+    )
+    agent_b = Agent(
+        model=_tool_then_text("tool_b"),
+        tools=[tool_b],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "globex"},
+    )
+
+    async def drain(agent):
+        async for _ in agent.stream_async("hi"):
+            pass
+
+    await asyncio.gather(drain(agent_a), drain(agent_b))
+
+    assert seen_a["tenant.id"] == "acme", f"agent A saw tenant.id={seen_a['tenant.id']}, expected 'acme'"
+    assert seen_b["tenant.id"] == "globex", f"agent B saw tenant.id={seen_b['tenant.id']}, expected 'globex'"
+
+
+def test_baggage_attributes_stamped_on_agent_span():
+    """BaggageSpanProcessor sees baggage_attributes when the invoke_agent span starts."""
+    from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    with unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer):
+        agent = Agent(
+            model=MockedModelProvider([{"role": "assistant", "content": [{"text": "hi"}]}]),
+            callback_handler=None,
+            baggage_attributes={"tenant.id": "acme"},
+        )
+        agent("test")
+
+    provider.force_flush()
+    agent_spans = [span for span in exporter.get_finished_spans() if span.name.startswith("invoke_agent")]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].attributes["tenant.id"] == "acme"
+
+
+def test_baggage_attributes_nested_agent_override_and_restore():
+    """Inner agent's baggage overrides outer's for its scope, then outer's is restored."""
+    from opentelemetry import baggage as baggage_api
+
+    seen_before_inner = {}
+    seen_inner = {}
+    seen_after_inner = {}
+
+    @strands.tool
+    def outer_probe_before() -> str:
+        """Capture outer baggage before the inner agent runs."""
+        seen_before_inner["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        return "ok"
+
+    @strands.tool
+    def inner_probe() -> str:
+        """Capture baggage inside the inner agent."""
+        seen_inner["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        return "ok"
+
+    @strands.tool
+    def outer_probe_after() -> str:
+        """Capture outer baggage after the inner agent finishes."""
+        seen_after_inner["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        return "ok"
+
+    inner_agent = Agent(
+        model=MockedModelProvider(
+            [
+                {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t", "name": "inner_probe", "input": {}}}]},
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        ),
+        tools=[inner_probe],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "inner-corp"},
+        name="inner_agent",
+    )
+
+    outer_agent = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "t1", "name": "outer_probe_before", "input": {}}}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "t2", "name": "inner_agent", "input": {"input": "hi"}}}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "t3", "name": "outer_probe_after", "input": {}}}],
+                },
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        ),
+        tools=[outer_probe_before, inner_agent.as_tool(), outer_probe_after],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "outer-corp"},
+    )
+    outer_agent("hi")
+
+    assert seen_before_inner["tenant.id"] == "outer-corp", (
+        f"before inner: expected 'outer-corp', got {seen_before_inner['tenant.id']}"
+    )
+    assert seen_inner["tenant.id"] == "inner-corp", (
+        f"inside inner: expected 'inner-corp', got {seen_inner['tenant.id']}"
+    )
+    assert seen_after_inner["tenant.id"] == "outer-corp", (
+        f"after inner: expected 'outer-corp', got {seen_after_inner['tenant.id']}"
+    )

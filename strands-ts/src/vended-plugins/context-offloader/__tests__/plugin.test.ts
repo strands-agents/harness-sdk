@@ -7,6 +7,7 @@ import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { AgentMetrics } from '../../../telemetry/meter.js'
+import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
 
 const mockModel = new MockMessageModel()
 
@@ -145,6 +146,21 @@ describe('ContextOffloader', () => {
       expect(preview).toContain('Tool result was offloaded')
       expect(preview).toContain('[Stored references:]')
       expect(preview).not.toContain(largeText)
+    })
+
+    // https://github.com/strands-agents/harness-sdk/issues/4681
+    it('formats offload sizes the same regardless of the host locale', async () => {
+      const storage = new InMemoryStorage()
+      const plugin = new ContextOffloader({ storage, maxResultTokens: 100, previewTokens: 10 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('a'.repeat(200_000))])
+      await withDefaultLocale('en-IN', () => invokeTrackedHook(agent, event))
+
+      const preview = (event.result.content[0] as TextBlock).text
+      expect(preview).toContain('text, 200,000 chars')
+      expect(preview).toMatch(/~\d{1,3}(,\d{3})* tokens\]/)
     })
 
     it('offloads large JSON results', async () => {

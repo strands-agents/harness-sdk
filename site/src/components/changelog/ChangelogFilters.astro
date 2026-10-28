@@ -6,6 +6,7 @@ const { areas } = Astro.props
 ---
 <div class="cl-scrim" data-cl-scrim></div>
 <form class="cl-rail" role="search" aria-label="Filter changelog" data-cl-rail onsubmit="return false">
+  <button class="cl-rail-close" type="button" data-cl-filter-close>Done</button>
   <input class="cl-search" type="search" placeholder="Search titles, authors…" data-cl-search aria-label="Search changelog" />
   <p class="cl-rail-label" id="cl-area-label">Area</p>
   <ul class="cl-areas" aria-labelledby="cl-area-label">

@@ -199,6 +199,7 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       ['google.gemma-4-e2b', '/openai/v1'],
       ['openai.gpt-5.6-terra', '/openai/v1'],
       ['openai.gpt-6-astra', '/openai/v1'],
+      ['openai.gpt-6.1-sol', '/openai/v1'],
       // Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
       ['google.gemma-3-27b-it', '/v1'],
       ['google.gemma-3-4b-it', '/v1'],
@@ -224,9 +225,11 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       ['xai.grok-4.9', '/openai/v1'],
       ['openai.gpt-5.9-unreleased', '/openai/v1'],
       ['openai.gpt-6-nova', '/openai/v1'],
+      ['openai.gpt-6.1-sol', '/openai/v1'],
       // New lines the prefixes deliberately do not cover.
       ['xai.grok-5', '/v1'],
       ['xai.grok-5-preview', '/v1'],
+      ['openai.gpt-6oss-20b', '/v1'],
     ])('resolves unverified %s to %s', (modelId, expected) => {
       expect(baseURLFor({ modelId, bedrockMantleConfig: { region: 'us-west-2' } })).toBe(
         `https://bedrock-mantle.us-west-2.api.aws${expected}`

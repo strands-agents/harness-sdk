@@ -34,7 +34,10 @@ import {
   BeforeToolsEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
+import { ModelRouter } from '../../models/routing/router.js'
+import type { Model } from '../../models/model.js'
 import { StructuredOutputError } from '../../errors.js'
+import { NO_STRUCTURED_OUTPUT_MESSAGE } from '../../tools/structured-output-tool.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
@@ -410,6 +413,39 @@ describe('Agent', () => {
         const agent = new Agent({ model })
 
         await expect(agent.invoke('Test')).rejects.toThrow(MaxTokensError)
+      })
+
+      it.each([
+        ['empty string', ''],
+        ['whitespace string', '  \n'],
+        ['blank text blocks', [new TextBlock(' '), new TextBlock('\n')]],
+        ['blank content block data', [{ text: '' }]],
+        ['user message with blank text', [{ role: 'user' as const, content: [{ text: '' }] }]],
+        ['user message with no content', [{ role: 'user' as const, content: [] }]],
+      ])('rejects a blank prompt (%s) without breaking later calls', async (_, prompt) => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+        const agent = new Agent({ model })
+
+        await expect(agent.invoke(prompt)).rejects.toThrow('Input prompt is blank')
+
+        expect(agent.messages).toEqual([])
+        const result = await agent.invoke('Hi')
+        expect(result.toString()).toBe('Hello')
+      })
+
+      it.each([
+        ['text alongside blank text', [new TextBlock('hello'), new TextBlock('')]],
+        [
+          'image alongside blank text',
+          [new TextBlock(''), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })],
+        ],
+      ])('accepts a prompt with some non-blank content (%s)', async (_, prompt) => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+        const agent = new Agent({ model })
+
+        const result = await agent.invoke(prompt)
+
+        expect(result.toString()).toBe('Hello')
       })
     })
 
@@ -1378,6 +1414,57 @@ describe('Agent', () => {
     })
   })
 
+  describe('auxModel', () => {
+    it('defaults to model', () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model })
+
+      expect(agent.auxModel).toBe(model)
+    })
+
+    it('uses the configured auxModel', () => {
+      const auxModel = new MockMessageModel()
+      const agent = new Agent({ model: new MockMessageModel(), auxModel })
+
+      expect(agent.auxModel).toBe(auxModel)
+    })
+
+    it('creates BedrockModel from a string model id', () => {
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        auxModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+      })
+
+      expect(agent.auxModel).toBeInstanceOf(BedrockModel)
+      expect(agent.auxModel.getConfig().modelId).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    })
+
+    it('rejects a ModelRouter', () => {
+      const router = new ModelRouter([new MockMessageModel()])
+
+      expect(() => new Agent({ auxModel: router as unknown as Model })).toThrow(/ModelRouter/)
+    })
+
+    it('is reassignable at runtime', () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model })
+      const auxModel = new MockMessageModel()
+
+      agent.auxModel = auxModel
+      expect(agent.auxModel).toBe(auxModel)
+
+      agent.auxModel = 'us.anthropic.claude-haiku-4-5-20251001-v1:0'
+      expect(agent.auxModel).toBeInstanceOf(BedrockModel)
+
+      agent.auxModel = undefined
+      expect(agent.auxModel).toBe(model)
+
+      expect(() => {
+        agent.auxModel = new ModelRouter([new MockMessageModel()]) as unknown as Model
+      }).toThrow(/ModelRouter/)
+    })
+  })
+
   describe('model initialization', () => {
     describe('when model is a string', () => {
       it('creates BedrockModel with specified modelId', () => {
@@ -1508,7 +1595,48 @@ describe('Agent', () => {
 
       const agent = new Agent({ model, structuredOutputSchema: schema })
 
-      await expect(agent.invoke('Test')).rejects.toThrow(StructuredOutputError)
+      await expect(agent.invoke('Test')).rejects.toThrow(new StructuredOutputError(NO_STRUCTURED_OUTPUT_MESSAGE))
+    })
+
+    it('passes the schema on the retry and accepts a JSON text response', async () => {
+      const schema = z.object({ value: z.number() })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain text, no tool call' })
+        .addTurn({ type: 'textBlock', text: '{"value": 42}' })
+      const streamOptions: (StreamOptions | undefined)[] = []
+      const originalStream = model.stream.bind(model)
+      vi.spyOn(model, 'stream').mockImplementation((messages, options) => {
+        streamOptions.push(options)
+        return originalStream(messages, options)
+      })
+
+      const agent = new Agent({ model, tools: [createRandomTool('lookup')], structuredOutputSchema: schema })
+      const result = await agent.invoke('Test')
+
+      expect(result.structuredOutput).toStrictEqual({ value: 42 })
+      expect(result.stopReason).toBe('endTurn')
+      expect(agent.messages.map((message) => message.role)).toStrictEqual(['user', 'assistant'])
+      expect(agent.messages[1]).toStrictEqual(result.lastMessage)
+      expect(streamOptions.map((options) => options?.structuredOutputSchema)).toStrictEqual([undefined, schema])
+      expect(streamOptions.map((options) => options?.toolChoice)).toStrictEqual([
+        undefined,
+        { tool: { name: 'strands_structured_output' } },
+      ])
+      expect(streamOptions[1]?.toolSpecs?.map((spec) => spec.name)).toStrictEqual([
+        'lookup',
+        'strands_structured_output',
+      ])
+    })
+
+    it('throws StructuredOutputError when the JSON text response fails validation', async () => {
+      const schema = z.object({ value: z.number() })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain text, no tool call' })
+        .addTurn({ type: 'textBlock', text: '{"value": "not a number"}' })
+
+      const agent = new Agent({ model, structuredOutputSchema: schema })
+
+      await expect(agent.invoke('Test')).rejects.toThrow(/^Structured output failed validation: /)
     })
 
     it('throws MaxTokensError when maxTokens reached before structured output', async () => {
@@ -2184,7 +2312,7 @@ describe('normalizeToolUseNames', () => {
     })
 
     describe('when limits.outputTokens is reached', () => {
-      it('returns limitOutputTokens once cumulative outputTokens hits the cap', async () => {
+      it('returns limitOutputTokens once cumulative outputTokens hits the limit', async () => {
         const model = new MockMessageModel()
           .addTurn(...toolUseTurn('tool-1', { inputTokens: 10, outputTokens: 60, totalTokens: 70 }))
           .addTurn(...toolUseTurn('tool-2', { inputTokens: 10, outputTokens: 60, totalTokens: 70 }))
@@ -2210,7 +2338,7 @@ describe('normalizeToolUseNames', () => {
         )
       })
 
-      it('uses at-most (>=) semantics: stops when count exactly equals the cap', async () => {
+      it('uses at-most (>=) semantics: stops when count exactly equals the limit', async () => {
         const model = new MockMessageModel()
           .addTurn(...toolUseTurn('tool-1', { inputTokens: 10, outputTokens: 100, totalTokens: 110 }))
           .addTurn(...toolUseTurn('tool-2', { inputTokens: 10, outputTokens: 100, totalTokens: 110 }))
@@ -2234,7 +2362,7 @@ describe('normalizeToolUseNames', () => {
     })
 
     describe('when limits.totalTokens is reached', () => {
-      it('returns limitTotalTokens once cumulative totalTokens hits the cap', async () => {
+      it('returns limitTotalTokens once cumulative totalTokens hits the limit', async () => {
         const model = new MockMessageModel()
           .addTurn(...toolUseTurn('tool-1', { inputTokens: 200, outputTokens: 100, totalTokens: 300 }))
           .addTurn(...toolUseTurn('tool-2', { inputTokens: 200, outputTokens: 100, totalTokens: 300 }))
@@ -2318,7 +2446,7 @@ describe('normalizeToolUseNames', () => {
         )
       })
 
-      it('falls back to outputTokens when no higher-priority cap is set', async () => {
+      it('falls back to outputTokens when no higher-priority limit is set', async () => {
         const result = await buildAgent().invoke('go', { limits: { outputTokens: 1 } })
 
         expect(result).toEqual(
@@ -2334,7 +2462,7 @@ describe('normalizeToolUseNames', () => {
     describe('when the same agent is reused across invocations', () => {
       it('scopes the limit to the current invocation, not lifetime', async () => {
         // Each turn uses 50 output tokens. With limits.outputTokens: 75, a single
-        // invocation tolerates one turn but trips on the second. If the cap
+        // invocation tolerates one turn but trips on the second. If the limit
         // were lifetime-scoped, the second `invoke()` would trip on its first
         // turn (75 cumulative across both calls).
         const model = new MockMessageModel()
@@ -2372,11 +2500,11 @@ describe('normalizeToolUseNames', () => {
     })
 
     describe('when a limit key is unrecognized', () => {
-      // Guards #4354: a mistyped cap name is rejected instead of silently applying no limit.
+      // Guards #4354: a mistyped limit name is rejected instead of silently applying no limit.
       it.each([
         ['maxTurns', { limits: { maxTurns: 3 } }],
         ['turn', { limits: { turn: 3 } }],
-        ['a typo alongside a valid cap', { limits: { turns: 3, maxTokens: 100 } }],
+        ['a typo alongside a valid limit', { limits: { turns: 3, maxTokens: 100 } }],
       ])('rejects %s with TypeError', async (_label, options) => {
         const agent = new Agent({ model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'never reached' }) })
         await expect(agent.invoke('go', options as InvokeOptions)).rejects.toThrow(/not recognized/)

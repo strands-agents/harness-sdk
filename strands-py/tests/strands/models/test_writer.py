@@ -264,6 +264,46 @@ def test_format_request_with_tool_results(model, model_id, stream_options):
     assert request == exp_request
 
 
+@pytest.mark.parametrize("text_position", [None, "before", "after"])
+def test_format_request_messages_orders_tool_results_before_injected_text(model, text_position):
+    messages = [
+        {"role": "user", "content": [{"text": "What is 2+2?"}]},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "c1", "name": "calculator", "input": {"expression": "2+2"}}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                *([{"text": "Injected context"}] if text_position == "before" else []),
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "4"}]}},
+                *([{"text": "Injected context"}] if text_position == "after" else []),
+            ],
+        },
+    ]
+
+    tru_messages = model._format_request_messages(messages)
+    exp_messages = [
+        {"role": "user", "content": [{"text": "What is 2+2?", "type": "text"}]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {"arguments": '{"expression": "2+2"}', "name": "calculator"},
+                    "id": "c1",
+                    "type": "function",
+                }
+            ],
+        },
+        {"role": "tool", "content": [{"text": "4", "type": "text"}], "tool_call_id": "c1"},
+    ]
+    if text_position:
+        exp_messages.append({"role": "user", "content": [{"text": "Injected context", "type": "text"}]})
+
+    assert tru_messages == exp_messages
+
+
 def test_format_request_with_image(model, model_id, stream_options):
     messages = [
         {
@@ -427,6 +467,34 @@ async def test_stream_empty(writer_client, model, model_id):
         "stream_options": {"include_usage": True},
     }
     writer_client.chat.chat.assert_called_once_with(**expected_request)
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "stop_reason"),
+    [
+        ("stop", "end_turn"),
+        ("tool_calls", "tool_use"),
+        ("length", "max_tokens"),
+        ("content_filter", "content_filtered"),
+    ],
+)
+def test_format_chunk_message_stop(model, finish_reason, stop_reason):
+    chunk = model.format_chunk({"chunk_type": "message_stop", "data": finish_reason})
+
+    assert chunk == {"messageStop": {"stopReason": stop_reason}}
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter(writer_client, model, alist):
+    mock_delta = unittest.mock.Mock(content="partial", tool_calls=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="content_filter", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(usage=unittest.mock.Mock(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+    writer_client.chat.chat.return_value = mock_streaming_response([mock_event_1, mock_event_2])
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}], None, None))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in events
 
 
 @pytest.mark.asyncio
@@ -683,3 +751,18 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(writer_client, m
         request = model.format_request(messages)
 
     assert "cache_config" not in request
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.writer")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Writer" in messages_logged[0]

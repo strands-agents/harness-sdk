@@ -142,6 +142,11 @@ export interface InterruptStateData {
    * Pending tool execution state for resume after interrupt.
    */
   pendingToolExecution?: PendingToolExecution | undefined
+
+  /**
+   * Additional state carried for the duration of an interrupt, e.g. an interrupted sub-agent turn.
+   */
+  context?: Record<string, JSONValue> | undefined
 }
 
 /**
@@ -179,11 +184,15 @@ export class InterruptState implements InterruptStateData {
   /** Pending tool execution state for resume. */
   pendingToolExecution?: PendingToolExecution | undefined
 
+  /** Additional state carried for the duration of an interrupt, e.g. an interrupted sub-agent turn. */
+  context: Record<string, JSONValue>
+
   constructor() {
     this.interrupts = {}
     this.resumeResponses = undefined
     this.activated = false
     this.pendingToolExecution = undefined
+    this.context = {}
   }
 
   /**
@@ -260,6 +269,7 @@ export class InterruptState implements InterruptStateData {
     this.resumeResponses = undefined
     this.activated = false
     this.pendingToolExecution = undefined
+    this.context = {}
   }
 
   /**
@@ -346,6 +356,7 @@ export class InterruptState implements InterruptStateData {
       ...(this.resumeResponses && { resumeResponses: this.resumeResponses }),
       activated: this.activated,
       ...(this.pendingToolExecution && { pendingToolExecution: this.pendingToolExecution }),
+      ...(Object.keys(this.context).length > 0 && { context: this.context }),
     }
   }
 
@@ -369,6 +380,10 @@ export class InterruptState implements InterruptStateData {
 
     if (data.pendingToolExecution) {
       state.pendingToolExecution = data.pendingToolExecution
+    }
+
+    if (data.context) {
+      state.context = data.context
     }
 
     return state

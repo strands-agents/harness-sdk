@@ -193,6 +193,11 @@
   role: "Sr. Technical Content Creator, AWS"
   bio: Tim Moreton is a Sr. Technical Content Creator at AWS working on Strands Agents and agentic AI.
 
+- id: fernando-dingler
+  name: Fernando Dingler
+  role: "Principal Engineer, AWS"
+  bio: Fernando Dingler is a Principal Engineer at AWS working on Strands Agents and Strands Box.
+
 - id: chen-wu
   name: Chen Wu
   role: "Principal Applied Scientist, AWS"
@@ -208,6 +213,11 @@
   role: "Software Engineer, AWS Agentic AI"
   bio: Ariel is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
 
+- id: owen-kaplan
+  name: Owen Kaplan
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Owen is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
 - id: murat-kaan-meral
   name: Murat Kaan Meral
   role: "Software Engineer, AWS Agentic AI"
@@ -217,3 +227,63 @@
   name: Gautam Sirdeshmukh
   role: "Software Engineer, AWS Agentic AI"
   bio: Gautam is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: marc-brooker
+  name: Marc Brooker
+  role: "VP and Distinguished Engineer, AWS"
+  bio: Marc Brooker is a VP and Distinguished Engineer at AWS in Seattle, working on agentic AI, especially safety and policy for AI agents. He previously worked on EC2, EBS, databases, and serverless.
+
+- id: mike-chambers
+  name: Mike Chambers
+  role: "Senior AI Specialist Developer Advocate, AWS"
+  bio: Mike Chambers is a Senior AI Specialist Developer Advocate at AWS, helping developers build with generative AI and agents.
+
+- id: fabio-nonato-de-paula
+  name: Fabio Nonato de Paula
+  role: "Principal Applied Scientist, AWS"
+  bio: Fabio Nonato de Paula is a Principal Applied Scientist at AWS working on agentic AI.
+
+- id: morgan-willis
+  name: Morgan Willis
+  role: "Principal Developer Advocate, AWS"
+  bio: Morgan Willis is a Principal Developer Advocate at AWS working on agents.
+
+- id: chris-smith
+  name: Chris Smith
+  role: "Senior Solutions Architect, AWS"
+  bio: Chris Smith is a Senior Solutions Architect at AWS focused on agents and helping customers run them in production.
+
+- id: rachit-mehta
+  name: Rachit Mehta
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Rachit is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: spencer-romo
+  name: Spencer Romo
+  role: "Senior Data Scientist, AWS"
+  bio: Spencer Romo is a Senior Data Scientist in AWS Forward Deployed Engineering. He maintains Stickler, the open source AWS library for field-level evaluation of structured output, and built the StructuredOutputSimilarity evaluator in Strands Evals on top of it.
+
+- id: vincil-bishop
+  name: Vincil Bishop
+  role: "Senior Deep Learning Architect, AWS"
+  bio: Vincil Bishop is a Senior Deep Learning Architect in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: diego-galaviz
+  name: Diego Galavíz
+  role: "Deep Learning Architect, AWS"
+  bio: Diego Galavíz is a Deep Learning Architect in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: harry-cavanagh
+  name: Harry Cavanagh
+  role: "Data Scientist, AWS"
+  bio: Harry Cavanagh is a Data Scientist in AWS Forward Deployed Engineering and a contributor to Stickler.
+
+- id: hayley-park
+  name: Hayley Park
+  role: "Applied Scientist, AWS"
+  bio: Hayley Park is an Applied Scientist in AWS Forward Deployed Engineering.
+
+- id: arnaud-jean
+  name: Arnaud Jean
+  role: "Developer Advocate, AWS"
+  bio: Arnaud Jean is a Developer Advocate at AWS working with developers building agents on Strands.

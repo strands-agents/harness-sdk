@@ -31,7 +31,9 @@ The three file tools are thin wrappers over the agent's sandbox:
 - `read` reads a file. Text comes back as `cat -n` style numbered lines so the agent can
   cite `path:line` and page through a large file with `offset` and `limit` (default limit
   2000 lines). Images (`png`, `jpg`, `jpeg`, `gif`, `webp`) and binary documents (`pdf`,
-  `doc`, `docx`, `xls`, `xlsx`) are returned as media the model can view directly.
+  `doc`, `docx`, `xls`, `xlsx`) are returned as media the model can view directly. An image's
+  format comes from its bytes, not its extension, and a file with an image extension that is not
+  an image fails the call instead of being sent to the model.
 - `write` creates a file or overwrites it with the content you give.
 - `edit` replaces an exact string in a file. The `old_str` must appear exactly once, so an
   ambiguous edit fails rather than changing the wrong place.

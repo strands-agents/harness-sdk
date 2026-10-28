@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 192" width="720" height="192">
+  <!-- Type: pipeline (after half of a pair; node x positions match migrate-langgraph-function-nodes). Story: in Strands each node is an agent that runs its own loop before handing off. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="16" y="16" width="688" height="160" rx="8"/>
+  <text class="dg-eyebrow" x="32" y="36">STRANDS · EACH NODE IS AN AGENT WITH ITS OWN LOOP</text>
+
+  <!-- Edges: hand-offs -->
+  <path class="dg-edge" d="M208,128 H278" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M440,128 H510" marker-end="url(#arrow)"/>
+
+  <!-- Edges: each agent's own loop (U-shaped self-messages) -->
+  <path class="dg-edge" d="M100,96 V80 Q100,72 108,72 H148 Q156,72 156,80 V94" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M332,96 V80 Q332,72 340,72 H380 Q388,72 388,80 V94" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M564,96 V80 Q564,72 572,72 H612 Q620,72 620,80 V94" marker-end="url(#arrow)"/>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="48" y="96" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="128" y="125" text-anchor="middle">Research</text>
+  <text class="dg-code" x="128" y="143" text-anchor="middle">Agent</text>
+
+  <rect class="dg-node" x="280" y="96" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="360" y="125" text-anchor="middle">Analysis</text>
+  <text class="dg-code" x="360" y="143" text-anchor="middle">Agent</text>
+
+  <rect class="dg-node" x="512" y="96" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="592" y="125" text-anchor="middle">Review</text>
+  <text class="dg-code" x="592" y="143" text-anchor="middle">Agent</text>
+</svg>

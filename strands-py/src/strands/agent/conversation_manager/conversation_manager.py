@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, Union
 from ...hooks.events import BeforeModelCallEvent
 from ...hooks.registry import HookProvider, HookRegistry
 from ...types.content import Message
+from ..invocation_context import _create_auxiliary_invocation_context, _invocation_context_kwargs
 
 if TYPE_CHECKING:
     from ...agent.agent import Agent
@@ -139,7 +140,12 @@ class ConversationManager(ABC, HookProvider):
             )
             # Proactive compression is best-effort: swallow errors so the model call can still proceed.
             try:
-                self.reduce_context(agent=event.agent)
+                self.reduce_context(
+                    agent=event.agent,
+                    **_invocation_context_kwargs(
+                        self.reduce_context, _create_auxiliary_invocation_context(event.invocation_context)
+                    ),
+                )
             except Exception:
                 logger.debug("proactive compression failed, will proceed with model call", exc_info=True)
 
@@ -174,7 +180,9 @@ class ConversationManager(ABC, HookProvider):
         Args:
             agent: The agent whose conversation history will be manage.
                 This list is modified in-place.
-            **kwargs: Additional keyword arguments for future extensibility.
+            **kwargs: Additional keyword arguments for future extensibility. The SDK passes
+                ``invocation_context``: the request this management runs for, if any; a nested call
+                that joins it adds to the request's usage, but the request's limits don't apply.
         """
         pass
 
@@ -198,6 +206,8 @@ class ConversationManager(ABC, HookProvider):
                 reduce enough history for the next model call to succeed.
                 When None, this is a proactive compression call — best-effort reduction to avoid
                 hitting the context window limit.
-            **kwargs: Additional keyword arguments for future extensibility.
+            **kwargs: Additional keyword arguments for future extensibility. The SDK passes
+                ``invocation_context``: the request this reduction runs for, if any; a nested call
+                that joins it adds to the request's usage, but the request's limits don't apply.
         """
         pass

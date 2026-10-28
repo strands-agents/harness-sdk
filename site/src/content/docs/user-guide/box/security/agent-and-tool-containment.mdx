@@ -1,0 +1,134 @@
+---
+title: Agent and tool sandboxes
+description: How a Strands Box contains the agent, each tool, and each MCP server in separate sandboxes, which enforcement point decides each action, and where the boundaries differ.
+sidebar:
+  label: "Agent and tool sandboxes"
+---
+
+A box contains more than one process. The agent runs in the **agent's sandbox**. Each
+tool and each local MCP server it starts runs in **its own sandbox**, with its own grants.
+Box's shell, its Python, the egress gateway, and the MCP broker run in the **box's trusted
+process**, outside every sandbox. Credentials belong to the box: every process in it
+holds every credential binding. Knowing where an action happens tells you what controls
+it.
+
+## Which control decides each action
+
+| The workload… | Example | Contained by | Decided by policy as |
+|---|---|---|---|
+| Uses its own file tools | The harness edits `src/main.rs` | The agent's `[agent.filesystem]` grants | Not decided |
+| Runs a shell command Box implements | `grep -rn TODO src` | Box's shell, in the box's trusted process | `shell:exec`, then `fs:*` per file |
+| Runs Python | `python3 analyze.py` | Monty, in the box's trusted process | `fs:*` per file |
+| Starts a host binary | `git commit` | The tool's sandbox, with its grants | `shell:spawn` |
+| Calls a local MCP server | A `tools/call` to `docs` | The server's sandbox, with its grants | `shell:spawn` at start, then `mcp:call` |
+| Makes an HTTP request | The model API, `curl`, `fetch()` | The egress gateway | `net:connect` and `http:request` |
+
+The policy sees the interpreters, the gateway, and the MCP broker. It doesn't see
+inside a process's own system calls: those are bounded by its sandbox grants alone.
+
+## The agent's sandbox
+
+The agent's sandbox is the narrowest:
+
+- **Files.** The paths `[agent.filesystem]` grants, plus a small runtime minimum, such
+  as `/System/Library` and `/dev/null` on macOS. Under your home, an ungranted path
+  appears not to exist. The agent's workspace is enterable, not readable, until a list
+  grants it.
+- **Programs.** The agent's own command and the interpreters its scripts name, its
+  `exec` entries, and Box's shell and Python aliases. Other programs go through Box's
+  shell, which raises a decision.
+- **Shells and Python.** `bash`, `zsh`, `sh`, `python`, and `python3` come first on the
+  agent's `PATH`, and each one is an alias for Box's interpreter.
+- **Network.** The egress gateway and Box's telemetry port on loopback, and the broker's
+  socket, `run/box.sock`, which the aliases use. `[agent]` refuses a `network` table, so
+  the agent can't leave the gateway.
+- **Environment.** What `[agent] env` sets, plus `HOME`, `PATH`, credential
+  placeholders, and the variables Box adds for the proxy, the CA, and telemetry. Box
+  reserves loader and interpreter variables such as `LD_*`, `DYLD_*`, `PYTHON*`, and
+  `NODE_OPTIONS`, so a table can't set them.
+
+## A tool's sandbox
+
+When a `shell:spawn` permit starts a tool, Box builds a sandbox for that one launch from
+the tool's `[tool.<name>]` table. It ends when the program does:
+
+- **Files.** The tool's own six lists plus a wider runtime minimum, such as
+  `/usr/lib` and `/etc/ssl`. Inside its grants the tool's file access raises no
+  decision. On macOS it also sees what exists across your home: it can test that a path
+  exists and read its metadata. Contents stay behind its `read` grants, and the box
+  directory and credential stores stay hidden.
+- **Startup services.** On macOS it can read the `net.*` system settings and open a
+  routing socket at startup. Neither is outbound access.
+- **Programs.** On macOS a tool's sandbox can run any binary it can reach, and load code
+  it writes into its writable grants. An Apple `/usr/bin` stub, such as `git`, `make`, `cc`,
+  or `python3`, hands off to the Command Line Tools, and that hand-off fails in a tool's
+  sandbox. Put the Command Line Tools binary itself on the path, as
+  [Write policy for shell commands](../guides/write-shell-policy.md#step-4-allow-a-program-on-your-path)
+  shows.
+- **Network.** Through the egress gateway, under the same policy as the agent, unless
+  `[tool.<name>.network]` sets `contain_egress = false`. Then it connects directly, with
+  the arguments the agent passes, and with no gateway decision, credential injection, or
+  traffic record.
+- **Credentials.** Every binding the box declares, the same as the agent.
+- **No route back to Box.** A tool's sandbox has no aliases and can't connect to the
+  broker's socket. A `bash` or `python3` inside it is the host OS's shell or Python,
+  running in the tool's sandbox, and raises no decision.
+
+One permit covers the tool's whole process tree. A `git` permit also covers the hooks
+`git` runs, and an `npm` permit covers the scripts in `package.json`. Treat a tool
+permit as trust in everything that tool will execute.
+
+## A local MCP server's sandbox
+
+A local stdio MCP server runs in its own sandbox like a tool, after a `shell:spawn`
+permit, with the grants in `[mcp.<name>]`. Its `[mcp.<name>.filesystem]` table takes the
+same six lists as a tool's, and refuses `metadata` and `exec`. A server with no grants
+still runs contained, and it holds every credential binding the box declares. A server
+with `network.contain_egress = false` connects directly to any IP address, loopback
+included, but to no other pathname socket, such as another box's broker socket.
+
+Box's MCP broker decides each request the agent sends. For a local server,
+`initialize`, `ping`, `server/discover`, `subscriptions/listen`, and notifications pass
+undecided; every other method, including `tools/list`, raises `mcp:call`. A remote MCP
+server is reached through the gateway, so its `initialize` is decided as `mcp:call`, and
+its traffic is decided as `net:connect` and `http:request` as well.
+
+A local server can send its own request to the agent, such as `roots/list` or
+`sampling/createMessage`. The agent's reply is decided as `mcp:call`, with `method` set
+to the method of the request it answers, so a policy that permits only named methods
+must name these too. A reply to `ping` passes undecided.
+
+`mcp:call` bounds what the agent asks the server to do. It doesn't bound what the
+server does with its own grants. Box doesn't list an MCP server's grants in the startup
+disclosure, so read its `[mcp.<name>]` table.
+
+## Choose where a program runs
+
+You decide which sandbox runs a program by where you declare it:
+
+| Declared as | Runs in | Decision |
+|---|---|---|
+| `[tool.<name>]` | Its own sandbox | `shell:spawn` per start |
+| `[tool.<name>]` with `network.contain_egress = false` | Its own sandbox, with direct network access | `shell:spawn` per start, and no `net:*` |
+| An `exec` entry in `[agent.filesystem]`, started through Box's shell | A new sandbox that runs with the agent's own filesystem lists and a tool's runtime reach, always through the gateway | `shell:spawn` per start |
+| An `exec` entry, run directly by the agent | The agent's sandbox | Not decided |
+| `[mcp.<name>]` with `type = "stdio"` | Its own sandbox | `shell:spawn`, then `mcp:call` |
+
+Prefer a tool table when a program needs files the agent shouldn't have. Prefer an
+agent `exec` entry when a program should reach no more paths than the agent's lists
+grant. It still runs with a tool's runtime reach: on macOS it gets a tool sandbox's
+broader exec, its larger runtime minimum, and path checks across your home. The startup
+report shows its grants under `[agent]`, but not that wider reach. To keep a credential
+from a program, run it in another box.
+
+## Go deeper
+
+- [How Box contains a process](https://github.com/strands-agents/box/blob/main/docs/design/containment.md#the-agents-box-and-leaf-boxes):
+  the agent's sandbox and the sandboxes for tools and local MCP servers, and a
+  [side-by-side comparison](https://github.com/strands-agents/box/blob/main/docs/design/containment.md#side-by-side).
+- [Limitations](https://github.com/strands-agents/box/blob/main/docs/design/limitations.md):
+  what is still at risk once the box and the policy do their jobs.
+- [macOS enforcement](https://github.com/strands-agents/box/blob/main/docs/design/macos-enforcement.md):
+  the Seatbelt profiles for the agent and for tools, and how to diagnose a refusal.
+- [Binaries](https://github.com/strands-agents/box/blob/main/docs/design/binaries.md):
+  `strands-box`, the trampoline, and the alias.

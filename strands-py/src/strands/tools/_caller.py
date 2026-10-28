@@ -22,7 +22,7 @@ from ..types.tools import ToolResult, ToolUse
 
 if TYPE_CHECKING:
     from ..agent import Agent
-    from ..experimental.bidi.agent import BidiAgent
+    from ..bidi.agent import BidiAgent
 
 
 class _ToolCaller:

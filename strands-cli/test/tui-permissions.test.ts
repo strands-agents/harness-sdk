@@ -99,6 +99,26 @@ describe('CedarPermissions', () => {
     })
   })
 
+  it.each(['retrieve_context', 'retrieve_offloaded_content'])(
+    'permits %s without interactive approval',
+    async (toolName) => {
+      const broker = new ToolPermissionBroker()
+      const permissions = new CedarPermissions({ broker, cwd: await temporaryWorkspace() })
+      const requests: string[] = []
+      broker.subscribe((request) => {
+        if (request) {
+          requests.push(request.toolName)
+          broker.respond(request.id, 'deny')
+        }
+      })
+
+      await expect(
+        permissions.beforeToolCall(toolEvent(toolName, { reference: 'tooluse-1_0' }))
+      ).resolves.toMatchObject({ type: 'proceed' })
+      expect(requests).toEqual([])
+    }
+  )
+
   it('does not auto-permit reads that escape through paths or symlinks', async () => {
     const workspace = await temporaryWorkspace()
     const outside = await temporaryWorkspace()

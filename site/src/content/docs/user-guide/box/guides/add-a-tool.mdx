@@ -1,0 +1,277 @@
+---
+title: Add a tool or an MCP server
+description: Let a boxed agent run a host binary such as git in its own sandbox, start a local stdio MCP server, or call a remote MCP server, each gated by policy.
+sidebar:
+  label: "Add a tool"
+---
+
+The agent's shell is Strands Shell, which implements commands such as `cat`, `grep`,
+and `sed` itself. To run a host binary such as `git`, `cargo`, or `aws`, you
+declare it as a **tool**. Box runs each tool in **its own sandbox**, with its own
+filesystem grants, and only after a policy permit.
+
+Adding a tool takes two edits: a `[tool.<name>]` table and a `shell:spawn` permit.
+
+## Declare the tool
+
+```toml
+[tool.git]
+command = ["/usr/bin/git"]
+
+[tool.git.env]
+PATH = "/usr/bin:/bin"
+GIT_CONFIG_NOSYSTEM = "1"
+GIT_CONFIG_GLOBAL = "/dev/null"
+
+[tool.git.filesystem]
+read  = ["/Users/me/src/my-service", "/Library/Developer/CommandLineTools"]
+write = ["/Users/me/src/my-service"]
+```
+
+A tool table takes the four keys of `[agent]`, plus `network`:
+
+| Key | Meaning |
+|---|---|
+| `command` | The program, plus any leading arguments. Element 0 is an absolute path or a bare name; see [`command`](../reference/configuration.md#command). |
+| `env` | Variables for the tool. Box adds the proxy, CA, and telemetry variables itself. |
+| `filesystem` | The paths the tool's own system calls reach: `read`, `write`, `read_file`, `write_file`, `list`, and `deny`. |
+| `workspace` | The tool's starting directory. Defaults to the box's shell's current directory when the tool's grants or the agent's workspace contain it, else the agent's workspace. |
+| `network.contain_egress` | `true` by default. `false` lets the tool connect directly, with no gateway decision and no credential injection. See [Let a tool skip the gateway](#let-a-tool-skip-the-gateway). |
+
+Set `PATH` in each tool's `env`: without it, the tool's program resolves on the `PATH`
+of the host OS's shell that runs `box run`.
+
+On macOS, `/usr/bin/git` is an `xcode-select` stub. A tool whose program runs an Apple
+`/usr/bin` stub, such as `git`, `python3`, `cc`, or `make`, directly or through a child
+process, needs the active developer directory in its `read` list, as the example does.
+`xcode-select -p` prints the directory. Set `env.DEVELOPER_DIR` only to use a toolchain
+other than the selected one.
+
+## Permit the start
+
+The shell raises a `shell:spawn` decision for each host binary it would start. Pin the
+rule to the resolved file:
+
+```text
+@id("spawn_git")
+permit (principal, action == Box::Action::"shell:spawn", resource)
+when {
+  context.input.program_path == "/usr/bin/git" &&
+  context.input.program == "git"
+};
+```
+
+`program_path` is the canonical path of the binary, written `~/…` under your home.
+`program` is the name the command line used. Use `arg1`, `arg2`, and `arg_count` to
+narrow a rule by arguments, and guard the optional ones with `has`:
+
+```text
+@id("no_git_push")
+forbid (principal, action == Box::Action::"shell:spawn", resource)
+when {
+  context.input.program == "git" &&
+  context.input has arg1 && context.input.arg1 == "push"
+};
+```
+
+After a permit, Box picks the `[tool.<name>]` whose `command` matches the resolved
+program and its leading arguments, the longest match winning. If no tool matches, the
+start is refused with `no tool runs …`, unless the program is under one of the agent's
+own `exec` entries, in which case it runs in its own sandbox with the agent's path
+lists. If a `[tool.<name>]` names the program but none matches its leading arguments,
+the start is refused, even when the program is under an `exec` entry.
+
+## Require a tool to succeed
+
+Each start records a `shell:spawn` response whose `output.status` is the command's exit
+status. A later rule can require a recorded success. This rule refuses `git push` until
+`cargo test` has exited `0` in the last hour:
+
+```text
+@id("push_after_tests")
+forbid (principal, action == Box::Action::"shell:spawn", resource)
+when {
+  context.input.program == "git" &&
+  context.input has arg1 && context.input.arg1 == "push"
+}
+when temporal {
+  !(formerly within 1h (
+    Box::Action::"shell:spawn"::response{
+      input.program_path: "~/.cargo/bin/cargo",
+      input.arg1: "test",
+      output.status: 0
+    }
+  ))
+};
+```
+
+A process that a signal ends reports 128 plus the signal number, and a permitted binary
+that can't start reports 126. Read `shell:spawn` and pin `program_path`, not
+`shell:exec`: the workload can set the status of a command the shell runs itself, for
+example with a shell function of the same name.
+
+## What a tool can do inside its sandbox
+
+One `shell:spawn` permit covers the tool's whole process tree. Inside it, the tool's
+file access is bounded by its own `filesystem` lists and a runtime minimum of system
+paths, with no `fs:*` decisions.
+A tool can therefore touch files inside its granted trees that the policy denies to
+the agent's shell. On macOS a tool's sandbox can also run any binary it can reach,
+load code it writes into its writable grants, and see which paths exist across your
+home.
+
+A tool's sandbox has no route back to the box's trusted process. It gets no aliases on
+its `PATH` and can't reach the broker's socket, `run/box.sock`, so a `sh` or `python3`
+that a tool runs is the host OS's own program, inside the tool's sandbox, and raises no
+decision.
+
+Grant each tool the narrowest trees it needs. A tool that runs scripts, such as `npm`
+or `make`, runs whatever those scripts say. The
+[sandboxes page](../security/agent-and-tool-containment.md) explains how the agent's
+sandbox and a tool's sandbox differ.
+
+A tool's network traffic goes through the egress gateway like the agent's, under the
+same `net:connect` and `http:request` rules. Every tool gets every `[egress.<name>]`
+placeholder, so `git` can use a GitHub binding with no extra configuration; see
+[Allow network destinations](network-and-credentials.md). To keep a credential from a
+tool, run the tool in another box.
+
+### Let a tool skip the gateway
+
+`[tool.<name>.network]` holds one key, `contain_egress`. Set it to `false` only for a
+program whose client doesn't read `HTTPS_PROXY`, such as a client that signs in through
+single sign-on:
+
+```toml
+[tool.sso-cli]
+command = ["sso-cli"]
+
+[tool.sso-cli.network]
+contain_egress = false
+```
+
+The tool then connects directly to IP hosts, with no `net:connect` or `http:request`
+decision, no credential injection, and no traffic record. The agent picks a tool's
+arguments, so with `false` the agent can aim the program's connections. Don't set it on
+a general client such as `curl`, or on an interpreter. Box prints a `native egress` line
+for the tool at startup, and records `egress:native` each time the tool runs. `[agent]`
+refuses a `network` table, and a program that runs under an agent `exec` entry always
+goes through the gateway.
+
+## Add a local MCP server
+
+A stdio MCP server runs in its own sandbox, like a tool. This example uses the
+reference `fetch` server, installed with `uv`:
+
+```bash
+uv tool install mcp-server-fetch
+```
+
+Declare it, and permit both its start and its calls:
+
+```toml
+[mcp.fetch]
+type = "stdio"
+command = ["mcp-server-fetch"]
+
+[mcp.fetch.filesystem]
+read = ["~/.local/share/uv/tools/mcp-server-fetch", "~/.local/share/uv/python"]
+```
+
+On macOS, a server that runs on an interpreter needs `read` on the interpreter's install
+directories, as this one does for `uv`'s. Without them the server exits before it
+answers, and Box prints `MCP server closed stdout before it sent a complete response`.
+
+`command[0]` must be a bare program name, and can't be `zsh`, `bash`, `sh`, `python`, or
+`python3`. Box resolves it on the server's `env.PATH`, or on your `PATH` when `env`
+doesn't set one. Two servers can't share a program name, so only one `[mcp.*]` entry can
+start with a given program. Box puts an alias with that name on the agent's
+`PATH`. Point the harness's own MCP configuration at the bare name, and Box starts the
+real server in its own sandbox when the harness runs it. The server's identity always
+comes from `box.toml`, whatever the harness's configuration says.
+
+```text
+@id("fetch_start")
+permit (principal, action == Box::Action::"shell:spawn", resource)
+when { context.input.program == "mcp-server-fetch" };
+
+@id("fetch_calls")
+permit (principal, action == Box::Action::"mcp:call", resource)
+when { context.input.server == "fetch" };
+```
+
+The server's own requests go through the egress gateway, so each host its `fetch` tool
+reads needs a `net:connect` and an `http:request` permit, like any other.
+
+A stdio server takes `env`, `workspace`, and a `filesystem` table with the six lists a
+tool's takes. `box run` refuses `metadata` and `exec` there by name. It holds every
+credential binding the box declares.
+Its network traffic goes through the gateway unless you set
+`network.contain_egress = false`, which gives the server direct connections to IP hosts
+with no policy decision and no credential injection. Box records `egress:native` when
+the server starts.
+
+For every `[mcp.<name>]` key, see the Box repository's
+[MCP server reference](https://github.com/strands-agents/box/blob/main/docs/user/mcp.md),
+and for its rules, [Write policy for an MCP server](https://github.com/strands-agents/box/blob/main/docs/user/mcp-policy.md).
+
+## Add a remote MCP server
+
+A remote server is reached over HTTP through the gateway:
+
+```toml
+[mcp.tickets]
+type = "http"
+destinations = ["mcp.tickets.example.com"]
+secret.ref = "env://TICKETS_TOKEN"
+```
+
+Permit the connection, the request, and the MCP calls:
+
+```text
+@id("tickets_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when { context.input.host == "mcp.tickets.example.com" && context.input.port == 443 };
+
+@id("tickets_request")
+permit (principal, action == Box::Action::"http:request", resource)
+when { context.input.host == "mcp.tickets.example.com" && context.input.port == 443 };
+
+@id("tickets_calls")
+permit (principal, action == Box::Action::"mcp:call", resource)
+when { context.input.server == "tickets" };
+```
+
+## Refuse one MCP tool
+
+`mcp:call` carries `server`, `method`, and, for a `tools/call`, the `tool` name. Forbid
+one tool on a server you otherwise permit:
+
+```text
+@id("tickets_no_delete")
+forbid (principal, action == Box::Action::"mcp:call", resource)
+when {
+  context.input.server == "tickets" &&
+  context.input has tool && context.input.tool == "delete_ticket"
+};
+```
+
+Box also generates a typed action for each tool a server lists, named
+`<server>::Action::"<tool>"`, whose `context.input` holds the tool's arguments. Use it
+to refuse a call by its arguments:
+
+```text
+@id("tickets_no_sev1_close")
+forbid (principal, action == tickets::Action::"close_ticket", resource)
+when { context.input has priority && context.input.priority == "sev1" };
+```
+
+To see the generated actions and argument types, run
+[`box policy generate-schema`](../reference/cli.md#policy-generate-schema). A typed
+action refines `mcp:call`: when no typed rule matches, the `mcp:call` decision stands.
+At run time, Box learns the tools from the replies to the agent's own `tools/list`, so
+a typed rule enforces once the agent lists the server's tools.
+
+In a box with no stdio MCP server, Box checks the whole policy against its schema
+before the box starts, so a typed rule fails there with
+`policy references unknown action`.

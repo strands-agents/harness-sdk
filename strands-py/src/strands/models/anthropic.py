@@ -7,6 +7,9 @@
 import base64
 import json
 import logging
+import re
+import warnings
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
@@ -16,6 +19,7 @@ from pydantic import BaseModel
 from typing_extensions import Required, Unpack, override
 
 from ..event_loop.streaming import process_stream
+from ..tools.structured_output._structured_output_context import json_object_from_message
 from ..tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
 from ..types.citations import (
     DocumentCharLocationDict,
@@ -29,9 +33,21 @@ from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
-from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
+from ._native_output import (
+    StructuredOutputMechanism,
+    handle_rejected_mechanism,
+    structured_output_mechanisms,
+    unsupported_mechanisms,
+)
+from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    _warn_on_deprecated_cache_tools,
+    validate_config_keys,
+)
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -77,9 +93,39 @@ _CACHEABLE_BLOCK_TYPES = frozenset({"document", "image", "text", "tool_result", 
 # ``ephemeral`` is the only cache type the Anthropic API supports
 _ANTHROPIC_CACHE_TYPE = "ephemeral"
 
+# The anthropic SDK added the output_config request parameter in 0.77.0, after transform_schema (0.75.0).
+_SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (0, 77)
+
+
+def _mechanism_tool_choice(
+    mechanism: StructuredOutputMechanism | None, tool_choice: ToolChoice | None
+) -> ToolChoice | None:
+    """The tool choice to send: the requested one, or auto when the mechanism does not force the tool."""
+    if mechanism in ("native", "auto"):
+        return cast(ToolChoice, {"auto": ToolChoiceAuto()})
+    return tool_choice
+
+
+def _with_native_output(
+    request: dict[str, Any],
+    mechanism: StructuredOutputMechanism | None,
+    structured_output_model: type[BaseModel] | None,
+) -> dict[str, Any]:
+    """Constrain the response to the output model's schema, keeping other output_config settings.
+
+    tool_choice none keeps the tools array unchanged while ruling out tool calls, so the response is the JSON object.
+    """
+    if mechanism != "native" or structured_output_model is None:
+        return request
+    schema = anthropic.transform_schema(structured_output_model)
+    output_config = {**request.get("output_config", {}), "format": {"type": "json_schema", "schema": schema}}
+    return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
+
 
 class AnthropicModel(Model):
     """Anthropic model provider implementation."""
+
+    _supports_structured_output = True
 
     EVENT_TYPES = {
         "message_start",
@@ -147,6 +193,7 @@ class AnthropicModel(Model):
 
         client_args = client_args or {}
         self.client = anthropic.AsyncAnthropic(**client_args)
+        self._drop_stale_thinking_model_id: str | None = None
 
     @override
     def update_config(self, **model_config: Unpack[AnthropicConfig]) -> None:  # type: ignore[override]
@@ -172,14 +219,14 @@ class AnthropicModel(Model):
         """
         return resolve_config_metadata(self.config, self.config["model_id"])
 
-    def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any]:
+    def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.
 
         Args:
             content: Message content.
 
         Returns:
-            Anthropic formatted content block.
+            Anthropic formatted content block, or None if Anthropic cannot accept the block.
 
         Raises:
             TypeError: If the content block type or document format cannot be converted to an
@@ -229,11 +276,22 @@ class AnthropicModel(Model):
             }
 
         if "reasoningContent" in content:
-            return {
-                "signature": content["reasoningContent"]["reasoningText"]["signature"],
-                "thinking": content["reasoningContent"]["reasoningText"]["text"],
-                "type": "thinking",
-            }
+            reasoning_text = content["reasoningContent"].get("reasoningText", {})
+            if signature := reasoning_text.get("signature"):
+                return {
+                    "signature": signature,
+                    "thinking": reasoning_text.get("text", ""),
+                    "type": "thinking",
+                }
+
+            if redacted_content := content["reasoningContent"].get("redactedContent"):
+                return {
+                    "data": base64.b64encode(redacted_content).decode("utf-8"),
+                    "type": "redacted_thinking",
+                }
+
+            # Anthropic rejects reasoning text without a signature, which is how other model families emit it.
+            return None
 
         if "text" in content:
             return {"text": content["text"], "type": "text"}
@@ -251,15 +309,16 @@ class AnthropicModel(Model):
             }
 
         if "toolResult" in content:
+            formatted_results = [
+                self._format_request_message_content(
+                    {"text": json.dumps(tool_result_content["json"], ensure_ascii=False)}
+                    if "json" in tool_result_content
+                    else cast(ContentBlock, tool_result_content)
+                )
+                for tool_result_content in content["toolResult"]["content"]
+            ]
             return {
-                "content": [
-                    self._format_request_message_content(
-                        {"text": json.dumps(tool_result_content["json"], ensure_ascii=False)}
-                        if "json" in tool_result_content
-                        else cast(ContentBlock, tool_result_content)
-                    )
-                    for tool_result_content in content["toolResult"]["content"]
-                ],
+                "content": [block for block in formatted_results if block is not None],
                 "is_error": content["toolResult"]["status"] == "error",
                 "tool_use_id": content["toolResult"]["toolUseId"],
                 "type": "tool_result",
@@ -286,6 +345,8 @@ class AnthropicModel(Model):
         cache_config = self.config.get("cache_config")
         configured_ttl = cache_config.ttl if cache_config else None
         formatted_messages = []
+        dropped_unsigned_reasoning = False
+        skipped: Counter[str] = Counter()
 
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
@@ -311,10 +372,14 @@ class AnthropicModel(Model):
 
                 # Check for location sources in image, document, or video content
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Anthropic | skipping content block")
+                    skipped["Location sources are not supported by Anthropic | skipping content block"] += 1
                     continue
 
-                formatted_contents.append(self._format_request_message_content(content))
+                formatted_content = self._format_request_message_content(content)
+                if formatted_content is None:
+                    dropped_unsigned_reasoning = True
+                    continue
+                formatted_contents.append(formatted_content)
 
             # Automatic placement runs once the whole message is formatted, so the cache point lands on a
             # block that survived translation. It is skipped when a caller-placed point already marked one.
@@ -329,6 +394,10 @@ class AnthropicModel(Model):
             if formatted_contents:
                 formatted_messages.append({"content": formatted_contents, "role": message["role"]})
 
+        if dropped_unsigned_reasoning:
+            logger.warning("Unsigned reasoning content is not supported by Anthropic | skipped content blocks")
+
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     @classmethod
@@ -423,7 +492,12 @@ class AnthropicModel(Model):
             return messages, None
 
         if cache_config.strategy not in ("auto", "anthropic"):
-            logger.warning("strategy=<%s> | unknown cache strategy, prompt caching disabled", cache_config.strategy)
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per distinct strategy value).
+            warnings.warn(
+                f"cache_config.strategy={cache_config.strategy!r} is an unknown cache strategy;"
+                " prompt caching is disabled",
+                stacklevel=1,
+            )
             return messages, None
 
         target_idx = next(
@@ -530,7 +604,24 @@ class AnthropicModel(Model):
             "tools": tools,
         }
 
+        if self._drop_stale_thinking_model_id == self.config["model_id"]:
+            request = self._request_with_drop_block(request) or request
+
         return request
+
+    def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the request with stale thinking blocks dropped, or None if it cannot change."""
+        thinking = thinking_with_drop_block(request.get("thinking"))
+        if thinking is None:
+            return None
+        extra_headers = dict(request.get("extra_headers") or {})
+        # Request headers replace client headers of the same name, so betas set on the client are carried over.
+        configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
+        betas = [beta.strip() for beta in configured.split(",")] if isinstance(configured, str) else []
+        if THINKING_BINDING_BETA not in betas:
+            betas.append(THINKING_BINDING_BETA)
+        extra_headers["anthropic-beta"] = ",".join(beta for beta in betas if beta)
+        return {**request, "thinking": thinking, "extra_headers": extra_headers}
 
     def _format_system_prompt(
         self, system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None
@@ -893,6 +984,7 @@ class AnthropicModel(Model):
         *,
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        structured_output_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the Anthropic model.
@@ -903,6 +995,8 @@ class AnthropicModel(Model):
             system_prompt: Plain string system prompt. Ignored when system_prompt_content is provided.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: Structured system prompt content blocks, which can carry a cache point.
+            structured_output_model: Output model the call must produce; the request is then sent with the strongest
+                structured output mechanism the model supports.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -916,21 +1010,26 @@ class AnthropicModel(Model):
             ModelThrottledException: If the request is throttled by Anthropic.
             RuntimeError: If a paused server-side tool turn is still paused after the continuation limit.
         """
+        mechanism = self._structured_output_mechanism(structured_output_model, tool_choice)
+
         logger.debug("formatting request")
         request = self.format_request(
             messages,
             tool_specs,
             system_prompt,
             system_prompt_content=system_prompt_content,
-            tool_choice=tool_choice,
+            tool_choice=_mechanism_tool_choice(mechanism, tool_choice),
             dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
         )
+        request = _with_native_output(request, mechanism, structured_output_model)
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")
         usage: dict[str, int] = {}
         block_index_offset = 0
         continuations = 0
+        retry_with_drop_block = False
+        retry_with_next_mechanism = False
         try:
             while True:
                 async with self.client.messages.stream(**request) as stream:
@@ -1015,9 +1114,77 @@ class AnthropicModel(Model):
             if any(overflow_message in str(error).lower() for overflow_message in AnthropicModel.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error
 
-            raise error
+            retry_with_drop_block = (
+                continuations == 0
+                and is_thinking_binding_error(error)
+                and self._request_with_drop_block(request) is not None
+            )
+            # A mechanism is rejected on a turn's first request, before any chunk is yielded; continuations reuse an
+            # accepted one. So the request can be resent with the next mechanism, the same order BedrockModel tries
+            # in a loop.
+            retry_with_next_mechanism = not retry_with_drop_block and self._record_rejected_mechanism(
+                error, mechanism, structured_output_model
+            )
+            if not (retry_with_drop_block or retry_with_next_mechanism):
+                raise error
+
+        if retry_with_drop_block:
+            # Stale blocks stay in history, so drop_block stays on for every later request to this model.
+            logger.warning(
+                "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
+                self.config["model_id"],
+            )
+            self._drop_stale_thinking_model_id = self.config["model_id"]
+        if retry_with_drop_block or retry_with_next_mechanism:
+            async for chunk in self.stream(
+                messages,
+                tool_specs,
+                system_prompt,
+                tool_choice=tool_choice,
+                system_prompt_content=system_prompt_content,
+                structured_output_model=structured_output_model,
+                **kwargs,
+            ):
+                yield chunk
+            return
 
         logger.debug("finished streaming response from model")
+
+    def _record_rejected_mechanism(
+        self,
+        error: anthropic.BadRequestError,
+        mechanism: StructuredOutputMechanism | None,
+        structured_output_model: type[BaseModel] | None,
+    ) -> bool:
+        """Record a structured output rejection, so the request should be resent with the next mechanism.
+
+        Returns:
+            True if the rejection was recorded; False if the error is unrelated and should surface unchanged.
+        """
+        if mechanism is None or structured_output_model is None:
+            return False
+        return handle_rejected_mechanism(
+            "anthropic", self.config["model_id"], mechanism, structured_output_model, str(error)
+        )
+
+    def _structured_output_mechanism(
+        self, structured_output_model: type[BaseModel] | None, tool_choice: ToolChoice | None
+    ) -> StructuredOutputMechanism | None:
+        """Choose the strongest structured output mechanism not yet rejected for this model."""
+        if structured_output_model is None:
+            return None
+        mechanism = structured_output_mechanisms(
+            unsupported_mechanisms("anthropic", self.config["model_id"], structured_output_model),
+            cast(dict[str, Any] | None, tool_choice),
+            structured_output_model,
+        )[0]
+        if mechanism == "native" and not _SDK_SUPPORTS_NATIVE_OUTPUT:
+            warnings.warn(
+                "Native structured output requires anthropic>=0.77.0; using auto tool choice instead",
+                stacklevel=2,
+            )
+            return "auto"
+        return mechanism
 
     @override
     async def structured_output(
@@ -1041,12 +1208,18 @@ class AnthropicModel(Model):
             tool_specs=[tool_spec],
             system_prompt=system_prompt,
             tool_choice=cast(ToolChoice, {"any": {}}),
+            structured_output_model=output_model,
             **kwargs,
         )
         async for event in process_stream(response):
             yield event
 
         stop_reason, messages, _, _ = event["stop"]
+
+        # Native structured output returns the result as JSON text instead of a tool call.
+        if stop_reason == "end_turn" and (data := json_object_from_message(messages)) is not None:
+            yield {"output": output_model(**data)}
+            return
 
         if stop_reason != "tool_use":
             raise ValueError(f'Model returned stop_reason: {stop_reason} instead of "tool_use".')

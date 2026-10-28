@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import threading
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar
@@ -190,6 +191,10 @@ class Model(abc.ABC):
     standardized way to configure and process requests for different AI model providers.
     """
 
+    # A provider that sets this enforces structured output itself: on the structured output retry it receives
+    # structured_output_model and the full tool list, instead of only the forced tool.
+    _supports_structured_output: bool = False
+
     @property
     def stateful(self) -> bool:
         """Whether the model manages conversation state server-side.
@@ -263,6 +268,7 @@ class Model(abc.ABC):
         invocation_state: dict[str, Any] | None = None,
         cancel_signal: threading.Event | None = None,
         agent_metadata: "AgentMetadata | None" = None,
+        structured_output_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[StreamEvent]:
         """Stream conversation with the model.
@@ -286,6 +292,10 @@ class Model(abc.ABC):
             agent_metadata: Stable identity of the invoking agent (e.g. its session id), supplied per
                 request. A provider may consult it to derive a prompt-cache routing key; None when the
                 model is streamed directly without an agent.
+            structured_output_model: Output model this call must produce, passed by the agent on its structured
+                output retry to providers that enforce structured output themselves. The response must then be
+                either a call to the tool named in ``tool_choice`` or a final text response whose text is exactly one
+                JSON object that validates against this model.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -339,13 +349,13 @@ class Model(abc.ABC):
         context_window_limit = self.context_window_limit
         if not context_window_limit:
             context_window_limit = DEFAULT_CONTEXT_WINDOW_LIMIT
-            if not getattr(self, "_utilization_limit_warned", False):
-                self._utilization_limit_warned = True
-                logger.warning(
-                    "context_window_limit=<%s> | context_window_limit not set on model, using default"
-                    " for utilization estimate | set context_window_limit in your model config for accurate results",
-                    DEFAULT_CONTEXT_WINDOW_LIMIT,
-                )
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                f"context_window_limit is not set on the model, using default of"
+                f" {DEFAULT_CONTEXT_WINDOW_LIMIT} for the utilization estimate; set context_window_limit"
+                " in your model config for accurate results",
+                stacklevel=1,
+            )
 
         return input_tokens / context_window_limit
 

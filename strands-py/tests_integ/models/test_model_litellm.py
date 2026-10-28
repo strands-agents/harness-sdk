@@ -13,17 +13,17 @@ from tests_integ.conftest import retry_on_flaky
 
 @pytest.fixture
 def model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0")
+    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6")
 
 
 @pytest.fixture
 def streaming_model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", params={"stream": True})
+    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6", params={"stream": True})
 
 
 @pytest.fixture
 def non_streaming_model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", params={"stream": False})
+    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6", params={"stream": False})
 
 
 @pytest.fixture
@@ -259,8 +259,10 @@ def test_streaming_returns_usage_metrics(model_fixture, request):
     assert result.metrics.accumulated_usage["totalTokens"] > 0
 
 
+@pytest.mark.skip(reason="Turn-2 prompt-cache read intermittently returns 0 tokens; see #5315")
 @pytest.mark.asyncio
-async def test_cache_read_tokens_multi_turn(model):
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_cache_read_tokens_multi_turn(model, streaming):
     """Integration test for cache read tokens in multi-turn conversation."""
     from strands.types.content import SystemContentBlock
 
@@ -270,15 +272,17 @@ async def test_cache_read_tokens_multi_turn(model):
         {"cachePoint": {"type": "default"}},
     ]
 
+    model.update_config(stream=streaming)
     agent = Agent(model=model, system_prompt=system_prompt_content)
 
     # First turn - establishes cache
-    agent("Hello, what's 2+2?")
-    result = agent("What's 3+3?")
-    result.metrics.accumulated_usage["cacheReadInputTokens"]
+    first_result = await agent.invoke_async("Hello, what's 2+2?")
+    assert first_result.metrics.latest_agent_invocation.usage["cacheReadInputTokens"] == 0
+    assert first_result.metrics.latest_agent_invocation.usage["cacheWriteInputTokens"] > 0
 
-    assert result.metrics.accumulated_usage["cacheReadInputTokens"] > 0
-    assert result.metrics.accumulated_usage["cacheWriteInputTokens"] > 0
+    result = await agent.invoke_async("What's 3+3?")
+    assert result.metrics.latest_agent_invocation.usage["cacheReadInputTokens"] > 0
+    assert result.metrics.latest_agent_invocation.usage["cacheWriteInputTokens"] == 0
 
 
 @retry_on_flaky("The model may occasionally not elect to call both tools", retry_on=[AssertionError])

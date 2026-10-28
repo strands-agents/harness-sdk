@@ -3,6 +3,7 @@ import type { MessageData, ContentBlockData } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
 import type { LocalAgent } from '../../types/agent.js'
 import type { Tracer } from '../../telemetry/tracer.js'
+import type { InvocationContext } from '../../agent/invocation-context.js'
 
 // `keyof` over a union yields only the keys every member shares (none, here). The conditional makes
 // it distribute over each member instead, collecting the union of their individual keys.
@@ -53,7 +54,7 @@ export interface ExtractionResult {
  * {@link defaultModel}.
  */
 export interface ExtractorContext {
-  /** The agent's model, supplied so an extractor can default to it. */
+  /** Model an extractor without its own falls back to (`agent.auxModel > agent.model`). */
   defaultModel?: Model
   /**
    * Tracer for wrapping the extractor's model call in a span, parented to the active extraction
@@ -61,6 +62,9 @@ export interface ExtractorContext {
    * @internal
    */
   tracer?: Tracer
+
+  /** The request this extraction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
+  readonly invocationContext?: InvocationContext
 }
 
 /**
@@ -89,8 +93,8 @@ export interface Extractor {
 export interface ExtractionTriggerContext {
   /** The agent the trigger attaches its hooks to. */
   agent: LocalAgent
-  /** Save this store's unsaved messages now. Runs in the background and returns immediately, so calling it from a hook never blocks the agent. To await completion, see {@link MemoryManager.flush}. */
-  fire: () => void
+  /** Save this store's unsaved messages now. Runs in the background and returns immediately, so calling it from a hook never blocks the agent. To await completion, see {@link MemoryManager.flush}. Pass the firing hook event's `invocationContext` so a client-side extractor's model call joins that request. */
+  fire: (invocationContext?: InvocationContext) => void
 }
 
 /**
