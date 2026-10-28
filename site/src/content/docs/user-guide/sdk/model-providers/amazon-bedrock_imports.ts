@@ -13,6 +13,11 @@ import { z } from 'zod'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 // --8<-- [end:custom_credentials_imports]
 
+// --8<-- [start:reasoning_imports]
+import { Agent } from '@strands-agents/sdk'
+import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+// --8<-- [end:reasoning_imports]
+
 // --8<-- [start:request_timeout_imports]
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 // --8<-- [end:request_timeout_imports]

@@ -21,7 +21,7 @@ async function basicUsageDefault() {
 async function basicUsageModelId() {
   // --8<-- [start:basic_model_id]
   // Create an agent using the model
-  const agent = new Agent({ model: 'global.anthropic.claude-sonnet-5' })
+  const agent = new Agent({ model: 'global.anthropic.claude-sonnet-5-5' })
 
   const response = await agent.invoke('Tell me about Amazon Bedrock.')
   // --8<-- [end:basic_model_id]
@@ -49,9 +49,9 @@ async function configurationExample() {
   // --8<-- [start:configuration]
   // Create a configured Bedrock model
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
     region: 'us-east-1', // Specify a different region than the default
-    temperature: 0.3,
+    maxTokens: 4096,
     stopSequences: ['###', 'END'],
     clientConfig: {
       retryMode: 'standard',
@@ -72,7 +72,7 @@ async function streamingExample() {
   // --8<-- [start:streaming]
   // Streaming model (default)
   const streamingModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
     stream: true, // This is the default
   })
 
@@ -89,13 +89,13 @@ async function updateConfiguration() {
   // --8<-- [start:update_config]
   // Create the model with initial configuration
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
-    temperature: 0.7,
+    modelId: 'global.anthropic.claude-haiku-5-5',
+    maxTokens: 4096,
   })
 
   // Update configuration later
   bedrockModel.updateConfig({
-    temperature: 0.3,
+    maxTokens: 8192,
   })
   // --8<-- [end:update_config]
 }
@@ -104,48 +104,47 @@ async function updateConfiguration() {
 async function toolBasedConfigUpdate() {
   // --8<-- [start:tool_update_config]
   // Define a tool that updates model configuration
-  const updateTemperature = tool({
-    name: 'update_temperature',
-    description: 'Update the temperature of the agent',
+  const updateMaxTokens = tool({
+    name: 'update_max_tokens',
+    description: "Update the maximum number of tokens the agent's model can generate",
     inputSchema: z.object({
-      temperature: z.number().describe('Temperature value for the model to use'),
+      maxTokens: z
+        .number()
+        .int()
+        .describe('Maximum number of tokens for the model to generate'),
     }),
-    callback: async ({ temperature }, context) => {
+    callback: async ({ maxTokens }, context) => {
       if (context.agent?.model && 'updateConfig' in context.agent.model) {
-        context.agent.model.updateConfig({ temperature })
-        return `Temperature updated to ${temperature}`
+        context.agent.model.updateConfig({ maxTokens })
+        return `maxTokens updated to ${maxTokens}`
       }
-      return 'Failed to update temperature'
+      return 'Failed to update maxTokens'
     },
   })
 
   const agent = new Agent({
-    model: new BedrockModel({ modelId: 'global.anthropic.claude-sonnet-5' }),
-    tools: [updateTemperature],
+    model: new BedrockModel({ modelId: 'global.anthropic.claude-sonnet-5-5' }),
+    tools: [updateMaxTokens],
   })
   // --8<-- [end:tool_update_config]
 }
 
 // Reasoning support
-async function reasoningSupport() {
+async function reasoningAdaptive() {
   // --8<-- [start:reasoning]
-  // Create a Bedrock model with reasoning configuration
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-opus-5-5',
     additionalRequestFields: {
-      thinking: {
-        type: 'enabled',
-        budget_tokens: 4096, // Minimum of 1,024
-      },
+      thinking: { type: 'adaptive', display: 'summarized' },
+      output_config: { effort: 'high' },
     },
   })
 
-  // Create an agent with the reasoning-enabled model
   const agent = new Agent({ model: bedrockModel })
 
-  // Ask a question that requires reasoning
   const response = await agent.invoke(
-    'If a train travels at 120 km/h and needs to cover 450 km, how long will the journey take?'
+    'Two trains start 450 km apart and head toward each other at 120 km/h and 80 km/h. ' +
+      'A bird flies between them at 150 km/h until they meet. How far does the bird fly?'
   )
   // --8<-- [end:reasoning]
 }
@@ -158,7 +157,7 @@ async function customCredentials() {
   // https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html
 
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
     region: 'us-west-2',
     clientConfig: {
       credentials: {
@@ -175,7 +174,7 @@ async function customCredentials() {
 async function multimodalSupport() {
   // --8<-- [start:multimodal_full]
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
   })
 
   const agent = new Agent({ model: bedrockModel })
@@ -221,7 +220,7 @@ async function guardrailsExample() {
   // --8<-- [start:guardrails]
   // Using guardrails with BedrockModel
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
     guardrailConfig: {
       guardrailIdentifier: 'your-guardrail-id',
       guardrailVersion: 'DRAFT',
@@ -248,7 +247,7 @@ async function guardrailsExample() {
 async function requestTimeoutExample() {
   // --8<-- [start:request_timeout]
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
     requestTimeout: 600_000, // 10 minutes
   })
   // --8<-- [end:request_timeout]
@@ -260,7 +259,7 @@ void requestTimeoutExample
 async function requestTimeoutHandlerOptionsExample() {
   // --8<-- [start:request_timeout_handler_options]
   const bedrockModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
+    modelId: 'global.anthropic.claude-sonnet-5-5',
     clientConfig: {
       requestHandler: { requestTimeout: 600_000, connectionTimeout: 5_000 },
     },
