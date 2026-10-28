@@ -11,6 +11,7 @@
  *   httpRequest,
  *   notebook,
  *   pythonRepl,
+ *   read,
  *   sleep,
  *   subagent,
  *   swarm,
@@ -34,6 +35,7 @@ export * from './shell/index.js'
 export * from './http-request/index.js'
 export * from './notebook/index.js'
 export * from './python-repl/index.js'
+export * from './read/index.js'
 export * from './sleep/index.js'
 export * from './subagent/index.js'
 export * from './swarm/index.js'

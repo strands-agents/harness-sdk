@@ -36,6 +36,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/graph/graph.py
   - path: strands-py/src/strands/vended_tools/python_repl/python_repl.py
   - path: strands-py/src/strands/vended_tools/read/read.py
+  - path: strands-ts/src/vended-tools/read/read.ts
 ---
 
 Vended tools are pre-built tools included directly in the Strands Harness SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
@@ -58,7 +59,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 |------|-------------|--------------|
 | [Edit](#edit) | Make in-place changes to a text file | Python, TypeScript (Node.js) |
 | [File Editor](#file-editor) *(deprecated)* | View, create, and edit files | Python, TypeScript (Node.js) |
-| [Read](#read) | Read a file as numbered text or a media block | Python |
+| [Read](#read) | Read a file as numbered text or a media block | Python, TypeScript (Node.js) |
 | [Write](#write) | Create or overwrite a text file with the full provided content | Python, TypeScript (Node.js) |
 | [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
@@ -154,9 +155,9 @@ agent("Create a file at /tmp/hello.txt with the contents 'Hello, world!'")
 
 ### Read
 
-Reads a file through the agent's sandbox. Text files return `cat -n` style numbered lines so the model can cite `path:line`, with `offset` and `limit` for paging through large files. Images (png/jpg/jpeg/gif/webp) and binary documents (pdf/doc/docx/xls/xlsx) return as media content blocks when the model accepts media; otherwise `make_read(media=False)` returns a short text placeholder describing the file.
+Reads a file through the agent's sandbox. Text files return `cat -n` style numbered lines so the model can cite `path:line`, with `offset` and `limit` for paging through large files. Images (png/jpg/jpeg/gif/webp) and binary documents (pdf/doc/docx/xls/xlsx) return as media content blocks when the model accepts media; otherwise `make_read(media=False)` / `makeRead({ media: false })` returns a short text placeholder describing the file.
 
-_Supported in: Python._
+_Supported in: Python, TypeScript (Node.js)._
 
 :::caution[Security Warning]
 This tool reads files at arbitrary absolute paths with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../sandbox/index.mdx) for production.
@@ -176,7 +177,18 @@ agent("Read /etc/hosts and summarize what it maps.")
 ```
 
 </Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:read_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:read_example"
+```
+
+</Tab>
 </Tabs>
+
+[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/read/README.md)
 
 ---
 

@@ -17,6 +17,7 @@ import {
 } from '@strands-agents/sdk/vended-tools/handoff-to-user'
 import { sleep, makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
 import { write } from '@strands-agents/sdk/vended-tools/write'
+import { read } from '@strands-agents/sdk/vended-tools/read'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
 import { pythonRepl, makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
@@ -106,6 +107,14 @@ async function writeExample() {
   const agent = new Agent({ tools: [write] })
   await agent.invoke("Create /tmp/hello.txt containing 'Hello, Strands!'")
   // --8<-- [end:write_example]
+}
+
+// Read tool example
+async function readExample() {
+  // --8<-- [start:read_example]
+  const agent = new Agent({ tools: [read] })
+  await agent.invoke('Read /etc/hosts and summarize what it maps.')
+  // --8<-- [end:read_example]
 }
 
 // HTTP request example
