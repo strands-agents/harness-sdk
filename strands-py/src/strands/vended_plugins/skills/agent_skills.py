@@ -2,23 +2,31 @@
 
 This module provides the AgentSkills class that extends the Plugin base class
 to add Agent Skills support. The plugin registers a tool for activating
-skills, and injects skill metadata into the system prompt.
+skills, and injects skill metadata into the system prompt. With
+``dynamic_loading=True`` the tool also takes ``load`` / ``unload`` actions so
+the agent can add skills at runtime from paths in its sandbox or ``https://``
+URLs and remove them again.
 
 Filesystem skill sources are loaded through the agent's sandbox (host or
 container) at ``init_agent`` time, not at construction, so each agent sees the
-skills present on its own filesystem. Skill instances and ``https://`` URLs are
-sandbox-independent and resolve eagerly at construction.
-
-:meth:`Skill.from_url` is synchronous, so URLs resolve at construction and no
-readiness barrier is needed. The observable effect is benign: URL skills are
+skills present on its own filesystem. Configured Skill instances and
+``https://`` URLs are sandbox-independent and resolve eagerly at construction
+(:meth:`Skill.from_url` is synchronous). Sources the agent loads at runtime go
+through its sandbox in both cases: paths are read from it and URLs are fetched
+with ``curl`` inside it.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import posixpath
+import shlex
+import uuid
 import weakref
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from xml.sax.saxutils import escape
 
 from ...hooks.events import BeforeInvocationEvent
@@ -38,12 +46,70 @@ _DEFAULT_STATE_KEY = "agent_skills"
 _RESOURCE_DIRS = ("scripts", "references", "assets")
 _DEFAULT_MAX_RESOURCE_FILES = 20
 _MAX_RESOURCE_DEPTH = 3
+_URL_FETCH_TIMEOUT = 30
+_URL_MAX_BYTES = 1_000_000
 
 SkillSource: TypeAlias = str | Path | Skill
 """A single skill source: path string, Path object, or Skill instance."""
 
 SkillSources: TypeAlias = SkillSource | list[SkillSource]
 """One or more skill sources."""
+
+
+_KIND_LABELS = {"sandbox": "sandbox paths", "url": "https:// URLs"}
+_KIND_EXPECTED = {
+    "sandbox": "a skill directory (containing SKILL.md), a parent directory of skill directories or a SKILL.md "
+    "path in your sandbox",
+    "url": "an https:// URL to raw SKILL.md",
+}
+
+
+def _source_kind(source: str) -> str:
+    """Classify a runtime skill source as ``"url"`` (any scheme, validated later) or ``"sandbox"``."""
+    return "url" if "://" in source else "sandbox"
+
+
+def _source_key(source: str) -> str:
+    """Canonical form of a runtime source so ``skills``, ``./skills`` and ``./skills/`` share one entry.
+
+    Sandbox paths are POSIX regardless of the host OS (the sandbox may be a container), so
+    ``posixpath`` is used rather than ``os.path``.
+    """
+    return source if not source or _source_kind(source) == "url" else posixpath.normpath(source)
+
+
+async def _fetch_url_in_sandbox(sandbox: Sandbox, url: str) -> str:
+    """Fetch ``url`` with ``curl`` inside the sandbox and return the body as text.
+
+    Runtime URL loads go through the sandbox, like path loads, so the sandbox stays the agent's
+    network boundary. Raises ``ValueError`` for a non-``https://`` URL and ``RuntimeError`` when
+    curl fails or is not installed in the sandbox.
+    """
+    if not url.startswith("https://"):
+        raise ValueError(f"only https:// URLs are supported, got {url!r}")
+    output = f"/tmp/strands-skill-{uuid.uuid4().hex}"
+    out, part = shlex.quote(output), shlex.quote(output + ".part")
+    # --proto/--proto-redir keep every hop on https; --fail turns HTTP errors into a non-zero exit.
+    # The body goes to a file (stdout is decoded per chunk and would split multi-byte characters) and
+    # is capped in the sandbox before it is read back: --max-filesize only sees a Content-Length, so
+    # chunked responses need the head -c; one extra byte lets the caller tell "capped" from "exact".
+    command = (
+        f"curl -sSL -g --fail --proto '=https' --proto-redir '=https' --max-time {_URL_FETCH_TIMEOUT} "
+        f"--max-filesize {_URL_MAX_BYTES} -o {out} -- {shlex.quote(url)} "
+        f"&& head -c {_URL_MAX_BYTES + 1} {out} > {part} && mv -f {part} {out}"
+    )
+    try:
+        result = await sandbox.execute(command, timeout=_URL_FETCH_TIMEOUT + 5)
+        if result.exit_code != 0:
+            raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")
+        data = await sandbox.read_file(output)
+        if len(data) > _URL_MAX_BYTES:
+            raise RuntimeError(f"SKILL.md is larger than {_URL_MAX_BYTES} bytes")
+        return data.decode("utf-8", errors="replace")
+    finally:
+        for path in (output, output + ".part"):
+            with contextlib.suppress(Exception):
+                await sandbox.remove_file(path)
 
 
 def _normalize_sources(sources: SkillSources) -> list[SkillSource]:
@@ -79,6 +145,8 @@ class AgentSkills(Plugin):
     1. A ``skills`` tool that allows the agent to activate skills on demand
     2. System prompt injection of available skill metadata before each invocation
     3. Session persistence of active skill state via ``agent.state``
+    4. Optionally (``dynamic_loading=True``), ``load`` / ``unload`` actions on that tool so
+       the agent can add skills at runtime from its sandbox or ``https://`` URLs
 
     Skills can be provided as filesystem paths (to individual skill directories or
     parent directories containing multiple skills), ``https://`` URLs pointing to
@@ -102,6 +170,10 @@ class AgentSkills(Plugin):
         skill = Skill(name="my-skill", description="A custom skill", instructions="Do the thing")
         plugin = AgentSkills(skills=[skill])
 
+        # Or let the agent load and unload skills itself at runtime, from sandbox paths
+        # and https:// URLs (True) or only one of the two ("sandbox" / "url")
+        plugin = AgentSkills(skills=["./skills/"], dynamic_loading="sandbox")
+
         agent = Agent(plugins=[plugin])
         ```
     """
@@ -114,6 +186,8 @@ class AgentSkills(Plugin):
         state_key: str = _DEFAULT_STATE_KEY,
         max_resource_files: int = _DEFAULT_MAX_RESOURCE_FILES,
         strict: bool = False,
+        *,
+        dynamic_loading: bool | Literal["sandbox", "url"] = False,
     ) -> None:
         """Initialize the AgentSkills plugin.
 
@@ -127,10 +201,26 @@ class AgentSkills(Plugin):
             state_key: Key used to store plugin state in ``agent.state``.
             max_resource_files: Maximum number of resource files to list in skill responses.
             strict: If True, raise on skill validation issues. If False (default), warn and load anyway.
+            dynamic_loading: Let the agent add and remove skills at runtime; the ``skills`` tool gains
+                ``load`` / ``unload`` actions next to ``activate``.
+                ``True``: load from paths in the agent's sandbox and ``https://`` URLs to raw SKILL.md.
+                ``"sandbox"`` / ``"url"``: only that kind; the other is refused by the tool and skipped
+                when recorded sources are restored. ``False`` (default): the plain ``skills(skill_name)``
+                tool. Loaded sources persist in ``agent.state`` and are restored on first use in a later
+                run; configured skills win over loaded ones with the same name. Both kinds go through
+                ``agent.sandbox``: paths are read from it and URLs are fetched with ``curl`` inside it
+                (so ``curl`` must be available there), keeping the sandbox the agent's network boundary.
+                Loaded SKILL.md content reaches the system prompt, so enable only kinds you trust. This
+                governs what the ``skills`` tool loads, not what other tools (e.g. a shell) can fetch.
         """
         self._strict = strict
         self._state_key = state_key
         self._max_resource_files = max_resource_files
+        if not (isinstance(dynamic_loading, bool) or dynamic_loading in _KIND_LABELS):
+            raise ValueError(f"dynamic_loading must be a bool, 'sandbox' or 'url', got {dynamic_loading!r}")
+        # Source kinds the skills tool may load at runtime (empty: off), in the order messages list them.
+        self._source_kinds = tuple(kind for kind in _KIND_LABELS if dynamic_loading in (True, kind))
+        self._allowed_label = " and ".join(_KIND_LABELS[kind] for kind in self._source_kinds)
         # Skill instances and URLs resolve now (both sandbox-independent and synchronous in
         # Python). Filesystem paths are deferred to init_agent, where the agent's sandbox is
         # available, so a path may resolve differently per agent (host vs. container).
@@ -139,7 +229,24 @@ class AgentSkills(Plugin):
         # Per-agent map (WeakKeyDictionary) so a single plugin
         # instance can serve multiple agents without leaking references once an agent is collected.
         self._agent_skills: weakref.WeakKeyDictionary[Agent, dict[str, Skill]] = weakref.WeakKeyDictionary()
+        # Per-agent skills loaded at runtime, keyed by source (sandbox path or https:// URL); kept apart so
+        # configured skills always win. Each agent's dict is published once (restore) and never replaced.
+        self._dynamic_skills: weakref.WeakKeyDictionary[Agent, dict[str, dict[str, Skill]]] = (
+            weakref.WeakKeyDictionary()
+        )
         super().__init__()
+        # Both variants publish the tool name ``skills``; keep the one matching the mode. ``__name__``
+        # is the defining method's name (functools.update_wrapper copies it onto the decorated tool).
+        unwanted_method = "skills" if self._source_kinds else "manage_skills"
+        self._tools = [
+            registered for registered in self._tools if getattr(registered, "__name__", None) != unwanted_method
+        ]
+        for registered in self._tools:
+            if self._source_kinds and registered.tool_name == "skills":
+                # Copy, don't mutate: the spec dict is shared with the class-level tool.
+                spec = registered.tool_spec
+                description = f"{spec['description']}\n\nSources you may load: {self._allowed_label}."
+                registered.tool_spec = {**spec, "description": description}
 
     async def init_agent(self, agent: Agent) -> None:
         """Initialize the plugin with an agent instance.
@@ -168,7 +275,10 @@ class AgentSkills(Plugin):
             skill_name: Name of the skill to activate.
             tool_context: Injected by the framework. Not user-facing.
         """
-        agent = tool_context.agent
+        return await self._activate_skill(tool_context.agent, skill_name)
+
+    async def _activate_skill(self, agent: Agent, skill_name: str) -> str:
+        """Return a skill's formatted instructions, or an error listing the available skills."""
         skills = self._skills_for(agent)
 
         if not skill_name:
@@ -183,6 +293,128 @@ class AgentSkills(Plugin):
         logger.debug("skill_name=<%s> | skill activated", skill_name)
         self._track_activated_skill(agent, skill_name)
         return await self._format_skill_response(found, agent.sandbox)
+
+    @tool(name="skills", context=True)
+    async def manage_skills(
+        self,
+        action: Literal["activate", "load", "unload"],
+        skill_name: str = "",
+        source: str = "",
+        *,
+        tool_context: ToolContext,
+    ) -> str:
+        """Activate a skill, or load and unload skills at runtime.
+
+        Use "activate" to load the complete instructions for a skill listed in the
+        available_skills section of your system prompt. Use "load" to add skills from a
+        source you discovered, for example a skills/ folder inside a repository you cloned;
+        they then appear in available_skills and are activated the same way. Loading the same
+        source again refreshes it. Use "unload" with the same source to remove them from
+        available_skills; instructions you already activated stay in the conversation.
+
+        Args:
+            action: "activate" to get a skill's instructions, "load" to add skills from source,
+                "unload" to remove the skills previously loaded from source.
+            skill_name: Name of the skill to activate (required for "activate").
+            source: Required for "load" and "unload". A path in your sandbox to a skill directory
+                (containing SKILL.md), a parent directory of skill directories, or a SKILL.md file;
+                or an https:// URL to raw SKILL.md content. Only the kinds enabled for this agent
+                are accepted.
+            tool_context: Injected by the framework. Not user-facing.
+        """
+        agent = tool_context.agent
+        if action == "activate":
+            return await self._activate_skill(agent, skill_name)
+
+        if not self._source_kinds:
+            return "Error: runtime skill loading is not enabled for this agent."
+        source = _source_key(source.strip())
+        if not source:
+            return f"Error: action '{action}' requires a source ({self._allowed_label})."
+        kind = _source_kind(source)
+        if action == "load" and kind not in self._source_kinds:
+            return (
+                f"Error: loading skills from {_KIND_LABELS[kind]} is not enabled for this agent; "
+                f"only {self._allowed_label}."
+            )
+        dynamic = await self._restore_dynamic_sources(agent)
+
+        if action == "unload":
+            removed = dynamic.pop(source, None)
+            if not removed:
+                loaded_sources = ", ".join(dynamic) or "none"
+                return f"No skills are loaded from '{source}'. Currently loaded sources: {loaded_sources}."
+            self._set_state_field(agent, "dynamic_sources", list(dynamic))
+            self._inject_skills(agent)
+            return f"Unloaded {len(removed)} skill(s) from '{source}': {', '.join(removed)}."
+
+        previous = sorted(dynamic.get(source, {}))
+        try:
+            loaded = await self._read_source(agent, source)
+        except Exception as error:
+            return f"Error: could not load skills from '{source}': {error}"
+        # No await below: the shared per-agent dict is read and written in one step, so concurrent tool
+        # calls (one loop) and successive invocations (a fresh loop each) interleave safely without a lock.
+        removed = dynamic.pop(source, None)
+        if loaded:
+            dynamic[source] = loaded
+        if loaded or removed:
+            self._set_state_field(agent, "dynamic_sources", list(dynamic))
+            self._inject_skills(agent)
+        if not loaded:
+            expected = "; or ".join(_KIND_EXPECTED[kind] for kind in self._source_kinds)
+            result = f"No skills found at '{source}'. Expected {expected}."
+            if previous:
+                result += f" Removed previously loaded: {', '.join(previous)}."
+            return result
+
+        configured = self._agent_skills.get(agent, self._skills)
+        shadowed = sorted(name for name in loaded if name in configured)
+        added = [name for name in loaded if name not in configured]
+        parts = [f"Loaded {len(added)} skill(s) from '{source}': {', '.join(added) or 'none'}."]
+        if shadowed:
+            parts.append(f"Skipped (name already taken by a configured skill): {', '.join(shadowed)}.")
+        if added:
+            parts.append('Activate one with action="activate".')
+        return " ".join(parts)
+
+    async def _read_source(self, agent: Agent, source: str) -> dict[str, Skill]:
+        """Read skills from a sandbox path (problems are logged and yield nothing) or an ``https://`` URL (raises)."""
+        if _source_kind(source) == "sandbox":
+            return await self._load_skills_from_path(agent.sandbox, source)
+        skill = Skill.from_content(await _fetch_url_in_sandbox(agent.sandbox, source), strict=self._strict)
+        return {skill.name: skill}
+
+    async def _restore_dynamic_sources(self, agent: Agent) -> dict[str, dict[str, Skill]]:
+        """Return the agent's runtime-loaded skills by source, restoring the sources recorded in state on first use.
+
+        Runs lazily rather than in ``init_agent`` because session managers replace ``agent.state`` afterwards.
+        """
+        if agent in self._dynamic_skills:
+            return self._dynamic_skills[agent]
+        restored: dict[str, dict[str, Skill]] = {}
+        if self._source_kinds:
+            state_data = agent.state.get(self._state_key)
+            sources = state_data.get("dynamic_sources", []) if isinstance(state_data, dict) else []
+            for recorded in sources if isinstance(sources, list) else []:
+                source = _source_key(str(recorded))
+                kind = _source_kind(source)
+                if kind not in self._source_kinds:
+                    logger.warning("source=<%s> | skipped: loading from %s is not enabled", source, _KIND_LABELS[kind])
+                    continue
+                try:
+                    loaded = await self._read_source(agent, source)
+                except Exception as error:
+                    logger.warning(
+                        "source=<%s> | recorded dynamic skill source could not be restored: %s", source, error
+                    )
+                    continue
+                if loaded:
+                    restored[source] = loaded
+                else:
+                    logger.warning("source=<%s> | recorded dynamic skill source could not be restored", source)
+        # Concurrent first calls may each restore; the first to finish publishes, the rest discard theirs.
+        return self._dynamic_skills.setdefault(agent, restored)
 
     @hook
     async def _on_before_invocation(self, event: BeforeInvocationEvent) -> None:
@@ -209,7 +441,14 @@ class AgentSkills(Plugin):
         # after set_available_skills, which clears the per-agent cache.
         if agent not in self._agent_skills:
             await self._load_skill_paths(agent)
+        await self._restore_dynamic_sources(agent)
+        self._inject_skills(agent)
 
+    def _inject_skills(self, agent: Agent) -> None:
+        """Replace the previously injected skills XML block in the system prompt with a fresh one.
+
+        Also called after a runtime load/unload so the next model call sees the change.
+        """
         state_data = agent.state.get(self._state_key)
         last_injected_xml = state_data.get("last_injected_xml") if isinstance(state_data, dict) else None
 
@@ -247,10 +486,12 @@ class AgentSkills(Plugin):
 
         Args:
             agent: When provided, returns that agent's full skill set (base skills
-                plus filesystem skills loaded from its sandbox). When omitted,
-                returns only the sandbox-independent base skills (Skill instances
-                and URLs); filesystem skills are excluded because they are loaded
-                per-agent at ``init_agent`` time.
+                plus filesystem skills loaded from its sandbox, plus any skills the
+                agent loaded at runtime with ``dynamic_loading``; configured skills
+                win on name collisions). When omitted, returns only the
+                sandbox-independent base skills (Skill instances and URLs);
+                filesystem skills are excluded because they are loaded per-agent
+                at ``init_agent`` time.
 
         Returns:
             A copy of the resolved skills list.
@@ -294,7 +535,12 @@ class AgentSkills(Plugin):
         """
         if agent is None:
             return self._skills
-        return self._agent_skills.get(agent, self._skills)
+        configured = self._agent_skills.get(agent, self._skills)
+        skills = dict(configured)
+        # Later-loaded sources win among dynamic skills; configured skills always win.
+        for loaded in self._dynamic_skills.get(agent, {}).values():
+            skills.update((name, skill) for name, skill in loaded.items() if name not in configured)
+        return skills
 
     async def _load_skill_paths(self, agent: Agent) -> None:
         """Load deferred filesystem skill paths through the agent's sandbox.
@@ -309,12 +555,32 @@ class AgentSkills(Plugin):
             agent: The agent whose sandbox is used to read skill files.
         """
         skills = dict(self._skills)
-        if not self._skill_paths:
-            self._agent_skills[agent] = skills
-            return
-
         # Falls back to the default NotASandboxLocalEnvironment when the agent has no explicit sandbox.
         sandbox = agent.sandbox
+
+        for skill_path in self._skill_paths:
+            for skill_name, skill in (await self._load_skills_from_path(sandbox, str(skill_path))).items():
+                if skill_name in skills:
+                    logger.warning("name=<%s> | duplicate skill name, overwriting previous skill", skill_name)
+                skills[skill_name] = skill
+
+        self._agent_skills[agent] = skills
+
+    async def _load_skills_from_path(self, sandbox: Sandbox, skill_path_str: str) -> dict[str, Skill]:
+        """Load skills from one path through a sandbox.
+
+        The path may be a SKILL.md file, a skill directory, or a parent directory of skill
+        subdirectories. Per-skill failures are logged and skipped so one bad skill does not
+        abort its siblings.
+
+        Args:
+            sandbox: The sandbox used to read skill files.
+            skill_path_str: The path to load skills from.
+
+        Returns:
+            Mapping of skill name to loaded Skill (empty when nothing loads).
+        """
+        skills: dict[str, Skill] = {}
 
         async def load_skill(skill_dir: str, md_path: str) -> None:
             # A failure (e.g. malformed SKILL.md) is logged and skipped so it does not abort
@@ -333,40 +599,37 @@ class AgentSkills(Plugin):
                 if skill.name in skills:
                     logger.warning("name=<%s> | duplicate skill name, overwriting previous skill", skill.name)
                 skills[skill.name] = skill
-            except Exception as e:
-                logger.warning("path=<%s> | failed to load skill: %s", skill_dir, e)
+            except Exception as error:
+                logger.warning("path=<%s> | failed to load skill: %s", skill_dir, error)
 
-        for skill_path in self._skill_paths:
-            skill_path_str = str(skill_path)
+        try:
+            entries = await sandbox.list_files(skill_path_str)
+        except Exception:
+            # Not a directory: accept a direct path to a SKILL.md file, as Skill.from_file does.
+            if skill_path_str.lower().endswith("skill.md"):
+                await load_skill(os.path.dirname(skill_path_str) or ".", skill_path_str)
+            else:
+                logger.warning("path=<%s> | skill source does not exist or is not a valid path", skill_path_str)
+            return skills
+
+        md_name = _find_skill_md_name(entries)
+        if md_name:
+            await load_skill(skill_path_str, f"{skill_path_str}/{md_name}")
+            return skills
+
+        # Parent directory: load each subdirectory that contains a skill.
+        for entry in sorted((e for e in entries if e.is_dir), key=lambda e: e.name):
+            child_dir = f"{skill_path_str}/{entry.name}"
             try:
-                entries = await sandbox.list_files(skill_path_str)
-            except Exception:
-                # Not a directory: accept a direct path to a SKILL.md file, as Skill.from_file does.
-                if skill_path_str.lower().endswith("skill.md"):
-                    slash_index = skill_path_str.rfind("/")
-                    await load_skill("." if slash_index == -1 else skill_path_str[:slash_index], skill_path_str)
-                else:
-                    logger.warning("path=<%s> | skill source does not exist or is not a valid path", skill_path_str)
+                child_entries = await sandbox.list_files(child_dir)
+            except Exception as error:
+                logger.warning("path=<%s> | failed to load skill from sandbox: %s", child_dir, error)
                 continue
+            child_md = _find_skill_md_name(child_entries)
+            if child_md:
+                await load_skill(child_dir, f"{child_dir}/{child_md}")
 
-            md_name = _find_skill_md_name(entries)
-            if md_name:
-                await load_skill(skill_path_str, f"{skill_path_str}/{md_name}")
-                continue
-
-            # Parent directory: load each subdirectory that contains a skill.
-            for entry in sorted((e for e in entries if e.is_dir), key=lambda e: e.name):
-                child_dir = f"{skill_path_str}/{entry.name}"
-                try:
-                    child_entries = await sandbox.list_files(child_dir)
-                except Exception as e:
-                    logger.warning("path=<%s> | failed to load skill from sandbox: %s", child_dir, e)
-                    continue
-                child_md = _find_skill_md_name(child_entries)
-                if child_md:
-                    await load_skill(child_dir, f"{child_dir}/{child_md}")
-
-        self._agent_skills[agent] = skills
+        return skills
 
     async def _format_skill_response(self, skill: Skill, sandbox: Sandbox) -> str:
         """Format the tool response when a skill is activated.
