@@ -207,6 +207,7 @@ describe('AgentModelRuntime thinking controls', () => {
     'us.anthropic.claude-sonnet-4-6-v1:0',
     'openai.gpt-oss-120b-1:0',
     'us.qwen.qwen3-32b-v1:0',
+    'us.openai.gpt-6.1-terra',
   ])('offers only levels the library accepts for %s', async (modelId) => {
     const offered = runtimeFor(modelId, 'auto')
       .listEfforts()
@@ -222,8 +223,15 @@ describe('AgentModelRuntime thinking controls', () => {
     expect(rejected).toEqual([])
   })
 
-  it('offers Astra effort levels with High selected by default', () => {
-    const runtime = runtimeFor('global.openai.gpt-6-astra', 'auto')
+  // https://github.com/strands-agents/harness-sdk/issues/5561
+  it.each([
+    'global.openai.gpt-6-astra',
+    'openai.gpt-6-sol',
+    'eu.openai.gpt-6-luna',
+    'global.openai.gpt-6.1-sol',
+    'us.openai.gpt-6.1-terra',
+  ])('offers GPT-6 effort levels with High selected by default for %s', (modelId) => {
+    const runtime = runtimeFor(modelId, 'auto')
 
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
     expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })

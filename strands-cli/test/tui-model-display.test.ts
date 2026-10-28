@@ -6,6 +6,7 @@ describe('model display names', () => {
   it('presents Bedrock model IDs as official model names', () => {
     expect(modelDisplayName('global.anthropic.claude-opus-4-8')).toBe('Claude Opus 4.8')
     expect(modelDisplayName('bedrock/openai.gpt-5.6-sol')).toBe('GPT-5.6 Sol')
+    expect(modelDisplayName('bedrock/us.openai.gpt-6.1-terra')).toBe('GPT-6.1 Terra')
     expect(modelDisplayName('bedrock/google.gemini-3.5-flash')).toBe('Gemini 3.5 Flash')
     expect(modelDisplayName('us.xai.grok-4.6')).toBe('Grok 4.6')
     expect(modelDisplayName('bedrock/us.xai.grok-3-mini')).toBe('Grok 3 Mini')

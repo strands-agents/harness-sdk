@@ -173,6 +173,7 @@ jobs:
       contents: read
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      local-harness-ts: ${{ needs.detect-changes.outputs.harness-ts == 'true' }}
 
   pr-metrics:
     name: PR Metrics Scripts

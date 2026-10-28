@@ -6,7 +6,8 @@ name: "Harness CLI: Test and Lint"
 #
 # The CLI installs standalone (its own package-lock.json) against the published
 # @strands-agents/harness (< 2.0.0) and @strands-agents/sdk, not the repo-root
-# workspace. `npm run build` also bundles the sibling harness-py source
+# workspace. `local-harness-ts` swaps in a tarball packed from the sibling source.
+# `npm run build` also bundles the sibling harness-py source
 # (scripts/bundle-python.js reads ../harness-py), so this needs a full checkout.
 
 on:
@@ -15,6 +16,11 @@ on:
       ref:
         required: true
         type: string
+      local-harness-ts:
+        description: 'Build, lint, and test against the checked-out harness-ts instead of the published @strands-agents/harness.'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test-lint:
@@ -48,6 +54,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install local harness-ts
+        if: inputs.local-harness-ts
+        shell: bash
+        # Pack rather than link so the harness dependencies resolve inside the CLI's own tree.
+        # The temporary version satisfies the CLI's ~0.1.1 dependency range.
+        run: |
+          set -euo pipefail
+          (cd ../harness-ts && npm ci --no-audit --no-fund && npm version 0.1.999 --no-git-tag-version >/dev/null)
+          TARBALL=$(cd ../harness-ts && npm pack --silent --pack-destination "$RUNNER_TEMP")
+          npm install --no-save --no-audit --no-fund "$RUNNER_TEMP/$TARBALL"
+          node -e "const v = require('./node_modules/@strands-agents/harness/package.json').version; if (v !== '0.1.999') throw new Error('expected local harness, got ' + v); console.log('@strands-agents/harness', v)"
 
       - name: Build
         run: npm run build

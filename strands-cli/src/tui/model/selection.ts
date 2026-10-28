@@ -153,7 +153,7 @@ function effortLevels(modelId: string): readonly string[] {
   if (family.startsWith('anthropic.')) {
     return CLAUDE_EFFORTS
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (['openai.gpt-5.6-', 'openai.gpt-6-', 'openai.gpt-6.'].some((prefix) => family.startsWith(prefix))) {
     return BEDROCK_GPT_EFFORTS
   }
   if (family.startsWith('openai.gpt-oss-')) {

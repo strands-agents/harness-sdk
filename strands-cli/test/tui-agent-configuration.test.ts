@@ -123,7 +123,9 @@ describe('strands_config tool', () => {
     await expect(control.invoke({ action: 'apply', revision: 1 })).resolves.toContain('Configuration validated')
     expect(control.takePending()?.configuration?.profile).toEqual({ ...config.snapshot().profile, name: 'Renamed' })
     await control.invoke({ action: 'update', profile: { builtinTools: ['read', 'web_search'] } })
-    await expect(control.invoke({ action: 'apply', revision: 2 })).rejects.toThrow('has no native web search')
+    await expect(control.invoke({ action: 'apply', revision: 2 })).rejects.toThrow(
+      /has no (?:native|built-in) web search/u
+    )
     expect(control.takePending()).toBeUndefined()
   })
 
