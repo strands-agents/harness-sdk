@@ -33,6 +33,16 @@ updates:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+    ignore:
+      # smithy-http requires awscrt~=0.32.0; move awscrt with the smithy stack.
+      - dependency-name: 'awscrt'
+        versions: ['>=0.33']
+      # 2.4 has inference regressions on async hooks and reversed lists (#4813).
+      - dependency-name: 'mypy'
+        versions: ['>=2.4,<2.5']
+      # 1.x is a rewrite; the migration is #3923.
+      - dependency-name: 'a2a-sdk'
+        versions: ['>=1']
     groups:
       # Dev tooling in one PR, matched by name because Dependabot does not
       # classify PEP 621 pyproject dependencies as development vs production,
@@ -122,6 +132,10 @@ updates:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+    ignore:
+      # 1.x moves to A2A protocol v1 types; the migration is #4892.
+      - dependency-name: '@a2a-js/sdk'
+        update-types: ['version-update:semver-major']
     groups:
       # All development dependencies in one PR.
       development-dependencies:
@@ -154,6 +168,10 @@ updates:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+    ignore:
+      # Starlight still default-imports js-yaml 4, so a hoisted v5 breaks the build.
+      - dependency-name: 'js-yaml'
+        update-types: ['version-update:semver-major']
     groups:
       # All development dependencies in one PR.
       development-dependencies:
