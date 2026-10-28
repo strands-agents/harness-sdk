@@ -46,6 +46,8 @@ import inspect
 import json
 import logging
 import threading
+import types
+import warnings
 from collections.abc import Callable
 from typing import (
     Annotated,
@@ -53,6 +55,7 @@ from typing import (
     Generic,
     ParamSpec,
     TypeVar,
+    Union,
     cast,
     get_args,
     get_origin,
@@ -175,7 +178,7 @@ class FunctionToolMetadata:
         return actual_type, final_field
 
     def _validate_signature(self) -> None:
-        """Verify that ToolContext is used correctly in the function signature."""
+        """Verify that ToolContext and the reserved `agent` parameter are used correctly in the function signature."""
         for param in self.signature.parameters.values():
             annotation = self.type_hints.get(param.name)
             if annotation is ToolContext or get_origin(annotation) is ToolContext:
@@ -188,6 +191,55 @@ class FunctionToolMetadata:
                     )
                 # Found the parameter, no need to check further
                 break
+
+        self._validate_agent_parameter()
+
+    def _validate_agent_parameter(self) -> None:
+        """Warn when a parameter named `agent` cannot hold the injected Agent instance.
+
+        The parameter is excluded from the input schema and receives the invoking Agent at call time, bypassing
+        validation, so an annotation that cannot hold an Agent corrupts the call silently unless it is flagged
+        when the tool is defined.
+        """
+        if "agent" not in self.signature.parameters or self._context_param == "agent":
+            return
+
+        annotation = self.type_hints.get("agent")
+        if annotation is None or self._is_agent_annotation(annotation):
+            return
+
+        warnings.warn(
+            "param_name=<agent> | 'agent' is reserved for Agent injection and is excluded from the input schema; "
+            "the parameter receives the invoking Agent instance rather than a model-supplied value - "
+            "rename the parameter or annotate it as Agent",
+            UserWarning,
+            stacklevel=5,
+        )
+
+    @staticmethod
+    def _is_agent_annotation(annotation: Any) -> bool:
+        """Check whether an annotation can hold the injected Agent instance."""
+        if annotation is Any:
+            return True
+
+        if get_origin(annotation) is Annotated:
+            return FunctionToolMetadata._is_agent_annotation(get_args(annotation)[0])
+
+        # Local import: the agent module imports the tool registry, so importing it at module
+        # load would be circular. If it is still initializing, the annotation cannot be
+        # verified and the parameter is left as is.
+        try:
+            from ..agent.agent import Agent
+        except ImportError:
+            return True
+
+        if isinstance(annotation, type) and issubclass(annotation, Agent):
+            return True
+
+        if get_origin(annotation) in (Union, types.UnionType):
+            return any(FunctionToolMetadata._is_agent_annotation(arg) for arg in get_args(annotation))
+
+        return False
 
     def _create_input_model(self) -> type[BaseModel]:
         """Create a Pydantic model from function signature for input validation.
@@ -773,6 +825,11 @@ def tool(  # type: ignore
     The decorator can be used in two ways:
     - As a simple decorator: `@tool`
     - With parameters: `@tool(name="custom_name", description="Custom description")`
+
+    The parameter names `self`, `cls`, and `agent` are reserved and excluded from the tool's input schema. A
+    parameter named `agent` receives the invoking Agent instance at call time, so it should be annotated as
+    `Agent` (or left unannotated); any other annotation emits a UserWarning when the tool is defined, because
+    the injected Agent instance cannot satisfy it.
 
     Args:
         func: The function to decorate. When used as a simple decorator, this is the function being decorated.
