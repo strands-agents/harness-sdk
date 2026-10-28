@@ -15,6 +15,8 @@ if (process.platform === 'win32') {
 export default defineConfig({
   test: {
     unstubEnvs: true,
+    // vitest 5 defaults this to true, which wipes the spies of integ tests still running concurrently.
+    clearMocks: false,
     reporters: [
       'default',
       // integ-node and integ-browser run the same files; the project prefix keeps their metrics series apart.

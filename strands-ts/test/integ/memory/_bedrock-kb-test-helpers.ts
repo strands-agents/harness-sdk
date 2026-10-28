@@ -1,4 +1,4 @@
-import { onTestFinished } from 'vitest'
+import type { TestContext } from 'vitest'
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import {
   BedrockAgentClient,
@@ -75,6 +75,7 @@ export async function waitForIndexed(
  * Registers best-effort cleanup (via onTestFinished) for a CUSTOM document.
  */
 export function cleanupCustomDocument(
+  onTestFinished: TestContext['onTestFinished'],
   agentClient: BedrockAgentClient,
   knowledgeBaseId: string,
   dataSourceId: string,
@@ -100,6 +101,7 @@ export function cleanupCustomDocument(
  * deletes the content object, its optional .metadata.json sidecar, and the KB document entry.
  */
 export function cleanupS3Document(
+  onTestFinished: TestContext['onTestFinished'],
   agentClient: BedrockAgentClient,
   s3Client: S3Client,
   knowledgeBaseId: string,

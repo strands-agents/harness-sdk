@@ -57,7 +57,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
   // ---------------------------------------------------------------------------
 
   describe.skipIf(shouldSkip())('CUSTOM data source', () => {
-    it('adds and searches a document', async () => {
+    it('adds and searches a document', async ({ onTestFinished }) => {
       const { knowledgeBaseId, customDataSourceId } = config()
 
       const store = new BedrockKnowledgeBaseStore({
@@ -77,7 +77,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
 
       const result = await store.add(content)
       expect(result.documentId).toBeTruthy()
-      cleanupCustomDocument(agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
+      cleanupCustomDocument(onTestFinished, agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
 
       await waitForIndexed(agentClient, knowledgeBaseId, customDataSourceId, {
         dataSourceType: 'CUSTOM',
@@ -90,7 +90,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(match!.content).toContain('launched in 2025')
     }, 60_000)
 
-    it('adds with scope and retrieves filtered', async () => {
+    it('adds with scope and retrieves filtered', async ({ onTestFinished }) => {
       const { knowledgeBaseId, customDataSourceId } = config()
 
       const scope = uniqueMarker('scope')
@@ -109,7 +109,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
 
       const marker = uniqueMarker('custom-scope')
       const result = await store.add(`Scoped fact: ${marker}`)
-      cleanupCustomDocument(agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
+      cleanupCustomDocument(onTestFinished, agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
 
       await waitForIndexed(agentClient, knowledgeBaseId, customDataSourceId, {
         dataSourceType: 'CUSTOM',
@@ -120,7 +120,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(entries.find((e: MemoryEntry) => e.content.includes(marker))).toBeDefined()
     }, 60_000)
 
-    it('scope isolates documents from other scopes', async () => {
+    it('scope isolates documents from other scopes', async ({ onTestFinished }) => {
       const { knowledgeBaseId, customDataSourceId } = config()
 
       const scopeA = uniqueMarker('isolate-a')
@@ -153,7 +153,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       })
 
       const result = await storeA.add(`Isolated fact: ${marker}`)
-      cleanupCustomDocument(agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
+      cleanupCustomDocument(onTestFinished, agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
 
       await waitForIndexed(agentClient, knowledgeBaseId, customDataSourceId, {
         dataSourceType: 'CUSTOM',
@@ -167,7 +167,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(entriesB.find((e: MemoryEntry) => e.content.includes(marker))).toBeUndefined()
     }, 60_000)
 
-    it('adds with metadata attributes and returns them in search', async () => {
+    it('adds with metadata attributes and returns them in search', async ({ onTestFinished }) => {
       const { knowledgeBaseId, customDataSourceId } = config()
 
       const store = new BedrockKnowledgeBaseStore({
@@ -184,7 +184,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
 
       const marker = uniqueMarker('custom-meta')
       const result = await store.add(`Metadata fact: ${marker}`, { priority: 'high', version: 3 })
-      cleanupCustomDocument(agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
+      cleanupCustomDocument(onTestFinished, agentClient, knowledgeBaseId, customDataSourceId, result.documentId)
 
       await waitForIndexed(agentClient, knowledgeBaseId, customDataSourceId, {
         dataSourceType: 'CUSTOM',
@@ -206,7 +206,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
   // ---------------------------------------------------------------------------
 
   describe.skipIf(shouldSkip())('S3 data source', () => {
-    it('adds and searches a document via S3', async () => {
+    it('adds and searches a document via S3', async ({ onTestFinished }) => {
       const { knowledgeBaseId, s3DataSourceId, s3Bucket } = config()
 
       const store = new BedrockKnowledgeBaseStore({
@@ -229,7 +229,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(result.documentId).toMatch(/^s3:\/\//)
 
       const contentKey = keyFromUri(result.documentId)
-      cleanupS3Document(agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
+      cleanupS3Document(onTestFinished, agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
 
       await waitForIndexed(agentClient, knowledgeBaseId, s3DataSourceId, {
         dataSourceType: 'S3',
@@ -242,7 +242,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(match!.content).toContain('answer is 42')
     }, 60_000)
 
-    it('adds with scope and writes a sidecar', async () => {
+    it('adds with scope and writes a sidecar', async ({ onTestFinished }) => {
       const { knowledgeBaseId, s3DataSourceId, s3Bucket } = config()
 
       const scope = uniqueMarker('s3scope')
@@ -263,7 +263,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       const marker = uniqueMarker('s3-scoped')
       const result = await store.add(`S3 scoped: ${marker}`)
       const contentKey = keyFromUri(result.documentId)
-      cleanupS3Document(agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
+      cleanupS3Document(onTestFinished, agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
 
       await waitForIndexed(agentClient, knowledgeBaseId, s3DataSourceId, {
         dataSourceType: 'S3',
@@ -276,7 +276,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(match!.metadata?.namespace).toBe(scope)
     }, 60_000)
 
-    it('scope isolates S3 documents from other scopes', async () => {
+    it('scope isolates S3 documents from other scopes', async ({ onTestFinished }) => {
       const { knowledgeBaseId, s3DataSourceId, s3Bucket } = config()
 
       const scopeA = uniqueMarker('s3-iso-a')
@@ -312,7 +312,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
 
       const result = await storeA.add(`S3 isolated: ${marker}`)
       const contentKey = keyFromUri(result.documentId)
-      cleanupS3Document(agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
+      cleanupS3Document(onTestFinished, agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
 
       await waitForIndexed(agentClient, knowledgeBaseId, s3DataSourceId, {
         dataSourceType: 'S3',
@@ -326,7 +326,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       expect(entriesB.find((e: MemoryEntry) => e.content.includes(marker))).toBeUndefined()
     }, 60_000)
 
-    it('adds with metadata in the sidecar', async () => {
+    it('adds with metadata in the sidecar', async ({ onTestFinished }) => {
       const { knowledgeBaseId, s3DataSourceId, s3Bucket } = config()
 
       const store = new BedrockKnowledgeBaseStore({
@@ -345,7 +345,7 @@ describe('BedrockKnowledgeBaseStore Integration Tests', () => {
       const marker = uniqueMarker('s3-meta')
       const result = await store.add(`S3 metadata fact: ${marker}`, { category: 'testing', count: 7 })
       const contentKey = keyFromUri(result.documentId)
-      cleanupS3Document(agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
+      cleanupS3Document(onTestFinished, agentClient, s3Client, knowledgeBaseId, s3DataSourceId, s3Bucket, contentKey)
 
       await waitForIndexed(agentClient, knowledgeBaseId, s3DataSourceId, {
         dataSourceType: 'S3',
