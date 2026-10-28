@@ -66,8 +66,6 @@ export default defineConfig({
           // Retry so a flaky test doesn't block a release; a genuinely broken
           // test still fails after the retries and holds the gate.
           retry: 2,
-          // Type tests run in unit-node; this project has no tsconfig of its own.
-          typecheck: { enabled: false },
           browser: {
             enabled: true,
             provider: playwright(),
@@ -136,9 +134,6 @@ export default defineConfig({
         },
       },
     ],
-    typecheck: {
-      enabled: true,
-    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
