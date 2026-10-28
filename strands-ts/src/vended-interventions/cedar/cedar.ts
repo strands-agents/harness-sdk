@@ -77,7 +77,11 @@ export interface CedarAuthorizationConfig {
     | undefined
 
   /**
-   * Error handling: `'throw'` (default), `'deny'` (fail-closed), `'proceed'` (dangerous: fail-open).
+   * What to do when `principalResolver` or `contextEnricher` throws: `'throw'` (default) rethrows,
+   * `'deny'` denies the tool call (fail-closed, recommended alternative to the default).
+   *
+   * **Warning:** `'proceed'` is fail-open. When a callback throws, the tool call runs without any
+   * Cedar authorization check. Never use it when the agent relies on Cedar to enforce access.
    */
   onError?: OnError | undefined
 }

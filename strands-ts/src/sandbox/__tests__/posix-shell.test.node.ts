@@ -181,6 +181,15 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
     it('throws on nonexistent file', async () => {
       await expect(sandbox.readFile('nope.txt')).rejects.toThrow()
     })
+
+    // Contract: on POSIX, `\` in a path is a legal filename character, not a
+    // separator. Containment logic in tools above the sandbox relies on this.
+    it('treats a backslash in a filename as a literal character', async () => {
+      await sandbox.writeText('weird\\name.txt', 'ok')
+      expect(await sandbox.readText('weird\\name.txt')).toBe('ok')
+      const entries = await sandbox.listFiles('.')
+      expect(entries.some((entry) => entry.name === 'weird\\name.txt')).toBe(true)
+    })
   })
 
   describe('remove', () => {

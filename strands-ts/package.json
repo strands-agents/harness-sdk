@@ -60,6 +60,10 @@
       "types": "./dist/src/vended-tools/notebook/index.d.ts",
       "default": "./dist/src/vended-tools/notebook/index.js"
     },
+    "./vended-tools/edit": {
+      "types": "./dist/src/vended-tools/edit/index.d.ts",
+      "default": "./dist/src/vended-tools/edit/index.js"
+    },
     "./vended-tools/file-editor": {
       "types": "./dist/src/vended-tools/file-editor/index.d.ts",
       "default": "./dist/src/vended-tools/file-editor/index.js"
@@ -83,6 +87,10 @@
     "./vended-tools/python-repl": {
       "types": "./dist/src/vended-tools/python-repl/index.d.ts",
       "default": "./dist/src/vended-tools/python-repl/index.js"
+    },
+    "./vended-tools/read": {
+      "types": "./dist/src/vended-tools/read/index.d.ts",
+      "default": "./dist/src/vended-tools/read/index.js"
     },
     "./vended-tools/sleep": {
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
@@ -111,6 +119,10 @@
     "./vended-tools/swarm": {
       "types": "./dist/src/vended-tools/swarm/index.d.ts",
       "default": "./dist/src/vended-tools/swarm/index.js"
+    },
+    "./vended-tools/write": {
+      "types": "./dist/src/vended-tools/write/index.d.ts",
+      "default": "./dist/src/vended-tools/write/index.js"
     },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
@@ -214,6 +226,8 @@
     }
   },
   "scripts": {
+    "prepare": "node -e \"require('fs').copyFileSync('../shared/model-info.json','src/models/model-info.json')\"",
+    "prebuild": "node -e \"require('fs').copyFileSync('../shared/model-info.json','src/models/model-info.json')\"",
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",
@@ -269,7 +283,7 @@
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
     "@modelcontextprotocol/node": "^2.1.1",
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/baggage-span-processor": "^0.5.0",
@@ -310,7 +324,7 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1152.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
     "@modelcontextprotocol/ext-tasks": "^0.2.2",
     "@smithy/fetch-http-handler": "^5.8.0",
     "@types/json-schema": "^7.0.15",

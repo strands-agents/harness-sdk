@@ -1,50 +1,55 @@
 {
   "ag-ui": {
     "downloads": {
-      "python": 154417
+      "python": 113333
     },
-    "stars": 15337
+    "stars": 16816
   },
   "agent-control": {
     "downloads": {},
-    "stars": 292
+    "stars": 332
   },
   "agent-skills": {
     "downloads": {}
   },
   "agent402": {
     "downloads": {
-      "typescript": 547
+      "typescript": 431
     },
-    "stars": 8
+    "stars": 47
   },
   "agentcore-memory-store": {
     "downloads": {
-      "typescript": 363226
+      "typescript": 1068743
     },
-    "stars": 89
+    "stars": 98
   },
   "agentcore-memory": {
     "downloads": {},
-    "stars": 751
+    "stars": 780
   },
   "agentcore-payments": {
     "downloads": {},
-    "stars": 751
+    "stars": 780
   },
   "agentcore-push": {
-    "downloads": {},
+    "downloads": {
+      "python": 38
+    },
     "stars": 6
   },
   "agentcore-rl-toolkit": {
     "downloads": {
-      "python": 434
+      "python": 491
     },
-    "stars": 52
+    "stars": 93
   },
   "agentcore-tool-search": {
     "downloads": {},
-    "stars": 751
+    "stars": 780
+  },
+  "aidress-mcp": {
+    "downloads": {}
   },
   "amazon-bedrock": {
     "downloads": {}
@@ -55,24 +60,41 @@
   "anthropic": {
     "downloads": {}
   },
+  "attenu-guard": {
+    "downloads": {
+      "python": 1487
+    },
+    "stars": 3
+  },
+  "band": {
+    "downloads": {},
+    "stars": 13
+  },
   "bash": {
     "downloads": {}
   },
   "bedrock-knowledge-base": {
     "downloads": {}
   },
+  "braintrust": {
+    "downloads": {
+      "python": 6574708,
+      "typescript": 6491242
+    },
+    "stars": 22
+  },
   "cedar-authorization": {
     "downloads": {}
   },
   "clawskills-strands": {
     "downloads": {
-      "typescript": 34
+      "typescript": 91
     },
     "stars": 9
   },
   "clova-studio": {
     "downloads": {
-      "python": 11
+      "python": 14
     },
     "stars": 1
   },
@@ -81,9 +103,15 @@
   },
   "coinbase-agentkit": {
     "downloads": {
-      "python": 55
+      "python": 24
     },
-    "stars": 1283
+    "stars": 1339
+  },
+  "confident-trace": {
+    "downloads": {
+      "python": 748
+    },
+    "stars": 15
   },
   "context-injector": {
     "downloads": {}
@@ -96,9 +124,9 @@
   },
   "datadog-ai-guard": {
     "downloads": {
-      "python": 39386044
+      "python": 37729954
     },
-    "stars": 648
+    "stars": 654
   },
   "file-editor": {
     "downloads": {}
@@ -117,25 +145,25 @@
   },
   "grantex": {
     "downloads": {
-      "typescript": 9
+      "typescript": 392
     },
-    "stars": 31
+    "stars": 33
   },
   "headroom": {
     "downloads": {},
-    "stars": 66564
+    "stars": 77846
   },
   "hiddenlayer-strands": {
     "downloads": {
-      "python": 19
+      "python": 14
     },
     "stars": 0
   },
   "hindsight-strands": {
     "downloads": {
-      "python": 28
+      "python": 47
     },
-    "stars": 20065
+    "stars": 53877
   },
   "http-request": {
     "downloads": {}
@@ -145,6 +173,20 @@
   },
   "langfuse": {
     "downloads": {}
+  },
+  "langsmith": {
+    "downloads": {},
+    "stars": 1081
+  },
+  "langwatch": {
+    "downloads": {}
+  },
+  "lelu": {
+    "downloads": {
+      "python": 124,
+      "typescript": 101
+    },
+    "stars": 68
   },
   "litellm": {
     "downloads": {}
@@ -157,40 +199,58 @@
   },
   "llm-tracekit-strands": {
     "downloads": {
-      "python": 1584
+      "python": 47
     },
     "stars": 12
+  },
+  "loopgrid-strands": {
+    "downloads": {
+      "python": 139
+    },
+    "stars": 0
+  },
+  "mem0-strands": {
+    "downloads": {
+      "python": 61
+    },
+    "stars": 67823
   },
   "mistral": {
     "downloads": {}
   },
   "mlx": {
     "downloads": {
-      "python": 93
+      "python": 31
     },
-    "stars": 37
+    "stars": 39
   },
   "nebius-token-factory": {
     "downloads": {}
   },
+  "neo4j-agent-memory-store": {
+    "downloads": {
+      "typescript": 1346
+    },
+    "stars": 592
+  },
   "neo4j-agent-memory": {
     "downloads": {
-      "typescript": 1383
+      "typescript": 1346
     },
-    "stars": 416
+    "stars": 592
   },
   "notebook": {
     "downloads": {}
   },
   "nvidia-nat-strands": {
     "downloads": {
-      "python": 2858
+      "python": 848
     },
-    "stars": 2583
+    "stars": 2675
   },
   "nvidia-nim": {
     "downloads": {
-      "python": 33
+      "python": 9
     },
     "stars": 2
   },
@@ -203,11 +263,23 @@
   "openai": {
     "downloads": {}
   },
+  "opencode": {
+    "downloads": {
+      "typescript": 308
+    },
+    "stars": 0
+  },
   "openinference-instrumentation-strands-agents": {
     "downloads": {
-      "python": 14972
+      "python": 23879
     },
-    "stars": 1148
+    "stars": 1284
+  },
+  "openrouter": {
+    "downloads": {}
+  },
+  "orcarouter": {
+    "downloads": {}
   },
   "ovhcloud-ai-endpoints": {
     "downloads": {}
@@ -215,32 +287,38 @@
   "portkey": {
     "downloads": {}
   },
+  "pushary": {
+    "downloads": {}
+  },
   "respan": {
     "downloads": {
-      "typescript": 22
+      "typescript": 69
     },
-    "stars": 44
+    "stars": 52
   },
   "s3-session-manager": {
     "downloads": {}
   },
   "s3-vectors-memory": {
     "downloads": {
-      "python": 573
+      "python": 151
     },
-    "stars": 61
+    "stars": 67
+  },
+  "serply-mcp": {
+    "downloads": {}
   },
   "sglang": {
     "downloads": {
-      "python": 2911
+      "python": 8093
     },
-    "stars": 77
+    "stars": 79
   },
   "sigil-sdk-strands": {
     "downloads": {
-      "python": 547
+      "python": 97
     },
-    "stars": 56
+    "stars": 130
   },
   "sleep": {
     "downloads": {}
@@ -250,250 +328,309 @@
   },
   "strands-acp": {
     "downloads": {
-      "typescript": 181
+      "typescript": 767
     },
-    "stars": 3
+    "stars": 5
   },
   "strands-adb": {
     "downloads": {
-      "python": 39
+      "python": 25
     },
-    "stars": 2
+    "stars": 4
   },
   "strands-agentcore-tools": {
     "downloads": {
-      "python": 64
+      "python": 73
     },
     "stars": 6
   },
   "strands-agt": {
     "downloads": {
-      "python": 134
+      "python": 15
     },
     "stars": 0
   },
   "strands-apify": {
     "downloads": {
-      "python": 17
+      "python": 128
     },
-    "stars": 2
+    "stars": 3
   },
   "strands-arise": {
     "downloads": {
-      "python": 14
+      "python": 5
     },
     "stars": 0
   },
   "strands-bitchat": {
     "downloads": {
-      "python": 36
+      "python": 7
     },
-    "stars": 8
+    "stars": 9
   },
   "strands-ccxt": {
-    "downloads": {},
+    "downloads": {
+      "python": 7
+    },
     "stars": 9
   },
   "strands-cloudflare": {
-    "downloads": {},
+    "downloads": {
+      "python": 10
+    },
     "stars": 4
   },
   "strands-code-agent": {
     "downloads": {
-      "python": 1800
+      "python": 1780
     },
-    "stars": 11
+    "stars": 13
   },
   "strands-compose-agentcore": {
     "downloads": {
-      "python": 1932
+      "python": 201
     },
     "stars": 0
   },
   "strands-cosmos": {
     "downloads": {
-      "python": 97
+      "python": 48
     },
     "stars": 5
   },
   "strands-dakera": {
     "downloads": {
-      "python": 35
+      "python": 127
     },
     "stars": 0
   },
   "strands-deepgram": {
     "downloads": {
-      "python": 24
+      "python": 21
     },
     "stars": 3
   },
+  "strands-deepkeep": {
+    "downloads": {
+      "python": 18
+    },
+    "stars": 0
+  },
+  "strands-dynamodb-storage": {
+    "downloads": {
+      "python": 3856,
+      "typescript": 84
+    },
+    "stars": 18
+  },
   "strands-erc8004": {
-    "downloads": {},
+    "downloads": {
+      "python": 16
+    },
     "stars": 5
   },
   "strands-fun-tools": {
     "downloads": {
-      "python": 188
+      "python": 21
     },
     "stars": 1
   },
   "strands-github-storage": {
     "downloads": {
-      "typescript": 27
+      "python": 29,
+      "typescript": 16
     },
     "stars": 1
   },
   "strands-google": {
     "downloads": {
-      "python": 248
+      "python": 57
     },
     "stars": 7
   },
   "strands-hackerone": {
-    "downloads": {},
-    "stars": 4
+    "downloads": {
+      "python": 11
+    },
+    "stars": 5
   },
   "strands-hubspot": {
     "downloads": {
-      "python": 78
+      "python": 95
     },
     "stars": 3
   },
   "strands-mcp-server": {
     "downloads": {
-      "python": 842
+      "python": 287
     },
     "stars": 7
   },
+  "strands-neuraltrust": {
+    "downloads": {
+      "python": 305
+    },
+    "stars": 0
+  },
   "strands-osmo": {
     "downloads": {
-      "python": 115
+      "python": 13
     },
     "stars": 3
   },
   "strands-pack": {
-    "downloads": {},
-    "stars": 1
+    "downloads": {
+      "python": 7
+    },
+    "stars": 2
   },
   "strands-perplexity": {
     "downloads": {
-      "python": 395
+      "python": 85
     },
     "stars": 1
   },
   "strands-postgresql-session-manager": {
     "downloads": {
-      "python": 18
+      "python": 229
     },
     "stars": 1
   },
   "strands-redis-session-manager": {
-    "downloads": {},
+    "downloads": {
+      "python": 190
+    },
     "stars": 6
   },
   "strands-rendercv": {
     "downloads": {
-      "python": 20
+      "python": 8
     },
     "stars": 3
   },
   "strands-robots": {
     "downloads": {
-      "python": 464
+      "python": 1840
     },
     "stars": 23
   },
   "strands-sapiens": {
     "downloads": {
-      "python": 116
+      "python": 15
     },
-    "stars": 1
+    "stars": 3
   },
   "strands-spraay": {
     "downloads": {
-      "python": 22
+      "python": 112
     },
     "stars": 0
   },
   "strands-sql": {
     "downloads": {
-      "python": 31
+      "python": 38
     },
     "stars": 2
   },
   "strands-stigmer": {
     "downloads": {
-      "python": 1180
+      "python": 32
     },
     "stars": 0
   },
   "strands-swarms": {
     "downloads": {
-      "python": 23
+      "python": 19
     },
-    "stars": 1
+    "stars": 3
+  },
+  "strands-tealtiger": {
+    "downloads": {
+      "python": 20
+    },
+    "stars": 37
   },
   "strands-teams": {
     "downloads": {
-      "python": 59
+      "python": 21
     },
     "stars": 4
   },
   "strands-telegram-listener": {
     "downloads": {
-      "python": 17
+      "python": 12
     },
     "stars": 3
   },
   "strands-telegram": {
     "downloads": {
-      "python": 20
+      "python": 15
     },
     "stars": 5
   },
   "strands-token-telemetry": {
     "downloads": {
-      "python": 34
+      "python": 12
     },
     "stars": 0
   },
   "strands-transformers": {
     "downloads": {
-      "python": 469
+      "python": 30
     },
     "stars": 5
   },
   "strands-valkey-session-manager": {
     "downloads": {
-      "python": 1466
+      "python": 552
     },
-    "stars": 3
+    "stars": 4
+  },
+  "strands-web-llm": {
+    "downloads": {
+      "typescript": 311
+    },
+    "stars": 0
+  },
+  "strands-xa11y": {
+    "downloads": {
+      "python": 47
+    },
+    "stars": 84
+  },
+  "strands-you": {
+    "downloads": {
+      "python": 0,
+      "typescript": 423
+    },
+    "stars": 94
   },
   "supabase-strands": {
     "downloads": {
-      "python": 16
+      "python": 9
     },
     "stars": 4
   },
   "temporal": {
     "downloads": {},
-    "stars": 1164
+    "stars": 1236
   },
   "traceai": {
     "downloads": {
-      "typescript": 9
+      "typescript": 270
     },
-    "stars": 213
+    "stars": 260
   },
   "utcp": {
     "downloads": {
-      "python": 485
+      "python": 219
     },
-    "stars": 645
+    "stars": 653
   },
   "valyu-agentcore": {
-    "downloads": {},
+    "downloads": {
+      "python": 21
+    },
     "stars": 4
   },
   "vercel-ai": {
@@ -501,14 +638,14 @@
   },
   "vllm": {
     "downloads": {
-      "python": 5614
+      "python": 838
     },
     "stars": 1
   },
   "welt": {
     "downloads": {
-      "python": 1102,
-      "typescript": 1667
+      "python": 205,
+      "typescript": 267
     },
     "stars": 1
   },
@@ -517,12 +654,14 @@
   },
   "xai": {
     "downloads": {
-      "python": 8003
+      "python": 2783
     },
-    "stars": 4
+    "stars": 3
   },
   "zep-strands": {
-    "downloads": {},
-    "stars": 4843
+    "downloads": {
+      "python": 20
+    },
+    "stars": 4973
   }
 }

@@ -1,13 +1,33 @@
 """Tests for the HumanInTheLoop vended intervention handler."""
 
 import logging
+from collections.abc import AsyncGenerator
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel
 
 from strands import Agent
 from strands.agent.invocation_context import _create_invocation_context
+from strands.decisions import (
+    DecisionInput,
+    DecisionMetadata,
+    DecisionModel,
+    DecisionResult,
+    LLMDecisionModel,
+    Question,
+    Uncertain,
+)
+from strands.models.model import Model
 from strands.tools import tool
+from strands.types.content import Messages
 from strands.vended_interventions.hitl import HumanInTheLoop
+from strands.vended_interventions.hitl.classifier import (
+    _DEFAULT_RISK_QUESTION,
+    ClassifierResult,
+    _create_decision_model_risk_classifier,
+)
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -568,7 +588,7 @@ class TestStdioMode:
 
 
 class TestPublicExports:
-    """Public API exports: HumanInTheLoop, HumanInTheLoopClassifier, LLMClassifierConfig."""
+    """Public API exports of the HITL package."""
 
     def test_public_exports(self):
         import strands.vended_interventions as vended
@@ -1190,3 +1210,149 @@ class TestBuiltInClassifier:
 
         call_kwargs = mock_agent_cls.call_args[1]
         assert call_kwargs["system_prompt"] == custom_prompt
+
+
+class StubDecisionModel(DecisionModel):
+    """A decision model that records each ask and returns a canned answer (or raises)."""
+
+    def __init__(self, answer: Any = None, *, error: Exception | None = None) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls: list[tuple[DecisionInput, dict[str, Question]]] = []
+
+    async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
+        self.calls.append((state, questions))
+        if self.error is not None:
+            raise self.error
+        return DecisionResult(
+            answers={"requires_approval": self.answer},
+            metadata=DecisionMetadata(latency_ms=0),
+            usage={"inputTokens": 4, "outputTokens": 1, "totalTokens": 5},
+        )
+
+
+class AnswerReplayModel(Model):
+    """A model whose ``structured_output`` replays one ``requires_approval`` answer."""
+
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+
+    def get_config(self) -> Any:
+        return {}
+
+    def update_config(self, **model_config: Any) -> None:
+        pass
+
+    async def structured_output(
+        self, output_model: type[BaseModel], prompt: Messages, system_prompt: str | None = None, **kwargs: Any
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        yield {"output": output_model(requires_approval={"answer": self.answer})}
+
+    async def stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+
+def run_with_decision_model(decision_model: DecisionModel, **hitl_kwargs: Any) -> tuple[Any, list[bool]]:
+    executed: list[bool] = []
+
+    @tool(name="delete_file")
+    def delete_file(path: str) -> str:
+        executed.append(True)
+        return "deleted"
+
+    agent = Agent(
+        model=MockedModelProvider(
+            [tool_use_message("delete_file", tool_input={"path": "/data"}), text_message("Done")]
+        ),
+        tools=[delete_file],
+        interventions=[HumanInTheLoop(classifier=decision_model, **hitl_kwargs)],
+    )
+    return agent("Delete the file"), executed
+
+
+class TestDecisionModelClassifier:
+    """Tests for passing a ``DecisionModel`` as the classifier."""
+
+    def test_requires_approval_when_answer_is_true(self):
+        result, executed = run_with_decision_model(StubDecisionModel(True))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    def test_runs_tool_when_answer_is_false(self):
+        result, executed = run_with_decision_model(StubDecisionModel(False))
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_uncertain_requires_approval_with_its_reason_in_the_prompt(self):
+        result, executed = run_with_decision_model(StubDecisionModel(Uncertain("no context")))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert result.interrupts[0].reason == 'Approve "delete_file" — no context?\n  Input: {"path": "/data"}'
+
+    def test_definite_answer_carries_no_reason(self):
+        result, _ = run_with_decision_model(StubDecisionModel(True))
+
+        assert result.interrupts[0].reason == 'Approve "delete_file"?\n  Input: {"path": "/data"}'
+
+    def test_asks_about_the_tool_call_with_the_default_question(self):
+        decision_model = StubDecisionModel(False)
+
+        run_with_decision_model(decision_model)
+
+        assert decision_model.calls == [
+            (
+                'Tool: delete_file\nInput: {\n  "path": "/data"\n}',
+                {"requires_approval": {"question": _DEFAULT_RISK_QUESTION, "choices": "boolean"}},
+            )
+        ]
+
+    def test_error_requires_approval(self):
+        result, executed = run_with_decision_model(StubDecisionModel(error=RuntimeError("model down")))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+
+    @pytest.mark.parametrize("answer", ["False", None])
+    def test_non_boolean_answer_requires_approval_and_warns(self, answer, caplog):
+        with caplog.at_level(logging.WARNING):
+            result, executed = run_with_decision_model(StubDecisionModel(answer))
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "non-boolean answer" in caplog.text
+
+    def test_allowed_tools_bypasses_the_decision_model(self):
+        decision_model = StubDecisionModel(True)
+
+        result, executed = run_with_decision_model(decision_model, allowed_tools=["delete_file"])
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+        assert decision_model.calls == []
+
+    @pytest.mark.asyncio
+    async def test_adds_decision_usage_to_the_request_the_tool_call_belongs_to(self):
+        classifier = _create_decision_model_risk_classifier(StubDecisionModel(False))
+        request = _create_invocation_context()
+        event = MagicMock()
+        event.invocation_context = request
+        event.tool_use = {"name": "read", "input": {}}
+
+        result = await classifier(event)
+
+        assert result == ClassifierResult(requires_human_in_the_loop=False)
+        assert request.usage == {"turns_taken": 0, "inputTokens": 4, "outputTokens": 1, "totalTokens": 5}
+
+    def test_rejects_a_non_callable_classifier(self):
+        with pytest.raises(TypeError, match="got str"):
+            HumanInTheLoop(classifier="yes")
+
+    def test_runs_through_a_real_llm_decision_model(self):
+        result, executed = run_with_decision_model(LLMDecisionModel(model=AnswerReplayModel("false")))
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]

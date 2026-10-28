@@ -81,6 +81,7 @@ const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
 }
 
 const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
+const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.gpt-6-', 'openai.gpt-6.'] as const
 
 // Reasoning levels each provider's API accepts. `'off'` is the harness's spelling of a provider's
 // "none" where it has one (OpenAI, Bedrock GPT and Qwen) and omits the reasoning field elsewhere.
@@ -89,6 +90,9 @@ const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.']
 const ANTHROPIC_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'none'] as const
 const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+// Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
+const BEDROCK_GPT_NO_MAX_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+const BEDROCK_GPT_NO_NONE_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_GPT_OSS_LEVELS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
@@ -169,12 +173,22 @@ function bedrockFamily(modelId: string): string {
   return unprefixed ? modelId.slice(unprefixed.length) : modelId
 }
 
+function isBedrockGpt(family: string): boolean {
+  return BEDROCK_GPT_PREFIXES.some((prefix) => family.startsWith(prefix))
+}
+
 function bedrockLevels(modelId: string): readonly string[] {
   const family = bedrockFamily(modelId)
   if (family.startsWith('anthropic.')) {
     return claudeThinkingMode(family) !== null ? ANTHROPIC_LEVELS : NO_THINKING_LEVELS
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (family.startsWith('openai.gpt-5.4') || family.startsWith('openai.gpt-5.5')) {
+    return BEDROCK_GPT_NO_MAX_LEVELS
+  }
+  if (family.startsWith('openai.gpt-6-astra') || family.startsWith('openai.gpt-6.1-sol')) {
+    return BEDROCK_GPT_NO_NONE_LEVELS
+  }
+  if (isBedrockGpt(family)) {
     return BEDROCK_GPT_LEVELS
   }
   if (family.startsWith('openai.gpt-oss-')) {
@@ -203,7 +217,7 @@ function bedrockThinking(modelId: string, effort: string | null): JSONValue | un
   if (family.startsWith('anthropic.')) {
     return claudeThinkingBlock(family, effort, claudeMaxTokens(modelId) ?? ANTHROPIC_MAX_TOKENS) as JSONValue
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (isBedrockGpt(family)) {
     return { reasoning: { effort } }
   }
   if (family.startsWith('openai.gpt-oss-')) {
@@ -339,7 +353,7 @@ interface Provider {
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
   // `builtInTools`, Anthropic-direct `anthropicTools`); `hasWebSearch` narrows bedrock-mantle to its
-  // GPT-5/GPT-6 models. Bedrock Converse has no mechanism.
+  // GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
   // Bedrock and Anthropic direct (the harness sets cache points and tool caching) plus OpenAI, Google,
@@ -572,13 +586,8 @@ function hasWebSearch(providerName: string, name: string): boolean {
   if (provider === undefined || !provider.webSearch) {
     return false
   }
-  // Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-  return (
-    providerName !== 'bedrock-mantle' ||
-    name.startsWith('openai.gpt-5.') ||
-    name.startsWith('openai.gpt-6-') ||
-    name.startsWith('openai.gpt-6.')
-  )
+  // Only Mantle's GPT-5, GPT-6, and Daybreak models serve Bedrock Web Search; others reject the tool (HTTP 400).
+  return providerName !== 'bedrock-mantle' || isBedrockGpt(name)
 }
 
 /**

@@ -100,13 +100,6 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 const MODELS_INCLUDE_STATUS = ['anthropic.claude']
 
 /**
- * Models that support the Anthropic-style prompt caching strategy.
- * Used to auto-detect when `cacheConfig.strategy` is `'auto'`.
- * @see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
- */
-const MODELS_SUPPORTING_ANTHROPIC_CACHING = ['anthropic', 'claude']
-
-/**
  * Models that reject any reasoning text block replayed in history
  * ("User messages cannot contain reasoning content").
  */
@@ -523,9 +516,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Cache strategy name or null
    */
   private _getCacheStrategy(): 'anthropic' | null {
-    return MODELS_SUPPORTING_ANTHROPIC_CACHING.some((pattern) => this._config.modelId?.includes(pattern))
-      ? 'anthropic'
-      : null
+    return this.modelInfo.capabilities?.promptCaching === 'cachePoints' ? 'anthropic' : null
   }
 
   /**
@@ -547,7 +538,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (strategy === 'auto') {
       const detectedStrategy = this._getCacheStrategy()
       if (!detectedStrategy) {
-        logger.warn(
+        warnOnce(
+          logger,
           `model_id=<${this._config.modelId}> | cache_config is enabled but this model does not support automatic caching`
         )
         return false
@@ -832,7 +824,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       return this._send(this._formatRequest(messages, options), send)
     }
 
-    const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema)
+    const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
     for (const mechanism of mechanisms.slice(0, -1)) {
       try {
         return await this._send(this._structuredOutputRequest(messages, options, mechanism, schema), send)

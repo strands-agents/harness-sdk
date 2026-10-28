@@ -51,16 +51,16 @@ gemini = ["google-genai>=1.68.0,<3.0.0"]
 # Ceiling is the last known-good release rather than the major: 1.107.0 was a compromised
 # build (credential stealer, removed from PyPI 2026-10-21). Given that history the cap moves
 # only via a reviewed Dependabot bump, never an automatic in-range resolve.
-litellm = ["litellm>=1.75.9,<1.107.0", "openai>=1.68.0,<3.0.0"]
+litellm = ["litellm>=1.75.9,<1.107.0", "openai>=1.68.0,<4.0.0"]
 llamaapi = ["llama-api-client>=0.1.0,<1.0.0"]
 mistral = ["mistralai>=2.0.0,<4.0.0"]
 ollama = ["ollama>=0.4.8,<1.0.0"]
 web-fetch = ["markdownify>=1.1.0,<2.0.0", "beautifulsoup4>=4.9.0,<5.0.0"]
-openai = ["openai>=1.68.0,<3.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
+openai = ["openai>=1.68.0,<4.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
 writer = ["writer-sdk>=2.2.0,<4.0.0"]
 sagemaker = [
     "boto3-stubs[sagemaker-runtime]>=1.26.0,<2.0.0",
-    "openai>=1.68.0,<3.0.0",  # SageMaker uses OpenAI-compatible interface
+    "openai>=1.68.0,<4.0.0",  # SageMaker uses OpenAI-compatible interface
 ]
 otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.30.0,<2.0.0",
@@ -81,7 +81,7 @@ a2a = [
     "starlette>=1.0.0,<2.0.0",
 ]
 
-cedar = ["cedarpy==4.12.2", "cedar-policy-mcp-schema-generator==0.6.1"]
+cedar = ["cedarpy==4.12.2", "cedar-policy-mcp-schema-generator==0.7.0"]
 
 bidi = [
     "aws_sdk_bedrock_runtime[awscrt]>=0.11.0,<0.12.0; python_version>='3.12'",

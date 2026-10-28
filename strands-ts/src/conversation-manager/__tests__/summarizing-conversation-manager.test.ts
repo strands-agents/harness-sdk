@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { SummarizingConversationManager } from '../summarizing-conversation-manager.js'
 import { ContextWindowOverflowError, Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
-import { Model as ModelBase } from '../../models/model.js'
-import type { Model, BaseModelConfig } from '../../models/model.js'
+import type { Model } from '../../models/model.js'
 
 function textMsg(role: 'user' | 'assistant', text: string): Message {
   return new Message({ role, content: [new TextBlock(text)] })
@@ -374,10 +374,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = {
-        getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-        estimateUtilization: ModelBase.prototype.estimateUtilization,
-      } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -408,10 +406,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = {
-        getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-        estimateUtilization: ModelBase.prototype.estimateUtilization,
-      } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -438,10 +434,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = {
-        getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-        estimateUtilization: ModelBase.prototype.estimateUtilization,
-      } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 

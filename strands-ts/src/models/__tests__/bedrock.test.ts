@@ -407,6 +407,15 @@ describe('BedrockModel', () => {
       })
     })
 
+    it('auto-populates contextWindowLimit from the modelInfo override over the shared value', () => {
+      const provider = new BedrockModel({
+        modelId: 'anthropic.claude-sonnet-4-6',
+        modelInfo: { limits: { contextWindow: 500_000 } },
+      })
+      expect(provider.getConfig().contextWindowLimit).toBe(500_000)
+      expect(provider.modelInfo.limits?.contextWindow).toBe(500_000)
+    })
+
     it('does not override explicit contextWindowLimit', () => {
       const provider = new BedrockModel({
         modelId: 'anthropic.claude-sonnet-4-6',
@@ -423,6 +432,59 @@ describe('BedrockModel', () => {
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'unknown.model-v1:0',
       })
+    })
+  })
+
+  describe('info', () => {
+    it('reads cache points for Claude model ids from the shared model info', () => {
+      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it('leaves caching unknown for other model ids', () => {
+      const provider = new BedrockModel({ modelId: 'amazon.nova-pro-v1:0' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+    })
+
+    it('does not auto-cache a Claude id the shared model info does not list', async () => {
+      const provider = new BedrockModel({ modelId: 'anthropic.claude-future-9', cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    it('injects auto cache points on a model the info override says takes them', async () => {
+      const provider = new BedrockModel({
+        modelId: 'amazon.nova-pro-v1:0',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('skips auto cache points on a Claude model the info override marks unsupported', async () => {
+      const provider = new BedrockModel({
+        modelId: 'us.anthropic.claude-sonnet-4-6',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
     })
   })
 
@@ -499,7 +561,7 @@ describe('BedrockModel', () => {
     it('formats the request to bedrock properly', async () => {
       const provider = new BedrockModel({
         region: 'us-west-2',
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         maxTokens: 1024,
         temperature: 0.7,
         topP: 0.9,
@@ -534,7 +596,7 @@ describe('BedrockModel', () => {
         MyExtraArg: 'ExtraArg',
         additionalModelRequestFields: ['World!'],
         additionalModelResponseFieldPaths: ['Hello!'],
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         messages: [
           {
             role: 'user',
@@ -1582,6 +1644,28 @@ describe('BedrockModel', () => {
         await collectIterator(
           provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
         )
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('starts at native output for a model the shared model info says cannot be forced', async () => {
+        const mockSend = mockRejections()
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(1)
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+      })
+
+      it('skips native output when the info override says the model lacks it', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          modelInfo: { capabilities: { nativeStructuredOutput: false } },
+        })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
 
         expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
       })
@@ -2937,6 +3021,18 @@ describe('BedrockModel', () => {
         expect(cachePoints()).toStrictEqual([undefined, undefined])
       })
 
+      it('warns through warnOnce when auto finds no caching support', async () => {
+        const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: {} })
+
+        await collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([undefined, undefined])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('does not support automatic caching')
+        )
+      })
+
       it('applies the shared ttl to both sections', async () => {
         // Bedrock requires checkpoint TTLs to be non-increasing across toolConfig then messages, which
         // equal values satisfy.
@@ -3430,7 +3526,6 @@ describe('BedrockModel', () => {
     })
 
     it('logs warning and disables caching for non-caching models', async () => {
-      const warnSpy = vi.spyOn(console, 'warn')
       const provider = new BedrockModel({
         modelId: 'amazon.titan-text-express-v1',
         cacheConfig: { strategy: 'auto' },
@@ -3443,7 +3538,10 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       // Verify warning was logged
-      expect(warnSpy).toHaveBeenCalled()
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('does not support automatic caching')
+      )
 
       // Verify no cache points were added
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
@@ -3456,8 +3554,6 @@ describe('BedrockModel', () => {
         ],
         system: [{ text: 'You are a helpful assistant' }],
       })
-
-      warnSpy.mockRestore()
     })
 
     it('enables caching with anthropic strategy for application inference profiles', async () => {
