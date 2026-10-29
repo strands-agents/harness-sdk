@@ -138,7 +138,7 @@ export function loadSnapshot(agent: LocalAgent, snapshot: Snapshot): void {
     const messages = snapshot.data.messages
     agent.messages.length = 0
     for (const msgData of messages as unknown as MessageData[]) {
-      agent.messages.push(Message.fromJSON(msgData))
+      agent.messages.push(Message._fromSavedData(msgData))
     }
   }
 

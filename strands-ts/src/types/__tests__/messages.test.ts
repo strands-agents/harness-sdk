@@ -1,4 +1,4 @@
-import { describe, expect, test, it } from 'vitest'
+import { describe, expect, test, it, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -8,6 +8,8 @@ import {
   CachePointBlock,
   GuardContentBlock,
   JsonBlock,
+  UnknownBlock,
+  contentBlockFromSavedData,
   generateTrackingId,
   type MessageData,
   type SystemPromptData,
@@ -17,6 +19,7 @@ import {
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { logger } from '../../logging/logger.js'
 
 describe('Message', () => {
   test('creates message with role and content', () => {
@@ -283,6 +286,17 @@ describe('JsonBlock', () => {
   })
 })
 
+describe('UnknownBlock', () => {
+  test('creates unknown block holding the raw data', () => {
+    const block = new UnknownBlock({ futureBlock: { value: 1 } })
+
+    expect(block).toEqual({
+      type: 'unknownBlock',
+      data: { futureBlock: { value: 1 } },
+    })
+  })
+})
+
 describe('Message.fromMessageData', () => {
   it('converts text block data to TextBlock', () => {
     const messageData: MessageData = {
@@ -529,6 +543,57 @@ describe('Message.fromMessageData', () => {
   })
 })
 
+describe('restoring saved data with an unknown content block type', () => {
+  const savedData = {
+    role: 'assistant',
+    content: [{ text: 'Hello' }, { futureBlock: { nested: { a: 1 }, items: [1, 'two', null] } }],
+    trackingId: 'durable-1',
+  } as unknown as MessageData
+
+  it('contentBlockFromSavedData keeps it as an UnknownBlock and warns', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const block = contentBlockFromSavedData({ futureBlock: { value: 1 } } as never)
+
+    expect(block).toEqual(new UnknownBlock({ futureBlock: { value: 1 } }))
+    expect(warnSpy.mock.calls).toEqual([
+      ['block_keys=<futureBlock> | unknown content block type | keeping it unchanged | model providers skip it'],
+    ])
+  })
+
+  it('contentBlockFromSavedData converts known types as usual, without a warning', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    expect(contentBlockFromSavedData({ text: 'Hello' })).toEqual(new TextBlock('Hello'))
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('Message._fromSavedData restores the message and serializes it back unchanged', () => {
+    using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const message = Message._fromSavedData(savedData)
+
+    expect(message.content).toEqual([
+      new TextBlock('Hello'),
+      new UnknownBlock({ futureBlock: { nested: { a: 1 }, items: [1, 'two', null] } }),
+    ])
+    expect(message.toJSON()).toStrictEqual(savedData)
+    expect(JSON.parse(JSON.stringify(message))).toStrictEqual(savedData)
+  })
+
+  it('Message.clone keeps the UnknownBlock without warning again', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const message = Message._fromSavedData(savedData)
+    warnSpy.mockClear()
+
+    const copy = message.clone()
+
+    expect(copy).toEqual(message)
+    expect(copy.content[1]).not.toBe(message.content[1])
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe('systemPromptFromData', () => {
   describe('when called with string', () => {
     it('returns the string unchanged', () => {
@@ -757,6 +822,7 @@ describe('toJSON/fromJSON round-trips', () => {
     ['Message with multiple content blocks',   () => new Message({ role: 'assistant', content: [new TextBlock('Here is the result'), new ToolUseBlock({ name: 'test-tool', toolUseId: '123', input: { key: 'value' } })] })],
     ['Message with image content',             () => new Message({ role: 'user', content: [new TextBlock('Check this image'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })] })],
     ['CitationsBlock',                         () => new CitationsBlock({ citations: [{ location: { type: 'documentChar', documentIndex: 0, start: 0, end: 10 }, source: 'doc-0', sourceContent: [{ text: 'source' }], title: 'Test' }], content: [{ text: 'generated' }] })],
+    ['UnknownBlock',                           () => new UnknownBlock({ futureBlock: { nested: { a: 1 } } })],
   ] as const
 
   it.each(roundTripCases)('%s', (_name, createBlock) => {

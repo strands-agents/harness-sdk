@@ -12,6 +12,7 @@ import {
   ToolResultBlock,
   JsonBlock,
   ReasoningBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -939,6 +940,21 @@ describe('AnthropicModel', () => {
         { type: 'thinking', thinking: '', signature: 'sig-abc' },
         { type: 'text', text: 'answer' },
       ])
+    })
+
+    it('skips unknown blocks', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
     })
 
     describe('Prompt Caching (Lookahead logic)', () => {

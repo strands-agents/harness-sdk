@@ -1606,6 +1606,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           throw new Error('guardContent must have either text or image')
         }
       }
+
+      case 'unknownBlock':
+        // Reported once when it was loaded.
+        return undefined
     }
   }
 

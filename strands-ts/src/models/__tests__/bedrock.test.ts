@@ -11,7 +11,14 @@ import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
 import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  JsonBlock,
+  UnknownBlock,
+} from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
 import { TextBlock, GuardContentBlock, CachePointBlock } from '../../types/messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
@@ -711,6 +718,23 @@ describe('BedrockModel', () => {
         ],
         toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
         modelId: expect.any(String),
+      })
+    })
+
+    it('skips unknown blocks', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        modelId: expect.any(String),
+        messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
       })
     })
 

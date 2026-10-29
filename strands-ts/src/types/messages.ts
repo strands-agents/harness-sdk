@@ -5,6 +5,7 @@ import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64, decode
 import type { CitationsBlockData } from './citations.js'
 import { CitationsBlock } from './citations.js'
 import type { Usage, Metrics } from '../models/streaming.js'
+import { logger } from '../logging/logger.js'
 
 /**
  * Message types and content blocks for conversational AI interactions.
@@ -113,11 +114,25 @@ export class Message implements JSONSerializable<MessageData> {
    * Creates a Message instance from MessageData.
    */
   public static fromMessageData(data: MessageData): Message {
-    const contentBlocks: ContentBlock[] = data.content.map(contentBlockFromData)
+    return Message._fromData(data, (block) => contentBlockFromData(block))
+  }
 
+  /**
+   * Creates a Message from data the SDK saved earlier, such as a snapshot. Unlike {@link Message.fromMessageData},
+   * it keeps a content block of a type this version does not recognize as an {@link UnknownBlock}.
+   *
+   * @param data - Saved MessageData
+   * @returns Message instance
+   * @internal
+   */
+  static _fromSavedData(data: MessageData): Message {
+    return Message._fromData(data, (block) => contentBlockFromSavedData(block))
+  }
+
+  private static _fromData(data: MessageData, toContentBlock: (block: ContentBlockData) => ContentBlock): Message {
     return new Message({
       role: data.role,
-      content: contentBlocks,
+      content: data.content.map(toContentBlock),
       // A missing trackingId (e.g. legacy serialized data) is backfilled by the constructor.
       ...(data.trackingId !== undefined && { trackingId: data.trackingId }),
       ...(data.metadata !== undefined && { metadata: data.metadata }),
@@ -152,7 +167,9 @@ export class Message implements JSONSerializable<MessageData> {
    * Creates a deep copy of this Message (round-trips through serialization).
    */
   clone(): Message {
-    return Message.fromMessageData(deepCopy(this.toJSON()) as unknown as MessageData)
+    return Message._fromData(deepCopy(this.toJSON()) as unknown as MessageData, (block) =>
+      contentBlockFromSavedData(block, { warn: false })
+    )
   }
 }
 
@@ -200,6 +217,7 @@ export type ContentBlock =
   | VideoBlock
   | DocumentBlock
   | CitationsBlock
+  | UnknownBlock
 
 /**
  * Data for a text block.
@@ -983,6 +1001,44 @@ export class GuardContentBlock
 }
 
 /**
+ * Content block of a type this SDK version does not recognize, kept when restoring data a newer version saved.
+ * Holds the raw data so it serializes back unchanged. Model providers skip it.
+ */
+export class UnknownBlock implements JSONSerializable<Record<string, unknown>> {
+  /**
+   * Discriminator for unrecognized content.
+   */
+  readonly type = 'unknownBlock' as const
+
+  /**
+   * The raw content block data.
+   */
+  readonly data: Record<string, unknown>
+
+  constructor(data: Record<string, unknown>) {
+    this.data = data
+  }
+
+  /**
+   * Returns the raw content block data unchanged.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): Record<string, unknown> {
+    return this.data
+  }
+
+  /**
+   * Creates an UnknownBlock instance from raw content block data.
+   *
+   * @param data - Raw content block data
+   * @returns UnknownBlock instance
+   */
+  static fromJSON(data: Record<string, unknown>): UnknownBlock {
+    return new UnknownBlock(data)
+  }
+}
+
+/**
  * Converts ContentBlockData to a ContentBlock instance.
  * Handles all content block types including text, tool use/result, reasoning, cache points, guard content, and media blocks.
  *
@@ -991,6 +1047,37 @@ export class GuardContentBlock
  * @throws Error if the content block type is unknown
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
+  const block = knownContentBlockFromData(data)
+  if (block === undefined) {
+    throw new Error('Unknown ContentBlockData type')
+  }
+  return block
+}
+
+/**
+ * Converts content block data the SDK saved earlier, such as in a snapshot, to a ContentBlock instance.
+ * Unlike {@link contentBlockFromData}, data of a type this version does not recognize becomes an
+ * {@link UnknownBlock}, so data saved by a newer version still loads.
+ *
+ * @param data - The saved content block data
+ * @param options - `warn: false` skips the warning, for a block that was already loaded once
+ * @returns A ContentBlock instance of the appropriate type
+ * @internal
+ */
+export function contentBlockFromSavedData(data: ContentBlockData, options: { warn?: boolean } = {}): ContentBlock {
+  const block = knownContentBlockFromData(data)
+  if (block !== undefined) {
+    return block
+  }
+  if (options.warn !== false) {
+    logger.warn(
+      `block_keys=<${Object.keys(data).join(',')}> | unknown content block type | keeping it unchanged | model providers skip it`
+    )
+  }
+  return UnknownBlock.fromJSON(data as unknown as Record<string, unknown>)
+}
+
+function knownContentBlockFromData(data: ContentBlockData): ContentBlock | undefined {
   if ('text' in data) {
     return new TextBlock(data.text)
   } else if ('toolUse' in data) {
@@ -1013,7 +1100,6 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return DocumentBlock.fromJSON(data)
   } else if ('citations' in data) {
     return CitationsBlock.fromJSON(data)
-  } else {
-    throw new Error('Unknown ContentBlockData type')
   }
+  return undefined
 }

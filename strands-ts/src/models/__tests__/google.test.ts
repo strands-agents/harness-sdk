@@ -11,6 +11,7 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { formatMessages, mapChunkToEvents } from '../google/adapters.js'
@@ -762,6 +763,12 @@ describe('GoogleModel', () => {
 
         expect(contents).toHaveLength(0)
         warnSpy.mockRestore()
+      })
+
+      it('skips unknown blocks', () => {
+        const contents = formatBlock(new UnknownBlock({ futureBlock: { value: 1 } }))
+
+        expect(contents).toHaveLength(0)
       })
 
       it('formats tool use blocks as function calls', () => {
