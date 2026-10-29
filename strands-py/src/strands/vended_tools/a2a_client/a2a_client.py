@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from google.protobuf.json_format import MessageToDict
+
 try:
     from a2a.client import ClientConfig
 
@@ -145,7 +147,8 @@ async def _handle_discover(agent: A2AAgent) -> _A2AClientOutput:
     except Exception as error:
         raise A2AClientError(f"Failed to discover agent card at {agent.endpoint!r}: {error}") from error
 
-    return agent_card.model_dump(mode="json", exclude_none=True)
+    result: dict[str, Any] = MessageToDict(agent_card)
+    return result
 
 
 async def _handle_send_message(agent: A2AAgent, message_text: str) -> _A2AClientOutput:
