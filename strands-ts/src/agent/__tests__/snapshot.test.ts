@@ -354,6 +354,21 @@ describe('Snapshot API', () => {
 
       expect(agent.messages).toEqual(originalMessages)
     })
+
+    it('preserves additionalModelResponseFields through a JSON save/load cycle', () => {
+      const fields = {
+        openaiResponsesOutput: [{ id: 'rs_1', type: 'reasoning', summary: [], encrypted_content: 'enc' }],
+      }
+      agent.messages.push(
+        new Message({ role: 'assistant', content: [new TextBlock('Hi!')], additionalModelResponseFields: fields })
+      )
+
+      const snapshot = JSON.parse(JSON.stringify(takeSnapshot(agent, { include: ['messages'] })))
+      agent.messages.length = 0
+      loadSnapshot(agent, snapshot)
+
+      expect(agent.messages[0]!.additionalModelResponseFields).toEqual(fields)
+    })
   })
 
   describe('JSON serialization', () => {

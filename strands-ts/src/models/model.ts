@@ -12,6 +12,7 @@ import {
 import { CitationsBlock } from '../types/citations.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
+import type { JSONValue } from '../types/json.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import type { AgentMetadata } from '../agent/agent-metadata.js'
 import type { z } from 'zod'
@@ -513,6 +514,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let stoppedMessage: Message | null = null
       let finalStopReason: StopReason | null = null
       let metadata: ModelMetadataEvent | undefined = undefined
+      let additionalModelResponseFields: JSONValue | undefined = undefined
       let redactionMessage: string | undefined = undefined
       let toolInputParseError: SyntaxError | undefined = undefined
 
@@ -612,9 +614,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               const filtered = contentBlocks.filter(
                 (block) => !(block instanceof TextBlock && block.text.trim() === '')
               )
+              additionalModelResponseFields = event.additionalModelResponseFields
               stoppedMessage = new Message({
                 role: messageRole,
                 content: filtered,
+                ...(additionalModelResponseFields !== undefined && { additionalModelResponseFields }),
               })
               finalStopReason = event.stopReason!
             }
@@ -634,6 +638,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
             if (event.outputRedaction) {
               // Update output message directly with redacted content
               // Redaction event comes after modelMessageStopEvent, so we overwrite stoppedMessage
+              additionalModelResponseFields = undefined
               stoppedMessage = new Message({
                 role: 'assistant',
                 content: [new TextBlock(event.outputRedaction.replaceContent)],
@@ -664,6 +669,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
           role: stoppedMessage.role,
           content: stoppedMessage.content,
           metadata: messageMetadata,
+          ...(additionalModelResponseFields !== undefined && { additionalModelResponseFields }),
         })
       }
 

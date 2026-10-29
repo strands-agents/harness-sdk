@@ -17,8 +17,8 @@ import type { Usage, Metrics } from '../models/streaming.js'
 /**
  * Optional metadata attached to a message.
  *
- * Not sent to model providers — model providers construct their own message format
- * from `role` and `content` only. Persisted alongside the message in session storage.
+ * Not sent directly to model providers — adapters decide whether to use it when
+ * constructing their provider-specific format. Persisted alongside the message in session storage.
  */
 export interface MessageMetadata {
   /** Token usage information from the model response. */
@@ -53,6 +53,12 @@ export interface MessageData {
    * Optional metadata, not sent to model providers.
    */
   metadata?: MessageMetadata
+
+  /**
+   * Provider-specific fields captured from the model response.
+   * Model adapters may use these fields to preserve provider state across turns.
+   */
+  additionalModelResponseFields?: JSONValue
 }
 
 /**
@@ -98,7 +104,18 @@ export class Message implements JSONSerializable<MessageData> {
    */
   metadata?: MessageMetadata
 
-  constructor(data: { role: Role; content: ContentBlock[]; trackingId?: string; metadata?: MessageMetadata }) {
+  /**
+   * Provider-specific fields captured from the model response.
+   */
+  readonly additionalModelResponseFields?: JSONValue
+
+  constructor(data: {
+    role: Role
+    content: ContentBlock[]
+    trackingId?: string
+    metadata?: MessageMetadata
+    additionalModelResponseFields?: JSONValue
+  }) {
     this.role = data.role
     this.content = data.content
     // Mint a durable id when the caller did not supply a usable one, so every Message has one from
@@ -106,6 +123,9 @@ export class Message implements JSONSerializable<MessageData> {
     this.trackingId = data.trackingId || generateTrackingId()
     if (data.metadata !== undefined) {
       this.metadata = data.metadata
+    }
+    if (data.additionalModelResponseFields !== undefined) {
+      this.additionalModelResponseFields = data.additionalModelResponseFields
     }
   }
 
@@ -121,6 +141,9 @@ export class Message implements JSONSerializable<MessageData> {
       // A missing trackingId (e.g. legacy serialized data) is backfilled by the constructor.
       ...(data.trackingId !== undefined && { trackingId: data.trackingId }),
       ...(data.metadata !== undefined && { metadata: data.metadata }),
+      ...(data.additionalModelResponseFields !== undefined && {
+        additionalModelResponseFields: data.additionalModelResponseFields,
+      }),
     })
   }
 
@@ -134,6 +157,9 @@ export class Message implements JSONSerializable<MessageData> {
       content: this.content.map((block) => block.toJSON() as ContentBlockData),
       ...(this.trackingId !== undefined && { trackingId: this.trackingId }),
       ...(this.metadata !== undefined && { metadata: this.metadata }),
+      ...(this.additionalModelResponseFields !== undefined && {
+        additionalModelResponseFields: this.additionalModelResponseFields,
+      }),
     }
   }
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
+import { formatResponsesRequest } from '../responses-adapter.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
@@ -230,6 +231,7 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.model).toBe('gpt-5.4')
       expect(req.stream).toBe(true)
       expect(req.store).toBe(false)
+      expect(req.include).toBeUndefined()
       expect(Array.isArray(req.input)).toBe(true)
     })
 
@@ -520,6 +522,194 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What about 3+3?' }] })
     })
 
+    it('replays captured Responses output items verbatim in order', async () => {
+      const output = [
+        {
+          id: 'rs_1',
+          type: 'reasoning',
+          status: 'completed',
+          summary: [{ type: 'summary_text', text: 'summary' }],
+          encrypted_content: 'encrypted',
+        },
+        {
+          id: 'fc_1',
+          type: 'function_call',
+          status: 'completed',
+          call_id: 'call_1',
+          name: 'lookup',
+          arguments: '{"query":"next"}',
+        },
+        {
+          id: 'msg_1',
+          type: 'message',
+          status: 'completed',
+          role: 'assistant',
+          phase: 'final_answer',
+          content: [
+            {
+              type: 'output_text',
+              text: 'answer',
+              annotations: [
+                { type: 'url_citation', url: 'https://example.com', title: 'Example', start_index: 0, end_index: 6 },
+              ],
+            },
+          ],
+        },
+      ]
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('question')] }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('answer')],
+          additionalModelResponseFields: { openaiResponsesOutput: output },
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'call_1',
+              status: 'success',
+              content: [new TextBlock('result')],
+            }),
+          ],
+        }),
+      ]
+
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'question' }] },
+        ...output,
+        { type: 'function_call_output', call_id: 'call_1', output: 'result' },
+      ])
+    })
+
+    it('falls back to assistant text when captured output items are invalid', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('answer')],
+          additionalModelResponseFields: { openaiResponsesOutput: [null] },
+        }),
+      ]
+
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([{ role: 'assistant', content: 'answer' }])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('invalid responses output items'))
+      warnSpy.mockRestore()
+    })
+
+    it('replays input-compatible additional_tools output items', async () => {
+      const output = [{ id: 'tools_1', type: 'additional_tools', role: 'developer', tools: [] }]
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('answer')],
+          additionalModelResponseFields: { openaiResponsesOutput: output },
+        }),
+      ]
+
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([...output, { role: 'assistant', content: 'answer' }])
+    })
+
+    it('falls back when output items are not input-compatible', async () => {
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('answer')],
+          additionalModelResponseFields: {
+            openaiResponsesOutput: [{ id: 'tools_1', type: 'additional_tools', role: 'assistant', tools: [] }],
+          },
+        }),
+      ]
+
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([{ role: 'assistant', content: 'answer' }])
+    })
+
+    it('replays reasoning but not message items when replayMessageItems is false (Mantle)', () => {
+      const reasoning = { id: 'rs_1', type: 'reasoning', summary: [], content: [{ type: 'reasoning_text', text: 't' }] }
+      const message = {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: '4', annotations: [] }],
+      }
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('4')],
+          additionalModelResponseFields: { openaiResponsesOutput: [reasoning, message] },
+        }),
+      ]
+
+      const req = formatResponsesRequest({ modelId: 'm' }, messages, undefined, false, { replayMessageItems: false })
+      expect(req.input).toEqual([reasoning, { role: 'assistant', content: '4' }])
+
+      const legacy = formatResponsesRequest(
+        { modelId: 'm' },
+        [
+          new Message({
+            role: 'assistant',
+            content: [new TextBlock('answer')],
+            additionalModelResponseFields: { openaiResponsesOutput: [message] },
+          }),
+        ],
+        undefined,
+        false,
+        { replayMessageItems: false }
+      )
+      expect(legacy.input).toEqual([{ role: 'assistant', content: 'answer' }])
+    })
+
+    it('keeps reasoning and function_call items ahead of the text when message items are dropped', () => {
+      const reasoning = { id: 'rs_1', type: 'reasoning', summary: [] }
+      const message = { id: 'msg_1', type: 'message', role: 'assistant', status: 'completed', content: [] }
+      const call = { id: 'fc_1', type: 'function_call', call_id: 'call_1', name: 'calc', arguments: '{}' }
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('let me check'), new ToolUseBlock({ name: 'calc', toolUseId: 'call_1', input: {} })],
+          additionalModelResponseFields: { openaiResponsesOutput: [reasoning, message, call] },
+        }),
+      ]
+
+      const req = formatResponsesRequest({ modelId: 'm' }, messages, undefined, false, { replayMessageItems: false })
+      expect(req.input).toEqual([reasoning, call, { role: 'assistant', content: 'let me check' }])
+    })
+
+    it('replays function_call output items without an id', async () => {
+      const output = [{ type: 'function_call', call_id: 'call_1', name: 'calculator', arguments: '{}' }]
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('answer')],
+          additionalModelResponseFields: { openaiResponsesOutput: output },
+        }),
+      ]
+
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([...output, { role: 'assistant', content: 'answer' }])
+    })
+
+    it('does not replay captured output items in stateful mode', async () => {
+      const messages = [
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('answer')],
+          additionalModelResponseFields: {
+            openaiResponsesOutput: [{ id: 'rs_1', type: 'reasoning', summary: [], encrypted_content: 'encrypted' }],
+          },
+        }),
+      ]
+
+      const req = await runOnce({ stateful: true }, messages)
+      expect(req.input).toEqual([{ role: 'assistant', content: 'answer' }])
+      expect(req.include).toBeUndefined()
+    })
+
     it('joins multiple assistant text blocks with newlines', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('list two words')] }),
@@ -678,6 +868,65 @@ describe("OpenAIModel (api: 'responses')", () => {
       ])
     })
 
+    it('captures completed output items on the aggregated assistant message', async () => {
+      const reasoning = {
+        id: 'rs_1',
+        type: 'reasoning',
+        status: 'completed',
+        summary: [{ type: 'summary_text', text: 'summary' }],
+        encrypted_content: 'encrypted',
+      }
+      const message = {
+        id: 'msg_1',
+        type: 'message',
+        status: 'completed',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text: 'answer', annotations: [] }],
+      }
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'answer' }
+        yield { type: 'response.output_item.done', output_index: 1, item: message }
+        yield { type: 'response.output_item.done', output_index: 0, item: reasoning }
+        yield { type: 'response.completed', response: {} }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      const iterator = model.streamAggregated([new Message({ role: 'user', content: [new TextBlock('x')] })])
+      let result = await iterator.next()
+      while (!result.done) result = await iterator.next()
+
+      expect(result.value.message.additionalModelResponseFields).toEqual({
+        openaiResponsesOutput: [reasoning, message],
+      })
+      expect(Message.fromJSON(result.value.message.toJSON()).additionalModelResponseFields).toEqual({
+        openaiResponsesOutput: [reasoning, message],
+      })
+    })
+
+    it('omits captured output items when they do not cover an emitted tool call', async () => {
+      const reasoning = { id: 'rs_1', type: 'reasoning', summary: [], encrypted_content: 'encrypted' }
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_item.done', output_index: 0, item: reasoning }
+        yield {
+          type: 'response.output_item.added',
+          item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'calc' },
+        }
+        yield { type: 'response.function_call_arguments.done', item_id: 'item_1', arguments: '{"a":1}' }
+        yield { type: 'response.completed', response: {} }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      const iterator = model.streamAggregated([new Message({ role: 'user', content: [new TextBlock('x')] })])
+      let result = await iterator.next()
+      while (!result.done) result = await iterator.next()
+
+      expect(result.value.stopReason).toBe('toolUse')
+      expect(result.value.message.additionalModelResponseFields).toBeUndefined()
+    })
+
     it('emits tool call triplet after stream close and sets stopReason=toolUse', async () => {
       const client = createMockClient(async function* () {
         yield { type: 'response.created', response: { id: 'r' } }
@@ -738,6 +987,26 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(stop?.stopReason).toBe('maxTokens')
       const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+    })
+
+    it('preserves maxTokens when an incomplete response also contains a function call', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.output_item.added',
+          item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'calc' },
+        }
+        yield { type: 'response.function_call_arguments.done', item_id: 'item_1', arguments: '{"a":1}' }
+        yield {
+          type: 'response.incomplete',
+          response: { incomplete_details: { reason: 'max_output_tokens' } },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+
+      expect((events.find((event: any) => event.type === 'modelMessageStopEvent') as any).stopReason).toBe('maxTokens')
     })
 
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {

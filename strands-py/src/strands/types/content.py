@@ -262,12 +262,14 @@ class Message(TypedDict):
             within a conversation, but the same message carries the same id across sessions (copying
             another agent's messages does not re-key them).
         metadata: Optional metadata, stripped before model calls.
+        additionalModelResponseFields: Provider-specific fields captured from the model response.
     """
 
     content: list[ContentBlock]
     role: Role
     tracking_id: NotRequired[str]
     metadata: NotRequired[MessageMetadata]
+    additionalModelResponseFields: NotRequired[dict | list | int | float | str | bool | None]
 
 
 Messages = list[Message]

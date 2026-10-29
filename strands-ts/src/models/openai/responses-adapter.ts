@@ -21,8 +21,10 @@ import type {
   ResponseFunctionCallOutputItem,
   ResponseCreateParamsStreaming,
   ResponseUsage,
+  ResponseOutputItem,
 } from 'openai/resources/responses/responses'
 import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
+import type { JSONValue } from '../../types/json.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
@@ -38,6 +40,35 @@ import type { OpenAIResponsesConfig } from './types.js'
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
+const OPENAI_RESPONSES_OUTPUT_FIELD = 'openaiResponsesOutput'
+const RESPONSE_OUTPUT_ITEM_TYPES = new Set([
+  'message',
+  'file_search_call',
+  'function_call',
+  'function_call_output',
+  'web_search_call',
+  'computer_call',
+  'computer_call_output',
+  'reasoning',
+  'tool_search_call',
+  'tool_search_output',
+  'image_generation_call',
+  'code_interpreter_call',
+  'local_shell_call',
+  'local_shell_call_output',
+  'shell_call',
+  'shell_call_output',
+  'apply_patch_call',
+  'apply_patch_call_output',
+  'mcp_call',
+  'mcp_list_tools',
+  'mcp_approval_request',
+  'mcp_approval_response',
+  'custom_tool_call',
+  'custom_tool_call_output',
+  'compaction',
+  'additional_tools',
+])
 
 /**
  * Logs a warning for each responses-managed key present in `params`.
@@ -57,9 +88,10 @@ export function formatResponsesRequest(
   config: OpenAIResponsesConfig,
   messages: Message[],
   options: StreamOptions | undefined,
-  stateful: boolean
+  stateful: boolean,
+  replay: { replayMessageItems: boolean } = { replayMessageItems: true }
 ): ResponseCreateParamsStreaming {
-  const input = formatResponsesMessages(messages)
+  const input = formatResponsesMessages(messages, !stateful, replay.replayMessageItems)
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -138,12 +170,31 @@ export function formatResponsesRequest(
  * - Text/media → grouped in `{ role, content: [...] }`
  * - Tool calls → separate `{ type: 'function_call', ... }` items
  * - Tool results → separate `{ type: 'function_call_output', ... }` items
+ *
+ * `replayMessageItems=false` drops `message` output items and sends the string-form
+ * assistant text instead: Bedrock Mantle rejects replayed message items (it strips
+ * their id/status in flight) but accepts reasoning and function_call items.
  */
-function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
+function formatResponsesMessages(
+  messages: Message[],
+  replayOutputItems: boolean,
+  replayMessageItems = true
+): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
     const role = message.role === 'assistant' ? 'assistant' : 'user'
+    const captured = getResponsesOutputItems(message)
+    const outputItems = replayMessageItems ? captured : captured?.filter((item) => item.type !== 'message')
+    if (replayOutputItems && role === 'assistant' && outputItems && (outputItems.length > 0 || hasText(message))) {
+      input.push(...outputItems)
+      // Max-token recovery may retain only safe reasoning items after removing an
+      // incomplete tool call. Preserve the recovered visible text in that case.
+      if (!outputItems.some((item) => item.type === 'message')) {
+        appendAssistantTextFallback(input, message)
+      }
+      continue
+    }
     const contentItems: Array<Record<string, unknown>> = []
     const toolCallItems: ResponseInputItem[] = []
     const toolResultItems: ResponseInputItem[] = []
@@ -253,6 +304,78 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
   return input
 }
 
+function getResponsesOutputItems(message: Message): ResponseInputItem[] | undefined {
+  const fields = message.additionalModelResponseFields
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return undefined
+  const output = (fields as Record<string, JSONValue>)[OPENAI_RESPONSES_OUTPUT_FIELD]
+  if (!Array.isArray(output) || output.length === 0) return undefined
+  if (!output.every(isResponsesOutputItem)) {
+    logger.warn('field=<openaiResponsesOutput> | invalid responses output items | using legacy assistant history')
+    return undefined
+  }
+  return output as unknown as ResponseInputItem[]
+}
+
+function isResponsesOutputItem(value: JSONValue): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const item = value as Record<string, JSONValue>
+  if (typeof item.type !== 'string' || !RESPONSE_OUTPUT_ITEM_TYPES.has(item.type)) return false
+  // `id` is optional on function_call / custom_tool_call in the SDK types; required everywhere else.
+  const idOptional = item.type === 'function_call' || item.type === 'custom_tool_call'
+  if (typeof item.id !== 'string' && !(idOptional && item.id === undefined)) return false
+  if (
+    item.status !== undefined &&
+    !['in_progress', 'completed', 'incomplete', 'generating', 'failed'].includes(String(item.status))
+  ) {
+    return false
+  }
+  if (item.type === 'message') {
+    if (item.role !== 'assistant' || !['in_progress', 'completed', 'incomplete'].includes(String(item.status)))
+      return false
+    if (!Array.isArray(item.content) || !item.content.every(isResponseOutputContent)) return false
+  } else if (item.type === 'reasoning') {
+    if (!Array.isArray(item.summary) || !item.summary.every(isReasoningSummaryPart)) return false
+  } else if (item.type === 'function_call') {
+    if (typeof item.call_id !== 'string' || typeof item.name !== 'string' || typeof item.arguments !== 'string')
+      return false
+  } else if (item.type === 'additional_tools') {
+    if (!Array.isArray(item.tools) || item.role !== 'developer') return false
+  } else if (item.type === 'compaction') {
+    if (typeof item.encrypted_content !== 'string') return false
+  }
+  return true
+}
+
+function isResponseOutputContent(value: JSONValue): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const part = value as Record<string, JSONValue>
+  if (part.type === 'output_text') return typeof part.text === 'string' && Array.isArray(part.annotations)
+  if (part.type === 'refusal') return typeof part.refusal === 'string'
+  return false
+}
+
+function isReasoningSummaryPart(value: JSONValue): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const part = value as Record<string, JSONValue>
+  return part.type === 'summary_text' && typeof part.text === 'string'
+}
+
+function assistantText(message: Message): string {
+  return message.content
+    .filter((block) => block.type === 'textBlock')
+    .map((block) => block.text)
+    .join('\n')
+}
+
+function hasText(message: Message): boolean {
+  return assistantText(message).length > 0
+}
+
+function appendAssistantTextFallback(input: ResponseInputItem[], message: Message): void {
+  const text = assistantText(message)
+  if (text) input.push({ role: 'assistant', content: text })
+}
+
 /**
  * Builds a Responses API `function_call_output.output` value from a SDK
  * `toolResultBlock`. Returns a plain string for text-only results (joined with
@@ -353,6 +476,7 @@ function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> |
 export interface ResponsesStreamState {
   dataType: string | null
   toolCalls: Map<string, { name: string; arguments: string; callId: string; itemId: string }>
+  outputItems: Map<number, ResponseOutputItem>
   finalUsage: {
     inputTokens: number
     outputTokens: number
@@ -372,6 +496,7 @@ export function createResponsesStreamState(): ResponsesStreamState {
   return {
     dataType: null,
     toolCalls: new Map(),
+    outputItems: new Map(),
     finalUsage: null,
     stopReason: 'endTurn',
   }
@@ -514,6 +639,11 @@ export function mapResponsesEventToSDK(
       break
     }
 
+    case 'response.output_item.done': {
+      if (!stateful) state.outputItems.set(event.output_index, event.item)
+      break
+    }
+
     case 'response.function_call_arguments.delta': {
       const tc = state.toolCalls.get(event.item_id)
       if (tc) {
@@ -532,6 +662,7 @@ export function mapResponsesEventToSDK(
 
     case 'response.incomplete': {
       const resp = event.response
+      if (!stateful) captureResponseOutput(resp.output, state)
       if (resp.usage) {
         state.finalUsage = mapResponsesUsage(resp.usage)
       }
@@ -552,6 +683,7 @@ export function mapResponsesEventToSDK(
 
     case 'response.completed': {
       const resp = event.response
+      if (!stateful) captureResponseOutput(resp.output, state)
       if (resp.usage) {
         state.finalUsage = mapResponsesUsage(resp.usage)
       }
@@ -572,6 +704,12 @@ export function mapResponsesEventToSDK(
  *
  * @internal
  */
+function captureResponseOutput(output: ResponseOutputItem[] | undefined, state: ResponsesStreamState): void {
+  if (!output || output.length === 0) return
+  state.outputItems.clear()
+  output.forEach((item, index) => state.outputItems.set(index, item))
+}
+
 export function finalizeResponsesStream(state: ResponsesStreamState): ModelStreamEvent[] {
   const events: ModelStreamEvent[] = []
 
@@ -592,7 +730,7 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
   }
 
   let stopReason = state.stopReason
-  if (state.toolCalls.size > 0) {
+  if (state.toolCalls.size > 0 && stopReason === 'endTurn') {
     stopReason = 'toolUse'
   }
 
@@ -600,7 +738,19 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
     events.push({ type: 'modelMetadataEvent', usage: state.finalUsage })
   }
 
-  events.push({ type: 'modelMessageStopEvent', stopReason })
+  const outputItems = [...state.outputItems.entries()].sort(([left], [right]) => left - right).map(([, item]) => item)
+  // Replay drops the toolUse blocks, so the items must carry every emitted call or a tool
+  // result would be orphaned on the next request. Fall back to legacy history otherwise.
+  const capturedCallIds = new Set(outputItems.flatMap((item) => (item.type === 'function_call' ? [item.call_id] : [])))
+  const coversToolCalls = [...state.toolCalls.values()].every((tc) => capturedCallIds.has(tc.callId))
+  events.push({
+    type: 'modelMessageStopEvent',
+    stopReason,
+    ...(outputItems.length > 0 &&
+      coversToolCalls && {
+        additionalModelResponseFields: { [OPENAI_RESPONSES_OUTPUT_FIELD]: outputItems } as unknown as JSONValue,
+      }),
+  })
 
   return events
 }
