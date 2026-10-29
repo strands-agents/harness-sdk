@@ -1,0 +1,12 @@
+name: Highflame
+description: Highflame Shield guardrails as a Strands intervention that checks agent input, tool calls, tool results, and model responses, and blocks or redacts them by policy.
+integrationType: intervention
+maintainedBy: partner
+languages:
+  python:
+    package: highflame[strands]
+  typescript:
+    package: "@highflame/sdk"
+github: https://github.com/highflame-ai/highflame-cookbook
+docsUrl: https://github.com/highflame-ai/highflame-cookbook/blob/main/recipes/agent-identity/strands_interventions_and_agent_keys.ipynb
+addedDate: 2026-10-26
