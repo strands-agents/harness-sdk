@@ -21,11 +21,23 @@ const _ANALYST_PROMPT =
   'factual, and preserve concrete details (names, numbers, quotes, links) ' +
   'relevant to the request.'
 
+function offsetSchema(action: string): z.ZodOptional<z.ZodNumber> {
+  return z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      'Character offset into the extracted content to start from. Use the value given in a ' +
+        `previous result's truncation marker to ${action} the next part of a long page. Defaults to 0.`
+    )
+}
+
 /**
  * Zod schema for markdown mode web fetch input validation.
  */
 const webFetchMarkdownInputSchema = z.object({
   url: z.string().describe('URL to fetch. Must be http:// or https://.'),
+  offset: offsetSchema('read'),
 })
 
 /**
@@ -34,6 +46,7 @@ const webFetchMarkdownInputSchema = z.object({
 const webFetchAgenticInputSchema = z.object({
   url: z.string().describe('URL to fetch. Must be http:// or https://.'),
   prompt: z.string().describe('Question or instruction about the page content.'),
+  offset: offsetSchema('ask about'),
 })
 
 /**
@@ -60,17 +73,13 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
     description,
     inputSchema: webFetchMarkdownInputSchema,
     callback: async (input, context) => {
-      const { url } = input
+      const { url, offset = 0 } = input
       const signal = context?.cancelSignal ?? null
 
       const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
 
-      const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
-      let content = isMarkup ? await htmlToMarkdown(raw) : raw
-      if (content.length > maxContentChars) {
-        content = content.slice(0, maxContentChars) + '\n\n[content truncated]'
-      }
-      return content
+      const window = selectWindow(await extractContent(contentType, raw), offset, maxContentChars)
+      return appendMarker(window, window.text, true)
     },
   })
 
@@ -79,7 +88,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
     description,
     inputSchema: webFetchAgenticInputSchema,
     callback: async (input, context) => {
-      const { url, prompt } = input
+      const { url, prompt, offset = 0 } = input
 
       if (!prompt.trim()) {
         throw new Error('web_fetch: agentic mode requires a non-empty prompt.')
@@ -100,21 +109,20 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
       }
       const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
 
-      const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
-      let content = isMarkup ? await htmlToMarkdown(raw) : raw
-      if (content.length > maxContentChars) {
-        content = content.slice(0, maxContentChars) + '\n\n[content truncated]'
-      }
+      const window = selectWindow(await extractContent(contentType, raw), offset, maxContentChars)
+      // The analyst sees the bounds only; the paging hint is for the calling agent.
+      const analystContent = appendMarker(window, window.text, false)
 
       // Fresh agent per call — no history from one fetch bleeds into the next.
       const analyst = new Agent({ model: effectiveModel, systemPrompt: _ANALYST_PROMPT, printer: false })
-      const invokePrompt = `URL: ${url}\n\nRequest: ${prompt}\n\n--- Content ---\n${content}`
+      const invokePrompt = `URL: ${url}\n\nRequest: ${prompt}\n\n--- Content ---\n${analystContent}`
       try {
         const result = await analyst.invoke(invokePrompt, invokeOptions)
-        return result.lastMessage.content
+        const answer = result.lastMessage.content
           .filter((block) => block.type === 'textBlock')
           .map((block) => block.text)
           .join('')
+        return appendMarker(window, answer, true)
       } catch (error) {
         throw new Error(
           `url=<${url}> | web fetch analyst failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -133,6 +141,55 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
 export const webFetch = makeWebFetch()
 
 // ---- Internals ----
+
+/** Convert markup bodies to markdown; return other content types as-is. */
+async function extractContent(contentType: string, raw: string): Promise<string> {
+  const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
+  return isMarkup ? await htmlToMarkdown(raw) : raw
+}
+
+/** The slice of extracted content delivered for one call, with its bounds. */
+interface ContentWindow {
+  text: string
+  offset: number
+  end: number
+  total: number
+}
+
+/**
+ * Return `content.slice(offset, offset + maxContentChars)` with its bounds.
+ * Throws when `offset` is negative or past the end of the content.
+ */
+function selectWindow(content: string, offset: number, maxContentChars: number): ContentWindow {
+  const total = content.length
+  if (offset < 0) {
+    throw new Error(`offset must be non-negative, got ${offset}`)
+  }
+  if (offset > 0 && offset >= total) {
+    throw new Error(
+      `offset ${offset} is past the end of the content (${total} characters); omit offset or pass a value below ${total}`
+    )
+  }
+  const end = Math.min(offset + maxContentChars, total)
+  return { text: content.slice(offset, end), offset, end, total }
+}
+
+/**
+ * Append a truncation marker to `text` unless the window is the whole content.
+ * The marker reports the window bounds and total length; with `withHint` it also
+ * tells the caller how to read the next window, or that this is the end.
+ */
+function appendMarker(window: ContentWindow, text: string, withHint: boolean): string {
+  if (window.offset === 0 && window.end === window.total) {
+    return text
+  }
+  let marker = `[content truncated: showing characters ${window.offset}-${window.end} of ${window.total}`
+  if (withHint) {
+    const hint = window.end < window.total ? `pass offset=${window.end} to read the next window` : 'end of content'
+    marker += `; ${hint}`
+  }
+  return `${text}\n\n${marker}]`
+}
 
 async function fetchOnce(url: string, maxBytes: number, signal: AbortSignal | null): Promise<[string, string]> {
   // Validate scheme before hitting the network
