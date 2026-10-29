@@ -15,7 +15,7 @@ if (process.platform === 'win32') {
 export default defineConfig({
   test: {
     unstubEnvs: true,
-    // vitest 5 defaults this to true, which wipes the spies of integ tests still running concurrently.
+    // vitest 5 defaults this to true, which would wipe spies set up in beforeAll between tests.
     clearMocks: false,
     reporters: [
       'default',
