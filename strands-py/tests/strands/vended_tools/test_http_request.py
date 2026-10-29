@@ -248,82 +248,82 @@ class TestTimeout:
         with pytest.raises(HttpRequestError, match="positive"):
             await tool(method="GET", url="https://example.com/", timeout=0)
 
+    @pytest.mark.parametrize(
+        ("client_timeout", "model_timeout", "exp_timeout"),
+        [
+            pytest.param(
+                httpx.Timeout(10.0, connect=5.0, write=20.0, pool=1.0),
+                None,
+                {"connect": 5.0, "read": 10.0, "write": 20.0, "pool": 1.0},
+                id="client-defaults",
+            ),
+            pytest.param(
+                httpx.Timeout(10.0, connect=5.0, write=20.0, pool=1.0),
+                60.0,
+                {"connect": 5.0, "read": 10.0, "write": 20.0, "pool": 1.0},
+                id="client-caps",
+            ),
+            pytest.param(
+                httpx.Timeout(10.0, connect=5.0, write=20.0, pool=1.0),
+                2.0,
+                {"connect": 2.0, "read": 2.0, "write": 2.0, "pool": 1.0},
+                id="shorter-model-timeout",
+            ),
+            pytest.param(
+                httpx.Timeout(None, connect=5.0),
+                60.0,
+                {"connect": 5.0, "read": 60.0, "write": 60.0, "pool": 60.0},
+                id="unbounded-phases",
+            ),
+            pytest.param(
+                httpx.Timeout(None, pool=1.0),
+                2.0,
+                {"connect": 2.0, "read": 2.0, "write": 2.0, "pool": 1.0},
+                id="pool-only-cap",
+            ),
+            pytest.param(
+                httpx.Timeout(None),
+                None,
+                {"connect": None, "read": None, "write": None, "pool": None},
+                id="unbounded-client-defaults",
+            ),
+            pytest.param(
+                httpx.Timeout(None),
+                999.0,
+                {"connect": 999.0, "read": 999.0, "write": 999.0, "pool": 999.0},
+                id="unbounded-client-with-model-timeout",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_model_timeout_capped_by_client(self):
-        async def slow_handler(_request: httpx.Request) -> httpx.Response:
-            raise httpx.TimeoutException("timed out")
-
-        client = httpx.AsyncClient(
-            transport=httpx.MockTransport(slow_handler),
-            timeout=5.0,
-        )
-        tool = make_http_request(client=client)
-        with pytest.raises(HttpRequestError, match="timed out"):
-            await tool(method="GET", url="https://example.com/slow", timeout=60)
-
-    @pytest.mark.asyncio
-    async def test_model_timeout_used_when_shorter_than_client(self):
-        async def slow_handler(_request: httpx.Request) -> httpx.Response:
-            raise httpx.TimeoutException("timed out")
-
-        client = httpx.AsyncClient(
-            transport=httpx.MockTransport(slow_handler),
-            timeout=60.0,
-        )
-        tool = make_http_request(client=client)
-        with pytest.raises(HttpRequestError, match="timed out"):
-            await tool(method="GET", url="https://example.com/slow", timeout=2)
-
-    @pytest.mark.asyncio
-    async def test_defaults_to_client_timeout_when_model_omits(self):
-        def handler(_request: httpx.Request) -> httpx.Response:
+    async def test_request_timeout_respects_client_phase_limits(self, client_timeout, model_timeout, exp_timeout):
+        # Operator-set timeout phase limits remain effective (#4838).
+        def handler(request: httpx.Request) -> httpx.Response:
+            tru_timeout = request.extensions["timeout"]
+            assert tru_timeout == exp_timeout
             return httpx.Response(200, text="ok")
 
-        client = httpx.AsyncClient(
-            transport=_make_transport(handler),
-            timeout=10.0,
-        )
-        tool = make_http_request(client=client)
-        result = await tool(method="GET", url="https://example.com/")
-        assert result["status"] == 200
+        async with httpx.AsyncClient(transport=_make_transport(handler), timeout=client_timeout) as client:
+            tool = make_http_request(client=client)
+            await tool(method="GET", url="https://example.com/", timeout=model_timeout)
 
+    @pytest.mark.parametrize(("model_timeout", "exp_seconds"), [(None, 5.0), (999.0, 999.0)])
     @pytest.mark.asyncio
-    async def test_fallback_to_connect_timeout_when_read_is_none(self):
-        """When read timeout is None but connect is set, connect is used as cap."""
-        from strands.vended_tools.http_request.http_request import _resolve_timeout
+    async def test_default_client_timeout(self, monkeypatch, model_timeout, exp_seconds):
+        def handler(request: httpx.Request) -> httpx.Response:
+            tru_timeout = request.extensions["timeout"]
+            exp_timeout = {
+                "connect": exp_seconds,
+                "read": exp_seconds,
+                "write": exp_seconds,
+                "pool": exp_seconds,
+            }
+            assert tru_timeout == exp_timeout
+            return httpx.Response(200, text="ok")
 
-        client = httpx.AsyncClient(
-            transport=_make_transport(lambda _r: httpx.Response(200)),
-            timeout=httpx.Timeout(None, connect=5.0),
-        )
-        # Model requests 60s, but connect cap is 5s
-        result = _resolve_timeout(60.0, client)
-        assert result == 5.0
-
-    @pytest.mark.asyncio
-    async def test_no_client_no_cap(self):
-        """Without a client, model timeout is used as-is (no cap)."""
-        from strands.vended_tools.http_request.http_request import _resolve_timeout
-
-        result = _resolve_timeout(999.0, None)
-        assert result == 999.0
-
-    @pytest.mark.asyncio
-    async def test_client_with_all_none_timeouts_no_cap(self):
-        """A client with all timeout phases set to None applies no cap."""
-        from strands.vended_tools.http_request.http_request import _resolve_timeout
-
-        client = httpx.AsyncClient(
-            transport=_make_transport(lambda _r: httpx.Response(200)),
-            timeout=httpx.Timeout(None),
-        )
-        # All phases are None, so no cap — model's timeout is used as-is
-        result = _resolve_timeout(999.0, client)
-        assert result == 999.0
-
-        # And when model omits timeout, result is None (no timeout at all)
-        result_none = _resolve_timeout(None, client)
-        assert result_none is None
+        client = httpx.AsyncClient(transport=_make_transport(handler))
+        monkeypatch.setattr(httpx, "AsyncClient", lambda: client)
+        await http_request(method="GET", url="https://example.com/", timeout=model_timeout)
 
 
 class TestToolMetadata:
