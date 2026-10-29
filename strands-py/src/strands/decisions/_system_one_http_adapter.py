@@ -139,12 +139,7 @@ async def _ask_system_one(
         )
 
     started_at = time.perf_counter()
-    try:
-        response = await _post(config, body)
-    except Exception as error:
-        # Mirror the TypeScript adapter, which wraps any throw from fetch (network error, closed
-        # client, etc.) rather than only typed transport failures.
-        raise StructuredOutputException(f"{config.provider_name} decision request failed: {error}") from error
+    response = await _post(config, body)
 
     payload = _read_payload(response)
     if not response.is_success:

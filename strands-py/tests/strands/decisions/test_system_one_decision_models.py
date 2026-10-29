@@ -371,16 +371,15 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio
-    async def test_wraps_transport_failures_with_the_original_cause(self, provider: _ProviderCase):
+    async def test_propagates_transport_failures(self, provider: _ProviderCase):
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("offline")
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        with pytest.raises(StructuredOutputException) as caught:
+        with pytest.raises(httpx.ConnectError, match="offline"):
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
-        assert isinstance(caught.value.__cause__, httpx.ConnectError)
 
     @pytest.mark.asyncio
     async def test_rejects_a_non_json_success_response(self, provider: _ProviderCase):
@@ -607,12 +606,12 @@ class TestAsk:
         assert isinstance(caught.value.__cause__, ValueError)
 
     @pytest.mark.asyncio
-    async def test_wraps_a_closed_client_as_structured_output_error(self, provider: _ProviderCase):
+    async def test_propagates_a_closed_client_error(self, provider: _ProviderCase):
         client = _fake_client(_response_body({"q": {"type": "noul", "noul": 1}}))
         await client.aclose()
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        with pytest.raises(StructuredOutputException):
+        with pytest.raises(RuntimeError, match="client has been closed"):
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
 
