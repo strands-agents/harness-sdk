@@ -13,6 +13,7 @@ import { InterruptResponseContent, type InterruptResponseContentData, type Inter
 import type { JSONValue } from './types/json.js'
 import type { LocalAgent } from './types/agent.js'
 import { Message, ToolResultBlock, type MessageData, type ToolResultBlockData } from './types/messages.js'
+import { SessionError } from './errors.js'
 
 /**
  * Origin of an interrupt:
@@ -197,10 +198,10 @@ export class InterruptState implements InterruptStateData {
 
   /**
    * Gets the pending tool execution state with reconstructed Message and ToolResultBlock objects.
-   * Returns undefined if there is no pending execution.
+   * Returns undefined if there is no pending execution or the interrupt state is not activated.
    */
   getPendingExecution(): { assistantMessage: Message; completedToolResults: Map<string, ToolResultBlock> } | undefined {
-    if (!this.pendingToolExecution) {
+    if (!this.activated || !this.pendingToolExecution) {
       return undefined
     }
 
@@ -363,8 +364,11 @@ export class InterruptState implements InterruptStateData {
   /**
    * Creates an InterruptState instance from a JSON object.
    *
+   * A pending tool execution is restored only when the state is activated.
+   *
    * @param data - JSON data to deserialize
    * @returns InterruptState instance
+   * @throws SessionError if an activated state carries a malformed pending tool execution
    */
   static fromJSON(data: InterruptStateData): InterruptState {
     const state = new InterruptState()
@@ -378,8 +382,8 @@ export class InterruptState implements InterruptStateData {
       state.resumeResponses = data.resumeResponses.map((r) => InterruptResponseContent.fromJSON(r))
     }
 
-    if (data.pendingToolExecution) {
-      state.pendingToolExecution = data.pendingToolExecution
+    if (data.activated && data.pendingToolExecution) {
+      state.pendingToolExecution = validatePendingToolExecution(data.pendingToolExecution)
     }
 
     if (data.context) {
@@ -387,6 +391,66 @@ export class InterruptState implements InterruptStateData {
     }
 
     return state
+  }
+}
+
+/**
+ * Checks that restored pending tool execution data can be resumed: an assistant message with tool uses,
+ * and completed results keyed by tool use ids from that message.
+ *
+ * @param pending - The restored pending tool execution data
+ * @returns The same data, unchanged
+ * @throws SessionError naming the malformed field
+ */
+function validatePendingToolExecution(pending: PendingToolExecution): PendingToolExecution {
+  const assistantMessage = parseRestoredData('field=<pendingToolExecution.assistantMessageData>', () =>
+    Message.fromMessageData(pending.assistantMessageData)
+  )
+  if (assistantMessage.role !== 'assistant') {
+    throw new SessionError(
+      'field=<pendingToolExecution.assistantMessageData.role> | pending tool execution message must be an assistant message'
+    )
+  }
+
+  const toolUseIds = new Set(
+    assistantMessage.content.flatMap((block) => (block.type === 'toolUseBlock' ? [block.toolUseId] : []))
+  )
+  if (toolUseIds.size === 0) {
+    throw new SessionError(
+      'field=<pendingToolExecution.assistantMessageData.content> | pending tool execution message has no tool uses'
+    )
+  }
+
+  const completedToolResults: unknown = pending.completedToolResults
+  if (
+    typeof completedToolResults !== 'object' ||
+    completedToolResults === null ||
+    Array.isArray(completedToolResults)
+  ) {
+    throw new SessionError(
+      'field=<pendingToolExecution.completedToolResults> | completed tool results must be an object'
+    )
+  }
+
+  for (const [toolUseId, resultData] of Object.entries(pending.completedToolResults)) {
+    const field = `field=<pendingToolExecution.completedToolResults>, tool_use_id=<${toolUseId}>`
+    if (!toolUseIds.has(toolUseId)) {
+      throw new SessionError(`${field} | does not match a tool use in the pending assistant message`)
+    }
+    parseRestoredData(field, () => ToolResultBlock.fromJSON(resultData))
+  }
+
+  return pending
+}
+
+/**
+ * Runs a parser over restored data, converting any failure into a SessionError prefixed with the field context.
+ */
+function parseRestoredData<T>(fieldContext: string, parse: () => T): T {
+  try {
+    return parse()
+  } catch (error) {
+    throw new SessionError(`${fieldContext} | failed to parse restored pending tool execution`, { cause: error })
   }
 }
 

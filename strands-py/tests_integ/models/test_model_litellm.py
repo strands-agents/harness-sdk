@@ -10,20 +10,29 @@ from strands import Agent
 from strands.models.litellm import LiteLLMModel
 from tests_integ.conftest import retry_on_flaky
 
+_MODEL_ID = "bedrock/global.anthropic.claude-sonnet-4-6"
+
+# Pinned so an explicitly-exported AWS_REGION cannot redirect these tests: conftest only
+# setdefault()s the region, so a developer's own AWS_REGION still wins. Bedrock prompt-cache
+# read-back measures ~88% in us-west-2 against ~100% in us-east-1 and us-east-2, so the region
+# decides whether the cache assertions below are stable. us-east-2 is the known-good alternative.
+_REGION = "us-east-1"
+_CLIENT_ARGS = {"aws_region_name": _REGION}
+
 
 @pytest.fixture
 def model():
-    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6")
+    return LiteLLMModel(model_id=_MODEL_ID, client_args=_CLIENT_ARGS)
 
 
 @pytest.fixture
 def streaming_model():
-    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6", params={"stream": True})
+    return LiteLLMModel(model_id=_MODEL_ID, client_args=_CLIENT_ARGS, params={"stream": True})
 
 
 @pytest.fixture
 def non_streaming_model():
-    return LiteLLMModel(model_id="bedrock/global.anthropic.claude-sonnet-4-6", params={"stream": False})
+    return LiteLLMModel(model_id=_MODEL_ID, client_args=_CLIENT_ARGS, params={"stream": False})
 
 
 @pytest.fixture
@@ -259,7 +268,10 @@ def test_streaming_returns_usage_metrics(model_fixture, request):
     assert result.metrics.accumulated_usage["totalTokens"] > 0
 
 
-@pytest.mark.skip(reason="Turn-2 prompt-cache read intermittently returns 0 tokens; see #5315")
+# Bedrock prompt-cache read-back is best effort: an entry written on turn 1 is occasionally not
+# readable on turn 2, which the provider reports as a fresh write of identical size. Reruns rather
+# than `retry_on_flaky`, whose wrapper is sync and breaks async test collection. See #5315.
+@pytest.mark.flaky(reruns=4, reruns_delay=1)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [True, False])
 async def test_cache_read_tokens_multi_turn(model, streaming):

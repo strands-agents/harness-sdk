@@ -34,13 +34,7 @@ SMOKE_MODELS = [
     if provider is not None
 ]
 
-TOOL_USE_MARKS = {
-    "mistral-large-4-0": pytest.mark.xfail(
-        strict=True,
-        raises=TypeError,
-        reason="Large 4 returns list content (ThinkChunk/TextChunk) that MistralModel passes through as text: #5032",
-    ),
-}
+TOOL_USE_MARKS: dict[str, pytest.MarkDecorator] = {}
 
 
 @strands.tool

@@ -21,6 +21,7 @@ from strands.decisions import (
 )
 from strands.models.model import Model
 from strands.tools import tool
+from strands.types._snapshot import SNAPSHOT_SCHEMA_VERSION, Snapshot
 from strands.types.content import Messages
 from strands.vended_interventions.hitl import HumanInTheLoop
 from strands.vended_interventions.hitl.classifier import (
@@ -153,6 +154,29 @@ class TestInlineAskMode:
 
         assert result.stop_reason == "end_turn"
         assert executed == []
+
+    @pytest.mark.parametrize(
+        ("answer", "expected_result"),
+        [
+            ("n", 'DENIED: Tool "my_tool" denied: the human rejected the call.'),
+            (None, 'DENIED: Tool "my_tool" denied: approval callback returned no response.'),
+        ],
+        ids=["rejected", "no_answer"],
+    )
+    def test_inline_denial_tells_the_model_why(self, answer, expected_result):
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool"), text_message("Understood")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=lambda prompt: answer)])
+
+        agent("Run tool")
+
+        tool_results = [
+            block["toolResult"] for message in agent.messages for block in message["content"] if "toolResult" in block
+        ]
+        assert tool_results[0]["content"][0]["text"] == expected_result
 
     def test_async_ask_returning_none_denies_instead_of_pausing(self):
         # Same fail-closed contract as the sync case, on the awaited async-ask branch.
@@ -533,6 +557,158 @@ class TestTrustMode:
         assert result.stop_reason == "end_turn"
         assert executed == [True, True]
         assert agent.state.get("hitl:trusted_tools") == ["my_tool"]
+
+    def test_ignores_trusted_tools_in_agent_state_when_enable_trust_is_false(self):
+        ask_count = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "n"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            state={"hitl:trusted_tools": ["my_tool"]},
+            interventions=[HumanInTheLoop(ask=ask)],
+        )
+
+        agent("Run tool")
+
+        assert len(ask_count) == 1
+        assert executed == []
+
+    @pytest.mark.parametrize(
+        "trusted_tools",
+        ["my_tool", 42, {"my_tool": True}, ["my_tool", 1]],
+        ids=["string", "number", "object", "list_with_non_string_entries"],
+    )
+    def test_ignores_malformed_trusted_tools_value(self, trusted_tools):
+        ask_count = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "n"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            state={"hitl:trusted_tools": trusted_tools},
+            interventions=[HumanInTheLoop(enable_trust=True, ask=ask)],
+        )
+
+        agent("Run tool")
+
+        assert len(ask_count) == 1
+        assert executed == []
+
+    def test_replaces_malformed_trusted_tools_value_when_tool_is_trusted(self):
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(
+            model=model,
+            tools=[my_tool],
+            state={"hitl:trusted_tools": {"my_tool": True}},
+            interventions=[HumanInTheLoop(enable_trust=True, ask=lambda prompt: "t")],
+        )
+
+        agent("Run tool")
+
+        assert agent.state.get("hitl:trusted_tools") == ["my_tool"]
+
+
+class TestRestoredInterruptResponses:
+    @staticmethod
+    def _interrupt_id_for_tool_call() -> str:
+        """Raise a real interrupt for the ``tool-1`` call so the restored entry uses the id the SDK assigns."""
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop()])
+        return agent("Run tool").interrupts[0].id
+
+    @classmethod
+    def _restore_interrupt_response(cls, agent: Agent, response: str) -> None:
+        interrupt_id = cls._interrupt_id_for_tool_call()
+        agent.load_snapshot(
+            Snapshot(
+                scope="agent",
+                schema_version=SNAPSHOT_SCHEMA_VERSION,
+                data={
+                    "interrupt_state": {
+                        "interrupts": {
+                            interrupt_id: {
+                                "id": interrupt_id,
+                                "name": "strands:human-in-the-loop",
+                                "reason": None,
+                                "response": response,
+                            }
+                        },
+                        "context": {},
+                        "activated": False,
+                    }
+                },
+                app_data={},
+            )
+        )
+
+    def test_uses_live_ask_answer_over_restored_answer(self):
+        ask_count = []
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        def ask(prompt: str) -> str:
+            ask_count.append(1)
+            return "n"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop(ask=ask)])
+        self._restore_interrupt_response(agent, "y")
+
+        agent("Run tool")
+
+        assert len(ask_count) == 1
+        assert executed == []
+
+    def test_applies_restored_answer_when_no_ask_callback_is_configured(self):
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "executed"
+
+        model = MockedModelProvider([tool_use_message("my_tool", "tool-1"), text_message("Done")])
+        agent = Agent(model=model, tools=[my_tool], interventions=[HumanInTheLoop()])
+        self._restore_interrupt_response(agent, "y")
+
+        result = agent("Run tool")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
 
 
 class TestStdioMode:

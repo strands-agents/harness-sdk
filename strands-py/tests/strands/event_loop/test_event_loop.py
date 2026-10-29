@@ -2138,6 +2138,47 @@ async def test_event_loop_cycle_interrupt_resume(agent, model, tool, tool_times_
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_ignores_pending_tool_execution_when_interrupt_state_not_activated(
+    agent, model, tool_registry, agenerator, alist
+):
+    tool_calls = []
+
+    @strands.tool
+    def record_tool() -> str:
+        tool_calls.append("record_tool")
+        return "recorded"
+
+    tool_registry.register_tool(record_tool)
+
+    agent._interrupt_state.pending_tool_execution = PendingToolExecution(
+        assistant_message={
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "t1", "name": "record_tool", "input": {}}}],
+        },
+        completed_tool_results=[],
+    )
+
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    events = await alist(stream)
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
+
+    exp_stop_reason = "end_turn"
+    exp_message = {"role": "assistant", "content": [{"text": "test text"}], "metadata": ANY, "tracking_id": ANY}
+    assert tru_stop_reason == exp_stop_reason and tru_message == exp_message
+
+    tru_tool_calls = tool_calls
+    exp_tool_calls = []
+    assert tru_tool_calls == exp_tool_calls
+
+
+@pytest.mark.asyncio
 async def test_invalid_tool_names_adds_tool_uses(agent, model, alist):
     model.stream = MockedModelProvider(
         [

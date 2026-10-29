@@ -1,10 +1,11 @@
 // --8<-- [start:basic_import]
 import { Agent } from '@strands-agents/sdk'
 import { bash } from '@strands-agents/sdk/vended-tools/bash'
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
+import { edit } from '@strands-agents/sdk/vended-tools/edit'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
 import { notebook, makeNotebook } from '@strands-agents/sdk/vended-tools/notebook'
 // --8<-- [end:basic_import]
+import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import {
   SessionManager,
   FileStorage,
@@ -15,6 +16,8 @@ import {
   HANDOFF_INTERRUPT_NAME,
 } from '@strands-agents/sdk/vended-tools/handoff-to-user'
 import { sleep, makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
+import { write } from '@strands-agents/sdk/vended-tools/write'
+import { read } from '@strands-agents/sdk/vended-tools/read'
 import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
 import { pythonRepl, makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
@@ -38,7 +41,7 @@ import { Fixed, Inherit } from '@strands-agents/sdk/multiagent'
 async function agentWithVendedToolsExample() {
   // --8<-- [start:agent_with_vended_tools]
   const agent = new Agent({
-    tools: [bash, fileEditor, httpRequest, notebook],
+    tools: [bash, edit, httpRequest, notebook],
   })
   // --8<-- [end:agent_with_vended_tools]
 }
@@ -73,6 +76,17 @@ async function bashSessionPersistenceExample() {
   // --8<-- [end:bash_session]
 }
 
+// Edit example
+async function editExample() {
+  // --8<-- [start:edit_example]
+  const agent = new Agent({
+    tools: [edit],
+  })
+
+  await agent.invoke("In /tmp/hello.txt, replace 'world' with 'Strands'.")
+  // --8<-- [end:edit_example]
+}
+
 // File editor example
 async function fileEditorExample() {
   // --8<-- [start:file_editor_example]
@@ -85,6 +99,22 @@ async function fileEditorExample() {
   await agent.invoke('Replace "debug": false with "debug": true in /tmp/config.json')
   await agent.invoke('View lines 1-10 of /tmp/config.json')
   // --8<-- [end:file_editor_example]
+}
+
+// Write tool example
+async function writeExample() {
+  // --8<-- [start:write_example]
+  const agent = new Agent({ tools: [write] })
+  await agent.invoke("Create /tmp/hello.txt containing 'Hello, Strands!'")
+  // --8<-- [end:write_example]
+}
+
+// Read tool example
+async function readExample() {
+  // --8<-- [start:read_example]
+  const agent = new Agent({ tools: [read] })
+  await agent.invoke('Read /etc/hosts and summarize what it maps.')
+  // --8<-- [end:read_example]
 }
 
 // HTTP request example
