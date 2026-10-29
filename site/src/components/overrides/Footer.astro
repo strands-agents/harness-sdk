@@ -71,17 +71,10 @@ const issueHref = documentationIssueHref(issueRepository, pageUrl)
 
 <script>
   import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
+  import { showFooterLanguage } from '../../util/footer'
 
   // For products released per language, show only the stream matching the
   // reader's language preference.
-  function showLanguage(lang: string) {
-    const releases = document.querySelectorAll<HTMLElement>('.site-footer [data-release-lang]')
-    const match = [...releases].some((el) => el.dataset.releaseLang === lang)
-    releases.forEach((el) => {
-      el.hidden = match && el.dataset.releaseLang !== lang
-    })
-  }
-
   function storedLanguage() {
     try {
       return localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? DEFAULT_LANGUAGE_LABEL
@@ -90,8 +83,8 @@ const issueHref = documentationIssueHref(issueRepository, pageUrl)
     }
   }
 
-  showLanguage(storedLanguage())
-  window.addEventListener('lang-change', (e) => showLanguage((e as CustomEvent<string>).detail))
+  showFooterLanguage(document, storedLanguage())
+  window.addEventListener('lang-change', (e) => showFooterLanguage(document, (e as CustomEvent<string>).detail))
 </script>
 
 <style>

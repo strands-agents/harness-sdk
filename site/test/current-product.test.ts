@@ -31,6 +31,13 @@ describe('product identity wiring', () => {
     for (const p of products) {
       expect(PRODUCT_RELEASE_STREAM, `PRODUCT_RELEASE_STREAM entry for "${p.label}"`).toHaveProperty([p.label])
     }
+    expect(PRODUCT_RELEASE_STREAM).toEqual({
+      Harness: 'harness',
+      'Harness SDK': 'sdk',
+      Shell: null,
+      Box: 'box',
+      Evals: 'evals',
+    })
   })
 
   it('every product routes issues to its owning repository', () => {
