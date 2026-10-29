@@ -372,6 +372,16 @@
         "contextWindow": 1050000
       }
     },
+    "openai.gpt-5.6-cyber": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
+    "openai.gpt-daybreak-blue-5.6-sol": {
+      "limits": {
+        "contextWindow": 1050000
+      }
+    },
     "gpt-5.5": {
       "limits": {
         "contextWindow": 1050000

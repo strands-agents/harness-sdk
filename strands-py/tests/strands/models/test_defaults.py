@@ -65,6 +65,8 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("openai.gpt-5.6-sol") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.6-terra") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.6-luna") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.6-cyber") == 1_050_000
+        assert get_context_window_limit("openai.gpt-daybreak-blue-5.6-sol") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.5") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.4") == 1_050_000
         assert get_context_window_limit("us.openai.gpt-5.5") == 1_050_000

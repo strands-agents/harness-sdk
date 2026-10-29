@@ -2989,6 +2989,7 @@ REDACTED_REASONING = {"reasoningContent": {"redactedContent": b"opaque"}}
         ("us.amazon.nova-pro-v1:0", [REDACTED_REASONING]),
         ("us.meta.llama3-3-70b-instruct-v1:0", [REDACTED_REASONING]),
         ("openai.gpt-5.5", [REDACTED_REASONING]),
+        ("openai.gpt-daybreak-blue-5.6-sol", [REDACTED_REASONING]),
         ("qwen.qwen3-coder-480b-a35b-v1:0", [REDACTED_REASONING]),
         # DeepSeek rejects reasoning content altogether.
         ("us.deepseek.r1-v1:0", []),

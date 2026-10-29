@@ -115,6 +115,8 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
     "openai.gpt-5.6-sol": 1_050_000,
     "openai.gpt-5.6-terra": 1_050_000,
     "openai.gpt-5.6-luna": 1_050_000,
+    "openai.gpt-5.6-cyber": 1_050_000,
+    "openai.gpt-daybreak-blue-5.6-sol": 1_050_000,
     "openai.gpt-5.5": 1_050_000,
     "openai.gpt-5.4": 1_050_000,
     # Bedrock Mistral

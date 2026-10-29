@@ -120,6 +120,10 @@
       "types": "./dist/src/vended-tools/swarm/index.d.ts",
       "default": "./dist/src/vended-tools/swarm/index.js"
     },
+    "./vended-tools/graph": {
+      "types": "./dist/src/vended-tools/graph/index.d.ts",
+      "default": "./dist/src/vended-tools/graph/index.js"
+    },
     "./vended-tools/write": {
       "types": "./dist/src/vended-tools/write/index.d.ts",
       "default": "./dist/src/vended-tools/write/index.js"

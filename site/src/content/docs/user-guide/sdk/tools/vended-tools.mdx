@@ -21,6 +21,7 @@ sourceLinks:
   - path: strands-ts/src/vended-tools/a2a-client/a2a-client.ts
   - path: strands-ts/src/vended-tools/subagent/subagent.ts
   - path: strands-ts/src/vended-tools/swarm/swarm.ts
+  - path: strands-ts/src/vended-tools/graph/graph.ts
   - path: strands-ts/src/vended-tools/python-repl/python-repl.ts
   - path: strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
@@ -73,7 +74,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
 | [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
-| [Graph](#graph) | Run a team of sub-agents as a directed acyclic graph designed by the model | Python |
+| [Graph](#graph) | Run a team of sub-agents as a directed acyclic graph designed by the model | Python, TypeScript (Node.js, browsers) |
 
 ### Edit
 
@@ -1029,10 +1030,34 @@ Lets your agent design and run a team of sub-agents as a [Graph](../multi-agent/
 Nodes inherit the caller's model and tools, including MCP tools, except graph tools. Child
 interrupts pause the tool call and resume with the user's response. An interrupted graph
 is saved in the parent agent's interrupt state, so it can resume after the parent is
-restored from a snapshot or session. By default, a call times out after 900 seconds and
-each node after 300 seconds. A running graph cannot be cancelled from the parent agent.
+restored from a snapshot or session. By default, a call times out after 15 minutes and
+each node after 5 minutes.
+
+_Supported in: Python, TypeScript (Node.js, browsers)._
 
 **Example:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:graph_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:graph_example"
+```
+
+Use `makeGraph` to set limits (`maxNodes`, `maxEdges`, `maxSteps`, and `timeout` and `nodeTimeout` in
+milliseconds), build each node agent yourself with `builder`, or control what the model configures on each
+node with [axis policies](#axis-policies) over `instructions`, `tools`, and `model`.
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:graph_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:graph_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -1042,12 +1067,10 @@ agent = Agent(tools=[graph, http_request])
 agent("Research three competing vector databases in parallel, then write a comparison table.")
 ```
 
-Use `make_graph` to set limits (`max_nodes`, `max_edges`, `max_node_executions`,
-`execution_timeout`, `node_timeout`), build each node agent yourself with `builder`, or control
-what the model configures on each node with [axis policies](#axis-policies) over `instructions`,
-`tools`, and `model`.
-
-**Custom configuration:**
+Use `make_graph` to set limits (`max_nodes`, `max_edges`, `max_node_executions`, and
+`execution_timeout` and `node_timeout` in seconds), build each node agent yourself with `builder`, or
+control what the model configures on each node with [axis policies](#axis-policies) over `instructions`,
+`tools`, and `model`. A running graph cannot be cancelled from the parent agent.
 
 ```python
 from strands import Agent
@@ -1075,6 +1098,11 @@ team = make_graph(
 )
 agent = Agent(tools=[team, http_request, file_editor])
 ```
+
+</Tab>
+</Tabs>
+
+Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/graph/README.md)
 
 ---
 

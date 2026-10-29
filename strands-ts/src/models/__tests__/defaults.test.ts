@@ -100,6 +100,8 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('openai.gpt-5.6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.6-terra')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.6-luna')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.6-cyber')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-daybreak-blue-5.6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.5')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.4')).toBe(1_050_000)
     expect(getContextWindowLimit('us.openai.gpt-5.5')).toBe(1_050_000)

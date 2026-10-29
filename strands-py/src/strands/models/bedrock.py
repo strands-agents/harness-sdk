@@ -94,6 +94,7 @@ _MODELS_REJECT_REASONING_TEXT = [
     "nvidia.nemotron-super",
     "openai.gpt-5",
     "openai.gpt-6",
+    "openai.gpt-daybreak",
     "qwen.qwen3-235b",
     "qwen.qwen3-coder",
     "writer.palmyra",

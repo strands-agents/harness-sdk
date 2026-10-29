@@ -1068,6 +1068,7 @@ describe('BedrockModel', () => {
       { modelId: 'us.amazon.nova-pro-v1:0', expReasoning: [REDACTED_REASONING] },
       { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', expReasoning: [REDACTED_REASONING] },
       { modelId: 'openai.gpt-5.5', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-daybreak-blue-5.6-sol', expReasoning: [REDACTED_REASONING] },
       { modelId: 'qwen.qwen3-coder-480b-a35b-v1:0', expReasoning: [REDACTED_REASONING] },
       // DeepSeek rejects reasoning content altogether.
       { modelId: 'us.deepseek.r1-v1:0', expReasoning: [] },
