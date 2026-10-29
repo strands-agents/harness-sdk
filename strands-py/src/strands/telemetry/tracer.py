@@ -7,7 +7,7 @@ enabling trace data to be sent to OTLP endpoints.
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
@@ -175,7 +175,7 @@ class Tracer:
             return True
         return any(attribute_name.startswith(prefix) for prefix in self._unredacted_globs)
 
-    def _redact(self, attribute_name: str, value: str) -> str:
+    def _redact(self, attribute_name: str, value: str | Callable[[], str]) -> str:
         """Apply the redaction policy to a single sensitive attribute value.
 
         Args:
@@ -185,13 +185,13 @@ class Tracer:
                 from the physical event field key emitted under legacy conventions (which uses
                 `content`/`message`), but the canonical name is always used so that allowlist
                 entries are independent of the convention in use.
-            value: The serialized attribute value to potentially redact.
+            value: The serialized attribute value or a lazy serializer to potentially redact.
 
         Returns:
             The original value if the attribute is unredacted, otherwise ``REDACTED_VALUE``.
         """
         if self._is_attribute_unredacted(attribute_name):
-            return value
+            return value() if callable(value) else value
         return REDACTED_VALUE
 
     @property
@@ -590,6 +590,9 @@ class Tracer:
             tool_result: The result from the tool execution.
             error: Optional exception if the tool call failed.
         """
+        if not span or not span.is_recording():
+            return
+
         attributes: dict[str, AttributeValue] = {}
         status: str | None = None
         content: list[Any] = []
@@ -605,25 +608,30 @@ class Tracer:
                 # consumers read on tool spans. The spec scopes the attribute to successful
                 # executions; failures are captured in the span status instead.
                 if status != "error":
-                    attributes["gen_ai.tool.call.result"] = self._redact("gen_ai.tool.call.result", serialize(content))
-                output_messages = serialize(
-                    [
-                        {
-                            "role": "tool",
-                            "parts": [
-                                {
-                                    "type": "tool_call_response",
-                                    "id": tool_result.get("toolUseId", ""),
-                                    "response": content,
-                                }
-                            ],
-                        }
-                    ]
+                    attributes["gen_ai.tool.call.result"] = self._redact(
+                        "gen_ai.tool.call.result", lambda: serialize(content)
+                    )
+                output_messages = self._redact(
+                    "gen_ai.output.messages",
+                    lambda: serialize(
+                        [
+                            {
+                                "role": "tool",
+                                "parts": [
+                                    {
+                                        "type": "tool_call_response",
+                                        "id": tool_result.get("toolUseId", ""),
+                                        "response": content,
+                                    }
+                                ],
+                            }
+                        ]
+                    ),
                 )
                 self._add_event(
                     span,
                     "gen_ai.client.inference.operation.details",
-                    {"gen_ai.output.messages": self._redact("gen_ai.output.messages", output_messages)},
+                    {"gen_ai.output.messages": output_messages},
                     to_span_attributes=self._span_attributes_only,
                 )
             else:
@@ -631,7 +639,7 @@ class Tracer:
                     span,
                     "gen_ai.choice",
                     event_attributes={
-                        "message": self._redact("gen_ai.output.messages", serialize(content)),
+                        "message": self._redact("gen_ai.output.messages", lambda: serialize(content)),
                         "id": tool_result.get("toolUseId", ""),
                     },
                 )

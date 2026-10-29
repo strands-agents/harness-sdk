@@ -679,15 +679,21 @@ class MCPClient(ToolProvider):
         # Only try to signal close future if we have a background thread
         if self._background_thread is not None:
             # Signal close future if event loop exists
-            if self._background_thread_event_loop is not None:
+            loop = self._background_thread_event_loop
+            if loop is not None and not loop.is_closed():
 
-                async def _set_close_event() -> None:
+                def _set_close_event() -> None:
                     if self._close_future and not self._close_future.done():
                         self._close_future.set_result(None)
 
-                # Not calling _invoke_on_background_thread since the session does not need to exist
-                # we only need the thread and event loop to exist.
-                asyncio.run_coroutine_threadsafe(coro=_set_close_event(), loop=self._background_thread_event_loop)
+                # Callbacks do not create an unawaited coroutine if the loop has
+                # already stopped. Defer one iteration so startup can create the
+                # close future when the loop has not begun running yet.
+                try:
+                    loop.call_soon_threadsafe(loop.call_soon, _set_close_event)
+                except RuntimeError:
+                    if not loop.is_closed():
+                        raise
 
             self._log_debug_with_thread("waiting for background thread to join")
             self._background_thread.join()
