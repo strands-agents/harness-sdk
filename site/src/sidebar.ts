@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import yaml from 'js-yaml'
+import { loadGeneratedExternalDocsNavigation } from './external-docs-navigation'
 import { isNew, NEW_BADGE } from './util/new-badge'
 
 // A badge rendered next to a sidebar label. A bare string is shorthand for the default variant.
@@ -22,6 +23,7 @@ interface NavConfigItem {
   collapsed?: boolean // Explicit collapse state for groups (overrides auto-collapse)
   badge?: SidebarBadge // Badge on a group label (leaf badges come from page frontmatter)
   addedDate?: string | Date // Derives a "New" badge on a group for NEW_BADGE_DAYS; never hand-write one
+  externalDocs?: string // Product id whose generated navigation expands at build time
 }
 type NavConfigEntry = string | NavConfigItem
 
@@ -79,6 +81,7 @@ interface NavigationConfig {
 
 interface ConvertContext {
   contentDir: string
+  externalDocsDir: string
   buildDate: Date
 }
 
@@ -118,6 +121,10 @@ function convertConfigItem(item: NavConfigEntry, ctx: ConvertContext): Starlight
 
   // Object with label and items (group)
   if (typeof item === 'object' && item !== null) {
+    if (item.externalDocs) {
+      return convertExternalDocsItem(item.externalDocs, ctx)
+    }
+
     if (item.label && item.items) {
       const children = item.items
         .map((child) => convertConfigItem(child, ctx))
@@ -153,6 +160,23 @@ function convertConfigItem(item: NavConfigEntry, ctx: ConvertContext): Starlight
   return null
 }
 
+function convertExternalDocsItem(productId: string, ctx: ConvertContext): StarlightSidebarItem | null {
+  const navigation = loadGeneratedExternalDocsNavigation(ctx.externalDocsDir, productId)
+  if (!navigation) return null
+
+  const groups = navigation.groups
+    .map((group) => ({
+      label: group.label,
+      items: group.items
+        .filter((item) => contentExists(item.slug, ctx.contentDir))
+        .map((item) => ({ label: item.label, slug: item.slug })),
+    }))
+    .filter((group) => group.items.length > 0)
+
+  if (groups.length === 0) return null
+  return { label: navigation.label, items: groups }
+}
+
 /**
  * Load navigation configuration from YAML file
  */
@@ -167,12 +191,13 @@ export function loadNavigationConfig(configPath: string): NavigationConfig {
 export function loadSidebarFromConfig(
   configPath: string,
   docsContentDir?: string,
-  buildDate: Date = new Date()
+  buildDate: Date = new Date(),
+  externalDocsDir: string = path.resolve(path.dirname(configPath), '../../.build/external-docs')
 ): StarlightSidebarItem[] {
   const config = loadNavigationConfig(configPath)
   if (!config.sidebar) return []
 
-  const ctx: ConvertContext = { contentDir: docsContentDir || '', buildDate }
+  const ctx: ConvertContext = { contentDir: docsContentDir || '', externalDocsDir, buildDate }
 
   const items = config.sidebar
     .map((item) => convertConfigItem(item, ctx))

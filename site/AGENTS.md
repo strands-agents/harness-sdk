@@ -61,6 +61,8 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── AGENTS.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── external-docs.config.json    # Upstream refs plus site-owned routes and navigation
+├── external-docs.lock.json      # Immutable upstream documentation revisions
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
@@ -87,6 +89,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── labs/
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
+│   │           └── box/source    # Symlink to .build/external-docs/strands-box/content
 │   ├── data/                     # Bot-maintained data (catalog-stats.json — updated by the
 │   │                             #   catalog-stats workflow; do not hand-edit)
 │   ├── layouts/                  # Custom layouts
@@ -101,8 +104,9 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── NOTICE
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
-├── scripts/                      # Build and utility scripts (scripts/catalog/ — stats refresh
-│                                 #   run by the weekly catalog-stats workflow)
+├── scripts/                      # Build and utility scripts
+│   ├── catalog/                  # Stats refresh run by the weekly catalog-stats workflow
+│   └── external-docs/            # External Markdown import and lock updates
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files
 ```

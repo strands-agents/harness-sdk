@@ -4,7 +4,7 @@ import { renderEntryToMarkdown } from '@util/render-to-markdown'
 import { siteLink } from '@util/links'
 
 export const GET: APIRoute = async () => {
-  const allDocs = await getCollection('docs', ({ data }) => !data.draft)
+  const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
   // Exclude API documentation from full content
   const docs = allDocs.filter((doc) => !doc.id.startsWith('docs/api/'))
   const lines: string[] = []
