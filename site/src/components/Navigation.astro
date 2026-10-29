@@ -8,6 +8,7 @@ import frogHop from '../assets/nav/frog-hop.svg?raw';
 import wordmark from '../assets/nav/wordmark.svg?raw';
 import NavMenu from './NavMenu.astro';
 import LanguageToggle from './LanguageToggle.astro';
+import { DISCORD_HREF } from '../config/community';
 import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
@@ -100,7 +101,7 @@ const learnCategories = [
           <span class="strands-nav__github-stars">{stars}</span>
         </a>
         <a
-          href="https://discord.gg/strands"
+          href={DISCORD_HREF}
           class="strands-nav__icon-link"
           aria-label="Discord"
           target="_blank"
@@ -258,7 +259,7 @@ const learnCategories = [
         <span>GitHub</span>
       </a>
       <a
-        href="https://discord.gg/strands"
+        href={DISCORD_HREF}
         class="mobile-menu__control-item"
         target="_blank"
         rel="noopener"

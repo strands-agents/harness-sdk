@@ -2,6 +2,7 @@
 import type { LearnEvent } from '../../content.config'
 import { formatEventDate, toIsoDate } from '../../util/learn'
 import { pathWithBase } from '../../util/links'
+import { DISCORD_HREF } from '../../config/community'
 
 interface Props {
   headliner: LearnEvent | undefined
@@ -74,7 +75,7 @@ const headlinerHref = headliner ? eventHref(headliner) : undefined
       <h3>Community calls &amp; events</h3>
       <p class="sub">Event announcements land on Discord first — talks, workshops, and community calls.</p>
     </div>
-    <a class="cal" id="poster-cal" href="https://discord.gg/strands">
+    <a class="cal" id="poster-cal" href={DISCORD_HREF}>
       {headliner ? 'Event updates on Discord →' : 'Join the Discord →'}
     </a>
   </div>

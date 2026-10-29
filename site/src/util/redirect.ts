@@ -8,6 +8,7 @@
  * The path-normalization fallback never returns an external URL (prevents open redirects).
  */
 
+import { DISCORD_HREF } from '../config/community'
 import { exactly, startsWith } from './regex'
 
 // ── Slug-level rename rules ───────────────────────────────────────────────────
@@ -38,7 +39,7 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
   'docs/user-guide/concepts/tools/python-tools': 'docs/user-guide/sdk/tools/custom-tools',
 
   // Vanity URLs for community links
-  discord: 'https://discord.gg/strands',
+  discord: DISCORD_HREF,
 
   // Campaign short-links → tracked landing pages with UTM baked in, so a source
   // is tracked even when the URL is typed (not clicked). Each emits a build-time

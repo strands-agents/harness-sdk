@@ -1,3 +1,5 @@
+import { DISCORD_HREF } from './community'
+
 // Promote deepDives to a content collection if this list grows past ~6.
 
 export interface DeepDive {
@@ -18,4 +20,4 @@ export const deepDives: DeepDive[] = [
   },
 ]
 
-export const suggestTopicHref = 'https://discord.gg/strands'
+export const suggestTopicHref = DISCORD_HREF

@@ -6,6 +6,7 @@
  * rendered statically; the inline script only toggles card visibility.
  */
 import { getCollection } from 'astro:content'
+import { DISCORD_HREF } from '../config/community'
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import CatalogCard from '../components/catalog/CatalogCard.astro'
 import CatalogFacets from '../components/catalog/CatalogFacets.astro'
@@ -119,7 +120,7 @@ const sidebar = [
     </dialog>
     <p class="cat-empty" data-cat-empty hidden>No integrations match the current filters.</p>
 
-    <p class="cat-disclaimer">Community packages are maintained by their authors. Review them before production use. Questions? Ask in <a href="https://discord.gg/strands">Discord</a>.</p>
+    <p class="cat-disclaimer">Community packages are maintained by their authors. Review them before production use. Questions? Ask in <a href={DISCORD_HREF}>Discord</a>.</p>
   </div>
 </StarlightPage>
 
