@@ -160,3 +160,44 @@ async def test_input_is_fed_to_stdin_and_closed():
 async def test_input_to_a_child_that_exits_early_does_not_hang_or_raise():
     _, result = await _collect(_stream_process("sh", ["-c", "exit 0"], timeout=5, input="x" * 1_000_000))
     assert result is not None and result.exit_code == 0
+# A 3-byte character, so a 65536-byte read always ends mid-sequence somewhere in
+# a long enough run: 65536 is not a multiple of 3.
+_MULTIBYTE = "☕"
+
+
+@pytest.mark.asyncio
+async def test_multibyte_split_across_read_boundaries_is_not_corrupted():
+    # Python twin of #4156 (TypeScript). Reads are capped at 64 KiB, so decoding each
+    # read on its own splits a straddling UTF-8 sequence into two invalid halves.
+    count = 100_000
+    script = f"import sys; sys.stdout.buffer.write(({_MULTIBYTE!r}*{count}).encode()); sys.stdout.flush()"
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+
+    assert result is not None
+    assert result.stdout == _MULTIBYTE * count
+    assert "�" not in result.stdout
+    # The incremental stream must agree with the buffered result, not just be the right length.
+    assert "".join(c.data for c in chunks if c.stream_type == "stdout") == result.stdout
+    # Guard that the case is real: more than one read actually happened.
+    assert len([c for c in chunks if c.stream_type == "stdout"]) > 1
+
+
+@pytest.mark.asyncio
+async def test_multibyte_split_is_not_corrupted_on_stderr():
+    count = 50_000
+    script = f"import sys; sys.stderr.buffer.write(({_MULTIBYTE!r}*{count}).encode()); sys.stderr.flush()"
+    _, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+
+    assert result is not None
+    assert result.stderr == _MULTIBYTE * count
+
+
+@pytest.mark.asyncio
+async def test_output_truncated_mid_sequence_still_yields_replacement_char():
+    # Holding partial bytes back must not swallow them when the stream really does
+    # end mid-sequence: errors="replace" semantics still apply at end of stream.
+    script = f"import sys; sys.stdout.buffer.write(b'ok' + {_MULTIBYTE!r}.encode()[:2]); sys.stdout.flush()"
+    _, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+
+    assert result is not None
+    assert result.stdout == "ok�"
