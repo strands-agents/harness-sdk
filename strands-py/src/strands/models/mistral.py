@@ -407,7 +407,9 @@ class MistralModel(Model):
                 reason: StopReason
                 if event["data"] == "tool_calls":
                     reason = "tool_use"
-                elif event["data"] == "length":
+                elif event["data"] in ("length", "model_length"):
+                    # "model_length" means the model's context window ran out mid-generation, so the
+                    # response is truncated just as it is for "length".
                     reason = "max_tokens"
                 else:
                     reason = "end_turn"
