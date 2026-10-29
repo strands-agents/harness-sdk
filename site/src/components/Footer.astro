@@ -5,6 +5,7 @@ import shape from '../assets/next-steps/shape.svg?raw';
 import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
 import InstallCommand from './InstallCommand.astro';
 import { pathWithBase } from '../util/links';
+import { LEGAL_LINKS } from '../config/footer';
 
 interface Props {
   // Render the green curved transition above the footer. On by default so every
@@ -65,16 +66,6 @@ const columns = [
     ],
   },
 ];
-
-const legal = [
-  { label: 'Privacy', href: 'https://aws.amazon.com/privacy/' },
-  { label: 'Site terms', href: 'https://aws.amazon.com/terms/' },
-  { label: 'License', href: 'https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE' },
-  { label: 'Cookies', href: 'https://aws.amazon.com/legal/cookies/' },
-  // Shortbread's click handler (SiteScripts.astro) opens the cookie
-  // customization dialog for the element with this id.
-  { label: 'Preferences', href: '#', id: 'cookie-preferences' },
-];
 ---
 
 {
@@ -134,7 +125,7 @@ const legal = [
     <div class="footer__bottom">
       <div class="footer__aws" role="img" aria-label="AWS" set:html={awsLogo} />
       <ul class="footer__legal" role="list">
-        {legal.map((item) => (
+        {LEGAL_LINKS.map((item) => (
           <li>
             <a
               href={item.href}

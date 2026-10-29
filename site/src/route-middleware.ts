@@ -11,6 +11,7 @@ import { pathWithBase } from './util/links'
 import { navLinks, type NavLink } from './config/navbar'
 import { isNew, NEW_BADGE } from './util/new-badge'
 import { buildIntegrationsSidebar } from './util/integrations-sidebar'
+import { buildLastModMap, getGitPrefix } from './util/git-dates'
 
 type SidebarEntry = StarlightRouteData['sidebar'][number]
 type SidebarGroup = Extract<SidebarEntry, { type: 'group' }>
@@ -153,8 +154,22 @@ async function buildTitlesByHref(): Promise<Map<string, string>> {
   return map
 }
 
+// Docs "Last updated" dates from one `git log` over the docs content, shared by
+// every page render. Starlight's `lastUpdated` option stays off: its build-time
+// git data nearly doubled peak build memory. Deploy checkouts use
+// fetch-depth: 0, so these dates are accurate in CI.
+let docsLastUpdated: { prefix: string; dates: Map<string, string> } | undefined
+
+function lastUpdatedFor(filePath: string): Date | undefined {
+  docsLastUpdated ??= { prefix: getGitPrefix(), dates: buildLastModMap('src/content/docs') }
+  const date = docsLastUpdated.dates.get(docsLastUpdated.prefix + filePath)
+  return date ? new Date(date) : undefined
+}
+
 export const onRequest = defineRouteMiddleware(async (context) => {
   const { starlightRoute } = context.locals
+  const filePath = starlightRoute.entry?.filePath
+  if (filePath) starlightRoute.lastUpdated = lastUpdatedFor(filePath)
   const { sidebar } = starlightRoute
   const currentPath = context.url.pathname
   const currentSlug = starlightRoute.id
