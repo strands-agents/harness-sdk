@@ -1,0 +1,83 @@
+name: "Docs: Sync external lock"
+
+on:
+  schedule:
+    - cron: '47 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: github.repository == 'strands-agents/harness-sdk'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    concurrency:
+      group: external-docs-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      SYNC_BRANCH: docs/external-docs-sync
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: npm ci --prefix site
+
+      - name: Sync bot fork with upstream
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+        run: gh api repos/strands-agent/harness-sdk/merge-upstream -f branch=main
+
+      - name: Resolve configured upstream refs
+        id: lock
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run external-docs:update-lock
+
+      - name: Check for a lock change
+        id: changes
+        run: |
+          if git diff --quiet -- site/external-docs.lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate and validate external docs
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: site
+        run: npm run external-docs:generate
+
+      - name: Build the documentation site
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: site
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm run cms:build
+
+      - name: Open or update the external docs lock PR
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+          push-to-fork: strands-agent/harness-sdk
+          add-paths: site/external-docs.lock.json
+          branch: ${{ env.SYNC_BRANCH }}
+          title: "chore(docs): update external docs lock"
+          commit-message: "chore(docs): update external docs lock"
+          body: |
+            Updates external documentation sources to the commits resolved from
+            their configured upstream refs.
+
+            Upstream changes:
+            ${{ steps.lock.outputs.compare_links }}
+
+            The workflow generated the imported pages and built the site against
+            the new lock before opening this PR.
+          draft: true
+          delete-branch: true

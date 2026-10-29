@@ -20,10 +20,12 @@ const route = Astro.locals.starlightRoute
 const base = import.meta.env.BASE_URL || '/'
 const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
 
-// Raw markdown twins are available for docs and generated sample guide routes.
+// Raw markdown twins are available for generated sample guides and non-preview docs.
 const [docIds, sampleGuideRouteIds] = await Promise.all([getDocsIds(), getSampleGuideRouteIds()])
 const baseNoSlash = base.replace(/\/$/, '')
-const hasMarkdownTwin = docIds.has(route.entry.id) || sampleGuideRouteIds.has(route.entry.id)
+const hasMarkdownTwin =
+  sampleGuideRouteIds.has(route.entry.id) ||
+  (docIds.has(route.entry.id) && route.entry.data.externalDocs?.status !== 'preview')
 const markdownHref = hasMarkdownTwin ? `${baseNoSlash}/${route.entry.id}/index.md` : null
 
 // Build breadcrumb list from the canonical route id rather than the deployed URL,

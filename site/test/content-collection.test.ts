@@ -96,10 +96,14 @@ describe('Content Collections', () => {
     // Related-pages output and JSON-LD `headline` use `title` verbatim. Two
     // user-guide pages with the same title produce ambiguous links that look
     // like duplicates. Intentional shared titles are allowlisted below.
+    // Preview external docs intentionally mirror current pages and are excluded
+    // from related pages and JSON-LD discovery surfaces.
     // Set `sidebar.label` if you want the sidebar to stay terse while the page
     // title remains unambiguous out-of-context.
     const docs = await getCollection('docs')
-    const userGuide = docs.filter((d) => d.id.startsWith('docs/user-guide/'))
+    const userGuide = docs.filter(
+      (doc) => doc.id.startsWith('docs/user-guide/') && doc.data.externalDocs?.status !== 'preview'
+    )
 
     const titleMap = new Map<string, string[]>()
     for (const doc of userGuide) {

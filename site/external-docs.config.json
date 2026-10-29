@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "products": [
+    {
+      "id": "strands-box",
+      "repository": "https://github.com/strands-agents/box",
+      "ref": "main",
+      "manifest": "docs/site-manifest.json",
+      "routePrefix": "docs/user-guide/box/source",
+      "navLabel": "Upstream docs preview"
+    }
+  ]
+}

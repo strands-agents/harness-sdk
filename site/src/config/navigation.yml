@@ -558,6 +558,8 @@ sidebar:
           - docs/user-guide/box/reference/policy-actions
           - docs/user-guide/box/reference/shell
           - docs/user-guide/box/reference/python
+      # Expanded from .build/external-docs/strands-box/navigation.json.
+      - externalDocs: strands-box
 
   - label: Evals SDK
     items:

@@ -27,6 +27,7 @@ function linkLine(label: string, url: string, description?: string, indent: stri
 function extractLinks(
   items: StarlightSidebarItem[],
   descriptions: Map<string, string | undefined>,
+  excludedSlugs: ReadonlySet<string>,
   depth: number = 0
 ): string[] {
   const lines: string[] = []
@@ -34,6 +35,7 @@ function extractLinks(
 
   for (const item of items) {
     if ('slug' in item && item.slug) {
+      if (excludedSlugs.has(item.slug)) continue
       // Internal link
       const url = siteLink(`/${item.slug}/index.md`)
       const label = item.label || item.slug.split('/').pop() || item.slug
@@ -44,9 +46,11 @@ function extractLinks(
         lines.push(`${indent}- [${item.label}](${item.link})`)
       }
     } else if ('items' in item && item.items) {
+      const childLines = extractLinks(item.items, descriptions, excludedSlugs, depth + 1)
+      if (childLines.length === 0) continue
       // Group - add label and recurse
       lines.push(`${indent}- ${item.label}`)
-      lines.push(...extractLinks(item.items, descriptions, depth + 1))
+      lines.push(...childLines)
     }
   }
 
@@ -58,7 +62,8 @@ function buildLlmsTxt(
   sidebar: StarlightSidebarItem[],
   sampleGuides: CollectionEntry<'sampleGuides'>[],
   blogPosts: CollectionEntry<'blog'>[],
-  releases: ChangelogRelease[]
+  releases: ChangelogRelease[],
+  excludedSlugs: ReadonlySet<string>
 ): string {
   const lines: string[] = []
 
@@ -83,7 +88,7 @@ function buildLlmsTxt(
     if ('label' in section && 'items' in section && section.items) {
       lines.push(`## ${section.label}`)
       lines.push('')
-      lines.push(...extractLinks(section.items, descriptions, 0))
+      lines.push(...extractLinks(section.items, descriptions, excludedSlugs, 0))
       lines.push('')
     }
   }
@@ -164,13 +169,17 @@ function buildLlmsTxt(
 }
 
 export const GET: APIRoute = async () => {
-  const docs = await getCollection('docs', ({ data }) => !data.draft)
+  const allDocs = await getCollection('docs', ({ data }) => !data.draft)
+  const excludedSlugs = new Set(
+    allDocs.filter(({ data }) => data.externalDocs?.status === 'preview').map((doc) => doc.id)
+  )
+  const docs = allDocs.filter((doc) => !excludedSlugs.has(doc.id))
   const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
   const sampleGuides = await getCollection('sampleGuides')
   const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
   const releases = await getReleases()
-  const content = buildLlmsTxt(docs, sidebar, sampleGuides, blogPosts, releases)
+  const content = buildLlmsTxt(docs, sidebar, sampleGuides, blogPosts, releases, excludedSlugs)
 
   return new Response(content, {
     headers: {
