@@ -975,6 +975,31 @@ async def test_stream_throttling_exception_lowercase_non_streaming(bedrock_clien
     bedrock_client.converse_stream.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("streaming", "error_cls", "error_code"),
+    [
+        (True, EventStreamError, "serviceUnavailableException"),
+        (True, ClientError, "ServiceUnavailableException"),
+        (False, ClientError, "ServiceUnavailableException"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_service_unavailable_exception(bedrock_client, messages, alist, streaming, error_cls, error_code):
+    """Service unavailable errors are raised as ModelThrottledException so the default retry strategy retries them."""
+    error_message = "Bedrock is unable to process your request."
+    operation_name = "ConverseStream" if streaming else "Converse"
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = error_cls({"Error": {"Message": error_message, "Code": error_code}}, operation_name)
+
+    model = BedrockModel(model_id="m1", streaming=streaming)
+    with pytest.raises(ModelThrottledException) as excinfo:
+        await alist(model.stream(messages))
+
+    assert error_message in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, error_cls)
+    converse_method.assert_called_once()
+
+
 @pytest.mark.parametrize("streaming", [True, False])
 @pytest.mark.asyncio
 async def test_stream_retries_with_separated_tool_result_turns(
