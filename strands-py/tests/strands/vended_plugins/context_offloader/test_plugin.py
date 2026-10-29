@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from strands.hooks.events import AfterToolCallEvent, BeforeModelCallEvent
+from strands.models.model import _estimate_tokens_with_heuristic
 from strands.types.tools import ToolContext, ToolUse
 from strands.vended_plugins.context_offloader import (
     ContextOffloader,
@@ -57,6 +58,11 @@ async def _heuristic_count_tokens(messages, **kwargs):
             elif "text" in block:
                 total += math.ceil(len(block["text"]) / 4)
     return total
+
+
+async def _base_model_count_tokens(messages, **kwargs):
+    """Delegate to the real base-model heuristic (text chars/4, JSON chars/2)."""
+    return _estimate_tokens_with_heuristic(messages)
 
 
 def _make_event(
@@ -1499,3 +1505,70 @@ class TestShouldOffloadCallback:
         await plugin._handle_tool_result(event)
 
         assert "[Offloaded:" in event.result["content"][0]["text"]
+
+
+class TestPreviewBudgetMatchesTokenCount:
+    """The preview budget has to use the ratio count_tokens charged (#4914).
+
+    `_heuristic_count_tokens` above charges JSON at chars/4, so it cannot surface
+    this; these tests use the real base-model heuristic, which charges JSON at
+    chars/2 of the compact dump while the preview renders it at `indent=2`.
+    """
+
+    @staticmethod
+    def _rows(n: int = 50) -> list[dict]:
+        return [{"id": i, "name": f"role-{i}", "active": True} for i in range(n)]
+
+    @pytest.fixture
+    def heuristic_agent(self, tmp_path):
+        agent = MagicMock()
+        agent.model = MagicMock()
+        agent.model.count_tokens = AsyncMock(side_effect=_base_model_count_tokens)
+        agent.sandbox = TestSandbox(str(tmp_path))
+        agent.event_loop_metrics.cycle_count = 0
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_json_preview_does_not_hold_the_whole_result(self, storage, heuristic_agent):
+        """A fixed 4 chars/token budget let the preview keep every byte it elided."""
+        rows = self._rows()
+        full_text = json.dumps(rows, indent=2)
+        plugin = ContextOffloader(
+            storage=storage, max_result_tokens=1000, preview_tokens=900, include_retrieval_tool=False
+        )
+        plugin.init_agent(heuristic_agent)
+        event = _make_event(heuristic_agent, [{"json": rows}])
+
+        await plugin._handle_tool_result(event)
+        replacement = event.result["content"][0]["text"]
+
+        assert "[Offloaded:" in replacement
+        assert full_text not in replacement
+        assert len(replacement) < len(full_text)
+
+    @pytest.mark.asyncio
+    async def test_text_only_budget_is_unchanged(self, storage, heuristic_agent):
+        """Text is charged at chars/4, which is what the old constant assumed.
+
+        The ratio must therefore leave the text-only path exactly where it was.
+        This is the case that fails if the budget stops being derived from the
+        result's own chars-per-token.
+        """
+        plugin = ContextOffloader(
+            storage=storage, max_result_tokens=100, preview_tokens=50, include_retrieval_tool=False
+        )
+        plugin.init_agent(heuristic_agent)
+        event = _make_event(heuristic_agent, "a" * 2000)
+
+        await plugin._handle_tool_result(event)
+        replacement = event.result["content"][0]["text"]
+
+        assert "a" * 200 in replacement
+        assert "a" * 201 not in replacement
+
+    def test_preview_chars_falls_back_without_a_usable_token_count(self, storage):
+        """A non-positive count would divide by zero; fall back to the constant."""
+        plugin = ContextOffloader(storage=storage, max_result_tokens=100, preview_tokens=50)
+
+        assert plugin._preview_chars("text", 0) == 200
+        assert plugin._preview_chars("", 10) == 200
