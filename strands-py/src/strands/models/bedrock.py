@@ -201,6 +201,30 @@ def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
     return {**fields, "anthropic_beta": betas, "thinking": thinking}
 
 
+def _add_cache_write_tokens_by_ttl(event: StreamEvent) -> None:
+    """Split the cache write tokens of a metadata event by the TTL they were written with.
+
+    Bedrock bills a cache write at a different rate per TTL, so the ``cacheWriteInputTokens`` total
+    alone cannot be priced. The event is left untouched when no cache write is reported.
+
+    Args:
+        event: Model event, updated in place.
+    """
+    if "metadata" not in event or "usage" not in event["metadata"]:
+        return
+
+    usage = event["metadata"]["usage"]
+    # cacheDetails is a Bedrock wire field that the provider-neutral Usage type does not carry.
+    cache_details = cast(dict[str, Any], usage).get("cacheDetails") or []
+
+    tokens_by_ttl: dict[str, int] = {}
+    for detail in cache_details:
+        tokens_by_ttl[detail["ttl"]] = tokens_by_ttl.get(detail["ttl"], 0) + detail["inputTokens"]
+
+    if tokens_by_ttl:
+        usage["cacheWriteInputTokensByTtl"] = tokens_by_ttl
+
+
 class BedrockModel(Model):
     """AWS Bedrock model provider implementation.
 
@@ -1581,6 +1605,7 @@ class BedrockModel(Model):
                 if event is None:
                     break
 
+                _add_cache_write_tokens_by_ttl(event)
                 yield event
 
             if cancel_poll is not None and cancel_poll.done():

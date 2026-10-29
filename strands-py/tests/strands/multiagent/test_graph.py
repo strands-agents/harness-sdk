@@ -902,6 +902,50 @@ def test_accumulate_metrics_sums_cache_token_counters():
     )
 
 
+def test_accumulate_metrics_sums_cache_write_tokens_by_ttl():
+    graph = _make_graph(nodes={})
+    result_text = AgentResult(
+        message={"role": "assistant", "content": [{"text": "ok"}]}, stop_reason="end_turn", state={}, metrics={}
+    )
+    node_results = [
+        NodeResult(
+            result=result_text,
+            accumulated_usage={
+                "inputTokens": 10,
+                "outputTokens": 20,
+                "totalTokens": 2078,
+                "cacheWriteInputTokens": 2048,
+                "cacheWriteInputTokensByTtl": {"1h": 2048},
+            },
+            execution_count=1,
+        ),
+        NodeResult(
+            result=result_text,
+            accumulated_usage={
+                "inputTokens": 15,
+                "outputTokens": 25,
+                "totalTokens": 1064,
+                "cacheWriteInputTokens": 1024,
+                "cacheWriteInputTokensByTtl": {"1h": 512, "5m": 512},
+            },
+            execution_count=1,
+        ),
+    ]
+
+    for node_result in node_results:
+        graph._accumulate_metrics(node_result)
+
+    tru_usage = graph.state.accumulated_usage
+    exp_usage = {
+        "inputTokens": 25,
+        "outputTokens": 45,
+        "totalTokens": 3142,
+        "cacheWriteInputTokens": 3072,
+        "cacheWriteInputTokensByTtl": {"1h": 2560, "5m": 512},
+    }
+    assert tru_usage == exp_usage
+
+
 def test_accumulate_metrics_without_cache_counters_omits_them():
     """Nodes without cache counters must not materialize cache keys as 0 (#797)."""
     graph = _make_graph(nodes={})

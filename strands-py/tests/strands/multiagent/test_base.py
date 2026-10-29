@@ -1,7 +1,7 @@
 import pytest
 
 from strands.agent import AgentResult
-from strands.multiagent.base import MultiAgentBase, MultiAgentResult, NodeResult, Status
+from strands.multiagent.base import MultiAgentBase, MultiAgentResult, NodeResult, Status, _parse_usage
 
 
 @pytest.fixture
@@ -465,3 +465,24 @@ def test_multi_agent_result_str_whitespace_exact_output():
     # After removesuffix("\n"), we get "  line1  \nline2\n"
     expected = "node:   line1  \nline2\n"
     assert str(result) == expected, f"Expected exact output:\n{expected!r}\nGot:\n{str(result)!r}"
+
+
+def test_parse_usage_keeps_cache_write_tokens_by_ttl():
+    tru_usage = _parse_usage(
+        {
+            "inputTokens": 10,
+            "outputTokens": 20,
+            "totalTokens": 1054,
+            "cacheWriteInputTokens": 1024,
+            "cacheWriteInputTokensByTtl": {"1h": 1024},
+        }
+    )
+    exp_usage = {
+        "inputTokens": 10,
+        "outputTokens": 20,
+        "totalTokens": 1054,
+        "cacheWriteInputTokens": 1024,
+        "cacheWriteInputTokensByTtl": {"1h": 1024},
+    }
+
+    assert tru_usage == exp_usage

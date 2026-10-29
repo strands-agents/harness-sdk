@@ -362,6 +362,38 @@ def test_event_loop_metrics_update_usage(usage, event_loop_metrics, mock_get_met
     metrics_client.event_loop_cache_write_input_tokens.record.assert_called()
 
 
+def test_event_loop_metrics_update_usage_sums_cache_write_tokens_by_ttl(event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "test-cycle"})
+
+    event_loop_metrics.update_usage(
+        Usage(
+            inputTokens=1, outputTokens=2, totalTokens=3, cacheWriteInputTokens=2, cacheWriteInputTokensByTtl={"1h": 2}
+        )
+    )
+    event_loop_metrics.update_usage(
+        Usage(
+            inputTokens=1,
+            outputTokens=2,
+            totalTokens=3,
+            cacheWriteInputTokens=5,
+            cacheWriteInputTokensByTtl={"1h": 2, "5m": 3},
+        )
+    )
+
+    tru_usage = event_loop_metrics.accumulated_usage
+    exp_usage = Usage(
+        inputTokens=2,
+        outputTokens=4,
+        totalTokens=6,
+        cacheWriteInputTokens=7,
+        cacheWriteInputTokensByTtl={"1h": 4, "5m": 3},
+    )
+
+    assert tru_usage == exp_usage
+    assert event_loop_metrics.agent_invocations[0].cycles[0].usage == exp_usage
+
+
 def test_event_loop_metrics_update_metrics(metrics_with_ttfb, event_loop_metrics, mock_get_meter_provider):
     for _ in range(3):
         event_loop_metrics.update_metrics(metrics_with_ttfb)
