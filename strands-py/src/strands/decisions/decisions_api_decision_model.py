@@ -50,8 +50,7 @@ class DecisionsAPIDecisionModel(DecisionModel):
             default_min_confidence: Default minimum confidence in ``[0.0, 1.0]``. Defaults to ``0.5``.
             http_client: ``httpx.AsyncClient`` used for the request. The caller owns and closes it;
                 pass one to reuse connections across decisions, set a timeout, or add headers. When
-                omitted, a client with no timeout is created per request (mirroring the TypeScript
-                port's reliance on ``fetch``).
+                omitted, a client with a 30-second timeout is created per request.
 
         Raises:
             ValueError: If the API key is missing or the confidence threshold is out of range.

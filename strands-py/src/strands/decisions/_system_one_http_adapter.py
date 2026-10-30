@@ -155,8 +155,8 @@ async def _post(config: _SystemOneProviderConfig, body: str) -> httpx.Response:
     headers = {"Authorization": f"Bearer {config.api_key}", "Content-Type": "application/json"}
     if config.http_client is not None:
         return await config.http_client.post(config.endpoint, headers=headers, content=body)
-    # No timeout, mirroring the TypeScript adapter's reliance on the default fetch (no deadline).
-    async with httpx.AsyncClient(timeout=None) as client:
+    # Created per call: a client held across calls breaks when reused over separate event loops.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         return await client.post(config.endpoint, headers=headers, content=body)
 
 

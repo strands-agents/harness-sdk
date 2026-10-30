@@ -252,7 +252,7 @@ class TestAsk:
         created: list[Any] = []
 
         class FakeDefaultClient:
-            def __init__(self, *, timeout: None) -> None:
+            def __init__(self, *, timeout: httpx.Timeout) -> None:
                 self.timeout = timeout
                 self.closed = False
                 created.append(self)
@@ -278,7 +278,7 @@ class TestAsk:
 
         assert result.answers == {"q": True}
         assert len(created) == 1
-        assert created[0].timeout is None
+        assert created[0].timeout == httpx.Timeout(30.0)
         assert created[0].closed is True
 
     @pytest.mark.asyncio
