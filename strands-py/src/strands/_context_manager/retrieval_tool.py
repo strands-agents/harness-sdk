@@ -50,9 +50,8 @@ def _extract_text(data: object) -> str | None:
         text = data.get("text")
         if isinstance(text, str):
             return text
-        json_val = data.get("json")
-        if json_val is not None:
-            return json.dumps(json_val, indent=2)
+        if "json" in data:
+            return json.dumps(data["json"], indent=2, ensure_ascii=False)
     return None
 
 

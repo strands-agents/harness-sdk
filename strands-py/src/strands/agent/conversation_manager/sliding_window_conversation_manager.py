@@ -12,6 +12,7 @@ from ...types.exceptions import ContextWindowOverflowException
 from ...types.tools import ToolResultContent
 from .compression.context_compression import find_valid_trim_point
 from .compression.pin_message import apply_pin_first, is_pinned
+from .compression.truncate_text import _truncate_block
 from .conversation_manager import ConversationManager, ProactiveCompressionConfig
 
 logger = logging.getLogger(__name__)
@@ -301,10 +302,11 @@ class SlidingWindowConversationManager(ConversationManager):
     def _truncate_tool_results(self, messages: Messages, msg_idx: int) -> bool:
         """Truncate tool results and replace image blocks in a message to reduce context size.
 
-        For text blocks within tool results, all blocks are partially truncated unless they
-        have already been truncated. The first and last _PRESERVE_CHARS characters are kept,
-        and the removed middle is replaced with a notice indicating how many characters were
-        removed. The tool result status is not changed.
+        Text and JSON blocks within tool results are partially truncated unless they
+        have already been truncated. JSON blocks become text previews. The first and
+        last _PRESERVE_CHARS characters are kept, and the removed middle is replaced
+        with a notice indicating how many characters were removed. The tool result
+        status is not changed.
 
         Image blocks nested inside tool result content are replaced with a short descriptive placeholder.
 
@@ -342,20 +344,11 @@ class SlidingWindowConversationManager(ConversationManager):
                         item_changed = True
                         continue
 
-                    # Partially truncate text items that have not already been truncated
-                    if "text" in item:
-                        text = item["text"]
-                        truncation_marker = "... [truncated:"
-                        if truncation_marker not in text and len(text) > 2 * _PRESERVE_CHARS:
-                            prefix = text[:_PRESERVE_CHARS]
-                            suffix = text[-_PRESERVE_CHARS:]
-                            removed = len(text) - 2 * _PRESERVE_CHARS
-                            truncated_text = (
-                                f"{prefix}...\n\n... [truncated: {removed} chars removed] ...\n\n...{suffix}"
-                            )
-                            new_items.append({"text": truncated_text})
-                            item_changed = True
-                            continue
+                    # Partially truncate text and JSON items that have not already been truncated
+                    if ("text" in item or "json" in item) and _truncate_block(item, _PRESERVE_CHARS):
+                        new_items.append(item)
+                        item_changed = True
+                        continue
 
                     new_items.append(item)
 
