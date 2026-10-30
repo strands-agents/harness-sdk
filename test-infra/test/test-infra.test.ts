@@ -300,6 +300,40 @@ test('persistent bucket policy grants access without DeleteBucket', () => {
   expect(persistentStmt.Action).not.toContain('s3:DeleteBucket');
 });
 
+test('S3 vector search grants are scoped to the test-strands-s3v- prefix', () => {
+  const template = synth({ internal: true });
+
+  const policies = template.findResources('AWS::IAM::Policy');
+  const statements = Object.values(policies).flatMap(
+    (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
+  );
+  const bucketStmt = statements.find(
+    (s: any) =>
+      Array.isArray(s.Action) &&
+      s.Action.includes('s3:CreateBucket') &&
+      JSON.stringify(s.Resource).includes('test-strands-s3v-*'),
+  );
+  const vectorsStmt = statements.find(
+    (s: any) => Array.isArray(s.Action) && s.Action.includes('s3vectors:CreateVectorBucket'),
+  );
+
+  expect(bucketStmt.Resource).toEqual('arn:aws:s3:::test-strands-s3v-*');
+  expect(bucketStmt.Action).toEqual(
+    expect.arrayContaining([
+      's3:CreateBucket',
+      's3:DeleteBucket',
+      's3:ListBucket',
+      's3:PutObject',
+      's3:GetObject',
+      's3:DeleteObject',
+    ]),
+  );
+  expect(vectorsStmt.Resource).toEqual([
+    'arn:aws:s3vectors:*:*:bucket/test-strands-s3v-*',
+    'arn:aws:s3vectors:*:*:bucket/test-strands-s3v-*/index/*',
+  ]);
+});
+
 // --- Feature Toggling ---
 
 test('selecting only bedrock-knowledge-base excludes EC2 resources', () => {

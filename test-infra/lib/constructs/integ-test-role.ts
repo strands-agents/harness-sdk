@@ -136,6 +136,8 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*::foundation-model/xai.grok-4.7',
           'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-3-675b-instruct',
           'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
+          // Default embedder for S3VectorSearchStrategy integration tests.
+          'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0',
         ],
       }),
     );
@@ -258,6 +260,39 @@ export class IntegTestRole extends Construct {
           's3:DeleteObject',
         ],
         resources: persistentBucketNames.map((name) => `arn:aws:s3:::${name}`),
+      }),
+    );
+
+    // S3VectorSearchStrategy integration tests create and tear down their own S3 bucket, vector
+    // bucket and index, scoped to the test's bucket-name prefix.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          's3:CreateBucket',
+          's3:DeleteBucket',
+          's3:ListBucket',
+          's3:PutObject',
+          's3:GetObject',
+          's3:DeleteObject',
+        ],
+        resources: ['arn:aws:s3:::test-strands-s3v-*'],
+      }),
+    );
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          's3vectors:CreateVectorBucket',
+          's3vectors:DeleteVectorBucket',
+          's3vectors:CreateIndex',
+          's3vectors:DeleteIndex',
+          's3vectors:PutVectors',
+          's3vectors:QueryVectors',
+          's3vectors:DeleteVectors',
+        ],
+        resources: [
+          'arn:aws:s3vectors:*:*:bucket/test-strands-s3v-*',
+          'arn:aws:s3vectors:*:*:bucket/test-strands-s3v-*/index/*',
+        ],
       }),
     );
 
