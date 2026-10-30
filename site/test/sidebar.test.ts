@@ -199,6 +199,7 @@ describe('Sidebar Generation from navigation.yml', () => {
     expect(groups[3]?.items).toEqual([
       { label: 'Return structured output', slug: 'docs/user-guide/sdk/agents/structured-output' },
       { label: 'Stream responses', slug: 'docs/user-guide/sdk/streaming' },
+      { label: 'Stream to the browser', slug: 'docs/user-guide/sdk/streaming/streaming-to-the-browser-guide' },
     ])
 
     // Single-page guides sit alongside the groups as flat links.
