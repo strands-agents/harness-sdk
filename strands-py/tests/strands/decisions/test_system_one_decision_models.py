@@ -595,6 +595,24 @@ class TestAsk:
         assert captured == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [({"a"}, "Object of type set is not JSON serializable"), (float("nan"), "Out of range float values")],
+        ids=["non-serializable", "nan"],
+    )
+    async def test_rejects_state_that_is_not_valid_json_with_value_error(
+        self, provider: _ProviderCase, value: Any, message: str
+    ):
+        captured: list[httpx.Request] = []
+        client = _fake_client(_response_body({}), captured=captured)
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+        state = [{"toolResult": {"content": [{"json": {"value": value}}]}}]
+
+        with pytest.raises(ValueError, match=message):
+            await decision.ask(state, {"q": {"question": "ok?", "choices": "boolean"}})
+        assert captured == []
+
+    @pytest.mark.asyncio
     async def test_rejects_non_json_numeric_constants(self, provider: _ProviderCase):
         body = (
             '{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1}},'

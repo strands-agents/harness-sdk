@@ -192,7 +192,7 @@ def _reject_non_serializable(value: Any) -> Any:
     # below the top-level block (e.g. an image inside a toolResult) lands here.
     if isinstance(value, (bytes, bytearray)):
         raise ValueError("System One decision providers do not support binary ContentBlock state")
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    raise ValueError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _to_wire_questions(questions: dict[str, Question]) -> dict[str, dict[str, Any]]:

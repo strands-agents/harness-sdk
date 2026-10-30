@@ -20,8 +20,9 @@ class TypeSafeDecisionModel(DecisionModel):
     ``ask`` raises ``ModelThrottledException`` on provider throttling (HTTP 429/529),
     ``ContextWindowOverflowException`` when the request exceeds the provider's size limit (HTTP 413
     or the pre-send body-byte check), ``ValueError`` for request-level violations (too many choices,
-    binary content), and ``StructuredOutputException`` for transport failures and any other
-    provider error, with the original error available as ``__cause__``.
+    binary content, state that is not JSON-serializable or contains NaN/infinity), and
+    ``StructuredOutputException`` for transport failures and any other provider error, with the
+    original error available as ``__cause__``.
 
     Example:
         ```python
