@@ -24,7 +24,7 @@ import { isUserTurn, createInjectionMiddleware } from '../injection/message-inje
 import { escapeXmlText, escapeXmlAttr } from '../injection/xml.js'
 import { InvokeModelStage } from '../middleware/index.js'
 import { Tracer } from '../telemetry/tracer.js'
-import { context, trace } from '@opentelemetry/api'
+import { context, trace, type AttributeValue } from '@opentelemetry/api'
 
 const SEARCH_TOOL_DESCRIPTION =
   'Search long-term memory for facts, preferences, or context from previous conversations. Use when you need background about the user or topic that may have been discussed before.'
@@ -105,7 +105,7 @@ export class MemoryManager implements Plugin {
    * established via OTel context (context.active() / context.with()), not instance hierarchy — so a
    * fresh instance routes spans to the same exporter and parents correctly without fragmenting traces.
    */
-  private readonly _tracer = new Tracer()
+  private _tracer = new Tracer()
 
   constructor(config: MemoryManagerConfig) {
     if (config.stores.length === 0) {
@@ -203,6 +203,17 @@ export class MemoryManager implements Plugin {
       }
       return found
     })
+  }
+
+  /**
+   * Applies the owning agent's `traceAttributes` to memory spans. Called by `Agent` at
+   * construction, before {@link initAgent} hands the tracer to the extraction coordinator.
+   *
+   * @param traceAttributes - Custom attributes to include on all memory spans
+   * @internal
+   */
+  _setTraceAttributes(traceAttributes: Record<string, AttributeValue> | undefined): void {
+    this._tracer = new Tracer(traceAttributes)
   }
 
   /**
