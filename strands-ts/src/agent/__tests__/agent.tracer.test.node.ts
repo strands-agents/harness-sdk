@@ -203,6 +203,42 @@ describe('Agent tracer integration', () => {
         })
       )
     })
+
+    // Guards https://github.com/strands-agents/harness-sdk/issues/5438: the gen_ai_tool_definitions
+    // opt-in only records gen_ai.tool.definitions when the agent span receives the tools config
+    it('passes toolsConfig to the agent span for the tool-definitions opt-in', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const tool = createMockTool(
+        'myTool',
+        () =>
+          new ToolResultBlock({
+            toolUseId: 'id',
+            status: 'success',
+            content: [],
+          })
+      )
+      const agent = new Agent({ model, tools: [tool] })
+      const tracer = getLatestTracer()
+
+      await agent.invoke('Hi')
+
+      expect(tracer.startAgentSpan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolsConfig: { myTool: { name: 'myTool', description: 'Mock tool myTool', inputSchema: { type: 'object', properties: {} } } },
+        })
+      )
+    })
+
+    it('omits toolsConfig from the agent span when the agent has no tools', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model })
+      const tracer = getLatestTracer()
+
+      await agent.invoke('Hi')
+
+      const call = tracer.startAgentSpan.mock.calls.at(-1)![0] as Record<string, unknown>
+      expect(call).not.toHaveProperty('toolsConfig')
+    })
   })
 
   describe('agent loop span lifecycle', () => {

@@ -119,7 +119,9 @@ describe('Tracer', () => {
       })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.tool.definitions']).toBe(JSON.stringify(toolsConfig))
+      expect(options.attributes['gen_ai.tool.definitions']).toBe(
+        JSON.stringify([{ name: 'calc', description: 'Calculator', inputSchema: undefined, outputSchema: undefined }]),
+      )
     })
 
     it('serializes system prompt into attribute', () => {
@@ -1200,7 +1202,9 @@ describe('Tracer', () => {
 
       const [, options] = getStartSpanCall()
       expect(options.attributes['gen_ai.provider.name']).toBeDefined()
-      expect(options.attributes['gen_ai.tool.definitions']).toBe(JSON.stringify(toolsConfig))
+      expect(options.attributes['gen_ai.tool.definitions']).toBe(
+        JSON.stringify([{ name: 'calc', description: 'Calculator', inputSchema: undefined, outputSchema: undefined }]),
+      )
     })
 
     it('handles whitespace in opt-in values', () => {
