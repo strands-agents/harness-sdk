@@ -6,6 +6,9 @@
 
 import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
 import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
+import { edit } from '@strands-agents/sdk/vended-tools/edit'
+import { makeRead } from '@strands-agents/sdk/vended-tools/read'
+import { write } from '@strands-agents/sdk/vended-tools/write'
 
 import type { HarnessAgentOptions } from './agent.js'
 import {
@@ -18,7 +21,7 @@ import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
 import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
-import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
+import { exaWebSearch, makeWebFetch } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
 import type { BuiltinToolsConfig, ToolConfig, WebSearchSetting } from './types/agent.js'
