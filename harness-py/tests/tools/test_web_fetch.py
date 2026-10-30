@@ -13,6 +13,7 @@ from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvi
 
 from strands_harness import create_harness
 from strands_harness.models import resolve_web_fetch_model
+from strands_harness.sandbox_shell import SHELL_PROBE
 from strands_harness.tools import make_web_fetch
 from strands_harness.tools import web_fetch as web_fetch_module
 
@@ -35,7 +36,7 @@ class _Sandbox:
 
     async def execute(self, command, **kwargs):
         self.commands.append(command)
-        if command == web_fetch_module._SHELL_PROBE:
+        if command == SHELL_PROBE:
             return ExecutionResult(exit_code=0, stdout="\n", stderr="")
         if self.exit_code != 0:
             return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
@@ -54,7 +55,7 @@ class _PowerShellSandbox(_Sandbox):
 
     async def execute(self, command, **kwargs):
         self.commands.append(command)
-        if command == web_fetch_module._SHELL_PROBE:
+        if command == SHELL_PROBE:
             return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
         if self.exit_code != 0:
             return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
@@ -210,7 +211,7 @@ async def test_fetch_text_runs_curl_in_the_sandbox_and_reads_the_final_hop():
         assert flag in command
     # One shell probe, then one round-trip: the shell picks the scratch file, returns the body as base64, and
     # removes the file itself.
-    assert sandbox.commands == [web_fetch_module._SHELL_PROBE, command]
+    assert sandbox.commands == [SHELL_PROBE, command]
     assert command.startswith("f=$(mktemp -t strands-web-fetch.XXXXXX) && ")
     assert command.endswith('| base64; s=$?; rm -f "$f"; exit $s')
 
@@ -257,7 +258,7 @@ async def test_fetch_text_probes_the_shell_once_per_sandbox():
     sandbox = _Sandbox(body=b"page", content_type="text/plain")
     await web_fetch_module._fetch_text(sandbox, "https://example.com/a", "curl")
     await web_fetch_module._fetch_text(sandbox, "https://example.com/b", "curl")
-    assert sandbox.commands.count(web_fetch_module._SHELL_PROBE) == 1
+    assert sandbox.commands.count(SHELL_PROBE) == 1
     assert len(sandbox.commands) == 3
     assert await web_fetch_module._shell(_PowerShellSandbox()) == "powershell"
 

@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from strands.plugins import Plugin
 from strands.vended_plugins.context_injector import ContextInjector, InjectionContext
 
+from strands_harness.sandbox_shell import SandboxShell, shell_of
+
 if TYPE_CHECKING:
     from strands import Agent
 
@@ -72,11 +74,13 @@ class EnvironmentContext(Plugin):
 async def _render(agent: Agent, memo: dict[str, Any]) -> str | None:
     if "gathered" not in memo:
         memo["gathered"] = await _gather(agent)
-    platform, cwd, agents_md, other_agents, readmes = memo["gathered"]
+    platform, cwd, shell, agents_md, other_agents, readmes = memo["gathered"]
 
     env = []
     if platform:
         env.append(f"Platform: {platform}")
+    if shell == "powershell":
+        env.append("Shell: PowerShell (the shell tool runs commands in it, not sh)")
     env.append(f"Date: {date.today().isoformat()}")
     if cwd:
         env.append(f"Working directory: {cwd}")
@@ -91,7 +95,9 @@ async def _render(agent: Agent, memo: dict[str, Any]) -> str | None:
     return "<system-reminder>\n" + "\n\n".join(sections) + "\n</system-reminder>"
 
 
-async def _gather(agent: Agent) -> tuple[str | None, str | None, str | None, list[str], list[str]]:
+async def _gather(
+    agent: Agent,
+) -> tuple[str | None, str | None, SandboxShell | None, str | None, list[str], list[str]]:
     """The one-time, memoized part: platform, working directory, cwd ``AGENTS.md``, and nearby links.
 
     Platform and cwd are read from the sandbox (via ``uname`` and ``$PWD``), not the host process, so they
@@ -102,15 +108,20 @@ async def _gather(agent: Agent) -> tuple[str | None, str | None, str | None, lis
     except Exception:
         # Defensive: normally a default local sandbox is present, but if the getter has none to fall
         # back to, still surface the date block without probing the environment.
-        return None, None, None, [], []
-    platform = await _probe(sandbox, "uname -s")
+        return None, None, None, None, [], []
+    # ``uname`` does not exist in PowerShell, so a PowerShell sandbox is reported as Windows from the shell probe.
+    try:
+        shell: SandboxShell | None = await shell_of(sandbox)
+    except Exception:
+        shell = None
+    platform = "Windows" if shell == "powershell" else await _probe(sandbox, "uname -s")
     # ``echo "$PWD"`` prints a bare path in both sh and PowerShell; PowerShell's ``pwd`` prints a table.
     cwd = await _probe(sandbox, 'echo "$PWD"')
     agents_md = await _read_text(sandbox, "AGENTS.md")
     found = await _discover(sandbox)
     # The working-directory AGENTS.md is shown in full above; keep only the nested ones as links.
     other_agents = [p for p in found["AGENTS.md"] if p != "AGENTS.md"]
-    return platform, cwd, agents_md, other_agents, found["README.md"]
+    return platform, cwd, shell, agents_md, other_agents, found["README.md"]
 
 
 async def _probe(sandbox: Any, command: str) -> str | None:

@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { createHarness } from '../../src/agent.js'
+import { SHELL_PROBE } from '../../src/sandbox-shell.js'
 import {
   EnvironmentContext,
   type EnvironmentMemo,
@@ -47,8 +48,30 @@ class FakeSandbox {
     if (this.cwd === null) {
       throw new Error('no shell')
     }
+    if (command === SHELL_PROBE) {
+      return { type: 'executionResult', exitCode: 0, stdout: '\n', stderr: '', outputFiles: [] }
+    }
     const out = command.startsWith('uname') ? 'Linux' : this.cwd
     return { type: 'executionResult', exitCode: 0, stdout: `${out}\n`, stderr: '', outputFiles: [] }
+  }
+}
+
+/** The SDK's local sandbox on Windows: commands run in PowerShell, which has no `uname`. */
+class PowerShellSandbox extends FakeSandbox {
+  override async execute(command: string): Promise<ExecutionResult> {
+    if (command === SHELL_PROBE) {
+      return { type: 'executionResult', exitCode: 0, stdout: 'Desktop\r\n', stderr: '', outputFiles: [] }
+    }
+    if (command.startsWith('uname')) {
+      return {
+        type: 'executionResult',
+        exitCode: 1,
+        stdout: '',
+        stderr: "The term 'uname' is not recognized",
+        outputFiles: [],
+      }
+    }
+    return { type: 'executionResult', exitCode: 0, stdout: `${this.cwd}\r\n`, stderr: '', outputFiles: [] }
   }
 }
 
@@ -127,6 +150,20 @@ describe('EnvironmentContext', () => {
     const out = await renderEnvironment(fakeAgent(sandbox), {})
     expect(out).toContain('truncated')
     expect(out.length).toBeLessThan(big.length)
+  })
+
+  it('reports Windows and the PowerShell shell when the sandbox runs PowerShell', async () => {
+    const sandbox = new PowerShellSandbox({ 'AGENTS.md': 'x' }, { '.': [file('AGENTS.md')] }, 'C:\\Users\\me\\proj')
+    const out = await renderEnvironment(fakeAgent(sandbox), {})
+    expect(out).toContain('Platform: Windows')
+    expect(out).toContain('Shell: PowerShell')
+    expect(out).toContain('Working directory: C:\\Users\\me\\proj')
+  })
+
+  it('adds no shell line for an sh sandbox', async () => {
+    const out = await renderEnvironment(fakeAgent(new FakeSandbox({}, { '.': [] })), {})
+    expect(out).toContain('Platform: Linux')
+    expect(out).not.toContain('Shell:')
   })
 
   it('omits platform and working directory when the probes fail', async () => {

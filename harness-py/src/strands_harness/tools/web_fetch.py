@@ -18,8 +18,7 @@ import base64
 import re
 import shlex
 import time
-import weakref
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -29,6 +28,7 @@ from strands.sandbox import Sandbox
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 
+from strands_harness.sandbox_shell import shell_of as _shell
 from strands_harness.types.agent import WebFetchTransport
 
 _USER_AGENT = "strands-harness/1.0"
@@ -112,19 +112,6 @@ def _powershell_curl_command(url: str) -> str:
             "exit $s",
         ]
     )
-
-
-# The Sandbox contract names no shell dialect, so the only check that holds for every sandbox is to ask: PowerShell
-# prints its edition (``Desktop`` or ``Core``), ``sh`` expands the unset variable to an empty line.
-_SHELL_PROBE = 'echo "${PSEdition}"'
-_shells: weakref.WeakKeyDictionary[Sandbox, Literal["sh", "powershell"]] = weakref.WeakKeyDictionary()
-
-
-async def _shell(sandbox: Sandbox) -> Literal["sh", "powershell"]:
-    if sandbox not in _shells:
-        result = await sandbox.execute(_SHELL_PROBE, timeout=10)
-        _shells[sandbox] = "powershell" if result.stdout.strip() in ("Desktop", "Core") else "sh"
-    return _shells[sandbox]
 
 
 def _decode(data: bytes, content_type: str) -> str:

@@ -7,6 +7,7 @@ from strands.sandbox.types import ExecutionResult, FileInfo
 from strands_harness import create_harness
 from strands_harness.plugins import EnvironmentContext
 from strands_harness.plugins import environment as env
+from strands_harness.sandbox_shell import SHELL_PROBE
 
 
 class _FakeSandbox:
@@ -29,11 +30,24 @@ class _FakeSandbox:
             raise FileNotFoundError(path)
         return self._tree[path]
 
-    async def execute(self, command: str) -> ExecutionResult:
+    async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
         if self._cwd is None:
             raise RuntimeError("no shell")
+        if command == SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="\n", stderr="")
         out = "Linux" if command.startswith("uname") else self._cwd
         return ExecutionResult(exit_code=0, stdout=f"{out}\n", stderr="")
+
+
+class _PowerShellSandbox(_FakeSandbox):
+    """The SDK's local sandbox on Windows: commands run in PowerShell, which has no ``uname``."""
+
+    async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
+        if command == SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
+        if command.startswith("uname"):
+            return ExecutionResult(exit_code=1, stdout="", stderr="The term 'uname' is not recognized")
+        return ExecutionResult(exit_code=0, stdout=f"{self._cwd}\r\n", stderr="")
 
 
 class _FakeAgent:
@@ -104,6 +118,20 @@ async def test_oversize_agents_md_is_truncated():
     out = await env._render(_FakeAgent(sandbox), {})
     assert "truncated" in out
     assert len(out) < len(big)
+
+
+async def test_powershell_sandbox_reports_windows_and_the_shell():
+    sandbox = _PowerShellSandbox({"AGENTS.md": "x"}, {".": [FileInfo("AGENTS.md", False)]}, cwd="C:\\Users\\me\\proj")
+    out = await env._render(_FakeAgent(sandbox), {})
+    assert "Platform: Windows" in out
+    assert "Shell: PowerShell" in out
+    assert "Working directory: C:\\Users\\me\\proj" in out
+
+
+async def test_sh_sandbox_adds_no_shell_line():
+    out = await env._render(_FakeAgent(_FakeSandbox({}, {".": []})), {})
+    assert "Platform: Linux" in out
+    assert "Shell:" not in out
 
 
 async def test_probe_failure_omits_platform_and_working_directory():
