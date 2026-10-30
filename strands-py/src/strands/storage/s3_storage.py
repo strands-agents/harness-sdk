@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import copy
 from typing import TYPE_CHECKING, Any
 
 from ..types.exceptions import StorageError
-from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+from .storage import _NAMESPACED, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
     from .search.types import SearchStrategy
@@ -60,13 +61,15 @@ class S3Storage:
             raise StorageError("Cannot specify both region_name and boto_session")
 
         self._bucket = bucket
-        normalized = _normalize_prefix(prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
         self._prefix = f"{normalized}/" if normalized else ""
         self._region_name = region_name
         self._boto_session = boto_session
         self._boto_client_config = boto_client_config
         self._search_strategy = search_strategy
         self._client: Any = None
+        # Set on instances returned by namespace(), so they share the root instance's client.
+        self._root: S3Storage | None = None
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data as an S3 object.
@@ -208,19 +211,38 @@ class S3Storage:
 
         return await KeywordSearchStrategy().search(self, query)
 
-    def namespace(self, prefix: str) -> _NamespacedStorage:
-        """Return a view of this storage with all keys prefixed.
+    def namespace(self, prefix: str) -> S3Storage:
+        """Return an ``S3Storage`` scoped to ``prefix`` within this storage's bucket and prefix.
+
+        The scoped instance shares this instance's S3 client and search strategy.
+        Unlike a generic ``_NamespacedStorage`` wrapper, its ``search()`` only
+        lists and reads objects under the prefix and scores keys without it,
+        rather than scanning the whole bucket.
+
+        The shared search strategy receives the scoped instance and keys relative
+        to the prefix. A strategy that keeps its own index must not key it by those
+        relative keys alone; see ``SearchStrategy.index``.
 
         Args:
             prefix: Prefix to prepend to all keys.
 
         Returns:
-            A namespaced storage view.
+            An ``S3Storage`` scoped to the prefix.
         """
-        return _NamespacedStorage(self, prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
+        # Copy this instance rather than constructing a new one, so a subclass's overrides and
+        # attributes carry over to the scoped instance. The shallow copy keeps the bucket, client
+        # settings and search strategy; its client always comes from _root.
+        scoped = copy.copy(self)
+        scoped._prefix = f"{self._prefix}{normalized}/" if normalized else self._prefix
+        scoped._root = self._root or self
+        scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return scoped
 
     def _get_client(self) -> Any:
         """Lazily create and cache the S3 client."""
+        if self._root is not None:
+            return self._root._get_client()
         if self._client is not None:
             return self._client
 

@@ -18,7 +18,15 @@ export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
-export type { InvocationState, InvokeArgs, InvokeOptions, LocalAgent } from './types/agent.js'
+export type {
+  CancelOptions,
+  InvocationState,
+  InvokeArgs,
+  InvokeLimits,
+  InvokeOptions,
+  LocalAgent,
+} from './types/agent.js'
+export type { InvocationContext, InvocationContextUsage } from './agent/invocation-context.js'
 export type { LifecycleObserver } from './types/lifecycle-observer.js'
 
 // Snapshot types
@@ -195,8 +203,29 @@ export {
 
 // Model provider types
 export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
+
+// Decision models
+export {
+  DecisionModel,
+  DecisionsAPIDecisionModel,
+  defineQuestions,
+  LLMDecisionModel,
+  TypeSafeDecisionModel,
+  Uncertain,
+} from './decisions/index.js'
+export type {
+  AnswerOf,
+  AskOptions,
+  DecisionInput,
+  DecisionResult,
+  DecisionsAPIDecisionModelOptions,
+  LLMDecisionModelOptions,
+  Question,
+  TypeSafeDecisionModelOptions,
+} from './decisions/index.js'
 
 // Model routing
 export { ClassifierStrategy, FallbackStrategy, ModelRouter, RoutingCandidate } from './models/routing/index.js'
@@ -319,7 +348,10 @@ export type { Logger } from './logging/types.js'
 // MCP Client types and implementations
 export {
   type McpClientOptions,
+  type McpListOptions,
   type McpListToolsOptions,
+  type McpProgress,
+  type McpProgressCallback,
   type McpToolFilterCallback,
   type McpToolFilters,
   type McpToolMatcher,

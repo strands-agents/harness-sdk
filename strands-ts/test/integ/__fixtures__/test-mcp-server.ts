@@ -5,7 +5,7 @@
  * Supports stdio and HTTP transports.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createServer, type Server as HttpServer } from 'node:http'
@@ -139,6 +139,52 @@ function createTestServer(): McpServer {
     }
   )
 
+  // Register a prompt, a static resource, and a resource template (exercises the
+  // prompts/resources client APIs)
+  server.registerPrompt(
+    'summarize',
+    {
+      title: 'Summarize Prompt',
+      description: 'Builds a summarization request for a topic',
+      argsSchema: {
+        topic: z.string(),
+      },
+    },
+    ({ topic }) => ({
+      messages: [
+        {
+          role: 'user',
+          content: { type: 'text', text: `Summarize the topic: ${topic}` },
+        },
+      ],
+    })
+  )
+
+  server.registerResource(
+    'greeting',
+    'test://greeting.txt',
+    {
+      title: 'Greeting Resource',
+      description: 'A static text resource',
+      mimeType: 'text/plain',
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, text: 'Hello from the test resource', mimeType: 'text/plain' }],
+    })
+  )
+
+  server.registerResource(
+    'user-file',
+    new ResourceTemplate('test://users/{userId}', { list: undefined }),
+    {
+      title: 'User File Template',
+      description: 'A templated resource addressed by user id',
+    },
+    async (uri, { userId }) => ({
+      contents: [{ uri: uri.href, text: `Data for user ${String(userId)}`, mimeType: 'text/plain' }],
+    })
+  )
+
   // Register error tool
   server.registerTool(
     'error_tool',
@@ -172,10 +218,12 @@ export interface HttpServerInfo {
 }
 
 /**
- * Creates and starts a Streamable HTTP MCP server on a random port.
+ * Creates and starts a Streamable HTTP MCP server.
  * Uses stateless mode - creates a new transport for each request.
+ *
+ * @param port - Port to listen on. The default 0 picks a random free port.
  */
-export async function startHTTPServer(): Promise<HttpServerInfo> {
+export async function startHTTPServer(port: number = 0): Promise<HttpServerInfo> {
   const mcpServer = createTestServer()
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -228,14 +276,14 @@ export async function startHTTPServer(): Promise<HttpServerInfo> {
   })
 
   return new Promise((resolve) => {
-    httpServer.listen(0, () => {
+    httpServer.listen(port, () => {
       const address = httpServer.address() as AddressInfo
-      const port = address.port
-      const url = `http://localhost:${port}/mcp`
+      const boundPort = address.port
+      const url = `http://localhost:${boundPort}/mcp`
 
       resolve({
         server: httpServer,
-        port,
+        port: boundPort,
         url,
         close: async () => {
           return new Promise((resolveClose) => {

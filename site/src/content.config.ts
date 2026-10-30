@@ -4,6 +4,7 @@ import { docsSchema } from '@astrojs/starlight/schema'
 import { glob, file } from 'astro/loaders'
 import { pathToDocsSlug } from './util/links'
 import { TagSchema } from './config/tags'
+import { SDK_META, hasLanguageStreams, type Sdk } from './config/changelog'
 
 export const ALL_SDK_LANGUAGES = ['python', 'typescript'] as const
 
@@ -62,7 +63,7 @@ export type ChangelogEntry = z.infer<typeof changelogEntrySchema>
 
 export const changelogFrontmatterSchema = z
   .object({
-    sdk: z.enum(['sdk', 'evals']),
+    sdk: z.enum(Object.keys(SDK_META) as [Sdk, ...Sdk[]]),
     language: z.enum(['python', 'typescript']).optional(),
     version: z.string(),
     tag: z.string(),
@@ -74,21 +75,21 @@ export const changelogFrontmatterSchema = z
     newContributors: z.array(z.object({ login: z.string(), pr: z.number() })).default([]),
   })
   // Tie `language` to `sdk` so bad data can't create bogus streams/routes:
-  // sdk releases are per-language (python|typescript); evals is python-only
-  // and omits the field entirely.
+  // per-language products (sdk, harness) require it; single-stream products
+  // (evals, cli, box) omit the field entirely.
   .superRefine((d, ctx) => {
-    if (d.sdk === 'sdk' && d.language === undefined) {
+    if (hasLanguageStreams(d.sdk) && d.language === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['language'],
-        message: 'sdk releases require a language (python or typescript)',
+        message: `${d.sdk} releases require a language (python or typescript)`,
       })
     }
-    if (d.sdk === 'evals' && d.language !== undefined) {
+    if (!hasLanguageStreams(d.sdk) && d.language !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['language'],
-        message: 'evals releases must not set a language (evals is python-only)',
+        message: `${d.sdk} releases must not set a language (${d.sdk} has a single release stream)`,
       })
     }
   })
@@ -191,10 +192,7 @@ const blogSchema = z.object({
 })
 
 // Regex rejects protocol-relative URLs like //evil.com and /\evil.com that startsWith('/') would accept.
-const internalHref = z.string().regex(
-  /^\/(?![/\\])/,
-  'course hrefs must be site-relative (start with a single /)',
-)
+const internalHref = z.string().regex(/^\/(?![/\\])/, 'course hrefs must be site-relative (start with a single /)')
 
 export const courseSchema = z.object({
   title: z.string(),

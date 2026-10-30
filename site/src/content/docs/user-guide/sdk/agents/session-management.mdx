@@ -153,9 +153,9 @@ Multi-agent session managers only track the current state of the Graph/Swarm exe
 
 An agent exposes its session identifier through a readable <Syntax py="agent.session_id" ts="agent.sessionId" /> property. When a session manager is attached, the property returns the manager's <Syntax py="session_id" ts="sessionId" /> (also readable directly on the session manager). Without a session manager, it returns a random 8-character hex string generated at construction, unique per agent instance but not persisted across restarts.
 
-Snapshot-based session managers accept any [Storage](../storage.mdx) backend, including
+Snapshot-based session managers accept any [Storage](../storage/index.mdx) backend, including
 `InMemoryStorage`, `LocalFileStorage`, `S3Storage`, and custom implementations. See
-[Storage](../storage.mdx) for backend configuration, tradeoffs, custom backends, and
+[Storage](../storage/index.mdx) for backend configuration, tradeoffs, custom backends, and
 required S3 permissions.
 
 <Tabs>
@@ -201,7 +201,7 @@ console.log(new Agent().sessionId) // e.g. "a1b2c3d4"
 
 ## Storage backends
 
-[Storage](../storage.mdx) is the single place persistence backends are documented. How session management reaches a backend depends on the manager:
+[Storage](../storage/index.mdx) is the single place persistence backends are documented. How session management reaches a backend depends on the manager:
 
 - **`SnapshotSessionManager` (Python) and `SessionManager` (TypeScript)** compose the shared `Storage` abstraction: you pass any `Storage` backend and the manager persists snapshots through it. Manager-level storage takes precedence over an agent-level `storage`. If neither provides storage, Python falls back to `LocalFileStorage("./.strands/")` and TypeScript fails during initialization.
 - **`FileSessionManager` and `S3SessionManager` (Python, compatibility path)** configure storage directly with a storage directory or an S3 bucket. They do not take a `Storage` backend.
@@ -211,7 +211,7 @@ The examples below show each form.
 <Tabs>
 <Tab label="Python">
 
-The recommended `SnapshotSessionManager` accepts any [Storage](../storage.mdx) backend, so you choose durability the same way the offloader and memory subsystems do:
+The recommended `SnapshotSessionManager` accepts any [Storage](../storage/index.mdx) backend, so you choose durability the same way the offloader and memory subsystems do:
 
 ```python
 from strands import Agent
@@ -538,7 +538,7 @@ For advanced use cases, you can implement your own session storage backend.
 <Tabs>
 <Tab label="Python">
 
-For new single-agent sessions, implement a [custom `Storage` backend](../storage.mdx#custom-backends) and pass it to `SnapshotSessionManager`: the manager owns the session layout, so the backend only moves bytes.
+For new single-agent sessions, implement a [custom `Storage` backend](../storage/index.mdx#custom-backends) and pass it to `SnapshotSessionManager`: the manager owns the session layout, so the backend only moves bytes.
 
 To customize a repository-based session, implement the `SessionRepository` interface:
 
@@ -587,7 +587,7 @@ agent = Agent(session_manager=session_manager)
 <Tab label="TypeScript">
 
 The simplest approach is to pass any
-[Storage](../storage.mdx) backend directly: the
+[Storage](../storage/index.mdx) backend directly: the
 `SessionManager` wraps it automatically. For full control,
 implement the `SnapshotStorage` interface:
 
@@ -692,4 +692,4 @@ When implementing session persistence in your applications, consider these best 
 - **Session Cleanup**: Implement a strategy for cleaning up old or inactive sessions. Consider adding TTL (Time To Live) for sessions in production environments.
 - **Understand Persistence Triggers**: Remember that changes to agent state or messages are only persisted during specific lifecycle events.
 - **Concurrent Access**: Session managers are not thread-safe and take no distributed lock. See [Sessions, Agents, and Concurrency](#sessions-agents-and-concurrency).
-- **Secure Storage Directories**: The session storage directory is a trusted data store. Restrict filesystem permissions so that only the agent process can read and write to it. In shared or multi-tenant environments (shared volumes, containers), be aware that the SDK does not block symlinks in the session storage directory. If an attacker with write access to the storage directory creates a symlink (e.g., `message_0.json` pointing to an arbitrary file), the SDK will follow it, which could cause sensitive file contents to be loaded into the agent's conversation history.
+- **Secure Storage Directories**: The session storage directory is a trusted data store. Session state is trusted input, so do not load sessions from untrusted sources, such as session files inside a cloned repository. Restrict filesystem permissions so that only the agent process can read and write to it. In shared or multi-tenant environments (shared volumes, containers), be aware that the SDK does not block symlinks in the session storage directory. If an attacker with write access to the storage directory creates a symlink (e.g., `message_0.json` pointing to an arbitrary file), the SDK will follow it, which could cause sensitive file contents to be loaded into the agent's conversation history.

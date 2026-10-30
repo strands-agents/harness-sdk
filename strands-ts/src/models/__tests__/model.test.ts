@@ -11,8 +11,9 @@ import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
+import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
-import type { ModelStreamEvent } from '../streaming.js'
+import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 /**
@@ -695,6 +696,48 @@ describe('Model', () => {
       })
     })
 
+    describe('when content blocks have no start events', () => {
+      it('keeps text and citations scoped to each completed block', async () => {
+        const citation = {
+          location: { type: 'documentChunk' as const, documentIndex: 0, start: 0, end: 1 },
+          source: '',
+          sourceContent: [{ text: 'Project Atlas automates invoice processing.' }],
+          title: 'doc1',
+        }
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'From the document: ' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [] },
+          }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Atlas ' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'automates invoices.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: ' That is the summary.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { items, result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('What is Atlas?')] })])
+        )
+
+        const expectedContent = [
+          new TextBlock('From the document: '),
+          new CitationsBlock({ citations: [citation], content: [{ text: 'Atlas automates invoices.' }] }),
+          new TextBlock(' That is the summary.'),
+        ]
+        expect(items.filter((item) => !isModelStreamEvent(item))).toEqual(expectedContent)
+        expect(result.message.content).toEqual(expectedContent)
+      })
+    })
+
     describe('when a content block emits no text deltas alongside reasoning and tool use', () => {
       it('drops the resulting empty TextBlock from the aggregated message but still yields it', async () => {
         const provider = new TestModelProvider(async function* () {
@@ -1165,7 +1208,97 @@ describe('countTokens', () => {
   })
 })
 
+describe('info', () => {
+  it('is all unknown for a provider with no model id, and unknown stateful reads as false', () => {
+    const provider = new TestModelProvider()
+
+    expect(provider.modelInfo).toEqual({})
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('resolves facts from the shared model info for any provider by modelId', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(1_000_000)
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('lets a provider put its facts over the shared model info, with the user override over both', () => {
+    class GatewayProvider extends TestModelProvider {
+      override get modelInfo(): ModelInfo {
+        return mergeModelInfo(
+          super.modelInfo,
+          { capabilities: { promptCaching: 'unsupported' } },
+          this.getConfig().modelInfo
+        )
+      }
+    }
+    const provider = new GatewayProvider()
+    provider.updateConfig({ modelId: 'claude-sonnet-4-6', contextWindowLimit: 8_000 })
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('unsupported') // shared file says cachePoints
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+    expect(Object.isFrozen(provider.modelInfo)).toBe(true)
+
+    provider.updateConfig({ modelInfo: { capabilities: { promptCaching: 'cachePoints' } } })
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('lets the info override set stateful, and the stateful getter reads it', () => {
+    const provider = new TestModelProvider()
+    expect(provider.stateful).toBe(false)
+
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: true } } })
+
+    expect(provider.modelInfo.capabilities?.stateful).toBe(true)
+    expect(provider.stateful).toBe(true)
+  })
+
+  it('lets the info override win over contextWindowLimit', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000, modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(10_000)
+  })
+
+  it('takes the context window from the config', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(50_000)
+  })
+
+  it('reads stateful from what a provider puts in the record', () => {
+    class StatefulProvider extends TestModelProvider {
+      override get modelInfo(): ModelInfo {
+        return mergeModelInfo(super.modelInfo, { capabilities: { stateful: true } }, this.getConfig().modelInfo)
+      }
+    }
+    const provider = new StatefulProvider()
+    expect(provider.stateful).toBe(true)
+
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: false } } })
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('reflects config changes on the next read', () => {
+    const provider = new TestModelProvider()
+    expect(provider.modelInfo.limits?.contextWindow).toBeUndefined()
+
+    provider.updateConfig({ contextWindowLimit: 4_096 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(4_096)
+  })
+})
+
 describe('estimateUtilization', () => {
+  it('uses the context window from info, including an info override', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.estimateUtilization(5_000)).toBe(0.5)
+  })
+
   it('returns ratio of inputTokens to contextWindowLimit', () => {
     const provider = new TestModelProvider()
     provider.updateConfig({ contextWindowLimit: 100_000 })

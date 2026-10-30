@@ -1,0 +1,128 @@
+---
+title: Web fetch
+description: "Fetch an HTTP(S) URL and return its content to a Strands agent, either as clean markdown or through an analyst agent that answers a prompt about the page."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/web-fetch/web-fetch.ts
+  - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
+---
+
+Fetches an HTTP(S) URL and returns its content. Two modes are available,
+configured at construction time via `make_web_fetch` / `makeWebFetch`:
+
+- **`agentic`** (default): HTML is converted to markdown and passed to an
+  analyst agent that answers a `prompt`, so the full page never enters the
+  main agent's context. Use when targeted answers are needed about potentially
+  large pages.
+- **`markdown`**: HTML is converted to clean markdown with scripts, styles,
+  and noise stripped. Use when the agent needs full pages for reasoning.
+
+The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
+`max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
+analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
+the factory also accepts a `model` for the analyst; <Syntax py="agent.aux_model" ts="agent.auxModel" />
+is used when none is supplied.
+
+The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
+`make_web_fetch` factory to supply a pre-configured client with custom
+timeouts, redirects, proxies, or caching.
+
+_Supported in: Node.js (TypeScript); Python (all platforms)._
+
+:::note[Install required]
+<Tabs>
+<Tab label="Python">
+`web_fetch` requires the optional `web-fetch` extra:
+
+```bash
+pip install 'strands-agents[web-fetch]'
+```
+</Tab>
+<Tab label="TypeScript">
+HTML conversion requires the optional `turndown` peer dependency:
+
+```bash
+npm install turndown
+```
+</Tab>
+</Tabs>
+:::
+
+:::note[Security posture]
+Web fetch accepts only `http://` and `https://` URLs and caps response bodies
+at 5 MiB by default. Egress control belongs at the layer that encapsulates the
+agent (a sandbox, microVM, or network policy) where it can be enforced
+consistently across all tools, including `shell`.
+:::
+
+**Example:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch_imports.ts:web_fetch_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch.ts:web_fetch_example"
+```
+
+Reading the full page as markdown:
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch_imports.ts:web_fetch_markdown_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch.ts:web_fetch_markdown_example"
+```
+
+Tighter response cap with a dedicated analyst model:
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch_imports.ts:web_fetch_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch.ts:web_fetch_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import web_fetch
+
+agent = Agent(tools=[web_fetch])
+agent("What is the pricing for the enterprise plan at https://example.com/pricing")
+```
+
+Reading the full page as markdown:
+
+```python
+from strands import Agent
+from strands.vended_tools import make_web_fetch
+
+web_fetch = make_web_fetch(mode="markdown")
+agent = Agent(tools=[web_fetch])
+agent("Read https://example.com/docs and then explain the architecture")
+```
+
+Tighter response cap with a dedicated analyst model and custom transport:
+
+```python
+import httpx
+from strands import Agent
+from strands.models import BedrockModel
+from strands.vended_tools import make_web_fetch
+
+web_fetch = make_web_fetch(
+    mode="agentic",
+    client=httpx.AsyncClient(timeout=10.0),
+    max_bytes=1 * 1024 * 1024,
+    max_content_chars=25_000,
+    model=BedrockModel(model_id="us.amazon.nova-micro-v1:0"),
+)
+agent = Agent(tools=[web_fetch])
+```
+
+</Tab>
+</Tabs>
+
+📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/README.md)

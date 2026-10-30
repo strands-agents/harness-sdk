@@ -1,0 +1,8 @@
+name: mnemoverse
+description: Hosted long-term memory for Strands agents over MCP, so memories persist across sessions and tools; rating a recalled memory as helpful or misleading re-ranks what comes back next.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/mnemoverse/mcp-memory-server
+docsUrl: https://mnemoverse.com/docs/api/strands
+addedDate: 2026-10-25

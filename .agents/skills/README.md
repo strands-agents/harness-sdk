@@ -23,7 +23,9 @@ Skills for this repository. See [agentskills.io](https://agentskills.io/home) fo
 | **docs-writer** | Drafts or rewrites documentation pages following the project's voice and structure guidelines. |
 | **docs-reviewer** | Reviews drafts for voice consistency, structure, and terminology before PR submission. |
 | **docs-audit** | Assesses published pages for quality, accuracy, and voice compliance. |
+| **docs-verifier** | Verifies every code example and factual claim on a page against the repo source, citing the `file:line` behind each claim, and type-checks or runs the code blocks. |
 | **docs-planner** | Identifies documentation gaps and prioritizes the backlog. |
+| **docs-diagrams** | Designs and draws theme-aware SVG diagrams for the docs following `references/diagrams.md`, then screenshots them in light and dark mode to verify. |
 
 ## Code review
 

@@ -197,7 +197,7 @@ runtime.
 
 ### Web search and Exa
 
-`web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5/GPT-6
+`web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5, GPT-6, and Daybreak
 models on `bedrock-mantle`, Anthropic). On a model without native search the Tools step offers
 `web_search` through [Exa](https://exa.ai) instead, unchecked; ticking it writes
 `"web_search": "exa"` to the profile.

@@ -10,8 +10,12 @@ This file is shared by agents with different goals — writing code, opening PRs
 
 ```
 strands-agents/
+├── harness-py/         # Python Strands harness (hatch) — see harness-py/AGENTS.md
+├── harness-ts/         # TypeScript Strands harness (npm) — see harness-ts/AGENTS.md
+├── strands-cli/        # strands CLI (npm) — see strands-cli/AGENTS.md
 ├── strands-py/         # Python SDK (hatch) — see strands-py/AGENTS.md
 ├── strands-ts/         # TypeScript SDK (npm workspace) — see strands-ts/AGENTS.md
+├── strands-mcp/        # MCP server with Strands docs for coding agents (hatch)
 ├── site/               # Documentation site (Astro) — see site/AGENTS.md
 ├── team/               # Governance + cross-SDK process (tenets, decisions, API bar-raising, PR & compatibility guidelines, designs/ proposals)
 ├── test-infra/         # CDK stack for integ tests that require provisioned AWS infra
@@ -38,7 +42,7 @@ Before designing a feature or changing an API, read the relevant context in `tea
 - **Branching**: `git checkout -b agent-tasks/{ISSUE_NUMBER}`
 - **Commits**: Use [conventional commits](https://www.conventionalcommits.org/) — `feat:`, `fix:`, `refactor:`, `docs:`, etc.
 - **CI**: The `ci.yml` merge gate detects which paths changed and runs only relevant checks.
-- **Skills**: Reusable, repo-specific workflows live under `.agents/skills/` — for PRs (`pr-create`, `pr-writer`, `pr-feedback`), docs (`docs-writer`, `docs-reviewer`, `docs-audit`, `docs-planner`), and code review (`strands-review`). See [`.agents/skills/README.md`](./.agents/skills/README.md) for what each does and when to use it.
+- **Skills**: Reusable, repo-specific workflows live under `.agents/skills/` — for PRs (`pr-create`, `pr-writer`, `pr-feedback`), docs (`docs-writer`, `docs-reviewer`, `docs-audit`, `docs-verifier`, `docs-planner`), and code review (`strands-review`). See [`.agents/skills/README.md`](./.agents/skills/README.md) for what each does and when to use it.
 - **Doc `sourceLinks` track source files**: Doc pages under `site/` point at their backing implementation via `sourceLinks` frontmatter — repo-relative paths into `strands-py/` and `strands-ts/`. When you **rename or move a source file**, update any `sourceLinks` that reference its old path in the same change. The site build only fails on a malformed path or an unmapped file extension, **not** on a path that still resolves to the wrong (or now-nonexistent) file, so a stale reference rots silently. Find affected pages with `grep -rn "<old/path>" site/src/content/docs`.
 
 ### Cross-SDK Conventions

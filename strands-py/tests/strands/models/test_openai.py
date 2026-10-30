@@ -11,6 +11,7 @@ import pytest
 import strands
 from strands.agent import AgentMetadata
 from strands.models import CacheConfig
+from strands.models.litellm import LiteLLMModel
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -601,7 +602,9 @@ def test_format_request_tool_choice_tool():
     assert tru_result == exp_result
 
 
-def test_format_request_messages(system_prompt):
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+@pytest.mark.parametrize("text_position", [None, "before", "after"])
+def test_format_request_messages(system_prompt, model_class, text_position):
     messages = [
         {
             "content": [],
@@ -630,7 +633,11 @@ def test_format_request_messages(system_prompt):
         },
     ]
 
-    tru_result = OpenAIModel.format_request_messages(messages, system_prompt)
+    if text_position is not None:
+        position = 0 if text_position == "before" else len(messages[-1]["content"])
+        messages[-1]["content"].insert(position, {"text": "Injected context"})
+
+    tru_result = model_class.format_request_messages(messages, system_prompt)
     exp_result = [
         {
             "content": system_prompt,
@@ -659,6 +666,76 @@ def test_format_request_messages(system_prompt):
             "role": "tool",
             "tool_call_id": "c1",
         },
+    ]
+    if model_class is LiteLLMModel:
+        exp_result[0]["content"] = [{"type": "text", "text": system_prompt}]
+    if text_position is not None:
+        exp_result.append({"role": "user", "content": [{"type": "text", "text": "Injected context"}]})
+    assert tru_result == exp_result
+
+
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+def test_format_request_messages_groups_tool_results_before_text_and_images(model_class):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"toolUse": {"toolUseId": tool_id, "name": "image_tool", "input": {}}} for tool_id in ["t1", "t2"]
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "t1",
+                        "status": "success",
+                        "content": [
+                            {"text": "Image generated"},
+                            {"image": {"format": "png", "source": {"bytes": b"image"}}},
+                        ],
+                    }
+                },
+                {"text": "Injected context"},
+                {"toolResult": {"toolUseId": "t2", "status": "success", "content": [{"text": "done"}]}},
+            ],
+        },
+    ]
+
+    tru_result = model_class.format_request_messages(messages)
+    exp_result = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": tool_id, "type": "function", "function": {"name": "image_tool", "arguments": "{}"}}
+                for tool_id in ["t1", "t2"]
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "t1",
+            "content": [
+                {"type": "text", "text": "Image generated"},
+                {
+                    "type": "text",
+                    "text": (
+                        "Tool successfully returned an image. "
+                        "The image is being provided in the following user message."
+                    ),
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "t2", "content": "done"},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aW1hZ2U=", "detail": "auto", "format": "image/png"},
+                }
+            ],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "Injected context"}]},
     ]
     assert tru_result == exp_result
 
@@ -1011,6 +1088,11 @@ def test_format_request_with_tool_choice_tool(model, messages, tool_specs, syste
         (
             {"chunk_type": "message_stop", "data": "length"},
             {"messageStop": {"stopReason": "max_tokens"}},
+        ),
+        # Message Stop - Content Filtered
+        (
+            {"chunk_type": "message_stop", "data": "content_filter"},
+            {"messageStop": {"stopReason": "content_filtered"}},
         ),
         # Message Stop - End Turn
         (
@@ -1482,9 +1564,13 @@ def test_format_request_warns_once_for_reasoning_content_across_history(model, c
 
     model.format_request(messages)
 
-    tru_count = sum("reasoningContent is not supported" in record.getMessage() for record in caplog.records)
-    exp_count = 1
-    assert tru_count == exp_count
+    tru_messages = [
+        record.getMessage() for record in caplog.records if "reasoningContent is not supported" in record.getMessage()
+    ]
+    exp_messages = [
+        "count=<3> | reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+    ]
+    assert tru_messages == exp_messages
 
 
 def test_format_request_does_not_warn_without_reasoning_content(model, messages, caplog):
@@ -2153,6 +2239,8 @@ class TestOpenAIModelBedrockMantleConfig:
             ("google.gemma-4-26b-a4b", "/openai/v1"),
             ("google.gemma-4-e2b", "/openai/v1"),
             ("openai.gpt-5.6-terra", "/openai/v1"),
+            ("openai.gpt-5.6-cyber", "/openai/v1"),
+            ("openai.gpt-daybreak-blue-5.6-sol", "/openai/v1"),
             ("openai.gpt-6-astra", "/openai/v1"),
             ("openai.gpt-6.1-sol", "/openai/v1"),
             # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
@@ -2444,3 +2532,19 @@ class TestOpenAIModelBedrockMantleConfig:
             with pytest.raises(ValueError, match="Could not resolve an AWS region.*endpoints-region-availability"):
                 model._resolve_client_args()
         mock_provide_token.assert_not_called()
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image, {"cachePoint": {"type": "default"}}]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 2
+    assert "count=<3> | Location sources are not supported by OpenAI" in messages_logged[0]
+    assert "count=<3> | cachePoint content block is not supported by OpenAI" in messages_logged[1]

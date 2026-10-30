@@ -17,12 +17,12 @@ The SDK estimates how much of the model's context window is in use so it can tri
 
 ## Context window limit
 
-The threshold check requires the model's context window size. The SDK auto-populates <Syntax py="context_window_limit" ts="contextWindowLimit" /> from built-in lookup tables for known models.
+The threshold check requires the model's context window size. The SDK auto-populates <Syntax py="context_window_limit" ts="contextWindowLimit" /> from the shared model info for known models.
 
 <Tabs>
 <Tab label="Python">
 
-Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_defaults.py):
+Override it manually for models not in the [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json):
 
 ```python
 model = BedrockModel(
@@ -33,7 +33,7 @@ model = BedrockModel(
 </Tab>
 <Tab label="TypeScript">
 
-Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/defaults.ts):
+Override it manually for models not in the [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json):
 
 ```typescript
 --8<-- "user-guide/sdk/context-management/context-estimation_imports.ts:context_window_limit_imports"
@@ -44,7 +44,7 @@ Override it manually for models not in the [lookup table](https://github.com/str
 </Tabs>
 
 :::caution[Inaccurate compression with default fallback]
-If <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the model ID is not in the built-in lookup table, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
+If <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the model ID is not in the shared model info, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
 :::
 
 ## Token estimation

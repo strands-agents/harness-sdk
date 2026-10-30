@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 96" width="720" height="96">
+  <!-- Type: pipeline (left to right). Story: each node runs after the one before it and receives its output. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M164,48 H194" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M344,48 H374" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M524,48 H554" marker-end="url(#arrow)"/>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="16" y="16" width="148" height="64" rx="6"/>
+  <text class="dg-name" x="90" y="45" text-anchor="middle">Researcher</text>
+  <text class="dg-code" x="90" y="63" text-anchor="middle">research</text>
+
+  <rect class="dg-node" x="196" y="16" width="148" height="64" rx="6"/>
+  <text class="dg-name" x="270" y="45" text-anchor="middle">Analyst</text>
+  <text class="dg-code" x="270" y="63" text-anchor="middle">analysis</text>
+
+  <rect class="dg-node" x="376" y="16" width="148" height="64" rx="6"/>
+  <text class="dg-name" x="450" y="45" text-anchor="middle">Reviewer</text>
+  <text class="dg-code" x="450" y="63" text-anchor="middle">review</text>
+
+  <rect class="dg-node" x="556" y="16" width="148" height="64" rx="6"/>
+  <text class="dg-name" x="630" y="45" text-anchor="middle">Report writer</text>
+  <text class="dg-code" x="630" y="63" text-anchor="middle">report</text>
+</svg>

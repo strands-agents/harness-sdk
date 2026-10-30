@@ -3,25 +3,39 @@
 import warnings
 from typing import Any
 
-from .stop import make_stop, stop
-
-_DEPRECATED_NAMES = {"ToolProvider"}
+_DEPRECATED_NAMES = {"ToolProvider", "stop", "make_stop"}
 
 
 def __getattr__(name: str) -> Any:
     if name in _DEPRECATED_NAMES:
-        from ...tools import ToolProvider
+        if name == "ToolProvider":
+            from ...tools import ToolProvider
 
-        warnings.warn(
-            f"{name} has been moved to production. Use {name} from strands.tools instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return ToolProvider
+            warnings.warn(
+                "ToolProvider has been moved to production. Use ToolProvider from strands.tools instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return ToolProvider
+        if name == "stop":
+            from ...vended_tools import stop
+
+            warnings.warn(
+                "stop has been moved to production. Use stop from strands.vended_tools instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return stop
+        if name == "make_stop":
+            from ...vended_tools import make_stop
+
+            warnings.warn(
+                "make_stop has been moved to production. Use make_stop from strands.vended_tools instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return make_stop
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = [
-    "make_stop",
-    "stop",
-]
+__all__ = []

@@ -24,6 +24,8 @@ const MANTLE_DOCS_URL = 'https://docs.aws.amazon.com/bedrock/latest/userguide/in
  */
 const OPENAI_PATH_MODEL_PREFIXES = [
   'openai.gpt-5.',
+  // Not in the catalog the rest of this list was verified against; base path per the model card.
+  'openai.gpt-daybreak-',
   'openai.gpt-6-',
   'openai.gpt-6.',
   'xai.grok-4.',

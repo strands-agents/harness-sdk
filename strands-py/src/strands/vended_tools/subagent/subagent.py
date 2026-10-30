@@ -12,9 +12,13 @@ import copy
 import logging
 import re
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ...agent.conversation_manager.compression.context_compression import find_valid_trim_point
+from ...multiagent._agent_tool_streamer import (
+    _AgentToolStreamer,
+    _ChildAgentAdapter,
+)
 from ...multiagent.spec import (
     AgentBuilder,
     AgentSpec,
@@ -24,7 +28,8 @@ from ...multiagent.spec import (
     Open,
     Preset,
     _default_builder,
-    _resolve_spec,
+    _resolve_specs,
+    _to_schema_properties,
 )
 from ...tools.tools import AgentTool
 from ...types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
 
 _DEPTH_STATE_KEY = "strands.subagent_depth"
 
+
 _FORK_PREAMBLE = (
     "The conversation so far is the parent agent's. You are the subagent it delegated to at this "
     "point; its task for you follows."
@@ -59,86 +65,54 @@ _FRAMING_END = f"</parent_context>\n\n{_CONTEXT_PREAMBLE}\n\n"
 _SENTINEL = re.compile(r"<(/?)parent_context>")
 
 
-def _description(base: str, presets: Mapping[str, Preset]) -> str:
-    if not presets:
-        return base
-    roles = "\n".join(f"- {name}: {p.description or name}" for name, p in presets.items())
-    return f"{base}\n\nAvailable subagents (agent_type):\n{roles}"
-
-
 def _build_schema(
     *,
     presets: Mapping[str, Preset],
     default_preset: str | None,
     instructions: Open | Choice | Fixed,
-    tools: Choice | Fixed | Inherit,
-    mcp_servers: Choice | Fixed | Inherit,
+    tools: Choice | Fixed | Inherit | None,
     model: Inherit | Choice | Fixed,
     context: Fixed | Choice,
 ) -> dict[str, Any]:
     """Derive the tool's input schema from the axis modes."""
-    props: dict[str, Any] = {
+    properties: dict[str, Any] = {
         "task": {
             "type": "string",
             "description": "The self-contained task, including all context the subagent needs. "
             "It cannot ask follow-up questions.",
-        }
+        },
+        **_to_schema_properties(
+            presets=presets,
+            default_preset=default_preset,
+            instructions=instructions,
+            tools=tools,
+            model=model,
+        ),
     }
-    required = ["task"]
-
-    if presets:
-        props["agent_type"] = {
-            "type": "string",
-            "enum": list(presets),
-            "description": f"Which subagent role to use. Omit to use the default ({default_preset!r}).",
-        }
-
-    if isinstance(instructions, Open):
-        props["instructions"] = {
-            "type": "string",
-            "description": "A system prompt defining the subagent's role.",
-        }
-    elif isinstance(instructions, Choice):
-        props["instructions"] = instructions.to_schema_property("A system prompt defining the subagent's role.")
-
-    if isinstance(tools, Choice):
-        props["tools"] = tools.to_schema_property(
-            "Subset of tools to grant the subagent. Fewer is safer; it cannot exceed your own. "
-            "Omit to grant all inherited tools."
-        )
-
-    if isinstance(mcp_servers, Choice):
-        props["mcp_servers"] = mcp_servers.to_schema_property(
-            "Subset of MCP servers whose tools to grant the subagent. Fewer is safer; it cannot "
-            "exceed your own. Omit to grant all of them.",
-        )
-
-    if isinstance(model, Choice):
-        props["model"] = model.to_schema_property(
-            "Which model the subagent runs on. Omit to inherit the parent's model."
-        )
-
     if isinstance(context, Choice):
-        props["context"] = context.to_schema_property(
-            "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full "
+        options = context.normalized()
+        lines = [f"- {option.name}: {option.description}" for option in options if option.description]
+        options_text = "\nOptions:\n" + "\n".join(lines) if lines else ""
+        properties["context"] = {
+            "type": "string",
+            "enum": [option.name for option in options],
+            "description": "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full "
             "history including tool calls and their results — can be large), 'no_tools' (text turns "
-            "only — tool calls and their results removed). More context costs more tokens.",
-        )
-        if any(str(o.value) != "none" for o in context.normalized()):
-            props["last_messages"] = {
-                "type": "integer",
-                "description": "Optional: limit the shared context to the last N messages. Omit to "
-                "share all of the selected context.",
-            }
-
-    return {"type": "object", "properties": props, "required": required}
+            "only — tool calls and their results removed). More context costs more tokens." + options_text,
+        }
+    if isinstance(context, Choice) and any(str(o.value) != "none" for o in context.normalized()):
+        properties["last_messages"] = {
+            "type": "integer",
+            "description": "Optional: limit the shared context to the last N messages. Omit to "
+            "share all of the selected context.",
+        }
+    return {"type": "object", "properties": properties, "required": ["task"]}
 
 
 class _SubagentTool(AgentTool):
     """Streams a fresh per-call child and propagates its interrupts to the parent for resume.
 
-    If the parent never answers the interrupt, the child ``Agent`` remains referenced here for
-    the lifetime of this tool instance.
+    An interrupted child's turn is stored on the parent, so it resumes after rehydration.
     """
 
     def __init__(
@@ -152,13 +126,12 @@ class _SubagentTool(AgentTool):
     ) -> None:
         super().__init__()
         self._name = name
+        self._adapter = _ChildAgentAdapter(label="Subagent", agent_name=name)
         self._spec = tool_spec
         self._resolve = resolve
         self._context = context
         self._builder = builder
         self._max_depth = max_depth
-        # Children awaiting a resume, keyed by the tool-use id that interrupted.
-        self._pending: dict[str, Agent] = {}
 
     @property
     def tool_name(self) -> str:
@@ -250,24 +223,16 @@ class _SubagentTool(AgentTool):
     def _error_result(self, tool_use_id: str, text: str) -> ToolResultEvent:
         return ToolResultEvent({"toolUseId": tool_use_id, "status": "error", "content": [{"text": text}]})
 
-    def _prepare_child(self, tool_use_id: str, raw: Mapping[str, Any], parent: Agent | None) -> tuple[Agent, Any] | str:
+    def _prepare_child(
+        self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, tool_streamer: _AgentToolStreamer
+    ) -> tuple[Agent, Any] | str | ToolInterruptEvent | ToolResultEvent:
         """Resolve or resume the child agent and its prompt.
 
-        Returns ``(child, prompt)`` on success, or a ``str`` error message on validation failure.
+        Returns ``(child, prompt)`` on success, a ``str`` error message on validation failure, or the
+        event to yield if the child's stored turn could not be resumed.
         """
-        child = self._pending.get(tool_use_id)
-        if child is not None and child._interrupt_state.activated:
-            prompt: Any = [
-                {
-                    "interruptResponse": {
-                        "interruptId": interrupt.id,
-                        "response": interrupt.response,
-                    }
-                }
-                for interrupt in child._interrupt_state.interrupts.values()
-                if interrupt.response is not None
-            ]
-            return child, prompt
+        if tool_streamer.is_resuming():
+            return self._prepare_resume(tool_use, raw, parent, tool_streamer)
 
         stored_depth = None if parent is None else parent.state.get(_DEPTH_STATE_KEY)
         depth = self._max_depth if stored_depth is None else stored_depth
@@ -286,7 +251,7 @@ class _SubagentTool(AgentTool):
         child.state.set(_DEPTH_STATE_KEY, depth - 1)
         ctx_mode, last_messages = self._resolve_context(raw)
 
-        prompt = task
+        prompt: Any = task
         if ctx_mode == "all":
             messages = self._fork_messages(parent, last_messages)
             if messages:
@@ -305,37 +270,47 @@ class _SubagentTool(AgentTool):
 
         return child, prompt
 
-    def _finalize_result(
-        self, tool_use_id: str, tool_use: ToolUse, child: Agent, result: Any
-    ) -> ToolResultEvent | ToolInterruptEvent:
-        """Map the child's result to the terminal event for the parent."""
-        if result is None:
-            self._pending.pop(tool_use_id, None)
-            return self._error_result(tool_use_id, "Subagent produced no result.")
-        if result.stop_reason == "interrupt" and result.interrupts:
-            self._pending[tool_use_id] = child
-            return ToolInterruptEvent(tool_use, list(result.interrupts))
-        if result.stop_reason == "cancelled":
-            self._pending.pop(tool_use_id, None)
-            return self._error_result(tool_use_id, "Subagent was cancelled.")
-        self._pending.pop(tool_use_id, None)
-        return ToolResultEvent(
-            {
-                "toolUseId": tool_use_id,
-                "status": "success",
-                "content": [{"text": str(result)}],
-            }
+    def _prepare_resume(
+        self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, tool_streamer: _AgentToolStreamer
+    ) -> tuple[Agent, Any] | ToolInterruptEvent | ToolResultEvent:
+        """Rebuild the interrupted child from the same tool input and restore its stored turn."""
+        spec = self._resolve(raw)
+        build = self._builder or _default_builder(parent)  # type: ignore[arg-type]
+        child: Agent | None = None
+        try:
+            child = build(spec)
+        except Exception as error:
+            logger.warning(
+                "tool_name=<%s>, tool_use_id=<%s> | failed to rebuild interrupted subagent: %s",
+                self._name,
+                tool_use["toolUseId"],
+                error,
+            )
+        resumed = tool_streamer.resume(
+            self._adapter,
+            child,
+            "Subagent did NOT run and the response was NOT applied: its interrupted turn is not available. "
+            "Do not report the delegated task as completed; if it is still needed, delegate it again.",
         )
+        if resumed is None:
+            return tool_streamer.terminal_event(tool_use)
+        # resume() returns an event when there is no child to resume.
+        return cast("Agent", child), resumed
 
     async def stream(self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any) -> ToolGenerator:
         tool_use_id = tool_use["toolUseId"]
         raw = tool_use.get("input", {}) or {}
         parent = invocation_state.get("agent")
+        tool_streamer = _AgentToolStreamer(
+            interrupt_state=getattr(parent, "_interrupt_state", None),
+            tool_use_id=tool_use_id,
+            namespace="v1:subagent",
+        )
 
         try:
-            prepared = self._prepare_child(tool_use_id, raw, parent)
-            if isinstance(prepared, str):
-                yield self._error_result(tool_use_id, prepared)
+            prepared = self._prepare_child(tool_use, raw, parent, tool_streamer)
+            if not isinstance(prepared, tuple):
+                yield self._error_result(tool_use_id, prepared) if isinstance(prepared, str) else prepared
                 return
             child, prompt = prepared
 
@@ -343,17 +318,16 @@ class _SubagentTool(AgentTool):
             cancel_signal = (
                 tool_context.cancel_signal if tool_context is not None else getattr(parent, "cancel_signal", None)
             )
+            # Join the request of the tool call so the child shares its limits and usage.
+            invocation_context = tool_context.invocation_context if tool_context is not None else None
             child_state = {**invocation_state} if isinstance(invocation_state, dict) else invocation_state
-            result = None
-            async for event in child.stream_async(prompt, invocation_state=child_state, cancel_signal=cancel_signal):
-                if "result" in event:
-                    result = event["result"]
-                else:
-                    yield ToolStreamEvent(tool_use, event)
-
-            yield self._finalize_result(tool_use_id, tool_use, child, result)
+            source = child.stream_async(
+                prompt, invocation_state=child_state, cancel_signal=cancel_signal, invocation_context=invocation_context
+            )
+            async for event in tool_streamer.stream(self._adapter, child, source):
+                yield ToolStreamEvent(tool_use, event)
+            yield tool_streamer.terminal_event(tool_use)
         except Exception as exc:
-            self._pending.pop(tool_use_id, None)
             logger.warning(
                 "tool_name=<%s>, tool_use_id=<%s> | subagent failed: %s",
                 self._name,
@@ -370,7 +344,6 @@ def make_subagent(
     default_preset: str | None = None,
     instructions: Open | Choice | Fixed | None = None,
     tools: Choice | Fixed | Inherit | None = None,
-    mcp_servers: Choice | Fixed | Inherit | None = None,
     model: Inherit | Choice | Fixed | None = None,
     context: Fixed | Choice | None = None,
     max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH,
@@ -400,48 +373,31 @@ def make_subagent(
     if default_preset is None and presets:
         default_preset = next(iter(presets))
 
-    # A tools Choice must be multiple.
-    if tools is None:
-        tools = Inherit()
-    elif isinstance(tools, Choice):
-        if not tools.options:
-            raise ValueError("tools=Choice([]) offers no options; use Fixed([]) for a toolless child, or Inherit().")
-        if not tools.multiple:
-            raise ValueError("tools=Choice(...) must be multiple=True; a subagent selects a subset of tools.")
-
-    if mcp_servers is None:
-        mcp_servers = Inherit()
-    elif isinstance(mcp_servers, Choice):
-        if not mcp_servers.options:
-            raise ValueError("mcp_servers=Choice([]) offers no options; use Fixed([]) for no servers, or Inherit().")
-        if not mcp_servers.multiple:
-            raise ValueError("mcp_servers=Choice(...) must be multiple=True; a subagent selects a subset of servers.")
-
     schema = _build_schema(
         presets=presets,
         default_preset=default_preset,
         instructions=instructions,
         tools=tools,
-        mcp_servers=mcp_servers,
         model=model,
         context=context,
     )
     tool_spec = {
         "name": name,
-        "description": _description(description, presets),
+        "description": description,
         "inputSchema": {"json": schema},
     }
 
     def resolve(raw: Mapping[str, Any]) -> AgentSpec:
-        return _resolve_spec(
-            raw,
+        # The schema has no name field; the child takes the tool's name.
+        model_input: list[Mapping[str, Any]] = [{**raw, "name": name}]
+        return _resolve_specs(
+            model_input,
             presets=presets,
             default_preset=default_preset,
             instructions=instructions,
             tools=tools,
-            mcp_servers=mcp_servers,
             model=model,
-        )
+        )[0]
 
     return _SubagentTool(name, tool_spec, resolve, context, builder, max_depth)
 

@@ -61,7 +61,7 @@ const failingTool = tool({
   },
 })
 
-describe.sequential('Telemetry Integration', () => {
+describe('Telemetry Integration', { concurrent: false }, () => {
   beforeAll(() => {
     exporter = new InMemorySpanExporter()
     provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
@@ -806,7 +806,7 @@ describe.sequential('Telemetry Integration', () => {
   })
 })
 
-describe.sequential('Metrics Integration', () => {
+describe('Metrics Integration', { concurrent: false }, () => {
   let metricExporter: InMemoryMetricExporter
   let metricReader: PeriodicExportingMetricReader
   let meterProvider: MeterProvider

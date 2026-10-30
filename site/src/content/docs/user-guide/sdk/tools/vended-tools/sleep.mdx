@@ -1,0 +1,70 @@
+---
+title: Sleep
+description: "Pause a Strands agent for a bounded number of seconds. Cancelling the invocation aborts the sleep, and the developer, not the model, sets the maximum duration."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/sleep/sleep.ts
+  - path: strands-py/src/strands/vended_tools/sleep/sleep.py
+---
+
+Pauses the agent for a bounded number of seconds. Cancelling the enclosing
+invocation aborts the sleep immediately rather than waiting for the full
+duration, so a long timer never ties up a session the caller has moved on from.
+
+_Supported in: Node.js, modern browsers (TypeScript); all platforms (Python)._
+
+The maximum duration is configurable at construction (default: 60 seconds) and
+cannot be raised by the model. Negative, `NaN`, infinite, non-numeric, and
+boolean durations are rejected at the tool boundary.
+
+**Example:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/sleep_imports.ts:sleep_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/sleep.ts:sleep_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import sleep
+
+agent = Agent(tools=[sleep])
+agent("Pause for two seconds, then continue.")
+```
+
+</Tab>
+</Tabs>
+
+**Custom maximum:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/sleep_imports.ts:sleep_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/sleep.ts:sleep_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import make_sleep
+
+short_sleep = make_sleep(max_duration=5)
+agent = Agent(tools=[short_sleep])
+```
+
+</Tab>
+</Tabs>
+
+[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/sleep/README.md)

@@ -68,7 +68,7 @@ describe('read/write/edit', () => {
 
   it('returns an ImageBlock for an image extension', async () => {
     const path = join(dir, 'pic.png')
-    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     writeFileSync(path, bytes)
     const out = await read.invoke({ path }, ctx())
     expect(out).toBeInstanceOf(ImageBlock)
@@ -84,6 +84,41 @@ describe('read/write/edit', () => {
     writeFileSync(path, new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))
     const out = await read.invoke({ path }, ctx())
     expect((out as ImageBlock).format).toBe('jpeg')
+  })
+
+  it.each([
+    ['a.gif', [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 'gif'],
+    ['a.gif', [0x47, 0x49, 0x46, 0x38, 0x37, 0x61], 'gif'],
+    ['a.webp', [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38], 'webp'],
+    ['photo.jpg', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'png'],
+    ['shot.png', [0xff, 0xd8, 0xff, 0xe0], 'jpeg'],
+  ])('image format follows the bytes, not the extension (%s)', async (name, bytes, expected) => {
+    const path = join(dir, name)
+    writeFileSync(path, new Uint8Array(bytes))
+    const out = await read.invoke({ path }, ctx())
+    expect((out as ImageBlock).format).toBe(expected)
+  })
+
+  it.each([
+    ['plain text', new Uint8Array([0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x74, 0x65, 0x78, 0x74, 0x0a])],
+    ['empty', new Uint8Array([])],
+    ['truncated png signature', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x58])],
+    ['riff but not webp', new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45])],
+  ])('rejects non-image bytes under an image extension (%s)', async (_label, bytes) => {
+    const path = join(dir, 'notes.png')
+    writeFileSync(path, bytes)
+    const message = `.png extension but its ${bytes.length} bytes are not`
+    await expect(read.invoke({ path }, ctx())).rejects.toThrow(message)
+    await expect(makeRead({ media: false }).invoke({ path }, ctx())).rejects.toThrow(message)
+  })
+
+  it('surfaces a non-image as an error tool result, never a success image block', async () => {
+    const path = join(dir, 'notes.png')
+    writeFileSync(path, 'this is plain text\n')
+    const result = await agent.tool.read!.invoke({ path }, { recordDirectToolCall: false })
+    expect(result.status).toBe('error')
+    expect(result.content).toHaveLength(1)
+    expect((result.content[0] as { text?: string }).text).toContain('19 bytes are not a png, jpeg, gif, or webp image')
   })
 
   it('returns a DocumentBlock with a sanitized name for a binary document', async () => {
@@ -113,6 +148,19 @@ describe('read/write/edit', () => {
 
   it('rejects path traversal', async () => {
     await expect(read.invoke({ path: '/tmp/../etc/passwd' }, ctx())).rejects.toThrow('path traversal')
+  })
+
+  it('accepts Windows drive-letter paths as absolute', async () => {
+    const written: string[] = []
+    const sandbox = { writeText: async (path: string) => void written.push(path) }
+    const winCtx = { agent: { sandbox } } as unknown as ToolContext
+    await write.invoke({ path: 'C:\\Users\\me\\novel.json', content: '{}' }, winCtx)
+    await write.invoke({ path: 'C:/Users/me/novel.json', content: '{}' }, winCtx)
+    await write.invoke({ path: '\\\\server\\share\\novel.json', content: '{}' }, winCtx)
+    expect(written).toEqual(['C:\\Users\\me\\novel.json', 'C:/Users/me/novel.json', '\\\\server\\share\\novel.json'])
+    // Drive-relative (`C:foo`) is not absolute on either platform.
+    await expect(write.invoke({ path: 'C:novel.json', content: '' }, winCtx)).rejects.toThrow('not absolute')
+    await expect(write.invoke({ path: 'C:\\Users\\..\\secret', content: '' }, winCtx)).rejects.toThrow('path traversal')
   })
 })
 

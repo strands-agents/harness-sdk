@@ -5,8 +5,6 @@ sidebar:
   label: "Evaluate with AI"
 ---
 
-## Overview
-
 Point an AI assistant at your agent and it runs the whole evaluation for you: it plans the evaluation, generates test data, scores the agent with the Strands Evals SDK, and writes a report. This is the assistant driving the entire workflow, not an evaluator that happens to use an LLM as its judge. The workflow ships as the Eval SOP, an [Agent SOP](https://github.com/strands-agents/agent-sop): a markdown standard for encoding agent workflows as natural-language instructions with parameterized inputs and RFC 2119 (MUST, SHOULD, MAY) constraints.
 
 Designing agent evaluations by hand is slow and easy to get wrong. Choosing the right evaluators, covering edge cases and failure modes, writing the SDK code, and keeping results consistent across a team all take real effort. Eval SOP structures that work into four phases (Plan, Data, Eval, Report) that run the same way across different AI assistants, and distributes through MCP servers, Anthropic Skills, or direct integration with a Strands agent.

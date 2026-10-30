@@ -24,7 +24,27 @@ from pathlib import Path
 from typing import Any
 
 import boto3
-import pyaudio  # pyright: ignore[reportMissingModuleSource]
+
+PORTAUDIO_INSTALL_GUIDANCE = (
+    "Audio is unavailable: PyAudio could not load the PortAudio system library.\n"
+    "Install PortAudio, restart the CLI, and try /voice again:\n"
+    "  macOS   brew install portaudio\n"
+    "  Ubuntu  sudo apt-get install libportaudio2\n"
+    "  Fedora  sudo dnf install portaudio\n"
+    "  Arch    sudo pacman -S portaudio"
+)
+
+try:
+    # Import PyAudio before the strands.bidi imports below, which reach the same native
+    # library: on a first run without PortAudio installed (#5413) the PyAudio wheel is
+    # present but its native dependency is not, and the import raises OSError. The TUI
+    # surfaces this process's stderr, so print the install steps and exit instead of
+    # showing a traceback.
+    import pyaudio  # pyright: ignore[reportMissingModuleSource]
+except OSError as error:
+    sys.stderr.write(f"{PORTAUDIO_INSTALL_GUIDANCE}\nDetails: {error}\n")
+    raise SystemExit(1) from error
+
 from strands import tool
 from strands.experimental.bidi import (
     AudioProcessorConfig,
@@ -392,7 +412,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def audio_devices() -> list[dict[str, Any]]:
-    audio = pyaudio.PyAudio()
+    try:
+        audio = pyaudio.PyAudio()
+    except OSError as error:
+        # Same first-run dead end as the import, for layouts where PyAudio imports but the
+        # PortAudio init fails; --check would otherwise show a bare OSError.
+        raise OSError(f"{PORTAUDIO_INSTALL_GUIDANCE}\nDetails: {error}") from error
     try:
         devices = []
         for index in range(audio.get_device_count()):
