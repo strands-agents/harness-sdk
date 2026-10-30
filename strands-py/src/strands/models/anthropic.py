@@ -35,6 +35,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
+from ._model_info import ModelInfo, lookup_model_info
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -150,7 +151,9 @@ class AnthropicModel(Model):
                 caching everything before it. Caching is off when unset.
             cache_tools: Caches the tool definitions (deprecated, use CacheConfig(tools_ttl=...)). Superseded
                 by an explicitly set cache_config.tools_ttl.
-            max_tokens: Maximum number of tokens to generate.
+            max_tokens: Maximum number of tokens to generate. Defaults to the model's output limit from the
+                model info (``model_info.limits.max_output_tokens``); required for a model the model info does
+                not know, since the Anthropic API needs the field.
             model_id: Calude model ID (e.g., "claude-3-7-sonnet-latest").
                 For a complete list of supported models, see
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
@@ -168,7 +171,7 @@ class AnthropicModel(Model):
 
         cache_config: CacheConfig | None
         cache_tools: str | CacheToolsConfig | None
-        max_tokens: Required[int]
+        max_tokens: int
         model_id: Required[str]
         params: dict[str, Any] | None
         anthropic_tools: list[dict[str, Any]]
@@ -185,6 +188,7 @@ class AnthropicModel(Model):
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
+        self._validate_max_tokens()
 
         if "anthropic_tools" in self.config:
             self._validate_anthropic_tools(self.config["anthropic_tools"])
@@ -209,15 +213,34 @@ class AnthropicModel(Model):
 
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config.update(model_config)
+        self._validate_max_tokens()
 
     @override
     def get_config(self) -> AnthropicConfig:
-        """Get the Anthropic model configuration.
+        """Get the Anthropic model configuration, with ``max_tokens`` resolved when it was not set.
 
         Returns:
             The Anthropic model configuration.
         """
-        return resolve_config_metadata(self.config, self.config["model_id"])
+        config = resolve_config_metadata(self.config, self.config["model_id"])
+        if "max_tokens" in config:
+            return config
+        return {**config, "max_tokens": self._resolve_max_tokens()}  # type: ignore[typeddict-item]
+
+    def _resolve_max_tokens(self) -> int | None:
+        """The ``max_tokens`` to send: the configured value, else the model info's output limit, else None."""
+        if "max_tokens" in self.config:
+            return self.config["max_tokens"]
+        override = self.config.get("model_info")
+        return ModelInfo.merge(lookup_model_info(self.config["model_id"]), override).limits.max_output_tokens
+
+    def _validate_max_tokens(self) -> None:
+        """Raise when ``max_tokens`` is neither configured nor known from the model info."""
+        if self._resolve_max_tokens() is None:
+            raise ValueError(
+                f"model_id=<{self.config['model_id']}> | max_tokens is required: "
+                "the model info has no output token limit for this model"
+            )
 
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.
@@ -621,7 +644,7 @@ class AnthropicModel(Model):
         system = self._format_system_prompt(system_prompt, system_prompt_content)
 
         request = {
-            "max_tokens": self.config["max_tokens"],
+            "max_tokens": self.get_config()["max_tokens"],
             "messages": self._format_request_messages(messages, cache_target_idx, dynamic_trailing_blocks),
             "model": self.config["model_id"],
             **(self._format_tool_choice(tool_choice)),

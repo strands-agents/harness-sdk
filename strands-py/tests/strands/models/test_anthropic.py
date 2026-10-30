@@ -115,6 +115,56 @@ def test__init__unknown_model_no_context_window_limit(anthropic_client):
     assert model.get_config().get("context_window_limit") is None
 
 
+def test__init__defaults_max_tokens_to_the_model_info_output_limit(anthropic_client, messages):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="claude-sonnet-4-6")
+
+    assert model.get_config()["max_tokens"] == 128_000
+    assert model.format_request(messages)["max_tokens"] == 128_000
+
+
+def test__init__defaults_max_tokens_from_the_model_info_override(anthropic_client, messages):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="unknown-model", model_info=ModelInfo(limits=ModelLimits(max_output_tokens=2_000)))
+
+    assert model.format_request(messages)["max_tokens"] == 2_000
+
+
+def test__init__explicit_max_tokens_wins_over_the_model_info_output_limit(anthropic_client, messages):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
+
+    assert model.get_config()["max_tokens"] == 1
+    assert model.format_request(messages)["max_tokens"] == 1
+
+
+def test__init__raises_without_max_tokens_for_an_unknown_model(anthropic_client):
+    _ = anthropic_client
+
+    with pytest.raises(ValueError, match=r"model_id=<unknown-model> \| max_tokens is required"):
+        AnthropicModel(model_id="unknown-model")
+
+
+def test_update_config_re_resolves_the_default_max_tokens(anthropic_client, messages):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="claude-sonnet-4-6")
+
+    model.update_config(model_id="claude-opus-4-1")
+
+    assert model.format_request(messages)["max_tokens"] == 32_000
+
+
+def test_update_config_raises_when_the_new_model_has_no_max_tokens(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="claude-sonnet-4-6")
+
+    with pytest.raises(ValueError, match="max_tokens is required"):
+        model.update_config(model_id="unknown-model")
+
+
 def test_update_config(model, model_id):
     model.update_config(model_id=model_id)
 
