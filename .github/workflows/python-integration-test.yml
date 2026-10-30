@@ -8,6 +8,11 @@ on:
       - '.github/workflows/python-*'
   merge_group:
     types: [checks_requested]
+  # Nightly full run of main. Gives the CloudWatch dashboards a flakiness
+  # baseline that no PR's own breakage can pollute. Scheduled runs check out
+  # main's own code, so authorization-check is skipped for them.
+  schedule:
+    - cron: '17 6 * * *'
   # workflow_call entry — TRUST INVARIANT.
   #
   # Lets another workflow in this repo reuse the integ tests against an
@@ -83,15 +88,16 @@ jobs:
         id: auth
         uses: strands-agents/devtools/authorization-check@main
         with:
-          # Skip on merge_group (gated by branch protection) and on
+          # Skip on merge_group (gated by branch protection), on schedule
+          # (runs main's own code; there is no PR author to check) and on
           # workflow_call (the caller — release.yml — is workflow_dispatch
           # gated, see the trigger comment above).
           # `github.event_name` can't identify the release here — inside a
           # reusable workflow it reports the caller's event, never
           # 'workflow_call' — so key off `inputs.ref`, which only a
           # workflow_call caller supplies (empty on pull_request_target /
-          # merge_group). Matches the validate-call-ref guard above.
-          skip-check: ${{ github.event_name == 'merge_group' || inputs.ref != '' }}
+          # merge_group / schedule). Matches the validate-call-ref guard above.
+          skip-check: ${{ github.event_name == 'merge_group' || github.event_name == 'schedule' || inputs.ref != '' }}
           username: ${{ github.event.pull_request.user.login || 'invalid' }}
           allowed-roles: 'maintain,triage,write,admin'
 
@@ -143,7 +149,7 @@ jobs:
           persist-credentials: false
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -197,16 +203,37 @@ jobs:
             .github/scripts
           persist-credentials: false
 
+      # One directory per matrix leg: test-results/, bidi-test-results/, mcp-1x-test-results/.
       - name: Download test results
         uses: actions/download-artifact@v8.0.2
         with:
-          name: test-results
+          pattern: '*test-results'
+          merge-multiple: false
           path: ${{ runner.temp }}/test-results
 
+      # Each leg is published separately with a Leg dimension; a leg whose upload
+      # fails does not stop the others, but the step fails at the end.
+      #
+      # Do not re-run this job after a partial failure: put_metric_data has no
+      # idempotency key, so batches that succeeded before the failure are already
+      # stored and a re-run republishes them, double-counting that run. Fix the
+      # cause and let the next run publish instead.
       - name: Publish test metrics to CloudWatch
         env:
           REPO_NAME: ${{ github.event.repository.name }}
-          TEST_RESULTS_FILE: ${{ runner.temp }}/test-results/test-results.xml
+          RESULTS_DIR: ${{ runner.temp }}/test-results
         run: |
           pip install --no-cache-dir boto3
-          python .github/scripts/upload-integ-test-metrics.py "$TEST_RESULTS_FILE" "$REPO_NAME"
+          status=0
+          for dir in "$RESULTS_DIR"/*/; do
+            leg=$(basename "$dir")
+            leg=${leg%-test-results}
+            [ "$leg" = "test-results" ] && leg=all
+            if [ ! -f "$dir/test-results.xml" ]; then
+              echo "::warning::No test-results.xml in $dir; nothing to publish for leg $leg"
+              continue
+            fi
+            python .github/scripts/upload-integ-test-metrics.py "$dir/test-results.xml" "$REPO_NAME" python \
+              --leg "$leg" || status=1
+          done
+          exit "$status"

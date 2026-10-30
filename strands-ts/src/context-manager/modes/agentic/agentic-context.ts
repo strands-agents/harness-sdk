@@ -193,7 +193,7 @@ export function createTokenUsageMiddleware(): MiddlewareInputHandler<InvokeModel
       return context
     }
 
-    const contextWindowLimit = context.model.getConfig().contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
+    const contextWindowLimit = context.model.modelInfo.limits?.contextWindow ?? DEFAULT_CONTEXT_WINDOW_LIMIT
     const remaining = Math.max(0, contextWindowLimit - projectedInputTokens)
     const percentUsed = ((projectedInputTokens / contextWindowLimit) * 100).toFixed(1)
 

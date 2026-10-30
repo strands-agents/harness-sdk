@@ -11,7 +11,7 @@ import bisect
 import inspect
 import logging
 from collections.abc import Awaitable, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Generic, Protocol, runtime_checkable
 
@@ -22,6 +22,7 @@ from ._type_inference import infer_event_types
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..agent.invocation_context import InvocationContext
     from ..types.agent import LocalAgent
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,15 @@ class _CallbackEntry:
 
 @dataclass
 class BaseHookEvent:
-    """Base class for all hook events."""
+    """Base class for all hook events.
+
+    Attributes:
+        invocation_context: The request this event belongs to (``None`` outside one); pass it as
+            ``invocation_context`` to a nested call to join that request. Kept out of equality
+            and repr.
+    """
+
+    invocation_context: "InvocationContext | None" = field(default=None, kw_only=True, compare=False, repr=False)
 
     @property
     def should_reverse_callbacks(self) -> bool:

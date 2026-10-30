@@ -1,0 +1,153 @@
+---
+title: Vended Tools
+description: "Pre-built tools included in the SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes."
+tags: [tool-authoring]
+---
+
+Vended tools are pre-built tools included directly in the Strands Harness SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
+
+They ship as part of the SDK package and are updated alongside it. See [Versioning & Maintenance](#versioning--maintenance) for how changes are communicated and what level of backwards compatibility they maintain.
+
+## Quickstart
+
+Each tool is imported from its own subpath under `@strands-agents/sdk/vended-tools`, with no additional packages required:
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/index_imports.ts:basic_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/index.ts:agent_with_vended_tools"
+```
+
+## Available tools
+
+| Tool | Description | Supported in |
+|------|-------------|--------------|
+| [Edit](edit.mdx) | Make in-place changes to a text file | Python, TypeScript (Node.js) |
+| [File Editor](file-editor.mdx) *(deprecated)* | View, create, and edit files | Python, TypeScript (Node.js) |
+| [Read](read.mdx) | Read a file as numbered text or a media block | Python, TypeScript (Node.js) |
+| [Write](write.mdx) | Create or overwrite a text file with the full provided content | Python, TypeScript (Node.js) |
+| [HTTP Request](http-request.mdx) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
+| [Notebook](notebook.mdx) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
+| [Bash](shell.mdx) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
+| [MCP Router](mcp-router.mdx) | Connect to Model Context Protocol servers on a developer-set allowlist | Python, TypeScript (Node.js) |
+| [Sleep](sleep.mdx) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
+| [Handoff to User](handoff-to-user.mdx) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
+| [Stop](stop.mdx) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
+| [Web Fetch](web-fetch.mdx) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
+| [A2A Client](a2a-client.mdx) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
+| [Python REPL](python-repl.mdx) | Execute Python code through the agent's sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
+| [Subagent](subagent.mdx) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
+| [Swarm](swarm.mdx) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
+| [Graph](graph.mdx) | Run a team of sub-agents as a directed acyclic graph designed by the model | Python, TypeScript (Node.js, browsers) |
+
+## Multi-agent tools
+
+The [subagent](subagent.mdx), [swarm](swarm.mdx), and [graph](graph.mdx) tools let the model configure child agents at runtime. They use axis policies to control how much freedom the model has over each parameter. Import them from <Syntax py="strands.multiagent" ts="@strands-agents/sdk/multiagent" />.
+
+- <Syntax py="Inherit()" ts="new Inherit()" />: the child inherits the parent's value. Hidden from the model.
+- <Syntax py="Fixed(value)" ts="new Fixed(value)" />: you pin the value. Hidden from the model.
+- <Syntax py="Open()" ts="new Open()" />: the model writes a free-form string value.
+- <Syntax py="Choice([...], multiple=True)" ts="new Choice([...], true)" />: the model picks from a set you define (one value, or several when `multiple` is set).
+
+Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`. When the model omits both `agent_type` and `instructions`, the child uses <Syntax py="default_preset" ts="defaultPreset" />, or the first preset if none is set.
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/index_imports.ts:multi_agent_tools_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/index.ts:multi_agent_tools_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.multiagent import Choice, Fixed, Inherit, Open, Preset
+from strands.vended_tools.http_request import http_request
+from strands.vended_tools.shell import shell
+from strands.vended_tools.subagent import make_subagent
+
+delegate = make_subagent(
+    presets={
+        "researcher": Preset(
+            instructions="You research topics on the web and cite your sources.",
+            description="web research",
+        ),
+        "summarizer": Preset(
+            instructions="You condense documents into short bullet summaries.",
+            description="summarize a document",
+        ),
+    },
+    default_preset="researcher",
+    instructions=Open(),  # model writes the child's system prompt
+    tools=Fixed(["http_request"]),  # child can only make HTTP requests
+    model=Inherit(),  # child runs on the parent's model
+    context=Choice(["none", "no_tools"]),  # model picks how much history to share
+)
+agent = Agent(tools=[shell, http_request, delegate])
+agent("Have a subagent summarize the latest Python release notes, then run the tests.")
+```
+
+</Tab>
+</Tabs>
+
+Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent's tools, model, and interventions, so a child's tool calls go through the same approval and authorization checks as the parent's. Each child gets <Syntax py='context_manager="auto"' ts="contextManager: 'auto'" /> (unless its model is stateful) in place of the parent's context-management tools, and accesses the parent's long-term memory through inherited memory tools.
+
+To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`. A custom builder decides everything the child inherits, including interventions.
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/index_imports.ts:custom_builder_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/index.ts:custom_builder_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.multiagent import AgentSpec
+from strands.vended_tools.http_request import http_request
+from strands.vended_tools.subagent import make_subagent
+
+def build_child(spec: AgentSpec) -> Agent:
+    return Agent(name=spec.name, system_prompt=spec.instructions, tools=[http_request])
+
+delegate = make_subagent(builder=build_child)
+agent = Agent(tools=[delegate])
+```
+
+</Tab>
+</Tabs>
+
+---
+
+## Using multiple tools together
+
+Combine vended tools in one agent to cover a multi-step workflow:
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/index_imports.ts:combined_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/index.ts:combined_tools_example"
+```
+
+## Versioning & maintenance
+
+Vended tools ship as part of the SDK and are updated alongside it. Report bugs and feature requests in the [GitHub repository](https://github.com/strands-agents/harness-sdk/issues).
+
+Tool names are stable and will not change. In minor versions, a tool's description, spec, or parameters may be updated to improve effectiveness. These changes are noted in SDK release notes. Pin your SDK version and test after upgrades if your workflows depend on specific tool behavior.
+
+## See also
+
+- [Custom Tools](../custom-tools.mdx): build your own tools
+- [Community Tools Package](../community-tools-package.mdx): Python tools package with 30+ tools
+- [Session Management](../../agents/session-management.mdx): persist agent state including notebooks
+- [Interrupts](../../interrupts.mdx): implement approval workflows for sensitive operations
+- [Hooks](../../agents/hooks.mdx): intercept and customize tool execution

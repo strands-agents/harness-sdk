@@ -17,6 +17,7 @@ from ...types.content import ContentBlock, Message, Messages
 from ...types.tools import ToolResult, ToolResultContent
 
 if TYPE_CHECKING:
+    from ...agent.invocation_context import InvocationContext
     from ...models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ async def _summarize_content(
     content: list[ContentBlock],
     model: Model,
     config: SummarizeConfig | None = None,
+    invocation_context: InvocationContext | None = None,
 ) -> str | None:
     """Summarize content blocks via an LLM call. Model errors propagate to the caller."""
     system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
@@ -75,7 +77,7 @@ async def _summarize_content(
     chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
 
     result_message: Message | None = None
-    async for event in process_stream(chunks):
+    async for event in process_stream(chunks, invocation_context=invocation_context):
         if "stop" in event:
             _, result_message, _, _ = event["stop"]
 

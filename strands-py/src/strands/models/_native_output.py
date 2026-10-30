@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from ._model_info import ModelInfo
+
 logger = logging.getLogger(__name__)
 
 # Ways a provider can enforce a structured output request, strongest first.
@@ -83,6 +85,7 @@ def structured_output_mechanisms(
     unsupported: Set[StructuredOutputMechanism],
     tool_choice: dict[str, Any] | None,
     output_model: type[BaseModel],
+    model_info: ModelInfo | None = None,
 ) -> list[StructuredOutputMechanism]:
     """List the mechanisms to try, strongest first.
 
@@ -93,12 +96,19 @@ def structured_output_mechanisms(
         unsupported: Mechanisms the model is known to reject.
         tool_choice: The requested tool choice; forcing is only tried when it forces a tool.
         output_model: The output model the response must produce.
+        model_info: What the SDK knows about the model; a known-unsupported mechanism is skipped without a request.
 
     Returns:
         The mechanisms to try in order; never empty, since auto is always available.
     """
+    capabilities = (model_info or ModelInfo()).capabilities
+    skipped = set(unsupported)
+    if capabilities.forced_tool_choice is False:
+        skipped.add("forced")
+    if capabilities.native_structured_output is False:
+        skipped.add("native")
     forces_tool = tool_choice is not None and ("any" in tool_choice or "tool" in tool_choice)
-    native_known_unsupported = "native" in unsupported
+    native_known_unsupported = "native" in skipped
     feature = (
         None if native_known_unsupported else find_unsupported_native_output_feature(output_model.model_json_schema())
     )
@@ -111,7 +121,7 @@ def structured_output_mechanisms(
     return [
         mechanism
         for mechanism in STRUCTURED_OUTPUT_MECHANISMS
-        if mechanism not in unsupported
+        if mechanism not in skipped
         and (mechanism != "forced" or forces_tool)
         and (mechanism != "native" or not feature)
     ]

@@ -94,7 +94,7 @@ async def _render(agent: Agent, memo: dict[str, Any]) -> str | None:
 async def _gather(agent: Agent) -> tuple[str | None, str | None, str | None, list[str], list[str]]:
     """The one-time, memoized part: platform, working directory, cwd ``AGENTS.md``, and nearby links.
 
-    Platform and cwd are read from the sandbox (via ``uname``/``pwd``), not the host process, so they
+    Platform and cwd are read from the sandbox (via ``uname`` and ``$PWD``), not the host process, so they
     describe where the agent actually runs — a Docker or SSH sandbox, not the machine hosting it.
     """
     try:
@@ -104,7 +104,8 @@ async def _gather(agent: Agent) -> tuple[str | None, str | None, str | None, lis
         # back to, still surface the date block without probing the environment.
         return None, None, None, [], []
     platform = await _probe(sandbox, "uname -s")
-    cwd = await _probe(sandbox, "pwd")
+    # ``echo "$PWD"`` prints a bare path in both sh and PowerShell; PowerShell's ``pwd`` prints a table.
+    cwd = await _probe(sandbox, 'echo "$PWD"')
     agents_md = await _read_text(sandbox, "AGENTS.md")
     found = await _discover(sandbox)
     # The working-directory AGENTS.md is shown in full above; keep only the nested ones as links.

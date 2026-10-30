@@ -259,7 +259,7 @@ Common configuration parameters include:
 
 - `model_id` - The Bedrock model identifier
 - `temperature` - Controls randomness (higher = more random)
-- `max_tokens` - Maximum number of tokens to generate
+- `max_tokens` - Maximum number of tokens to generate; defaults to the model's known output limit (`get_config()` shows the value); pass `None` to leave it unset. Bedrock reserves `input + max_tokens` against your tokens-per-minute quota when a request starts, so set it explicitly for high-concurrency workloads
 - `streaming` - Enable/disable streaming mode
 - `guardrail_id` - ID of the guardrail to apply
 - `cache_prompt` - Cache point type for the system prompt (deprecated, use `cache_config`)
@@ -278,7 +278,7 @@ Common configuration parameters include:
 
 - `modelId` - The Bedrock model identifier
 - `temperature` - Controls randomness (higher = more random)
-- `maxTokens` - Maximum number of tokens to generate
+- `maxTokens` - Maximum number of tokens to generate; defaults to the model's known output limit (`getConfig()` shows the value). Bedrock reserves `input + maxTokens` against your tokens-per-minute quota when a request starts, so set it explicitly for high-concurrency workloads
 - `stream` - Enable/disable streaming mode
 - `cacheConfig` - Enable prompt caching with `{ strategy: 'auto' }`, or `{ messagesTTL: false }` to cache the tool definitions and system prompt only
 - `region` - AWS region to use

@@ -10,7 +10,9 @@ from strands._context_manager.modes.agentic.agentic_context import (
     truncate_context,
 )
 from strands.agent.conversation_manager.compression.pin_message import pin_message
+from strands.agent.invocation_context import _create_invocation_context
 from strands.types.content import Message
+from strands.types.tools import ToolContext
 
 
 def text_msg(role: str, text: str) -> Message:
@@ -38,6 +40,12 @@ async def _mock_model_stream(response_text):
     yield {"contentBlockDelta": {"delta": {"text": response_text}}}
     yield {"contentBlockStop": {}}
     yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+async def _mock_model_stream_with_usage(response_text, usage):
+    async for event in _mock_model_stream(response_text):
+        yield event
+    yield {"metadata": {"usage": usage, "metrics": {"latencyMs": 0}}}
 
 
 async def _mock_model_stream_error(error):
@@ -411,3 +419,28 @@ class TestPinContextEmptyConversation:
         agent = make_agent([])
         result = await invoke_tool(pin_context, agent, alist, select="last_turn", action="pin")
         assert result == "No messages in the conversation."
+
+
+@pytest.mark.asyncio
+async def test_summarize_context_adds_its_usage_to_the_request_total(alist):
+    messages = make_messages(20)
+    model = Mock()
+    model.stream = Mock(
+        side_effect=lambda *a, **kw: _mock_model_stream_with_usage(
+            "Summary", {"inputTokens": 4, "outputTokens": 5, "totalTokens": 9}
+        )
+    )
+    agent = make_agent(messages, model)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+    tool_use = {"toolUseId": "test-id", "name": summarize_context.tool_name, "input": {"keep_recent": 10}}
+    tool_context = ToolContext(
+        tool_use=tool_use, agent=agent, invocation_state={"agent": agent}, invocation_context=request
+    )
+
+    events = await alist(
+        summarize_context.stream(tool_use, {"agent": agent}, _tool_context=tool_context),
+    )
+
+    assert "Summarized" in events[-1].tool_result["content"][0]["text"]
+    assert request.usage == {"turns_taken": 1, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}

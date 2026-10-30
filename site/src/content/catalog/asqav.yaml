@@ -1,0 +1,9 @@
+name: Asqav
+description: "Signs each agent model call as a hash-chained Asqav receipt (input and output hashes, model name, latency) that can be verified without an Asqav account; observe-only and fail-open."
+integrationType: observability
+languages:
+  python:
+    package: asqav
+github: https://github.com/jagmarques/asqav-sdk
+docsUrl: https://github.com/jagmarques/asqav-sdk/blob/main/python/examples/strands_integration.py
+addedDate: 2026-10-24

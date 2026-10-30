@@ -1,8 +1,13 @@
 import { InterventionHandler } from '../../interventions/handler.js'
-import { confirm, proceed, defaultEvaluate } from '../../interventions/actions.js'
+import { confirm, deny, proceed, defaultEvaluate } from '../../interventions/actions.js'
 import { logger } from '../../logging/logger.js'
-import { createLlmRiskClassifier } from './classifier.js'
-import type { ClassifierResult, HumanInTheLoopClassifier, LlmClassifierConfig } from './classifier.js'
+import { createDecisionModelRiskClassifier, createLlmRiskClassifier } from './classifier.js'
+import type {
+  ClassifierResult,
+  DecisionModelClassifierConfig,
+  HumanInTheLoopClassifier,
+  LlmClassifierConfig,
+} from './classifier.js'
 import type { InterventionAction } from '../../interventions/actions.js'
 import type { BeforeToolCallEvent } from '../../hooks/events.js'
 import type { JSONValue } from '../../types/json.js'
@@ -67,9 +72,13 @@ export interface HumanInTheLoopConfig {
    * - **Omitted / `false`**: all non-allowed tools require approval (default behavior).
    * - **`true`**: uses the built-in LLM risk classifier with defaults.
    * - **Config object** (`{ systemPrompt?, model? }`): built-in LLM classifier with custom settings.
+   *   Kept for backwards compatibility; prefer the decision model config for new code.
+   * - **Decision model config** (`{ decisionModel, question? }`): asks any `DecisionModel` (e.g.
+   *   `LLMDecisionModel`) whether the call requires approval. An `Uncertain` answer requires approval
+   *   and carries its reason into the approval prompt; a definite answer carries no reason.
    * - **Custom function**: your own sync or async classification logic.
    */
-  classifier?: boolean | LlmClassifierConfig | HumanInTheLoopClassifier
+  classifier?: boolean | LlmClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier
 
   /**
    * When true, trust responses approve the tool AND remember it
@@ -104,6 +113,7 @@ export interface HumanInTheLoopConfig {
    * - **Default** (omitted): uses interrupt/resume — agent pauses, caller resumes with response.
    * - **`'stdio'`**: prompts via CLI readline (Node.js only). Agent blocks inline until human responds.
    * - **Custom function**: your own async prompt logic (Slack, web UI, etc.). Agent blocks inline.
+   *   Returning `undefined` denies the call.
    */
   ask?: ((prompt: string) => Promise<JSONValue>) | 'stdio'
 }
@@ -136,6 +146,13 @@ export interface HumanInTheLoopConfig {
  *   interventions: [new HumanInTheLoop({
  *     allowedTools: ['readFile', 'listDir'],
  *     classifier: true,
+ *   })],
+ * })
+ *
+ * // Risk classification via a DecisionModel
+ * const agent = new Agent({
+ *   interventions: [new HumanInTheLoop({
+ *     classifier: { decisionModel: new LLMDecisionModel() },
  *   })],
  * })
  *
@@ -204,21 +221,29 @@ export class HumanInTheLoop extends InterventionHandler {
 
     const response = await this._ask(prompt)
 
+    // An inline caller has no way to resume an interrupt, so a missing answer fails closed.
+    if (response === undefined) {
+      return deny(`Tool "${toolName}" denied: approval callback returned no response.`)
+    }
+
     if (!isNegated && this._enableTrust && this._evaluateTrust(response)) {
       this._trustTool(event, toolName)
       return proceed()
     }
 
-    return confirm(prompt, {
-      response,
-      evaluate: this._evaluate ?? defaultEvaluate,
-    })
+    return this._decideAskResponse(toolName, response)
+  }
+
+  /** Decides on the answer the human just gave, without consulting stored interrupt responses. */
+  private _decideAskResponse(toolName: string, response: JSONValue): InterventionAction {
+    const evaluateResponse = this._evaluate ?? defaultEvaluate
+    return evaluateResponse(response) ? proceed() : deny(`Tool "${toolName}" denied: the human rejected the call.`)
   }
 
   /**
    * Precedence (first match wins):
    * 1. Negated (`!tool`) → always requires approval (cannot be trusted)
-   * 2. Trusted at runtime via 't' response (stored in agent.appState) → runs freely
+   * 2. Trusted at runtime via 't' response (stored in agent.appState, only read when enableTrust) → runs freely
    * 3. Wildcard (`*`) → runs freely
    * 4. Explicitly listed in allowedTools → runs freely
    * 5. Classifier (if provided) → its decision
@@ -231,8 +256,7 @@ export class HumanInTheLoop extends InterventionHandler {
       return { requiresHumanInTheLoop: true }
     }
 
-    const trusted = (event.agent.appState.get(TRUSTED_TOOLS_KEY) as string[] | undefined) ?? []
-    if (trusted.includes(toolName)) {
+    if (this._enableTrust && this._trustedTools(event).includes(toolName)) {
       return { requiresHumanInTheLoop: false }
     }
 
@@ -263,18 +287,28 @@ export class HumanInTheLoop extends InterventionHandler {
   }
 
   private _trustTool(event: BeforeToolCallEvent, toolName: string): void {
-    const trusted = (event.agent.appState.get(TRUSTED_TOOLS_KEY) as string[] | undefined) ?? []
+    const trusted = this._trustedTools(event)
     if (!trusted.includes(toolName)) {
       event.agent.appState.set(TRUSTED_TOOLS_KEY, [...trusted, toolName])
     }
   }
 
+  /** Agent state can be restored from a session, so anything other than a list of strings counts as empty. */
+  private _trustedTools(event: BeforeToolCallEvent): string[] {
+    const trusted = event.agent.appState.get(TRUSTED_TOOLS_KEY)
+    if (Array.isArray(trusted) && trusted.every((toolName): toolName is string => typeof toolName === 'string')) {
+      return trusted
+    }
+    return []
+  }
+
   private _resolveClassifier(
-    classifier: boolean | LlmClassifierConfig | HumanInTheLoopClassifier | undefined
+    classifier: boolean | LlmClassifierConfig | DecisionModelClassifierConfig | HumanInTheLoopClassifier | undefined
   ): HumanInTheLoopClassifier | undefined {
     if (!classifier) return undefined
     if (classifier === true) return createLlmRiskClassifier()
     if (typeof classifier === 'function') return classifier
+    if ('decisionModel' in classifier) return createDecisionModelRiskClassifier(classifier)
     return createLlmRiskClassifier(classifier)
   }
 

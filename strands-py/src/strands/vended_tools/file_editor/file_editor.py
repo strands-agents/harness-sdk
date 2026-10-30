@@ -1,5 +1,10 @@
 """Sandbox-routed file editor tool.
 
+.. deprecated::
+    This tool is deprecated in favor of the focused ``read``, ``write``, and
+    ``edit`` vended tools (see :mod:`strands.vended_tools.edit`). It will be
+    removed in a future release.
+
 Provides
 ``view`` (with line ranges), ``create``, ``str_replace``, and ``insert``
 operations, all routed through a :class:`~strands.sandbox.base.Sandbox`: either
@@ -12,7 +17,10 @@ from __future__ import annotations
 
 import posixpath
 import re
+import warnings
 from typing import TYPE_CHECKING, Literal
+
+from typing_extensions import deprecated
 
 from ...sandbox.errors import SandboxPathNotFoundError
 from ...tools.decorator import tool
@@ -32,6 +40,18 @@ DEFAULT_FILE_EDITOR_DESCRIPTION = (
 )
 
 
+# `@deprecated` gives PEP 702 static checkers (mypy, pyright) a deprecation
+# signal; the matching `warnings.warn` in the body is the explicit runtime
+# notice called for in strands-py/AGENTS.md's logging guidance. Python's default
+# warning filter dedupes identical (message, category, caller line) pairs, so
+# a single call site surfaces one warning in practice.
+# PEP 702 only honors `@deprecated` when the argument is a string literal, so
+# the message is spelled out rather than referencing a shared constant.
+@deprecated(
+    "file_editor is deprecated and will be removed in a future release. "
+    "Use the focused edit vended tool instead (strands.vended_tools.edit), "
+    "paired with the read and write tools."
+)
 def make_file_editor(
     *,
     sandbox: Sandbox | None = None,
@@ -54,6 +74,13 @@ def make_file_editor(
     Returns:
         A decorated tool that performs file operations through the sandbox.
     """
+    warnings.warn(
+        "file_editor is deprecated and will be removed in a future release. "
+        "Use the focused edit vended tool instead (strands.vended_tools.edit), "
+        "paired with the read and write tools.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     @tool(name=name, description=description, context="tool_context")
     async def file_editor_tool(
@@ -95,7 +122,13 @@ def make_file_editor(
     return file_editor_tool
 
 
-file_editor = make_file_editor()
+# The module-level default instance is an internal self-construction, not a
+# user call; suppress the deprecation warning here so ``import
+# strands.vended_tools`` is quiet. The warning still fires when a consumer
+# calls ``make_file_editor`` themselves.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    file_editor = make_file_editor()
 """Default sandbox-routed file editor tool. Reads the sandbox from the agent's context at call time."""
 
 

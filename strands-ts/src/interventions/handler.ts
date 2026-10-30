@@ -13,7 +13,9 @@ export type Awaitable<T> = T | Promise<T>
  * What to do when a handler throws during evaluation.
  *
  * - `'throw'` — rethrow the error (default, safest: a broken policy check blocks execution)
- * - `'proceed'` — log the error and continue as if the handler returned Proceed
+ * - `'proceed'` — continue as if the handler returned Proceed.
+ *   **This mode is fail-open**: a broken handler silently stops enforcing its policy.
+ *   Use only when availability matters more than enforcement.
  * - `'deny'` — log the error and treat it as a Deny (fail-closed)
  */
 export type OnError = 'throw' | 'proceed' | 'deny'

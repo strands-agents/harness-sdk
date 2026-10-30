@@ -104,6 +104,59 @@ describe('BackgroundTasks', () => {
     })
   })
 
+  describe('background tool cancellation', () => {
+    // AbortError from a tool is delivered as cancellation (#5426).
+    it.each(['DOMException', 'Error'])('delivers %s AbortError and finishes the invocation', async (errorForm) => {
+      const work = tool({
+        name: 'work',
+        description: 'Await an aborted operation.',
+        inputSchema: z.object({}),
+        callback: async () => {
+          const controller = new AbortController()
+          if (errorForm === 'Error') controller.abort(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          else controller.abort()
+          controller.signal.throwIfAborted()
+          return 'unreachable'
+        },
+      })
+      const model = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'work',
+          toolUseId: 'work-use',
+          input: { _background_execution: true },
+        })
+        .addTurn({ type: 'textBlock', text: 'Task admitted.' })
+        .addTurn({ type: 'textBlock', text: 'Cancellation received.' })
+      const agent = new Agent({ model, tools: [work], backgroundTasks: { agentic: [work] }, printer: false })
+
+      const result = await agent.invoke('Run work.')
+
+      expect(result.stopReason).toBe('endTurn')
+      const [delivery] = deliveries(agent)
+      expect(deliveries(agent)).toHaveLength(1)
+      expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
+        type: 'toolResultBlock',
+        toolUseId: delivery!.toolUseId,
+        status: 'success',
+        content: [
+          {
+            type: 'jsonBlock',
+            json: {
+              taskId: delivery!.toolUseId,
+              toolUseId: 'work-use',
+              toolName: 'work',
+              status: 'cancelled',
+              createdAt: expect.any(String),
+              lastUpdatedAt: expect.any(String),
+            },
+          },
+        ],
+      })
+      expect(persistedTasks(agent)).toBeUndefined()
+    })
+  })
+
   it('applies always and never policies per tool', async () => {
     const executions: string[] = []
     const seenInputs: unknown[] = []
@@ -329,6 +382,45 @@ describe('BackgroundTasks', () => {
       content: inspected.content,
     })
     expect(persistedTasks(restored)).toBeUndefined()
+  })
+
+  it('stops waiting for running tasks when the invocation is cancelled', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const work = tool({
+      name: 'work',
+      description: 'Perform deferred work.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'done'
+      },
+    })
+    const abort = tool({
+      name: 'abort',
+      description: 'Cancel the invocation.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        context!.agent.cancel()
+        return 'aborting'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } },
+        { type: 'toolUseBlock', name: 'abort', toolUseId: 'abort-use', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'unreachable' })
+    const agent = new Agent({ model, tools: [work, abort], backgroundTasks: {}, printer: false })
+
+    const result = await agent.invoke('Run work.')
+
+    expect(result.stopReason).toBe('cancelled')
+    expect(persistedTasks(agent)![0]!.status).toBe('working')
+    release()
+    await expect.poll(() => persistedTasks(agent)![0]!.status).toBe('completed')
   })
 
   it('fails interrupted work restored from appState', async () => {

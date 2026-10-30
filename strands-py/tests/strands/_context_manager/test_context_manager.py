@@ -7,6 +7,7 @@ import pytest
 from strands._context_manager.context_manager import ContextManager
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.storage.in_memory_storage import InMemoryStorage
@@ -413,6 +414,37 @@ class TestStashBackfill:
         assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
 
     @pytest.mark.asyncio
+    async def test_backfill_does_not_stash_previews_over_missing_originals(self, mock_agent):
+        """Restored previews are never stashed under their originals' keys (#5620)."""
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="seed message")], tracking_id="seed"),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(
+                        toolResult=ToolResult(
+                            toolUseId="pre-tu-1",
+                            status="success",
+                            content=[
+                                {"text": "[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: pre-tu-1_0]"}
+                            ],
+                        )
+                    )
+                ],
+            ),
+        ]
+        cm = ContextManager(strategies=[], stash=True)
+        cm.init_agent(mock_agent)
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert await cm.stash.retrieve("pre-tu-1_0") is None
+        assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
+
+    @pytest.mark.asyncio
     async def test_backfill_runs_only_once(self):
         agent = unittest.mock.MagicMock()
         agent.agent_id = "test-agent"
@@ -558,3 +590,44 @@ class TestStashRoot:
         await context_manager.stash.store("tool-1", 0, b"{}")
 
         assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]
+
+
+class TestContextManagerRequestUsage:
+    """Tests that strategies get a handle joining the request they run for."""
+
+    @pytest.mark.asyncio
+    async def test_strategies_get_a_handle_that_joins_the_request_usage_without_its_limits(self, mock_agent):
+        captured = []
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "mock-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(side_effect=lambda context: captured.append(context) or False)
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+        request = _create_invocation_context({"turns": 1})
+        request._usage["turns_taken"] = 1
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=5000, invocation_context=request)
+        )
+
+        handed = captured[0].invocation_context
+        handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+        assert _reached_limit(handed) is None
+        assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+    @pytest.mark.asyncio
+    async def test_strategies_get_no_handle_outside_a_request(self, mock_agent):
+        captured = []
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "mock-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(side_effect=lambda context: captured.append(context) or False)
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=5000)
+        )
+
+        assert captured[0].invocation_context is None

@@ -15,6 +15,7 @@ from ....types.content import ContentBlock, Message
 from ....types.exceptions import ContextWindowOverflowException
 
 if TYPE_CHECKING:
+    from ....agent.invocation_context import InvocationContext
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ async def generate_summary(
     messages_to_summarize: list[Message],
     model: "Model",
     system_prompt: str | None = None,
+    invocation_context: "InvocationContext | None" = None,
 ) -> Message:
     """Generate a summary of the provided messages by calling the model directly.
 
@@ -161,6 +163,7 @@ async def generate_summary(
         model: The model used to generate the summary.
         system_prompt: Optional system prompt override. Defaults to
             :data:`DEFAULT_SUMMARIZATION_PROMPT`.
+        invocation_context: The request the summary call's usage adds to.
 
     Returns:
         A user-role message containing the model-generated summary.
@@ -181,7 +184,7 @@ async def generate_summary(
     )
 
     result_message: Message | None = None
-    async for event in process_stream(chunks):
+    async for event in process_stream(chunks, invocation_context=invocation_context):
         if "stop" in event:
             _, result_message, _, _ = event["stop"]
 

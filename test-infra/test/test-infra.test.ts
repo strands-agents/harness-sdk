@@ -243,6 +243,30 @@ test('internal mode grants the permissions Bidi integration tests need', () => {
   expect(pollyStatement?.Resource).toBe('*');
 });
 
+test('internal mode grants the Bedrock models the integ suites invoke', () => {
+  const template = synth({ internal: true });
+
+  const policies = template.findResources('AWS::IAM::Policy');
+  const statements = Object.values(policies).flatMap(
+    (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
+  );
+  const invokeStatement = statements.find(
+    (statement: any) =>
+      Array.isArray(statement.Action) && statement.Action.includes('bedrock:InvokeModelWithResponseStream'),
+  );
+
+  expect(invokeStatement.Resource).toEqual(
+    expect.arrayContaining([
+      'arn:aws:bedrock:*:*:inference-profile/us.xai.grok-4.7',
+      'arn:aws:bedrock:*::foundation-model/xai.grok-4.7',
+      'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-3-675b-instruct',
+      'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
+      'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      'arn:aws:bedrock:*:*:foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
+    ]),
+  );
+});
+
 test('community mode does not attach the legacy broad policy', () => {
   const template = synth({ internal: false });
 

@@ -512,7 +512,7 @@ def test_agent__call__(
     )
 
     callback_handler.assert_called()
-    conversation_manager_spy.apply_management.assert_called_with(agent)
+    conversation_manager_spy.apply_management.assert_called_with(agent, invocation_context=unittest.mock.ANY)
 
 
 def test_agent__call__passes_invocation_state(mock_model, agent, tool, mock_event_loop_cycle, agenerator):

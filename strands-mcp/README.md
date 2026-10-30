@@ -29,9 +29,15 @@
   <p>
     <a href="https://strandsagents.com/">Documentation</a>
     ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
-    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python SDK</a>
-    ◆ <a href="https://github.com/strands-agents/tools">Tools</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-cli">CLI</a>
     ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
+    <br>
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    ◆ <a href="https://github.com/strands-agents/box">Box</a>
+    ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
+    ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
+    ◆ <a href="https://github.com/strands-labs">Labs</a>
   </p>
 </div>
 

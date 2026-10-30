@@ -19,6 +19,7 @@ vi.mock('@aws-sdk/client-s3', () => ({
 }))
 
 import { S3Storage } from '../s3-storage.js'
+import { S3VectorSearchStrategy } from '../search/s3-vector.js'
 import { NAMESPACED } from '../storage.js'
 import type { StorageSearchResult } from '../storage.js'
 
@@ -118,6 +119,123 @@ describe('S3Storage', () => {
       const storage = new S3Storage('my-bucket')
 
       await expect(storage.delete('key')).rejects.toThrow(StorageError)
+    })
+  })
+
+  describe('searchStrategy', () => {
+    it('delegates search to the configured strategy', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'found.md', score: 1 }]),
+      }
+      const storage = new S3Storage('my-bucket', { searchStrategy: mockStrategy })
+
+      const results = await storage.search!('hello')
+
+      expect(mockStrategy.search).toHaveBeenCalledWith(storage, 'hello')
+      expect(results).toEqual([{ key: 'found.md', score: 1 }])
+    })
+
+    it('calls strategy.index on write when present', async () => {
+      mockSend.mockResolvedValue({})
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const storage = new S3Storage('my-bucket', { searchStrategy: mockStrategy })
+      const data = new TextEncoder().encode('content')
+
+      await storage.write('doc.md', data)
+
+      expect(mockStrategy.index).toHaveBeenCalledWith(storage, 'doc.md', data)
+    })
+
+    it('removes the vector on delete when using S3VectorSearchStrategy', async () => {
+      mockSend.mockResolvedValue({})
+      const strategy = new S3VectorSearchStrategy({
+        embedder: { embed: vi.fn() } as never,
+        vectorBucketName: 'vecs',
+        indexName: 'idx',
+        s3VectorsClient: { send: vi.fn() } as never,
+      })
+      const remove = vi.spyOn(strategy, 'remove').mockResolvedValue(undefined)
+      const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
+
+      await storage.delete('/doc.md')
+
+      expect(remove).toHaveBeenCalledWith(storage, 'doc.md')
+    })
+
+    it('does not remove the vector when the object delete fails', async () => {
+      mockSend.mockRejectedValue(new Error('InternalError'))
+      const strategy = new S3VectorSearchStrategy({
+        embedder: { embed: vi.fn() } as never,
+        vectorBucketName: 'vecs',
+        indexName: 'idx',
+        s3VectorsClient: { send: vi.fn() } as never,
+      })
+      const remove = vi.spyOn(strategy, 'remove').mockResolvedValue(undefined)
+      const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
+
+      await expect(storage.delete('doc.md')).rejects.toThrow(StorageError)
+      expect(remove).not.toHaveBeenCalled()
+    })
+
+    it('exposes region for strategies to derive client defaults from', () => {
+      expect(new S3Storage('my-bucket').region).toBeUndefined()
+      expect(new S3Storage('my-bucket', { region: 'eu-west-1' }).region).toBe('eu-west-1')
+    })
+
+    it('exposes the normalized prefix', () => {
+      expect(new S3Storage('my-bucket').prefix).toBe('')
+      expect(new S3Storage('my-bucket', { prefix: '/agents//a/' }).prefix).toBe('agents/a/')
+    })
+
+    it('wraps an index failure in StorageError after the object is stored', async () => {
+      mockSend.mockResolvedValue({})
+      const cause = new Error('ThrottlingException')
+      const storage = new S3Storage('my-bucket', {
+        searchStrategy: { search: vi.fn(), index: vi.fn().mockRejectedValue(cause) },
+      })
+
+      const error = await storage.write('doc.md', new TextEncoder().encode('x')).catch((e: unknown) => e)
+
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).message).toContain('indexing it failed')
+      expect((error as StorageError).cause).toBe(cause)
+      expect(mockPutObjectCommand).toHaveBeenCalled()
+    })
+
+    it('wraps a vector removal failure in StorageError after the object is deleted', async () => {
+      mockSend.mockResolvedValue({})
+      const cause = new Error('AccessDeniedException')
+      const strategy = new S3VectorSearchStrategy({
+        embedder: { embed: vi.fn() } as never,
+        vectorBucketName: 'vecs',
+        indexName: 'idx',
+        s3VectorsClient: { send: vi.fn() } as never,
+      })
+      vi.spyOn(strategy, 'remove').mockRejectedValue(cause)
+      const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
+
+      const error = await storage.delete('doc.md').catch((e: unknown) => e)
+
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).message).toContain('removing its search index entry failed')
+      expect((error as StorageError).cause).toBe(cause)
+      expect(mockDeleteObjectCommand).toHaveBeenCalled()
+    })
+
+    it('wraps a search strategy failure in StorageError', async () => {
+      const cause = new Error('The vector dimension must be 1024, but was 3.')
+      const storage = new S3Storage('my-bucket', {
+        searchStrategy: { search: vi.fn().mockRejectedValue(cause) },
+      })
+
+      const error = await storage.search('q').catch((e: unknown) => e)
+
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).message).toContain("Failed to search S3 bucket 'my-bucket'")
+      expect((error as StorageError).cause).toBe(cause)
     })
   })
 

@@ -444,6 +444,18 @@ jobs:
                  -f discussion_category_name="$DISCUSSION_CATEGORY" --jq .discussion_url \
             || echo "::warning::Failed to post the $NEW_TAG announcement discussion; create it from the release page."
 
+      # Close the announcements this release supersedes so only the newest
+      # per package stays open. Non-fatal for the same reason as the post
+      # step above.
+      - name: Close superseded announcement discussions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          DISCUSSION_CATEGORY: ${{ github.event.repository.fork != true && 'Announcements' || '' }}
+        run: |
+          bash .github/scripts/close-superseded-announcements.sh \
+            || echo "::warning::Failed to close announcements superseded by $NEW_TAG; close them from the Discussions board."
+
       # Trigger the changelog sync directly. A release created with the built-in
       # GITHUB_TOKEN (above) does NOT emit a `release` event, by design, so the
       # Changelog: Sync workflow's `on: release` trigger never fires from here --

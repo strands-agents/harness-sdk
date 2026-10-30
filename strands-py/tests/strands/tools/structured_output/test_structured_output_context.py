@@ -3,6 +3,7 @@
 import pytest
 from pydantic import BaseModel, Field
 
+from strands.tools.registry import ToolRegistry
 from strands.tools.structured_output._structured_output_context import (
     _NO_STRUCTURED_OUTPUT_MESSAGE,
     DEFAULT_STRUCTURED_OUTPUT_PROMPT,
@@ -11,6 +12,7 @@ from strands.tools.structured_output._structured_output_context import (
 )
 from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
 from strands.types.exceptions import StructuredOutputException
+from tests.fixtures.mock_agent_tool import MockAgentTool
 
 
 class SampleModel(BaseModel):
@@ -274,6 +276,42 @@ class TestStructuredOutputContext:
         extracted2 = context.extract_result(tool_uses)
         assert extracted2 == result2
         assert "tool_use_2" not in context.results
+
+
+@pytest.mark.parametrize("registration", ["regular", "dynamic", "temporary", "missing"])
+def test_cleanup_removes_only_structured_output_tool(registration):
+    context = StructuredOutputContext(structured_output_model=SampleModel)
+    registry = ToolRegistry()
+    retained_tool = MockAgentTool("retained")
+    retained_tool.mark_dynamic()
+    registry.register_tool(retained_tool)
+    output_tool = context.structured_output_tool
+    if registration == "dynamic":
+        output_tool.mark_dynamic()
+    if registration == "temporary":
+        context.register_tool(registry)
+    elif registration != "missing":
+        registry.register_tool(output_tool)
+
+    context.cleanup(registry)
+    context.cleanup(registry)
+
+    tru_registries = (registry.registry, registry.dynamic_tools)
+    exp_registries = ({retained_tool.tool_name: retained_tool}, {retained_tool.tool_name: retained_tool})
+    assert tru_registries == exp_registries
+
+
+def test_cleanup_when_disabled():
+    context = StructuredOutputContext(structured_output_model=None)
+    registry = ToolRegistry()
+    retained_tool = MockAgentTool("retained")
+    registry.register_tool(retained_tool)
+
+    context.cleanup(registry)
+
+    tru_registries = (registry.registry, registry.dynamic_tools)
+    exp_registries = ({retained_tool.tool_name: retained_tool}, {})
+    assert tru_registries == exp_registries
 
 
 def _text_message(*texts):

@@ -1,0 +1,63 @@
+---
+title: HTTP request
+description: "Use the HTTP request vended tool to let a Strands agent call external APIs and fetch web content, with any HTTP method, custom headers, and request bodies."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/http-request/http-request.ts
+  - path: strands-py/src/strands/vended_tools/http_request/http_request.py
+---
+
+Lets your agent call external APIs and fetch web content. Supports all HTTP methods, custom headers, and request bodies. Default timeout is 30 seconds.
+
+_Supported in: Python; Node.js 22+, modern browsers (TypeScript)._
+
+<Tabs>
+<Tab label="Python">
+
+The Python tool delegates all networking to an `httpx.AsyncClient`. Use the `make_http_request` factory to supply a pre-configured client with authentication, timeouts, redirects, proxies, or other transport-level configuration.
+
+</Tab>
+<Tab label="TypeScript">
+</Tab>
+</Tabs>
+
+**Example:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/http-request_imports.ts:http_request_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/http-request.ts:http_request_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import http_request
+
+agent = Agent(tools=[http_request])
+agent("Get data from https://api.example.com/data")
+```
+
+Custom configuration with a pre-configured client:
+
+```python
+import httpx
+from strands import Agent
+from strands.vended_tools import make_http_request
+
+client = httpx.AsyncClient(
+    headers={"Authorization": "Bearer token"},
+)
+tool = make_http_request(client=client)
+agent = Agent(tools=[tool])
+```
+
+</Tab>
+</Tabs>
+
+Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/http-request/README.md), [Python](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/http_request/README.md)

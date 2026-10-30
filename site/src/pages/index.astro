@@ -12,6 +12,7 @@ import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
 import SiteScripts from '../components/SiteScripts.astro';
 import Analytics from '../components/Analytics.astro';
+import { baseSchemas } from '../util/structured-data';
 import '../styles/fonts.css';
 
 // Base-path-aware favicon href — matches the docs override in Head.astro so
@@ -21,12 +22,18 @@ const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon
 // Self-referencing canonical (param-free) so tracking params like ?utm_source=...
 // don't get indexed as duplicate homepages. Docs/blog pages get theirs from Starlight.
 const canonicalHref = new URL(base, Astro.site ?? 'https://strandsagents.com').href;
+const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 // Standalone pages don't inherit Starlight's head, so declare the shared
 // /og-image.png share card here too (docs/blog get theirs from Starlight).
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
 const pageTitle = 'Strands Agents | The open source toolkit for production AI agents';
 const pageDescription =
   'Strands is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, sandboxed shell, evals, and research labs.';
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': baseSchemas(siteUrl),
+};
 ---
 
 <!doctype html>
@@ -37,6 +44,7 @@ const pageDescription =
     <title>{pageTitle}</title>
     <meta name="description" content={pageDescription} />
     <link rel="canonical" href={canonicalHref} />
+    <link rel="alternate" type="text/markdown" href={markdownHref} />
     <link rel="icon" type="image/svg+xml" href={faviconHref} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonicalHref} />
@@ -51,6 +59,7 @@ const pageDescription =
     <meta name="twitter:title" content={pageTitle} />
     <meta name="twitter:description" content={pageDescription} />
     <meta name="twitter:image" content={ogImageHref} />
+    <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
     <script is:inline>
       // Apply the theme before first paint to avoid a flash. With no saved
       // preference, follow the system color scheme (matches Starlight's docs

@@ -7,8 +7,9 @@ import pytest
 from pydantic import BaseModel
 
 from strands.hooks.events import AfterInvocationEvent
-from strands.models import CacheConfig
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models import Model as SAModel
+from strands.models._model_info import lookup_model_info
 from strands.models.model import _ModelPlugin
 
 
@@ -212,6 +213,116 @@ def test_context_window_limit_none_when_not_configured(model):
 def test_stateful_false(model):
     """Model.stateful defaults to False."""
     assert not model.stateful
+
+
+class ConfigurableModel(SAModel):
+    def __init__(self, context_window_limit=None):
+        self._config = {"context_window_limit": context_window_limit}
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config
+
+    async def structured_output(self, output_model, prompt=None, system_prompt=None, **kwargs):
+        yield {}
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None):
+        yield {}
+
+
+class TestModelInfo:
+    """Tests for the resolved Model.model_info record."""
+
+    @pytest.fixture
+    def provider(self):
+        return ConfigurableModel()
+
+    def test_is_all_unknown_without_a_model_id_and_unknown_stateful_reads_as_false(self, provider):
+        assert provider.model_info == ModelInfo()
+        assert provider.stateful is False
+
+    def test_resolves_facts_from_the_shared_model_info_by_model_id(self, provider):
+        provider.update_config(model_id="us.anthropic.claude-sonnet-4-6")
+
+        assert provider.model_info.limits.context_window == 1_000_000
+        assert provider.model_info.capabilities.prompt_caching == "cache_points"
+
+    def test_treats_a_non_string_model_id_as_unknown(self, provider):
+        provider.update_config(model_id=1234)
+
+        assert provider.model_info == ModelInfo()
+        assert provider.stateful is False
+
+    def test_lookup_treats_a_non_string_model_id_as_unknown(self):
+        assert lookup_model_info(None) == ModelInfo()
+        assert lookup_model_info(1234) == ModelInfo()
+
+    def test_lets_a_provider_put_its_facts_over_the_shared_model_info_with_the_user_override_over_both(self):
+        class GatewayModel(ConfigurableModel):
+            @property
+            def model_info(self):
+                return ModelInfo.merge(
+                    super().model_info,
+                    ModelInfo(capabilities=ModelCapabilities(prompt_caching="unsupported")),
+                    self.get_config().get("model_info"),
+                )
+
+        provider = GatewayModel()
+        provider.update_config(model_id="claude-sonnet-4-6", context_window_limit=8_000)
+
+        # The shared model info resolves to cache_points for this id.
+        assert provider.model_info.capabilities.prompt_caching == "unsupported"
+        assert provider.model_info.limits.context_window == 8_000
+
+        provider.update_config(model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")))
+
+        assert provider.model_info.capabilities.prompt_caching == "cache_points"
+
+    def test_lets_the_override_set_stateful_and_the_stateful_property_reads_it(self, provider):
+        assert provider.stateful is False
+
+        provider.update_config(model_info=ModelInfo(capabilities=ModelCapabilities(stateful=True)))
+
+        assert provider.model_info.capabilities.stateful is True
+        assert provider.stateful is True
+
+    def test_lets_the_override_win_over_context_window_limit(self, provider):
+        provider.update_config(
+            context_window_limit=50_000, model_info=ModelInfo(limits=ModelLimits(context_window=10_000))
+        )
+
+        assert provider.model_info.limits.context_window == 10_000
+
+    def test_takes_the_context_window_from_the_config(self, provider):
+        provider.update_config(context_window_limit=50_000)
+
+        assert provider.model_info.limits.context_window == 50_000
+
+    def test_reads_stateful_from_what_a_provider_puts_in_the_record(self):
+        class StatefulModel(ConfigurableModel):
+            @property
+            def model_info(self):
+                return ModelInfo.merge(
+                    super().model_info,
+                    ModelInfo(capabilities=ModelCapabilities(stateful=True)),
+                    self.get_config().get("model_info"),
+                )
+
+        provider = StatefulModel()
+        assert provider.stateful is True
+
+        provider.update_config(model_info=ModelInfo(capabilities=ModelCapabilities(stateful=False)))
+
+        assert provider.stateful is False
+
+    def test_reflects_config_changes_on_the_next_read(self, provider):
+        assert provider.model_info.limits == ModelLimits()
+
+        provider.update_config(context_window_limit=4_096)
+
+        assert provider.model_info.limits.context_window == 4_096
 
 
 def test_model_plugin_clears_messages_when_stateful(model_plugin):
@@ -620,55 +731,46 @@ class TestHeuristicEstimation:
 class TestEstimateUtilization:
     """Tests for Model.estimate_utilization."""
 
-    class ConfigurableModel(SAModel):
-        def __init__(self, context_window_limit=None):
-            self._config = {"context_window_limit": context_window_limit}
-
-        def update_config(self, **model_config):
-            self._config.update(model_config)
-
-        def get_config(self):
-            return self._config
-
-        async def structured_output(self, output_model, prompt=None, system_prompt=None, **kwargs):
-            yield {}
-
-        async def stream(self, messages, tool_specs=None, system_prompt=None):
-            yield {}
-
     def test_returns_ratio_of_tokens_to_limit(self):
         """Returns input_tokens / context_window_limit when limit is configured."""
-        model = self.ConfigurableModel(context_window_limit=100_000)
+        model = ConfigurableModel(context_window_limit=100_000)
 
         assert model.estimate_utilization(50_000) == 0.5
 
     def test_uses_default_when_limit_not_set(self):
         """Falls back to DEFAULT_CONTEXT_WINDOW_LIMIT (200_000) when not configured."""
-        model = self.ConfigurableModel(context_window_limit=None)
+        model = ConfigurableModel(context_window_limit=None)
 
         assert model.estimate_utilization(100_000) == 100_000 / 200_000
 
+    def test_uses_the_context_window_from_model_info_including_an_override(self):
+        """Reads the window from model_info, where a model_info override beats context_window_limit."""
+        model = ConfigurableModel(context_window_limit=100_000)
+        model.update_config(model_info=ModelInfo(limits=ModelLimits(context_window=10_000)))
+
+        assert model.estimate_utilization(5_000) == 0.5
+
     def test_returns_above_one_on_overflow(self):
         """Returns > 1.0 when tokens exceed the limit."""
-        model = self.ConfigurableModel(context_window_limit=1000)
+        model = ConfigurableModel(context_window_limit=1000)
 
         assert model.estimate_utilization(1500) > 1.0
 
     def test_returns_zero_for_zero_tokens(self):
         """Returns 0 for zero input tokens."""
-        model = self.ConfigurableModel(context_window_limit=100_000)
+        model = ConfigurableModel(context_window_limit=100_000)
 
         assert model.estimate_utilization(0) == 0
 
     def test_handles_zero_context_window_limit(self):
         """Falls back to default when context_window_limit is 0."""
-        model = self.ConfigurableModel(context_window_limit=0)
+        model = ConfigurableModel(context_window_limit=0)
 
         assert model.estimate_utilization(100_000) == 100_000 / 200_000
 
     def test_warns_when_limit_not_set(self):
         """Nudges the developer through warnings.warn when context_window_limit is unset."""
-        model = self.ConfigurableModel(context_window_limit=None)
+        model = ConfigurableModel(context_window_limit=None)
 
         with pytest.warns(UserWarning, match="context_window_limit is not set on the model"):
             model.estimate_utilization(1000)
@@ -678,8 +780,8 @@ class TestEstimateUtilization:
         with warnings.catch_warnings(record=True) as recorded:
             warnings.simplefilter("default", UserWarning)
 
-            self.ConfigurableModel(context_window_limit=None).estimate_utilization(1000)
-            self.ConfigurableModel(context_window_limit=None).estimate_utilization(2000)
+            ConfigurableModel(context_window_limit=None).estimate_utilization(1000)
+            ConfigurableModel(context_window_limit=None).estimate_utilization(2000)
 
         assert len(recorded) == 1
 

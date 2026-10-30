@@ -215,7 +215,7 @@ class _AgentAsTool(AgentTool):
             )
             return
 
-        adapter = _ChildAgentAdapter(label=f"Agent '{self._tool_name}'")
+        adapter = _ChildAgentAdapter(label=f"Agent '{self._tool_name}'", agent_name=self._tool_name)
         try:
             if tool_streamer.is_resuming():
                 unavailable_message = (
@@ -246,7 +246,11 @@ class _AgentAsTool(AgentTool):
                 if tool_context is not None
                 else getattr(invocation_state.get("agent"), "cancel_signal", None)
             )
-            source = self._agent.stream_async(prompt, cancel_signal=cancel_signal)
+            # Join the request of the tool call so the sub-agent shares its limits and usage.
+            invocation_context = tool_context.invocation_context if tool_context is not None else None
+            source = self._agent.stream_async(
+                prompt, cancel_signal=cancel_signal, invocation_context=invocation_context
+            )
             async for event in tool_streamer.stream(adapter, self._agent, source):
                 yield AgentAsToolStreamEvent(tool_use, event, self)
             terminal_event = tool_streamer.terminal_event(tool_use, self._result_content)

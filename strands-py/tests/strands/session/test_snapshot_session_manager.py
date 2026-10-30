@@ -6,7 +6,7 @@ import logging
 import tempfile
 import uuid
 from functools import partial
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
@@ -336,7 +336,7 @@ def test_interrupted_graph_restores_before_applying_response(storage, agenerator
     result = asyncio.run(resumed.invoke_async(responses))
 
     assert result.status == Status.COMPLETED
-    resumed_agent.stream_async.assert_called_once_with(responses, invocation_state={})
+    resumed_agent.stream_async.assert_called_once_with(responses, invocation_state={}, invocation_context=ANY)
 
 
 def test_interrupted_swarm_restores_before_applying_response(storage, agenerator):
@@ -394,7 +394,7 @@ def test_interrupted_swarm_restores_before_applying_response(storage, agenerator
     result = asyncio.run(resumed.invoke_async(responses))
 
     assert result.status == Status.COMPLETED
-    resumed_agent.stream_async.assert_called_once_with(responses, invocation_state={})
+    resumed_agent.stream_async.assert_called_once_with(responses, invocation_state={}, invocation_context=ANY)
 
 
 def test_load_snapshot_restores_mid_run_state(storage):

@@ -7,11 +7,13 @@ import pytest
 
 import strands
 from strands.agent.agent import Agent
+from strands.agent.invocation_context import _create_invocation_context
 from strands.agent.state import AgentState
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.multiagent._agent_tool_streamer import _INTERRUPTED_TURNS_KEY
 from strands.multiagent.spec import Choice, Fixed, Inherit, Option, Preset
 from strands.session.file_session_manager import FileSessionManager
+from strands.types.event_loop import _limit_stop_message
 from strands.vended_tools.subagent import make_subagent
 from strands.vended_tools.subagent.subagent import _CONTEXT_PREAMBLE, _DEPTH_STATE_KEY
 from strands.vended_tools.subagent.types import GENERALIST
@@ -37,16 +39,18 @@ class _FakeChild:
         self.prompts: list = []
         self.invocation_states: list = []
         self.cancel_signals: list = []
+        self.invocation_contexts: list = []
         self.state = AgentState()
         self._interrupt_state = SimpleNamespace(activated=activated, interrupts={})
         self.cancel_signal = threading.Event()
         if cancel_signal_set:
             self.cancel_signal.set()
 
-    async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
+    async def stream_async(self, prompt, invocation_state=None, cancel_signal=None, invocation_context=None):
         self.prompts.append(prompt)
         self.invocation_states.append(invocation_state)
         self.cancel_signals.append(cancel_signal)
+        self.invocation_contexts.append(invocation_context)
         yield {"result": self._results.pop(0)}
 
 
@@ -541,7 +545,7 @@ async def test_cancel_signal_prefers_tool_context():
     tool_use = {"toolUseId": "t1", "name": "subagent", "input": {"task": "x"}}
 
     # With _tool_context → uses its signal.
-    ctx = SimpleNamespace(cancel_signal="ctx-sig")
+    ctx = SimpleNamespace(cancel_signal="ctx-sig", invocation_context=None)
     [e async for e in tool.stream(tool_use, {"agent": parent}, _tool_context=ctx)]
     assert child.cancel_signals[0] == "ctx-sig"
 
@@ -557,7 +561,7 @@ async def test_no_result_from_child_yields_error():
         state = AgentState()
         _interrupt_state = SimpleNamespace(activated=False, interrupts={})
 
-        async def stream_async(self, prompt, invocation_state=None, cancel_signal=None):
+        async def stream_async(self, prompt, invocation_state=None, cancel_signal=None, invocation_context=None):
             yield {"data": "not a result"}
 
     tool = make_subagent(builder=lambda spec: _EmptyChild(), presets={"generalist": GENERALIST})
@@ -619,3 +623,47 @@ async def test_render_context_last_n():
     assert "first" not in prompt
     assert "second" not in prompt
     assert "third" in prompt
+
+
+# -- Request-wide invocation context ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_joins_the_request_of_the_tool_call():
+    child = _FakeChild(_FakeResult("done"))
+    invocation_context = _create_invocation_context()
+    tool_context = SimpleNamespace(cancel_signal=None, invocation_context=invocation_context)
+
+    await _events(make_subagent(builder=lambda spec: child), {"task": "x"}, _tool_context=tool_context)
+
+    assert child.invocation_contexts == [invocation_context]
+
+
+@pytest.mark.asyncio
+async def test_run_adds_child_model_usage_to_the_request_usage():
+    child = Agent(
+        model=MockedModelProvider(
+            [{"role": "assistant", "content": [{"text": "child done"}]}],
+            [{"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}],
+        ),
+        callback_handler=None,
+    )
+    invocation_context = _create_invocation_context({"turns": 5})
+    tool_context = SimpleNamespace(cancel_signal=None, invocation_context=invocation_context)
+
+    result = _result(
+        await _events(make_subagent(builder=lambda spec: child), {"task": "x"}, _tool_context=tool_context)
+    )
+
+    assert result["content"][0]["text"].strip() == "child done"
+    assert invocation_context.usage == {"turns_taken": 1, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+async def test_run_reports_a_child_stopped_by_a_limit_as_an_error():
+    child = _FakeChild(_FakeResult("partial", stop_reason="limit_turns"))
+
+    result = _result(await _events(make_subagent(builder=lambda spec: child), {"task": "x"}))
+
+    assert result["status"] == "error"
+    assert result["content"][0]["text"] == _limit_stop_message("subagent", "limit_turns")

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal
 from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
+from ....agent.invocation_context import _invocation_context_kwargs
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
@@ -18,6 +19,7 @@ from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
+    from ....agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -363,6 +365,7 @@ class BaseOffloadStrategy(ABC):
         """Per-block execution: walk each message, transform individual blocks above threshold."""
         messages = context.messages
         agent = context.agent
+        invocation_context = context.invocation_context
         tool_name_map = _build_tool_name_map(messages)
         eligible = (
             _get_oldest_matches(
@@ -378,7 +381,9 @@ class BaseOffloadStrategy(ABC):
             index = index_map.get(id(message), -1)
             if index >= 0 and is_pinned(messages, index):
                 continue
-            if await self._transform_blocks(message, messages, tool_name_map, agent):
+            if await self._transform_blocks(
+                message, messages, tool_name_map, agent, invocation_context=invocation_context
+            ):
                 acted = True
 
         return acted
@@ -430,6 +435,7 @@ class BaseOffloadStrategy(ABC):
         messages: Messages,
         tool_name_map: dict[str, str],
         agent: Agent,
+        invocation_context: InvocationContext | None = None,
     ) -> bool:
         """Process eligible blocks in a message."""
         effective_threshold = self._threshold or 0
@@ -445,7 +451,14 @@ class BaseOffloadStrategy(ABC):
                 continue
 
             stash_refs = self._stash.refs_for(block, message, block_index) if self._stash else []
-            replacement = await self._replace_block(block, tokens, message, agent, stash_refs)
+            replacement = await self._replace_block(
+                block,
+                tokens,
+                message,
+                agent,
+                stash_refs,
+                **_invocation_context_kwargs(self._replace_block, invocation_context),
+            )
             if replacement is not None and replacement is not block:
                 content[block_index] = replacement
                 acted = True
@@ -503,6 +516,7 @@ class BaseOffloadStrategy(ABC):
         message: Message,
         agent: Agent,
         stash_refs: list[str],
+        invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         """Transform a block. Return the replacement, or None to skip."""
         ...

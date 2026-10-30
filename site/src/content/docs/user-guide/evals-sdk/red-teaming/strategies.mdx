@@ -136,12 +136,13 @@ check, and the attacker of any strategy without its own `model`, including
 
 ## Crescendo
 
-Escalates over up to `max_turns` turns, starting benign and steering toward the goal. When the target refuses, Crescendo backtracks (up to `max_backtracks` times) and tries a different angle from the last good turn. Stops early once a turn scores at or above `success_threshold`, or as soon as the target
+Escalates over up to `max_turns` turns, starting benign and steering toward the goal. When the target refuses, Crescendo backtracks (up to `max_backtracks` times) and tries a different angle from the last good turn. Stops early once a turn scores at or above `success_threshold`, or (by default) as soon as the target
 makes a tool call; a turn that made a tool call is never backtracked.
 
 - **`max_turns`** (default `10`): Maximum escalation turns.
 - **`max_backtracks`** (default `10`): Maximum refusals to recover from before giving up.
 - **`success_threshold`** (default `0.7`).
+- **`stop_on_tool_call`** (default `True`): When `False`, tool calls no longer affect stopping or backtracking, and every turn is judged on its text alone. This applies to all tools: Crescendo doesn't check whether a tool is read-only. Tool calls from every turn, backtracked ones included, stay in the trace, so the `AttackSuccessEvaluator` still judges them.
 
 ```python
 from strands_evals.redteam import CrescendoStrategy
@@ -151,8 +152,11 @@ CrescendoStrategy(
     max_backtracks=10,
     success_threshold=0.7,
     model=None,
+    stop_on_tool_call=True,
 )
 ```
+
+Set `stop_on_tool_call=False` when the target's tools are read-only lookups, so every answer, refusals included, goes through a tool. With the default, such a target ends every case after one turn and the escalation never happens. On a target with tools that act (send an email, issue a refund), keep the default: with `False`, Crescendo may keep escalating past, or backtrack, a turn that took a real action.
 
 ## GOAT
 

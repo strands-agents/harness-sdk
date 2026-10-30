@@ -56,6 +56,25 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("us.openai.gpt-oss-120b-1:0") == 128_000
         assert get_context_window_limit("global.openai.gpt-oss-120b") == 128_000
 
+    def test_known_bedrock_openai_gpt(self):
+        # Bedrock GPT ids need their own rows: gpt-6.1-sol's Bedrock card is 1M, not the 1.05M of its siblings.
+        assert get_context_window_limit("openai.gpt-6-astra") == 1_050_000
+        assert get_context_window_limit("openai.gpt-6.1-sol") == 1_000_000
+        assert get_context_window_limit("openai.gpt-6.1-terra") == 1_050_000
+        assert get_context_window_limit("openai.gpt-6-sol") == 1_050_000
+        assert get_context_window_limit("openai.gpt-6-luna") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.6-sol") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.6-terra") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.6-luna") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.6-cyber") == 1_050_000
+        assert get_context_window_limit("openai.gpt-daybreak-blue-5.6-sol") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.5") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.4") == 1_050_000
+        assert get_context_window_limit("us.openai.gpt-5.5") == 1_050_000
+        assert get_context_window_limit("global.openai.gpt-6.1-sol") == 1_000_000
+        assert get_context_window_limit("us.openai.gpt-6.1-terra") == 1_050_000
+        assert get_context_window_limit("in.openai.gpt-5.6-luna") == 1_050_000
+
     def test_known_bedrock_mistral(self):
         # The Bedrock ids need their own rows: the prefix strip turns
         # mistral.mistral-large-3-675b-instruct into a key that is not the direct-API mistral-large-3 row.
@@ -87,10 +106,9 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("chat-latest") == 272_000
         assert get_context_window_limit("gpt-6-astra") == 1_050_000
         assert get_context_window_limit("gpt-6.1-sol") == 1_050_000
+        assert get_context_window_limit("gpt-6.1-terra") == 1_050_000
         assert get_context_window_limit("gpt-6-sol") == 1_050_000
         assert get_context_window_limit("gpt-6-luna") == 1_050_000
-        assert get_context_window_limit("global.openai.gpt-6.1-sol") == 1_050_000
-        assert get_context_window_limit("us.openai.gpt-6-luna") == 1_050_000
         assert get_context_window_limit("gpt-5.4") == 1_050_000
         assert get_context_window_limit("gpt-4o") == 128_000
         assert get_context_window_limit("o3") == 200_000
@@ -106,6 +124,8 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("gemini-2.5-pro") == 1_048_576
 
     def test_known_mistral(self):
+        assert get_context_window_limit("codestral-2508") == 256_000
+        assert get_context_window_limit("codestral-latest") == 256_000
         assert get_context_window_limit("mistral-large-4-0") == 1_048_576
         assert get_context_window_limit("mistral-large-4") == 1_048_576
         assert get_context_window_limit("mistral-medium-3-5") == 262_144
@@ -128,12 +148,10 @@ class TestGetContextWindowLimit:
 
     def test_strips_nested_bedrock_prefixes(self):
         # Guards against nested Bedrock prefixes failing model metadata lookup (#4220)
-        assert get_context_window_limit("us.openai.gpt-5.6-luna") == 1_050_000
-        assert get_context_window_limit("global.openai.gpt-5.6-luna") == 1_050_000
+        assert get_context_window_limit("us.openai.gpt-5.6") == 1_050_000
+        assert get_context_window_limit("global.openai.gpt-5.6") == 1_050_000
         assert (
-            get_context_window_limit(
-                "arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-5.6-luna"
-            )
+            get_context_window_limit("arn:aws:bedrock:eu-west-2:123456789012:inference-profile/global.openai.gpt-5.6")
             == 1_050_000
         )
 

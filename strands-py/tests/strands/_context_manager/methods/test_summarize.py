@@ -10,6 +10,10 @@ from strands._context_manager.methods.summarize import (
     _summarize_content,
     _tool_result_to_content_blocks,
 )
+from strands.agent.invocation_context import (
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+)
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
 
@@ -295,3 +299,22 @@ class TestToolResultToContentBlocksJson:
         assert len(tru_result) == 2
         assert tru_result[0] == ContentBlock(text="plain text")
         assert tru_result[1]["text"] == '{\n  "nested": true\n}'
+
+
+class TestSummarizeContentRequestUsage:
+    """Tests that the summarizer's usage joins the request it runs for."""
+
+    @pytest.mark.asyncio
+    async def test_adds_the_summarizer_usage_to_the_request_total_even_when_the_request_limit_is_used_up(
+        self, mock_model
+    ):
+        mock_model.stream = _make_stream_events("A summary.")
+        request = _create_invocation_context({"turns": 1})
+        request._usage["turns_taken"] = 1
+
+        tru_result = await _summarize_content(
+            [ContentBlock(text="content")], mock_model, {}, _create_auxiliary_invocation_context(request)
+        )
+
+        assert tru_result == "A summary."
+        assert request.usage == {"turns_taken": 1, "inputTokens": 10, "outputTokens": 5, "totalTokens": 15}

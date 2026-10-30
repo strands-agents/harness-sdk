@@ -14,6 +14,7 @@ from ..tools.tools import PythonAgentTool
 from ..types.tools import ToolResult, ToolResultContent, ToolSpec
 from ..vended_plugins.context_offloader.search import _search_content
 from .methods.truncate import CHARS_PER_TOKEN
+from .stash import _is_offload_placeholder
 
 if TYPE_CHECKING:
     from ..types.content import Message
@@ -70,6 +71,9 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         result = await stash.retrieve(reference)
         if result is None:
             text = f"Error: reference not found: {reference}"
+            return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
+        if _is_offload_placeholder(result):
+            text = f"Error: original content for reference {reference} is no longer available"
             return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
 
         if pattern is None and line_range is None:

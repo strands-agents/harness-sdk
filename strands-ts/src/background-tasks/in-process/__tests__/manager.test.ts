@@ -113,18 +113,29 @@ describe('InProcessTaskManager', () => {
     expect(executionCount).toBe(2)
   })
 
-  it('projects tool errors', async () => {
-    const { manager, work } = createFixture(() => {
-      throw new Error('tool failed')
-    })
-    const failed = await submit(manager, work, 'failed')
+  describe('tool outcomes', () => {
+    // Classify the original error, rather than its message (#5426).
+    it.each([
+      { error: new DOMException('aborted', 'AbortError'), status: 'cancelled' },
+      { error: Object.assign(new Error('aborted'), { name: 'AbortError' }), status: 'cancelled' },
+      { error: new DOMException('timed out', 'TimeoutError'), status: 'failed' },
+      { error: new Error('AbortError'), status: 'failed' },
+    ])('projects $error.name as $status', async ({ error, status }) => {
+      const { manager, work } = createFixture(() => {
+        throw error
+      })
+      const admitted = await submit(manager, work, 'error')
 
-    await expect(manager.wait(failed.taskId)).resolves.toEqual({
-      ...failed,
-      status: 'failed',
-      lastUpdatedAt: expect.any(String),
-      result: { content: [{ text: 'Error: tool failed' }] },
-      error: { type: 'toolError', message: 'tool failed' },
+      await expect(manager.wait(admitted.taskId)).resolves.toEqual({
+        ...admitted,
+        status,
+        lastUpdatedAt: expect.any(String),
+        ...(status === 'failed' && {
+          result: { content: [{ text: `Error: ${error.message}` }] },
+          error: { type: 'toolError', message: error.message },
+        }),
+      })
+      await manager.waitForIdle()
     })
   })
 

@@ -121,8 +121,11 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 
 #### Setup and Installation
 
+From the repository root:
+
 ```bash
-npm install
+cd site
+npm ci
 ```
 
 #### Building and Previewing
@@ -143,18 +146,20 @@ npm run dev
 
 1. **Create feature branch**: `git checkout -b agent-tasks/{ISSUE_NUMBER}`
 2. **Implement changes** following the patterns below
-3. **Run quality checks** before committing (pre-commit hooks will run automatically)
+3. **Run quality checks** before committing
 4. **Commit with conventional commits**: `feat:`, `fix:`, `refactor:`, `docs:`, etc.
 5. **Push to remote**: `git push origin agent-tasks/{ISSUE_NUMBER}`
 
 ### 3. Quality Gates
 
-Pre-commit hooks automatically run:
-- Unit tests (via npm test)
-- Format checking (via npm run format:check)
-- Type checking (via npm run typecheck)
+From `site/`:
 
-All checks must pass before commit is allowed.
+```bash
+npm run format        # apply formatting fixes
+npm run check         # check formatting, build, check types, and run tests
+```
+
+CI enforces these checks.
 
 ## Coding Patterns and Best Practices
 
@@ -176,7 +181,7 @@ For the underlying Astro/Starlight implementation (the snippets plugin, custom c
 
 1. **Read task requirements** carefully from the GitHub issue
 2. **Use existing patterns** as reference
-3. **Run all checks** before committing (pre-commit hooks will enforce this)
+3. **Run quality checks** before committing
 
 
 ### Integration with Other Files

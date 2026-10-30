@@ -96,6 +96,14 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(model.stateful).toBe(true)
     })
 
+    it('is declared on info', () => {
+      const stateful = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
+      const stateless = new OpenAIModel({ api: 'responses', client: {} as OpenAI })
+
+      expect(stateful.modelInfo.capabilities?.stateful).toBe(true)
+      expect(stateless.modelInfo.capabilities?.stateful).toBe(false)
+    })
+
     it('is construction-only and cannot be changed via updateConfig', () => {
       const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: false })
       const warnSpy = vi.spyOn(logger, 'warn')
@@ -583,6 +591,20 @@ describe("OpenAIModel (api: 'responses')", () => {
   })
 
   describe('stream event mapping', () => {
+    it('resolves stateful once per stream, not once per event', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'resp_abc' } }
+        for (let i = 0; i < 50; i++) yield { type: 'response.output_text.delta', delta: 'x' }
+        yield { type: 'response.completed', response: {} }
+      })
+      const model = new OpenAIModel({ api: 'responses', client, stateful: true })
+      const getConfig = vi.spyOn(model, 'getConfig')
+
+      await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('hi')] })]))
+
+      expect(getConfig.mock.calls.length).toBeLessThan(10)
+    })
+
     it('captures responseId on response.created when stateful', async () => {
       const modelState = new StateStore()
       const client = createMockClient(async function* () {

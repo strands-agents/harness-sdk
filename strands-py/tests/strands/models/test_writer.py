@@ -469,6 +469,34 @@ async def test_stream_empty(writer_client, model, model_id):
     writer_client.chat.chat.assert_called_once_with(**expected_request)
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "stop_reason"),
+    [
+        ("stop", "end_turn"),
+        ("tool_calls", "tool_use"),
+        ("length", "max_tokens"),
+        ("content_filter", "content_filtered"),
+    ],
+)
+def test_format_chunk_message_stop(model, finish_reason, stop_reason):
+    chunk = model.format_chunk({"chunk_type": "message_stop", "data": finish_reason})
+
+    assert chunk == {"messageStop": {"stopReason": stop_reason}}
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter(writer_client, model, alist):
+    mock_delta = unittest.mock.Mock(content="partial", tool_calls=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="content_filter", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(usage=unittest.mock.Mock(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+    writer_client.chat.chat.return_value = mock_streaming_response([mock_event_1, mock_event_2])
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}], None, None))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in events
+
+
 @pytest.mark.asyncio
 async def test_stream_with_empty_choices(writer_client, model, model_id, captured_warnings):
     mock_delta = unittest.mock.Mock(content="content", tool_calls=None)

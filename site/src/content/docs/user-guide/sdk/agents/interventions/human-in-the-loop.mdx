@@ -175,7 +175,7 @@ Use the allowed tools list to skip approval for safe, read-only tools:
 
 When trust is enabled, a human can respond with `'t'` or `'trust'` to approve the current tool call AND remember that decision for the rest of the session. Subsequent calls to the same tool skip the prompt entirely. Trust works in all modes: interrupt/resume, stdio, and custom callbacks.
 
-Trust state is stored in <Syntax py="agent.state" ts="agent.appState" /> and persists across turns within a session but resets when the agent is re-created. Negated tools (`"!tool_name"`) cannot be trusted and always prompt.
+Trust state is stored in <Syntax py="agent.state" ts="agent.appState" /> and persists across turns within a session but resets when the agent is re-created. It is only read while trust is enabled. Negated tools (`"!tool_name"`) cannot be trusted and always prompt.
 
 <Tabs>
 <Tab label="Python">
