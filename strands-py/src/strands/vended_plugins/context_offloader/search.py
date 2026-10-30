@@ -12,6 +12,8 @@ _MAX_PATTERN_LENGTH = 200
 # Best-effort heuristic; does not catch all catastrophic patterns (e.g. (.*a){12}$).
 _NESTED_QUANTIFIER = re.compile(r"[+*]\s*\)\s*[+*]")
 _MATCH_LINE = re.compile(r"^>", re.MULTILINE)
+# A window notice a tool appends after paged output, e.g. read's "[Showing lines 1-2000 of 4001. ...]".
+_WINDOW_NOTICE = re.compile(r"^\[([^\[\]]*[0-9]+-[0-9]+ of [0-9]+[^\[\]]*)\]$")
 
 _TEXT_APPLICATION_TYPES = frozenset(
     {
@@ -52,7 +54,9 @@ def _search_content(
         max_chars: Maximum output size in characters; results are truncated beyond this.
 
     Returns:
-        Formatted search results with line numbers, or a message reporting empty content or no matches.
+        Formatted search results with line numbers, or a message reporting empty content or no matches. When the
+        content ends with a window notice (e.g. ``read``'s pagination footer), a note that the rest of the original
+        output is not stored under this reference is appended.
 
     Raises:
         ValueError: If line_range is not a 1-indexed, non-empty range within the content.
@@ -73,7 +77,9 @@ def _search_content(
         if start > end:
             raise ValueError(f"line_range.start ({start}) must be <= line_range.end ({end}).")
         if start > total_lines:
-            raise ValueError(f"line_range.start ({start}) is beyond content length ({total_lines} lines).")
+            message = f"line_range.start ({start}) is beyond content length ({total_lines} lines)."
+            note = _window_note(lines)
+            raise ValueError(f"{message}\n\n{note}" if note else message)
         scope_start = start - 1
         scope_end = min(end - 1, total_lines - 1)
 
@@ -81,9 +87,24 @@ def _search_content(
 
     if pattern:
         scope_label = f" in lines {line_range[0]}-{scope_end + 1}" if line_range else ""
-        return _search_by_pattern(lines, pattern, scope_start, scope_end, context_lines, max_chars, scope_label)
+        result = _search_by_pattern(lines, pattern, scope_start, scope_end, context_lines, max_chars, scope_label)
+    else:
+        result = _search_by_line_range(lines, scope_start, scope_end, total_lines, max_chars)
 
-    return _search_by_line_range(lines, scope_start, scope_end, total_lines, max_chars)
+    note = _window_note(lines)
+    return f"{result}\n\n{note}" if note else result
+
+
+def _window_note(lines: list[str]) -> str | None:
+    """Return a note when the content ends with a window notice, so a search never hides that it is a partial page."""
+    last = next((line for line in reversed(lines) if line), "")
+    match = _WINDOW_NOTICE.fullmatch(last) if len(lines) > 1 else None
+    if match is None:
+        return None
+    return (
+        f'[This reference holds only a window of the original output ("{match.group(1)}"). '
+        "The rest is not stored here; call the original tool again with an offset to get it.]"
+    )
 
 
 def _truncate(output: str, max_chars: int, message: str) -> str:
