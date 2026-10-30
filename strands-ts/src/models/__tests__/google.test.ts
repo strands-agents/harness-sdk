@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import {
@@ -739,6 +739,15 @@ describe('GoogleModel', () => {
         expect(contents[0]!.parts).toEqual([{ text: 'Thinking...', thought: true, thoughtSignature: 'sig123' }])
       })
 
+      it('formats a signature-only reasoning block as an empty thought part carrying the signature', () => {
+        const reasoningBlock = new ReasoningBlock({ signature: 'sig123' })
+
+        const contents = formatBlock(reasoningBlock, 'assistant')
+
+        expect(contents).toHaveLength(1)
+        expect(contents[0]!.parts).toEqual([{ text: '', thought: true, thoughtSignature: 'sig123' }])
+      })
+
       it('skips reasoning block with empty text', () => {
         const reasoningBlock = new ReasoningBlock({ text: '' })
 
@@ -875,6 +884,112 @@ describe('GoogleModel', () => {
         type: 'modelContentBlockDeltaEvent',
         delta: { type: 'reasoningContentDelta', text: 'Thinking...', signature: 'sig456' },
       })
+    })
+
+    it('keeps a signature arriving on a separate empty thought part in the open reasoning block', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { text: 'test reason', thought: true },
+                  { thought: true, thoughtSignature: 'YWJj' },
+                ],
+              },
+            },
+          ],
+        }
+        yield { candidates: [{ finishReason: 'STOP' }] }
+      })
+
+      const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+      expect(result.message.content).toEqual([new ReasoningBlock({ text: 'test reason', signature: 'YWJj' })])
+      expect(formatMessages([result.message])[0]!.parts).toEqual([
+        { text: 'test reason', thought: true, thoughtSignature: 'YWJj' },
+      ])
+    })
+
+    it('emits a signature arriving after a text part as its own reasoning block', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ text: 'hello' }, { thought: true, thoughtSignature: 'YWJj' }] } }],
+        }
+        yield { candidates: [{ finishReason: 'STOP' }] }
+      })
+
+      const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+      expect(result.message.content).toEqual([new TextBlock('hello'), new ReasoningBlock({ signature: 'YWJj' })])
+      expect(formatMessages([result.message])[0]!.parts).toEqual([
+        { text: 'hello' },
+        { text: '', thought: true, thoughtSignature: 'YWJj' },
+      ])
+    })
+
+    it('does not split answer text around a signature riding on a text part', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield { candidates: [{ content: { parts: [{ text: 'The time is 12:00', thoughtSignature: 'YWJj' }] } }] }
+        yield { candidates: [{ content: { parts: [{ text: ' and it is sunny.' }] }, finishReason: 'STOP' }] }
+      })
+
+      const { items, result } = await collectGenerator(provider.streamAggregated(messages))
+
+      expect(result.message.content).toEqual([
+        new TextBlock('The time is 12:00 and it is sunny.'),
+        new ReasoningBlock({ signature: 'YWJj' }),
+      ])
+      expect(items.filter((e) => e.type === 'modelContentBlockStopEvent')).toHaveLength(2)
+      expect(formatMessages([result.message])[0]!.parts![1]).toEqual({
+        text: '',
+        thought: true,
+        thoughtSignature: 'YWJj',
+      })
+    })
+
+    it('keeps every signature that arrives inside one text block', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield { candidates: [{ content: { parts: [{ text: 'The time is 12:00', thoughtSignature: 'c2lnMQ==' }] } }] }
+        yield {
+          candidates: [
+            {
+              content: { parts: [{ text: ' and it is sunny.' }, { thought: true, thoughtSignature: 'c2lnMg==' }] },
+              finishReason: 'STOP',
+            },
+          ],
+        }
+      })
+
+      const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+      expect(result.message.content).toEqual([
+        new TextBlock('The time is 12:00 and it is sunny.'),
+        new ReasoningBlock({ signature: 'c2lnMQ==' }),
+        new ReasoningBlock({ signature: 'c2lnMg==' }),
+      ])
+      expect(formatMessages([result.message])[0]!.parts!.slice(1)).toEqual([
+        { text: '', thought: true, thoughtSignature: 'c2lnMQ==' },
+        { text: '', thought: true, thoughtSignature: 'c2lnMg==' },
+      ])
+    })
+
+    it('opens a reasoning block for a candidate whose only part carries a signature', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ thought: true, thoughtSignature: 'YWJj' }] }, finishReason: 'STOP' }],
+        }
+      })
+
+      const { items, result } = await collectGenerator(provider.streamAggregated(messages))
+
+      expect(items.filter((e) => e.type === 'modelContentBlockDeltaEvent')).toEqual([
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', signature: 'YWJj' } },
+      ])
+      expect(result.message.content).toEqual([new ReasoningBlock({ signature: 'YWJj' })])
+      expect(formatMessages([result.message])[0]!.parts).toEqual([
+        { text: '', thought: true, thoughtSignature: 'YWJj' },
+      ])
     })
   })
 
@@ -1336,6 +1451,7 @@ describe('GoogleModel', () => {
         messageStarted: true,
         textContentBlockStarted: false,
         reasoningContentBlockStarted: false,
+        deferredSignatures: [],
         hasToolCalls: false,
         inputTokens: 0,
         outputTokens: 0,
