@@ -634,6 +634,11 @@ class TestConstruction:
         with pytest.raises(TypeError, match="http_client must be an httpx.AsyncClient"):
             provider.model_cls(api_key="test-key", http_client=httpx.Client())
 
+    def test_omits_the_api_key_from_the_config_repr(self, provider: _ProviderCase):
+        decision = provider.model_cls(api_key="secret-test-key")
+
+        assert "secret-test-key" not in repr(decision._provider_config)
+
 
 @pytest.mark.asyncio
 async def test_typesafe_reads_its_api_key_from_the_environment(monkeypatch: pytest.MonkeyPatch):

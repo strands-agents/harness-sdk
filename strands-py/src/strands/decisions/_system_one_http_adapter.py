@@ -9,7 +9,7 @@ import json
 import math
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, NoReturn, TypeGuard
 
 import httpx
@@ -34,7 +34,7 @@ class _SystemOneProviderConfig:
 
     provider_name: str
     endpoint: str
-    api_key: str
+    api_key: str = field(repr=False)
     model_id: str
     default_min_confidence: float
     max_body_bytes: int
@@ -245,8 +245,8 @@ def _error_detail(body: Any) -> str | None:
         return body
     if not isinstance(body, dict):
         return None
-    for field in ("error", "message", "detail"):
-        value = body.get(field)
+    for key in ("error", "message", "detail"):
+        value = body.get(key)
         if isinstance(value, str):
             return value
         if isinstance(value, dict):
