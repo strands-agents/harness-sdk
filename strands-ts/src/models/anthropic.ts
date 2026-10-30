@@ -710,6 +710,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       name: tool.name,
       description: tool.description,
       input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+      ...(tool.deferLoading && { defer_loading: true }),
     }))
     const serverTools = [
       ...(this._config.anthropicTools ?? []),
@@ -725,9 +726,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    // A cache_control on the last tool caches all of them, so one cache point suffices.
+    // A cache_control on the last tool caches all of them, so one cache point suffices. Deferred tools
+    // are left out of the cached prefix and the API rejects cache_control on them.
     const toolsCache = this._cacheSection('toolsTTL')
-    const lastTool = tools[tools.length - 1]
+    const lastTool = tools.filter((tool) => !('defer_loading' in tool && tool.defer_loading)).pop()
     if (toolsCache.enabled && lastTool) {
       lastTool.cache_control = this._formatCacheControl(toolsCache.ttl)
     }

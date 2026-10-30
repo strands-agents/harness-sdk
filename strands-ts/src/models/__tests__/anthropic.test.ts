@@ -1674,6 +1674,50 @@ describe('AnthropicModel', () => {
       expect(captured.request.tools[0].cache_control).toBeUndefined()
     })
 
+    it('sends deferred tools with defer_loading and caches the last non-deferred tool', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+      const deferred = [
+        { ...toolSpecs[0]!, deferLoading: true },
+        toolSpecs[1]!,
+        { name: 't3', description: 'tool three', inputSchema: { type: 'object' as const }, deferLoading: true },
+      ]
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs: deferred }))
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' }, defer_loading: true },
+        { name: 't2', description: 'tool two', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
+        { name: 't3', description: 'tool three', input_schema: { type: 'object' }, defer_loading: true },
+      ])
+    })
+
+    it('omits defer_loading when deferLoading is false', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], { toolSpecs: [{ ...toolSpecs[0]!, deferLoading: false }] })
+      )
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' } },
+      ])
+    })
+
+    it('adds no tools breakpoint when every tool is deferred', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], {
+          toolSpecs: toolSpecs.map((spec) => ({ ...spec, deferLoading: true })),
+        })
+      )
+
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
     it('carries a toolsTTL onto cache_control', async () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({
