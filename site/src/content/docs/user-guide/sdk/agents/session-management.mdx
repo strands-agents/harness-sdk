@@ -7,11 +7,20 @@ sourceLinks:
   - path: strands-py/src/strands/session/snapshot_session_manager.py
   - path: strands-py/src/strands/session/file_session_manager.py
   - path: strands-py/src/strands/session/s3_session_manager.py
+  - path: strands-py/src/strands/session/repository_session_manager.py
+  - path: strands-py/src/strands/session/session_repository.py
   - path: strands-py/src/strands/storage/storage.py
   - path: strands-ts/src/session/session-manager.ts
 ---
 
 Keep an agent's state and conversation history across restarts and requests. A session persists what the agent knows, so it can pick up where it left off even when your application restarts or runs across several machines.
+
+:::caution[Python repository-based session managers are deprecated]
+`RepositorySessionManager`, `FileSessionManager`, and `S3SessionManager` remain supported
+in v1 but will be removed in v2.0.0. Use `SnapshotSessionManager` for new sessions.
+`SnapshotSessionManager` cannot read repository-format records, so follow the
+[migration guide](./migrate-repository-sessions.mdx) to preserve existing data.
+:::
 
 ## What a session contains
 
@@ -78,10 +87,8 @@ agent("Hello!")  # This conversation is persisted
 
 Strands persists the conversation and its state to the underlying storage backend.
 
-In Python, `SnapshotSessionManager` is the recommended manager for new single-agent sessions. `FileSessionManager` and `S3SessionManager` remain supported as the [compatibility path](#storage-backends) for Graph, Swarm, and existing repository-format sessions. TypeScript uses a single `SessionManager` for both.
-
-`FileSessionManager` and `S3SessionManager` remain supported in Python, but use
-`SnapshotSessionManager` for new single-agent sessions.
+In Python, use `SnapshotSessionManager` for new sessions. TypeScript uses a single
+`SessionManager` for both single-agent and multi-agent sessions.
 
 ### Multi-agent sessions
 
@@ -91,7 +98,7 @@ Multi-agent systems (Graph/Swarm) can also use session management to persist the
 <Tab label="Python">
 
 :::caution
-Only the orchestrator should have a session manager. Agents inside a graph or swarm must not have their own session manager — Python raises a `ValueError` if you add an agent that has one to a Graph or Swarm.
+Only the orchestrator should have a session manager. Agents inside a graph or swarm must not have their own session manager. Python raises a `ValueError` if you add an agent that has one to a Graph or Swarm.
 :::
 
 Pass an explicit storage backend to
@@ -203,10 +210,16 @@ console.log(new Agent().sessionId) // e.g. "a1b2c3d4"
 
 [Storage](../storage/index.mdx) is the single place persistence backends are documented. How session management reaches a backend depends on the manager:
 
-- **`SnapshotSessionManager` (Python) and `SessionManager` (TypeScript)** compose the shared `Storage` abstraction: you pass any `Storage` backend and the manager persists snapshots through it. Manager-level storage takes precedence over an agent-level `storage`. If neither provides storage, Python falls back to `LocalFileStorage("./.strands/")` and TypeScript fails during initialization.
-- **`FileSessionManager` and `S3SessionManager` (Python, compatibility path)** configure storage directly with a storage directory or an S3 bucket. They do not take a `Storage` backend.
+- **`SnapshotSessionManager` (Python) and `SessionManager` (TypeScript)** use the
+  shared `Storage` abstraction. Manager-level storage takes precedence over agent-level
+  storage. If neither provides storage, Python falls back to
+  `LocalFileStorage("./.strands/")`, while TypeScript fails during initialization.
+- **Repository-based managers (Python, deprecated)** configure a storage directory or
+  Amazon S3 bucket directly. They do not accept a `Storage` backend. See
+  [Repository-based session managers](#repository-based-session-managers) for v1
+  configuration examples.
 
-The examples below show each form.
+Configure snapshot storage for each SDK:
 
 <Tabs>
 <Tab label="Python">
@@ -228,33 +241,6 @@ session_manager = SnapshotSessionManager(
 session_manager = SnapshotSessionManager(
     session_id="user-123",
     storage=S3Storage(bucket="my-agent-sessions", prefix="production/"),
-)
-
-agent = Agent(session_manager=session_manager)
-```
-
-The repository-based managers cover Graph, Swarm, and existing repository-format sessions. They configure storage directly rather than through a `Storage` backend:
-
-| Session Manager | Persistence | Best for |
-|-----------------|-------------|----------|
-| [`FileSessionManager`](@api/python/strands.session.file_session_manager#FileSessionManager) | Local disk | Development, single-machine |
-| [`S3SessionManager`](@api/python/strands.session.s3_session_manager#S3SessionManager) | Amazon S3 | Production, distributed |
-
-```python
-from strands import Agent
-from strands.session import FileSessionManager, S3SessionManager
-
-# File-based persistence
-session_manager = FileSessionManager(
-    session_id="user-123",
-    storage_dir="/path/to/sessions",
-)
-
-# S3-based persistence
-session_manager = S3SessionManager(
-    session_id="user-123",
-    bucket="my-agent-sessions",
-    prefix="production/",
 )
 
 agent = Agent(session_manager=session_manager)
@@ -338,9 +324,56 @@ See [Basic Usage](#basic-usage) for configuration examples.
 
 ### Repository-based session managers
 
-:::note[Python only]
-Repository-based session managers are available in the Python SDK only.
-:::
+Repository-based session managers persist session metadata, agent state, and individual
+messages as separate records through the `SessionRepository` interface.
+
+- **`RepositorySessionManager`** coordinates persistence through a custom
+  `SessionRepository` implementation.
+- **`FileSessionManager`** stores session records as local files.
+- **`S3SessionManager`** stores session records as Amazon S3 objects.
+
+Continue an existing repository-format session with its original manager, session ID,
+agent ID, and storage configuration. The manager restores those records when it
+initializes the agent and persists subsequent messages and state.
+
+#### Continue a session from local files
+
+To continue a session stored on local disk, configure `FileSessionManager` with its
+existing storage directory:
+
+```python
+from strands import Agent
+from strands.session import FileSessionManager
+
+session_manager = FileSessionManager(
+    session_id="user-123",
+    storage_dir="./repository-sessions",
+)
+agent = Agent(session_manager=session_manager)
+
+agent("Continue our previous conversation.")
+```
+
+#### Continue a session from Amazon S3
+
+To continue a session stored in Amazon S3, configure `S3SessionManager` with its existing
+bucket and prefix. Configure the standard Boto3 credential chain and grant the
+[required S3 permissions](../storage/index.mdx#required-s3-permissions).
+
+```python
+from strands import Agent
+from strands.session import S3SessionManager
+
+session_manager = S3SessionManager(
+    session_id="user-123",
+    bucket="my-agent-sessions",
+    prefix="production/",
+    region_name="us-west-2",
+)
+agent = Agent(session_manager=session_manager)
+
+agent("Continue our previous conversation.")
+```
 
 ## Immutable snapshots
 
@@ -454,9 +487,13 @@ asyncio.run(session_manager.delete_session())
 <Tabs>
 <Tab label="Python">
 
-`SnapshotSessionManager` stores a single versioned [`Snapshot`](./snapshots.mdx) JSON blob whose `data` field carries the messages, agent state, conversation manager state, interrupt state, model state, and system prompt.
+`SnapshotSessionManager` stores one versioned [`Snapshot`](./snapshots.mdx) JSON blob.
+Its `data` field contains messages, agent state, conversation-manager state, interrupt
+state, model state, and the system prompt. It also includes context-manager stash data or
+a storage reference when present.
 
-The record-based models below apply to `FileSessionManager`, `S3SessionManager`, and `RepositorySessionManager`, which persist each message individually:
+The deprecated repository-based managers (`FileSessionManager`, `S3SessionManager`, and
+`RepositorySessionManager`) use the following record types:
 
 **Session**
 
@@ -497,11 +534,14 @@ These data models work together to provide a complete representation of an agent
 
 **Multi-Agent State**
 
-Multi-agent systems serialize their state as JSON objects containing:
+Multi-agent snapshots contain the orchestrator's current execution state:
 
-- **Orchestrator Configuration**: Settings, parameters, and execution preferences
-- **Node State**: Current execution state and node transition history
-- **Shared Context**: Cross-agent shared state and variables
+- Run status and the resume frontier
+- Node results, execution order, and interrupts
+- Usage, metrics, and Swarm shared context
+
+The application must reconstruct the Graph or Swarm topology and configuration before
+restoring this state.
 
 </Tab>
 <Tab label="TypeScript">
@@ -531,64 +571,26 @@ The following third-party session managers extend Strands with additional storag
 | AgentCoreMemorySessionManager | Amazon | Advanced memory with intelligent retrieval using Amazon Bedrock AgentCore Memory. Supports both short-term memory (STM) and long-term memory (LTM) with strategies for user preferences, facts, and session summaries. | [View Documentation](../../../integrations/session-managers/agentcore-memory.md) |
 | **Contribute Your Own** | Community | Have you built a session manager? Share it with the community! | [Learn How](/integrations/) |
 
-## Custom session repositories
+## Custom session storage
 
-For advanced use cases, you can implement your own session storage backend.
+Implement a custom storage backend when the built-in backends do not meet your needs.
 
 <Tabs>
 <Tab label="Python">
 
-For new single-agent sessions, implement a [custom `Storage` backend](../storage/index.mdx#custom-backends) and pass it to `SnapshotSessionManager`: the manager owns the session layout, so the backend only moves bytes.
+For new custom backends, implement the
+[`Storage` interface](../storage/index.mdx#custom-backends) and pass it to
+`SnapshotSessionManager`.
 
-To customize a repository-based session, implement the `SessionRepository` interface:
-
-```python
-from typing import Optional
-from strands import Agent
-from strands.session.repository_session_manager import RepositorySessionManager
-from strands.session.session_repository import SessionRepository
-from strands.types.session import Session, SessionAgent, SessionMessage
-
-class CustomSessionRepository(SessionRepository):
-    """Custom session repository implementation."""
-
-    def __init__(self):
-        """Initialize with your custom storage backend."""
-        # Initialize your storage backend (e.g., database connection)
-        self.db = YourDatabaseClient()
-
-    def create_session(self, session: Session) -> Session:
-        """Create a new session."""
-        self.db.sessions.insert(asdict(session))
-        return session
-
-    def read_session(self, session_id: str) -> Optional[Session]:
-        """Read a session by ID."""
-        data = self.db.sessions.find_one({"session_id": session_id})
-        if data:
-            return Session.from_dict(data)
-        return None
-
-    # Implement other required methods...
-    # create_agent, read_agent, update_agent
-    # create_message, read_message, update_message, list_messages
-
-# Use your custom repository with RepositorySessionManager
-custom_repo = CustomSessionRepository()
-session_manager = RepositorySessionManager(
-    session_id="user-789",
-    session_repository=custom_repo
-)
-
-agent = Agent(session_manager=session_manager)
-```
+Existing custom `SessionRepository` implementations remain supported in v1. Pass the
+repository instance to `RepositorySessionManager` as `session_repository`, then attach the
+manager to an agent as you would a built-in manager. Migrate the implementation to a
+custom `Storage` backend before v2.0.0.
 
 </Tab>
 <Tab label="TypeScript">
 
-The simplest approach is to pass any
-[Storage](../storage/index.mdx) backend directly: the
-`SessionManager` wraps it automatically. For full control,
+Pass any [Storage](../storage/index.mdx) backend directly to `SessionManager`. For full control,
 implement the `SnapshotStorage` interface:
 
 ```typescript
@@ -598,31 +600,35 @@ implement the `SnapshotStorage` interface:
 </Tab>
 </Tabs>
 
-This lets you store session data in any backend while reusing the built-in session management logic.
+The session manager owns the data layout while the storage backend moves bytes.
 
 ## Data layout
 
-Both file and S3 backends use the same key structure:
+Session managers use the following key layouts:
 
 <Tabs>
 <Tab label="Python">
 
-`SnapshotSessionManager` layout (recommended for new single-agent sessions). The `Storage` backend prepends a `session/` namespace, so the layout is byte-identical to the TypeScript SDK:
+`SnapshotSessionManager` stores snapshots under a `session/` namespace:
 
 ```
 <root>/
 └── session/
     └── <session_id>/
         └── scopes/
-            └── agent/
-                └── <agent_id>/
+            ├── agent/
+            │   └── <agent_id>/
+            │       └── snapshots/
+            │           ├── snapshot_latest.json
+            │           └── immutable_history/
+            │               └── snapshot_<uuid7>.json
+            └── multiAgent/
+                └── <orchestrator_id>/
                     └── snapshots/
-                        ├── snapshot_latest.json
-                        └── immutable_history/
-                            └── snapshot_<uuid7>.json
+                        └── snapshot_latest.json
 ```
 
-Repository-based layout (`FileSessionManager`, `S3SessionManager`):
+Deprecated repository-based layout (`FileSessionManager`, `S3SessionManager`):
 
 ```
 <root>/
@@ -660,10 +666,6 @@ Repository-based layout (`FileSessionManager`, `S3SessionManager`):
 
 </Tab>
 </Tabs>
-
-Using the same session ID and storage location does not migrate repository-based Python
-data to `SnapshotSessionManager`. Existing sessions can continue using their current
-manager, or applications can migrate the required state explicitly.
 
 ## Sessions, agents, and concurrency
 
