@@ -18,8 +18,9 @@ import type { InvocationContext } from '../agent/invocation-context.js'
  * (e.g. `cancel`, `retry`, `selectedTool`, `resume`, and mutable `toolUse` / `result`).
  *
  * All current events extend {@link HookableEvent} (which itself extends {@link StreamEvent}),
- * making them both streamable and subscribable via hook callbacks. {@link StreamEvent} exists
- * as the base class for potential future events that should be stream-only without hookability.
+ * making them subscribable via hook callbacks. All but {@link MessageUpdatedEvent}, which is
+ * hook-only, are also yielded by `agent.stream()`. {@link StreamEvent} exists as the base class
+ * for potential future events that should be stream-only without hookability.
  *
  * ## Event categories
  *
@@ -250,6 +251,45 @@ export class MessageAddedEvent extends HookableEvent {
    */
   toJSON(): Pick<MessageAddedEvent, 'type' | 'message'> {
     return { type: this.type, message: this.message }
+  }
+}
+
+/**
+ * Event triggered after the framework replaces a message in the conversation history.
+ * The replacement keeps the replaced message's tracking id. Fired to hook callbacks only;
+ * `agent.stream()` does not yield it. Does not fire for messages replaced directly in
+ * `agent.messages`.
+ */
+export class MessageUpdatedEvent extends HookableEvent {
+  readonly type = 'messageUpdatedEvent' as const
+  readonly agent: LocalAgent
+  /** Stable identifier of the replaced message. */
+  readonly trackingId: string
+  /** The replacement message. */
+  readonly message: Message
+  readonly invocationState: InvocationState
+
+  constructor(
+    data: {
+      agent: LocalAgent
+      trackingId: string
+      message: Message
+      invocationState: InvocationState
+    } & HookableEventData
+  ) {
+    super(data)
+    this.agent = data.agent
+    this.trackingId = data.trackingId
+    this.message = data.message
+    this.invocationState = data.invocationState
+  }
+
+  /**
+   * Serializes for wire transport, excluding the agent reference and invocationState.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): Pick<MessageUpdatedEvent, 'type' | 'trackingId' | 'message'> {
+    return { type: this.type, trackingId: this.trackingId, message: this.message }
   }
 }
 

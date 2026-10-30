@@ -10,6 +10,7 @@ import {
   BeforeToolCallEvent,
   BeforeToolsEvent,
   MessageAddedEvent,
+  MessageUpdatedEvent,
   ModelStreamUpdateEvent,
   ContentBlockEvent,
   ModelMessageEvent,
@@ -138,6 +139,35 @@ describe('MessageAddedEvent', () => {
     const agent = new Agent()
     const message = new Message({ role: 'assistant', content: [] })
     const event = new MessageAddedEvent({ agent, message, invocationState: {} })
+    expect(event._shouldReverseCallbacks()).toBe(false)
+  })
+})
+
+describe('MessageUpdatedEvent', () => {
+  it('creates instance with correct properties', () => {
+    const agent = new Agent()
+    const message = new Message({ role: 'user', content: [new TextBlock('Hello')], trackingId: 'tracking-1' })
+    const event = new MessageUpdatedEvent({ agent, trackingId: 'tracking-1', message, invocationState: {} })
+
+    expect(event).toEqual({
+      type: 'messageUpdatedEvent',
+      agent: agent,
+      trackingId: 'tracking-1',
+      message: message,
+      invocationState: {},
+    })
+    // @ts-expect-error verifying that property is readonly
+    event.agent = new Agent()
+    // @ts-expect-error verifying that property is readonly
+    event.trackingId = 'tracking-2'
+    // @ts-expect-error verifying that property is readonly
+    event.message = message
+  })
+
+  it('returns false for _shouldReverseCallbacks', () => {
+    const agent = new Agent()
+    const message = new Message({ role: 'user', content: [] })
+    const event = new MessageUpdatedEvent({ agent, trackingId: message.trackingId, message, invocationState: {} })
     expect(event._shouldReverseCallbacks()).toBe(false)
   })
 })
@@ -830,6 +860,21 @@ describe('toJSON serialization', () => {
     })
   })
 
+  describe('MessageUpdatedEvent', () => {
+    it('includes trackingId and message and excludes agent', () => {
+      const agent = new Agent()
+      const message = new Message({ role: 'user', content: [new TextBlock('Hello')], trackingId: 'tracking-1' })
+      const event = new MessageUpdatedEvent({ agent, trackingId: 'tracking-1', message, invocationState: {} })
+      const json = JSON.parse(JSON.stringify(event))
+
+      expect(json).toStrictEqual({
+        type: 'messageUpdatedEvent',
+        trackingId: 'tracking-1',
+        message: { role: 'user', content: [{ text: 'Hello' }], trackingId: 'tracking-1' },
+      })
+    })
+  })
+
   describe('ModelStreamUpdateEvent', () => {
     it('includes stream event and excludes agent', () => {
       const agent = new Agent()
@@ -1177,6 +1222,10 @@ describe('toJSON serialization completeness', () => {
         ),
       },
       { name: 'MessageAddedEvent', event: new MessageAddedEvent({ agent, message, invocationState: {} }) },
+      {
+        name: 'MessageUpdatedEvent',
+        event: new MessageUpdatedEvent({ agent, trackingId: message.trackingId, message, invocationState: {} }),
+      },
       {
         name: 'ModelStreamUpdateEvent',
         event: new ModelStreamUpdateEvent({ agent, event: streamEvent, invocationState: {} }),
