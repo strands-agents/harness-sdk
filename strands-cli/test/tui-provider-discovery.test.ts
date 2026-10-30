@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { STSClient } from '@aws-sdk/client-sts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { BedrockClient } from '@aws-sdk/client-bedrock'
+import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock'
 import { applyProviderEnvironmentValues, CliConfigStore } from '../src/tui/config.js'
 import { discoverAwsCredentials, discoverLiteLlm, discoverProviderModels } from '../src/tui/provider/discovery.js'
 
@@ -129,6 +129,104 @@ describe('AWS credential refresh', () => {
   })
 })
 
+describe('Bedrock model capability filtering', () => {
+  const runnableModelIds = [
+    'amazon.nova-lite-v1:0',
+    'anthropic.claude-current-v1:0',
+    'google.gemma-3-27b-it',
+    'mistral.devstral-2-123b',
+    'openai.gpt-oss-120b-1:0',
+    'qwen.qwen3-32b-v1:0',
+    'us.anthropic.claude-current-v1:0',
+  ]
+
+  it('lists only models that support chat with streaming tool use', async () => {
+    vi.spyOn(BedrockClient.prototype, 'send').mockImplementation(async (command) => {
+      if (command instanceof ListInferenceProfilesCommand) {
+        return {
+          inferenceProfileSummaries: [
+            inferenceProfile('us.anthropic.claude-current-v1:0', 'anthropic.claude-current-v1:0'),
+            inferenceProfile('us.meta.llama3-8b-instruct-v1:0', 'meta.llama3-8b-instruct-v1:0'),
+          ],
+        }
+      }
+      if (command instanceof ListFoundationModelsCommand) {
+        return {
+          modelSummaries: [
+            bedrockFoundationModel('anthropic.claude-current-v1:0'),
+            bedrockFoundationModel('amazon.nova-lite-v1:0'),
+            bedrockFoundationModel('openai.gpt-oss-120b-1:0'),
+            bedrockFoundationModel('qwen.qwen3-32b-v1:0'),
+            bedrockFoundationModel('mistral.devstral-2-123b'),
+            bedrockFoundationModel('google.gemma-3-27b-it'),
+            bedrockFoundationModel('meta.llama3-8b-instruct-v1:0'),
+            bedrockFoundationModel('meta.llama4-scout-17b-instruct-v1:0'),
+            bedrockFoundationModel('mistral.mistral-7b-instruct-v0:2'),
+            bedrockFoundationModel('mistral.mistral-large-2402-v1:0'),
+            bedrockFoundationModel('mistral.mixtral-8x7b-instruct-v0:1'),
+            bedrockFoundationModel('deepseek.r1-v1:0'),
+            bedrockFoundationModel('writer.palmyra-vision-7b'),
+            bedrockFoundationModel('amazon.titan-text-premier-v1:0'),
+            bedrockFoundationModel('cohere.command-text-v14'),
+            bedrockFoundationModel('anthropic.claude-v2:1'),
+            bedrockFoundationModel('anthropic.claude-instant-v1'),
+            bedrockFoundationModel('amazon.nova-2-sonic-v1:0'),
+            bedrockFoundationModel('amazon.nova-2-5-sonic'),
+            bedrockFoundationModel('twelvelabs.pegasus-1-5-v1:0'),
+          ],
+        }
+      }
+      return {}
+    })
+
+    const discovery = await discoverProviderModels('bedrock', {})
+
+    expect(discovery.available).toBe(true)
+    expect(discovery.models.map((model) => model.id).sort()).toEqual(runnableModelIds)
+  })
+})
+
+describe('Bedrock Mantle model capability filtering', () => {
+  const responsesApiModelIds = [
+    'google.gemma-4-31b',
+    'openai.gpt-5.4',
+    'openai.gpt-5.4-2026-03-05',
+    'openai.gpt-5.6-sol',
+    'openai.gpt-6-astra',
+    'openai.gpt-6.1-sol',
+    'openai.gpt-oss-120b',
+    'openai.gpt-oss-20b',
+    'xai.grok-4.3',
+  ]
+
+  it('lists only models that accept the Responses API', async () => {
+    const listedModelIds = [
+      ...responsesApiModelIds,
+      'anthropic.claude-haiku-4-5',
+      'deepseek.v3.2',
+      'google.gemma-3-27b-it',
+      'minimax.minimax-m2',
+      'mistral.mistral-large-3-675b-instruct',
+      'openai.gpt-oss-safeguard-20b',
+      'qwen.qwen3-32b',
+      'writer.palmyra-vision-7b',
+      'zai.glm-5',
+    ]
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new globalThis.Response(JSON.stringify({ data: listedModelIds.map((id) => ({ id })) })))
+
+    const discovery = await discoverProviderModels('bedrock-mantle', {
+      AWS_REGION: { value: 'us-east-1', source: 'process' },
+      AWS_BEARER_TOKEN_BEDROCK: { value: 'test-token', source: 'process' },
+    })
+
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://bedrock-mantle.us-east-1.api.aws/v1/models')
+    expect(discovery.available).toBe(true)
+    expect(discovery.models.map((model) => model.id).sort()).toEqual(responsesApiModelIds)
+  })
+})
+
 describe('LiteLLM proxy discovery', () => {
   it('detects models from the default local proxy without configuration', async () => {
     const fetch = vi
@@ -183,6 +281,41 @@ describe('LiteLLM proxy discovery', () => {
     })
   })
 })
+
+function bedrockFoundationModel(modelId: string): {
+  modelId: string
+  modelName: string
+  modelLifecycle: { status: 'ACTIVE' }
+  outputModalities: ['TEXT']
+  responseStreamingSupported: true
+  inferenceTypesSupported: ['ON_DEMAND']
+} {
+  return {
+    modelId,
+    modelName: modelId,
+    modelLifecycle: { status: 'ACTIVE' },
+    outputModalities: ['TEXT'],
+    responseStreamingSupported: true,
+    inferenceTypesSupported: ['ON_DEMAND'],
+  }
+}
+
+function inferenceProfile(
+  inferenceProfileId: string,
+  modelId: string
+): {
+  inferenceProfileId: string
+  inferenceProfileName: string
+  status: 'ACTIVE'
+  models: { modelArn: string }[]
+} {
+  return {
+    inferenceProfileId,
+    inferenceProfileName: inferenceProfileId,
+    status: 'ACTIVE',
+    models: [{ modelArn: `arn:aws:bedrock:us-east-1::foundation-model/${modelId}` }],
+  }
+}
 
 describe('provider model discovery errors', () => {
   it('retains the HTTP failure reason without exposing credential values', async () => {

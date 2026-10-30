@@ -17,6 +17,20 @@ export { discoverAwsCredentials } from './aws-client.js'
 
 const run = promisify(execFile)
 
+// The CLI sends bedrock-mantle requests through the OpenAI Responses API, and Mantle rejects that
+// surface for most of the models it lists. These are the lines that accept it: the SDK's Mantle
+// /openai/v1 routing prefixes plus the two gpt-oss models served from /v1. Confirmed by the live
+// catalog runs recorded in #5562.
+const RESPONSES_API_MODEL_PREFIXES = [
+  'openai.gpt-5.',
+  'openai.gpt-6-',
+  'openai.gpt-6.',
+  'google.gemma-4-',
+  'xai.grok-4.',
+  'openai.gpt-oss-120b',
+  'openai.gpt-oss-20b',
+] as const
+
 export interface OllamaDiscovery {
   installed: boolean
   running: boolean
@@ -285,15 +299,21 @@ async function listBedrockMantleModels(environment: DetectedProviderEnvironment)
   }
   const configuredToken = environment.AWS_BEARER_TOKEN_BEDROCK?.value
   if (configuredToken) {
-    return listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws`, configuredToken)
+    return filterResponsesApiModels(
+      await listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws`, configuredToken)
+    )
   }
   const client = new STSClient(awsClientConfiguration(environment))
   try {
     const token = await getTokenProvider({ region, credentials: client.config.credentials })()
-    return await listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws`, token)
+    return filterResponsesApiModels(await listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws`, token))
   } finally {
     client.destroy()
   }
+}
+
+function filterResponsesApiModels(models: readonly ProviderModel[]): ProviderModel[] {
+  return models.filter((model) => RESPONSES_API_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix)))
 }
 
 async function listAnthropicModels(apiKey: string): Promise<readonly ProviderModel[]> {
