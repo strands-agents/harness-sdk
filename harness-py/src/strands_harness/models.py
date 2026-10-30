@@ -187,7 +187,7 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
 def _bedrock_effort(model_id: str, effort: Effort) -> str | None:
     levels = _bedrock_levels(model_id)
     if levels:
-        return _effort(effort, "high", levels, f"Bedrock model {model_id}")
+        return _effort(effort, "medium", levels, f"Bedrock model {model_id}")
     _check_effort(effort)
     if effort in ("auto", "off"):
         return None
@@ -330,9 +330,9 @@ class Provider(NamedTuple):
 
 
 _PROVIDERS = {
-    "bedrock": Provider(_bedrock, "high", _ANTHROPIC_LEVELS, web_search=False, caching=True),
+    "bedrock": Provider(_bedrock, "medium", _ANTHROPIC_LEVELS, web_search=False, caching=True),
     "bedrock-mantle": Provider(_bedrock_mantle, "high", _OPENAI_LEVELS, web_search=True, caching=True),
-    "anthropic": Provider(_anthropic, "high", _ANTHROPIC_LEVELS, web_search=True, caching=True),
+    "anthropic": Provider(_anthropic, "medium", _ANTHROPIC_LEVELS, web_search=True, caching=True),
     "openai": Provider(_openai, "high", _OPENAI_LEVELS, web_search=True, caching=True),
     "google": Provider(_gemini, "high", _GOOGLE_LEVELS, web_search=True, caching=True),
     "ollama": Provider(_ollama, None, (), web_search=False, caching=False),

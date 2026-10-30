@@ -60,7 +60,7 @@ describe('resolveModel', () => {
     expect(config.modelId).toBe('global.anthropic.claude-opus-4-8')
     expect(config.additionalRequestFields).toEqual({
       thinking: { type: 'adaptive', display: 'summarized' },
-      output_config: { effort: 'high' },
+      output_config: { effort: 'medium' },
     })
   })
 
@@ -149,7 +149,7 @@ describe('resolveModel', () => {
     'resolves Astra and 6.1 Sol effort without none for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
-        ['auto', 'high'],
+        ['auto', 'medium'],
         ['low', 'low'],
         ['max', 'max'],
       ] as const) {
@@ -168,7 +168,7 @@ describe('resolveModel', () => {
     'resolves GPT-5.4/5.5 effort without max for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
-        ['auto', 'high'],
+        ['auto', 'medium'],
         ['low', 'low'],
         ['xhigh', 'xhigh'],
         ['off', 'none'],
@@ -192,7 +192,7 @@ describe('resolveModel', () => {
     'us.openai.gpt-daybreak-blue-5.6-sol',
   ])('resolves every GPT-5.6, GPT-6, and Daybreak effort for %s', async (modelId) => {
     for (const [thinking, effort] of [
-      ['auto', 'high'],
+      ['auto', 'medium'],
       ['low', 'low'],
       ['max', 'max'],
       ['off', 'none'],
@@ -226,7 +226,7 @@ describe('resolveModel', () => {
     })
     const automatic = await resolve('bedrock/us.xai.grok-4.6', 'auto')
     expect(automatic.getConfig().additionalRequestFields).toEqual({
-      reasoning_effort: 'high',
+      reasoning_effort: 'medium',
     })
     await expect(resolve('bedrock/us.xai.grok-4.6', 'max')).rejects.toThrow(
       'not supported by Bedrock model us.xai.grok-4.6'
@@ -331,10 +331,10 @@ describe('resolveModel', () => {
 
   const ADAPTIVE = {
     thinking: { type: 'adaptive', display: 'summarized' },
-    output_config: { effort: 'high' },
+    output_config: { effort: 'medium' },
   }
 
-  const EXTENDED = { thinking: { type: 'enabled', budget_tokens: 16_384 } }
+  const EXTENDED = { thinking: { type: 'enabled', budget_tokens: 8_192 } }
 
   const EXTENDED_CLAUDE = [
     'global.anthropic.claude-haiku-4-5-20251001-v1:0',
@@ -360,6 +360,7 @@ describe('resolveModel', () => {
     'global.anthropic.claude-opus-4-7',
     'global.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-5-5',
     'global.anthropic.claude-sonnet-5',
     'global.anthropic.claude-haiku-5-5',
     'au.anthropic.claude-haiku-5-5',
@@ -403,6 +404,7 @@ describe('resolveModel', () => {
     ['claude-opus-4.5', 64_000],
     ['claude-opus-4-8', 128_000],
     ['claude-opus-5', 128_000],
+    ['claude-opus-5-5', 128_000],
     ['claude-haiku-4-5-20251001-v1:0', 64_000],
     ['claude-haiku-4.5', 64_000],
     ['claude-haiku-5-5', 128_000],
@@ -617,8 +619,12 @@ describe('resolveModel', () => {
 
 // https://github.com/strands-agents/harness-sdk/issues/4472
 describe('default effort', () => {
+  const at = (config: Record<string, unknown>, path: string[]): unknown =>
+    path.reduce<unknown>((value, key) => (value as Record<string, unknown> | undefined)?.[key], config)
+
   // [model spec, path of the effort field in the resolved config]
-  const HIGH_BY_DEFAULT: [string, string[]][] = [
+  const MEDIUM_BY_DEFAULT: [string, string[]][] = [
+    ['bedrock/global.anthropic.claude-opus-5-5', ['additionalRequestFields', 'output_config', 'effort']],
     ['bedrock/global.anthropic.claude-opus-5', ['additionalRequestFields', 'output_config', 'effort']],
     ['bedrock/global.anthropic.claude-sonnet-5', ['additionalRequestFields', 'output_config', 'effort']],
     ['bedrock/us.anthropic.claude-sonnet-4-6', ['additionalRequestFields', 'output_config', 'effort']],
@@ -628,7 +634,17 @@ describe('default effort', () => {
     ['bedrock/openai.gpt-oss-120b-1:0', ['additionalRequestFields', 'reasoning_effort']],
     ['bedrock/qwen.qwen3-32b-v1:0', ['additionalRequestFields', 'reasoning_effort']],
     ['bedrock/us.xai.grok-4', ['additionalRequestFields', 'reasoning_effort']],
+    ['anthropic/claude-opus-5-5', ['params', 'output_config', 'effort']],
     ['anthropic/claude-opus-5', ['params', 'output_config', 'effort']],
+  ]
+
+  it.each(MEDIUM_BY_DEFAULT)('is medium on %s', async (spec, path) => {
+    const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig() as Record<string, unknown>
+    expect(at(config, path)).toBe('medium')
+    expect(config).toEqual((await resolve(spec, 'medium')).getConfig())
+  })
+
+  const HIGH_BY_DEFAULT: [string, string[]][] = [
     ['openai/gpt-5.6-sol', ['params', 'reasoning', 'effort']],
     ['bedrock-mantle/openai.gpt-5.6-sol', ['params', 'reasoning', 'effort']],
     ['google/gemini-3.5-flash', ['params', 'thinkingConfig', 'thinkingLevel']],
@@ -636,18 +652,17 @@ describe('default effort', () => {
 
   it.each(HIGH_BY_DEFAULT)('is high on %s', async (spec, path) => {
     const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig() as Record<string, unknown>
-    const at = path.reduce<unknown>((value, key) => (value as Record<string, unknown> | undefined)?.[key], config)
-    expect(at).toBe('high')
+    expect(at(config, path)).toBe('high')
     expect(config).toEqual((await resolve(spec, 'high')).getConfig())
   })
 
   it.each(['bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', 'anthropic/claude-haiku-4-5-20251001'])(
-    'is the high budget on extended-thinking %s',
+    'is the medium budget on extended-thinking %s',
     async (spec) => {
       const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig()
       const block = spec.startsWith('bedrock/') ? config.additionalRequestFields : config.params
-      expect(block).toEqual({ thinking: { type: 'enabled', budget_tokens: 16_384 } })
-      expect(config).toEqual((await resolve(spec, 'high')).getConfig())
+      expect(block).toEqual({ thinking: { type: 'enabled', budget_tokens: 8_192 } })
+      expect(config).toEqual((await resolve(spec, 'medium')).getConfig())
     }
   )
 
@@ -726,7 +741,7 @@ describe('supportsThinking', () => {
       const model = await resolve(`bedrock/global.anthropic.${modelId}`)
       expect(model.getConfig().additionalRequestFields).toEqual({
         thinking: { type: 'adaptive', display: 'summarized' },
-        output_config: { effort: 'high' },
+        output_config: { effort: 'medium' },
       })
     }
   )

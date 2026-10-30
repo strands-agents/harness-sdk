@@ -18,8 +18,9 @@ from typing_extensions import TypedDict
 Effort = Literal["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
 """Reasoning effort for the resolved model.
 
-``"auto"`` picks the provider's recommended level (``"high"`` everywhere it applies); ``"off"``
-disables reasoning (the provider's ``none``, or no thinking block where there is no such level).
+``"auto"`` picks the provider's recommended level (``"medium"`` on Bedrock and Anthropic, ``"high"``
+on the other providers that reason); ``"off"`` disables reasoning (the provider's ``none``, or no
+thinking block where there is no such level).
 The other levels are validated against the resolved provider and, on Bedrock, the model family.
 """
 

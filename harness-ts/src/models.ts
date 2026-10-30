@@ -206,7 +206,7 @@ function bedrockLevels(modelId: string): readonly string[] {
 function bedrockEffort(modelId: string, effort: Effort): string | null {
   const levels = bedrockLevels(modelId)
   // Families that take no level get none by default; an explicit level is rejected by resolveEffort.
-  return resolveEffort(effort, levels.length > 0 ? 'high' : null, levels, `Bedrock model ${modelId}`)
+  return resolveEffort(effort, levels.length > 0 ? 'medium' : null, levels, `Bedrock model ${modelId}`)
 }
 
 function bedrockThinking(modelId: string, effort: string | null): JSONValue | undefined {
@@ -363,7 +363,7 @@ interface Provider {
 }
 
 const PROVIDERS: Record<string, Provider> = {
-  bedrock: { build: bedrock, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
+  bedrock: { build: bedrock, recommended: 'medium', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
   'bedrock-mantle': {
     build: bedrockMantle,
     recommended: 'high',
@@ -371,7 +371,7 @@ const PROVIDERS: Record<string, Provider> = {
     webSearch: true,
     caching: true,
   },
-  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: true, caching: true },
+  anthropic: { build: anthropic, recommended: 'medium', levels: ANTHROPIC_LEVELS, webSearch: true, caching: true },
   openai: { build: openai, recommended: 'high', levels: OPENAI_LEVELS, webSearch: true, caching: true },
   google: { build: gemini, recommended: 'high', levels: GOOGLE_LEVELS, webSearch: true, caching: true },
   ollama: { build: ollama, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: false },

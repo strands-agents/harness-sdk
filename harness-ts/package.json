@@ -79,7 +79,7 @@
     "@anthropic-ai/sdk": "^0.109.1",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@google/genai": "^2.6.0",
-    "@strands-agents/sdk": ">=1.19.0 <2.0.0",
+    "@strands-agents/sdk": ">=1.22.0 <2.0.0",
     "openai": "^6.45.0"
   },
   "peerDependenciesMeta": {

@@ -660,7 +660,7 @@ def test_context_manager_config_builds_an_sdk_context_manager():
 
 def test_effort_auto_uses_recommended_level():
     agent = create_harness(effort="auto")
-    assert agent.model.config["additional_request_fields"]["output_config"]["effort"] == "high"
+    assert agent.model.config["additional_request_fields"]["output_config"]["effort"] == "medium"
 
 
 def test_effort_off_drops_reasoning():
