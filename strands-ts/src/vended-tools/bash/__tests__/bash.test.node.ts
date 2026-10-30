@@ -175,6 +175,57 @@ describe.skipIf(process.platform === 'win32')('bash tool', () => {
 
       expect((result as BashOutput).error).toContain('not found')
     })
+
+    // Guards https://github.com/strands-agents/harness-sdk/issues/4843: a command that reads
+    // stdin must not consume the commands and completion marker sent after it.
+    it('keeps executing later commands after a command reads stdin', async () => {
+      const { context } = createFreshContext()
+
+      const readResult = await bash.invoke({ mode: 'execute', command: 'cat', timeout: 5 }, context)
+      const nextResult = await bash.invoke({ mode: 'execute', command: 'echo $((6 * 7))', timeout: 5 }, context)
+
+      expect(readResult).toStrictEqual({ output: '', error: '' })
+      expect(nextResult).toStrictEqual({ output: '42', error: '' })
+    })
+
+    it('does not expose the completion marker on stdin', async () => {
+      const { context } = createFreshContext()
+
+      const result = await bash.invoke(
+        { mode: 'execute', command: 'read -r line; echo "read:$line"', timeout: 5 },
+        context
+      )
+
+      expect(result).toStrictEqual({ output: 'read:', error: '' })
+    })
+
+    it('returns each concurrent command its own output', async () => {
+      const { context } = createFreshContext()
+
+      const results = await Promise.all([
+        bash.invoke({ mode: 'execute', command: 'echo one; sleep 0.2; echo one-end', timeout: 5 }, context),
+        bash.invoke({ mode: 'execute', command: 'echo two', timeout: 5 }, context),
+      ])
+
+      expect(results).toStrictEqual([
+        { output: 'one\none-end', error: '' },
+        { output: 'two', error: '' },
+      ])
+    })
+
+    it('rejects a command queued on a session that is restarted', async () => {
+      const { context } = createFreshContext()
+
+      const running = bash.invoke({ mode: 'execute', command: 'sleep 0.5', timeout: 5 }, context)
+      const [queued, restarted] = await Promise.allSettled([
+        bash.invoke({ mode: 'execute', command: 'echo queued', timeout: 5 }, context),
+        bash.invoke({ mode: 'restart' }, context),
+      ])
+      await running.catch(() => undefined)
+
+      expect(queued).toStrictEqual({ status: 'rejected', reason: new BashSessionError('Bash session was restarted') })
+      expect(restarted).toStrictEqual({ status: 'fulfilled', value: 'Bash session restarted' })
+    })
   })
 
   describe('timeout handling', () => {
