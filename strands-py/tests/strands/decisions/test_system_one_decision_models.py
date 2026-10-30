@@ -642,6 +642,11 @@ class TestConstruction:
         with pytest.raises(ValueError, match=provider.api_key_env):
             provider.model_cls()
 
+    @pytest.mark.parametrize("model_id", ["", "  "], ids=["empty", "whitespace"])
+    def test_rejects_an_empty_model_id(self, provider: _ProviderCase, model_id: str):
+        with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+            provider.model_cls(api_key="test-key", model_id=model_id)
+
     @pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf")])
     def test_rejects_an_invalid_provider_default_threshold(self, provider: _ProviderCase, threshold: float):
         with pytest.raises(ValueError, match=r"default_min_confidence must be in \[0.0, 1.0\]"):

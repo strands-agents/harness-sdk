@@ -39,8 +39,8 @@ class TypeSafeDecisionModel(DecisionModel):
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
-        default_min_confidence: float | None = None,
+        model_id: str = _TYPESAFE_DEFAULT_MODEL_ID,
+        default_min_confidence: float = _TYPESAFE_DEFAULT_MIN_CONFIDENCE,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a TypeSafe-backed decision model.
@@ -54,7 +54,8 @@ class TypeSafeDecisionModel(DecisionModel):
                 omitted, a client with a 30-second timeout is created per request.
 
         Raises:
-            ValueError: If the API key is missing or the confidence threshold is out of range.
+            ValueError: If the API key is missing, ``model_id`` is empty, or the confidence threshold
+                is out of range.
             TypeError: If ``http_client`` is not an ``httpx.AsyncClient``.
         """
         super().__init__()

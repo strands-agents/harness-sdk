@@ -62,7 +62,9 @@ def _resolve_system_one_provider_config(
     if not resolved_api_key:
         raise ValueError(f"{class_name} requires an API key: pass api_key or set {api_key_environment_variable}")
 
-    resolved_model_id = (model_id or "").strip() or default_model_id
+    resolved_model_id = (default_model_id if model_id is None else model_id).strip()
+    if not resolved_model_id:
+        raise ValueError(f"{class_name} model_id must be a non-empty string")
 
     if http_client is not None and not isinstance(http_client, httpx.AsyncClient):
         raise TypeError(f"{class_name} http_client must be an httpx.AsyncClient")
