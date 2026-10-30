@@ -64,8 +64,6 @@ class TypeSafeDecisionModel(DecisionModel):
             provider_name="typesafe",
             endpoint=_TYPESAFE_ENDPOINT,
             api_key_environment_variable="TYPESAFE_API_KEY",
-            default_model_id=_TYPESAFE_DEFAULT_MODEL_ID,
-            default_min_confidence=_TYPESAFE_DEFAULT_MIN_CONFIDENCE,
             max_body_bytes=_TYPESAFE_MAX_BODY_BYTES,
             api_key=api_key,
             model_id=model_id,

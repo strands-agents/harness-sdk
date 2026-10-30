@@ -41,8 +41,8 @@ class DecisionsAPIDecisionModel(DecisionModel):
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
-        default_min_confidence: float | None = None,
+        model_id: str = _DECISIONS_API_DEFAULT_MODEL_ID,
+        default_min_confidence: float = _DECISIONS_API_DEFAULT_MIN_CONFIDENCE,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a decisionapi.net-backed decision model.
@@ -56,7 +56,8 @@ class DecisionsAPIDecisionModel(DecisionModel):
                 omitted, a client with a 30-second timeout is created per request.
 
         Raises:
-            ValueError: If the API key is missing or the confidence threshold is out of range.
+            ValueError: If the API key is missing, ``model_id`` is empty, or the confidence threshold
+                is out of range.
             TypeError: If ``http_client`` is not an ``httpx.AsyncClient``.
         """
         super().__init__()
@@ -65,8 +66,6 @@ class DecisionsAPIDecisionModel(DecisionModel):
             provider_name="decisionsApi",
             endpoint=_DECISIONS_API_ENDPOINT,
             api_key_environment_variable="JEV_API_KEY",
-            default_model_id=_DECISIONS_API_DEFAULT_MODEL_ID,
-            default_min_confidence=_DECISIONS_API_DEFAULT_MIN_CONFIDENCE,
             max_body_bytes=_DECISIONS_API_MAX_BODY_BYTES,
             max_questions=_DECISIONS_API_MAX_QUESTIONS,
             api_key=api_key,

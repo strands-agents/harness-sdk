@@ -49,32 +49,29 @@ def _resolve_system_one_provider_config(
     provider_name: str,
     endpoint: str,
     api_key_environment_variable: str,
-    default_model_id: str,
-    default_min_confidence: float,
     max_body_bytes: int,
     max_questions: int | None = None,
     api_key: str | None,
-    model_id: str | None,
-    min_confidence: float | None,
+    model_id: str,
+    min_confidence: float,
     http_client: httpx.AsyncClient | None,
 ) -> _SystemOneProviderConfig:
     resolved_api_key = (api_key or "").strip() or os.environ.get(api_key_environment_variable, "").strip()
     if not resolved_api_key:
         raise ValueError(f"{class_name} requires an API key: pass api_key or set {api_key_environment_variable}")
 
-    resolved_model_id = (default_model_id if model_id is None else model_id).strip()
+    resolved_model_id = model_id.strip()
     if not resolved_model_id:
         raise ValueError(f"{class_name} model_id must be a non-empty string")
 
     if http_client is not None and not isinstance(http_client, httpx.AsyncClient):
         raise TypeError(f"{class_name} http_client must be an httpx.AsyncClient")
 
-    resolved_min_confidence = default_min_confidence if min_confidence is None else min_confidence
     if (
-        not isinstance(resolved_min_confidence, (int, float))
-        or isinstance(resolved_min_confidence, bool)
-        or not math.isfinite(resolved_min_confidence)
-        or not 0 <= resolved_min_confidence <= 1
+        not isinstance(min_confidence, (int, float))
+        or isinstance(min_confidence, bool)
+        or not math.isfinite(min_confidence)
+        or not 0 <= min_confidence <= 1
     ):
         raise ValueError(f"{class_name} default_min_confidence must be in [0.0, 1.0]")
 
@@ -83,7 +80,7 @@ def _resolve_system_one_provider_config(
         endpoint=endpoint,
         api_key=resolved_api_key,
         model_id=resolved_model_id,
-        default_min_confidence=resolved_min_confidence,
+        default_min_confidence=min_confidence,
         max_body_bytes=max_body_bytes,
         http_client=http_client,
         max_questions=max_questions,
