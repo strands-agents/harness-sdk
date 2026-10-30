@@ -99,7 +99,7 @@ export class ContextManager implements Plugin {
     if (strategy === 'agentic') {
       return new ContextManager({
         strategies: [
-          Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
+          Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS, dynamicLimit: true }).when({
             threshold: AGENTIC_TRUNCATE_THRESHOLD,
           }),
           Offload.summarize('*').when({ utilization: 1, preserveRecent: 4 }),

@@ -343,6 +343,14 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     this._excludeFilter = resolved.exclude
   }
 
+  /**
+   * Per-tool-use token limits that replace `threshold` for the matching tool results.
+   * Subclasses that let something other than the configuration pick the limit override this.
+   */
+  protected _resultLimits(_messages: Message[], _agent: LocalAgent): ReadonlyMap<string, number> | undefined {
+    return undefined
+  }
+
   /** Whether this strategy operates at message-level (batch) vs per-block. */
   protected get _isMessageLevel(): boolean {
     return this._utilizationThreshold !== undefined
@@ -357,7 +365,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
       const toolNameMap = buildToolNameMap(messages)
-      await this._transformBlocks(event.message, messages, toolNameMap, event.agent)
+      const resultLimits = this._resultLimits(messages, event.agent)
+      await this._transformBlocks(event.message, messages, toolNameMap, event.agent, undefined, resultLimits)
     })
   }
 
@@ -376,6 +385,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const { messages, agent } = context
     const invocationContext = context.invocationContext
     const toolNameMap = buildToolNameMap(messages)
+    const resultLimits = this._resultLimits(messages, agent)
     const eligible =
       this._preserveRecent > 0
         ? getOldestMatches(
@@ -392,7 +402,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     for (const message of eligible) {
       const index = messages.indexOf(message)
       if (isPinned(messages, index)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext)) {
+      if (await this._transformBlocks(message, messages, toolNameMap, agent, invocationContext, resultLimits)) {
         acted = true
       }
     }
@@ -442,25 +452,29 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return false
   }
 
-  /** Process eligible blocks in a message. */
+  /**
+   * Process eligible blocks in a message. A tool result whose tool call carries a model-selected
+   * limit (see `resultLimits`) uses that limit as its threshold instead of the strategy's.
+   */
   protected async _transformBlocks(
     message: Message,
     messages: Message[],
     toolNameMap: Map<string, string>,
     agent: LocalAgent,
-    invocationContext?: InvocationContext
+    invocationContext?: InvocationContext,
+    resultLimits?: ReadonlyMap<string, number>
   ): Promise<boolean> {
-    const effectiveThreshold = this._threshold ?? 0
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
       if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
 
+      const limit = block instanceof ToolResultBlock ? resultLimits?.get(block.toolUseId) : undefined
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-      if (tokens <= effectiveThreshold) continue
+      if (tokens <= (limit ?? this._threshold ?? 0)) continue
 
       const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext, limit)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -515,14 +529,18 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return eligible
   }
 
-  /** Transform a block. Return the replacement, or null to skip. */
+  /**
+   * Transform a block. Return the replacement, or null to skip.
+   * `limit` is the model-selected token limit for this tool result, when one applies.
+   */
   protected abstract _replaceBlock(
     block: ContentBlock,
     tokens: number,
     message: Message,
     agent: LocalAgent,
     stashRefs: string[],
-    invocationContext?: InvocationContext
+    invocationContext?: InvocationContext,
+    limit?: number
   ): Promise<ContentBlock | null>
 }
 
