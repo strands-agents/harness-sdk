@@ -1,0 +1,115 @@
+---
+title: Approve before your agent acts
+description: >-
+  Let a model flag risky tool calls and pause the agent until a person approves them,
+  while safe calls such as reads run on their own.
+tags: [interventions, tool-execution]
+sourceLinks:
+  - path: strands-py/src/strands/vended_interventions/hitl/hitl.py
+  - path: strands-ts/src/vended-interventions/hitl/hitl.ts
+---
+
+An agent chooses and runs its own tools. Most calls are fine to run unattended, but a
+few, such as deleting files or sending an email, should wait for a person to sign off.
+Asking about every call wears people down until they approve without reading. The
+`HumanInTheLoop` intervention handler, with its risk classifier turned on, asks only
+about the calls that matter: a model rates each tool call, safe calls run, and risky
+ones pause the agent until a person approves or rejects them.
+
+## Ask before risky tool calls
+
+To have a person approve risky calls, add the handler with the classifier, terminal
+prompts, and trust turned on. This agent cleans up log files. Listing a directory is
+safe, so it runs. Deleting files can't be undone, so the agent asks first:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent, tool
+from strands.vended_interventions.hitl import HumanInTheLoop
+
+
+@tool
+def list_files(directory: str) -> list[str]:
+    """List the files in a directory."""
+    return ["app.log", "app.log.1", "app.log.2"]
+
+
+@tool
+def delete_files(paths: list[str]) -> str:
+    """Delete the files at the given paths."""
+    return f"Deleted {len(paths)} files"
+
+
+agent = Agent(
+    tools=[list_files, delete_files],
+    interventions=[HumanInTheLoop(classifier=True, ask="stdio", enable_trust=True)],
+)
+
+agent("Delete the rotated logs in /var/log/app")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/approve-before-acting_imports.ts:classifier_imports"
+
+--8<-- "user-guide/sdk/agents/approve-before-acting.ts:classifier"
+```
+
+</Tab>
+</Tabs>
+
+Typical output:
+
+```
+Let me start by listing the files in that directory to identify the rotated logs.
+Tool #1: list_files
+The rotated logs are `app.log.1` and `app.log.2`. Let me delete them now.
+Tool #2: delete_files
+Approve "delete_files" — Deleting files is irreversible and destructive.?
+  Input: {"paths": ["/var/log/app/app.log.1", "/var/log/app/app.log.2"]} (y/n/t): y
+Done! The 2 rotated log files have been removed, while the current active log file
+(`app.log`) was left untouched.
+```
+
+Before each tool call, the classifier sends the tool name and input to a model and asks
+whether the call needs approval. `list_files` runs without a prompt. For
+`delete_files`, the handler prints the approval prompt in the terminal, with the
+classifier's reason, and the agent waits for the answer:
+
+- `y` or `yes` approves this call.
+- `t` or `trust` approves this call and every later call to the same tool, for as long
+  as the agent exists.
+- Anything else rejects the call. The agent learns it was rejected, so it can tell the
+  user or try something else.
+
+The default classifier is an LLM acting as a judge. It runs on the agent's model, or
+on the [auxiliary model](../model-providers/index.md#auxiliary-model) when you set
+one, and it fails closed: if its model call errors, the tool call waits for approval.
+You can swap in a decision model instead, a small model built to answer closed
+questions fast, such as Jev or
+[Strands Decider](https://github.com/strands-labs/strands-decider), or bring your own
+decision model or classifier function.
+[Human in the loop](./interventions/human-in-the-loop.md#risk-classifier) shows each
+option. Without a classifier, every tool call prompts.
+
+The classifier is a judgment, not a guarantee: it can rate a risky call safe. For a
+tool that must always ask, negate it with
+<Syntax py='allowed_tools=["!delete_files"]' ts="allowedTools: ['!delete_files']" />. A
+negated tool always prompts and can't be trusted. For hard limits, such as tools only
+some users may call, write [Cedar policies](./interventions/cedar-authorization.md).
+Cedar denies any call no policy permits, whatever the classifier or a person decides.
+
+## Next steps
+
+- [Human in the loop](./interventions/human-in-the-loop.md): pause the agent and
+  resume it from a web service instead of prompting at the terminal, collect answers
+  in a custom UI, let known-safe tools skip review, classify with a decision model or
+  your own function, change the classifier's prompt or model, and define what counts
+  as approval.
+- [Interrupts](../interrupts.md): pause the agent from your own hooks and tools.
+- [Interventions](./interventions/index.md): write your own handler to deny, guide,
+  or transform tool calls.

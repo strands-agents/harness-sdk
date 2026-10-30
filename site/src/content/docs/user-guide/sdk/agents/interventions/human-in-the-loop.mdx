@@ -7,12 +7,14 @@ sourceLinks:
   - path: strands-py/src/strands/vended_interventions/hitl/classifier.py
   - path: strands-ts/src/vended-interventions/hitl/hitl.ts
   - path: strands-ts/src/vended-interventions/hitl/classifier.ts
+  - path: strands-py/src/strands/decisions/llm_decision_model.py
+  - path: strands-ts/src/decisions/llm-decision-model.ts
 addedDate: 2026-06-03
 ---
 
 import Diagram from '@components/Diagram.astro'
 
-Pause the agent before it acts and let a person approve, edit, or reject a tool call. The `HumanInTheLoop` intervention handler adds this oversight without custom interrupt logic: pass it to `interventions` and choose how to collect the human's response.
+Pause the agent before it acts and let a person approve, edit, or reject a tool call. The `HumanInTheLoop` intervention handler adds this oversight without custom interrupt logic: pass it to `interventions` and choose how to collect the human's response. For a worked example, see [Approve before your agent acts](../approve-before-acting.md).
 
 ## How It Works
 
@@ -119,6 +121,25 @@ the classifier entirely (fast path for known-safe tools).
 </Tab>
 </Tabs>
 
+To classify with a decision model instead, pass it as the classifier. A decision model answers closed questions about some state; here it answers one yes/no question per tool call, judged against the same risk criteria as the built-in classifier. An uncertain answer requires approval and shows its reason in the prompt.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop.py:classifier_decision_model"
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop_imports.ts:classifier_decision_model_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop.ts:classifier_decision_model"
+```
+</Tab>
+</Tabs>
+
 You can customize the classifier's system prompt or model, or
 provide your own classification function:
 
@@ -144,7 +165,7 @@ provide your own classification function:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | <Syntax py="allowed_tools" ts="allowedTools" /> | <Syntax py="list[str]" ts="string[]" /> | <Syntax py="None" ts="undefined" /> | Tools that bypass approval. Supports `"*"` (all) and `"!tool_name"` (negation). |
-| `classifier` | <Syntax py="bool, LLMClassifierConfig, or callable" ts="boolean, LlmClassifierConfig, or function" /> | <Syntax py="None" ts="undefined" /> | LLM risk classifier. `True` for built-in defaults, config object for custom prompt/model, or a custom function. |
+| `classifier` | <Syntax py="bool, LLMClassifierConfig, DecisionModel, or callable" ts="boolean, LlmClassifierConfig, DecisionModel, or function" /> | <Syntax py="None" ts="undefined" /> | Risk classifier. <Syntax py="True" ts="true" /> for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
 | <Syntax py="enable_trust" ts="enableTrust" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | When enabled, trust responses are remembered for the session. |
 | <Syntax py="evaluate_trust" ts="evaluateTrust" /> | Function | Accepts `"t"` or `"trust"` | Custom validator for trust responses. Only evaluated when trust is enabled. |
 | `evaluate` | Function | Accepts <Syntax py='True, "y", or "yes"' ts="true, 'y', or 'yes'" /> | Custom validator for approval responses. |

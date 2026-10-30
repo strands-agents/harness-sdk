@@ -1,4 +1,5 @@
-from strands import Agent, tool
+from strands import Agent, LLMDecisionModel, tool
+from strands.models import BedrockModel
 from strands.vended_interventions.hitl import (
     HumanInTheLoop,
     LLMClassifierConfig,
@@ -188,6 +189,26 @@ def classifier_example():
     # --8<-- [end:classifier]
 
 
+def classifier_decision_model_example():
+    # --8<-- [start:classifier_decision_model]
+    # Classify on a smaller model than the one the agent runs on
+    classifier_model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[
+            HumanInTheLoop(
+                allowed_tools=["read_file"],
+                classifier=LLMDecisionModel(model=classifier_model),
+            ),
+        ],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # delete_files: decision model evaluates -> risky -> prompts human
+    # --8<-- [end:classifier_decision_model]
+
+
 def classifier_custom_example():
     # --8<-- [start:classifier_custom]
     # Custom system prompt and model
@@ -197,6 +218,7 @@ def classifier_custom_example():
             HumanInTheLoop(
                 classifier=LLMClassifierConfig(
                     system_prompt="Only flag destructive operations.",
+                    model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"),
                 ),
             ),
         ],
