@@ -373,6 +373,9 @@ def _require_probability(value: Any, name: str) -> float:
 
 
 def _require_non_negative_number(value: Any, name: str) -> float:
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+        raise StructuredOutputException(f"{name} must be a non-negative finite number")
+    # Ints are always finite; math.isfinite would overflow converting a huge one to float.
+    if isinstance(value, float) and not math.isfinite(value):
         raise StructuredOutputException(f"{name} must be a non-negative finite number")
     return value

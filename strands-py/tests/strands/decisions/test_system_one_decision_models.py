@@ -445,6 +445,7 @@ class TestAsk:
             (_response_body({}), "boolean", "omitted answer for question"),
             (_response_body({"q": {"type": "choice"}}), "boolean", "must have type 'noul'"),
             (_response_body({"q": {"type": "noul", "noul": 2}}), "boolean", "must be in [0.0, 1.0]"),
+            (_response_body({"q": {"type": "noul", "noul": 10**400}}), "boolean", "must be in [0.0, 1.0]"),
             (
                 _response_body({"q": {"type": "noul", "noul": -0.1}}),
                 "boolean",
@@ -506,6 +507,7 @@ class TestAsk:
             "answer-omitted",
             "wrong-boolean-answer-type",
             "invalid-noul-probability",
+            "huge-integer-noul-probability",
             "negative-noul-probability",
             "wrong-choice-answer-type",
             "probabilities-not-object",
