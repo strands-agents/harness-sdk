@@ -22,8 +22,9 @@ import {
   type ToolList,
 } from '@strands-agents/sdk'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
 import { AgentSkills, type SkillSource } from '@strands-agents/sdk/vended-plugins/skills'
-import { EnvironmentContext, Todos } from './plugins/index.js'
+import { EnvironmentContext, Todos, Verification } from './plugins/index.js'
 import {
   buildBuiltinTools,
   builtinToolConfig,
@@ -52,7 +53,15 @@ import { resolveModel } from './models.js'
 import { buildSystemPrompt } from './prompt.js'
 import { setupTelemetry } from './telemetry.js'
 import type { BuiltinPluginName, BuiltinToolName } from './config.js'
-import type { BuiltinToolsConfig, ContextManagerOption, Effort, MemoryConfig, SessionConfig } from './types/agent.js'
+import type {
+  BuiltinToolsConfig,
+  ContextManagerOption,
+  Effort,
+  MemoryConfig,
+  SessionConfig,
+  VerifyConfig,
+  VerifyOption,
+} from './types/agent.js'
 
 /**
  * Built-in plugins, each toggled by name via `builtinPlugins`. Unlike the skills plugin (wired from
@@ -203,6 +212,77 @@ export interface HarnessAgentOptions extends Omit<
    * a `subagent` child inherits the policy so a delegate cannot bypass it.
    */
   interventions?: InterventionsOption
+  /**
+   * The project's own checks, run when the agent finishes an invocation that called a tool able to
+   * change the workspace (anything but `read`, `web_fetch`, `web_search`, `todo_write`,
+   * `search_memory` and `skills`); defaults to `undefined` (off). Accepts one command (`'npm test'`),
+   * an array run in order, `'auto'` to detect one from the project files (`package.json` with a `test`
+   * script, `pyproject.toml`, `Cargo.toml`, `go.mod`, a `Makefile` with a `test` target), or
+   * `{ commands, maxAttempts: 3, timeout: 600 }`. Sugar over `GoalLoop`: it adds a `Verification` plugin, a
+   * GoalLoop whose goal is the checks passing. Checks run through the agent's `sandbox`. When one exits non-zero,
+   * its output goes back to the agent, which keeps working; after `maxAttempts` failed check runs the loop stops
+   * and returns the agent's last answer, unverified, with a warning. An invocation stopped early (interrupt,
+   * cancel, `maxTokens`, limit) runs no checks; its changes are `'pending'` until a later invocation ends
+   * normally, and `maxAttempts` counts across such stops. The outcome is written to `agent.appState` under
+   * `verification`. A `subagent` child never verifies; the parent does. `'auto'` runs project-defined scripts
+   * outside any approval gate, so it cannot be combined with `interventions`; name the commands explicitly
+   * instead. It cannot be combined with another `GoalLoop` in `plugins` either, since an agent runs only one.
+   */
+  verify?: VerifyOption
+}
+
+/** `verify` as a {@link VerifyConfig} with `commands` set, or `null` when off. Value checks are the plugin's. */
+function verifyConfig(verify: VerifyOption | undefined): VerifyConfig | null {
+  if (verify === undefined || verify === null || verify === false) {
+    return null
+  }
+  if (typeof verify === 'string') {
+    return { commands: verify === 'auto' ? 'auto' : [verify] }
+  }
+  if (Array.isArray(verify)) {
+    return { commands: [...verify] }
+  }
+  if (typeof verify === 'object') {
+    const known = new Set(['commands', 'maxAttempts', 'timeout'])
+    const unknown = Object.keys(verify).filter((key) => !known.has(key))
+    if (unknown.length > 0) {
+      throw new Error(`Unknown verify key(s): ${unknown.sort().join(', ')}.`)
+    }
+    if (verify.commands === undefined) {
+      throw new Error("verify config needs 'commands' (an array of commands, or 'auto').")
+    }
+    const { commands } = verify as { commands: unknown }
+    return { ...verify, commands: typeof commands === 'string' && commands !== 'auto' ? [commands] : verify.commands }
+  }
+  throw new Error(
+    `verify must be a command, an array of commands, 'auto', a VerifyConfig or undefined, got ${JSON.stringify(verify)}.`
+  )
+}
+
+/** The verification plugin for `verify`, refusing combinations that would silently misbehave. */
+function verificationPlugin(
+  verify: VerifyOption | undefined,
+  interventions: InterventionsOption | undefined,
+  consumerPlugins: readonly Plugin[]
+): Verification | null {
+  const config = verifyConfig(verify)
+  if (config === null) {
+    return null
+  }
+  if (consumerPlugins.some((p) => p instanceof GoalLoop)) {
+    throw new Error(
+      'verify cannot be combined with a GoalLoop in plugins (a Verification is one): verify builds a GoalLoop, ' +
+        'and an agent runs only one.'
+    )
+  }
+  const hasInterventions = Array.isArray(interventions) ? interventions.length > 0 : Boolean(interventions)
+  if (config.commands === 'auto' && hasInterventions) {
+    throw new Error(
+      "verify='auto' cannot be combined with interventions: detected commands run project-defined scripts " +
+        "outside the approval gate. Name the commands explicitly, e.g. verify: 'npm test'."
+    )
+  }
+  return new Verification(config)
 }
 
 function sanitizeSessionId(sessionId: string): string {
@@ -361,6 +441,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     memory = DEFAULT_MEMORY,
     builtinPlugins,
     interventions,
+    verify,
     ...agentConfig
   } = options
 
@@ -466,6 +547,10 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   }
 
   plugins.push(...selectBuiltinPlugins(builtinPlugins ?? DEFAULT_BUILTIN_PLUGINS, plugins))
+  const verification = verificationPlugin(verify, interventions, consumerPlugins)
+  if (verification !== null) {
+    plugins.push(verification)
+  }
   const harnessPlugins = plugins.slice(consumerPlugins.length)
 
   let memoryManager = agentConfig.memoryManager

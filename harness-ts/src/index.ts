@@ -33,6 +33,8 @@ export type {
   ShellConfig,
   SubagentConfig,
   ToolConfig,
+  VerifyConfig,
+  VerifyOption,
   WebFetchConfig,
   WebFetchTransport,
   WebSearchSetting,
@@ -71,5 +73,11 @@ export type {
   PresetOptions,
   ToolsMode,
 } from './tools/index.js'
-export { EnvironmentContext, Todos } from './plugins/index.js'
-export type { EnvironmentContextConfig, TodoItem } from './plugins/index.js'
+export { EnvironmentContext, Todos, Verification } from './plugins/index.js'
+export type {
+  EnvironmentContextConfig,
+  TodoItem,
+  VerificationConfig,
+  VerificationRecord,
+  VerificationStatus,
+} from './plugins/index.js'
