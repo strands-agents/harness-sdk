@@ -105,6 +105,37 @@ _MODELS_REJECT_REASONING_TEXT = [
 _SKIP_COUNT_TOKENS_MODELS: set[str] = set()
 
 
+
+def _strip_blank_json_keys(value: Any) -> Any:
+    """Drop empty/whitespace-only object keys (recursively) for Bedrock Converse.
+
+    Bedrock rejects toolUse.input objects that contain blank keys at any depth
+    with a ValidationException. Models can emit such keys; a @tool with a
+    Pydantic input model ignores them, so the tool may succeed while a later
+    replay of the same history fails.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _strip_blank_json_keys(child)
+            for key, child in value.items()
+            if isinstance(key, str) and key.strip() != ""
+        }
+    if isinstance(value, list):
+        return [_strip_blank_json_keys(child) for child in value]
+    return value
+
+
+def _normalize_bedrock_tool_input(tool_input: Any) -> dict[str, Any]:
+    """Normalize toolUse.input before sending it to Bedrock Converse.
+
+    Non-dict inputs become ``{}`` (see #4625). Dict inputs also have blank keys
+    stripped so a history the agent produced can always be replayed (#5667).
+    """
+    if not isinstance(tool_input, dict):
+        return {}
+    return _strip_blank_json_keys(tool_input)
+
+
 def _clear_skip_count_tokens_cache() -> None:
     """Clear the cache of model IDs for which CountTokens API calls should be skipped."""
     _SKIP_COUNT_TOKENS_MODELS.clear()
@@ -1320,10 +1351,9 @@ class BedrockModel(Model):
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolUseBlock.html
         if "toolUse" in content:
             tool_use = content["toolUse"]
-            tool_input = tool_use.get("input")
             return {
                 "toolUse": {
-                    "input": tool_input if isinstance(tool_input, dict) else {},
+                    "input": _normalize_bedrock_tool_input(tool_use.get("input")),
                     "name": tool_use["name"],
                     "toolUseId": tool_use["toolUseId"],
                 }

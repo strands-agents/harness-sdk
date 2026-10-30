@@ -2905,6 +2905,51 @@ def test_format_request_message_content_normalizes_non_dict_tool_use_input(model
     }
 
 
+@pytest.mark.parametrize(
+    ("tool_input", "expected"),
+    [
+        ({"sql": "SELECT 1", "": None}, {"sql": "SELECT 1"}),
+        ({"email": {"content": "<p>Hi</p>", "": None}}, {"email": {"content": "<p>Hi</p>"}}),
+        ({"a": 1, " ": "x", "\t": "y"}, {"a": 1}),
+        ({"keep": {"nested": {"ok": True, "": False}}}, {"keep": {"nested": {"ok": True}}}),
+        ({"list": [{"": 1, "v": 2}, {"  ": 3}]}, {"list": [{"v": 2}, {}]}),
+    ],
+)
+def test_format_request_message_content_strips_blank_tool_use_input_keys(
+    model, tool_input, expected
+):
+    content = {
+        "toolUse": {
+            "toolUseId": "tool_001",
+            "name": "send_message",
+            "input": tool_input,
+        }
+    }
+
+    assert model._format_request_message_content(content) == {
+        "toolUse": {
+            "input": expected,
+            "name": "send_message",
+            "toolUseId": "tool_001",
+        }
+    }
+
+
+def test_format_request_message_content_does_not_mutate_blank_tool_use_input_keys(model):
+    tool_input = {"email": {"content": "<p>Hi</p>", "": None}}
+    content = {
+        "toolUse": {
+            "toolUseId": "tool_001",
+            "name": "send_message",
+            "input": tool_input,
+        }
+    }
+
+    model._format_request_message_content(content)
+
+    assert "" in tool_input["email"], "Original tool input should not be mutated"
+
+
 def test_format_request_message_content_does_not_mutate_empty_tool_result(model, model_id):
     """Test that normalizing empty toolResult content does not mutate the original messages."""
     messages = [
