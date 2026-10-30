@@ -236,3 +236,77 @@ async def test_stream_sends_client_meta_on_model_driven_calls(mock_transport, mo
     assert tru_events == [ToolResultEvent(exp_result)]
     # Trace context may be merged on top, so assert our key survives.
     assert received_meta["com.example/request_id"] == "abc-123"
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_meta_from_provider(mock_mcp_tool, mock_mcp_client, alist):
+    """Test the provider's metadata is sent with a model-driven call."""
+    agent_tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client, meta_provider=lambda tool_use, state: {"user": "alice"})
+    tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {"param": "value"}}
+
+    await alist(agent_tool.stream(tool_use, {"agent": MagicMock(_cancel_signal=threading.Event())}))
+
+    mock_mcp_client.call_tool_async.assert_called_once_with(
+        tool_use_id="test-123",
+        name="test_tool",
+        arguments={"param": "value"},
+        read_timeout_seconds=None,
+        cancel_signal=mock_mcp_client.call_tool_async.call_args.kwargs["cancel_signal"],
+        meta={"user": "alice"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_provider_receives_tool_use_and_invocation_state(mock_mcp_tool, mock_mcp_client, alist):
+    """Test the provider is called with the tool use and the agent's invocation state."""
+    calls = []
+
+    def provider(tool_use, invocation_state):
+        calls.append((tool_use, invocation_state))
+        return None
+
+    agent_tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client, meta_provider=provider)
+    tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {"param": "value"}}
+    invocation_state = {"agent": MagicMock(_cancel_signal=threading.Event()), "user": "alice"}
+
+    await alist(agent_tool.stream(tool_use, invocation_state))
+
+    assert calls == [(tool_use, invocation_state)]
+
+
+@pytest.mark.asyncio
+async def test_stream_provider_returning_none_sends_no_meta(mock_mcp_tool, mock_mcp_client, alist):
+    """Test a provider that returns None leaves the metadata unset."""
+    agent_tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client, meta_provider=lambda tool_use, state: None)
+    tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {}}
+
+    await alist(agent_tool.stream(tool_use, {}))
+
+    assert "meta" not in mock_mcp_client.call_tool_async.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_provider_meta_merged_with_client_meta(mock_transport, mock_session, alist):
+    """Test the provider's metadata is merged over the client-level meta."""
+    mock_content = MCPTextContent(type="text", text="done")
+    received_meta = {}
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        received_meta.update(meta or {})
+        return MCPCallToolResult(isError=False, content=[mock_content])
+
+    mock_session.call_tool.side_effect = call_tool
+
+    with MCPClient(
+        mock_transport["transport_callable"],
+        meta={"com.example/app": "demo"},
+        meta_provider=lambda tool_use, state: {"com.example/user": state["user"]},
+    ) as client:
+        agent_tool = MCPAgentTool(make_mcp_tool(), client, meta_provider=client._resolve_meta)
+        tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {}}
+        invocation_state = {"agent": MagicMock(_cancel_signal=threading.Event()), "user": "alice"}
+
+        await alist(agent_tool.stream(tool_use, invocation_state))
+
+    assert received_meta["com.example/app"] == "demo"
+    assert received_meta["com.example/user"] == "alice"
