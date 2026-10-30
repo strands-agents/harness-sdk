@@ -18,9 +18,11 @@ class _OffloadNamespace:
     """Factory for creating offload strategies via ``Offload.truncate(...)``, ``Offload.drop(...)``, etc.
 
     Example:
-        >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(threshold=1500)
-        >>> Offload.summarize("*").when(utilization=0.85, preserve_recent=2)
-        >>> Offload.drop("tool_result_errors").when(threshold=500)
+        >>> Offload.truncate("tool_results", {"preview_tokens": 750}).when(block_threshold=1500)
+        >>> Offload.summarize("*").when(context_utilization="85%", preserve_recent=2)
+        >>> Offload.drop("tool_result_errors")
+        >>> Offload.drop("media").when(context_utilization="80%", preserve_recent=1)
+        >>> Offload.summarize("*").when(context_utilization="90%", block_threshold=2000, preserve_recent=4)
     """
 
     def drop(self, target: OffloadTarget) -> DropStrategy:
@@ -30,7 +32,7 @@ class _OffloadNamespace:
             target: What content to target for dropping.
 
         Returns:
-            A DropStrategy builder (usable directly or with .when()).
+            The strategy. With no ``.when()`` conditions, it drops each matching block as it arrives.
         """
         return DropStrategy(target)
 
@@ -42,7 +44,7 @@ class _OffloadNamespace:
             config: Method-specific config (preview_tokens, preview mode).
 
         Returns:
-            A TruncateStrategy builder (usable directly or with .when()).
+            The strategy. With no ``.when()`` conditions, it truncates each matching block as it arrives.
         """
         return TruncateStrategy(target, config)
 
@@ -54,7 +56,7 @@ class _OffloadNamespace:
             config: Method-specific config (model, system_prompt).
 
         Returns:
-            A SummarizeStrategy builder (usable directly or with .when()).
+            The strategy. With no ``.when()`` conditions, it summarizes each matching block as it arrives.
         """
         return SummarizeStrategy(target, config)
 

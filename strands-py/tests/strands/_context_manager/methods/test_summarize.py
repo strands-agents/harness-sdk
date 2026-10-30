@@ -7,6 +7,7 @@ import pytest
 
 from strands._context_manager.methods.summarize import (
     _flatten_messages_to_content,
+    _format_summarized,
     _summarize_content,
     _tool_result_to_content_blocks,
 )
@@ -279,6 +280,9 @@ class TestSummarizeContent:
         from strands._context_manager.methods.summarize import _format_summarized
 
         assert _format_summarized("test", 100).startswith("[Summarized:")
+
+    def test_format_summarized_leaves_out_an_unmeasured_size(self):
+        assert _format_summarized("media block", 0, "a red square") == "[Summarized: media block]\n\na red square"
 
 
 class TestToolResultToContentBlocksJson:

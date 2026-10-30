@@ -46,7 +46,7 @@ class TestContextManagerInit:
         assert isinstance(cm._strategies[2], EmergencyTruncateStrategy)
 
     def test_custom_strategies(self):
-        custom = [Offload.drop("*").when(threshold=500)]
+        custom = [Offload.drop("*").when(block_threshold=500)]
         cm = ContextManager(strategies=custom)
         assert len(cm._strategies) == 2
         assert cm._strategies[0].name == "offload:drop"
@@ -255,7 +255,7 @@ class TestFromStrategy:
         assert ContextManager.from_strategy(cm) is cm
 
     def test_dict_config_returns_context_manager(self):
-        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
+        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(block_threshold=500)]})
         assert isinstance(result, ContextManager)
 
     def test_unknown_string_raises(self):

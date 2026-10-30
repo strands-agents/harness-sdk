@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 def _format_summarized(description: str, tokens: int, summary: str | None = None) -> str:
-    """Format a ``[Summarized: ...]`` marker with an optional summary body."""
-    header = f"[Summarized: {description}, ~{tokens:,} tokens]"
+    """Format a ``[Summarized: ...]`` marker with an optional summary body, leaving out an unmeasured size."""
+    size = f", ~{tokens:,} tokens" if tokens else ""
+    header = f"[Summarized: {description}{size}]"
     if summary:
         return f"{header}\n\n{summary}"
     return header

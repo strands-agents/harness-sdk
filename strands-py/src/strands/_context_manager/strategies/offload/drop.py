@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...stash import _format_stash_refs
-from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_conditions
+from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _format_marker
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
@@ -16,11 +16,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DROPPED_MARKER = "[Dropped]"
-
 
 class DropStrategy(BaseOffloadStrategy):
-    """Drop strategy — replaces matching content with a [Dropped] marker."""
+    """Drop strategy — removes old messages, or replaces matching blocks with a [Dropped] marker."""
 
     @property
     def name(self) -> str:
@@ -30,18 +28,8 @@ class DropStrategy(BaseOffloadStrategy):
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
         super().__init__(target, conditions)
 
-    def when(
-        self,
-        *,
-        threshold: int | None = None,
-        utilization: float | None = None,
-        preserve_recent: int | float = 0,
-    ) -> DropStrategy:
-        """Return a new instance with the given conditions applied."""
-        return DropStrategy(
-            self._target,
-            _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
-        )
+    def _with_conditions(self, conditions: OffloadConditions) -> DropStrategy:
+        return DropStrategy(self._target, conditions)
 
     def _make_removal_marker(self, count: int) -> str:
         word = "message" if count == 1 else "messages"
@@ -56,7 +44,7 @@ class DropStrategy(BaseOffloadStrategy):
         stash_refs: list[str],
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
-        marker = f"{DROPPED_MARKER}{_format_stash_refs(stash_refs)}"
+        marker = _format_marker("Dropped", block, tokens, _format_stash_refs(stash_refs))
         if "toolResult" in block:
             tool_result = block["toolResult"]
             logger.debug("tool_use_id=<%s> | dropped tool result from context window", tool_result["toolUseId"])

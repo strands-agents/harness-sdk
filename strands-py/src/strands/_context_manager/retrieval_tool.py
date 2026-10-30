@@ -63,14 +63,14 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
     async def _invoke(tool_use: dict[str, Any], **kwargs: Any) -> ToolResult:
         tool_use_id = tool_use["toolUseId"]
         inputs = tool_use.get("input", {})
-        reference: str = inputs["reference"]
+        reference: str = inputs["reference"].strip()
         pattern: str | None = inputs.get("pattern")
         line_range: dict[str, int] | None = inputs.get("line_range")
         context_lines: int | None = inputs.get("context_lines")
 
         result = await stash.retrieve(reference)
         if result is None:
-            text = f"Error: reference not found: {reference}"
+            text = f'Error: reference not found: {reference}. Pass only one <id> from the placeholder\'s "[ref: <id>]".'
             return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=text)])
         if _is_offload_placeholder(result):
             text = f"Error: original content for reference {reference} is no longer available"
@@ -120,8 +120,8 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         description=(
             "Retrieve content that was offloaded from context.\n\n"
             "When content is offloaded (truncated, dropped, or summarized), the original is "
-            "persisted and a reference key is left in its place. Use this tool with that "
-            "reference to access the original content.\n\n"
+            'persisted and the placeholder left in its place ends in "[ref: <id>]", or "[refs: <id>, <id>]" '
+            "for several. Pass one <id> as the reference to access the original content.\n\n"
             "Options:\n"
             "  - pattern: regex/keyword to find matching lines with context\n"
             "  - line_range: { start, end } to read a specific span\n"
@@ -136,7 +136,7 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
             "properties": {
                 "reference": {
                     "type": "string",
-                    "description": "The reference key from the offload placeholder.",
+                    "description": 'One <id> from the "[ref: <id>]" or "[refs: ...]" at the end of the placeholder.',
                 },
                 "pattern": {
                     "type": "string",

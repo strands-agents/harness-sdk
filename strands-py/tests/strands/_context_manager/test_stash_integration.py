@@ -9,7 +9,6 @@ import pytest
 from strands._context_manager.retrieval_tool import _create_retrieval_tool
 from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
 from strands._context_manager.types import ContextState
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
@@ -50,7 +49,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_truncated_text(self, mock_agent, stash):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("assistant_text", {"preview_tokens": 100}).when(block_threshold=200)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -65,7 +64,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_truncated_tool_result(self, mock_agent, stash):
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(block_threshold=200)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -96,7 +95,7 @@ class TestTruncateWithStash:
 
     @pytest.mark.asyncio
     async def test_no_stash_ref_without_stash(self, mock_agent):
-        strategy = Offload.truncate("*", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("assistant_text", {"preview_tokens": 100}).when(block_threshold=200)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 50000)], tracking_id="track-1"),
@@ -113,7 +112,7 @@ class TestDropWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_dropped_marker(self, mock_agent, stash):
-        strategy = Offload.drop("*").when(threshold=100)
+        strategy = Offload.drop("assistant_text").when(block_threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -123,12 +122,12 @@ class TestDropWithStash:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash)
         assert await strategy.apply(context) is True
         text = messages[1]["content"][0]["text"]
-        assert DROPPED_MARKER in text
+        assert "[Dropped: ~5,000 tokens]" in text
         assert "ref:" in text
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_dropped_tool_result(self, mock_agent, stash):
-        strategy = Offload.drop("tool_results").when(threshold=100)
+        strategy = Offload.drop("tool_results").when(block_threshold=100)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -155,7 +154,7 @@ class TestDropWithStash:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash)
         assert await strategy.apply(context) is True
         result_text = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
-        assert DROPPED_MARKER in result_text
+        assert "[Dropped: ~5,000 tokens]" in result_text
         assert "ref:" in result_text
 
 
@@ -191,7 +190,7 @@ class TestRetrievalLoopPrevention:
 
     @pytest.mark.asyncio
     async def test_does_not_offload_retrieve_context_results_when_stash_active(self, mock_agent, stash):
-        strategy = Offload.drop("tool_results").when(threshold=100)
+        strategy = Offload.drop("tool_results").when(block_threshold=100)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -220,7 +219,7 @@ class TestRetrievalLoopPrevention:
 
     @pytest.mark.asyncio
     async def test_does_offload_retrieve_context_results_without_stash(self, mock_agent):
-        strategy = Offload.drop("tool_results").when(threshold=100)
+        strategy = Offload.drop("tool_results").when(block_threshold=100)
         assistant_msg = Message(
             role="assistant",
             content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name="retrieve_context", input={}))],
@@ -252,7 +251,7 @@ class TestSummarizeWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_summarized_tool_result(self, mock_agent, stash):
-        strategy = Offload.summarize("tool_results").when(threshold=100)
+        strategy = Offload.summarize("tool_results").when(block_threshold=100)
         strategy._stash = stash
         assistant_msg = Message(
             role="assistant",
@@ -284,7 +283,7 @@ class TestSummarizeWithStash:
 
     @pytest.mark.asyncio
     async def test_includes_stash_ref_in_media_offload_marker(self, mock_agent, stash):
-        strategy = Offload.summarize("*").when(threshold=100)
+        strategy = Offload.summarize("media").when(context_utilization="50%", block_threshold=100)
         strategy._stash = stash
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -293,6 +292,7 @@ class TestSummarizeWithStash:
                 content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
                 tracking_id="track-1",
             ),
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, stash=stash)
@@ -308,7 +308,7 @@ class TestStashRefRoundTrip:
     @pytest.mark.asyncio
     async def test_truncated_ref_resolves_via_retrieval_tool(self, mock_agent, stash):
         original_text = "x" * 50_000
-        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(threshold=200)
+        strategy = Offload.truncate("tool_results", {"preview_tokens": 100}).when(block_threshold=200)
         strategy._stash = stash
 
         assistant_msg = Message(

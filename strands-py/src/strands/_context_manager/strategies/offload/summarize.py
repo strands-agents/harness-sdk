@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ....types.content import ContentBlock, Message
+from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
     SummarizeConfig,
@@ -20,11 +20,10 @@ from .base import (
     BaseOffloadStrategy,
     OffloadConditions,
     OffloadTarget,
-    _build_conditions,
     _collect_removable_with_pair,
+    _format_marker,
     _insert_marker,
     _repair_alternation,
-    _splice_with_pairs,
 )
 
 if TYPE_CHECKING:
@@ -52,19 +51,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
 
-    def when(
-        self,
-        *,
-        threshold: int | None = None,
-        utilization: float | None = None,
-        preserve_recent: int | float = 0,
-    ) -> SummarizeStrategy:
-        """Return a new instance with the given conditions applied."""
-        return SummarizeStrategy(
-            self._target,
-            self._config,
-            _build_conditions(threshold=threshold, utilization=utilization, preserve_recent=preserve_recent),
-        )
+    def _with_conditions(self, conditions: OffloadConditions) -> SummarizeStrategy:
+        return SummarizeStrategy(self._target, self._config, conditions)
 
     async def apply(self, context: ContextState) -> bool:
         """Apply summarization. Returns False if no model is available."""
@@ -74,7 +62,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return await super().apply(context)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Summarize oldest eligible messages into a single summary message."""
+        """Summarize each contiguous run of eligible messages into its own summary message."""
         model = self._resolve_model(context.agent)
         if not model:
             return False
@@ -83,37 +71,38 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if len(messages) <= 1:
             return False
 
-        eligible = await self._get_eligible_messages(context)
-        if not eligible:
-            return False
+        runs = _contiguous_runs(_removable_indices(messages, await self._get_eligible_messages(context)))
+        summarized = False
+        # Last run first so earlier indices stay valid as runs collapse.
+        for run in reversed(runs):
+            summarized = await self._summarize_run(messages, run, model, context.invocation_context) or summarized
+        if summarized:
+            _repair_alternation(messages)
+        return summarized
 
-        identity_map = {id(msg): index for index, msg in enumerate(messages)}
-        safe_ids: set[int] = set()
-        for message in eligible:
-            index = identity_map.get(id(message))
-            if index is None:
-                continue
-            for removable in _collect_removable_with_pair(messages, index):
-                safe_ids.add(id(removable))
-        safe = [msg for msg in messages if id(msg) in safe_ids]
-        if not safe:
+    async def _summarize_run(
+        self,
+        messages: Messages,
+        run: list[int],
+        model: Model,
+        invocation_context: InvocationContext | None = None,
+    ) -> bool:
+        """Replace one run with its summary; a failure is logged and leaves the run intact so the pass continues."""
+        safe = [messages[index] for index in run]
+        try:
+            summary = await _summarize_content(
+                _flatten_messages_to_content(safe), model, self._config, invocation_context
+            )
+        except Exception as error:
+            logger.warning("run_length=<%s>, error=<%s> | run summarization failed", len(run), error)
             return False
-
-        content_blocks = _flatten_messages_to_content(safe)
-        summary = await _summarize_content(content_blocks, model, self._config, context.invocation_context)
         if not summary:
             return False
 
         total_tokens = await model.count_tokens(safe)
-
-        removed, lowest_index = _splice_with_pairs(messages, safe)
-        if removed == 0:
-            return False
-
-        _insert_marker(messages, lowest_index, _format_summarized(f"{removed} messages", total_tokens, summary))
-
-        _repair_alternation(messages)
-        logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)
+        del messages[run[0] : run[-1] + 1]
+        _insert_marker(messages, run[0], _format_summarized(f"{len(run)} messages", total_tokens, summary))
+        logger.debug("summarized=<%s>, tokens=<%s> | run summarization complete", len(run), total_tokens)
         return True
 
     async def _replace_block(
@@ -168,7 +157,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 return ContentBlock(text=marker)
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
+        return ContentBlock(text=_format_marker("Offloaded", block, tokens, refs))
 
     async def _try_summarize(
         self,
@@ -188,3 +177,25 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model
+
+
+def _removable_indices(messages: Messages, eligible: list[Message]) -> list[int]:
+    """Indices of the eligible messages plus their tool-use pairs, in order."""
+    identity_map = {id(msg): index for index, msg in enumerate(messages)}
+    removable_ids: set[int] = set()
+    for message in eligible:
+        index = identity_map.get(id(message))
+        if index is None:
+            continue
+        removable_ids.update(id(removable) for removable in _collect_removable_with_pair(messages, index))
+    return [index for index, msg in enumerate(messages) if id(msg) in removable_ids]
+
+
+def _contiguous_runs(indices: list[int]) -> list[list[int]]:
+    runs: list[list[int]] = []
+    for index in indices:
+        if runs and runs[-1][-1] == index - 1:
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    return runs

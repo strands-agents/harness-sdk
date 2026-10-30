@@ -68,9 +68,24 @@ class TestRetrievalTool:
     @pytest.mark.asyncio
     async def test_returns_error_for_unknown_reference(self, stash):
         tool = _create_retrieval_tool(stash)
-        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": "nonexistent"}})
-        assert result["status"] == "error"
-        assert "not found" in result["content"][0]["text"]
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": "[ref: nonexistent]"}})
+        assert result == {
+            "toolUseId": "t1",
+            "status": "error",
+            "content": [
+                {
+                    "text": "Error: reference not found: [ref: nonexistent]."
+                    ' Pass only one <id> from the placeholder\'s "[ref: <id>]".'
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_ignores_whitespace_around_the_reference(self, stash):
+        ref = await _store_text(stash, "original")
+        tool = _create_retrieval_tool(stash)
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": f" {ref} "}})
+        assert result == {"toolUseId": "t1", "status": "success", "content": [{"text": '{"text": "original"}'}]}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("extra_input", [{}, {"pattern": "row-4321"}])
