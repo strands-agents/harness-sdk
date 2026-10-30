@@ -18,12 +18,14 @@ _DECISIONS_API_MAX_BODY_BYTES = 32 * 1024
 class DecisionsAPIDecisionModel(DecisionModel):
     """Decision model backed by decisionapi.net.
 
-    ``ask`` raises ``ModelThrottledException`` on provider throttling (HTTP 429/529),
-    ``ContextWindowOverflowException`` when the request exceeds the provider's size limit (HTTP 413
-    or the pre-send body-byte check), ``ValueError`` for request-level violations (more than eight
-    questions, too many choices, binary content, state that is not JSON-serializable or contains
-    NaN/infinity), and ``StructuredOutputException`` for transport failures and any other provider
-    error, with the original error available as ``__cause__``.
+    ``ask`` raises ``ModelThrottledException`` on provider throttling (HTTP 429/503/529, with the
+    ``httpx.HTTPStatusError`` as ``__cause__``), ``ContextWindowOverflowException`` when the request
+    exceeds the provider's size limit (HTTP 413 or the pre-send body-byte check), ``ValueError`` for
+    request-level violations (more than eight questions, too many choices, binary content, state
+    that is not JSON-serializable or contains NaN/infinity), ``httpx.HTTPStatusError`` for any other
+    non-2xx response, and ``StructuredOutputException`` for a malformed provider response.
+    Transport errors from the HTTP client (e.g. ``httpx.TimeoutException``, ``httpx.ConnectError``)
+    propagate unchanged.
 
     Example:
         ```python
