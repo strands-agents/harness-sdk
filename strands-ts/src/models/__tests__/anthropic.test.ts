@@ -949,6 +949,25 @@ describe('AnthropicModel', () => {
       ])
     })
 
+    it('sends a text block without its metadata, at top level and inside a tool result', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const injected = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [injected, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: 'cwd: /repo' },
+        { type: 'tool_result', tool_use_id: 'tu-1', is_error: false, content: 'cwd: /repo' },
+      ])
+    })
+
     describe('Prompt Caching (Lookahead logic)', () => {
       it('attaches cache control to message content block followed by cache point', async () => {
         const { captured, mockClient } = setupCapture()

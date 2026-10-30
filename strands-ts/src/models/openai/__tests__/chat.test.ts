@@ -1515,6 +1515,31 @@ describe('OpenAIModel', () => {
     })
   })
 
+  describe('text block metadata', () => {
+    it('sends a text block without its metadata, in user, assistant, and tool-result content', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+      const injected = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [injected] }),
+          new Message({ role: 'assistant', content: [injected] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'cwd: /repo' }] },
+        { role: 'assistant', content: 'cwd: /repo' },
+        { role: 'tool', tool_call_id: 'tu-1', content: 'cwd: /repo' },
+      ])
+    })
+  })
+
   describe('systemPrompt handling', () => {
     it('formats array system prompt with text blocks only', async () => {
       const captured: { request: any } = { request: null }

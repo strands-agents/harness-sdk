@@ -582,6 +582,24 @@ describe('VercelModel', () => {
   })
 
   describe('message formatting', () => {
+    it('sends a text block without its metadata, in user, assistant, and tool-result content', async () => {
+      const { collect, callArgs } = setupCaptureTest()
+      const injected = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+      await collect([
+        new Message({ role: 'user', content: [injected] }),
+        new Message({ role: 'assistant', content: [injected] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })],
+        }),
+      ])
+
+      const [user, assistant, tool] = callArgs().prompt as any[]
+      expect(user.content).toEqual([{ type: 'text', text: 'cwd: /repo' }])
+      expect(assistant.content).toEqual([{ type: 'text', text: 'cwd: /repo' }])
+      expect(tool.content[0].output).toEqual({ type: 'content', value: [{ type: 'text', text: 'cwd: /repo' }] })
+    })
+
     describe('system prompt', () => {
       it('formats string system prompt', async () => {
         const { collect, callArgs } = setupCaptureTest()

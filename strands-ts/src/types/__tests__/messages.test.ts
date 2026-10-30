@@ -177,6 +177,35 @@ describe('TextBlock', () => {
       type: 'textBlock',
       text: 'hello',
     })
+    expect(block.toJSON()).toEqual({ text: 'hello' })
+  })
+
+  test('carries metadata and serializes it beside the text', () => {
+    const block = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+
+    expect(block).toEqual({
+      type: 'textBlock',
+      text: 'cwd: /repo',
+      metadata: { injected: { source: 'strands:context-injector' } },
+    })
+    expect(block.toJSON()).toEqual({
+      text: 'cwd: /repo',
+      metadata: { injected: { source: 'strands:context-injector' } },
+    })
+    expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
+  })
+
+  test('keeps metadata through message data and clone, at top level and inside a tool result', () => {
+    const injected = new TextBlock('recalled: likes tea', {
+      metadata: { injected: { source: 'strands:memory-manager' } },
+    })
+    const message = new Message({
+      role: 'user',
+      content: [injected, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })],
+    })
+
+    expect(Message.fromMessageData(message.toJSON())).toEqual(message)
+    expect(message.clone()).toEqual(message)
   })
 })
 

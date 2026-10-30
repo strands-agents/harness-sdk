@@ -202,6 +202,26 @@ export type ContentBlock =
   | CitationsBlock
 
 /**
+ * Marks text the SDK added to a user turn, such as recalled memories or a reminder, rather than the user's own words.
+ */
+export interface InjectedBlockData {
+  /**
+   * Name of the component that added the text, such as `strands:memory-manager`.
+   */
+  source: string
+}
+
+/**
+ * Metadata attached to a text block. Not sent to model providers.
+ */
+export interface TextBlockMetadata {
+  /**
+   * Present when an SDK component injected the text; the model receives it as ordinary text.
+   */
+  injected?: InjectedBlockData
+}
+
+/**
  * Data for a text block.
  */
 export interface TextBlockData {
@@ -209,6 +229,11 @@ export interface TextBlockData {
    * Plain text content.
    */
   text: string
+
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  metadata?: TextBlockMetadata
 }
 
 /**
@@ -225,8 +250,16 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    */
   readonly text: string
 
-  constructor(data: string) {
-    this.text = data
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  readonly metadata?: TextBlockMetadata
+
+  constructor(text: string, options?: { metadata?: TextBlockMetadata }) {
+    this.text = text
+    if (options?.metadata !== undefined) {
+      this.metadata = options.metadata
+    }
   }
 
   /**
@@ -234,7 +267,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * Called automatically by JSON.stringify().
    */
   toJSON(): TextBlockData {
-    return { text: this.text }
+    return { text: this.text, ...(this.metadata !== undefined && { metadata: this.metadata }) }
   }
 
   /**
@@ -244,7 +277,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * @returns TextBlock instance
    */
   static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text)
+    return new TextBlock(data.text, { ...(data.metadata !== undefined && { metadata: data.metadata }) })
   }
 }
 
@@ -462,7 +495,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return new TextBlock(data.text)
+  if ('text' in data) return TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
@@ -999,7 +1032,7 @@ export class GuardContentBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return new TextBlock(data.text)
+    return TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {

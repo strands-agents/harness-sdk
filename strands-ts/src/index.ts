@@ -67,6 +67,8 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  TextBlockMetadata,
+  InjectedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,

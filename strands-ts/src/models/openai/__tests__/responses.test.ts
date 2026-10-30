@@ -238,6 +238,25 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.store).toBe(true)
     })
 
+    it('sends a text block without its metadata, in user, assistant, and tool-result content', async () => {
+      const injected = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+      const req = await runOnce({}, [
+        new Message({ role: 'user', content: [injected] }),
+        new Message({ role: 'assistant', content: [injected] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })],
+        }),
+      ])
+
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'cwd: /repo' }] })
+      expect(req.input[1]).toEqual({ role: 'assistant', content: 'cwd: /repo' })
+      expect(req.input.find((item: any) => item.type === 'function_call_output')).toMatchObject({
+        call_id: 'tu-1',
+        output: 'cwd: /repo',
+      })
+    })
+
     it('chains previous_response_id when stateful and modelState has responseId', async () => {
       const modelState = new StateStore({ responseId: 'resp_prev' })
       const req = await runOnce({ stateful: true }, [mkUserMessage()], { modelState })

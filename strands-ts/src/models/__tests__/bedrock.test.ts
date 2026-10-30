@@ -4015,6 +4015,26 @@ describe('BedrockModel', () => {
     })
   })
 
+  describe('text block metadata', () => {
+    it('sends a text block without its metadata, at top level and inside a tool result', async () => {
+      const provider = new BedrockModel()
+      const injected = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [injected, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0]?.messages?.[0]?.content).toStrictEqual([
+        { text: 'cwd: /repo' },
+        { toolResult: { toolUseId: 'tu-1', content: [{ text: 'cwd: /repo' }], status: 'success' } },
+      ])
+    })
+  })
+
   describe('guard content in messages', async () => {
     const mockConverseStreamCommand = vi.mocked(ConverseStreamCommand)
 

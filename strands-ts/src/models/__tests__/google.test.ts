@@ -588,6 +588,16 @@ describe('GoogleModel', () => {
   })
 
   describe('message formatting', () => {
+    it('sends a text block without its metadata, at top level and inside a tool result', () => {
+      const injected = new TextBlock('cwd: /repo', { metadata: { injected: { source: 'strands:context-injector' } } })
+
+      expect(formatBlock(injected)[0]!.parts).toEqual([{ text: 'cwd: /repo' }])
+      const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [injected] })
+      expect(formatBlock(toolResult)[0]!.parts![0]!.functionResponse?.response).toEqual({
+        output: [{ text: 'cwd: /repo' }],
+      })
+    })
+
     it('formats user messages correctly', async () => {
       const { provider, captured } = setupCaptureTest()
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
