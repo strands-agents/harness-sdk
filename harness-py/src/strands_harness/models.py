@@ -44,10 +44,16 @@ _CLAUDE_MAX_TOKENS = {
     "claude-fable-": 128_000,
 }
 _CLAUDE_MAX_TOKENS_BY_VERSION = (
+    # Keep longer / more specific needles before shorter ones.
+    # Values match shared/model-info.json limits.maxOutputTokens for ids that
+    # the tier table would otherwise over-report (see #5680).
     ("claude-opus-4-5", 64_000),
     ("claude-opus-4.5", 64_000),
+    ("claude-opus-4-1", 32_000),
+    ("claude-opus-4-20250514", 32_000),
     ("claude-sonnet-4-5", 64_000),
     ("claude-sonnet-4.5", 64_000),
+    ("claude-sonnet-4-20250514", 64_000),
     ("claude-haiku-4-5", 64_000),
     ("claude-haiku-4.5", 64_000),
 )

@@ -723,6 +723,21 @@ def test_a_split_family_carries_its_version_max_tokens_ceiling(model_id, max_tok
     assert resolve(f"bedrock/global.anthropic.{model_id}").config["max_tokens"] == max_tokens
 
 
+
+@pytest.mark.parametrize(
+    ("model_id", "max_tokens"),
+    [
+        ("claude-opus-4-1-20250805-v1:0", 32_000),
+        ("claude-opus-4-20250514-v1:0", 32_000),
+        ("claude-sonnet-4-20250514-v1:0", 64_000),
+    ],
+)
+def test_claude_ids_match_model_info_max_output_tokens(model_id, max_tokens):
+    """Harness table pins that disagree with shared/model-info.json (#5680)."""
+    assert resolve(f"bedrock/us.anthropic.{model_id}").config["max_tokens"] == max_tokens
+    assert resolve(f"anthropic/{model_id}").config["max_tokens"] == max_tokens
+
+
 def test_the_budget_is_clamped_below_a_small_max_tokens():
     assert _claude_extended_thinking("max", 4_096) == {"thinking": {"type": "enabled", "budget_tokens": 4_095}}
     assert _claude_extended_thinking("low", 64_000) == {"thinking": {"type": "enabled", "budget_tokens": 2_048}}

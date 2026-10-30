@@ -406,6 +406,10 @@ describe('resolveModel', () => {
     ['claude-haiku-4-5-20251001-v1:0', 64_000],
     ['claude-haiku-4.5', 64_000],
     ['claude-haiku-5-5', 128_000],
+    // Pins that previously fell through to the 128k tier (#5680 / model-info.json)
+    ['claude-opus-4-1-20250805-v1:0', 32_000],
+    ['claude-opus-4-20250514-v1:0', 32_000],
+    ['claude-sonnet-4-20250514-v1:0', 64_000],
   ] as const)('gives %s a max tokens ceiling of %d', async (modelId, maxTokens) => {
     const model = await resolve(`bedrock/global.anthropic.${modelId}`)
     expect(model.getConfig().maxTokens).toBe(maxTokens)
