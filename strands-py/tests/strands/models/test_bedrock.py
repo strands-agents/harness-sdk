@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError, EventStreamError
 
 import strands
 from strands import _exception_notes
+from strands.event_loop.streaming import process_stream
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
@@ -888,6 +889,136 @@ async def test_stream_throttling_exception_from_event_stream_error(bedrock_clien
     bedrock_client.converse_stream.assert_called_once_with(
         modelId="m1", messages=messages, system=[], inferenceConfig={}
     )
+
+
+def _converse_stream_failing_with(events, code, message):
+    """A Converse event stream that yields events, then fails the way botocore does mid-stream."""
+    yield from events
+    raise EventStreamError({"Error": {"Code": code, "Message": message}}, "ConverseStream")
+
+
+_CONTENT_FILTER_MESSAGE = (
+    "The model returned the following errors: Mantle streaming error for requestId "
+    "00000000-0000-0000-0000-000000000000: Output blocked by content filtering policy"
+)
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter_error_ends_with_content_filtered(bedrock_client, model, messages, alist):
+    events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "partial"}, "contentBlockIndex": 0}},
+    ]
+    bedrock_client.converse_stream.return_value = {
+        "stream": _converse_stream_failing_with(events, "validationException", _CONTENT_FILTER_MESSAGE)
+    }
+
+    tru_chunks = await alist(model.stream(messages))
+    exp_chunks = [
+        *events,
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "content_filtered"}},
+    ]
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter_error_keeps_partial_text(bedrock_client, model, messages, alist):
+    events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "first "}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"text": "second"}, "contentBlockIndex": 0}},
+    ]
+    bedrock_client.converse_stream.return_value = {
+        "stream": _converse_stream_failing_with(events, "validationException", _CONTENT_FILTER_MESSAGE)
+    }
+
+    stop_event = (await alist(process_stream(model.stream(messages))))[-1]
+    tru_stop = (stop_event.stop_reason, stop_event.message)
+    exp_stop = ("content_filtered", {"role": "assistant", "content": [{"text": "first second"}]})
+    assert tru_stop == exp_stop
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter_error_drops_unfinished_tool_use(bedrock_client, model, messages, alist):
+    events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "Let me check."}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "t1", "name": "lookup"}},
+                "contentBlockIndex": 1,
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"query": "par'}}, "contentBlockIndex": 1}},
+    ]
+    bedrock_client.converse_stream.return_value = {
+        "stream": _converse_stream_failing_with(events, "validationException", _CONTENT_FILTER_MESSAGE)
+    }
+
+    stop_event = (await alist(process_stream(model.stream(messages))))[-1]
+    tru_stop = (stop_event.stop_reason, stop_event.message)
+    exp_stop = ("content_filtered", {"role": "assistant", "content": [{"text": "Let me check."}]})
+    assert tru_stop == exp_stop
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter_error_after_citation_keeps_cited_text(bedrock_client, model, messages, alist):
+    citation = {"location": {"documentChar": {"documentIndex": 0, "start": 0, "end": 5}}, "title": "Doc"}
+    events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "cited "}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"citation": citation}, "contentBlockIndex": 0}},
+    ]
+    bedrock_client.converse_stream.return_value = {
+        "stream": _converse_stream_failing_with(events, "validationException", _CONTENT_FILTER_MESSAGE)
+    }
+
+    stop_event = (await alist(process_stream(model.stream(messages))))[-1]
+    tru_stop = (stop_event.stop_reason, stop_event.message)
+    exp_stop = (
+        "content_filtered",
+        {
+            "role": "assistant",
+            "content": [{"citationsContent": {"citations": [citation], "content": [{"text": "cited "}]}}],
+        },
+    )
+    assert tru_stop == exp_stop
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter_error_at_tool_use_start_drops_tool_use(bedrock_client, model, messages, alist):
+    events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "Let me check."}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "t1", "name": "lookup"}},
+                "contentBlockIndex": 1,
+            }
+        },
+    ]
+    bedrock_client.converse_stream.return_value = {
+        "stream": _converse_stream_failing_with(events, "validationException", _CONTENT_FILTER_MESSAGE)
+    }
+
+    stop_event = (await alist(process_stream(model.stream(messages))))[-1]
+    tru_stop = (stop_event.stop_reason, stop_event.message)
+    exp_stop = ("content_filtered", {"role": "assistant", "content": [{"text": "Let me check."}]})
+    assert tru_stop == exp_stop
+
+
+@pytest.mark.asyncio
+async def test_stream_other_validation_error_mid_stream_raises(bedrock_client, model, messages, alist):
+    events = [{"messageStart": {"role": "assistant"}}]
+    bedrock_client.converse_stream.return_value = {
+        "stream": _converse_stream_failing_with(events, "validationException", "Malformed input request")
+    }
+
+    with pytest.raises(EventStreamError, match="Malformed input request"):
+        await alist(model.stream(messages))
 
 
 @pytest.mark.asyncio
