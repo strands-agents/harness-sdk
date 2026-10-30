@@ -5,7 +5,9 @@ import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { Checkpoint } from '../../experimental/checkpoint.js'
 import { CheckpointError } from '../../errors.js'
 import type { InvokeArgs } from '../../types/agent.js'
-import { AfterModelCallEvent, AfterToolsEvent, BeforeToolCallEvent } from '../../hooks/events.js'
+import { AfterModelCallEvent, AfterToolsEvent, BeforeInvocationEvent, BeforeToolCallEvent } from '../../hooks/events.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 /** A model that always returns a single tool-use turn (reused across calls). */
 function toolUseModel(): MockMessageModel {
@@ -102,6 +104,47 @@ describe('Agent checkpointing', () => {
       expect(result.checkpoint?.position).toBe('afterTools')
       expect(result.checkpoint?.cycleIndex).toBe(0)
       expect(toolRan).toBe(true)
+    })
+
+    it('does not append hook messages when resuming from an afterModel checkpoint', async () => {
+      const agent = new Agent({
+        model: toolUseModel(),
+        tools: [createMockTool('noop', () => 'ok')],
+        checkpointing: true,
+        printer: false,
+      })
+      const contextMessage = new Message({ role: 'user', content: [new TextBlock('context')] })
+      agent.addHook(BeforeInvocationEvent, (event) => {
+        event.messages.push(contextMessage)
+      })
+
+      const checkpointResult = await agent.invoke('hi')
+      const result = await agent.invoke({
+        checkpointResume: { checkpoint: checkpointResult.checkpoint!.toJSON() },
+      })
+
+      expect(result.stopReason).toBe('checkpoint')
+      expect(result.checkpoint?.position).toBe('afterTools')
+      expect(agent.messages).toEqual([
+        new Message({ role: 'user', content: [new TextBlock('hi')], trackingId: anyTrackingId }),
+        contextMessage,
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'noop', toolUseId: 'tool-1', input: {} })],
+          trackingId: anyTrackingId,
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tool-1',
+              status: 'success',
+              content: [new TextBlock('ok')],
+            }),
+          ],
+          trackingId: anyTrackingId,
+        }),
+      ])
     })
 
     it('resuming from afterTools increments the cycle index for the next afterModel checkpoint', async () => {

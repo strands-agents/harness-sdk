@@ -1270,8 +1270,15 @@ export class Agent implements LocalAgent, InvokableAgent {
           this._interruptState.resume(interruptResponses)
         }
 
+        const inputMessages = this._normalizeInput(currentArgs)
+
         // Hooks fire outside middleware — always, even on short-circuit.
-        const beforeInvocationEvent = new BeforeInvocationEvent({ agent: this, invocationContext, invocationState })
+        const beforeInvocationEvent = new BeforeInvocationEvent({
+          agent: this,
+          invocationContext,
+          invocationState,
+          messages: [...inputMessages],
+        })
         yield await this._invokeCallbacks(beforeInvocationEvent)
 
         if (beforeInvocationEvent.cancel) {
@@ -1308,6 +1315,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             resolvedOptions,
             invocationState,
             invocationContext,
+            beforeInvocationEvent.messages,
             continuationEvent
           )
         } catch (error) {
@@ -1384,6 +1392,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     options: InvokeOptions,
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl,
+    inputMessages: Message[],
     continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     // Snapshot so a gate that re-reads its response after next() still resolves even if a tool cycle called deactivate().
@@ -1403,14 +1412,24 @@ export class Agent implements LocalAgent, InvokableAgent {
         AgentStreamStage,
         context,
         async function* (ctx: AgentStreamContext): AsyncGenerator<AgentStreamEvent, AgentStreamResult, undefined> {
-          const streamArgs = continuations.combine(continuationEvent, ctx.args, (continuationArgs) =>
-            self._normalizeInput(continuationArgs)
-          )
+          const combineWith = (base: InvokeArgs): InvokeArgs =>
+            continuations.combine(continuationEvent, base, (continuationArgs) => self._normalizeInput(continuationArgs))
+
+          // Middleware replacements provide the continuation base. Otherwise, continuations apply to
+          // post-hook messages; without either, post-hook messages are appended separately.
+          const middlewareReplacedArgs = ctx.args !== args
+          const combinedArgs = combineWith(ctx.args)
+          const continuationApplied = combinedArgs !== ctx.args
+
+          const streamArgs = continuationApplied && !middlewareReplacedArgs ? combineWith(inputMessages) : combinedArgs
+          const historyMessages = !continuationApplied && !middlewareReplacedArgs ? inputMessages : undefined
+
           const result = yield* self._streamCore(
             streamArgs,
             ctx.options,
             invocationContext,
-            streamArgs === ctx.args ? undefined : continuationEvent
+            continuationApplied ? continuationEvent : undefined,
+            historyMessages
           )
           return { result }
         }
@@ -1457,9 +1476,10 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options: InvokeOptions | undefined,
     invocationContext: InvocationContextImpl,
-    continuationEvent?: AfterInvocationEvent
+    continuationEvent?: AfterInvocationEvent,
+    inputMessages?: Message[]
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
-    const streamGenerator = this._stream(args, options, invocationContext, continuationEvent)
+    const streamGenerator = this._stream(args, options, invocationContext, continuationEvent, inputMessages)
     let caughtError: Error | undefined
     let iterationResult: IteratorResult<AgentStreamEvent, AgentResult>
     try {
@@ -1627,9 +1647,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options: InvokeOptions | undefined,
     invocationContext: InvocationContextImpl,
-    continuationEvent?: AfterInvocationEvent
+    continuationEvent?: AfterInvocationEvent,
+    inputMessages?: Message[]
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     let currentArgs: InvokeArgs | undefined = args
+    let pendingInputMessages = inputMessages
     let result: AgentResult | undefined
     const messageCountAtStart = this.messages.length
 
@@ -1670,14 +1692,19 @@ export class Agent implements LocalAgent, InvokableAgent {
       throw new TypeError('Agent is in an interrupted state. Resume by invoking with interruptResponse content blocks.')
     }
 
+    // Control-only resumes continue an existing cycle and must not append new hook input.
+    if (resumeCheckpoint || interruptResponses.length > 0) {
+      pendingInputMessages = undefined
+    }
+
     // Normalize input to get the user messages for telemetry
-    const inputMessages = this._normalizeInput(args)
+    const traceInputMessages = pendingInputMessages ?? this._normalizeInput(args)
 
     // Start agent trace span
     this._meter.startNewInvocation()
     const agentModelId = this.model.modelId
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
-      messages: inputMessages,
+      messages: traceInputMessages,
       agentName: this.name,
       agentId: this.id,
       tools: this.tools,
@@ -1735,8 +1762,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         try {
           // Normalize input and append user messages on first invocation only
-          if (currentArgs !== undefined) {
-            const messagesToAppend = this._normalizeInput(currentArgs)
+          if (currentArgs !== undefined || pendingInputMessages !== undefined) {
+            const messagesToAppend = pendingInputMessages ?? this._normalizeInput(currentArgs)
             if (continuationEvent) {
               yield* await this._appendContinuationMessages(
                 messagesToAppend,
@@ -1750,6 +1777,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               }
             }
             currentArgs = undefined
+            pendingInputMessages = undefined
           }
 
           // Check if we're resuming from a tool interrupt
