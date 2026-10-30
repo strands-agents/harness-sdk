@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from strands.interrupt import _AGENT_STREAM_INTERRUPT_ID_PREFIX, Interrupt, PendingToolExecution, _InterruptState
@@ -58,7 +60,10 @@ def test_interrupt_state_to_dict():
         context={"test": "context"},
         activated=True,
         pending_tool_execution=PendingToolExecution(
-            assistant_message={"role": "assistant", "content": []},
+            assistant_message={
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             completed_tool_results=[{"toolUseId": "tool-1", "status": "success", "content": []}],
         ),
     )
@@ -69,7 +74,10 @@ def test_interrupt_state_to_dict():
         "context": {"test": "context"},
         "activated": True,
         "pending_tool_execution": {
-            "assistant_message": {"role": "assistant", "content": []},
+            "assistant_message": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             "completed_tool_results": [{"toolUseId": "tool-1", "status": "success", "content": []}],
         },
     }
@@ -82,7 +90,10 @@ def test_interrupt_state_from_dict():
         "context": {"test": "context", "tool_results": ["unrelated"]},
         "activated": True,
         "pending_tool_execution": {
-            "assistant_message": {"role": "assistant", "content": []},
+            "assistant_message": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             "completed_tool_results": [{"toolUseId": "tool-1", "status": "success", "content": []}],
         },
     }
@@ -93,7 +104,10 @@ def test_interrupt_state_from_dict():
         context={"test": "context", "tool_results": ["unrelated"]},
         activated=True,
         pending_tool_execution=PendingToolExecution(
-            assistant_message={"role": "assistant", "content": []},
+            assistant_message={
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             completed_tool_results=[{"toolUseId": "tool-1", "status": "success", "content": []}],
         ),
     )
@@ -106,7 +120,10 @@ def test_interrupt_state_from_dict_migrates_legacy_tool_context():
         "interrupts": {},
         "context": {
             "responses": prompt,
-            "tool_use_message": {"role": "assistant", "content": []},
+            "tool_use_message": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             "tool_results": [{"toolUseId": "tool-1", "status": "success", "content": []}],
         },
         "activated": True,
@@ -117,14 +134,20 @@ def test_interrupt_state_from_dict_migrates_legacy_tool_context():
         context={"responses": prompt},
         activated=True,
         pending_tool_execution=PendingToolExecution(
-            assistant_message={"role": "assistant", "content": []},
+            assistant_message={
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             completed_tool_results=[{"toolUseId": "tool-1", "status": "success", "content": []}],
         ),
     )
     assert tru_state == exp_state
     assert data["context"] == {
         "responses": prompt,
-        "tool_use_message": {"role": "assistant", "content": []},
+        "tool_use_message": {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+        },
         "tool_results": [{"toolUseId": "tool-1", "status": "success", "content": []}],
     }
 
@@ -134,12 +157,18 @@ def test_interrupt_state_from_dict_prefers_typed_pending_execution_over_legacy_c
         "interrupts": {},
         "context": {
             "responses": [],
-            "tool_use_message": {"role": "assistant", "content": [{"text": "legacy"}]},
+            "tool_use_message": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "legacy", "name": "test_tool", "input": {}}}],
+            },
             "tool_results": [{"toolUseId": "legacy", "status": "success", "content": []}],
         },
         "activated": True,
         "pending_tool_execution": {
-            "assistant_message": {"role": "assistant", "content": [{"text": "typed"}]},
+            "assistant_message": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "typed", "name": "test_tool", "input": {}}}],
+            },
             "completed_tool_results": [{"toolUseId": "typed", "status": "success", "content": []}],
         },
     }
@@ -149,14 +178,20 @@ def test_interrupt_state_from_dict_prefers_typed_pending_execution_over_legacy_c
         context={"responses": []},
         activated=True,
         pending_tool_execution=PendingToolExecution(
-            assistant_message={"role": "assistant", "content": [{"text": "typed"}]},
+            assistant_message={
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "typed", "name": "test_tool", "input": {}}}],
+            },
             completed_tool_results=[{"toolUseId": "typed", "status": "success", "content": []}],
         ),
     )
     assert tru_state == exp_state
     assert data["context"] == {
         "responses": [],
-        "tool_use_message": {"role": "assistant", "content": [{"text": "legacy"}]},
+        "tool_use_message": {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "legacy", "name": "test_tool", "input": {}}}],
+        },
         "tool_results": [{"toolUseId": "legacy", "status": "success", "content": []}],
     }
 
@@ -165,7 +200,10 @@ def test_interrupt_state_pending_tool_execution_round_trip_is_independent():
     interrupt_state = _InterruptState(
         activated=True,
         pending_tool_execution=PendingToolExecution(
-            assistant_message={"role": "assistant", "content": [{"text": "pending"}]},
+            assistant_message={
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+            },
             completed_tool_results=[{"toolUseId": "tool-1", "status": "success", "content": []}],
         ),
     )
@@ -177,7 +215,10 @@ def test_interrupt_state_pending_tool_execution_round_trip_is_independent():
 
     serialized_state["pending_tool_execution"]["completed_tool_results"][0]["status"] = "error"
     exp_pending_tool_execution = PendingToolExecution(
-        assistant_message={"role": "assistant", "content": [{"text": "pending"}]},
+        assistant_message={
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "tool-1", "name": "test_tool", "input": {}}}],
+        },
         completed_tool_results=[{"toolUseId": "tool-1", "status": "success", "content": []}],
     )
     assert interrupt_state.pending_tool_execution == exp_pending_tool_execution
@@ -191,10 +232,152 @@ def test_interrupt_state_from_dict_wraps_invalid_pending_tool_execution():
         "pending_tool_execution": {"assistant_message": {"role": "assistant", "content": []}},
     }
 
-    with pytest.raises(SessionException, match="Failed to restore pending tool execution state") as error_info:
+    with pytest.raises(
+        SessionException, match=r"field=<pending_tool_execution> \| failed to restore pending tool execution state"
+    ) as error_info:
         _InterruptState.from_dict(data)
 
     assert isinstance(error_info.value.__cause__, TypeError)
+
+
+_PENDING_TOOL_EXECUTION = {
+    "assistant_message": {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"toolUseId": "t-0", "name": "test_tool", "input": {}}},
+            {"toolUse": {"toolUseId": "t-1", "name": "test_tool", "input": {}}},
+        ],
+    },
+    "completed_tool_results": [{"toolUseId": "t-0", "status": "success", "content": []}],
+}
+
+
+@pytest.mark.parametrize("pending_tool_execution", [None, _PENDING_TOOL_EXECUTION])
+def test_interrupt_state_from_dict_drops_pending_tool_execution_when_not_activated(pending_tool_execution):
+    """A non-activated state never replays, so a stale pending execution is not restored (#5628)."""
+    data = {
+        "interrupts": {},
+        "context": {"tool_use_message": _PENDING_TOOL_EXECUTION["assistant_message"], "tool_results": []},
+        "activated": False,
+    }
+    if pending_tool_execution is not None:
+        data["pending_tool_execution"] = pending_tool_execution
+
+    tru_state = _InterruptState.from_dict(data)
+    exp_state = _InterruptState(activated=False)
+    assert tru_state == exp_state
+
+
+@pytest.mark.parametrize(
+    ("pending_tool_execution", "match"),
+    [
+        pytest.param(
+            {
+                **_PENDING_TOOL_EXECUTION,
+                "assistant_message": {**_PENDING_TOOL_EXECUTION["assistant_message"], "role": "user"},
+            },
+            r"field=<pending_tool_execution.assistant_message.role> \|",
+            id="non-assistant message",
+        ),
+        pytest.param(
+            {**_PENDING_TOOL_EXECUTION, "assistant_message": {"role": "assistant", "content": "not-a-list"}},
+            r"field=<pending_tool_execution.assistant_message> \|",
+            id="unparseable message",
+        ),
+        pytest.param(
+            {**_PENDING_TOOL_EXECUTION, "completed_tool_results": {"t-0": {}}},
+            r"field=<pending_tool_execution.completed_tool_results> \| completed tool results must be a list",
+            id="non-list completed tool results",
+        ),
+        pytest.param(
+            {**_PENDING_TOOL_EXECUTION, "completed_tool_results": [{"toolUseId": "t-0"}]},
+            r"tool_use_id=<t-0> \| completed tool result has no status",
+            id="completed tool result without status",
+        ),
+        pytest.param(
+            {**_PENDING_TOOL_EXECUTION, "completed_tool_results": [{"toolUseId": "t-0", "status": "success"}]},
+            r"tool_use_id=<t-0> \| completed tool result content must be a list",
+            id="completed tool result without content list",
+        ),
+        pytest.param(
+            {**_PENDING_TOOL_EXECUTION, "completed_tool_results": [42]},
+            r"tool_use_id=<None> \| failed to parse restored pending tool execution",
+            id="non-dict completed tool result",
+        ),
+    ],
+)
+def test_interrupt_state_from_dict_rejects_invalid_pending_tool_execution(pending_tool_execution, match):
+    data = {"interrupts": {}, "context": {}, "activated": True, "pending_tool_execution": pending_tool_execution}
+
+    with pytest.raises(SessionException, match=match):
+        _InterruptState.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    ("pending_tool_execution", "match"),
+    [
+        pytest.param(
+            {"assistant_message": {"role": "assistant", "content": [{"text": "hello"}]}, "completed_tool_results": []},
+            "field=<pending_tool_execution.assistant_message.content>",
+            id="message without tool uses",
+        ),
+        pytest.param(
+            {
+                "assistant_message": {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"name": "test_tool", "input": {}}}],
+                },
+                "completed_tool_results": [],
+            },
+            "field=<pending_tool_execution.assistant_message.content>",
+            id="tool use without a toolUseId",
+        ),
+        pytest.param(
+            {
+                **_PENDING_TOOL_EXECUTION,
+                "completed_tool_results": [{"toolUseId": "t-9", "status": "success", "content": []}],
+            },
+            "field=<pending_tool_execution.completed_tool_results>, tool_use_id=<t-9>",
+            id="completed tool result for an unknown tool use",
+        ),
+    ],
+)
+def test_interrupt_state_from_dict_drops_unreplayable_pending_tool_execution(pending_tool_execution, match, caplog):
+    """Well-formed state the event loop cannot replay is dropped, not fatal, so the session stays loadable."""
+    data = {"interrupts": {}, "context": {}, "activated": True, "pending_tool_execution": pending_tool_execution}
+
+    with caplog.at_level(logging.WARNING, logger="strands.interrupt"):
+        tru_state = _InterruptState.from_dict(data)
+
+    exp_state = _InterruptState(activated=True)
+    assert tru_state == exp_state
+    assert match in caplog.text
+
+
+def test_interrupt_state_from_dict_accepts_state_written_for_a_partial_tool_batch():
+    """The shape _stop_for_interrupts persists (one tool answered, one interrupted) round-trips."""
+    interrupt_state = _InterruptState(
+        interrupts={"test_id": Interrupt(id="test_id", name="test_name", reason="test reason")},
+        activated=True,
+        pending_tool_execution=PendingToolExecution(
+            assistant_message=_PENDING_TOOL_EXECUTION["assistant_message"],
+            completed_tool_results=[{"toolUseId": "t-0", "status": "success", "content": [{"text": "done"}]}],
+        ),
+    )
+
+    tru_state = _InterruptState.from_dict(interrupt_state.to_dict())
+    assert tru_state == interrupt_state
+
+
+def test_interrupt_state_from_dict_validates_legacy_tool_context():
+    data = {
+        "interrupts": {},
+        "context": {"tool_use_message": {"role": "user", "content": []}, "tool_results": []},
+        "activated": True,
+    }
+
+    with pytest.raises(SessionException, match="field=<pending_tool_execution.assistant_message.role>"):
+        _InterruptState.from_dict(data)
 
 
 def test_interrupt_state_resume():
