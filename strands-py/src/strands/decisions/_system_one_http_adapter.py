@@ -8,6 +8,7 @@ their endpoints, credentials, defaults, and limits and delegate the wire work he
 import json
 import math
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, TypeGuard
@@ -350,7 +351,9 @@ def _parse_usage(value: Any) -> Usage | None:
 
 
 def _is_token_count(value: Any) -> TypeGuard[float]:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    # Int/float comparison is exact, so this rejects inf, nan, and ints too large for a float
+    # without the OverflowError math.isfinite raises on them.
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= sys.float_info.max
 
 
 def _require_record(value: Any, name: str) -> dict[str, Any]:

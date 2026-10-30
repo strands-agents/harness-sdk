@@ -425,8 +425,9 @@ class TestAsk:
         [
             {"input_tokens": -1, "output_tokens": 3},
             {"input_tokens": "12", "output_tokens": 3},
+            {"input_tokens": 10**400, "output_tokens": 3},
         ],
-        ids=["negative", "non-numeric"],
+        ids=["negative", "non-numeric", "huge-integer"],
     )
     async def test_omits_usage_for_invalid_token_counters(self, provider: _ProviderCase, usage: Any):
         client = _fake_client(_response_body({"q": {"type": "noul", "noul": 1}}, usage=usage))
