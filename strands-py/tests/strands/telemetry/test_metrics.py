@@ -222,6 +222,7 @@ def test_tool_metrics_add_call(success, tool, tool_metrics, mock_get_meter_provi
     tru_attrs = dataclasses.asdict(tool_metrics)
     exp_attrs = {
         "tool": tool,
+        "invocations": [tool],
         "call_count": 1,
         "success_count": success,
         "error_count": not success,
@@ -309,6 +310,7 @@ def test_event_loop_metrics_add_tool_usage(mock_time, trace, tool, event_loop_me
         "tool_metrics": {
             "tool1": strands.telemetry.metrics.ToolMetrics(
                 tool=tool,
+                invocations=[tool],
                 call_count=1,
                 success_count=1,
                 error_count=0,
@@ -411,6 +413,12 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
                     "name": "tool1",
                     "tool_use_id": "123",
                 },
+                "invocations": [
+                    {
+                        "tool_use_id": "123",
+                        "input_params": {},
+                    },
+                ],
             },
         },
         "total_cycles": 0,
@@ -604,6 +612,50 @@ def test_reset_usage_metrics(usage, event_loop_metrics, mock_get_meter_provider)
 
     # Verify accumulated_usage is NOT cleared
     assert event_loop_metrics.accumulated_usage["inputTokens"] == 11
+
+
+def test_tool_metrics_tracks_all_invocations(mock_get_meter_provider):
+    """ToolMetrics.invocations should contain all tool calls, not just the latest."""
+    tool1 = {"name": "weather", "toolUseId": "id1", "input": {"city": "Berlin"}}
+    tool2 = {"name": "weather", "toolUseId": "id2", "input": {"city": "Paris"}}
+    tool3 = {"name": "weather", "toolUseId": "id3", "input": {"city": "Rome"}}
+
+    metrics_client = MetricsClient()
+    tm = strands.telemetry.metrics.ToolMetrics(tool=tool1)
+    tm.add_call(tool1, 0.1, True, metrics_client)
+    tm.add_call(tool2, 0.2, True, metrics_client)
+    tm.add_call(tool3, 0.15, False, metrics_client)
+
+    assert tm.call_count == 3
+    assert tm.success_count == 2
+    assert tm.error_count == 1
+    assert len(tm.invocations) == 3
+    assert tm.invocations[0]["input"] == {"city": "Berlin"}
+    assert tm.invocations[1]["input"] == {"city": "Paris"}
+    assert tm.invocations[2]["input"] == {"city": "Rome"}
+    # Backwards compatibility: .tool still points to the latest
+    assert tm.tool["input"] == {"city": "Rome"}
+    assert tm.tool["toolUseId"] == "id3"
+
+
+def test_tool_metrics_invocations_in_summary(tool, event_loop_metrics, mock_get_meter_provider):
+    """get_summary() should include all invocations for repeatedly called tools."""
+    tool1 = {"name": "search", "toolUseId": "s1", "input": {"query": "python"}}
+    tool2 = {"name": "search", "toolUseId": "s2", "input": {"query": "rust"}}
+
+    trace = strands.telemetry.metrics.Trace("test")
+    msg = {"role": "user", "content": [{"toolResult": {"toolUseId": "s1", "tool_name": "search"}}]}
+
+    event_loop_metrics.add_tool_usage(tool1, 0.1, trace, True, msg)
+    event_loop_metrics.add_tool_usage(tool2, 0.2, trace, True, msg)
+
+    summary = event_loop_metrics.get_summary()
+    tool_usage = summary["tool_usage"]["search"]
+
+    assert tool_usage["execution_stats"]["call_count"] == 2
+    assert len(tool_usage["invocations"]) == 2
+    assert tool_usage["invocations"][0]["input_params"] == {"query": "python"}
+    assert tool_usage["invocations"][1]["input_params"] == {"query": "rust"}
 
 
 def test_latest_context_size_no_invocations(event_loop_metrics):
