@@ -44,11 +44,10 @@ describe.each([openaiResponses, openai, bedrock, anthropic])(
 
         expect(acted).toBe(true)
         expect(streamSpy).toHaveBeenCalledTimes(1)
-        const summaries = agent.messages
-          .flatMap((message) => message.content)
-          .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized: 2 messages'))
-        expect(summaries).toHaveLength(1)
-        expect((summaries[0] as TextBlock).text).toMatch(/lookup_order|ORD-48213/)
+        expect(agent.messages).toHaveLength(3)
+        const [summary] = agent.messages
+        expect(summary!.role).toBe('user')
+        expect((summary!.content[0] as TextBlock).text).toMatch(/lookup_order|ORD-48213|FX-7731/)
       },
       120_000
     )

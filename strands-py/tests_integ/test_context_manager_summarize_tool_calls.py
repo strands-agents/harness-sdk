@@ -52,11 +52,7 @@ async def test_summarize_tool_call_history_in_single_request(provider: providers
 
     assert acted is True
     assert stream.call_count == 1
-    summaries = [
-        block["text"]
-        for message in agent.messages
-        for block in message["content"]
-        if block.get("text", "").startswith("[Summarized: 2 messages")
-    ]
-    assert len(summaries) == 1
-    assert re.search(r"lookup_order|ORD-48213", summaries[0])
+    assert len(agent.messages) == 3
+    summary = agent.messages[0]
+    assert summary["role"] == "user"
+    assert re.search(r"lookup_order|ORD-48213|FX-7731", summary["content"][0]["text"])

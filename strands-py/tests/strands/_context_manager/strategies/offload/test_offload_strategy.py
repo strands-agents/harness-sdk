@@ -137,6 +137,60 @@ class TestRepairAlternation:
         assert len(messages[0]["content"]) == 2
         assert messages[1]["role"] == "assistant"
 
+    def test_keeps_both_messages_tracking_ids_and_metadata(self):
+        usage = {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+        prev_metadata = {"usage": usage, "custom": {"source": "a"}}
+        current_metadata = {"custom": {"pinned": True, "note": "b"}}
+        prev = Message(role="user", content=[ContentBlock(text="a")], tracking_id="p", metadata=prev_metadata)
+        current = Message(role="user", content=[ContentBlock(text="b")], tracking_id="c", metadata=current_metadata)
+        messages: Messages = [prev, current, Message(role="assistant", content=[ContentBlock(text="c")])]
+
+        _repair_alternation(messages)
+
+        assert messages[0] == {
+            "role": "user",
+            "content": [{"text": "a"}, {"text": "b"}],
+            "tracking_id": "p",
+            "metadata": {
+                "custom": {
+                    "source": "a",
+                    "pinned": True,
+                    "merged_messages": [
+                        {"offset": 0, "tracking_id": "p", "metadata": prev_metadata},
+                        {"offset": 1, "tracking_id": "c", "metadata": current_metadata},
+                    ],
+                }
+            },
+        }
+
+    def test_takes_usage_from_the_later_message_so_the_estimate_counts_its_content(self):
+        older = {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+        newer = {"inputTokens": 20, "outputTokens": 5, "totalTokens": 25}
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="a")], metadata={"usage": older}),
+            Message(role="assistant", content=[ContentBlock(text="b")], metadata={"usage": newer}),
+        ]
+
+        _repair_alternation(messages)
+
+        assert messages[1]["metadata"]["usage"] == newer
+
+    def test_records_messages_merged_into_either_side_at_their_offsets_in_the_merge(self):
+        def text(tracking_id: str) -> Message:
+            return Message(role="user", content=[ContentBlock(text=tracking_id)], tracking_id=tracking_id)
+
+        first: Messages = [text("p"), text("q")]
+        second: Messages = [text("c"), text("d")]
+        _repair_alternation(first)
+        _repair_alternation(second)
+        messages = [*first, *second]
+
+        _repair_alternation(messages)
+
+        merged = messages[0]["metadata"]["custom"]["merged_messages"]
+        assert [(entry["tracking_id"], entry["offset"]) for entry in merged] == [("p", 0), ("q", 1), ("c", 2), ("d", 3)]
+
     def test_no_change_when_alternating(self):
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="a")]),

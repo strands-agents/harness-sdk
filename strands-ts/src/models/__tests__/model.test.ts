@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -11,10 +11,12 @@ import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
+import { DEFAULT_SUMMARIZE_INSTRUCTIONS } from '../summarize.js'
 import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 
 /**
  * Test model provider that throws an error from stream().
@@ -1324,5 +1326,221 @@ describe('estimateUtilization', () => {
     provider.updateConfig({ contextWindowLimit: 100_000 })
 
     expect(provider.estimateUtilization(0)).toBe(0)
+  })
+})
+
+describe('summarize', () => {
+  const text = (role: 'user' | 'assistant', value: string): Message =>
+    new Message({ role, content: [new TextBlock(value)] })
+  const usage = { inputTokens: 4, outputTokens: 5, totalTokens: 9 }
+  const shape = (messages: Message[]) => messages.map(({ role, content, metadata }) => ({ role, content, metadata }))
+
+  it('streams a flattened transcript under the instructions and returns the summary and usage', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: ' the summary ' }, { usage })
+    const streamSpy = vi.spyOn(model, 'stream')
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')], metadata: { custom: { pinned: true } } }),
+      new Message({
+        role: 'assistant',
+        content: [
+          new ReasoningBlock({ text: 'plan', signature: 'sig' }),
+          new ToolUseBlock({ name: 'shell', toolUseId: 't1', input: { command: 'ls' } }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [] })],
+      }),
+    ]
+    const original = shape(messages)
+    const toolSpec = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+
+    const result = await model.summarize(messages, {
+      systemPrompt: 'live prompt',
+      toolSpecs: [toolSpec],
+      instructions: 'Keep ids',
+    })
+
+    const [request, options] = streamSpy.mock.calls[0]!
+    expect(shape(request)).toEqual([
+      {
+        role: 'user',
+        content: [
+          new TextBlock('<content>'),
+          new TextBlock('\n---\n[user]'),
+          new TextBlock('task'),
+          new TextBlock('\n---\n[assistant]'),
+          new TextBlock('[tool call: shell] {"command":"ls"}'),
+          new TextBlock('\n---\n[user]'),
+          new TextBlock('[tool result: shell]'),
+          new TextBlock('</content>'),
+        ],
+        metadata: undefined,
+      },
+    ])
+    expect(options).toEqual({ systemPrompt: 'Keep ids' })
+    expect(result).toEqual({
+      summary: new Message({ role: 'user', content: [new TextBlock('the summary')], trackingId: anyTrackingId }),
+      usage,
+    })
+    expect(shape(messages)).toEqual(original)
+  })
+
+  it('uses the default summarization system prompt without instructions', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'summary' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    await model.summarize([text('user', 'task'), text('assistant', 'answer')])
+
+    const [request, options] = streamSpy.mock.calls[0]!
+    expect(request.map(({ role, content }) => ({ role, content }))).toEqual([
+      {
+        role: 'user',
+        content: [
+          new TextBlock('<content>'),
+          new TextBlock('\n---\n[user]'),
+          new TextBlock('task'),
+          new TextBlock('\n---\n[assistant]'),
+          new TextBlock('answer'),
+          new TextBlock('</content>'),
+        ],
+      },
+    ])
+    expect(options).toEqual({ systemPrompt: DEFAULT_SUMMARIZE_INSTRUCTIONS })
+  })
+
+  it('joins text and citation blocks with newlines and skips other blocks', async () => {
+    const model = new MockMessageModel().addTurn([
+      { type: 'reasoningBlock', text: 'thinking' },
+      { type: 'textBlock', text: 'first' },
+      { type: 'textBlock', text: '  ' },
+      {
+        type: 'citationsBlock',
+        citations: [
+          { location: { type: 'web', url: 'https://a.com' }, source: 'https://a.com', sourceContent: [], title: 'A' },
+        ],
+        content: [{ text: 'cited' }],
+      },
+      { type: 'textBlock', text: 'second' },
+    ])
+
+    const result = await model.summarize([text('user', 'task')])
+
+    expect(result).toEqual({
+      summary: new Message({
+        role: 'user',
+        content: [new TextBlock('first\ncited\nsecond')],
+        trackingId: anyTrackingId,
+      }),
+    })
+  })
+
+  it('returns the summary when the reply stops at a stop sequence', async () => {
+    const model = new MockMessageModel().addTurn(
+      { type: 'textBlock', text: 'the summary' },
+      { stopReason: 'stopSequence', usage }
+    )
+
+    const result = await model.summarize([text('user', 'task')])
+
+    expect(result).toEqual({
+      summary: new Message({ role: 'user', content: [new TextBlock('the summary')], trackingId: anyTrackingId }),
+      usage,
+    })
+  })
+
+  it.each([
+    ['the output token limit', 'maxTokens'],
+    ['a tool call', 'toolUse'],
+    ['a guardrail intervention', 'guardrailIntervened'],
+  ] as const)('returns an empty summary with the usage when the reply stops at %s', async (_, stopReason) => {
+    const model = new MockMessageModel().addTurn(
+      { type: 'textBlock', text: 'Let me check first.' },
+      { stopReason, usage }
+    )
+
+    const result = await model.summarize([text('user', 'task')])
+
+    expect(result).toEqual({
+      summary: new Message({ role: 'user', content: [], trackingId: anyTrackingId }),
+      usage,
+    })
+  })
+
+  it('returns an empty summary with the usage when the reply stops on a tool call with unparseable input', async () => {
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield {
+        type: 'modelContentBlockStartEvent',
+        start: { type: 'toolUseStart', name: 'read', toolUseId: 'tool-1' },
+      }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: '{invalid json' } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+      yield { type: 'modelMetadataEvent', usage }
+    })
+
+    const result = await model.summarize([text('user', 'task')])
+
+    expect(result).toEqual({
+      summary: new Message({ role: 'user', content: [], trackingId: anyTrackingId }),
+      usage,
+    })
+  })
+
+  it('returns an empty summary with the usage when the stream ends without a message stop', async () => {
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMetadataEvent', usage }
+    })
+
+    const result = await model.summarize([text('user', 'task')])
+
+    expect(result).toEqual({
+      summary: new Message({ role: 'user', content: [], trackingId: anyTrackingId }),
+      usage,
+    })
+  })
+
+  it('rethrows other model errors', async () => {
+    const error = new ModelError('provider failed')
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      throw error
+    })
+
+    await expect(model.summarize([text('user', 'task')])).rejects.toBe(error)
+  })
+
+  it('rethrows a provider error caused by a body that does not parse', async () => {
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      JSON.parse('{garbled')
+    })
+
+    await expect(model.summarize([text('user', 'task')])).rejects.toMatchObject({ cause: expect.any(SyntaxError) })
+  })
+
+  it('forwards the cancel signal to the stream call', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'summary' })
+    const streamSpy = vi.spyOn(model, 'stream')
+    const cancelSignal = new AbortController().signal
+
+    await model.summarize([text('user', 'task')], { cancelSignal })
+
+    expect(streamSpy.mock.calls[0]![1]).toEqual({ systemPrompt: DEFAULT_SUMMARIZE_INSTRUCTIONS, cancelSignal })
+  })
+
+  it('returns an empty summary with the usage when the model writes no text', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: '  ' }, { usage })
+
+    const result = await model.summarize([text('user', 'task')])
+
+    expect(result).toEqual({
+      summary: new Message({ role: 'user', content: [], trackingId: anyTrackingId }),
+      usage,
+    })
   })
 })

@@ -8,6 +8,8 @@ integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
   - path: strands-ts/src/models/model.ts
+  - path: strands-py/src/strands/models/_summarize.py
+  - path: strands-ts/src/models/summarize.ts
 ---
 
 When Strands Agents doesn't ship a provider for the model you want to run, implement the `Model` interface yourself. A custom model provider connects any LLM service to the agent loop while keeping the integration private to your codebase.
@@ -39,6 +41,7 @@ The base class also provides optional methods you can override:
 
 - `count_tokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimate_utilization()`: Compute the ratio of input tokens to `context_window_limit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
+- `summarize()`: Summarize messages into a `SummarizeResult` (summary message and token usage) for the experimental [`ContextManager`](../context-management/). The `ContextManager` calls an override only when summarizing the conversation's opening messages; other summaries use the base implementation. Override it to use your provider's server-side compaction, and call `super().summarize()` when that's unavailable.
 </Tab>
 <Tab label="TypeScript">
 
@@ -52,6 +55,7 @@ The base class also provides optional methods you can override:
 
 - `countTokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimateUtilization()`: Compute the ratio of input tokens to `contextWindowLimit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
+- `summarize()`: Summarize messages into a `SummarizeResult` (summary message and token usage) for the experimental [`ContextManager`](../context-management/). The `ContextManager` calls an override only when summarizing the conversation's opening messages; other summaries use the base implementation. Override it to use your provider's server-side compaction, and call `super.summarize()` when that's unavailable.
 </Tab>
 </Tabs>
 

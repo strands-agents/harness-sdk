@@ -26,6 +26,13 @@ import {
   type ModelStreamEvent,
 } from './streaming.js'
 import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
+import {
+  INCOMPLETE_STREAM_MESSAGE,
+  summarizeWithStream,
+  TOOL_INPUT_PARSE_MESSAGE,
+  type SummarizeOptions,
+  type SummarizeResult,
+} from './summarize.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
@@ -431,6 +438,39 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Summarizes `messages` into one message that replaces them.
+   *
+   * A text summary's role is chosen by the context manager. A non-text summary (e.g. a provider compaction block)
+   * is placed as returned, as its own message, so give it the role of the last message it summarizes; one that
+   * does not alternate with the kept messages is discarded.
+   *
+   * The base implementation accepts any messages. It makes a {@link streamAggregated} call, without tools, on one
+   * user message holding a flattened transcript of `messages`, under its own summarization system prompt; the
+   * caller's tools and system prompt are not sent. The summary is empty unless the reply ends its turn or hits a
+   * stop sequence.
+   *
+   * Providers with server-side compaction override this method. An override is called only for the conversation's
+   * opening messages: a non-empty prefix that starts with a user message, alternates roles, and keeps every
+   * `toolUse` with its `toolResult`. It falls back to `super.summarize()` when native compaction is unavailable.
+   * Every other summary keeps message 0 verbatim; an override's prefix includes message 0, so a fallback's summary
+   * replaces it.
+   *
+   * @experimental
+   * @param messages - The messages to summarize, left unmodified
+   * @param options - The live system prompt and tools, for an override, a custom summarization system prompt, and
+   *   a cancellation signal
+   * @returns The summary message and the call's token usage. The summary never contains a tool use; its content is
+   *   empty when the model wrote no summary
+   * @throws ContextWindowOverflowError - When the summarizer input exceeds the model's context window
+   * @throws ModelThrottledError - When the provider throttles the call
+   * @throws ModelError - For any other error the model's stream raises. A reply cut off at the output limit or
+   *   stopped by a guardrail gives an empty summary instead
+   */
+  async summarize(messages: Message[], options: SummarizeOptions = {}): Promise<SummarizeResult> {
+    return summarizeWithStream(this, messages, options)
+  }
+
+  /**
    * Estimate the fraction of the model's context window consumed by the given input token count.
    *
    * Resolves the model's context window limit (falling back to {@link DEFAULT_CONTEXT_WINDOW_LIMIT}
@@ -614,7 +654,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               yield block
             } catch (e: unknown) {
               if (e instanceof SyntaxError) {
-                logger.error('unable to parse tool input JSON', e)
+                logger.error(TOOL_INPUT_PARSE_MESSAGE, e)
                 toolInputParseError = e
               }
             }
@@ -664,7 +704,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       if (!stoppedMessage || !finalStopReason) {
         // If we exit the loop without completing a message or stop reason, throw an error
         throw new ModelError(
-          'Stream ended without completing a message',
+          INCOMPLETE_STREAM_MESSAGE,
           toolInputParseError ? { cause: toolInputParseError } : undefined
         )
       }
@@ -691,7 +731,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       }
 
       if (toolInputParseError !== undefined) {
-        throw new ModelError('unable to parse tool input JSON', { cause: toolInputParseError })
+        throw new ModelError(TOOL_INPUT_PARSE_MESSAGE, { cause: toolInputParseError })
       }
 
       // Return the final message with stop reason and optional metadata

@@ -1,6 +1,17 @@
 import { Message, type ToolUseBlock, type ToolResultBlock } from '../../types/messages.js'
 
 /**
+ * Whether a message has `metadata.custom.pinned` set to `true`, ignoring tool-pair partner protection.
+ *
+ * @param message - The message to check.
+ * @returns `true` if the message itself is pinned.
+ * @internal
+ */
+export function hasPinnedFlag(message: Message): boolean {
+  return message.metadata?.custom?.pinned === true
+}
+
+/**
  * Check if a message is pinned, including tool-pair partner protection.
  * Returns `true` if the message at `index` is pinned, or if it is the
  * adjacent tool-pair partner (toolUse/toolResult) of a pinned message,
