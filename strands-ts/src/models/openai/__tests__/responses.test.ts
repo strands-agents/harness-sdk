@@ -520,6 +520,27 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What about 3+3?' }] })
     })
 
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+        metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+      })
+      const messages = [
+        new Message({ role: 'user', content: [placeholder] }),
+        new Message({ role: 'assistant', content: [placeholder] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: '[Dropped] [ref: tu-1]' }] })
+      expect(req.input[1]).toEqual({ role: 'assistant', content: '[Dropped] [ref: tu-1]' })
+      expect(req.input.find((item: any) => item.type === 'function_call_output')).toMatchObject({
+        call_id: 'tu-1',
+        output: '[Dropped] [ref: tu-1]',
+      })
+    })
+
     it('joins multiple assistant text blocks with newlines', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('list two words')] }),

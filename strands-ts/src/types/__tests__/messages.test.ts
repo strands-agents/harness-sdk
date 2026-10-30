@@ -1,5 +1,6 @@
 import { describe, expect, test, it } from 'vitest'
 import {
+  isOffloaded,
   Message,
   TextBlock,
   ToolUseBlock,
@@ -177,6 +178,116 @@ describe('TextBlock', () => {
       type: 'textBlock',
       text: 'hello',
     })
+  })
+})
+
+describe('TextBlock standing in for offloaded content', () => {
+  test('carries what it stands in for and serializes it beside the text', () => {
+    const block = new TextBlock('[Dropped] [ref: tu-1]', {
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+    })
+
+    expect(block).toEqual({
+      type: 'textBlock',
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+    })
+    expect(block.toJSON()).toEqual({
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+    })
+    expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
+  })
+
+  test('a plain text block carries and serializes no offloaded field', () => {
+    const block = new TextBlock('hello')
+
+    expect(block).toEqual({ type: 'textBlock', text: 'hello' })
+    expect(block.toJSON()).toEqual({ text: 'hello' })
+    expect(isOffloaded(block)).toBe(false)
+  })
+
+  test('round-trips through message data at top level and inside a tool result', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new TextBlock('[Dropped] [ref: msg-1_0]', {
+          metadata: { offloaded: { method: 'drop', ref: 'msg-1_0', preview: '[Dropped]' } },
+        }),
+        new ToolResultBlock({
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [
+            new TextBlock('row-1 [ref: tu-1]', {
+              metadata: { offloaded: { method: 'truncate', ref: 'tu-1', preview: 'row-1' } },
+            }),
+          ],
+        }),
+      ],
+      trackingId: 'msg-1',
+    })
+
+    const data = JSON.parse(JSON.stringify(message)) as MessageData
+
+    expect(data.content).toEqual([
+      {
+        text: '[Dropped] [ref: msg-1_0]',
+        metadata: { offloaded: { method: 'drop', ref: 'msg-1_0', preview: '[Dropped]' } },
+      },
+      {
+        toolResult: {
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [
+            {
+              text: 'row-1 [ref: tu-1]',
+              metadata: { offloaded: { method: 'truncate', ref: 'tu-1', preview: 'row-1' } },
+            },
+          ],
+        },
+      },
+    ])
+    const restored = Message.fromMessageData(data)
+    expect(restored).toEqual(message)
+    expect(isOffloaded(restored.content[0])).toBe(true)
+    expect(isOffloaded((restored.content[1] as ToolResultBlock).content[0])).toBe(true)
+  })
+})
+
+describe('copies with other content', () => {
+  test('Message.withContent keeps role, tracking id, and metadata', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    const copy = message.withContent([new TextBlock('b')])
+
+    expect(copy).toEqual(new Message({ role: 'user', content: [new TextBlock('b')], trackingId: 'm1', metadata }))
+    expect(message.content).toEqual([new TextBlock('a')])
+  })
+
+  test('Message.withMetadata keeps role, content, and tracking id', () => {
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1' })
+
+    const copy = message.withMetadata({ custom: { pinned: true } })
+
+    expect(copy).toEqual(
+      new Message({
+        role: 'user',
+        content: [new TextBlock('a')],
+        trackingId: 'm1',
+        metadata: { custom: { pinned: true } },
+      })
+    )
+    expect(message.metadata).toBeUndefined()
+  })
+
+  test('ToolResultBlock.withContent keeps tool use id, status, and error', () => {
+    const error = new Error('boom')
+    const block = new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('a')], error })
+
+    expect(block.withContent([new TextBlock('b')])).toEqual(
+      new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('b')], error })
+    )
   })
 })
 

@@ -17,9 +17,9 @@ const calculator = tool({
 })
 
 const strategies = {
-  drop: () => Offload.drop('*').when({ utilization: 0.5 }),
-  truncate: () => Offload.truncate('*').when({ utilization: 0.5 }),
-  summarize: () => Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 2 }),
+  drop: () => Offload.drop('*').when({ contextUtilization: '50%' }),
+  truncate: () => Offload.truncate('*', { previewTokens: 50 }).when({ contextUtilization: '50%' }),
+  summarize: () => Offload.summarize('*').when({ contextUtilization: '50%', preserveRecent: 2 }),
 }
 
 describe.skipIf(bedrock.skip)('message-level context reduction', () => {

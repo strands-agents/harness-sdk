@@ -127,7 +127,17 @@ describe('ContextManager', () => {
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
-            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: tu-1_0]')],
+            content: [
+              new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]', {
+                metadata: {
+                  offloaded: {
+                    method: 'truncate',
+                    ref: 'tu-1',
+                    preview: '[Truncated: 1 block, ~7,500 tokens] preview',
+                  },
+                },
+              }),
+            ],
           }),
         ],
       })

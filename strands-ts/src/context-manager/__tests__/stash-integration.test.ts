@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
+import { offloadPlaceholder } from '../placeholder.js'
+import { repairAlternation } from '../message-trimming.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
@@ -8,63 +10,15 @@ import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
+import { makeContext, makeToolResultMessage } from '../../__fixtures__/context-manager-helpers.js'
 import type { Tool } from '../../tools/tool.js'
-import type { ContextState } from '../types.js'
 
 function invokeRetrievalTool(retrievalTool: Tool, input: unknown): Promise<unknown> {
   return (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke(input)
 }
 
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
 async function stashAll(stash: Stash, messages: Message[]): Promise<void> {
   for (const message of messages) await stash.storeMessage(message)
-}
-
-function makeContext(messages: Message[], stash?: Stash, utilization = 0.5): ContextState {
-  const agent = createMockAgent({
-    messages,
-    extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } } as never,
-  })
-  const base: ContextState = {
-    messages,
-    agent,
-    utilization,
-  }
-  if (stash) {
-    return { ...base, stash }
-  }
-  return base
 }
 
 describe('ContextManager tool registration', () => {
@@ -107,6 +61,27 @@ describe('ContextManager tool registration', () => {
 
 describe('Offload strategies with stash', () => {
   describe('truncate + stash', () => {
+    it('resolves the reference of a block that a history edit moved into another message', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const big = 'x'.repeat(20000)
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('q')], trackingId: 'u0' }),
+        new Message({ role: 'assistant', content: [new TextBlock('short')], trackingId: 'a1' }),
+        new Message({ role: 'assistant', content: [new TextBlock(big)], trackingId: 'a2' }),
+      ]
+      await stashAll(stash, messages)
+      // Merges a2 into a1: the big block is now a1_1, while it was stored on arrival as a2_0.
+      repairAlternation(messages)
+
+      await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, { stash }))
+
+      const placeholder = messages[1]!.content[1] as TextBlock
+      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
+      expect(placeholder.metadata!.offloaded!.ref).toBe('a1_1')
+      const retrieve = createRetrievalTool(stash)
+      expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual(new TextBlock(big))
+    })
+
     it('persists original content to stash before truncating', async () => {
       const storage = new InMemoryStorage()
       const stash = new Stash(storage, 'test-session', 'test-agent')
@@ -114,7 +89,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 
@@ -128,22 +103,70 @@ describe('Offload strategies with stash', () => {
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
-    it('includes stash reference in the truncated preview', async () => {
+    it('leaves an OffloadedBlock referencing the tool result in the truncated preview', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Stashed] [ref:')
+      const placeholder = block.content[0] as TextBlock
+      const { preview } = placeholder.metadata!.offloaded!
+      expect(placeholder).toEqual(offloadPlaceholder('truncate', preview, 'tool-123'))
     })
 
-    it('does not stash when no stash is configured', async () => {
+    it('never stores a seeded placeholder under the original key when a strategy acts on it', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const seeded = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tool-123',
+            status: 'success',
+            content: [offloadPlaceholder('truncate', '[Truncated: 1 block, ~7,500 tokens] preview', 'tool-123')],
+          }),
+        ],
+      })
+      const messages = [seeded]
+      await stashAll(stash, messages)
+
+      await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
+
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
+        offloadPlaceholder('drop', '[Dropped: ~15 tokens]', 'tool-123'),
+      ])
+      expect(await stash.list()).toStrictEqual([])
+      expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toBe(
+        'Error: reference not found: tool-123. Pass only the <id> from the placeholder\'s "[ref: <id>]".'
+      )
+    })
+
+    it('lets a later strategy act on an already truncated result and keeps its reference resolvable', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const original = 'x'.repeat(20000)
+      const messages = [makeToolResultMessage(original)]
+      await stashAll(stash, messages)
+      const context = makeContext(messages, { stash })
+      await Offload.truncate('toolResults', { previewTokens: 10 }).apply(context)
+
+      const actedAgain = await Offload.drop('toolResults').apply(context)
+
+      expect(actedAgain).toBe(true)
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
+        new TextBlock('[Dropped: ~32 tokens] [ref: tool-123]', {
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped: ~32 tokens]' } },
+        }),
+      ])
+      expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
+        new TextBlock(original)
+      )
+    })
+
+    it('leaves a placeholder without a reference when no stash is configured', async () => {
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       const strategy = Offload.truncate('toolResults')
@@ -151,9 +174,10 @@ describe('Offload strategies with stash', () => {
 
       await strategy.apply(context)
 
-      const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).not.toContain('[Stashed]')
+      const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock
+      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
+      expect(placeholder.metadata!.offloaded!.ref).toBeUndefined()
+      expect(placeholder.text).toBe(placeholder.metadata!.offloaded!.preview)
     })
   })
 
@@ -164,7 +188,7 @@ describe('Offload strategies with stash', () => {
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 
@@ -177,19 +201,75 @@ describe('Offload strategies with stash', () => {
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
-    it('includes stash reference in the drop marker', async () => {
+    it('leaves an OffloadedBlock referencing the tool result as the drop marker', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Dropped] [ref:')
+      expect(block.content).toEqual([
+        new TextBlock('[Dropped: ~5,000 tokens] [ref: tool-123]', {
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped: ~5,000 tokens]' } },
+        }),
+      ])
+      expect((block.content[0] as TextBlock).text).toBe('[Dropped: ~5,000 tokens] [ref: tool-123]')
+    })
+
+    it('marks removed messages with an OffloadedBlock that retrieves them', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const text = (role: 'user' | 'assistant', content: string, trackingId: string): Message =>
+        new Message({ role, content: [new TextBlock(content)], trackingId })
+      const first = text('assistant', 'first answer', 'm1')
+      const second = text('user', 'second question', 'm2')
+      const messages = [text('user', 'start', 'm0'), first, second, text('assistant', 'final', 'm3')]
+      await stashAll(stash, messages)
+      const strategy = Offload.drop('*').when({ contextUtilization: '50%' })
+
+      const acted = await strategy.apply(makeContext(messages, { stash, utilization: 0.9 }))
+
+      expect(acted).toBe(true)
+      const marker = new TextBlock('[Dropped: 2 messages] [ref: removed-m1]', {
+        metadata: {
+          offloaded: { method: 'drop', ref: 'removed-m1', preview: '[Dropped: 2 messages]', removedMessages: 2 },
+        },
+      })
+      expect(messages.map((message) => message.content)).toEqual([
+        [new TextBlock('start')],
+        [new TextBlock('final'), marker],
+      ])
+      const retrieve = createRetrievalTool(stash)
+      expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1' })).toEqual([
+        first.toJSON(),
+        second.toJSON(),
+      ])
+      expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1', pattern: 'second' })).toContain(
+        'second question'
+      )
+    })
+
+    it('leaves a marker without a reference when there is no stash', async () => {
+      const messages = [
+        makeToolResultMessage('a', 't0'),
+        new Message({ role: 'assistant', content: [new TextBlock('mid')] }),
+        new Message({ role: 'user', content: [new TextBlock('next')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('final')] }),
+      ]
+
+      await Offload.drop('*')
+        .when({ contextUtilization: '50%' })
+        .apply(makeContext(messages, { utilization: 0.9 }))
+
+      expect(messages.at(-1)!.content).toEqual([
+        new TextBlock('final'),
+        new TextBlock('[Dropped: 2 messages]', {
+          metadata: { offloaded: { method: 'drop', preview: '[Dropped: 2 messages]', removedMessages: 2 } },
+        }),
+      ])
     })
   })
 
@@ -211,7 +291,7 @@ describe('Offload strategies with stash', () => {
       ]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 
@@ -246,7 +326,7 @@ describe('Offload strategies with stash', () => {
       ]
       await stashAll(stash, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       await strategy.apply(context)
 
@@ -333,7 +413,7 @@ describe('Offload strategies with stash', () => {
       const keys = await stash.list()
       const result = await invokeRetrievalTool(retrievalTool, { reference: keys[0]! })
 
-      expect(result).toEqual({ text: 'hello world' })
+      expect(result).toEqual(new TextBlock('hello world'))
     })
 
     it('restores document blocks as DocumentBlock instances', async () => {
@@ -372,7 +452,7 @@ describe('Offload strategies with stash', () => {
         }),
       ]
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, stash)
+      const context = makeContext(messages, { stash })
 
       const acted = await strategy.apply(context)
 

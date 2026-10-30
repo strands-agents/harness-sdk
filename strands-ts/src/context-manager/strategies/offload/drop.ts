@@ -5,45 +5,38 @@
  */
 
 import { logger } from '../../../logging/logger.js'
-import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import type { ContextStrategy } from '../../types.js'
-import { formatStashRefs } from '../../stash.js'
+import type { ContextState } from '../../types.js'
+import { formatDropped, formatDroppedMessages } from '../../placeholder.js'
 import { BaseOffloadStrategy } from './base.js'
-import type { OffloadConditions } from './base.js'
-
-export const DROPPED_MARKER = '[Dropped]'
+import type { OffloadConditions } from './conditions.js'
+import { mediaKind, type OffloadTarget } from './target.js'
 
 export class DropStrategy extends BaseOffloadStrategy {
-  readonly name = 'offload:drop'
+  constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
+    super('drop', target, conditions)
+  }
 
-  when(conditions: OffloadConditions): ContextStrategy {
+  protected _withConditions(conditions: OffloadConditions): DropStrategy {
     return new DropStrategy(this._target, conditions)
   }
 
-  protected override _makeRemovalMarker(count: number): string {
-    return `[Dropped: ${count} ${count === 1 ? 'message' : 'messages'}]`
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+    const eligible = await this._getEligibleMessages(context)
+    return this._removeMessages(context.messages, eligible, async ({ length }) => formatDroppedMessages(length))
   }
 
   protected async _replaceBlock(
     block: ContentBlock,
-    _tokens: number,
+    tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRefs: string[]
+    stashRef: string | undefined
   ): Promise<ContentBlock | null> {
-    const marker = `${DROPPED_MARKER}${formatStashRefs(stashRefs)}`
-
-    if (block instanceof ToolResultBlock) {
-      logger.debug(`toolUseId=<${block.toolUseId}> | dropped tool result from context window`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [new TextBlock(marker)],
-      })
-    }
-    logger.debug(`trackingId=<${message.trackingId}> | dropped block from context window`)
-    return new TextBlock(marker)
+    logger.debug(`trackingId=<${message.trackingId}>, block=<${block.type}> | dropped block from context window`)
+    const placeholder = this._placeholder(formatDropped(tokens, mediaKind(block)), stashRef)
+    return block instanceof ToolResultBlock ? block.withContent([placeholder]) : placeholder
   }
 }

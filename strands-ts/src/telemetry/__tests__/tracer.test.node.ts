@@ -193,6 +193,30 @@ describe('Tracer', () => {
       ])
     })
 
+    it('records an offloaded block as the text the model receives', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startAgentSpan({
+        messages: [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('[Dropped] [ref: tu-1]', {
+                metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+              }),
+            ],
+          }),
+        ],
+        agentName: 'test-agent',
+      })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      expect(JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))).toStrictEqual([
+        { role: 'user', parts: [{ type: 'text', content: '[Dropped] [ref: tu-1]' }] },
+      ])
+    })
+
     it('uses gen_ai.provider.name with latest conventions', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()

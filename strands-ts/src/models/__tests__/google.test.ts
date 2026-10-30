@@ -87,6 +87,20 @@ function formatBlock(block: ContentBlock, role: 'user' | 'assistant' = 'user'): 
   return formatMessages([new Message({ role, content: [block] })])
 }
 
+describe('offloaded blocks', () => {
+  it('sends an offloaded block as the text the model receives, at top level and inside a tool result', () => {
+    const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+    })
+
+    expect(formatBlock(placeholder)[0]!.parts).toEqual([{ text: '[Dropped] [ref: tu-1]' }])
+    const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })
+    expect(formatBlock(toolResult)[0]!.parts![0]!.functionResponse?.response).toEqual({
+      output: [{ text: '[Dropped] [ref: tu-1]' }],
+    })
+  })
+})
+
 describe('GoogleModel', () => {
   beforeEach(() => {
     vi.clearAllMocks()

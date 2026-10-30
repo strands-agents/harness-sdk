@@ -388,6 +388,30 @@ describe('OpenAIModel', () => {
       expect(captured.request.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Hi' }] })
       warnSpy.mockRestore()
     })
+
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+      const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+        metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+      })
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }] },
+        { role: 'assistant', content: '[Dropped] [ref: tu-1]' },
+        { role: 'tool', tool_call_id: 'tu-1', content: '[Dropped] [ref: tu-1]' },
+      ])
+    })
   })
 
   describe('stream', () => {

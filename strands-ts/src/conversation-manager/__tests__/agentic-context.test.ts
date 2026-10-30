@@ -315,6 +315,29 @@ describe('pinContextTool', () => {
       expect(messages[2]!.metadata?.custom?.pinned).toBe(true)
       expect(messages[3]!.metadata?.custom?.pinned).toBeUndefined()
     })
+
+    it('treats a user turn whose text was offloaded as the turn boundary and as user text', async () => {
+      const messages = [
+        textMsg('user', 'Old'),
+        textMsg('assistant', 'Old'),
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('[Dropped] [ref: m_0]', {
+              metadata: { offloaded: { method: 'drop', ref: 'm_0', preview: '[Dropped]' } },
+            }),
+          ],
+        }),
+        textMsg('assistant', 'New answer'),
+      ]
+      const result = await pinContextTool.invoke(
+        { select: 'last_turn', filter: 'user', action: 'pin' as const },
+        makeContext(messages)
+      )
+      expect(result).toContain('1 message(s)')
+      expect(messages[2]!.metadata?.custom?.pinned).toBe(true)
+      expect(messages[0]!.metadata?.custom?.pinned).toBeUndefined()
+    })
   })
 
   describe('select: number (last N)', () => {

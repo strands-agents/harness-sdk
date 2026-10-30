@@ -154,6 +154,31 @@ export class Message implements JSONSerializable<MessageData> {
   clone(): Message {
     return Message.fromMessageData(deepCopy(this.toJSON()) as unknown as MessageData)
   }
+
+  /**
+   * A copy of this message with other content, keeping its role, tracking id, and metadata.
+   *
+   * @param content - The content of the copy
+   * @returns The copy
+   */
+  withContent(content: ContentBlock[]): Message {
+    return new Message({
+      role: this.role,
+      content,
+      trackingId: this.trackingId,
+      ...(this.metadata !== undefined && { metadata: this.metadata }),
+    })
+  }
+
+  /**
+   * A copy of this message with other metadata, keeping its role, content, and tracking id.
+   *
+   * @param metadata - The metadata of the copy
+   * @returns The copy
+   */
+  withMetadata(metadata: MessageMetadata): Message {
+    return new Message({ role: this.role, content: this.content, trackingId: this.trackingId, metadata })
+  }
 }
 
 /**
@@ -202,6 +227,53 @@ export type ContentBlock =
   | CitationsBlock
 
 /**
+ * Offload method that replaced content with a placeholder.
+ *
+ * @experimental
+ */
+export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
+
+/**
+ * What a text block stands in for when the context manager offloaded the original.
+ *
+ * @experimental
+ */
+export interface OffloadedBlockData {
+  /**
+   * Offload method that left the placeholder.
+   */
+  method: OffloadMethod
+
+  /**
+   * Text that stands in for the original in the context window.
+   */
+  preview: string
+
+  /**
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   */
+  ref?: string
+
+  /**
+   * Number of whole messages the placeholder stands for; absent when it replaced a single block.
+   */
+  removedMessages?: number
+}
+
+/**
+ * Metadata attached to a text block. Not sent to model providers.
+ *
+ * @experimental
+ */
+export interface TextBlockMetadata {
+  /**
+   * Present when the block stands in for content the context manager offloaded; `text` is then the
+   * preview followed by the reference token.
+   */
+  offloaded?: OffloadedBlockData
+}
+
+/**
  * Data for a text block.
  */
 export interface TextBlockData {
@@ -209,6 +281,11 @@ export interface TextBlockData {
    * Plain text content.
    */
   text: string
+
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  metadata?: TextBlockMetadata
 }
 
 /**
@@ -225,8 +302,16 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    */
   readonly text: string
 
-  constructor(data: string) {
-    this.text = data
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  readonly metadata?: TextBlockMetadata
+
+  constructor(text: string, options?: { metadata?: TextBlockMetadata }) {
+    this.text = text
+    if (options?.metadata !== undefined) {
+      this.metadata = options.metadata
+    }
   }
 
   /**
@@ -234,7 +319,7 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * Called automatically by JSON.stringify().
    */
   toJSON(): TextBlockData {
-    return { text: this.text }
+    return { text: this.text, ...(this.metadata !== undefined && { metadata: this.metadata }) }
   }
 
   /**
@@ -244,8 +329,19 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * @returns TextBlock instance
    */
   static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text)
+    return new TextBlock(data.text, { ...(data.metadata !== undefined && { metadata: data.metadata }) })
   }
+}
+
+/**
+ * Whether a block is a placeholder the context manager left where it offloaded content.
+ *
+ * @internal
+ */
+export function isOffloaded(
+  block: unknown
+): block is TextBlock & { metadata: TextBlockMetadata & { offloaded: OffloadedBlockData } } {
+  return block instanceof TextBlock && block.metadata?.offloaded !== undefined
 }
 
 /**
@@ -424,6 +520,21 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   }
 
   /**
+   * A copy of this result with other content, keeping its tool use id, status, and error.
+   *
+   * @param content - The content of the copy
+   * @returns The copy
+   */
+  withContent(content: ToolResultContent[]): ToolResultBlock {
+    return new ToolResultBlock({
+      toolUseId: this.toolUseId,
+      status: this.status,
+      content,
+      ...(this.error !== undefined && { error: this.error }),
+    })
+  }
+
+  /**
    * Serializes the ToolResultBlock to a JSON-compatible ContentBlockData object.
    * Called automatically by JSON.stringify().
    * Note: The error field is not serialized (deferred for future implementation).
@@ -462,7 +573,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return new TextBlock(data.text)
+  if ('text' in data) return TextBlock.fromJSON(data)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
@@ -999,7 +1110,7 @@ export class GuardContentBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return new TextBlock(data.text)
+    return TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {

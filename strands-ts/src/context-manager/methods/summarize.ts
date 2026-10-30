@@ -22,18 +22,6 @@ import { CitationsBlock } from '../../types/citations.js'
 import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
-export const SUMMARIZED_PREFIX = '[Summarized:'
-
-/**
- * Format a `[Summarized: ...]` marker with an optional summary body.
- *
- * @internal
- */
-export function formatSummarized(description: string, tokens: number, summary?: string): string {
-  const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
-  return summary ? `${header}\n\n${summary}` : header
-}
-
 // Subject to change as we benchmark summarization quality.
 const DEFAULT_SYSTEM_PROMPT = [
   'You are a summarization assistant. Produce a concise factual summary that preserves:',

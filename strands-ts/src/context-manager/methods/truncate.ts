@@ -4,10 +4,9 @@
  * Replaces content with a preview (head, tail, or head-tail).
  */
 
-import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { isOffloaded, JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
-
-export const TRUNCATED_PREFIX = '[Truncated:'
+import { formatTruncated } from '../placeholder.js'
 
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
@@ -18,11 +17,38 @@ const CHARS_PER_TOKEN = 4
  * @experimental
  */
 export interface TruncateConfig {
-  /** Number of tokens to keep as preview text. Defaults to 1,000. */
+  /**
+   * Number of tokens to keep as preview text. Defaults to 1,000. Content that already fits is left unchanged. For
+   * `Offload.truncate('*')` without a `blockThreshold`, the budget of whole messages kept at the head and tail; the
+   * rest are replaced by one `[... N messages elided ...]` marker.
+   */
   previewTokens?: number
 
-  /** Which portion of the text to keep as preview. Defaults to 'headTail'. */
+  /**
+   * Which portion of the text to keep as preview. Defaults to 'headTail'. For `Offload.truncate('*')` without a
+   * `blockThreshold`, `'head'` keeps only the oldest messages and `'tail'` only the newest.
+   */
   preview?: 'head' | 'tail' | 'headTail'
+}
+
+/**
+ * Share of the preview budget kept from the head; the rest is kept from the tail.
+ *
+ * @internal
+ */
+export const PREVIEW_HEAD_SHARE = { head: 1, tail: 0, headTail: 0.6 } as const
+
+/**
+ * Resolves the preview token budget, defaulting to 1,000.
+ *
+ * @param config - Truncate configuration
+ * @returns The preview token budget
+ * @internal
+ */
+export function resolvePreviewTokens(config?: TruncateConfig): number {
+  return typeof config?.previewTokens === 'number' && Number.isFinite(config.previewTokens)
+    ? Math.max(0, config.previewTokens)
+    : DEFAULT_PREVIEW_TOKENS
 }
 
 /**
@@ -31,11 +57,7 @@ export interface TruncateConfig {
  * @returns The preview string with truncation metadata header, or the original text if already within budget.
  */
 export function buildPreview(fullText: string, blockCount: number, config?: TruncateConfig): string {
-  const previewTokens =
-    typeof config?.previewTokens === 'number' && Number.isFinite(config.previewTokens)
-      ? Math.max(0, config.previewTokens)
-      : DEFAULT_PREVIEW_TOKENS
-  const previewChars = previewTokens * CHARS_PER_TOKEN
+  const previewChars = resolvePreviewTokens(config) * CHARS_PER_TOKEN
   const previewMode = config?.preview ?? 'headTail'
   const totalChars = fullText.length
 
@@ -43,7 +65,7 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
     return fullText
   }
 
-  const headShare = { head: 1, tail: 0, headTail: 0.6 }[previewMode]
+  const headShare = PREVIEW_HEAD_SHARE[previewMode]
   const headChars = Math.floor(previewChars * headShare)
   const tailChars = previewChars - headChars
   const head = fullText.slice(0, headChars)
@@ -52,9 +74,7 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
   const marker = `[... ${elided.toLocaleString('en-US')} chars elided ...]`
   const preview = [head, marker, tail].filter(Boolean).join('\n\n')
 
-  const result =
-    `${TRUNCATED_PREFIX} ${blockCount} ${blockCount === 1 ? 'block' : 'blocks'}, ~${Math.ceil(totalChars / CHARS_PER_TOKEN).toLocaleString('en-US')} tokens]\n\n` +
-    preview
+  const result = formatTruncated(blockCount, Math.ceil(totalChars / CHARS_PER_TOKEN), preview)
 
   if (result.length >= totalChars) {
     return fullText
@@ -64,40 +84,44 @@ export function buildPreview(fullText: string, blockCount: number, config?: Trun
 }
 
 /**
- * Creates a replacement ToolResultBlock with textual content truncated.
- * Text and JSON blocks are serialized into a preview. Opaque blocks (images, video, documents)
- * are preserved untouched — their payloads cannot be meaningfully previewed as text.
+ * A tool result split by {@link truncateToolResultBlock}.
+ *
+ * @internal
  */
-export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): ToolResultBlock {
+export interface TruncatedToolResult {
+  /** Preview of the result's text and JSON items. */
+  preview: string
+  /** Items kept as they are: media, whose payload can't be previewed as text, and placeholders. */
+  kept: ToolResultContent[]
+}
+
+/**
+ * Splits a tool result into a preview of its text and JSON items and the items kept as they are.
+ *
+ * @returns The split result, or `null` when nothing would be truncated.
+ */
+export function truncateToolResultBlock(block: ToolResultBlock, config?: TruncateConfig): TruncatedToolResult | null {
   const textual: string[] = []
-  const opaque: ToolResultContent[] = []
+  const kept: ToolResultContent[] = []
 
   for (const content of block.content) {
-    if (content instanceof TextBlock) {
+    if (content instanceof TextBlock && !isOffloaded(content)) {
       textual.push(content.text)
     } else if (content instanceof JsonBlock) {
       textual.push(JSON.stringify(content.toJSON()))
     } else {
-      opaque.push(content)
+      kept.push(content)
     }
   }
 
   if (textual.length === 0) {
-    return block
+    return null
   }
 
   const fullText = textual.join('\n')
   const preview = buildPreview(fullText, textual.length, config)
 
-  if (preview === fullText) {
-    return block
-  }
-
-  return new ToolResultBlock({
-    toolUseId: block.toolUseId,
-    status: block.status,
-    content: [new TextBlock(preview), ...opaque],
-  })
+  return preview === fullText ? null : { preview, kept }
 }
 
 /**
