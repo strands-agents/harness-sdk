@@ -1,0 +1,9 @@
+name: Decisions API
+description: Answer closed questions for Strands agents with decision models hosted on decisionapi.net.
+integrationType: decision-model
+maintainedBy: strands
+languages:
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts
+addedDate: 2026-10-26
+# TODO: add docsPage once the decision models guide page exists
