@@ -777,6 +777,43 @@ class TestSageMakerAIModel:
         usage_data = metadata["metadata"]["usage"]
         assert usage_data["totalTokens"] == 30
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("finish_reason", "expected"),
+        [("length", "max_tokens"), ("tool_calls", "tool_use"), ("stop", "tool_use")],
+    )
+    async def test_stream_non_streaming_tool_call_stop_reason(
+        self, sagemaker_client, model, messages, finish_reason, expected
+    ):
+        """A tool call cut off by the token limit reports max_tokens, as the streaming path does."""
+        model.payload_config["stream"] = False
+
+        mock_response = {"Body": unittest.mock.MagicMock()}
+        mock_response["Body"].read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "tool123",
+                                    "type": "function",
+                                    "function": {"name": "get_weather", "arguments": '{"location": "Pa'},
+                                }
+                            ],
+                        },
+                        "finish_reason": finish_reason,
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        sagemaker_client.invoke_endpoint.return_value = mock_response
+
+        response = [chunk async for chunk in model.stream(messages)]
+
+        assert [e["messageStop"]["stopReason"] for e in response if "messageStop" in e] == [expected]
+
 
 class TestDataClasses:
     """Test suite for data classes."""

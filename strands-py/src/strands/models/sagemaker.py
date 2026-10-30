@@ -593,7 +593,9 @@ class SageMakerAIModel(OpenAIModel):
                             {"chunk_type": "content_delta", "data_type": "tool", "data": ToolCall(**tool_call)}
                         )
                         yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
-                    message_stop_reason = "tool_calls"
+                    # A tool call cut off by the token limit keeps "length", as in the streaming branch
+                    if message_stop_reason != "length":
+                        message_stop_reason = "tool_calls"
 
                 # Message close
                 yield self.format_chunk({"chunk_type": "message_stop", "data": message_stop_reason})
