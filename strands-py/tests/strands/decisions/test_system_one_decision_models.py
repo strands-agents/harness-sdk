@@ -303,7 +303,7 @@ class TestAsk:
         assert _request_body(captured[0])["model"] == "pinned-model"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", [429, 529])
+    @pytest.mark.parametrize("status", [429, 503, 529])
     async def test_maps_throttling_statuses_to_model_throttled(self, provider: _ProviderCase, status: int):
         client = _fake_client({"error": "retry later"}, status=status)
         decision = provider.model_cls(api_key="test-key", http_client=client)
@@ -311,9 +311,10 @@ class TestAsk:
         with pytest.raises(ModelThrottledException) as caught:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
-        assert caught.value.__cause__ is not None
-        assert caught.value.__cause__.status == status
-        assert caught.value.__cause__.body == {"error": "retry later"}
+        cause = caught.value.__cause__
+        assert isinstance(cause, httpx.HTTPStatusError)
+        assert cause.response.status_code == status
+        assert cause.response.json() == {"error": "retry later"}
 
     @pytest.mark.asyncio
     async def test_maps_http_413_to_context_window_overflow(self, provider: _ProviderCase):
@@ -334,18 +335,17 @@ class TestAsk:
         ],
         ids=["error", "message", "detail", "nested-message"],
     )
-    async def test_maps_other_http_failures_with_the_original_cause(
+    async def test_raises_http_status_error_for_other_http_failures(
         self, provider: _ProviderCase, body: dict[str, Any], detail: str
     ):
         client = _fake_client(body, status=400)
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        with pytest.raises(StructuredOutputException, match=f"HTTP 400: {detail}") as caught:
+        with pytest.raises(httpx.HTTPStatusError, match=f"HTTP 400: {detail}") as caught:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
-        assert caught.value.__cause__ is not None
-        assert caught.value.__cause__.status == 400
-        assert caught.value.__cause__.body == body
+        assert caught.value.response.status_code == 400
+        assert caught.value.response.json() == body
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -357,17 +357,17 @@ class TestAsk:
         client = _fake_client(body, status=500)
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        with pytest.raises(StructuredOutputException) as caught:
+        with pytest.raises(httpx.HTTPStatusError) as caught:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
         assert str(caught.value) == f"{provider.provider_name} decision request failed with HTTP 500"
 
     @pytest.mark.asyncio
     async def test_uses_a_non_json_error_body_as_http_error_detail(self, provider: _ProviderCase):
-        client = _fake_text_client("upstream unavailable", status=503)
+        client = _fake_text_client("upstream unavailable", status=500)
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        with pytest.raises(StructuredOutputException, match="HTTP 503: upstream unavailable"):
+        with pytest.raises(httpx.HTTPStatusError, match="HTTP 500: upstream unavailable"):
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio

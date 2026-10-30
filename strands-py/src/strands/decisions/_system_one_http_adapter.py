@@ -42,15 +42,6 @@ class _SystemOneProviderConfig:
     max_questions: int | None = None
 
 
-class _SystemOneHttpError(Exception):
-    """Internal HTTP failure retained as the cause of translated provider errors."""
-
-    def __init__(self, status: int, body: Any, message: str) -> None:
-        super().__init__(message)
-        self.status = status
-        self.body = body
-
-
 def _resolve_system_one_provider_config(
     *,
     class_name: str,
@@ -143,7 +134,7 @@ async def _ask_system_one(
 
     payload = _read_payload(response)
     if not response.is_success:
-        _raise_http_error(config.provider_name, response.status_code, payload)
+        _raise_http_error(config.provider_name, response, payload)
 
     parsed = _parse_result(payload, questions, config.default_min_confidence)
     latency_ms = round((time.perf_counter() - started_at) * 1000)
@@ -236,16 +227,17 @@ def _reject_json_constant(value: str) -> NoReturn:
     raise ValueError(f"invalid JSON constant: {value}")
 
 
-def _raise_http_error(provider_name: str, status: int, body: Any) -> NoReturn:
+def _raise_http_error(provider_name: str, response: httpx.Response, body: Any) -> NoReturn:
+    status = response.status_code
     detail = _error_detail(body)
     message = f"{provider_name} decision request failed with HTTP {status}" + (f": {detail}" if detail else "")
     if status == 413:
         raise ContextWindowOverflowException(message)
 
-    cause = _SystemOneHttpError(status, body, message)
-    if status in (429, 529):
-        raise ModelThrottledException(message) from cause
-    raise StructuredOutputException(message) from cause
+    error = httpx.HTTPStatusError(message, request=response.request, response=response)
+    if status in (429, 503, 529):
+        raise ModelThrottledException(message) from error
+    raise error
 
 
 def _error_detail(body: Any) -> str | None:
