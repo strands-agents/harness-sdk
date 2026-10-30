@@ -1266,6 +1266,142 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
 
+def _tool_call_delta(index, arguments, id=None, name=None):
+    return SimpleNamespace(index=index, id=id, function=SimpleNamespace(name=name, arguments=arguments))
+
+
+def _chunk(content=None, tool_calls=None, finish_reason=None):
+    delta = SimpleNamespace(content=content, tool_calls=tool_calls, reasoning_content=None)
+    return SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish_reason, delta=delta)], usage=None)
+
+
+def _tool_start(id, name):
+    return {"contentBlockStart": {"start": {"toolUse": {"toolUseId": id, "name": name}}}}
+
+
+def _tool_input(arguments):
+    return {"contentBlockDelta": {"delta": {"toolUse": {"input": arguments}}}}
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_tool_call_deltas_as_they_arrive(openai_client, model, messages, alist):
+    pulled = []
+
+    async def response():
+        chunks = [
+            _chunk(tool_calls=[_tool_call_delta(0, "", id="t1", name="answer")]),
+            _chunk(tool_calls=[_tool_call_delta(0, '{"text": "Hel')]),
+            _chunk(tool_calls=[_tool_call_delta(0, 'lo"}')]),
+            _chunk(finish_reason="tool_calls"),
+        ]
+        for index, chunk in enumerate(chunks):
+            pulled.append(index)
+            yield chunk
+
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(return_value=response())
+
+    received = []
+    async for event in model.stream(messages):
+        received.append((event, list(pulled)))
+
+    assert received[:5] == [
+        ({"messageStart": {"role": "assistant"}}, []),
+        (_tool_start("t1", "answer"), [0]),
+        (_tool_input(""), [0]),
+        (_tool_input('{"text": "Hel'), [0, 1]),
+        (_tool_input('lo"}'), [0, 1, 2]),
+    ]
+    assert [event for event, _ in received[5:]] == [
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_text_then_tool_call_deltas_in_order(openai_client, model, messages, agenerator, alist):
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(
+        return_value=agenerator(
+            [
+                _chunk(content="Checking."),
+                _chunk(tool_calls=[_tool_call_delta(0, '{"q": ', id="t1", name="search")]),
+                _chunk(tool_calls=[_tool_call_delta(0, '"a"}')]),
+                _chunk(tool_calls=[_tool_call_delta(1, '{"q": "b"}', id="t2", name="search")]),
+                _chunk(finish_reason="tool_calls"),
+            ]
+        )
+    )
+
+    assert await alist(model.stream(messages)) == [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Checking."}}},
+        {"contentBlockStop": {}},
+        _tool_start("t1", "search"),
+        _tool_input('{"q": '),
+        _tool_input('"a"}'),
+        {"contentBlockStop": {}},
+        _tool_start("t2", "search"),
+        _tool_input('{"q": "b"}'),
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_defers_text_that_arrives_during_a_tool_call(openai_client, model, messages, agenerator, alist):
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(
+        return_value=agenerator(
+            [
+                _chunk(tool_calls=[_tool_call_delta(0, '{"q": "a"}', id="t1", name="search")]),
+                _chunk(content="Done."),
+                _chunk(finish_reason="tool_calls"),
+            ]
+        )
+    )
+
+    assert await alist(model.stream(messages)) == [
+        {"messageStart": {"role": "assistant"}},
+        _tool_start("t1", "search"),
+        _tool_input('{"q": "a"}'),
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Done."}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_buffers_tool_calls_that_start_interleaved(openai_client, model, messages, agenerator, alist):
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(
+        return_value=agenerator(
+            [
+                _chunk(
+                    tool_calls=[
+                        _tool_call_delta(0, '{"q": ', id="t1", name="search"),
+                        _tool_call_delta(1, '{"q": ', id="t2", name="search"),
+                    ]
+                ),
+                _chunk(tool_calls=[_tool_call_delta(0, '"a"}'), _tool_call_delta(1, '"b"}')]),
+                _chunk(finish_reason="tool_calls"),
+            ]
+        )
+    )
+
+    assert await alist(model.stream(messages)) == [
+        {"messageStart": {"role": "assistant"}},
+        _tool_start("t1", "search"),
+        _tool_input('{"q": '),
+        _tool_input('"a"}'),
+        {"contentBlockStop": {}},
+        _tool_start("t2", "search"),
+        _tool_input('{"q": '),
+        _tool_input('"b"}'),
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_stream_accepts_vllm_reasoning_delta(openai_client, model, messages, agenerator, alist):
     reasoning_delta = unittest.mock.Mock(spec=["reasoning", "content", "tool_calls"])
