@@ -89,9 +89,13 @@ reads `shell:spawn` and pins `program_path`.
 | `port` | Long | Yes | Yes | |
 | `ip` | String | Optional | No | The resolved address the gateway will dial. Guard with `has`. |
 | `method` | String | No | Yes | Such as `GET` or `POST`. |
-| `path` | String | No | Yes | The URL path, without the query string. |
+| `path` | String | No | Yes | The URL path in canonical form, without the query string. |
 | `body_bytes` | Long | No | Yes | On `::request`, the body bytes offered; on `::response`, the request bytes delivered, headers included. |
 | `intercepted` | Bool | No | Yes | Whether the gateway terminated TLS for the request. |
+
+A rule on `path` has caveats for repeated slashes and `%2F`:
+[Forbid one URL path on a host](../guides/write-a-policy.md#forbid-one-url-path-on-a-host)
+lists them.
 
 `net:connect` is decided when the host resolves, without `ip`, and again for each
 address, with `ip`. Permit on `host` and `port`: a permit that needs `ip` never passes
