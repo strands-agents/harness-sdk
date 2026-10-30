@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type {
   LanguageModelV3,
   LanguageModelV3CallOptions,
@@ -454,6 +454,7 @@ describe('VercelModel', () => {
         await expect(collectIterator(model.stream([]))).rejects.toThrow(
           'Language model stream error: connection failed'
         )
+        expect(mock.doStream).toHaveBeenCalledTimes(1)
       })
 
       it('throws ModelThrottledError for APICallError with status 429', async () => {
@@ -514,6 +515,84 @@ describe('VercelModel', () => {
         const model = new VercelModel({ provider: mock })
 
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
+      })
+
+      describe('transient request retry', () => {
+        beforeEach(() => {
+          vi.useFakeTimers()
+        })
+        afterEach(() => {
+          vi.useRealTimers()
+        })
+
+        const apiCallError = (statusCode: number): APICallError =>
+          new APICallError({
+            message: `status ${statusCode}`,
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            statusCode,
+          })
+
+        it('retries doStream after a fetch network failure and streams the response', async () => {
+          const expected = await collectIterator(
+            new VercelModel({ provider: createMockModel(minimalParts) }).stream([])
+          )
+          const { mock, model } = setupCaptureTest()
+          ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+          const pending = collectIterator(model.stream([]))
+          await vi.runAllTimersAsync()
+
+          expect(await pending).toEqual(expected)
+          expect(mock.doStream).toHaveBeenCalledTimes(2)
+        })
+
+        it('retries an APICallError the provider marks retryable', async () => {
+          const { mock, model } = setupCaptureTest()
+          ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(apiCallError(503))
+
+          const pending = collectIterator(model.stream([]))
+          await vi.runAllTimersAsync()
+
+          await pending
+          expect(mock.doStream).toHaveBeenCalledTimes(2)
+        })
+
+        it('leaves a 429 to the agent retry strategy', async () => {
+          const { mock, model } = setupCaptureTest()
+          ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(apiCallError(429))
+
+          await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
+          expect(mock.doStream).toHaveBeenCalledTimes(1)
+        })
+
+        it('throws the classified error once retries are spent', async () => {
+          const { mock, model } = setupCaptureTest()
+          ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(new TypeError('Failed to fetch'))
+
+          const assertion = expect(collectIterator(model.stream([]))).rejects.toThrow(
+            new ModelError('Language model stream error: Failed to fetch')
+          )
+          await vi.runAllTimersAsync()
+
+          await assertion
+          expect(mock.doStream).toHaveBeenCalledTimes(3)
+        })
+
+        it('makes a single attempt when maxRetries is 0', async () => {
+          const { mock, model } = setupCaptureTest(minimalParts, { maxRetries: 0 })
+          ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(new TypeError('Failed to fetch'))
+
+          await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelError)
+          expect(mock.doStream).toHaveBeenCalledTimes(1)
+        })
+
+        it('does not forward maxRetries to doStream', async () => {
+          const { collect, callArgs } = setupCaptureTest(minimalParts, { maxRetries: 1 })
+          await collect([])
+
+          expect(callArgs()).not.toHaveProperty('maxRetries')
+        })
       })
     })
 

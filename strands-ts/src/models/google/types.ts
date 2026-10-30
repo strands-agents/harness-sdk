@@ -52,6 +52,17 @@ export interface GoogleModelConfig extends BaseModelConfig {
    * @defaultValue false
    */
   useNativeTokenCount?: boolean
+
+  /**
+   * How many times to retry a model request whose connection fails before any response arrives.
+   * Throttling is left to the agent's `retryStrategy`. Set to `0` to disable.
+   *
+   * Prefer this over `clientConfig.httpOptions.retryOptions`: the client's own retry replaces API error
+   * responses with generic errors, which hides throttling and context-window overflow.
+   *
+   * @defaultValue 2
+   */
+  maxRetries?: number
 }
 
 /**

@@ -33,7 +33,9 @@ import { Message, TextBlock, type ToolResultContent } from '../types/messages.js
 import { encodeBase64, ImageBlock, DocumentBlock, VideoBlock } from '../types/media.js'
 import {
   Model,
+  isFetchNetworkError,
   resolveCacheSection,
+  withRequestRetry,
   type BaseModelConfig,
   type CacheConfig,
   type CacheTTL,
@@ -94,6 +96,15 @@ export interface VercelModelConfig extends BaseModelConfig, LanguageModelCallSet
    * `ttl`; every other provider ignores it with a one-time warning.
    */
   cacheConfig?: CacheConfig
+
+  /**
+   * How many times to retry a model request that fails before any response arrives: a network error,
+   * or a response the provider marks retryable (408, 409, 5xx). Throttling (429) is left to the agent's
+   * `retryStrategy`. Set to `0` to disable.
+   *
+   * @defaultValue 2
+   */
+  maxRetries?: number
 }
 
 /**
@@ -171,7 +182,7 @@ export class VercelModel extends Model<VercelModelConfig> {
     const tools = options?.toolSpecs ? formatTools(options.toolSpecs) : undefined
     const toolChoice = options?.toolChoice ? formatToolChoice(options.toolChoice) : undefined
 
-    const { modelId: _, maxTokens, cacheConfig, modelInfo: _modelInfo, ...callSettings } = this._config
+    const { modelId: _, maxTokens, cacheConfig, modelInfo: _modelInfo, maxRetries, ...callSettings } = this._config
 
     const callOptions: LanguageModelV3CallOptions = {
       prompt,
@@ -185,7 +196,11 @@ export class VercelModel extends Model<VercelModelConfig> {
 
     let result
     try {
-      result = await this._provider.doStream(callOptions)
+      result = await withRequestRetry(() => this._provider.doStream(callOptions), {
+        maxRetries,
+        isRetryable: isTransientVercelError,
+        signal: options?.cancelSignal,
+      })
     } catch (error) {
       throw classifyError(error)
     }
@@ -542,6 +557,16 @@ function applyOpenAICache(callOptions: LanguageModelV3CallOptions, cacheConfig: 
   if (Object.keys(openai).length > 0) {
     callOptions.providerOptions = { ...callOptions.providerOptions, openai }
   }
+}
+
+/**
+ * Whether a failed `doStream` call is worth retrying. In Node, ai-sdk wraps fetch failures as retryable
+ * `APICallError`s; in browsers they surface as a raw `TypeError`. 429 is excluded so throttling reaches
+ * the agent's retry strategy as a {@link ModelThrottledError} instead of being retried twice.
+ */
+function isTransientVercelError(error: unknown): boolean {
+  if (isFetchNetworkError(error)) return true
+  return APICallError.isInstance(error) && error.isRetryable && error.statusCode !== 429
 }
 
 /**

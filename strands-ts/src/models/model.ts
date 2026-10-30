@@ -31,6 +31,7 @@ import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
 import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
+import { ExponentialBackoff, sleep } from '../retry/backoff-strategy.js'
 
 /**
  * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
@@ -172,6 +173,103 @@ export function resolveCacheSection(
   const ttl = [sectionTTL, ...ttlFallbacks].find(Boolean)
 
   return ttl ? { enabled, ttl } : { enabled }
+}
+
+const DEFAULT_MAX_RETRIES = 2
+
+/**
+ * Lower-cased `TypeError` messages that `fetch` implementations use for a request that got no response.
+ */
+const FETCH_NETWORK_ERROR_MESSAGES = new Set([
+  'failed to fetch', // Chromium
+  'fetch failed', // Node.js (undici)
+  'networkerror when attempting to fetch resource', // Firefox
+  'load failed', // Safari
+  'network request failed', // React Native
+  'the internet connection appears to be offline', // Safari, offline
+])
+
+const REQUEST_RETRY_BACKOFF = new ExponentialBackoff({ baseMs: 2_000, maxMs: 8_000, jitter: 'equal' })
+
+/**
+ * Options for {@link withRequestRetry}.
+ *
+ * @internal
+ */
+export interface RequestRetryOptions {
+  /** Retries after the first attempt; `0` disables retrying. Defaults to 2 when undefined. */
+  maxRetries?: number | undefined
+  /** Whether a failed attempt is transient and worth retrying. */
+  isRetryable: (error: unknown) => boolean
+  /** Stops retrying, and ends a pending backoff wait, when aborted. */
+  signal?: AbortSignal | undefined
+}
+
+/**
+ * Whether `error` is a `fetch` network failure: the request never got a response.
+ *
+ * @param error - The error a request rejected with
+ * @returns True for the network-failure `TypeError` of any supported runtime
+ *
+ * @internal
+ */
+export function isFetchNetworkError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false
+  return FETCH_NETWORK_ERROR_MESSAGES.has(error.message.toLowerCase().replace(/\.$/, ''))
+}
+
+/**
+ * Runs `request`, retrying it with backoff while it rejects with an error `isRetryable` accepts.
+ *
+ * Only wrap the part of a call that completes before any response event is produced; retrying past
+ * that point would duplicate streamed events.
+ *
+ * @param request - Starts the model request
+ * @param options - Retry budget, retryable-error predicate, and cancellation signal
+ * @returns The value `request` resolves with
+ * @throws \{Error\} When `maxRetries` is not an integer \>= 0
+ * @throws The last error `request` rejected with, unchanged, once the error is not retryable, the
+ * budget is spent, or `signal` aborts
+ *
+ * @internal
+ */
+export async function withRequestRetry<T>(request: () => PromiseLike<T>, options: RequestRetryOptions): Promise<T> {
+  const { maxRetries = DEFAULT_MAX_RETRIES } = options
+  if (!Number.isInteger(maxRetries) || maxRetries < 0) {
+    throw new Error(`maxRetries must be an integer >= 0 (got ${maxRetries})`)
+  }
+
+  const startedAt = Date.now()
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await request()
+    } catch (error) {
+      if (!(await waitBeforeRetry(error, attempt, maxRetries, startedAt, options))) throw error
+    }
+  }
+}
+
+/**
+ * Decides whether a failed attempt gets retried and, if so, waits out its backoff delay.
+ *
+ * @returns True when the caller should attempt the request again
+ */
+async function waitBeforeRetry(
+  error: unknown,
+  attempt: number,
+  maxRetries: number,
+  startedAt: number,
+  { isRetryable, signal }: RequestRetryOptions
+): Promise<boolean> {
+  if (attempt > maxRetries || signal?.aborted || !isRetryable(error)) return false
+
+  const delayMs = REQUEST_RETRY_BACKOFF.nextDelay({ attempt, elapsedMs: Date.now() - startedAt })
+  logger.debug(
+    `attempt=<${attempt}>, max_retries=<${maxRetries}>, retry_delay_ms=<${Math.round(delayMs)}>, ` +
+      `error=<${String(error)}> | transient model request failure, retrying`
+  )
+  await sleep(delayMs, signal)
+  return !signal?.aborted
 }
 
 /**

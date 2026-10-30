@@ -13,7 +13,7 @@ import {
   type GenerateContentConfig,
   type GenerateContentParameters,
 } from '@google/genai'
-import { Model, resolveConfigMetadata } from '../model.js'
+import { Model, isFetchNetworkError, resolveConfigMetadata, withRequestRetry } from '../model.js'
 import type { CountTokensOptions, StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
@@ -232,7 +232,11 @@ export class GoogleModel extends Model<GoogleModelConfig> {
 
     try {
       const params = this._formatRequest(messages, options)
-      const stream = await this._client.models.generateContentStream(params)
+      const stream = await withRequestRetry(() => this._client.models.generateContentStream(params), {
+        maxRetries: this._config.maxRetries,
+        isRetryable: isFetchNetworkError,
+        signal: options?.cancelSignal,
+      })
 
       const streamState: GoogleStreamState = {
         messageStarted: false,

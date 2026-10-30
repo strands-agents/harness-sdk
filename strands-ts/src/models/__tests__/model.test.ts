@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -10,7 +10,7 @@ import {
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
-import { Model } from '../model.js'
+import { Model, isFetchNetworkError, withRequestRetry } from '../model.js'
 import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
@@ -1324,5 +1324,133 @@ describe('estimateUtilization', () => {
     provider.updateConfig({ contextWindowLimit: 100_000 })
 
     expect(provider.estimateUtilization(0)).toBe(0)
+  })
+})
+
+describe('isFetchNetworkError', () => {
+  it.each([
+    'Failed to fetch',
+    'fetch failed',
+    'NetworkError when attempting to fetch resource.',
+    'Load failed',
+    'Network request failed',
+    'The Internet connection appears to be offline.',
+  ])('returns true for a TypeError with message %j', (message) => {
+    expect(isFetchNetworkError(new TypeError(message))).toBe(true)
+  })
+
+  it('returns false for a TypeError with another message', () => {
+    expect(isFetchNetworkError(new TypeError("Cannot read properties of undefined (reading 'body')"))).toBe(false)
+  })
+
+  it('returns false for a non-TypeError with a network failure message', () => {
+    expect(isFetchNetworkError(new Error('Failed to fetch'))).toBe(false)
+  })
+})
+
+describe('withRequestRetry', () => {
+  const transientError = new TypeError('Failed to fetch')
+  const isRetryable = (error: unknown): boolean => error === transientError
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('resolves with the result once a retry succeeds', async () => {
+    const request = vi.fn().mockRejectedValueOnce(transientError).mockResolvedValue('response')
+
+    const pending = withRequestRetry(request, { isRetryable })
+    await vi.runAllTimersAsync()
+
+    expect(await pending).toBe('response')
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits with exponential backoff between attempts', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const request = vi.fn().mockRejectedValue(transientError)
+
+    const assertion = expect(withRequestRetry(request, { isRetryable })).rejects.toBe(transientError)
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(request).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(request).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(request).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(request).toHaveBeenCalledTimes(3)
+    await assertion
+  })
+
+  it('rethrows the last error unchanged after two retries by default', async () => {
+    const request = vi.fn().mockRejectedValue(transientError)
+
+    const assertion = expect(withRequestRetry(request, { isRetryable })).rejects.toBe(transientError)
+    await vi.runAllTimersAsync()
+
+    await assertion
+    expect(request).toHaveBeenCalledTimes(3)
+  })
+
+  it('honors a configured maxRetries', async () => {
+    const request = vi.fn().mockRejectedValue(transientError)
+
+    const assertion = expect(withRequestRetry(request, { isRetryable, maxRetries: 4 })).rejects.toBe(transientError)
+    await vi.runAllTimersAsync()
+
+    await assertion
+    expect(request).toHaveBeenCalledTimes(5)
+  })
+
+  it('makes a single attempt when maxRetries is 0', async () => {
+    const request = vi.fn().mockRejectedValue(transientError)
+
+    await expect(withRequestRetry(request, { isRetryable, maxRetries: 0 })).rejects.toBe(transientError)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry an error isRetryable rejects', async () => {
+    const permanentError = new Error('bad request')
+    const request = vi.fn().mockRejectedValue(permanentError)
+
+    await expect(withRequestRetry(request, { isRetryable })).rejects.toBe(permanentError)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry once the signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const request = vi.fn().mockRejectedValue(transientError)
+
+    await expect(withRequestRetry(request, { isRetryable, signal: controller.signal })).rejects.toBe(transientError)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops retrying when the signal aborts during the backoff wait', async () => {
+    const controller = new AbortController()
+    const request = vi.fn().mockRejectedValue(transientError)
+
+    const assertion = expect(withRequestRetry(request, { isRetryable, signal: controller.signal })).rejects.toBe(
+      transientError
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    controller.abort()
+
+    await assertion
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([-1, 1.5, Number.NaN])('rejects maxRetries %s without making a request', async (maxRetries) => {
+    const request = vi.fn()
+
+    await expect(withRequestRetry(request, { isRetryable, maxRetries })).rejects.toThrow(
+      `maxRetries must be an integer >= 0 (got ${maxRetries})`
+    )
+    expect(request).not.toHaveBeenCalled()
   })
 })

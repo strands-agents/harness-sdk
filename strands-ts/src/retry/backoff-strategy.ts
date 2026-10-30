@@ -169,3 +169,29 @@ function jitter(raw: number, kind: JitterKind, baseMs: number, maxMs: number, la
     }
   }
 }
+
+/**
+ * Waits `ms` milliseconds, resolving early (never rejecting) when `signal` aborts.
+ *
+ * @param ms - Delay in milliseconds
+ * @param signal - Optional signal that ends the wait early
+ * @returns A promise that resolves when the delay elapses or the signal aborts
+ *
+ * @internal
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      globalThis.clearTimeout(timer)
+      // Resolve so the retry loop can re-check cancellation before another attempt.
+      resolve()
+    }
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}

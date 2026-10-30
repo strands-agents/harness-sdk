@@ -6,6 +6,7 @@ import { AfterModelCallEvent } from '../hooks/events.js'
 import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { RetryDecision } from './retry-strategy.js'
+import { sleep } from './backoff-strategy.js'
 
 /**
  * Abstract base class for model-retry strategies.
@@ -103,21 +104,4 @@ export abstract class ModelRetryStrategy implements Plugin {
 
     agent.addHook(AfterModelCallEvent, (event) => this.retryModel(event))
   }
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.resolve()
-
-  return new Promise((resolve) => {
-    const onAbort = (): void => {
-      globalThis.clearTimeout(timer)
-      // Resolve so the retry loop can re-check cancellation before another model attempt.
-      resolve()
-    }
-    const timer = globalThis.setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
 }
