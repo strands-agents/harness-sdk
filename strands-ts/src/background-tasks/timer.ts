@@ -1,4 +1,5 @@
-const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
+/** @internal */
+export const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
 
 /** Validates a delay accepted by JavaScript timers. @internal */
 export function assertTimerDelay(name: string, value: number): void {

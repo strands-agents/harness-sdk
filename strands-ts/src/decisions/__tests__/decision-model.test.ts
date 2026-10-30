@@ -10,7 +10,7 @@ import { LLMDecisionModel } from '../llm-decision-model.js'
 import { defineQuestions } from '../types.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
 import type { ToolContext } from '../../tools/tool.js'
-import type { DecisionResult, Question } from '../types.js'
+import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from '../types.js'
 
 const QUESTIONS = defineQuestions({ isSafe: { question: 'Is the command safe to run?', choices: 'boolean' } })
 
@@ -19,13 +19,19 @@ const DECISION_USAGE = { inputTokens: 3, outputTokens: 2, totalTokens: 5 }
 /** Decision model whose `_ask` returns a fixed result or throws a fixed error. */
 class StubDecisionModel extends DecisionModel {
   calls = 0
+  readonly options: DecisionCallOptions[] = []
 
   constructor(private readonly _outcome: Omit<DecisionResult, 'answers'> | Error) {
     super()
   }
 
-  protected async _ask<const Q extends Record<string, Question>>(): Promise<DecisionResult<Q>> {
+  protected async _ask<const Q extends Record<string, Question>>(
+    _state: DecisionInput,
+    _questions: Q,
+    options: DecisionCallOptions
+  ): Promise<DecisionResult<Q>> {
     this.calls += 1
+    this.options.push(options)
     if (this._outcome instanceof Error) throw this._outcome
     return { answers: { isSafe: true }, ...this._outcome } as DecisionResult<Q>
   }
@@ -33,6 +39,17 @@ class StubDecisionModel extends DecisionModel {
 
 describe('DecisionModel', () => {
   describe('ask', () => {
+    it('passes only the cancel signal to the implementation', async () => {
+      const decision = new StubDecisionModel({ metadata: { latencyMs: 1 } })
+      const controller = new AbortController()
+      const invocationContext = new InvocationContextImpl()
+
+      await decision.ask('ls', QUESTIONS, { cancelSignal: controller.signal, invocationContext })
+      await decision.ask('ls', QUESTIONS)
+
+      expect(decision.options).toEqual([{ cancelSignal: controller.signal }, {}])
+    })
+
     describe('when given an invocation context', () => {
       it('adds the reported usage to the context', async () => {
         const decision = new StubDecisionModel({ usage: DECISION_USAGE, metadata: { latencyMs: 1 } })
