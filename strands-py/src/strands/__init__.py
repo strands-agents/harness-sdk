@@ -5,7 +5,7 @@ from .agent.agent import Agent
 from .agent.base import AgentBase
 from .agent.invocation_context import InvocationContext, InvocationContextUsage
 from .background_tasks import BackgroundTasksConfig
-from .decisions import DecisionModel, LLMDecisionModel, Uncertain
+from .decisions import DecisionModel, DecisionsAPIDecisionModel, LLMDecisionModel, TypeSafeDecisionModel, Uncertain
 from .event_loop._retry import ModelRetryStrategy
 from .interventions import InterventionHandler
 from .plugins import MultiAgentPlugin, Plugin
@@ -26,11 +26,13 @@ __all__ = [
     "AgentSkills",
     "BackgroundTasksConfig",
     "DecisionModel",
+    "DecisionsAPIDecisionModel",
     "InterventionHandler",
     "InvocationContext",
     "InvocationContextUsage",
     "LLMDecisionModel",
     "LocalAgent",
+    "TypeSafeDecisionModel",
     "agent",
     "decisions",
     "models",

@@ -70,11 +70,25 @@ class Uncertain:
 class DecisionMetadata:
     """Per-call metadata recorded by a decision model implementation.
 
+    The ``provider_name``, ``model_id``, ``probabilities``, and ``confidence`` fields are populated
+    only by implementations that report them (e.g. System One models); they are ``None`` for
+    implementations that do not, such as ``LLMDecisionModel``.
+
     Attributes:
         latency_ms: Time spent in the underlying model call, in milliseconds.
+        provider_name: Provider that served the decision, when API-backed.
+        model_id: Provider-reported model identifier that served the decision.
+        probabilities: Per-question probability distributions, keyed first by question id and then
+            by answer value. Boolean questions key by ``"true"`` / ``"false"``; choice questions key
+            by each choice string.
+        confidence: Per-question confidence values in ``[0.0, 1.0]``, keyed by question id.
     """
 
     latency_ms: int
+    provider_name: str | None = None
+    model_id: str | None = None
+    probabilities: dict[str, dict[str, float]] | None = None
+    confidence: dict[str, float] | None = None
 
 
 @dataclass
