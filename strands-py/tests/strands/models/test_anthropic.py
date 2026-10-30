@@ -141,11 +141,21 @@ def test__init__explicit_max_tokens_wins_over_the_model_info_output_limit(anthro
     assert model.format_request(messages)["max_tokens"] == 1
 
 
-def test__init__raises_without_max_tokens_for_an_unknown_model(anthropic_client):
+@pytest.mark.parametrize(
+    "model_id", ["unknown-model", "claude-mythos-preview"], ids=["unknown model", "listed model without a limit"]
+)
+def test__init__raises_without_max_tokens_when_the_model_info_has_no_output_limit(anthropic_client, model_id):
     _ = anthropic_client
 
-    with pytest.raises(ValueError, match=r"model_id=<unknown-model> \| max_tokens is required"):
-        AnthropicModel(model_id="unknown-model")
+    with pytest.raises(ValueError, match=rf"model_id=<{model_id}> \| max_tokens is required"):
+        AnthropicModel(model_id=model_id)
+
+
+def test__init__raises_for_an_explicit_none_max_tokens(anthropic_client):
+    _ = anthropic_client
+
+    with pytest.raises(ValueError, match=r"max_tokens=<None> \| the Anthropic API requires max_tokens"):
+        AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=None)
 
 
 def test_update_config_re_resolves_the_default_max_tokens(anthropic_client, messages):
@@ -157,12 +167,17 @@ def test_update_config_re_resolves_the_default_max_tokens(anthropic_client, mess
     assert model.format_request(messages)["max_tokens"] == 32_000
 
 
-def test_update_config_raises_when_the_new_model_has_no_max_tokens(anthropic_client):
+def test_update_config_raises_and_leaves_the_config_unchanged_when_the_new_model_has_no_max_tokens(
+    anthropic_client, messages
+):
     _ = anthropic_client
     model = AnthropicModel(model_id="claude-sonnet-4-6")
 
     with pytest.raises(ValueError, match="max_tokens is required"):
         model.update_config(model_id="unknown-model")
+
+    assert model.get_config()["model_id"] == "claude-sonnet-4-6"
+    assert model.format_request(messages)["max_tokens"] == 128_000
 
 
 def test_update_config(model, model_id):

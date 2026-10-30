@@ -92,7 +92,7 @@ The `model_config` configures the underlying model selected for inference. The s
 
 |  Parameter | Description | Example | Options |
 |------------|-------------|---------|---------|
-| `max_tokens` | Maximum number of tokens to generate before stopping; defaults to the model's known output limit (`get_config()` shows the value) and is required for models the SDK does not know | `1028` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.max_tokens)
+| `max_tokens` | Maximum number of tokens to generate. Defaults to the model's output limit from the model info; required when that limit is unknown | `1028` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.max_tokens)
 | `model_id` | ID of a model to use | `claude-sonnet-5` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.model)
 | `params` | Additional pass-through parameters | `{"metadata": {"user_id": "u1"}}` | [reference](https://platform.claude.com/docs/en/api/messages/create)
 | `anthropic_tools` | [Built-in tools](#built-in-tools), appended to the agent's function tools | `[{"type": "web_search_20260318", "name": "web_search"}]` | [reference](https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/overview)
