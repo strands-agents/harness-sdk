@@ -17,7 +17,7 @@ import MobileNavTree from './MobileNavTree.astro';
 const stars = await getStarCount();
 const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
 
-// The "Projects" dropdown is organized around products (Strands harness, SDK,
+// The "Docs" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
 // aligned. Each product renders as one entry linking to its hub; its full
 // docs sidebar (`nav`) drives the mobile accordion. Labs (experimental projects) has its own docs hub, so
@@ -66,7 +66,7 @@ const learnCategories = [
       </a>
       <ul class="strands-nav__links" role="list">
         <li class="strands-nav__item" data-menu-trigger="docs">
-          <button type="button" class="strands-nav__trigger" aria-haspopup="true">Projects</button>
+          <button type="button" class="strands-nav__trigger" aria-haspopup="true">Docs</button>
           <NavMenu id="docs" categories={docsCategories} />
         </li>
         <li class="strands-nav__item" data-menu-trigger="learn">
@@ -143,11 +143,11 @@ const learnCategories = [
     </div>
   </div>
 
-  <!-- Mobile menu panel (Figma 745:13162): Projects / Learn accordions of
+  <!-- Mobile menu panel (Figma 745:13162): Docs / Learn accordions of
        categories + page links, then plain Integrations / Blog links. -->
   <div class="strands-nav__mobile" data-mobile-menu>
     {[
-      { label: 'Projects', categories: docsCategories },
+      { label: 'Docs', categories: docsCategories },
       { label: 'Learn', categories: learnCategories },
     ].map((section) => (
       <div class="mobile-menu__section" data-mobile-section>
@@ -856,7 +856,7 @@ const learnCategories = [
       color: var(--accent-green);
     }
 
-    /* Indent categories under their section header (Projects / Learn) so the
+    /* Indent categories under their section header (Docs / Learn) so the
        hierarchy reads clearly. */
     .mobile-menu__section-body {
       display: none;
