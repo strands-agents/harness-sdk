@@ -253,14 +253,19 @@ class FunctionToolMetadata:
 
             for line in lines:
                 stripped_line = line.strip()
+                # Section headers sit at the docstring's base indentation; an indented line such as
+                # "note: ..." or "ref: ..." is an entry inside a section, not a new header.
+                is_header_candidate = not line[:1].isspace()
 
                 # Check if we're starting the Args section
-                if stripped_line.lower().startswith(("args:", "arguments:", "parameters:", "param:", "params:")):
+                if is_header_candidate and stripped_line.lower().startswith(
+                    ("args:", "arguments:", "parameters:", "param:", "params:")
+                ):
                     skip_args_section = True
                     continue
 
                 # Check if we're starting a new section (not Args)
-                elif (
+                elif is_header_candidate and (
                     stripped_line.lower().startswith(("returns:", "return:", "yields:", "yield:"))
                     or stripped_line.lower().startswith(("raises:", "raise:", "except:", "exceptions:"))
                     or stripped_line.lower().startswith(("examples:", "example:", "note:", "notes:"))
