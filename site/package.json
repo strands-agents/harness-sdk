@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "astro build",
+    "build": "npm run external-docs:generate && astro build",
     "build:all": "npm run sdk:generate && npm run build",
-    "dev": "astro dev",
+    "dev": "npm run external-docs:generate && astro dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "typecheck:snippets": "npm run typecheck --prefix test-snippets",
@@ -22,6 +22,8 @@
     "routes:update": "tsx scripts/update-known-routes.ts",
     "changelog:sync": "tsx scripts/changelog/sync.ts",
     "catalog:stats": "tsx scripts/catalog/refresh-stats.ts",
+    "external-docs:generate": "tsx scripts/external-docs/cli.ts",
+    "external-docs:update-lock": "tsx scripts/external-docs/update-lock.ts",
     "astro": "astro"
   },
   "author": "",

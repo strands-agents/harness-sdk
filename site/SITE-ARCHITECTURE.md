@@ -119,6 +119,74 @@ The collection base is `src/content` (not `src/content/docs`), so all doc slugs 
 [AgentResult](@api/python/strands.agent.agent_result#AgentResult)
 ```
 
+### 6. External Documentation Federation
+
+**What it does:** Imports versioned Markdown from product repositories into the Starlight
+content collection. The first integration publishes the Box manifest under
+`/docs/user-guide/box/source/` so reviewers can compare it with the current Box guide.
+
+**Why:** Product documentation changes with its implementation. Keeping the source Markdown
+in the product repository lets one commit update behavior and documentation together. The
+site still owns public routes, navigation placement, presentation, and the pinned production
+revision.
+
+#### Upstream contract
+
+Each product publishes `docs/site-manifest.json` with `schemaVersion`, product metadata, and
+an ordered page list. A page declares a stable ID, repository-relative Markdown source, route
+slug, title, description, and navigation position. Schema version 1 accepts plain Markdown
+under `docs/user/`; it does not accept MDX.
+
+The product status is `preview` or `stable`. Preview pages render an
+`Upstream documentation preview` caution so comparison content cannot be mistaken for the
+canonical guide. When the same slug exists in the current guide, the caution links directly
+to that page for comparison.
+
+#### Site registry and lock
+
+`external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
+prefix, and sidebar label. `external-docs.lock.json` contains only immutable commit SHAs.
+Site builds read the SHA, never the moving ref. The scheduled
+`docs-external-sync.yml` workflow resolves each tracked ref, validates and builds the imported
+pages with the same `npm run cms:build` path as docs CI, then opens or updates a draft
+lock-only PR when the SHA changes. The workflow summary and PR body link to each upstream
+old-to-new commit comparison.
+
+#### Generated layout
+
+`npm run external-docs:generate` writes each product to:
+
+```text
+.build/external-docs/<product-id>/
+├── content/          # Generated .md pages
+└── navigation.json  # Generated groups and page links
+```
+
+The tracked `src/content/docs/user-guide/box/source` symlink exposes the generated content to
+Astro. The one `externalDocs: strands-box` entry in `navigation.yml` expands
+`navigation.json`; page lists do not need a second manually maintained copy.
+
+The generator:
+
+- strips the upstream H1 because Starlight renders the manifest title;
+- adds Starlight frontmatter, an upstream edit link, and source provenance;
+- rewrites links to other published manifest pages as site routes;
+- rewrites other relative links and same-repository `main` URLs to the pinned commit;
+- treats unsupported `dw` and `cedar` code fences as plain text;
+- rejects unsafe paths, source symlinks, frontmatter, MDX expressions, MDX imports, MDX
+  components, executable snippet includes, and unsafe raw HTML.
+
+Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and
+machine-readable documentation endpoints also omit them until the upstream product marks the
+manifest `stable`.
+
+Build and development scripts generate external docs before Astro starts. To preview changes
+from a local product checkout instead of the lock, set its source environment variable:
+
+```bash
+EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
+```
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:
@@ -145,8 +213,11 @@ export default defineConfig({
     }),
     starlight({
       markdown: {
-        // Ensures Starlight's rehype plugins run on API docs symlinked from .build/api-docs
-        processedDirs: [path.resolve('.build/api-docs')],
+        // Process generated docs through Starlight after following their content symlinks.
+        processedDirs: [
+          path.resolve('.build/api-docs'),
+          path.resolve('.build/external-docs'),
+        ],
       },
       sidebar: sidebar,
       routeMiddleware: './src/route-middleware.ts',
@@ -165,12 +236,18 @@ export default defineConfig({
 
 Notable config details:
 - `themeCssSelector` on Expressive Code makes code block themes follow Starlight's `[data-theme]` attribute rather than the browser's `prefers-color-scheme`, keeping syntax highlighting in sync with the site's theme toggle.
-- `processedDirs` tells Starlight to run its rehype plugins (e.g. heading anchor links) on the real resolved paths of the API docs symlinks.
+- `processedDirs` tells Starlight to run its rehype plugins (e.g. heading anchor links) on the real resolved paths of generated documentation symlinks.
 - `AutoImport` makes the following components available in every MDX page without an explicit import: `Tabs` (AutoSyncTabs), `Tab` (Starlight's TabItem), `Syntax`, and `YouTube` (from `@astro-community/astro-embed-youtube`).
 
 ## Custom Frontmatter Fields
 
 The documentation extends Starlight's default schema with custom fields that automatically render contextual banners at the top of pages.
+
+### `externalDocs`
+
+Generated external pages record their product, repository, tracked ref, immutable revision,
+and source file. Authors do not set this field by hand. A `preview` status renders the upstream
+preview caution; a `stable` status keeps the provenance without the caution.
 
 ### `languages`
 

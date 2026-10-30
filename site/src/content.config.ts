@@ -47,6 +47,17 @@ export const sourceLinkSchema = z.object({
 })
 export type SourceLink = z.infer<typeof sourceLinkSchema>
 
+export const externalDocsSchema = z.object({
+  product: z.string(),
+  productId: z.string(),
+  status: z.enum(['preview', 'stable']),
+  repository: z.string().url().startsWith('https://github.com/'),
+  ref: z.string(),
+  revision: z.string().regex(/^[0-9a-f]{40}$/),
+  source: z.string(),
+})
+export type ExternalDocsProvenance = z.infer<typeof externalDocsSchema>
+
 export const changelogEntrySchema = z.object({
   type: z.enum(['feat', 'fix', 'breaking', 'chore', 'docs', 'perf', 'refactor', 'test', 'other']),
   breaking: z.boolean().default(false),
@@ -333,6 +344,7 @@ export const collections = {
         '404.mdx',
 
         'docs/user-guide/**/*.mdx',
+        'docs/user-guide/box/source/**/*.md',
         'docs/learning/**/*.mdx',
         'docs/integrations/**/*.mdx',
         'docs/contribute/**/*.mdx',
@@ -378,6 +390,8 @@ export const collections = {
         // Pointers to the SDK implementation behind this page. Rendered as an
         // "Implementation" section on headless surfaces only (index.md, llms-full.txt).
         sourceLinks: z.array(sourceLinkSchema).optional(),
+        // Provenance for generated pages imported from another repository.
+        externalDocs: externalDocsSchema.optional(),
       }),
     }),
   }),

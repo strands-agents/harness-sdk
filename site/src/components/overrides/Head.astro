@@ -22,10 +22,11 @@ const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon
 
 // Raw markdown twin served by src/pages/[...slug]/index.md.ts — one endpoint per docs
 // collection entry, at `/{entry.id}/index.md`. Only advertise it for routes backed by a
-// docs entry (blog/changelog pages flow through Starlight with synthetic entries).
+// docs entry that the endpoint publishes. Preview imports and blog/changelog pages do not.
 const docIds = await getDocsIds()
 const baseNoSlash = base.replace(/\/$/, '')
-const markdownHref = docIds.has(route.entry.id) ? `${baseNoSlash}/${route.entry.id}/index.md` : null
+const hasMarkdownTwin = docIds.has(route.entry.id) && route.entry.data.externalDocs?.status !== 'preview'
+const markdownHref = hasMarkdownTwin ? `${baseNoSlash}/${route.entry.id}/index.md` : null
 
 // Build breadcrumb list from URL path
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
