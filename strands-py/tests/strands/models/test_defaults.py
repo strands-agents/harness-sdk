@@ -60,15 +60,19 @@ class TestGetContextWindowLimit:
         # Bedrock GPT ids need their own rows: gpt-6.1-sol's Bedrock card is 1M, not the 1.05M of its siblings.
         assert get_context_window_limit("openai.gpt-6-astra") == 1_050_000
         assert get_context_window_limit("openai.gpt-6.1-sol") == 1_000_000
+        assert get_context_window_limit("openai.gpt-6.1-terra") == 1_050_000
         assert get_context_window_limit("openai.gpt-6-sol") == 1_050_000
         assert get_context_window_limit("openai.gpt-6-luna") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.6-sol") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.6-terra") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.6-luna") == 1_050_000
+        assert get_context_window_limit("openai.gpt-5.6-cyber") == 1_050_000
+        assert get_context_window_limit("openai.gpt-daybreak-blue-5.6-sol") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.5") == 1_050_000
         assert get_context_window_limit("openai.gpt-5.4") == 1_050_000
         assert get_context_window_limit("us.openai.gpt-5.5") == 1_050_000
         assert get_context_window_limit("global.openai.gpt-6.1-sol") == 1_000_000
+        assert get_context_window_limit("us.openai.gpt-6.1-terra") == 1_050_000
         assert get_context_window_limit("in.openai.gpt-5.6-luna") == 1_050_000
 
     def test_known_bedrock_mistral(self):
@@ -102,6 +106,7 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("chat-latest") == 272_000
         assert get_context_window_limit("gpt-6-astra") == 1_050_000
         assert get_context_window_limit("gpt-6.1-sol") == 1_050_000
+        assert get_context_window_limit("gpt-6.1-terra") == 1_050_000
         assert get_context_window_limit("gpt-6-sol") == 1_050_000
         assert get_context_window_limit("gpt-6-luna") == 1_050_000
         assert get_context_window_limit("gpt-5.4") == 1_050_000

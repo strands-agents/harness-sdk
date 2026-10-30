@@ -362,8 +362,8 @@ function applyAnthropicCache(
  * Injects Bedrock `cachePoint` breakpoints on system and the last user message.
  *
  * @param modelId - The wrapped Bedrock model id, used in the skip warning
- * @param modelInfo - What the SDK knows about the wrapped model; the default `'auto'` strategy caches only
- * when `promptCaching` is `'cachePoints'`, matching `BedrockModel`
+ * @param modelInfo - What the SDK knows about the wrapped model; the default `'auto'` strategy follows its
+ * `promptCaching`, falling back to the Claude name test for unlisted ids, matching `BedrockModel`
  * @internal
  */
 function applyBedrockCache(
@@ -408,8 +408,8 @@ function applyBedrockCache(
 
 /**
  * Reports whether the wrapped Bedrock model takes cache points. An explicit `'anthropic'` strategy
- * opts in regardless; the default `'auto'` caches only when `modelInfo` says `'cachePoints'`, warning once
- * and skipping otherwise (mirroring `BedrockModel`).
+ * opts in regardless; the default `'auto'` caches when `modelInfo` says `'cachePoints'`, or when the id is
+ * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`).
  *
  * @param cacheConfig - The caller's cache configuration
  * @param modelId - The wrapped Bedrock model id, used in the skip warning
@@ -419,7 +419,13 @@ function applyBedrockCache(
 function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, modelInfo: ModelInfo): boolean {
   if ((cacheConfig.strategy ?? 'auto') !== 'auto') return true
 
-  const supported = modelInfo.capabilities?.promptCaching === 'cachePoints'
+  const promptCaching = modelInfo.capabilities?.promptCaching
+  // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+  // keep the historical name test so caching does not turn off until the data catches up.
+  const supported =
+    promptCaching === undefined
+      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
+      : promptCaching === 'cachePoints'
   if (!supported) {
     warnOnce(
       logger,

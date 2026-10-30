@@ -8,7 +8,12 @@ import pytest
 
 from strands import InvocationContext
 from strands.agent import invocation_context as invocation_context_module
-from strands.agent.invocation_context import _create_invocation_context, _invocation_context_kwargs
+from strands.agent.invocation_context import (
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+    _invocation_context_kwargs,
+    _reached_limit,
+)
 
 
 def test_rejects_direct_construction():
@@ -74,6 +79,28 @@ def test_lets_concurrent_threads_take_no_more_turns_than_the_limit(monkeypatch):
         thread.join()
 
     assert (sum(turns_taken_per_thread), request.usage["turns_taken"]) == (200, 200)
+
+
+def test_counts_structured_output_failures_toward_limiting_parents_but_not_through_auxiliary_calls():
+    request = _create_invocation_context({"structured_output_attempts": 2})
+    nested = _create_invocation_context({"turns": 5}, request)
+    auxiliary = _create_auxiliary_invocation_context(request)
+
+    nested._record_structured_output_failure()
+    auxiliary._record_structured_output_failure()
+
+    assert request._structured_output_failures == 1
+    assert _reached_limit(nested) is None
+    nested._record_structured_output_failure()
+    assert _reached_limit(nested) == "limit_structured_output_attempts"
+
+
+def test_has_limit_sees_limits_of_limiting_parents_only():
+    request = _create_invocation_context({"structured_output_attempts": 2})
+
+    assert _create_invocation_context({"turns": 5}, request)._has_limit("structured_output_attempts")
+    assert not _create_auxiliary_invocation_context(request)._has_limit("structured_output_attempts")
+    assert not _create_invocation_context({"turns": 5})._has_limit("structured_output_attempts")
 
 
 class _Overrides:

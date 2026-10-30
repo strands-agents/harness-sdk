@@ -25,6 +25,7 @@ export default [
     files: ['src/**/*.ts'],
     ignores: [
       'src/vended-tools/**/*.ts',
+      'src/experimental/vended-tools/**/*.ts',
       'src/sandbox/docker.ts',
       'src/sandbox/ssh.ts',
       'src/sandbox/__tests__/docker.test.node.ts',

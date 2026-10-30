@@ -18,6 +18,7 @@ from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
+from ._model_info import ModelInfo, ModelLimits, lookup_model_info
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -127,10 +128,20 @@ class BaseModelConfig(TypedDict, total=False):
 
     Attributes:
         context_window_limit: Maximum context window size in tokens for the model.
-            This value represents the total token capacity shared between input and output.
+            The same fact as ``model_info.limits.context_window``; setting it here is shorthand for
+            setting it through ``model_info``, and it wins over the shared model info. When both are
+            set, ``model_info`` wins. When not provided, vended providers still populate it from the
+            shared model info for callers that read ``get_config()``; ``model_info`` is the resolved
+            view to read.
+        model_info: Overrides for what the SDK knows about the model. Fields set here win over the
+            shared model info and the provider; ``capabilities.stateful`` changes how the agent loop
+            sends history, so set it only for a provider that keeps state server-side.
+            ``update_config(model_info=...)`` replaces the previous override entirely, it does not
+            merge into it.
     """
 
     context_window_limit: int | None
+    model_info: ModelInfo | None
 
 
 @dataclass
@@ -199,20 +210,59 @@ class Model(abc.ABC):
     def stateful(self) -> bool:
         """Whether the model manages conversation state server-side.
 
+        Reads ``model_info.capabilities.stateful``, so a provider that keeps state server-side sets
+        it there (see :attr:`model_info`) and a ``model_info`` config override can change it.
+
         Returns:
-            False by default. Model providers that support server-side state should override this.
+            False when unknown.
         """
-        return False
+        return bool(self.model_info.capabilities.stateful)
+
+    @property
+    def model_info(self) -> ModelInfo:
+        """Everything the SDK knows about the configured model, resolved on each read.
+
+        Layers, later ones winning: the shared model info for the configured model id, the
+        ``context_window_limit`` config value, and the ``model_info`` config override. Each read
+        returns a new record, so do not compare reads by identity.
+
+        A provider that knows better than the shared model info overrides this property: put its
+        facts over ``super().model_info``, then the user's ``self.get_config().get("model_info")``
+        over those so the override still wins::
+
+            from strands.models import ModelCapabilities, ModelInfo
+
+            ModelInfo.merge(
+                super().model_info,
+                ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
+                self.get_config().get("model_info"),
+            )
+
+        Do not read :attr:`stateful` inside the override; it reads this property.
+
+        Returns:
+            What the SDK knows about the model; empty when it knows nothing.
+        """
+        config = self.get_config()
+        if isinstance(config, dict):
+            model_id = config.get("model_id")
+            context_window_limit = config.get("context_window_limit")
+            override = config.get("model_info")
+        else:
+            model_id = getattr(config, "model_id", None)
+            context_window_limit = getattr(config, "context_window_limit", None)
+            override = getattr(config, "model_info", None)
+
+        return ModelInfo.merge(
+            lookup_model_info(model_id),
+            ModelInfo(limits=ModelLimits(context_window=context_window_limit)),
+            override,
+        )
 
     @property
     def context_window_limit(self) -> int | None:
-        """Maximum context window size in tokens, or None if not configured."""
-        config = self.get_config()
-        return (
-            config.get("context_window_limit")
-            if isinstance(config, dict)
-            else getattr(config, "context_window_limit", None)
-        )
+        """Maximum context window size in tokens, or None if not known."""
+        return self.model_info.limits.context_window
 
     @abc.abstractmethod
     # pragma: no cover

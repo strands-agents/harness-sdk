@@ -448,8 +448,28 @@ describe('BedrockModel', () => {
       expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
     })
 
-    it('does not auto-cache a Claude id the shared model info does not list', async () => {
-      const provider = new BedrockModel({ modelId: 'anthropic.claude-future-9', cacheConfig: { strategy: 'auto' } })
+    it.each([
+      'anthropic.claude-future-9',
+      'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
+      'US.ANTHROPIC.CLAUDE-SONNET-4-6',
+    ])('auto-caches an unlisted Claude id by name: %s', async (modelId) => {
+      const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('does not auto-cache an unlisted id that is not Claude', async () => {
+      const provider = new BedrockModel({
+        modelId: 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc',
+        cacheConfig: { strategy: 'auto' },
+      })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
 
       collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
@@ -1068,6 +1088,7 @@ describe('BedrockModel', () => {
       { modelId: 'us.amazon.nova-pro-v1:0', expReasoning: [REDACTED_REASONING] },
       { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', expReasoning: [REDACTED_REASONING] },
       { modelId: 'openai.gpt-5.5', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-daybreak-blue-5.6-sol', expReasoning: [REDACTED_REASONING] },
       { modelId: 'qwen.qwen3-coder-480b-a35b-v1:0', expReasoning: [REDACTED_REASONING] },
       // DeepSeek rejects reasoning content altogether.
       { modelId: 'us.deepseek.r1-v1:0', expReasoning: [] },

@@ -206,7 +206,8 @@ Example:
 ```
 
 Put rules like this in the schema, not in your prompt. The model sees the exact error
-message, so write it as an instruction the model can act on.
+message, so write it as an instruction the model can act on. The model can retry as
+often as it needs; to cap the retries, see [Limit attempts](#limit-attempts).
 
 ## Forced tool call
 
@@ -255,9 +256,70 @@ message is added, so there's no prompt to configure.
 </Tab>
 </Tabs>
 
-If the model still doesn't call the tool after the retry, the call raises
-<Syntax py="StructuredOutputException" ts="StructuredOutputError" /> with the message
-`The model failed to invoke the structured output tool even after it was forced.`
-Catch it where your application can fall back.
+If the retry still doesn't return valid structured output, the call raises
+<Syntax py="StructuredOutputException" ts="StructuredOutputError" />. Catch it where
+your application can fall back.
 [Return structured output](./structured-output.md#request-structured-output) shows an
-example.
+example. To retry again instead of raising, set an attempt limit.
+
+## Limit attempts
+
+To cap how many times the model can fail to produce structured output, set
+<Syntax py="limits['structured_output_attempts']" ts="limits.structuredOutputAttempts" />
+on the call. Each model response that fails counts as one attempt: a structured
+output tool call that fails validation, or a forced retry that doesn't return valid
+structured output. With a limit set, Strands retries a failed forced retry instead of
+raising. Calls to your other tools before the forced retry don't count.
+
+In TypeScript, a forced retry that a content filter or guardrail stops also counts as a
+failed attempt and is retried within the limit. In Python, that retry ends the call with
+its own stop reason, such as
+<Syntax py="content_filtered" ts="contentFiltered" />.
+
+When the limit is reached, the call stops before the next model call. The result has
+the stop reason
+<Syntax py="limit_structured_output_attempts" ts="limitStructuredOutputAttempts" />
+and no structured output.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from pydantic import BaseModel
+from strands import Agent
+
+
+class Contact(BaseModel):
+    name: str
+    email: str
+
+
+agent = Agent(callback_handler=None)
+result = agent(
+    "Find the contact details in this note: call Dana back tomorrow.",
+    structured_output_model=Contact,
+    limits={"structured_output_attempts": 3},
+)
+if result.stop_reason == "limit_structured_output_attempts":
+    print("No valid contact after 3 attempts")
+else:
+    print(result.structured_output)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/structured-output-behavior_imports.ts:attempt_limit_imports"
+
+--8<-- "user-guide/sdk/agents/structured-output-behavior.ts:attempt_limit"
+```
+
+</Tab>
+</Tabs>
+
+The limit covers the whole request, like the other
+[invocation limits](./lifecycle-controls.md#cap-the-work-one-call-can-do). Agents that
+run as tools in the same request count toward it, and passing
+<Syntax py="result.invocation_context" ts="result.invocationContext" /> to a later call
+continues it.

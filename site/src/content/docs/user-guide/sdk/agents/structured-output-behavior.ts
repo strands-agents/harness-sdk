@@ -46,3 +46,23 @@ async function defaultSchemaExample() {
   console.log(refund.structuredOutput)
   // --8<-- [end:defaults]
 }
+
+async function attemptLimitExample() {
+  // --8<-- [start:attempt_limit]
+  const ContactSchema = z.object({
+    name: z.string(),
+    email: z.string(),
+  })
+
+  const agent = new Agent({ printer: false })
+  const result = await agent.invoke(
+    'Find the contact details in this note: call Dana back tomorrow.',
+    { structuredOutputSchema: ContactSchema, limits: { structuredOutputAttempts: 3 } }
+  )
+  if (result.stopReason === 'limitStructuredOutputAttempts') {
+    console.log('No valid contact after 3 attempts')
+  } else {
+    console.log(result.structuredOutput)
+  }
+  // --8<-- [end:attempt_limit]
+}

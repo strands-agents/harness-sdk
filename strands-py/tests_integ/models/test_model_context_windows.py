@@ -1,10 +1,12 @@
-"""Table-wide drift check: every direct-API key in the context-window table matches the provider's reported limit.
+"""Table-wide drift check: every direct-API key in shared/model-info.json matches the provider's reported limit.
 
 Keys the provider no longer serves skip (not fail), so the skip list doubles as a report of stale rows.
 Metadata calls only; no model turns. Bedrock-style `vendor.` keys match no prefix below.
 """
 
+import json
 import os
+import pathlib
 
 import anthropic
 import pytest
@@ -13,7 +15,6 @@ from google.genai import errors as genai_errors
 from mistralai.client import Mistral
 from mistralai.client.errors import SDKError as MistralSDKError
 
-from strands.models._defaults import _CONTEXT_WINDOW_LIMITS
 from tests_integ.models import providers
 
 
@@ -53,9 +54,20 @@ LOOKUPS = [
     (("mistral-", "ministral-", "codestral-", "magistral-"), providers.mistral, _mistral),
 ]
 
+_SHARED_MODELS = json.loads(
+    (pathlib.Path(__file__).parents[2] / ".." / "shared" / "model-info.json").read_text(encoding="utf-8")
+)["models"]
+
 DIRECT_API_MODELS = [
-    pytest.param(provider, lookup, model_id, table_window, id=model_id, marks=provider.mark)
-    for model_id, table_window in _CONTEXT_WINDOW_LIMITS.items()
+    pytest.param(
+        provider,
+        lookup,
+        model_id,
+        entry.get("limits", {}).get("contextWindow"),
+        id=model_id,
+        marks=provider.mark,
+    )
+    for model_id, entry in _SHARED_MODELS.items()
     for prefixes, provider, lookup in LOOKUPS
     if model_id.startswith(prefixes)
 ]
@@ -68,5 +80,5 @@ def test_context_window_matches_provider_api(provider, lookup, model_id, table_w
         pytest.skip(f"{model_id}: not served by {provider.id} API: retired?")
 
     assert table_window == api_window, (
-        f"{model_id}: table says {table_window}, provider API reports {api_window}; update strands/models/_defaults.py"
+        f"{model_id}: table says {table_window}, provider API reports {api_window}; update shared/model-info.json"
     )

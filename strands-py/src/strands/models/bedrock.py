@@ -94,6 +94,7 @@ _MODELS_REJECT_REASONING_TEXT = [
     "nvidia.nemotron-super",
     "openai.gpt-5",
     "openai.gpt-6",
+    "openai.gpt-daybreak",
     "qwen.qwen3-235b",
     "qwen.qwen3-coder",
     "writer.palmyra",
@@ -371,18 +372,22 @@ class BedrockModel(Model):
         """The effective cache strategy for this request, or None when caching is off or unsupported.
 
         Resolves ``cache_config.strategy``: an explicit strategy is returned as written, while ``"auto"``
-        maps to ``"anthropic"`` for Claude/Anthropic model IDs and None for models without automatic
-        caching support.
+        maps to ``"anthropic"`` for models the model info says take cache points, and None for models
+        without automatic caching support. For an id the model info does not list at all, Claude/Anthropic
+        ids still map to ``"anthropic"``.
         """
         cache_config = self.config.get("cache_config")
         if not cache_config:
             return None
         if cache_config.strategy != "auto":
             return cache_config.strategy
-        model_id = self.config.get("model_id", "").lower()
-        if "claude" in model_id or "anthropic" in model_id:
-            return "anthropic"
-        return None
+        prompt_caching = self.model_info.capabilities.prompt_caching
+        if prompt_caching is None:
+            # Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+            # keep the historical name test so caching does not turn off until the data catches up.
+            model_id = str(self.config.get("model_id", "")).lower()
+            return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
+        return "anthropic" if prompt_caching == "cache_points" else None
 
     @override
     def update_config(self, **model_config: Unpack[BedrockConfig]) -> None:  # type: ignore
@@ -1045,6 +1050,7 @@ class BedrockModel(Model):
             unsupported_mechanisms("bedrock", model_id, structured_output_model),
             request.get("toolConfig", {}).get("toolChoice"),
             structured_output_model,
+            self.model_info,
         )
         if "native" in mechanisms and not self._client_supports_native_output():
             warnings.warn(

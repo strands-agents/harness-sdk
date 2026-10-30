@@ -53,6 +53,7 @@ class InvocationContext:
     _parent: InvocationContext | None
     _auxiliary: bool
     _usage: InvocationContextUsage
+    _structured_output_failures: int
 
     def __init__(self) -> None:
         """Reject direct construction.
@@ -101,6 +102,23 @@ class InvocationContext:
                 context = context._limiting_parent
             return None
 
+    def _record_structured_output_failure(self) -> None:
+        """Count one failed structured output attempt here and in every parent whose limits apply."""
+        with _usage_lock:
+            context: InvocationContext | None = self
+            while context is not None:
+                context._structured_output_failures += 1
+                context = context._limiting_parent
+
+    def _has_limit(self, key: str) -> bool:
+        """Whether this instance or a parent whose limits apply to it sets the limit named ``key``."""
+        context: InvocationContext | None = self
+        while context is not None:
+            if context._limits and context._limits.get(key) is not None:
+                return True
+            context = context._limiting_parent
+        return False
+
 
 def _create_invocation_context(
     limits: Limits | None = None,
@@ -125,6 +143,7 @@ def _create_invocation_context(
     context._parent = parent
     context._auxiliary = auxiliary
     context._usage = InvocationContextUsage(turns_taken=0, inputTokens=0, outputTokens=0, totalTokens=0)
+    context._structured_output_failures = 0
     return context
 
 
@@ -211,7 +230,7 @@ def _reached_limit(invocation_context: InvocationContext) -> StopReason | None:
     """Return the stop reason for the first limit reached, or ``None`` if none is reached.
 
     Checks this instance's own limits first and then each parent's. Within one instance the
-    order is turns, then total_tokens, then output_tokens.
+    order is turns, then total_tokens, then output_tokens, then structured_output_attempts.
     """
     own = _reached_own_limit(invocation_context)
     if own is not None:
@@ -234,4 +253,10 @@ def _reached_own_limit(invocation_context: InvocationContext) -> StopReason | No
     output_tokens = limits.get("output_tokens")
     if output_tokens is not None and usage["outputTokens"] >= output_tokens:
         return "limit_output_tokens"
+    structured_output_attempts = limits.get("structured_output_attempts")
+    if (
+        structured_output_attempts is not None
+        and invocation_context._structured_output_failures >= structured_output_attempts
+    ):
+        return "limit_structured_output_attempts"
     return None

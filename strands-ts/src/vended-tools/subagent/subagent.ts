@@ -284,7 +284,7 @@ class SubagentTool extends Tool {
         }
       }
 
-      return streamer.terminalResult()
+      return streamer.terminalResult((result) => [new TextBlock(result.toString())])
     } catch (error) {
       if (error instanceof InterruptError) {
         throw error

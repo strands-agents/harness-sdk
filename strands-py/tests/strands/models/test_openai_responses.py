@@ -12,7 +12,7 @@ from openai.types.responses.response_error import ResponseError
 
 import strands
 from strands.agent import AgentMetadata
-from strands.models import CacheConfig
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
 from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -1828,6 +1828,39 @@ def test_stateful(model_id, stateful):
     """Model.stateful reflects the stateful config option."""
     model = OpenAIResponsesModel(model_id=model_id, stateful=stateful)
     assert model.stateful is stateful
+    assert model.model_info.capabilities.stateful is stateful
+
+
+@pytest.mark.parametrize("stateful", [True, False])
+def test_stateful_model_info_override_wins_over_the_config_option(model_id, stateful):
+    model = OpenAIResponsesModel(
+        model_id=model_id,
+        stateful=not stateful,
+        model_info=ModelInfo(capabilities=ModelCapabilities(stateful=stateful)),
+    )
+
+    assert model.stateful is stateful
+
+
+@pytest.mark.asyncio
+async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(openai_client, model_id, agenerator, alist):
+    """Resolving the record walks the config, so the stream must not re-read it per event."""
+    model = OpenAIResponsesModel(model_id=model_id, stateful=True)
+    mock_events = [
+        unittest.mock.Mock(type="response.created", response=unittest.mock.Mock(id="resp_abc")),
+        *[unittest.mock.Mock(type="response.output_text.delta", delta="x") for _ in range(50)],
+        unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None)),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+
+    with unittest.mock.patch.object(
+        OpenAIResponsesModel, "get_config", side_effect=model.config.copy
+    ) as mock_get_config:
+        await alist(
+            model.stream([{"role": "user", "content": [{"text": "hi"}]}], model_state={"response_id": "resp_0"})
+        )
+
+    assert mock_get_config.call_count == 1
 
 
 @pytest.mark.asyncio

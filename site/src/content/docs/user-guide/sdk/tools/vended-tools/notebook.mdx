@@ -1,0 +1,96 @@
+---
+title: Notebook
+description: "Give a Strands agent persistent notebooks to plan multi-step tasks and track progress. Notebook state lives in agent state and persists with session management."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/notebook/notebook.ts
+  - path: strands-py/src/strands/vended_tools/notebook/notebook.py
+---
+
+A scratchpad the agent can read and write across invocations. The most effective use is giving the agent a notebook at the start of a task and instructing it to plan its work there. It can break the task into steps, check things off as it goes, and always have a clear picture of what's left. Notebook state is part of the agent's state, so it persists automatically with [Session Management](../../agents/session-management.mdx).
+
+_Supported in: Node.js, modern browsers (TypeScript); all platforms (Python)._
+
+**Example - Task Management:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/notebook_imports.ts:notebook_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/notebook.ts:notebook_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import notebook
+
+agent = Agent(tools=[notebook])
+agent('Create a notebook called "tasks" with "# Daily Tasks" and add "- [ ] Review code" to it')
+```
+
+</Tab>
+</Tabs>
+
+**Example - State Persistence:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/notebook_imports.ts:notebook_persistence_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/notebook.ts:notebook_state_persistence"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import notebook
+
+agent = Agent(tools=[notebook])
+agent('Create a notebook called "tasks" with "# Daily Tasks" and add "- [ ] Review code" to it')
+
+# Read the notebook contents directly off agent state.
+notebooks = agent.state.get("notebooks") or {}
+print(notebooks.get("tasks"))
+```
+
+</Tab>
+</Tabs>
+
+**Example - Custom configuration:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/notebook_imports.ts:notebook_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/notebook.ts:notebook_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import make_notebook
+
+notes = make_notebook(
+    name="notes",
+    max_notebook_size_bytes=64 * 1024,  # 64 KiB
+)
+agent = Agent(tools=[notes])
+```
+
+</Tab>
+</Tabs>
+
+📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/notebook/README.md)
