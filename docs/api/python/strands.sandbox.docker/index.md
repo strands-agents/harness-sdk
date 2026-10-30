@@ -8,7 +8,7 @@ Mirrors `strands-ts/src/sandbox/docker.ts`.
 class DockerSandbox(PosixShellSandbox)
 ```
 
-Defined in: [src/strands/sandbox/docker.py:19](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L19)
+Defined in: [src/strands/sandbox/docker.py:20](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L20)
 
 Execute commands in a Docker container via `docker exec`.
 
@@ -23,7 +23,7 @@ def __init__(container: str,
              user: str | None = None) -> None
 ```
 
-Defined in: [src/strands/sandbox/docker.py:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L27)
+Defined in: [src/strands/sandbox/docker.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L28)
 
 Initialize the Docker sandbox.
 
@@ -45,7 +45,7 @@ async def execute_streaming(
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/docker.py:44](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L44)
+Defined in: [src/strands/sandbox/docker.py:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L45)
 
 Execute a command in the container, streaming output.
 
@@ -72,7 +72,7 @@ Execute a command in the container, streaming output.
 def get_tools() -> list[AgentTool]
 ```
 
-Defined in: [src/strands/sandbox/docker.py:99](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L99)
+Defined in: [src/strands/sandbox/docker.py:100](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L100)
 
 Default sandbox-compatible tools auto-registered with this sandbox.
 

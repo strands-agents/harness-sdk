@@ -38,7 +38,7 @@ Use [`AudioIO`](/docs/api/python/strands.bidi.io#strands.bidi.io.AudioIO) to cap
 Install [PortAudio](/docs/user-guide/sdk/bidi/quickstart/index.md#install-the-sdk), then install the SDK with audio I/O support:
 
 ```bash
-pip install "strands-agents[bidi,bidi-io,bidi-pyaudio]"
+pip install "strands-agents[bidi,bidi-io,bidi-pyaudio,bidi-aec]"
 ```
 
 Create an `AudioIO` instance and pass its input and output streams to `run()`:
@@ -52,7 +52,7 @@ from strands.bidi.io import AudioIO
 
 async def main() -> None:
     agent = BidiAgent()
-    audio_io = AudioIO()
+    audio_io = AudioIO(audio_processor=True)
 
     try:
         await asyncio.wait_for(
@@ -70,21 +70,7 @@ Configure voice and audio settings on the model; `AudioIO` uses that configurati
 
 ### Audio processing
 
-Use a headset to limit echo, or enable microphone processing for speaker playback. Processing applies echo cancellation, noise suppression, and automatic gain control.
-
-Install the additional processing dependency:
-
-```bash
-pip install "strands-agents[bidi-aec]"
-```
-
-Then set `audio_processor=True` on your `AudioIO` instance:
-
-```python
-from strands.bidi.io import AudioIO
-
-audio_io = AudioIO(audio_processor=True)
-```
+Setting `audio_processor=True` applies echo cancellation, noise suppression, and automatic gain control to the microphone. Echo cancellation keeps the agent from hearing its own voice through open speakers. Processing requires the `bidi-aec` extra.
 
 Use input and output streams from the same `AudioIO` instance for echo cancellation. Processing requires mono microphone audio; echo cancellation also requires mono playback.
 

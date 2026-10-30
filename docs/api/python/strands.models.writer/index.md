@@ -130,7 +130,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/writer.py:389](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/writer.py#L389)
+Defined in: [src/strands/models/writer.py:391](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/writer.py#L391)
 
 Stream conversation with the Writer model.
 
@@ -162,7 +162,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/writer.py:474](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/writer.py#L474)
+Defined in: [src/strands/models/writer.py:476](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/writer.py#L476)
 
 Get structured output from the model.
 

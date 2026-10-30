@@ -378,8 +378,8 @@ The OpenAI Responses provider does not currently implement native token counting
 - [Add tools to your agent](/docs/user-guide/sdk/tools/index.md) (1 shared tag)
 - [Connect your agent to MCP tools](/docs/user-guide/sdk/tools/mcp-tools/index.md) (1 shared tag)
 - [MCP Transports](/docs/user-guide/sdk/tools/mcp-transports/index.md) (1 shared tag)
-- [Persist state across sessions](/docs/user-guide/sdk/agents/session-management/index.md) (1 shared tag)
 - [State Management](/docs/user-guide/sdk/agents/state/index.md) (1 shared tag)
+- [Persist state across sessions](/docs/user-guide/sdk/agents/session-management/index.md) (1 shared tag)
 
 
 ## Implementation

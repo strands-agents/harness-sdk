@@ -1,4 +1,4 @@
-Defined in: [src/models/model.ts:179](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L179)
+Defined in: [src/models/model.ts:184](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L184)
 
 Base configuration interface for all model providers.
 
@@ -16,7 +16,7 @@ This interface defines the common configuration properties that all model provid
 modelId?: string;
 ```
 
-Defined in: [src/models/model.ts:184](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L184)
+Defined in: [src/models/model.ts:189](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L189)
 
 The model identifier. This typically specifies which model to use from the provider’s catalog.
 
@@ -28,7 +28,7 @@ The model identifier. This typically specifies which model to use from the provi
 maxTokens?: number;
 ```
 
-Defined in: [src/models/model.ts:191](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L191)
+Defined in: [src/models/model.ts:196](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L196)
 
 Maximum number of tokens to generate in the response.
 
@@ -44,7 +44,7 @@ Provider-specific documentation for exact behavior
 temperature?: number;
 ```
 
-Defined in: [src/models/model.ts:198](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L198)
+Defined in: [src/models/model.ts:203](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L203)
 
 Controls randomness in generation.
 
@@ -60,7 +60,7 @@ Provider-specific documentation for valid range
 topP?: number;
 ```
 
-Defined in: [src/models/model.ts:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L205)
+Defined in: [src/models/model.ts:210](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L210)
 
 Controls diversity via nucleus sampling.
 
@@ -76,10 +76,20 @@ Provider-specific documentation for details
 contextWindowLimit?: number;
 ```
 
-Defined in: [src/models/model.ts:217](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L217)
+Defined in: [src/models/model.ts:220](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L220)
 
 Maximum context window size in tokens for the model.
 
-This value represents the total token capacity shared between input and output. When not provided, it is automatically resolved from a built-in lookup table based on the configured model ID. An explicit value always takes precedence.
+The same fact as `modelInfo.limits.contextWindow`; setting it here is shorthand for setting it through `modelInfo`, and it wins over the shared model info. When both are set, `modelInfo` wins. When not provided, vended providers still populate it from the shared model info for callers that read `getConfig()`; `modelInfo` is the resolved view to read.
 
-When `modelId` is changed via `updateConfig()`, this value is automatically re-resolved if it was initially auto-populated. Explicitly set values are preserved.
+---
+
+### modelInfo?
+
+```ts
+modelInfo?: ModelInfo;
+```
+
+Defined in: [src/models/model.ts:228](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L228)
+
+Overrides for what the SDK knows about the model. Fields set here win over the shared model info and the provider; `capabilities.stateful` changes how the agent loop sends history, so set it only for a provider that keeps state server-side. `updateConfig({ modelInfo })` replaces the previous override entirely, it does not merge into it.

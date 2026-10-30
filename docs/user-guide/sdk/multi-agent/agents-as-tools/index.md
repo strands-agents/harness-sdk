@@ -506,9 +506,9 @@ The [Agents as Tools](https://github.com/strands-agents/harness-sdk/tree/main/st
 - [Graph Components](/docs/user-guide/sdk/multi-agent/graph-components/index.md) (1 shared tag)
 - [Graph Multi-Agent Pattern](/docs/user-guide/sdk/multi-agent/graph/index.md) (1 shared tag)
 - [Swarm Multi-Agent Pattern](/docs/user-guide/sdk/multi-agent/swarm/index.md) (1 shared tag)
+- [Creating a Custom Model Provider](/docs/user-guide/sdk/model-providers/custom_model_provider/index.md) (1 shared tag)
+- [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) (1 shared tag)
 - [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) (1 shared tag)
-- [Community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md) (1 shared tag)
-- [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) (1 shared tag)
 
 
 ## Implementation

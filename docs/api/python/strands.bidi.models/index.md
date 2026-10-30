@@ -1,373 +1,3 @@
-Configuration types and helpers for bidirectional model providers.
-
-## AudioStreamConfig
-
-```python
-class AudioStreamConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:13](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L13)
-
-Resolved format of an audio stream.
-
-**Attributes**:
-
--   `sample_rate` - Sample rate in Hz.
--   `channels` - Number of audio channels.
--   `format` - Audio encoding.
-
-## AudioConfig
-
-```python
-class AudioConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L27)
-
-Resolved input and output formats consumed by audio I/O.
-
-Pass provider-specific audio options to the model constructor and use `get_audio_config()` to obtain the resulting stream formats.
-
-**Attributes**:
-
--   `input` - Audio format configured for model input.
--   `output` - Audio format produced by the model.
-
-## BedrockNovaSonicAudioStreamConfig
-
-```python
-class BedrockNovaSonicAudioStreamConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L42)
-
-Nova Sonic stream options. Audio uses mono PCM.
-
-**Attributes**:
-
--   `sample_rate` - Sample rate in Hz.
-
-## BedrockNovaSonicAudioConfig
-
-```python
-class BedrockNovaSonicAudioConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L52)
-
-Nova Sonic input and output audio options.
-
-Omitted streams use a sample rate of 16000 Hz.
-
-**Attributes**:
-
--   `input` - Input stream options.
--   `output` - Output stream options.
-
-## GoogleGeminiLiveAudioStreamConfig
-
-```python
-class GoogleGeminiLiveAudioStreamConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L66)
-
-Gemini Live input stream options. Audio uses mono PCM.
-
-**Attributes**:
-
--   `sample_rate` - Input sample rate in Hz.
-
-## GoogleGeminiLiveAudioConfig
-
-```python
-class GoogleGeminiLiveAudioConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:76](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L76)
-
-Gemini Live audio options. Output is mono PCM at 24000 Hz.
-
-Omitting the input stream uses a sample rate of 16000 Hz.
-
-**Attributes**:
-
--   `input` - Input stream options.
-
-## ConnectionConfig
-
-```python
-class ConnectionConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:88](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L88)
-
-Declared restart timing for a bidirectional model.
-
-Providers declare this so the agent loop can restart the connection proactively, before the provider terminates the connection on its own limit. A provider that declares nothing (empty config) keeps reactive-only behavior: no proactive timer, restart only after the provider reports a timeout.
-
-All fields are optional. The proactive timer arms only when `restart_after_s` is positive and automatic restarts are enabled.
-
-**Attributes**:
-
--   `restart_after_s` - Seconds after a connection is established at which to proactively restart. Set it at least ~10s below the provider’s own connection limit: the restart may wait briefly for the current turn to finish (aligning the swap to a turn boundary), and that wait plus the swap must complete before the provider’s limit.
--   `auto_restart` - Whether the loop restarts the connection automatically (default True).
-
-## ModelConfig
-
-```python
-class ModelConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:111](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L111)
-
-Configuration shared by bidirectional model providers.
-
-**Attributes**:
-
--   `model_id` - Provider model identifier.
--   `params` - Provider-specific keyword arguments passed to the model request or session.
--   `connection` - Restart timing overrides.
-
-## ModelUpdateConfig
-
-```python
-class ModelUpdateConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/configs.py:125](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L125)
-
-Partial configuration update shared by bidirectional model providers.
-
-**Attributes**:
-
--   `model_id` - Provider model identifier.
--   `params` - Provider-specific keyword arguments passed to the model request or session.
--   `connection` - Restart timing overrides.
-
-Configuration types for OpenAI bidirectional model providers.
-
-## OpenAILiveAudioConfig
-
-```python
-class OpenAILiveAudioConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/openai/configs.py:10](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/configs.py#L10)
-
-Audio configuration for OpenAI Live.
-
-Audio is always mono signed 16-bit little-endian PCM.
-
-**Attributes**:
-
--   `sample_rate` - Input and output sample rate in Hz. Defaults to 24000.
-
-## OpenAILiveResponsesDelegationConfig
-
-```python
-class OpenAILiveResponsesDelegationConfig(TypedDict)
-```
-
-Defined in: [src/strands/bidi/models/openai/configs.py:22](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/configs.py#L22)
-
-Responses delegation configuration for OpenAI Live.
-
-**Attributes**:
-
--   `type` - Delegation mode. Must be `responses`.
--   `model_id` - Responses model identifier.
--   `system_prompt` - Responses model instructions. Omission uses the agent’s system prompt.
--   `max_output_tokens` - Maximum output tokens per response.
--   `reasoning` - Reasoning settings passed through to OpenAI.
--   `text` - Text generation settings passed through to OpenAI.
--   `service_tier` - Processing tier for Responses requests.
-
-OpenAI Realtime API provider for Strands bidirectional streaming.
-
-Provides real-time audio and text communication through OpenAI’s Realtime API with WebSocket connections, voice activity detection, and function calling.
-
-## OpenAIRealtimeModel
-
-```python
-class OpenAIRealtimeModel(BidiModel, AudioCapable)
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:181](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L181)
-
-OpenAI Realtime API implementation for bidirectional streaming.
-
-Combines model configuration and connection state in a single class. Manages WebSocket connection to OpenAI’s Realtime API with automatic VAD, function calling, and event conversion to Strands format.
-
-#### \_\_init\_\_
-
-```python
-def __init__(*,
-             transcription_model_id: str | None,
-             api_key: str | None = None,
-             organization: str | None = None,
-             project: str | None = None,
-             timeout_s: int = OPENAI_MAX_TIMEOUT_S,
-             voice: str = "alloy",
-             **model_config: Unpack[ModelConfig]) -> None
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:192](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L192)
-
-Initialize OpenAI Realtime bidirectional model.
-
-**Arguments**:
-
--   `transcription_model_id` - Input transcription model identifier. Pass `None` to disable user transcription.
--   `api_key` - OpenAI API key. Defaults to `OPENAI_API_KEY`.
--   `organization` - OpenAI organization. Defaults to `OPENAI_ORGANIZATION`.
--   `project` - OpenAI project. Defaults to `OPENAI_PROJECT`.
--   `timeout_s` - Maximum connection duration in seconds. Unless `connection.restart_after_s` is set, the agent restarts the connection 5 minutes before this limit, so a value of 300 or less disables the proactive restart.
--   `voice` - Output voice identifier. Defaults to `alloy`.
--   `**model_config` - Model configuration.
-
-**Raises**:
-
--   `ValueError` - If any of the following conditions apply:
-    
-    -   Required model configuration fields are missing.
-    -   `model_id` is not a non-empty string.
-    -   The API key is missing.
-    -   `timeout_s` exceeds the maximum.
-    -   The configured audio formats are unsupported.
-
-#### update\_config
-
-```python
-@override
-def update_config(**model_config: Unpack[ModelUpdateConfig]) -> None
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:265](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L265)
-
-Update the model configuration with the provided arguments.
-
-**Arguments**:
-
--   `**model_config` - Configuration overrides.
-
-**Raises**:
-
--   `ValueError` - If any of the following conditions apply:
-    
-    -   The resulting configuration is missing required fields.
-    -   `model_id` is not a non-empty string.
-    -   The configured audio formats are unsupported.
-
-#### get\_config
-
-```python
-@override
-def get_config() -> ModelConfig
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:284](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L284)
-
-Return the model configuration by reference.
-
-#### get\_audio\_config
-
-```python
-@override
-def get_audio_config() -> AudioConfig
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:289](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L289)
-
-Get the resolved audio configuration.
-
-#### start
-
-```python
-async def start(system_prompt: str | None = None,
-                tools: list[ToolSpec] | None = None,
-                messages: Messages | None = None,
-                **kwargs: Any) -> None
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:314](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L314)
-
-Establish bidirectional connection to OpenAI Realtime API.
-
-**Arguments**:
-
--   `system_prompt` - System instructions for the model.
--   `tools` - List of tools available to the model.
--   `messages` - Conversation history to initialize with.
--   `**kwargs` - Reserved for provider-specific options; currently unused.
-
-**Raises**:
-
--   `RuntimeError` - If the model has already been started.
--   `ValueError` - If turn detection, automatic responses, or interruption are disabled.
-
-#### receive
-
-```python
-async def receive() -> AsyncGenerator[BidiOutputEvent, None]
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:524](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L524)
-
-Receive OpenAI events and convert to Strands TypedEvent format.
-
-#### send
-
-```python
-async def send(content: BidiMessage | BidiContentDelta) -> None
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:805](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L805)
-
-Unified send method for all content types. Sends the given content to OpenAI.
-
-Dispatches to appropriate internal handler based on content type.
-
-**Arguments**:
-
--   `content` - A complete BidiMessage or an individual AudioDelta.
-
-**Raises**:
-
--   `ValueError` - If content type not supported.
-
-#### stop
-
-```python
-async def stop() -> None
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:911](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L911)
-
-Close session and cleanup resources.
-
-#### restart
-
-```python
-async def restart(system_prompt: str | None = None,
-                  tools: list[ToolSpec] | None = None,
-                  messages: Messages | None = None,
-                  **restart_kwargs: Any) -> None
-```
-
-Defined in: [src/strands/bidi/models/openai/realtime.py:928](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L928)
-
-Restart by closing the connection and starting a new one, replaying history.
-
-OpenAI’s Realtime API exposes no server-side resume handle, so a restart re-establishes the session and replays the accumulated conversation history to preserve context across the swap.
-
-**Arguments**:
-
--   `system_prompt` - System instructions for the new connection.
--   `tools` - Tool specifications for the new connection.
--   `messages` - Conversation history to replay into the new connection.
--   `**restart_kwargs` - Reserved for provider-specific restart options.
-
 OpenAI Live model provider using the OpenAI Python client.
 
 .. warning:: Experimental This module is experimental and may change in future versions.
@@ -559,6 +189,400 @@ Run one receiver task concurrently with sends. `stop()` cancels this task.
 -   `ModelThrottledException` - If OpenAI reports rate limiting.
 -   `RuntimeError` - If OpenAI reports another session or backend error.
 -   `ValueError` - If a backend response ID is unexpected or tool arguments contain invalid JSON.
+
+OpenAI Realtime API provider for Strands bidirectional streaming.
+
+Provides real-time audio and text communication through OpenAI’s Realtime API with WebSocket connections, voice activity detection, and function calling.
+
+## OpenAIRealtimeModel
+
+```python
+class OpenAIRealtimeModel(BidiModel, AudioCapable)
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:181](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L181)
+
+OpenAI Realtime API implementation for bidirectional streaming.
+
+Combines model configuration and connection state in a single class. Manages WebSocket connection to OpenAI’s Realtime API with automatic VAD, function calling, and event conversion to Strands format.
+
+#### \_\_init\_\_
+
+```python
+def __init__(*,
+             transcription_model_id: str | None,
+             api_key: str | None = None,
+             organization: str | None = None,
+             project: str | None = None,
+             timeout_s: int = OPENAI_MAX_TIMEOUT_S,
+             voice: str = "alloy",
+             **model_config: Unpack[ModelConfig]) -> None
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:192](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L192)
+
+Initialize OpenAI Realtime bidirectional model.
+
+**Arguments**:
+
+-   `transcription_model_id` - Input transcription model identifier. Pass `None` to disable user transcription.
+-   `api_key` - OpenAI API key. Defaults to `OPENAI_API_KEY`.
+-   `organization` - OpenAI organization. Defaults to `OPENAI_ORGANIZATION`.
+-   `project` - OpenAI project. Defaults to `OPENAI_PROJECT`.
+-   `timeout_s` - Maximum connection duration in seconds. Unless `connection.restart_after_s` is set, the agent restarts the connection 5 minutes before this limit, so a value of 300 or less disables the proactive restart.
+-   `voice` - Output voice identifier. Defaults to `alloy`.
+-   `**model_config` - Model configuration.
+
+**Raises**:
+
+-   `ValueError` - If any of the following conditions apply:
+    
+    -   Required model configuration fields are missing.
+    -   `model_id` is not a non-empty string.
+    -   The API key is missing.
+    -   `timeout_s` exceeds the maximum.
+    -   The configured audio formats are unsupported.
+
+#### update\_config
+
+```python
+@override
+def update_config(**model_config: Unpack[ModelUpdateConfig]) -> None
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:265](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L265)
+
+Update the model configuration with the provided arguments.
+
+**Arguments**:
+
+-   `**model_config` - Configuration overrides.
+
+**Raises**:
+
+-   `ValueError` - If any of the following conditions apply:
+    
+    -   The resulting configuration is missing required fields.
+    -   `model_id` is not a non-empty string.
+    -   The configured audio formats are unsupported.
+
+#### get\_config
+
+```python
+@override
+def get_config() -> ModelConfig
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:284](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L284)
+
+Return the model configuration by reference.
+
+#### get\_audio\_config
+
+```python
+@override
+def get_audio_config() -> AudioConfig
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:289](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L289)
+
+Get the resolved audio configuration.
+
+#### start
+
+```python
+async def start(system_prompt: str | None = None,
+                tools: list[ToolSpec] | None = None,
+                messages: Messages | None = None,
+                **kwargs: Any) -> None
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:314](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L314)
+
+Establish bidirectional connection to OpenAI Realtime API.
+
+**Arguments**:
+
+-   `system_prompt` - System instructions for the model.
+-   `tools` - List of tools available to the model.
+-   `messages` - Conversation history to initialize with.
+-   `**kwargs` - Reserved for provider-specific options; currently unused.
+
+**Raises**:
+
+-   `RuntimeError` - If the model has already been started.
+-   `ValueError` - If turn detection, automatic responses, or interruption are disabled.
+
+#### receive
+
+```python
+async def receive() -> AsyncGenerator[BidiOutputEvent, None]
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:524](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L524)
+
+Receive OpenAI events and convert to Strands TypedEvent format.
+
+#### send
+
+```python
+async def send(content: BidiMessage | BidiContentDelta) -> None
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:805](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L805)
+
+Unified send method for all content types. Sends the given content to OpenAI.
+
+Dispatches to appropriate internal handler based on content type.
+
+**Arguments**:
+
+-   `content` - A complete BidiMessage or an individual AudioDelta.
+
+**Raises**:
+
+-   `ValueError` - If content type not supported.
+
+#### stop
+
+```python
+async def stop() -> None
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:911](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L911)
+
+Close session and cleanup resources.
+
+#### restart
+
+```python
+async def restart(system_prompt: str | None = None,
+                  tools: list[ToolSpec] | None = None,
+                  messages: Messages | None = None,
+                  **restart_kwargs: Any) -> None
+```
+
+Defined in: [src/strands/bidi/models/openai/realtime.py:928](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/realtime.py#L928)
+
+Restart by closing the connection and starting a new one, replaying history.
+
+OpenAI’s Realtime API exposes no server-side resume handle, so a restart re-establishes the session and replays the accumulated conversation history to preserve context across the swap.
+
+**Arguments**:
+
+-   `system_prompt` - System instructions for the new connection.
+-   `tools` - Tool specifications for the new connection.
+-   `messages` - Conversation history to replay into the new connection.
+-   `**restart_kwargs` - Reserved for provider-specific restart options.
+
+Configuration types for OpenAI bidirectional model providers.
+
+## OpenAILiveAudioConfig
+
+```python
+class OpenAILiveAudioConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/openai/configs.py:10](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/configs.py#L10)
+
+Audio configuration for OpenAI Live.
+
+Audio is always mono signed 16-bit little-endian PCM.
+
+**Attributes**:
+
+-   `sample_rate` - Input and output sample rate in Hz. Defaults to 24000.
+
+## OpenAILiveResponsesDelegationConfig
+
+```python
+class OpenAILiveResponsesDelegationConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/openai/configs.py:22](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/openai/configs.py#L22)
+
+Responses delegation configuration for OpenAI Live.
+
+**Attributes**:
+
+-   `type` - Delegation mode. Must be `responses`.
+-   `model_id` - Responses model identifier.
+-   `system_prompt` - Responses model instructions. Omission uses the agent’s system prompt.
+-   `max_output_tokens` - Maximum output tokens per response.
+-   `reasoning` - Reasoning settings passed through to OpenAI.
+-   `text` - Text generation settings passed through to OpenAI.
+-   `service_tier` - Processing tier for Responses requests.
+
+Google Gemini Live model provider using the Gemini Live API and official Google GenAI SDK.
+
+Implements the BidiModel interface for Google’s Gemini Live API using the official Google GenAI SDK for simplified and robust WebSocket communication.
+
+## GoogleGeminiLiveModel
+
+```python
+class GoogleGeminiLiveModel(BidiModel, AudioCapable)
+```
+
+Defined in: [src/strands/bidi/models/google.py:119](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L119)
+
+Google Gemini Live implementation using the official Google GenAI SDK.
+
+Combines model configuration and connection state in a single class. Provides a clean interface to Gemini Live API using the official SDK, eliminating custom WebSocket handling and providing robust error handling.
+
+#### \_\_init\_\_
+
+```python
+def __init__(*,
+             client_args: dict[str, Any] | None = None,
+             audio: GoogleGeminiLiveAudioConfig | None = None,
+             voice: str | None = None,
+             **model_config: Unpack[ModelConfig]) -> None
+```
+
+Defined in: [src/strands/bidi/models/google.py:127](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L127)
+
+Initialize the Google Gemini Live bidirectional model.
+
+**Arguments**:
+
+-   `client_args` - Arguments for the underlying Google GenAI client.
+-   `audio` - Audio configuration.
+-   `voice` - Prebuilt output voice name. Omit to use the provider’s default.
+-   `**model_config` - Model configuration.
+
+**Raises**:
+
+-   `ValueError` - If any of the following conditions apply:
+    
+    -   Required model configuration fields are missing.
+    -   `model_id` is not a non-empty string.
+    -   The input sample rate is not positive.
+
+#### update\_config
+
+```python
+@override
+def update_config(**model_config: Unpack[ModelUpdateConfig]) -> None
+```
+
+Defined in: [src/strands/bidi/models/google.py:171](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L171)
+
+Update the model configuration with the provided arguments.
+
+**Arguments**:
+
+-   `**model_config` - Configuration overrides.
+
+**Raises**:
+
+-   `ValueError` - If any of the following conditions apply:
+    
+    -   The resulting configuration is missing required fields.
+    -   `model_id` is not a non-empty string.
+
+#### get\_config
+
+```python
+@override
+def get_config() -> ModelConfig
+```
+
+Defined in: [src/strands/bidi/models/google.py:187](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L187)
+
+Return the model configuration by reference.
+
+#### get\_audio\_config
+
+```python
+@override
+def get_audio_config() -> AudioConfig
+```
+
+Defined in: [src/strands/bidi/models/google.py:192](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L192)
+
+Get the resolved audio configuration.
+
+#### start
+
+```python
+async def start(system_prompt: str | None = None,
+                tools: list[ToolSpec] | None = None,
+                messages: Messages | None = None,
+                **kwargs: Any) -> None
+```
+
+Defined in: [src/strands/bidi/models/google.py:213](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L213)
+
+Establish bidirectional connection with Gemini Live API.
+
+**Arguments**:
+
+-   `system_prompt` - System instructions for the model.
+-   `tools` - List of tools available to the model.
+-   `messages` - Conversation history to initialize with.
+-   `**kwargs` - Additional configuration options.
+
+#### receive
+
+```python
+async def receive() -> AsyncGenerator[BidiOutputEvent, None]
+```
+
+Defined in: [src/strands/bidi/models/google.py:285](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L285)
+
+Receive Gemini Live API events and convert to provider-agnostic format.
+
+#### send
+
+```python
+async def send(content: BidiMessage | BidiContentDelta) -> None
+```
+
+Defined in: [src/strands/bidi/models/google.py:538](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L538)
+
+Unified send method for all content types. Sends the given inputs to the Gemini Live API.
+
+Dispatches to appropriate internal handler based on content type.
+
+**Arguments**:
+
+-   `content` - A complete BidiMessage or an individual AudioDelta.
+
+**Raises**:
+
+-   `ValueError` - If content type not supported.
+
+#### stop
+
+```python
+async def stop() -> None
+```
+
+Defined in: [src/strands/bidi/models/google.py:635](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L635)
+
+Close Gemini Live API connection.
+
+#### restart
+
+```python
+async def restart(system_prompt: str | None = None,
+                  tools: list[ToolSpec] | None = None,
+                  messages: Messages | None = None,
+                  **restart_kwargs: Any) -> None
+```
+
+Defined in: [src/strands/bidi/models/google.py:656](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L656)
+
+Restart by closing the connection and resuming the same session via its handle.
+
+Resumes the Gemini session using the last resumption handle so server-side context carries across the swap without replaying history. The handle is supplied by the reactive (GoAway) path via `restart_kwargs` or read from the tracked handle on the proactive path. When no handle is available yet, falls back to a fresh connection with history replay.
+
+**Arguments**:
+
+-   `system_prompt` - System instructions for the resumed connection.
+-   `tools` - Tool specifications for the resumed connection.
+-   `messages` - Conversation history, replayed only when resuming without a handle.
+-   `**restart_kwargs` - Provider restart options; `live_session_handle` resumes the session.
 
 Amazon Bedrock Nova Sonic provider for real-time streaming conversations.
 
@@ -755,177 +779,6 @@ Restart by closing the connection and starting a new one, replaying messages.
 -   `tools` - Tool specifications for the new connection.
 -   `messages` - Conversation history to replay into the new connection.
 -   `**restart_kwargs` - Reserved for provider-specific restart options.
-
-Google Gemini Live model provider using the Gemini Live API and official Google GenAI SDK.
-
-Implements the BidiModel interface for Google’s Gemini Live API using the official Google GenAI SDK for simplified and robust WebSocket communication.
-
-## GoogleGeminiLiveModel
-
-```python
-class GoogleGeminiLiveModel(BidiModel, AudioCapable)
-```
-
-Defined in: [src/strands/bidi/models/google.py:119](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L119)
-
-Google Gemini Live implementation using the official Google GenAI SDK.
-
-Combines model configuration and connection state in a single class. Provides a clean interface to Gemini Live API using the official SDK, eliminating custom WebSocket handling and providing robust error handling.
-
-#### \_\_init\_\_
-
-```python
-def __init__(*,
-             client_args: dict[str, Any] | None = None,
-             audio: GoogleGeminiLiveAudioConfig | None = None,
-             voice: str | None = None,
-             **model_config: Unpack[ModelConfig]) -> None
-```
-
-Defined in: [src/strands/bidi/models/google.py:127](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L127)
-
-Initialize the Google Gemini Live bidirectional model.
-
-**Arguments**:
-
--   `client_args` - Arguments for the underlying Google GenAI client.
--   `audio` - Audio configuration.
--   `voice` - Prebuilt output voice name. Omit to use the provider’s default.
--   `**model_config` - Model configuration.
-
-**Raises**:
-
--   `ValueError` - If any of the following conditions apply:
-    
-    -   Required model configuration fields are missing.
-    -   `model_id` is not a non-empty string.
-    -   The input sample rate is not positive.
-
-#### update\_config
-
-```python
-@override
-def update_config(**model_config: Unpack[ModelUpdateConfig]) -> None
-```
-
-Defined in: [src/strands/bidi/models/google.py:171](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L171)
-
-Update the model configuration with the provided arguments.
-
-**Arguments**:
-
--   `**model_config` - Configuration overrides.
-
-**Raises**:
-
--   `ValueError` - If any of the following conditions apply:
-    
-    -   The resulting configuration is missing required fields.
-    -   `model_id` is not a non-empty string.
-
-#### get\_config
-
-```python
-@override
-def get_config() -> ModelConfig
-```
-
-Defined in: [src/strands/bidi/models/google.py:187](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L187)
-
-Return the model configuration by reference.
-
-#### get\_audio\_config
-
-```python
-@override
-def get_audio_config() -> AudioConfig
-```
-
-Defined in: [src/strands/bidi/models/google.py:192](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L192)
-
-Get the resolved audio configuration.
-
-#### start
-
-```python
-async def start(system_prompt: str | None = None,
-                tools: list[ToolSpec] | None = None,
-                messages: Messages | None = None,
-                **kwargs: Any) -> None
-```
-
-Defined in: [src/strands/bidi/models/google.py:213](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L213)
-
-Establish bidirectional connection with Gemini Live API.
-
-**Arguments**:
-
--   `system_prompt` - System instructions for the model.
--   `tools` - List of tools available to the model.
--   `messages` - Conversation history to initialize with.
--   `**kwargs` - Additional configuration options.
-
-#### receive
-
-```python
-async def receive() -> AsyncGenerator[BidiOutputEvent, None]
-```
-
-Defined in: [src/strands/bidi/models/google.py:285](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L285)
-
-Receive Gemini Live API events and convert to provider-agnostic format.
-
-#### send
-
-```python
-async def send(content: BidiMessage | BidiContentDelta) -> None
-```
-
-Defined in: [src/strands/bidi/models/google.py:538](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L538)
-
-Unified send method for all content types. Sends the given inputs to the Gemini Live API.
-
-Dispatches to appropriate internal handler based on content type.
-
-**Arguments**:
-
--   `content` - A complete BidiMessage or an individual AudioDelta.
-
-**Raises**:
-
--   `ValueError` - If content type not supported.
-
-#### stop
-
-```python
-async def stop() -> None
-```
-
-Defined in: [src/strands/bidi/models/google.py:635](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L635)
-
-Close Gemini Live API connection.
-
-#### restart
-
-```python
-async def restart(system_prompt: str | None = None,
-                  tools: list[ToolSpec] | None = None,
-                  messages: Messages | None = None,
-                  **restart_kwargs: Any) -> None
-```
-
-Defined in: [src/strands/bidi/models/google.py:656](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/google.py#L656)
-
-Restart by closing the connection and resuming the same session via its handle.
-
-Resumes the Gemini session using the last resumption handle so server-side context carries across the swap without replaying history. The handle is supplied by the reactive (GoAway) path via `restart_kwargs` or read from the tracked handle on the proactive path. When no handle is available yet, falls back to a fresh connection with history replay.
-
-**Arguments**:
-
--   `system_prompt` - System instructions for the resumed connection.
--   `tools` - Tool specifications for the resumed connection.
--   `messages` - Conversation history, replayed only when resuming without a handle.
--   `**restart_kwargs` - Provider restart options; `live_session_handle` resumes the session.
 
 Bidirectional streaming model interface: start a persistent connection, send and receive concurrently, then stop.
 
@@ -1156,3 +1009,150 @@ def get_audio_config() -> AudioConfig
 Defined in: [src/strands/bidi/models/model.py:177](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/model.py#L177)
 
 Get the resolved audio configuration.
+
+Configuration types and helpers for bidirectional model providers.
+
+## AudioStreamConfig
+
+```python
+class AudioStreamConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:13](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L13)
+
+Resolved format of an audio stream.
+
+**Attributes**:
+
+-   `sample_rate` - Sample rate in Hz.
+-   `channels` - Number of audio channels.
+-   `format` - Audio encoding.
+
+## AudioConfig
+
+```python
+class AudioConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L27)
+
+Resolved input and output formats consumed by audio I/O.
+
+Pass provider-specific audio options to the model constructor and use `get_audio_config()` to obtain the resulting stream formats.
+
+**Attributes**:
+
+-   `input` - Audio format configured for model input.
+-   `output` - Audio format produced by the model.
+
+## BedrockNovaSonicAudioStreamConfig
+
+```python
+class BedrockNovaSonicAudioStreamConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L42)
+
+Nova Sonic stream options. Audio uses mono PCM.
+
+**Attributes**:
+
+-   `sample_rate` - Sample rate in Hz.
+
+## BedrockNovaSonicAudioConfig
+
+```python
+class BedrockNovaSonicAudioConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L52)
+
+Nova Sonic input and output audio options.
+
+Omitted streams use a sample rate of 16000 Hz.
+
+**Attributes**:
+
+-   `input` - Input stream options.
+-   `output` - Output stream options.
+
+## GoogleGeminiLiveAudioStreamConfig
+
+```python
+class GoogleGeminiLiveAudioStreamConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L66)
+
+Gemini Live input stream options. Audio uses mono PCM.
+
+**Attributes**:
+
+-   `sample_rate` - Input sample rate in Hz.
+
+## GoogleGeminiLiveAudioConfig
+
+```python
+class GoogleGeminiLiveAudioConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:76](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L76)
+
+Gemini Live audio options. Output is mono PCM at 24000 Hz.
+
+Omitting the input stream uses a sample rate of 16000 Hz.
+
+**Attributes**:
+
+-   `input` - Input stream options.
+
+## ConnectionConfig
+
+```python
+class ConnectionConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:88](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L88)
+
+Declared restart timing for a bidirectional model.
+
+Providers declare this so the agent loop can restart the connection proactively, before the provider terminates the connection on its own limit. A provider that declares nothing (empty config) keeps reactive-only behavior: no proactive timer, restart only after the provider reports a timeout.
+
+All fields are optional. The proactive timer arms only when `restart_after_s` is positive and automatic restarts are enabled.
+
+**Attributes**:
+
+-   `restart_after_s` - Seconds after a connection is established at which to proactively restart. Set it at least ~10s below the provider’s own connection limit: the restart may wait briefly for the current turn to finish (aligning the swap to a turn boundary), and that wait plus the swap must complete before the provider’s limit.
+-   `auto_restart` - Whether the loop restarts the connection automatically (default True).
+
+## ModelConfig
+
+```python
+class ModelConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:111](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L111)
+
+Configuration shared by bidirectional model providers.
+
+**Attributes**:
+
+-   `model_id` - Provider model identifier.
+-   `params` - Provider-specific keyword arguments passed to the model request or session.
+-   `connection` - Restart timing overrides.
+
+## ModelUpdateConfig
+
+```python
+class ModelUpdateConfig(TypedDict)
+```
+
+Defined in: [src/strands/bidi/models/configs.py:125](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/models/configs.py#L125)
+
+Partial configuration update shared by bidirectional model providers.
+
+**Attributes**:
+
+-   `model_id` - Provider model identifier.
+-   `params` - Provider-specific keyword arguments passed to the model request or session.
+-   `connection` - Restart timing overrides.

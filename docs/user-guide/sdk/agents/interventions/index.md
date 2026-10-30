@@ -333,7 +333,7 @@ The `on_error``onError` property controls what happens when a handler throws an 
 | Value | Behavior |
 | --- | --- |
 | `'throw'` | Rethrow the error (default). The invocation fails. |
-| `'proceed'` | Log the error and continue as if `Proceed()` was returned. |
+| `'proceed'` | Skip the handler and continue as if `Proceed()` was returned (fail-open). |
 | `'deny'` | Log the error and treat it as a `Deny` (fail-closed). |
 
 (( tab "Python" ))
@@ -431,7 +431,7 @@ class CriticalValidator extends InterventionHandler {
 ```
 (( /tab "TypeScript" ))
 
-Use `'deny'` for security-critical handlers where a failure should block execution. Use `'proceed'` for non-critical handlers like logging where availability is more important than enforcement.
+Use `'deny'` for security-critical handlers where a failure should block execution. Use `'proceed'` only for non-critical handlers like logging where availability is more important than enforcement. Never use `'proceed'` on an authorization or other security handler: if it throws, the action it guards runs unchecked.
 
 ## Confirm Action
 

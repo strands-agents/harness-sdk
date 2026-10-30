@@ -81,7 +81,7 @@ Runs this call as a nested call in the request a hook event’s or [ToolContext.
 limits?: InvokeLimits;
 ```
 
-Defined in: [src/types/agent.ts:173](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L173)
+Defined in: [src/types/agent.ts:174](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L174)
 
 Limits for the whole request this `invoke()` / `stream()` call starts. They apply to this agent’s loop and to every nested call: agents passed as tools, and any Graph or Swarm you pass the request’s `invocationContext` to. A Graph or Swarm can also start a limited request itself through MultiAgentInvokeOptions.limits. An agent run by a hand-written tool joins only when the tool forwards [ToolContext.invocationContext](/docs/api/typescript/ToolContext/index.md#invocationcontext) as [InvokeOptions.invocationContext](#invocationcontext); otherwise it runs standalone under its own limits. A nested call can also set its own `limits`: it stops at whichever limit is reached first, its own or the request’s.
 
@@ -89,4 +89,4 @@ Auxiliary calls (summarization, routing, memory extraction, steering, HITL, goal
 
 Limits are checked before each turn, so tools requested by the previous turn finish first and `agent.messages` stays reinvokable. Each limit, when set, must be a positive finite number; omit a field (or `limits` itself) for no limit on that dimension.
 
-Priority when several are reached at once (highest first): `turns`, `totalTokens`, `outputTokens`, with `stopReason` `'limitTurns'`, `'limitTotalTokens'`, or `'limitOutputTokens'`.
+Priority when several are reached at once (highest first): `turns`, `totalTokens`, `outputTokens`, `structuredOutputAttempts`, with `stopReason` `'limitTurns'`, `'limitTotalTokens'`, `'limitOutputTokens'`, or `'limitStructuredOutputAttempts'`.

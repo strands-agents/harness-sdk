@@ -73,14 +73,14 @@ Bringing in tools that already exist? Reach for [vended tools](/docs/user-guide/
 
 - [Connect your agent to MCP tools](/docs/user-guide/sdk/tools/mcp-tools/index.md) (2 shared tags)
 - [MCP Transports](/docs/user-guide/sdk/tools/mcp-transports/index.md) (2 shared tags)
+- [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) (1 shared tag)
 - [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) (1 shared tag)
+- [Bash / shell](/docs/user-guide/sdk/tools/vended-tools/shell/index.md) (1 shared tag)
 - [Community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md) (1 shared tag)
 - [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) (1 shared tag)
-- [Tool result format](/docs/user-guide/sdk/tools/tool-results/index.md) (1 shared tag)
-- [Vended Tools](/docs/user-guide/sdk/tools/vended-tools/index.md) (1 shared tag)
-- [OpenAI Responses API](/docs/user-guide/sdk/model-providers/openai-responses/index.md) (1 shared tag)
-- [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
-- [Agent Configuration](/docs/user-guide/sdk/experimental/agent-config/index.md) (1 shared tag)
+- [Edit](/docs/user-guide/sdk/tools/vended-tools/edit/index.md) (1 shared tag)
+- [File editor](/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md) (1 shared tag)
+- [Graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) (1 shared tag)
 
 
 ## Implementation

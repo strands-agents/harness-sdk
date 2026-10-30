@@ -85,7 +85,7 @@ Initialize the Agent with the specified configuration.
     
     -   String tool names (e.g., “retrieve”)
     -   File paths (e.g., “/path/to/tool.py”)
-    -   Imported Python modules (e.g., from strands\_tools import current\_time)
+    -   Imported Python modules (e.g., import my\_tools)
     -   Dictionaries with name/path keys (e.g., {“name”: “tool\_name”, “path”: “/path/to/tool.py”})
     -   ToolProvider instances for managed tool collections
     -   Functions decorated with `@strands.tool` decorator
@@ -369,8 +369,8 @@ Tool caller through which user can invoke tool as a function.
 **Example**:
 
 ```plaintext
-agent = Agent(tools=[calculator])
-agent.tool.calculator(...)
+agent = Agent(tools=[square_root])
+agent.tool.square_root(number=1764)
 ```
 
 #### tool\_names
@@ -510,7 +510,7 @@ This method implements the conversational interface with multiple input patterns
 -   `structured_output_model` - Pydantic model type(s) for structured output (overrides agent default).
 -   `structured_output_prompt` - Custom prompt for forcing structured output (overrides agent default).
 -   `idempotency_token` - Dedup token for THROW mode (ignored in UNSAFE\_REENTRANT). If a matching token is already inflight, this call blocks until the original finishes, then gets its final result — only the result, not the streamed events, though `callback_handler` still fires once with it. Matched by `==` (any equatable object; need not be hashable). Raises `IdempotencyAbortedError` if the original is aborted before producing a result.
--   `limits` - Limits for the whole request this call starts (turns / output\_tokens / total\_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached, the loop stops at the next turn boundary with a corresponding `stop_reason` (e.g. `"limit_turns"`); no exception is raised. Token limits are soft — a single oversized model response can overshoot them, since checks run at turn boundaries.
+-   `limits` - Limits for the whole request this call starts (turns / output\_tokens / total\_tokens / structured\_output\_attempts). See :class:`~strands.types.agent.Limits`. When a limit is reached, the loop stops at the next turn boundary with a corresponding `stop_reason` (e.g. `"limit_turns"`); no exception is raised. Token limits are soft — a single oversized model response can overshoot them, since checks run at turn boundaries.
 -   `cancel_signal` - Caller-owned event that cancels this invocation. Use it when cancellation is driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The agent observes both this event and `cancel()`, so either cancels independently, and it never sets or clears the caller’s event. An event that is already set cancels the invocation at its first checkpoint; that checkpoint sits inside model streaming, so the user turn is still recorded and one model request may be issued, then aborted. Clear the event before reusing it for another invocation. On cancellation the result carries `stop_reason="cancelled"`. A duplicate call waiting on an `idempotency_token` does not observe this event; only the primary invocation does.
 -   `invocation_context` - Runs this call as a nested call in the request a hook event’s or `tool_context.invocation_context` handle belongs to, sharing its limits and usage even after that request returned; `limits` set alongside it only add stricter limits.
 -   `**kwargs` - Additional parameters to pass through the event loop.\[Deprecating\]
@@ -547,7 +547,7 @@ async def invoke_async(prompt: AgentInput = None,
                        **kwargs: Any) -> AgentResult
 ```
 
-Defined in: [src/strands/agent/agent.py:1021](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1021)
+Defined in: [src/strands/agent/agent.py:1022](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1022)
 
 Process a natural language prompt through the agent’s event loop.
 
@@ -569,7 +569,7 @@ This method implements the conversational interface with multiple input patterns
 -   `structured_output_model` - Pydantic model type(s) for structured output (overrides agent default).
 -   `structured_output_prompt` - Custom prompt for forcing structured output (overrides agent default).
 -   `idempotency_token` - Dedup token for THROW mode (ignored in UNSAFE\_REENTRANT). If a matching token is already inflight, this call blocks until the original finishes, then gets its final result — only the result, not the streamed events, though `callback_handler` still fires once with it. Matched by `==` (any equatable object; need not be hashable). Raises `IdempotencyAbortedError` if the original is aborted before producing a result.
--   `limits` - Limits for the whole request this call starts (turns / output\_tokens / total\_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached, the loop stops at the next turn boundary with a corresponding `stop_reason` (e.g. `"limit_turns"`); no exception is raised. Token limits are soft — a single oversized model response can overshoot them, since checks run at turn boundaries.
+-   `limits` - Limits for the whole request this call starts (turns / output\_tokens / total\_tokens / structured\_output\_attempts). See :class:`~strands.types.agent.Limits`. When a limit is reached, the loop stops at the next turn boundary with a corresponding `stop_reason` (e.g. `"limit_turns"`); no exception is raised. Token limits are soft — a single oversized model response can overshoot them, since checks run at turn boundaries.
 -   `cancel_signal` - Caller-owned event that cancels this invocation. Use it when cancellation is driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The agent observes both this event and `cancel()`, so either cancels independently, and it never sets or clears the caller’s event. An event that is already set cancels the invocation at its first checkpoint; that checkpoint sits inside model streaming, so the user turn is still recorded and one model request may be issued, then aborted. Clear the event before reusing it for another invocation. On cancellation the result carries `stop_reason="cancelled"`. A duplicate call waiting on an `idempotency_token` does not observe this event; only the primary invocation does.
 -   `invocation_context` - Runs this call as a nested call in the request a hook event’s or `tool_context.invocation_context` handle belongs to, sharing its limits and usage even after that request returned; `limits` set alongside it only add stricter limits.
 -   `**kwargs` - Additional parameters to pass through the event loop.\[Deprecating\]
@@ -596,7 +596,7 @@ This method implements the conversational interface with multiple input patterns
 def structured_output(output_model: type[T], prompt: AgentInput = None) -> T
 ```
 
-Defined in: [src/strands/agent/agent.py:1109](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1109)
+Defined in: [src/strands/agent/agent.py:1111](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1111)
 
 This method allows you to get structured output from the agent.
 
@@ -624,7 +624,7 @@ async def structured_output_async(output_model: type[T],
                                   prompt: AgentInput = None) -> T
 ```
 
-Defined in: [src/strands/agent/agent.py:1140](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1140)
+Defined in: [src/strands/agent/agent.py:1142](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1142)
 
 This method allows you to get structured output from the agent.
 
@@ -652,7 +652,7 @@ def as_tool(*,
             delegate: bool = False) -> AgentTool
 ```
 
-Defined in: [src/strands/agent/agent.py:1211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1211)
+Defined in: [src/strands/agent/agent.py:1213](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1213)
 
 Convert this agent into a tool for use by another agent.
 
@@ -686,7 +686,7 @@ orchestrator("What is my balance?")
 def cleanup() -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1260](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1260)
+Defined in: [src/strands/agent/agent.py:1262](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1262)
 
 Clean up resources used by the agent.
 
@@ -703,7 +703,7 @@ def add_hook(callback: HookCallback[TEvent],
              order: float = HookOrder.DEFAULT) -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1272](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1272)
+Defined in: [src/strands/agent/agent.py:1274](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1274)
 
 Register a callback function for a specific event type.
 
@@ -760,7 +760,7 @@ Docs: [https://strandsagents.com/docs/user-guide/concepts/agents/hooks/](https:/
 def add_middleware(stage_or_phase: Any, handler: Any) -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1356](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1356)
+Defined in: [src/strands/agent/agent.py:1358](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1358)
 
 Register a middleware handler for a stage or one of its phases.
 
@@ -798,7 +798,7 @@ Docs: [https://strandsagents.com/docs/user-guide/sdk/agents/middleware/](https:/
 def __del__() -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:1396](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1396)
+Defined in: [src/strands/agent/agent.py:1398](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1398)
 
 Clean up resources when agent is garbage collected.
 
@@ -817,7 +817,7 @@ async def stream_async(prompt: AgentInput = None,
                        **kwargs: Any) -> AsyncIterator[Any]
 ```
 
-Defined in: [src/strands/agent/agent.py:1436](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1436)
+Defined in: [src/strands/agent/agent.py:1438](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L1438)
 
 Process a natural language prompt and yield events as an async iterator.
 
@@ -839,7 +839,7 @@ This method provides an asynchronous interface for streaming agent events with m
 -   `structured_output_model` - Pydantic model type(s) for structured output (overrides agent default).
 -   `structured_output_prompt` - Custom prompt for forcing structured output (overrides agent default).
 -   `idempotency_token` - Dedup token for THROW mode (ignored in UNSAFE\_REENTRANT). If a matching token is already inflight, this call blocks until the original finishes, then gets its final result — only the result, not the streamed events, though `callback_handler` still fires once with it. Matched by `==` (any equatable object; need not be hashable). Raises `IdempotencyAbortedError` if the original is aborted before producing a result.
--   `limits` - Limits for the whole request this call starts (turns / output\_tokens / total\_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached, the loop stops at the next turn boundary with a corresponding `stop_reason` (e.g. `"limit_turns"`); no exception is raised. Token limits are soft — a single oversized model response can overshoot them, since checks run at turn boundaries.
+-   `limits` - Limits for the whole request this call starts (turns / output\_tokens / total\_tokens / structured\_output\_attempts). See :class:`~strands.types.agent.Limits`. When a limit is reached, the loop stops at the next turn boundary with a corresponding `stop_reason` (e.g. `"limit_turns"`); no exception is raised. Token limits are soft — a single oversized model response can overshoot them, since checks run at turn boundaries.
 -   `cancel_signal` - Caller-owned event that cancels this invocation. Use it when cancellation is driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The agent observes both this event and `cancel()`, so either cancels independently, and it never sets or clears the caller’s event. An event that is already set cancels the invocation at its first checkpoint; that checkpoint sits inside model streaming, so the user turn is still recorded and one model request may be issued, then aborted. Clear the event before reusing it for another invocation. On cancellation the result carries `stop_reason="cancelled"`. A duplicate call waiting on an `idempotency_token` does not observe this event; only the primary invocation does.
 -   `invocation_context` - Runs this call as a nested call in the request a hook event’s or `tool_context.invocation_context` handle belongs to, sharing its limits and usage even after that request returned; `limits` set alongside it only add stricter limits.
 -   `**kwargs` - Additional parameters to pass to the event loop.\[Deprecating\]
@@ -878,7 +878,7 @@ def take_snapshot(*,
                   app_data: dict[str, Any] | None = None) -> Snapshot
 ```
 
-Defined in: [src/strands/agent/agent.py:2230](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2230)
+Defined in: [src/strands/agent/agent.py:2233](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2233)
 
 Capture current agent state as an in-memory snapshot.
 
@@ -903,7 +903,7 @@ A Snapshot containing the captured agent state.
 def load_snapshot(snapshot: Snapshot) -> None
 ```
 
-Defined in: [src/strands/agent/agent.py:2278](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2278)
+Defined in: [src/strands/agent/agent.py:2281](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py#L2281)
 
 Restore agent state from a previously captured snapshot.
 

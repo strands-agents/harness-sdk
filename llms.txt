@@ -135,7 +135,25 @@
     - [mcp-transports](https://strandsagents.com/docs/user-guide/sdk/tools/mcp-transports/index.md): How a Strands agent reaches an MCP server: stdio for local processes, Streamable HTTP and SSE for remote servers, with OAuth and AWS IAM authentication.
     - [executors](https://strandsagents.com/docs/user-guide/sdk/tools/executors/index.md): Control whether Strands agents run tool calls concurrently or sequentially. Covers tool executors, event ordering, cancellation, and custom executors.
     - [community-tools-package](https://strandsagents.com/docs/user-guide/sdk/tools/community-tools-package/index.md): Understand the relationship between community tools and SDK-vended tools.
-    - [vended-tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/index.md): Pre-built tools included in the SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
+    - Vended Tools
+      - [Overview](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/index.md): Pre-built tools included in the SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
+      - [edit](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/edit/index.md): Use the edit vended tool to let a Strands agent make surgical, in-place changes to a text file by replacing an exact, unique string with the new content.
+      - [file-editor](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md): Use the file editor vended tool to let a Strands agent view, create, and make targeted edits to files on disk, for coding agents and config management work.
+      - [read](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/read/index.md): Use the read vended tool to let a Strands agent read a file as numbered text lines, with paging for large files, or as an image or document media block.
+      - [write](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/write/index.md): Use the write vended tool to let a Strands agent create a new text file or overwrite an existing one with the full provided content in a single tool call.
+      - [http-request](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/http-request/index.md): Use the HTTP request vended tool to let a Strands agent call external APIs and fetch web content, with any HTTP method, custom headers, and request bodies.
+      - [notebook](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/notebook/index.md): Give a Strands agent persistent notebooks to plan multi-step tasks and track progress. Notebook state lives in agent state and persists with session management.
+      - [shell](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/shell/index.md): Let a Strands agent run shell commands: TypeScript's bash keeps a persistent host session, while shell runs each stateless command through the agent's sandbox.
+      - [mcp-router](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/mcp-router/index.md): Let a Strands agent connect to MCP servers at runtime, list and call their tools, and disconnect, limited to a developer-configured allowlist of servers.
+      - [sleep](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/sleep/index.md): Pause a Strands agent for a bounded number of seconds. Cancelling the invocation aborts the sleep, and the developer, not the model, sets the maximum duration.
+      - [handoff-to-user](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/index.md): Let a Strands agent pause its loop and hand a message to the user for confirmation or input, then resume with the reply via the interrupt and resume mechanism.
+      - [stop](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/stop/index.md): Let the model end a Strands agent loop deliberately with an optional final message. A cooperative stop: tools requested in the same turn still run to the end.
+      - [web-fetch](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/web-fetch/index.md): Fetch an HTTP(S) URL and return its content to a Strands agent, either as clean markdown or through an analyst agent that answers a prompt about the page.
+      - [a2a-client](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md): Let a Strands agent discover remote A2A protocol agents and send them messages, limited to an endpoint allowlist with optional per-endpoint authentication.
+      - [python-repl](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/python-repl/index.md): Run model-generated Python through a Strands agent's sandbox. Each call starts a fresh interpreter, while files written to the sandbox persist across calls.
+      - [subagent](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/subagent/index.md): Delegate a self-contained task to a child agent that runs in its own context and returns a final report, keeping intermediate work out of the parent's context.
+      - [swarm](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/swarm/index.md): Let a Strands agent spin up a team of specialized sub-agents that collaborate through handoffs, with axis policies, presets, and limits you configure.
+      - [graph](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/graph/index.md): Let a Strands agent design and run a team of sub-agents as a directed acyclic graph. Root nodes start in parallel, and each node receives its upstream outputs.
   - Memory
     - [test-memory-store](https://strandsagents.com/docs/user-guide/sdk/memory/test-memory-store/index.md): A zero-infrastructure memory store backed by a local JSON file: no cloud account, lexical recall, and memories that survive across sessions.
     - [file-memory-store](https://strandsagents.com/docs/user-guide/sdk/memory/file-memory-store/index.md): Persist agent memories as markdown files on any Storage backend (local, S3, or custom): one file per topic, pluggable search, and topic-aware extraction.
@@ -368,6 +386,9 @@
 - [strands.bidi.io](https://strandsagents.com/docs/api/python/strands.bidi.io/index.md)
 - [strands.bidi.models](https://strandsagents.com/docs/api/python/strands.bidi.models/index.md)
 - [strands.bidi.types](https://strandsagents.com/docs/api/python/strands.bidi.types/index.md)
+- [strands.decisions.decision_model](https://strandsagents.com/docs/api/python/strands.decisions.decision_model/index.md)
+- [strands.decisions.llm_decision_model](https://strandsagents.com/docs/api/python/strands.decisions.llm_decision_model/index.md)
+- [strands.decisions.types](https://strandsagents.com/docs/api/python/strands.decisions.types/index.md)
 - [strands.event_loop.event_loop](https://strandsagents.com/docs/api/python/strands.event_loop.event_loop/index.md)
 - [strands.event_loop.streaming](https://strandsagents.com/docs/api/python/strands.event_loop.streaming/index.md)
 - [strands.experimental.agent_config](https://strandsagents.com/docs/api/python/strands.experimental.agent_config/index.md)
@@ -495,6 +516,7 @@
 - [strands.vended_plugins.steering.handlers.llm.llm_handler](https://strandsagents.com/docs/api/python/strands.vended_plugins.steering.handlers.llm.llm_handler/index.md)
 - [strands.vended_plugins.steering.handlers.llm.mappers](https://strandsagents.com/docs/api/python/strands.vended_plugins.steering.handlers.llm.mappers/index.md)
 - [strands.vended_tools.a2a_client.a2a_client](https://strandsagents.com/docs/api/python/strands.vended_tools.a2a_client.a2a_client/index.md)
+- [strands.vended_tools.edit.edit](https://strandsagents.com/docs/api/python/strands.vended_tools.edit.edit/index.md)
 - [strands.vended_tools.file_editor.file_editor](https://strandsagents.com/docs/api/python/strands.vended_tools.file_editor.file_editor/index.md)
 - [strands.vended_tools.graph.graph](https://strandsagents.com/docs/api/python/strands.vended_tools.graph.graph/index.md)
 - [strands.vended_tools.handoff_to_user.handoff_to_user](https://strandsagents.com/docs/api/python/strands.vended_tools.handoff_to_user.handoff_to_user/index.md)
@@ -507,6 +529,7 @@
 - [strands.vended_tools.notebook.types](https://strandsagents.com/docs/api/python/strands.vended_tools.notebook.types/index.md)
 - [strands.vended_tools.python_repl.python_repl](https://strandsagents.com/docs/api/python/strands.vended_tools.python_repl.python_repl/index.md)
 - [strands.vended_tools.python_repl.types](https://strandsagents.com/docs/api/python/strands.vended_tools.python_repl.types/index.md)
+- [strands.vended_tools.read.read](https://strandsagents.com/docs/api/python/strands.vended_tools.read.read/index.md)
 - [strands.vended_tools.shell.shell](https://strandsagents.com/docs/api/python/strands.vended_tools.shell.shell/index.md)
 - [strands.vended_tools.shell.types](https://strandsagents.com/docs/api/python/strands.vended_tools.shell.types/index.md)
 - [strands.vended_tools.sleep.sleep](https://strandsagents.com/docs/api/python/strands.vended_tools.sleep.sleep/index.md)
@@ -517,6 +540,7 @@
 - [strands.vended_tools.swarm.swarm](https://strandsagents.com/docs/api/python/strands.vended_tools.swarm.swarm/index.md)
 - [strands.vended_tools.web_fetch.types](https://strandsagents.com/docs/api/python/strands.vended_tools.web_fetch.types/index.md)
 - [strands.vended_tools.web_fetch.web_fetch](https://strandsagents.com/docs/api/python/strands.vended_tools.web_fetch.web_fetch/index.md)
+- [strands.vended_tools.write.write](https://strandsagents.com/docs/api/python/strands.vended_tools.write.write/index.md)
 
 ## Api TypeScript
 
@@ -559,6 +583,7 @@
 - [CacheConfig](https://strandsagents.com/docs/api/typescript/CacheConfig/index.md)
 - [CachePointBlock](https://strandsagents.com/docs/api/typescript/CachePointBlock/index.md)
 - [CachePointBlockData](https://strandsagents.com/docs/api/typescript/CachePointBlockData/index.md)
+- [CancelOptions](https://strandsagents.com/docs/api/typescript/CancelOptions/index.md)
 - [CandidateInput](https://strandsagents.com/docs/api/typescript/CandidateInput/index.md)
 - [Citation](https://strandsagents.com/docs/api/typescript/Citation/index.md)
 - [CitationGeneratedContent](https://strandsagents.com/docs/api/typescript/CitationGeneratedContent/index.md)
@@ -752,6 +777,7 @@
 - [MiddlewareOutputHandler](https://strandsagents.com/docs/api/typescript/MiddlewareOutputHandler/index.md)
 - [MiddlewareStage](https://strandsagents.com/docs/api/typescript/MiddlewareStage/index.md)
 - [Model](https://strandsagents.com/docs/api/typescript/Model/index.md)
+- [ModelCapabilities](https://strandsagents.com/docs/api/typescript/ModelCapabilities/index.md)
 - [ModelContentBlockDeltaEvent](https://strandsagents.com/docs/api/typescript/ModelContentBlockDeltaEvent/index.md)
 - [ModelContentBlockDeltaEventData](https://strandsagents.com/docs/api/typescript/ModelContentBlockDeltaEventData/index.md)
 - [ModelContentBlockStartEvent](https://strandsagents.com/docs/api/typescript/ModelContentBlockStartEvent/index.md)
@@ -760,6 +786,8 @@
 - [ModelError](https://strandsagents.com/docs/api/typescript/ModelError/index.md)
 - [ModelExtractor](https://strandsagents.com/docs/api/typescript/ModelExtractor/index.md)
 - [ModelExtractorOptions](https://strandsagents.com/docs/api/typescript/ModelExtractorOptions/index.md)
+- [ModelInfo](https://strandsagents.com/docs/api/typescript/ModelInfo/index.md)
+- [ModelLimits](https://strandsagents.com/docs/api/typescript/ModelLimits/index.md)
 - [ModelMessageEvent](https://strandsagents.com/docs/api/typescript/ModelMessageEvent/index.md)
 - [ModelMessageStartEvent](https://strandsagents.com/docs/api/typescript/ModelMessageStartEvent/index.md)
 - [ModelMessageStartEventData](https://strandsagents.com/docs/api/typescript/ModelMessageStartEventData/index.md)
@@ -787,6 +815,7 @@
 - [Plugin](https://strandsagents.com/docs/api/typescript/Plugin/index.md)
 - [PosixShellSandbox](https://strandsagents.com/docs/api/typescript/PosixShellSandbox/index.md)
 - [ProactiveCompressionConfig](https://strandsagents.com/docs/api/typescript/ProactiveCompressionConfig/index.md)
+- [PromptCaching](https://strandsagents.com/docs/api/typescript/PromptCaching/index.md)
 - [Question](https://strandsagents.com/docs/api/typescript/Question/index.md)
 - [ReasoningBlock](https://strandsagents.com/docs/api/typescript/ReasoningBlock/index.md)
 - [ReasoningBlockData](https://strandsagents.com/docs/api/typescript/ReasoningBlockData/index.md)

@@ -13,7 +13,7 @@ Load tools follows strands supported input string formats.
 This function can load a tool based on a string in the following ways:
 
 1.  Local file path to a module based tool: `./path/to/module/tool.py`
-2.  Module import path 2.1. Path to a module based tool: `strands_tools.file_read` 2.2. Path to a module with multiple AgentTool instances (@tool decorated): `tests.fixtures.say_tool` 2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
+2.  Module import path 2.1. Path to a module based tool: `my_package.my_tool` 2.2. Path to a module with multiple AgentTool instances (@tool decorated): `tests.fixtures.say_tool` 2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
 
 #### load\_tools\_from\_file\_path
 

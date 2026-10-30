@@ -188,7 +188,7 @@ Example:
 4. Validation passes, and the invocation returns the object
 ```
 
-Put rules like this in the schema, not in your prompt. The model sees the exact error message, so write it as an instruction the model can act on.
+Put rules like this in the schema, not in your prompt. The model sees the exact error message, so write it as an instruction the model can act on. The model can retry as often as it needs; to cap the retries, see [Limit attempts](#limit-attempts).
 
 ## Forced tool call
 
@@ -226,7 +226,72 @@ name='Dana Ruiz' email='dana@example.com'
 Strands drops the text reply and retries with only the tool choice changed. No message is added, so there’s no prompt to configure.
 (( /tab "TypeScript" ))
 
-If the model still doesn’t call the tool after the retry, the call raises `StructuredOutputException``StructuredOutputError` with the message `The model failed to invoke the structured output tool even after it was forced.` Catch it where your application can fall back. [Return structured output](/docs/user-guide/sdk/agents/structured-output/index.md#request-structured-output) shows an example.
+If the retry still doesn’t return valid structured output, the call raises `StructuredOutputException``StructuredOutputError`. Catch it where your application can fall back. [Return structured output](/docs/user-guide/sdk/agents/structured-output/index.md#request-structured-output) shows an example. To retry again instead of raising, set an attempt limit.
+
+## Limit attempts
+
+To cap how many times the model can fail to produce structured output, set
+
+`limits['structured_output_attempts']``limits.structuredOutputAttempts`
+
+on the call. Each model response that fails counts as one attempt: a structured output tool call that fails validation, or a forced retry that doesn’t return valid structured output. With a limit set, Strands retries a failed forced retry instead of raising. Calls to your other tools before the forced retry don’t count.
+
+In TypeScript, a forced retry that a content filter or guardrail stops also counts as a failed attempt and is retried within the limit. In Python, that retry ends the call with its own stop reason, such as `content_filtered``contentFiltered`.
+
+When the limit is reached, the call stops before the next model call. The result has the stop reason
+
+`limit_structured_output_attempts``limitStructuredOutputAttempts`
+
+and no structured output.
+
+(( tab "Python" ))
+```python
+from pydantic import BaseModel
+from strands import Agent
+
+
+class Contact(BaseModel):
+    name: str
+    email: str
+
+
+agent = Agent(callback_handler=None)
+result = agent(
+    "Find the contact details in this note: call Dana back tomorrow.",
+    structured_output_model=Contact,
+    limits={"structured_output_attempts": 3},
+)
+if result.stop_reason == "limit_structured_output_attempts":
+    print("No valid contact after 3 attempts")
+else:
+    print(result.structured_output)
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { z } from 'zod'
+
+const ContactSchema = z.object({
+  name: z.string(),
+  email: z.string(),
+})
+
+const agent = new Agent({ printer: false })
+const result = await agent.invoke(
+  'Find the contact details in this note: call Dana back tomorrow.',
+  { structuredOutputSchema: ContactSchema, limits: { structuredOutputAttempts: 3 } }
+)
+if (result.stopReason === 'limitStructuredOutputAttempts') {
+  console.log('No valid contact after 3 attempts')
+} else {
+  console.log(result.structuredOutput)
+}
+```
+(( /tab "TypeScript" ))
+
+The limit covers the whole request, like the other [invocation limits](/docs/user-guide/sdk/agents/lifecycle-controls/index.md#cap-the-work-one-call-can-do). Agents that run as tools in the same request count toward it, and passing `result.invocation_context``result.invocationContext` to a later call continues it.
 
 ## Related pages
 

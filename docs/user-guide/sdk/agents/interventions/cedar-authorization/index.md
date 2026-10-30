@@ -702,7 +702,11 @@ The `on_error``onError` option controls what happens when your user-supplied cal
 
 -   `'throw'` (default): re-raises the exception to the caller
 -   `'deny'`: treats the callback failure as a denial (fail-closed)
--   `'proceed'`: allows the tool call despite the callback error (fail-open, use with caution)
+-   `'proceed'`: allows the tool call despite the callback error (fail-open)
+
+Fail-open on callback errors
+
+With `'proceed'`, any exception from `principal_resolver``principalResolver` or `context_enricher``contextEnricher` lets the tool call run without a Cedar authorization check. Don’t use it when your agent relies on Cedar to enforce access. To block the tool call instead of failing the invocation, use `'deny'`.
 
 ## Installation
 

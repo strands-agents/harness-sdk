@@ -81,6 +81,7 @@ Each model invocation ends with a stop reason that determines what happens next:
 -   **Limit turns** (`limit_turns``limitTurns`): The per-invocation turn budget was exhausted. See [Invocation Limits](#invocation-limits).
 -   **Limit total tokens** (`limit_total_tokens``limitTotalTokens`): The cumulative token budget was exhausted. See [Invocation Limits](#invocation-limits).
 -   **Limit output tokens** (`limit_output_tokens``limitOutputTokens`): The output token budget was exhausted. See [Invocation Limits](#invocation-limits).
+-   **Limit structured output attempts** (`limit_structured_output_attempts``limitStructuredOutputAttempts`): The model failed to produce structured output as many times as the limit allows. See [Limit attempts](/docs/user-guide/sdk/agents/structured-output-behavior/index.md#limit-attempts).
 -   **Max tokens** (`max_tokens``maxTokens`): The model’s response was truncated because it hit the token limit. This is unrecoverable within the current loop. The model cannot continue from a partial response, and the loop terminates with an error.
 -   **Stop sequence** (`stop_sequence``stopSequence`): The model encountered a configured stop sequence. Like end turn, this terminates the loop normally.
 -   **Content filtered** (`content_filtered``contentFiltered`): The response was blocked by safety mechanisms.
@@ -181,7 +182,7 @@ Cancellation differs from [interrupts](/docs/user-guide/sdk/interrupts/index.md)
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
-The agent checks for cancellation at four checkpoints:
+The agent checks for cancellation at five checkpoints:
 
 | Checkpoint | Behavior | Note |
 | --- | --- | --- |
@@ -189,6 +190,7 @@ The agent checks for cancellation at four checkpoints:
 | During model response streaming | Partial output is discarded | Usage metrics may be inaccurate since the stream is closed before the model sends its final metadata event |
 | Before tool execution | All pending tool calls are skipped with error results |  |
 | Between sequential tool executions | Remaining tool calls are skipped with error results |  |
+| After tool execution | The agent stops before the next model call | Sibling tools in the current batch finish before cancellation is observed; this is the checkpoint the `stop` vended tool uses via `cancel({ afterCurrentTools: true })` |
 
 The agent returns a result with `stopReason: 'cancelled'`. `cancel()` is idempotent: calling it multiple times is safe.
 
@@ -244,7 +246,7 @@ const myTool = tool({
 
 ### Invocation Limits
 
-To cap how much work an agent does in a single invocation, pass a `limits` object. You can bound turns (loop iterations), output tokens, or total tokens. All three are optional.
+To cap how much work an agent does in a single invocation, pass a `limits` object. You can bound turns (loop iterations), output tokens, total tokens, or [failed structured output attempts](/docs/user-guide/sdk/agents/structured-output-behavior/index.md#limit-attempts). Each is optional.
 
 Set a turn limit, a total-token limit, or both on any long-running or autonomous agent. No limit applies unless you pass one, so the agent keeps going until the model stops requesting tools, and every turn resends the conversation so far. Prompt caching makes that resend cheaper, but cached tokens still count toward the total-token limit.
 

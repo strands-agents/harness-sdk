@@ -1,4 +1,4 @@
-Defined in: [src/interrupt.ts:104](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L104)
+Defined in: [src/interrupt.ts:105](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L105)
 
 Error thrown when human input is required to continue agent execution. Caught by the agent loop to trigger an interrupt stop.
 
@@ -14,7 +14,7 @@ Error thrown when human input is required to continue agent execution. Caught by
 new InterruptError(interrupt): InterruptError;
 ```
 
-Defined in: [src/interrupt.ts:110](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L110)
+Defined in: [src/interrupt.ts:111](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L111)
 
 #### Parameters
 
@@ -38,6 +38,6 @@ Defined in: [src/interrupt.ts:110](https://github.com/strands-agents/harness-sdk
 readonly interrupts: Interrupt[];
 ```
 
-Defined in: [src/interrupt.ts:108](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L108)
+Defined in: [src/interrupt.ts:109](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L109)
 
 The interrupts that caused this error.

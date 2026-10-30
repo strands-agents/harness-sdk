@@ -702,7 +702,7 @@ Map your API’s failures onto the SDK’s exceptions so the agent loop can reac
 - [Building a Custom Sandbox](/docs/user-guide/sdk/sandbox/custom-sandbox/index.md) (1 shared tag)
 - [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md) (1 shared tag)
 - [Sandbox](/docs/user-guide/sdk/sandbox/index.md) (1 shared tag)
-- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (1 shared tag)
+- [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
 - [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) (1 shared tag)
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (1 shared tag)
 

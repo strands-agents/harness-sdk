@@ -127,7 +127,7 @@ Reasoning does not apply to a pre-built `Model` instance: configure reasoning on
 
 ## Note on web search and caching
 
-Two model-level features follow from the provider you pick. Native `web_search` works on OpenAI, Anthropic, Google, and GPT-5/GPT-6 models on bedrock-mantle; prompt caching is configured by Strands harness on Amazon Bedrock and Anthropic direct and is automatic elsewhere. Both are covered where you enable them: [web access](/docs/user-guide/harness/tools/web-access/index.md) and [manage context and caching](/docs/user-guide/harness/configure/context-and-caching/index.md).
+Two model-level features follow from the provider you pick. Native `web_search` works on OpenAI, Anthropic, Google, and GPT-5, GPT-6, and Daybreak models on bedrock-mantle; prompt caching is configured by Strands harness on Amazon Bedrock and Anthropic direct and is automatic elsewhere. Both are covered where you enable them: [web access](/docs/user-guide/harness/tools/web-access/index.md) and [manage context and caching](/docs/user-guide/harness/configure/context-and-caching/index.md).
 
 For the full option list, see the [configuration reference](/docs/user-guide/harness/reference/configuration/index.md).
 

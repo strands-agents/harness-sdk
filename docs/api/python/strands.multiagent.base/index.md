@@ -173,7 +173,7 @@ async def invoke_async(task: MultiAgentInput,
                        **kwargs: Any) -> MultiAgentResult
 ```
 
-Defined in: [src/strands/multiagent/base.py:282](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L282)
+Defined in: [src/strands/multiagent/base.py:288](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L288)
 
 Invoke asynchronously.
 
@@ -191,7 +191,7 @@ async def stream_async(task: MultiAgentInput,
                        **kwargs: Any) -> AsyncIterator[dict[str, Any]]
 ```
 
-Defined in: [src/strands/multiagent/base.py:295](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L295)
+Defined in: [src/strands/multiagent/base.py:301](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L301)
 
 Stream events during multi-agent execution.
 
@@ -219,7 +219,7 @@ def __call__(task: MultiAgentInput,
              **kwargs: Any) -> MultiAgentResult
 ```
 
-Defined in: [src/strands/multiagent/base.py:320](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L320)
+Defined in: [src/strands/multiagent/base.py:326](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L326)
 
 Invoke synchronously.
 
@@ -235,7 +235,7 @@ Invoke synchronously.
 def serialize_state() -> dict[str, Any]
 ```
 
-Defined in: [src/strands/multiagent/base.py:340](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L340)
+Defined in: [src/strands/multiagent/base.py:346](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L346)
 
 Return a JSON-serializable snapshot of the orchestrator state.
 
@@ -245,7 +245,7 @@ Return a JSON-serializable snapshot of the orchestrator state.
 def deserialize_state(payload: dict[str, Any]) -> None
 ```
 
-Defined in: [src/strands/multiagent/base.py:344](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L344)
+Defined in: [src/strands/multiagent/base.py:350](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L350)
 
 Restore orchestrator state from a session dict.
 
@@ -258,7 +258,7 @@ def add_hook(callback: HookCallback,
              order: float = HookOrder.DEFAULT) -> None
 ```
 
-Defined in: [src/strands/multiagent/base.py:348](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L348)
+Defined in: [src/strands/multiagent/base.py:354](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/base.py#L354)
 
 Register a hook callback with the orchestrator.
 

@@ -56,7 +56,7 @@ const agent = new Agent({ tools: [httpRequest] })
 
 ## web\_search
 
-`web_search` lets the agent look things up while it answers. It isn’t a separate tool: it turns on the web search built into the model provider. OpenAI, Anthropic, Google, and the GPT-5 and GPT-6 models on `bedrock-mantle` have one.
+`web_search` lets the agent look things up while it answers. It isn’t a separate tool: it turns on the web search built into the model provider. OpenAI, Anthropic, Google, and the GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` have one.
 
 For models that don’t provide web search, the harness logs a message and builds the agent without it. If you asked for it explicitly in `builtin_tools`, you get an error instead, so the request doesn’t silently do nothing.
 

@@ -1,1 +1,0 @@
-import{t as e}from"./clipboard.CjEnQ9SX.js";document.querySelectorAll(`[data-install]`).forEach(t=>{let n=t.querySelector(`[data-install-copy]`),r=t.querySelector(`[data-install-text]`);n&&r&&e(n,{label:t.querySelector(`[data-install-copy-label]`),getText:()=>r.textContent??``,track:{surface:`install`,detail:()=>(r.textContent??``).startsWith(`pip`)?`pip`:`npm`}})});

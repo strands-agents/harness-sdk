@@ -9,12 +9,12 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 ```typescript
 import { Agent } from '@strands-agents/sdk'
 import { bash } from '@strands-agents/sdk/vended-tools/bash'
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
+import { edit } from '@strands-agents/sdk/vended-tools/edit'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
 import { notebook, makeNotebook } from '@strands-agents/sdk/vended-tools/notebook'
 
 const agent = new Agent({
-  tools: [bash, fileEditor, httpRequest, notebook],
+  tools: [bash, edit, httpRequest, notebook],
 })
 ```
 
@@ -22,1082 +22,135 @@ const agent = new Agent({
 
 | Tool | Description | Supported in |
 | --- | --- | --- |
-| [File Editor](#file-editor) | View, create, and edit files | Python, TypeScript (Node.js) |
-| [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
-| [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
-| [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
-| [MCP Router](#mcp-router) | Connect to Model Context Protocol servers on a developer-set allowlist | Python, TypeScript (Node.js) |
-| [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
-| [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
-| [Stop](#stop) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
-| [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
-| [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
-| [Python REPL](#python-repl) | Execute Python code through the agent’s sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
-| [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
-| [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
-| [Graph](#graph) | Run a team of sub-agents as a directed acyclic graph designed by the model | Python |
+| [Edit](/docs/user-guide/sdk/tools/vended-tools/edit/index.md) | Make in-place changes to a text file | Python, TypeScript (Node.js) |
+| [File Editor](/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md) *(deprecated)* | View, create, and edit files | Python, TypeScript (Node.js) |
+| [Read](/docs/user-guide/sdk/tools/vended-tools/read/index.md) | Read a file as numbered text or a media block | Python, TypeScript (Node.js) |
+| [Write](/docs/user-guide/sdk/tools/vended-tools/write/index.md) | Create or overwrite a text file with the full provided content | Python, TypeScript (Node.js) |
+| [HTTP Request](/docs/user-guide/sdk/tools/vended-tools/http-request/index.md) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
+| [Notebook](/docs/user-guide/sdk/tools/vended-tools/notebook/index.md) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
+| [Bash](/docs/user-guide/sdk/tools/vended-tools/shell/index.md) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
+| [MCP Router](/docs/user-guide/sdk/tools/vended-tools/mcp-router/index.md) | Connect to Model Context Protocol servers on a developer-set allowlist | Python, TypeScript (Node.js) |
+| [Sleep](/docs/user-guide/sdk/tools/vended-tools/sleep/index.md) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
+| [Handoff to User](/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/index.md) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
+| [Stop](/docs/user-guide/sdk/tools/vended-tools/stop/index.md) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
+| [Web Fetch](/docs/user-guide/sdk/tools/vended-tools/web-fetch/index.md) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
+| [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
+| [Python REPL](/docs/user-guide/sdk/tools/vended-tools/python-repl/index.md) | Execute Python code through the agent’s sandbox | Python, TypeScript (Node.js, Unix/Linux/macOS) |
+| [Subagent](/docs/user-guide/sdk/tools/vended-tools/subagent/index.md) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
+| [Swarm](/docs/user-guide/sdk/tools/vended-tools/swarm/index.md) | Spin up a team of agents that collaborate via the swarm pattern | Python, TypeScript (Node.js, browsers) |
+| [Graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) | Run a team of sub-agents as a directed acyclic graph designed by the model | Python, TypeScript (Node.js, browsers) |
 
-### File editor
+## Multi-agent tools
 
-Lets your agent read and modify files on disk: useful for coding agents, config management, or any workflow where the agent inspects output and makes targeted edits.
+The [subagent](/docs/user-guide/sdk/tools/vended-tools/subagent/index.md), [swarm](/docs/user-guide/sdk/tools/vended-tools/swarm/index.md), and [graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) tools let the model configure child agents at runtime. They use axis policies to control how much freedom the model has over each parameter. Import them from `strands.multiagent``@strands-agents/sdk/multiagent`.
 
-Security Warning
+-   `Inherit()``new Inherit()`: the child inherits the parent’s value. Hidden from the model.
+-   `Fixed(value)``new Fixed(value)`: you pin the value. Hidden from the model.
+-   `Open()``new Open()`: the model writes a free-form string value.
+-   `Choice([...], multiple=True)``new Choice([...], true)`: the model picks from a set you define (one value, or several when `multiple` is set).
 
-This tool reads and writes files at arbitrary absolute paths with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](/docs/user-guide/sdk/sandbox/index.md) for production.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
-
-const agent = new Agent({
-  tools: [fileEditor],
-})
-
-// Create, view, and edit files
-await agent.invoke('Create a file /tmp/config.json with {"debug": false}')
-await agent.invoke('Replace "debug": false with "debug": true in /tmp/config.json')
-await agent.invoke('View lines 1-10 of /tmp/config.json')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import file_editor
-
-agent = Agent(tools=[file_editor])
-agent("Create a file at /tmp/hello.txt with the contents 'Hello, world!'")
-```
-(( /tab "Python" ))
-
-[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/file-editor/README.md)
-
----
-
-### HTTP request
-
-Lets your agent call external APIs and fetch web content. Supports all HTTP methods, custom headers, and request bodies. Default timeout is 30 seconds.
-
-*Supported in: Python; Node.js 22+, modern browsers (TypeScript).*
-
-(( tab "Python" ))
-The Python tool delegates all networking to an `httpx.AsyncClient`. Use the `make_http_request` factory to supply a pre-configured client with authentication, timeouts, redirects, proxies, or other transport-level configuration.
-(( /tab "Python" ))
-
-**Example:**
+Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`. When the model omits both `agent_type` and `instructions`, the child uses `default_preset``defaultPreset`, or the first preset if none is set.
 
 (( tab "TypeScript" ))
 ```typescript
 import { Agent } from '@strands-agents/sdk'
+import { Choice, Fixed, Inherit, Open, Preset } from '@strands-agents/sdk/multiagent'
+import { bash } from '@strands-agents/sdk/vended-tools/bash'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
-
-const agent = new Agent({
-  tools: [httpRequest],
-})
-
-// Make API requests
-await agent.invoke('Get data from https://api.example.com/users')
-await agent.invoke('Post {"name": "John"} to https://api.example.com/users')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import http_request
-
-agent = Agent(tools=[http_request])
-agent("Get data from https://api.example.com/data")
-```
-
-Custom configuration with a pre-configured client:
-
-```python
-import httpx
-from strands import Agent
-from strands.vended_tools import make_http_request
-
-client = httpx.AsyncClient(
-    headers={"Authorization": "Bearer token"},
-)
-tool = make_http_request(client=client)
-agent = Agent(tools=[tool])
-```
-(( /tab "Python" ))
-
-Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/http-request/README.md), [Python](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/http_request/README.md)
-
----
-
-### Notebook
-
-A scratchpad the agent can read and write across invocations. The most effective use is giving the agent a notebook at the start of a task and instructing it to plan its work there. It can break the task into steps, check things off as it goes, and always have a clear picture of what’s left. Notebook state is part of the agent’s state, so it persists automatically with [Session Management](/docs/user-guide/sdk/agents/session-management/index.md).
-
-*Supported in: Node.js, modern browsers (TypeScript); all platforms (Python).*
-
-**Example - Task Management:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
-
-const agent = new Agent({
-  tools: [notebook],
-  systemPrompt:
-    'Before starting any multi-step task, create a notebook with a checklist of steps. ' +
-    'Check off each step as you complete it.',
-})
-
-// The agent uses the notebook to plan and track its work
-await agent.invoke('Write a project plan for building a personal budget tracker app')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import notebook
-
-agent = Agent(tools=[notebook])
-agent('Create a notebook called "tasks" with "# Daily Tasks" and add "- [ ] Review code" to it')
-```
-(( /tab "Python" ))
-
-**Example - State Persistence:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent, SessionManager, FileStorage } from '@strands-agents/sdk'
-import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
-
-const session = new SessionManager({
-  sessionId: 'my-session',
-  storage: { snapshot: new FileStorage('./sessions') },
-})
-
-const agent = new Agent({ tools: [notebook], sessionManager: session })
-
-// Notebooks are automatically persisted as part of the session
-await agent.invoke('Create a notebook called "ideas" with "# Project Ideas"')
-await agent.invoke('Add "- Build a web scraper" to the ideas notebook')
-
-// ...
-
-// Later, a new agent with the same session restores notebooks automatically
-const restoredAgent = new Agent({ tools: [notebook], sessionManager: session })
-await restoredAgent.invoke('Read the ideas notebook')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import notebook
-
-agent = Agent(tools=[notebook])
-agent('Create a notebook called "tasks" with "# Daily Tasks" and add "- [ ] Review code" to it')
-
-# Read the notebook contents directly off agent state.
-notebooks = agent.state.get("notebooks") or {}
-print(notebooks.get("tasks"))
-```
-(( /tab "Python" ))
-
-**Example - Custom configuration:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { makeNotebook } from '@strands-agents/sdk/vended-tools/notebook'
-
-const notes = makeNotebook({
-  name: 'notes',
-  maxNotebookSizeBytes: 64 * 1024, // 64 KiB
-})
-const agent = new Agent({ tools: [notes] })
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import make_notebook
-
-notes = make_notebook(
-    name="notes",
-    max_notebook_size_bytes=64 * 1024,  # 64 KiB
-)
-agent = Agent(tools=[notes])
-```
-(( /tab "Python" ))
-
-📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/notebook/README.md)
-
----
-
-### Bash / shell
-
-Lets your agent run shell commands and act on the output. The two SDKs expose different tools here:
-
--   **TypeScript `bash`** spawns a persistent `bash` process on the host. Shell state (variables, working directory, exported functions) persists across invocations within the same session, so the agent can build up context incrementally. Sessions can be restarted to clear state.
--   **Python `shell`** (and TypeScript’s `makeShell`) routes each command through the agent’s [Sandbox](/docs/user-guide/sdk/sandbox/index.md) and is stateless: every call runs in a fresh shell, so variables and the working directory do not carry over. The sandbox decides the interpreter (`sh` locally and in Docker, the remote login shell over SSH), so use portable POSIX syntax.
-
-*Supported in: Node.js on Unix/Linux/macOS (TypeScript), all platforms (Python).*
-
-Security Warning
-
-These tools execute arbitrary shell commands. Without a [Sandbox](/docs/user-guide/sdk/sandbox/index.md), commands run with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](/docs/user-guide/sdk/sandbox/index.md) for production.
-
-**Example - File Operations:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { bash } from '@strands-agents/sdk/vended-tools/bash'
-
-const agent = new Agent({
-  tools: [bash],
-})
-
-// List files and create a new file
-await agent.invoke('List all files in the current directory')
-await agent.invoke('Create a new file called notes.txt with "Hello World"')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import shell
-
-agent = Agent(tools=[shell])
-agent("List all Python files in the current directory and count them")
-```
-(( /tab "Python" ))
-
-**Example - Session Persistence (TypeScript):**
-
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { bash } from '@strands-agents/sdk/vended-tools/bash'
-
-const agent = new Agent({
-  tools: [bash],
-})
-
-// Variables persist across invocations within the same session
-await agent.invoke('Run: export MY_VAR="hello"')
-await agent.invoke('Run: echo $MY_VAR') // Will show "hello"
-
-// Restart session to clear state
-await agent.invoke('Restart the bash session')
-await agent.invoke('Run: echo $MY_VAR') // Variable will be empty
-```
-
-Full API reference: [shell](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/shell/README.md), [bash (TypeScript only)](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/bash/README.md)
-
----
-
-### Sleep
-
-Pauses the agent for a bounded number of seconds. Cancelling the enclosing invocation aborts the sleep immediately rather than waiting for the full duration, so a long timer never ties up a session the caller has moved on from.
-
-*Supported in: Node.js, modern browsers (TypeScript); all platforms (Python).*
-
-The maximum duration is configurable at construction (default: 60 seconds) and cannot be raised by the model. Negative, `NaN`, infinite, non-numeric, and boolean durations are rejected at the tool boundary.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { sleep } from '@strands-agents/sdk/vended-tools/sleep'
-
-const agent = new Agent({
-  tools: [sleep],
-})
-await agent.invoke('Pause for two seconds, then continue.')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import sleep
-
-agent = Agent(tools=[sleep])
-agent("Pause for two seconds, then continue.")
-```
-(( /tab "Python" ))
-
-**Custom maximum:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
-
-const shortSleep = makeSleep({ maxDuration: 5 })
-const agent = new Agent({ tools: [shortSleep] })
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import make_sleep
-
-short_sleep = make_sleep(max_duration=5)
-agent = Agent(tools=[short_sleep])
-```
-(( /tab "Python" ))
-
-[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/sleep/README.md)
-
----
-
-### Handoff to User
-
-Lets the model pause the agent loop and surface a message to the user for human-in-the-loop input. Use this when the agent needs explicit confirmation, additional information, or user approval before proceeding.
-
-*Supported in: Node.js, modern browsers (TypeScript); all platforms (Python).*
-
-Bidirectional streaming not supported
-
-`handoff_to_user` relies on the interrupt/resume mechanism, which requires the agent loop to fully halt and restart. It cannot be used inside bidirectional streaming sessions, where the loop runs continuously without a clean pause point.
-
-The loop halts with a `stop_reason` / `stopReason` of `"interrupt"` and the message is available on the interrupt’s `reason` field in `AgentResult.interrupts`. Resume the agent by passing back an `interruptResponse` content block with the interrupt ID and the user’s reply; the tool then returns that reply as its result and the model continues. To recognize a handoff interrupt, match its `name` against the exported `HANDOFF_INTERRUPT_NAME` constant.
-
-Combining with HumanInTheLoop
-
-`HumanInTheLoop()` requires approval for every tool by default, so pairing it with `handoff_to_user` prompts the user twice — once to approve the call, then again to answer it. Allow-list the tool with `HumanInTheLoop(allowed_tools=["handoff_to_user"])` / `new HumanInTheLoop({ allowedTools: ["handoff_to_user"] })` so only the handoff itself prompts.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent, InterruptResponseContent } from '@strands-agents/sdk'
-import {
-  handoffToUser,
-  HANDOFF_INTERRUPT_NAME,
-} from '@strands-agents/sdk/vended-tools/handoff-to-user'
-
-const agent = new Agent({
-  tools: [handoffToUser],
-  systemPrompt:
-    'Before deleting any files, call handoff_to_user to confirm with the user.',
-})
-
-let result = await agent.invoke('Delete all .tmp files in /workspace.')
-const interrupt = result.interrupts?.find((i) => i.name === HANDOFF_INTERRUPT_NAME)
-if (interrupt) {
-  console.log(interrupt.reason)
-  result = await agent.invoke([
-    new InterruptResponseContent({ interruptId: interrupt.id, response: 'confirmed' }),
-  ])
-}
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools.handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user
-
-agent = Agent(
-    tools=[handoff_to_user],
-    system_prompt=(
-        "Before deleting any files, call handoff_to_user to confirm with the user."
-    ),
-)
-
-result = agent("Delete all .tmp files in /workspace.")
-interrupt = next(i for i in (result.interrupts or []) if i.name == HANDOFF_INTERRUPT_NAME)
-print(interrupt.reason)
-
-resumed = agent([
-    {
-        "interruptResponse": {
-            "interruptId": interrupt.id,
-            "response": "confirmed",
-        }
-    }
-])
-```
-(( /tab "Python" ))
-
-📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/handoff-to-user/README.md)
-
----
-
-### Stop
-
-Lets the model gracefully end the agent loop with an optional final message. The default loop already terminates when the model returns without any tool call; the stop tool is useful when you want an explicit “I am done” affordance, when a workflow enforces that termination is a deliberate model decision, or when a sub-agent needs to signal completion back to a coordinator via the loop’s last assistant message.
-
-*Supported in: Node.js, modern browsers (TypeScript); all platforms (Python).*
-
-This is a cooperative stop, not an abort. Any other tools the model requested in the same turn still run to completion; the loop halts after that batch without calling the model again. The final message defaults to a 4096-character cap; pass `max_message_length` / `maxMessageLength` to `make_stop` / `makeStop` when a longer summary is legitimate.
-
-The two SDKs shim onto different loop-termination primitives, which produces a small difference in the final `AgentResult`’s stop reason. TypeScript halts via `AfterToolsEvent.endTurn` and returns `stopReason: "endTurn"`. Python halts via `agent.cancel(message=..., after_current_tools=True)` and returns `stop_reason: "cancelled"`. In both cases the stop text is appended as the last assistant message.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { stop } from '@strands-agents/sdk/experimental/vended-tools/stop'
-
-const agent = new Agent({
-  tools: [stop],
-  systemPrompt: 'Complete the task. Call stop with a short summary when you are done.',
-})
-await agent.invoke('Summarize the changes in ./CHANGELOG.md')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import stop
-
-agent = Agent(
-    tools=[stop],
-    system_prompt="Complete the task. Call stop with a short summary when you are done.",
-)
-result = agent("Summarize the changes in ./CHANGELOG.md")
-```
-(( /tab "Python" ))
-
-[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/experimental/vended-tools/stop/README.md)
-
----
-
-### Web fetch
-
-Fetches an HTTP(S) URL and returns its content. Two modes are available, configured at construction time via `make_web_fetch` / `makeWebFetch`:
-
--   **`agentic`** (default): HTML is converted to markdown and passed to an analyst agent that answers a `prompt`, so the full page never enters the main agent’s context. Use when targeted answers are needed about potentially large pages.
--   **`markdown`**: HTML is converted to clean markdown with scripts, styles, and noise stripped. Use when the agent needs full pages for reasoning.
-
-The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB); `max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`, the factory also accepts a `model` for the analyst; `agent.aux_model``agent.auxModel` is used when none is supplied.
-
-The Python tool delegates all networking to an `httpx.AsyncClient`. Use the `make_web_fetch` factory to supply a pre-configured client with custom timeouts, redirects, proxies, or caching.
-
-*Supported in: Node.js (TypeScript); Python (all platforms).*
-
-Install required
-
-(( tab "Python" ))
-`web_fetch` requires the optional `web-fetch` extra:
-
-```bash
-pip install 'strands-agents[web-fetch]'
-```
-(( /tab "Python" ))
-
-(( tab "TypeScript" ))
-HTML conversion requires the optional `turndown` peer dependency:
-
-```bash
-npm install turndown
-```
-(( /tab "TypeScript" ))
-
-Security posture
-
-Web fetch accepts only `http://` and `https://` URLs and caps response bodies at 5 MiB by default. Egress control belongs at the layer that encapsulates the agent (a sandbox, microVM, or network policy) where it can be enforced consistently across all tools, including `shell`.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { webFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
-
-const agent = new Agent({ tools: [webFetch] })
-await agent.invoke('Summarize https://example.com/blog/post')
-```
-
-Reading the full page as markdown:
-
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
-
-const webFetch = makeWebFetch({ mode: 'markdown' })
-const agent = new Agent({ tools: [webFetch] })
-await agent.invoke('Read https://example.com/docs and explain the architecture')
-```
-
-Tighter response cap with a dedicated analyst model:
-
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
-import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
-
-const webFetch = makeWebFetch({
-  mode: 'agentic',
-  maxBytes: 1 * 1024 * 1024,
-  maxContentChars: 25_000,
-  model: new BedrockModel({ modelId: 'us.amazon.nova-micro-v1:0' }),
-})
-const agent = new Agent({ tools: [webFetch] })
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import web_fetch
-
-agent = Agent(tools=[web_fetch])
-agent("What is the pricing for the enterprise plan at https://example.com/pricing")
-```
-
-Reading the full page as markdown:
-
-```python
-from strands import Agent
-from strands.vended_tools import make_web_fetch
-
-web_fetch = make_web_fetch(mode="markdown")
-agent = Agent(tools=[web_fetch])
-agent("Read https://example.com/docs and then explain the architecture")
-```
-
-Tighter response cap with a dedicated analyst model and custom transport:
-
-```python
-import httpx
-from strands import Agent
-from strands.models import BedrockModel
-from strands.vended_tools import make_web_fetch
-
-web_fetch = make_web_fetch(
-    mode="agentic",
-    client=httpx.AsyncClient(timeout=10.0),
-    max_bytes=1 * 1024 * 1024,
-    max_content_chars=25_000,
-    model=BedrockModel(model_id="us.amazon.nova-micro-v1:0"),
-)
-agent = Agent(tools=[web_fetch])
-```
-(( /tab "Python" ))
-
-📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/README.md)
-
----
-
-### MCP Router
-
-Lets your agent connect to Model Context Protocol servers at runtime, list the tools they expose, invoke one, and disconnect. The factory takes a developer-set allowlist of server configurations; the model can only initiate connections to servers on that list.
-
-The tool exposes five commands: `connect` (opens a named connection to an allowlisted server using a `connection_id`), `list_connections` (returns all open connection IDs for the current agent), `list_tools` (returns the tools the server exposes), `call_tool` (invokes a tool by name), and `disconnect` (closes a connection).
-
-Connections are scoped per agent and persist across invocations on the same agent instance. A connection is closed when the model calls `disconnect` explicitly, or when the agent is garbage collected. The connection remains open otherwise.
-
-*Supported in: Node.js (TypeScript); all platforms (Python).*
-
-Security Warning
-
-The allowlist controls which servers the model may connect to. For HTTP servers, treat this like any network request — egress control belongs at the encapsulation layer. For stdio servers, the allowlisted command is spawned as a local process with access to the host filesystem, environment variables, and network. Only allowlist commands you would run directly on the host.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { makeMcpRouter } from '@strands-agents/sdk/vended-tools/mcp-router'
-
-const mcpRouter = makeMcpRouter({
-  servers: {
-    files: {
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
-    },
-    'my-api': { url: 'https://mcp.example.com/mcp' },
-  },
-  maxConnections: 5,
-})
-const agent = new Agent({ tools: [mcpRouter] })
-await agent.invoke(
-  "Connect to 'files', list its tools, " +
-    'call the read_file tool on /tmp/hello.txt, then disconnect.'
-)
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import make_mcp_router
-
-mcp_router = make_mcp_router(
-    servers={
-        "files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]},
-        "my-api": {"url": "https://mcp.example.com/mcp"},
-    },
-    max_connections=5,
-)
-agent = Agent(tools=[mcp_router])
-agent(
-    "Connect to 'files', list its tools, "
-    "call the read_file tool on /tmp/hello.txt, then disconnect."
-)
-```
-(( /tab "Python" ))
-
-### A2A Client
-
-Lets your agent discover and communicate with remote [A2A (Agent-to-Agent) protocol](https://google.github.io/A2A/) agents. Two operations are available:
-
--   **`discover`** — fetches the agent card from a remote A2A endpoint and returns its capabilities, name, description, and skills.
--   **`send_message`** — sends a text message to a remote A2A agent and returns the response.
-
-The tool is stateless: a fresh `A2AAgent` is created on every call using the per-endpoint configuration. Use `make_a2a_client` / `makeA2AClient` to control which endpoints the model may contact, with per-endpoint authentication, and to tune size limits.
-
-*Supported in: Python, TypeScript (Node.js, browsers).*
-
-Install required
-
-(( tab "Python" ))
-`a2a_client` requires the optional `a2a` extra:
-
-```bash
-pip install 'strands-agents[a2a]'
-```
-(( /tab "Python" ))
-
-(( tab "TypeScript" ))
-Requires the optional `@a2a-js/sdk` peer dependency:
-
-```bash
-npm install @a2a-js/sdk
-```
-(( /tab "TypeScript" ))
-
-Endpoint security
-
-`allowed_endpoints` / `allowedEndpoints` is required and checked before any network connection is made, but it only gates the agent-card fetch. `send_message` is delivered to the `url` in that card, which may point to a different host, and HTTP redirects are not checked either. For full egress control, enforce it at the network layer.
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import {
-  ClientFactory,
-  DefaultAgentCardResolver,
-  JsonRpcTransportFactory,
-  RestTransportFactory,
-  createAuthenticatingFetchWithRetry,
-} from '@a2a-js/sdk/client'
-import { makeA2AClient } from '@strands-agents/sdk/vended-tools/a2a-client'
-
-const authFetch = createAuthenticatingFetchWithRetry(fetch, {
-  headers: async () => ({ Authorization: 'Bearer your-token' }),
-  shouldRetryWithHeaders: async () => undefined,
-})
-
-const a2aClient = makeA2AClient({
-  allowedEndpoints: [
-    // No auth needed
-    'https://agent.example.com',
-    // Custom ClientFactory for authenticated requests
-    [
-      'https://researcher.example.com',
-      new ClientFactory({
-        transports: [
-          new JsonRpcTransportFactory({ fetchImpl: authFetch }),
-          new RestTransportFactory({ fetchImpl: authFetch }),
-        ],
-        cardResolver: new DefaultAgentCardResolver({ fetchImpl: authFetch }),
-      }),
-    ],
-  ],
-})
-
-const agent = new Agent({ tools: [a2aClient] })
-await agent.invoke('What has the research agent found recently?')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-import httpx
-from a2a.client import ClientConfig
-from strands import Agent
-from strands.vended_tools import make_a2a_client
-
-a2a_client = make_a2a_client(
-    allowed_endpoints=[
-        "https://agent.example.com",
-        ("https://researcher.example.com", ClientConfig(
-            httpx_client=httpx.AsyncClient(
-                headers={"Authorization": "Bearer your-token"},
-                timeout=60.0,
-            ),
-        )),
-    ],
-)
-agent = Agent(tools=[a2a_client])
-agent("What has the research agent found recently?")
-```
-(( /tab "Python" ))
-
-Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/a2a-client/README.md)
-
----
-
-### Python REPL
-
-Runs model-generated Python through the agent’s [sandbox](/docs/user-guide/sdk/sandbox/index.md) by calling `sandbox.execute_code(code, "python3")` (`sandbox.executeCode(code, 'python3')` in TypeScript). It returns `output` (stdout), `error` (stderr, including tracebacks), and `exit_code`. Each call runs in a fresh interpreter, so variables, imports, and definitions do not persist across calls. Files written to the sandbox filesystem do persist, so the model can checkpoint intermediate results to disk and load them in a later call.
-
-*Supported in: Node.js on Unix/Linux/macOS (TypeScript), Python.*
-
-Security Warning
-
-This tool executes arbitrary Python code. Without a [Sandbox](/docs/user-guide/sdk/sandbox/index.md), code runs with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](/docs/user-guide/sdk/sandbox/index.md) for production.
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { pythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
-
-const agent = new Agent({ tools: [pythonRepl] })
-await agent.invoke(
-  'Use python_repl to compute the first 10 Fibonacci numbers and print them.'
-)
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools import python_repl
-
-agent = Agent(tools=[python_repl])
-agent("Use python_repl to compute the first 10 Fibonacci numbers and print them.")
-```
-(( /tab "Python" ))
-
-**Bound sandbox or custom interpreter:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
-import { makePythonRepl } from '@strands-agents/sdk/vended-tools/python-repl'
-
-const pythonRepl = makePythonRepl(new DockerSandbox({ container: 'my-container' }), {
-  language: 'python3.12',
-})
-const agent = new Agent({ tools: [pythonRepl] })
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.sandbox.docker import DockerSandbox
-from strands.vended_tools import make_python_repl
-
-python_repl = make_python_repl(
-    sandbox=DockerSandbox("my-container"),  # bind at creation instead of reading agent.sandbox
-    language="python3.12",  # interpreter on the sandbox's PATH
-)
-agent = Agent(tools=[python_repl])
-```
-(( /tab "Python" ))
-
-[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/python-repl/README.md)
-
----
-
-### Subagent
-
-Delegates a self-contained task to a child agent that runs in its own context and returns a final report. Use it when a subtask would otherwise flood the parent’s context with intermediate work and you only need the conclusion. The model writes the task each time it calls the tool; the child cannot ask follow-up questions, so the task must include all the context it needs.
-
-The `make_subagent``makeSubagent` factory uses [axis policies](#axis-policies) to control what the model can configure on each child. The configurable axes are `instructions`, `tools`, `model`, and `context`. The parent also passes a task to the child.
-
-By default, the child sees only the task (`context=Fixed("none")``context: new Fixed('none')`), but you can share the parent’s conversation by setting `context` to a `Choice` over `"none"`, `"all"` (full history including tool calls), and `"no_tools"` (text turns only). When a non-`"none"` option is available, the model can also pass `last_messages` to limit how many parent messages to share.
-
-*Supported in: Python, TypeScript (Node.js, browsers).*
-
-**Quickstart example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { subagent } from '@strands-agents/sdk/vended-tools/subagent'
-
-const agent = new Agent({
-  systemPrompt: 'You are a manager.',
-  tools: [subagent],
-})
-await agent.invoke('Research the latest TypeScript 5.x features and summarize them.')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.vended_tools.subagent import subagent
-
-agent = Agent(
-    system_prompt="You are a manager.",
-    tools=[subagent],
-)
-agent("Research the latest Python 3.13 features and summarize them.")
-```
-(( /tab "Python" ))
-
-**Example — full control with `make_subagent``makeSubagent`:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { Choice, Option, Preset } from '@strands-agents/sdk/multiagent'
 import { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
 
-const subagent = makeSubagent({
+const delegate = makeSubagent({
   presets: {
     researcher: new Preset({
-      instructions: 'You research topics thoroughly.',
-      description: 'deep research on a topic',
+      instructions: 'You research topics on the web and cite your sources.',
+      description: 'web research',
     }),
-    reviewer: new Preset({
-      instructions: 'You review code for correctness and style.',
-      description: 'code review',
-    }),
-  },
-  model: new Choice([
-    new Option('fast', 'global.anthropic.claude-sonnet-4-6', 'quick tasks'),
-    new Option('deep', 'global.anthropic.claude-opus-4-6-v1', 'hard problems'),
-  ]),
-  context: new Choice(['none', 'all', 'no_tools']),
-  tools: new Choice(['read', 'shell', 'write'], true),
-  maxDepth: 3,
-})
-const agent = new Agent({ tools: [subagent] })
-await agent.invoke('Review the changes in src/main.ts for correctness.')
-```
-(( /tab "TypeScript" ))
-
-(( tab "Python" ))
-```python
-from strands import Agent
-from strands.multiagent.spec import Choice, Option, Preset
-from strands.vended_tools.subagent import make_subagent
-
-subagent = make_subagent(
-    presets={
-        "researcher": Preset(
-            instructions="You research topics thoroughly.",
-            description="deep research on a topic",
-        ),
-        "reviewer": Preset(
-            instructions="You review code for correctness and style.",
-            description="code review",
-        ),
-    },
-    model=Choice([
-        Option("fast", "global.anthropic.claude-sonnet-4-6", "quick tasks"),
-        Option("deep", "global.anthropic.claude-opus-4-6-v1", "hard problems"),
-    ]),
-    context=Choice(["none", "all", "no_tools"]),
-    tools=Choice(["read", "shell", "write"], multiple=True),
-    max_depth=3,
-)
-agent = Agent(tools=[subagent])
-agent("Review the changes in src/main.py for correctness.")
-```
-(( /tab "Python" ))
-
-Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/subagent/README.md)
-
-### Graph
-
-Lets your agent design and run a team of sub-agents as a [Graph](/docs/user-guide/sdk/multi-agent/graph/index.md). The model supplies a `task`, a list of `nodes` (each with a unique `name` and its own `instructions`), and `edges` that order them. Nodes with no upstream nodes start in parallel, and each node receives its upstream outputs.
-
-Nodes inherit the caller’s model and tools, including MCP tools, except graph tools. Child interrupts pause the tool call and resume with the user’s response. An interrupted graph is saved in the parent agent’s interrupt state, so it can resume after the parent is restored from a snapshot or session. By default, a call times out after 900 seconds and each node after 300 seconds. A running graph cannot be cancelled from the parent agent.
-
-**Example:**
-
-```python
-from strands import Agent
-from strands.vended_tools import graph, http_request
-
-agent = Agent(tools=[graph, http_request])
-agent("Research three competing vector databases in parallel, then write a comparison table.")
-```
-
-Use `make_graph` to set limits (`max_nodes`, `max_edges`, `max_node_executions`, `execution_timeout`, `node_timeout`), build each node agent yourself with `builder`, or control what the model configures on each node with [axis policies](#axis-policies) over `instructions`, `tools`, and `model`.
-
-**Custom configuration:**
-
-```python
-from strands import Agent
-from strands.multiagent import Choice, Preset
-from strands.vended_tools import file_editor, http_request, make_graph
-
-team = make_graph(
-    presets={
-        "researcher": Preset(
-            instructions="Gather facts from the web and cite every source.",
-            tools=["http_request"],
-            description="Finds and summarizes sources.",
-        ),
-        "writer": Preset(
-            instructions="Turn upstream findings into clear prose.",
-            tools=["file_editor"],
-            description="Drafts the final document.",
-        ),
-    },
-    tools=Choice(["http_request", "file_editor"], multiple=True),
-    max_nodes=6,
-    max_edges=10,
-    execution_timeout=600,
-    node_timeout=120,
-)
-agent = Agent(tools=[team, http_request, file_editor])
-```
-
----
-
-### Swarm
-
-Lets your agent spin up a team of specialised sub-agents that collaborate autonomously via handoffs to solve a complex task. This is a meta-agent tool where the model defines each agent’s name and role; the tool resolves those specs through an authority-mode system, builds the agents, runs the swarm, and returns a consolidated result.
-
-Use the factory to control safety limits, lock down instructions or tools with [axis policies](#axis-policies), or supply named presets the model can select from.
-
-*Supported in: Python, TypeScript (Node.js, browsers).*
-
-**Example:**
-
-(( tab "TypeScript" ))
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { swarm } from '@strands-agents/sdk/vended-tools/swarm'
-
-const agent = new Agent({ tools: [swarm] })
-await agent.invoke(
-  'Research the pros and cons of microservices vs monoliths and write a summary'
-)
-```
-
-Custom configuration with `makeSwarm`. `maxAgents` caps agents per call; the other limits pass through to `Swarm`: `maxSteps` caps total agent executions, and `timeout` and `nodeTimeout` are in milliseconds.
-
-```typescript
-import { Agent } from '@strands-agents/sdk'
-import { Choice, Fixed, Inherit, Preset } from '@strands-agents/sdk/multiagent'
-import { makeSwarm } from '@strands-agents/sdk/vended-tools/swarm'
-import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
-import { webFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
-
-const swarm = makeSwarm({
-  presets: {
-    researcher: new Preset({
-      instructions: 'You search for and synthesise information.',
-      tools: ['http_request', 'web_fetch'],
-      description: 'Gathers raw information from the web.',
-    }),
-    writer: new Preset({
-      instructions: 'You write clear, engaging prose.',
-      description: 'Turns research into polished text.',
+    summarizer: new Preset({
+      instructions: 'You condense documents into short bullet summaries.',
+      description: 'summarize a document',
     }),
   },
   defaultPreset: 'researcher',
-  instructions: new Choice([
-    'You are a researcher.',
-    'You are a writer.',
-    'You are an editor.',
-  ]),
-  tools: new Inherit(),
-  model: new Fixed('us.amazon.nova-pro-v1:0'),
-  maxAgents: 5,
-  maxSteps: 15,
-  timeout: 300_000,
-  nodeTimeout: 120_000,
-  repetitiveHandoffDetectionWindow: 6,
-  repetitiveHandoffMinUniqueAgents: 3,
+  instructions: new Open(), // model writes the child's system prompt
+  tools: new Fixed(['http_request']), // child can only make HTTP requests
+  model: new Inherit(), // child runs on the parent's model
+  context: new Choice(['none', 'no_tools']), // model picks how much history to share
 })
-const agent = new Agent({ tools: [swarm, httpRequest, webFetch] })
-await agent.invoke('Write a blog post about AI agents')
+const agent = new Agent({ tools: [bash, httpRequest, delegate] })
+await agent.invoke(
+  'Have a subagent summarize the latest Node.js release notes, then run the tests.'
+)
 ```
 (( /tab "TypeScript" ))
 
 (( tab "Python" ))
 ```python
 from strands import Agent
-from strands.vended_tools import swarm
+from strands.multiagent import Choice, Fixed, Inherit, Open, Preset
+from strands.vended_tools.http_request import http_request
+from strands.vended_tools.shell import shell
+from strands.vended_tools.subagent import make_subagent
 
-agent = Agent(tools=[swarm])
-agent("Research the pros and cons of microservices vs monoliths and write a summary")
-```
-
-Custom configuration with `make_swarm`. `max_agents` caps agents per call; the other limits pass through to `Swarm`: `max_handoffs` and `max_iterations` cap handoffs and agent executions separately, and `execution_timeout` and `node_timeout` are in seconds.
-
-```python
-from strands import Agent
-from strands.multiagent.spec import Choice, Fixed, Inherit, Preset
-from strands.vended_tools import make_swarm
-from strands.vended_tools import http_request, web_fetch
-
-swarm = make_swarm(
+delegate = make_subagent(
     presets={
         "researcher": Preset(
-            instructions="You search for and synthesise information.",
-            tools=["http_request", "web_fetch"],
-            description="Gathers raw information from the web.",
+            instructions="You research topics on the web and cite your sources.",
+            description="web research",
         ),
-        "writer": Preset(
-            instructions="You write clear, engaging prose.",
-            description="Turns research into polished text.",
+        "summarizer": Preset(
+            instructions="You condense documents into short bullet summaries.",
+            description="summarize a document",
         ),
     },
     default_preset="researcher",
-    instructions=Choice(["You are a researcher.", "You are a writer.", "You are an editor."]),
-    tools=Inherit(),
-    model=Fixed("us.amazon.nova-pro-v1:0"),
-    max_agents=5,
-    max_handoffs=10,
-    max_iterations=15,
-    execution_timeout=300.0,
-    node_timeout=120.0,
-    repetitive_handoff_detection_window=6,
-    repetitive_handoff_min_unique_agents=3,
+    instructions=Open(),  # model writes the child's system prompt
+    tools=Fixed(["http_request"]),  # child can only make HTTP requests
+    model=Inherit(),  # child runs on the parent's model
+    context=Choice(["none", "no_tools"]),  # model picks how much history to share
 )
-agent = Agent(tools=[swarm, http_request, web_fetch])
-agent("Write a blog post about AI agents")
+agent = Agent(tools=[shell, http_request, delegate])
+agent("Have a subagent summarize the latest Python release notes, then run the tests.")
 ```
 (( /tab "Python" ))
-
-Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/swarm/README.md)
-
----
-
-## Axis policies
-
-Some vended tools let the model configure child agents at runtime. Axis policies control how much freedom the model has over each parameter. Import them from `strands.multiagent``@strands-agents/sdk/multiagent`.
-
-| Policy | Effect | Model sees a parameter? |
-| --- | --- | --- |
-| `Inherit()``new Inherit()` | Child inherits the parent’s value | No |
-| `Fixed(value)``new Fixed(value)` | Developer pins the value | No |
-| `Open()``new Open()` | Model writes a free-form value | Yes (string) |
-| `Choice([...], multiple=True)``new Choice([...], true)` | Model picks from a set | Yes (enum) |
-
-Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`. When the model omits both `agent_type` and `instructions`, the child uses `default_preset``defaultPreset`, or the first preset if none is set.
 
 Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent’s tools, model, and interventions, so a child’s tool calls go through the same approval and authorization checks as the parent’s. Each child gets `context_manager="auto"``contextManager: 'auto'` (unless its model is stateful) in place of the parent’s context-management tools, and accesses the parent’s long-term memory through inherited memory tools.
 
 To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`. A custom builder decides everything the child inherits, including interventions.
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import type { AgentSpec } from '@strands-agents/sdk/multiagent'
+import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
+import { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
+
+// Each child gets the resolved instructions and only the HTTP request tool
+const delegate = makeSubagent({
+  builder: (spec: AgentSpec) =>
+    new Agent({
+      name: spec.name,
+      systemPrompt: spec.instructions,
+      tools: [httpRequest],
+    }),
+})
+const agent = new Agent({ tools: [delegate] })
+```
+(( /tab "TypeScript" ))
+
+(( tab "Python" ))
+```python
+from strands import Agent
+from strands.multiagent import AgentSpec
+from strands.vended_tools.http_request import http_request
+from strands.vended_tools.subagent import make_subagent
+
+def build_child(spec: AgentSpec) -> Agent:
+    return Agent(name=spec.name, system_prompt=spec.instructions, tools=[http_request])
+
+delegate = make_subagent(builder=build_child)
+agent = Agent(tools=[delegate])
+```
+(( /tab "Python" ))
 
 ---
 
@@ -1145,47 +198,13 @@ Tool names are stable and will not change. In minor versions, a tool’s descrip
 
 ## Related pages
 
+- [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) (1 shared tag)
 - [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) (1 shared tag)
+- [Bash / shell](/docs/user-guide/sdk/tools/vended-tools/shell/index.md) (1 shared tag)
 - [Community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md) (1 shared tag)
 - [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) (1 shared tag)
-- [Tool result format](/docs/user-guide/sdk/tools/tool-results/index.md) (1 shared tag)
-- [Add tools to your agent](/docs/user-guide/sdk/tools/index.md) (1 shared tag)
-- [Connect your agent to MCP tools](/docs/user-guide/sdk/tools/mcp-tools/index.md) (1 shared tag)
-- [MCP Transports](/docs/user-guide/sdk/tools/mcp-transports/index.md) (1 shared tag)
-- [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
-- [Agent Configuration](/docs/user-guide/sdk/experimental/agent-config/index.md) (1 shared tag)
-
-
-## Implementation
-
-### TypeScript
-
-- [harness-sdk/strands-ts/src/vended-tools/file-editor/file-editor.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/file-editor/file-editor.ts)
-- [harness-sdk/strands-ts/src/vended-tools/handoff-to-user/handoff-to-user.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/handoff-to-user/handoff-to-user.ts)
-- [harness-sdk/strands-ts/src/vended-tools/bash/bash.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/bash/bash.ts)
-- [harness-sdk/strands-ts/src/vended-tools/http-request/http-request.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/http-request/http-request.ts)
-- [harness-sdk/strands-ts/src/vended-tools/notebook/notebook.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/notebook/notebook.ts)
-- [harness-sdk/strands-ts/src/vended-tools/sleep/sleep.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/sleep/sleep.ts)
-- [harness-sdk/strands-ts/src/vended-tools/web-fetch/web-fetch.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/web-fetch.ts)
-- [harness-sdk/strands-ts/src/vended-tools/mcp-router/mcp-router.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/mcp-router/mcp-router.ts)
-- [harness-sdk/strands-ts/src/experimental/vended-tools/stop/stop.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/experimental/vended-tools/stop/stop.ts)
-- [harness-sdk/strands-ts/src/vended-tools/a2a-client/a2a-client.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/a2a-client/a2a-client.ts)
-- [harness-sdk/strands-ts/src/vended-tools/subagent/subagent.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/subagent/subagent.ts)
-- [harness-sdk/strands-ts/src/vended-tools/swarm/swarm.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/swarm/swarm.ts)
-- [harness-sdk/strands-ts/src/vended-tools/python-repl/python-repl.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/python-repl/python-repl.ts)
-
-### Python
-
-- [harness-sdk/strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/http_request/http_request.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/http_request/http_request.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/notebook/notebook.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/notebook/notebook.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/mcp_router/mcp_router.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/mcp_router/mcp_router.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/shell/shell.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/shell/shell.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/sleep/sleep.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/sleep/sleep.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/web_fetch/web_fetch.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/web_fetch/web_fetch.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/a2a_client/a2a_client.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/a2a_client/a2a_client.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/subagent/subagent.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/subagent/subagent.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/stop/stop.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/stop/stop.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/swarm/swarm.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/swarm/swarm.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/graph/graph.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/graph/graph.py)
-- [harness-sdk/strands-py/src/strands/vended_tools/python_repl/python_repl.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/python_repl/python_repl.py)
+- [Edit](/docs/user-guide/sdk/tools/vended-tools/edit/index.md) (1 shared tag)
+- [File editor](/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md) (1 shared tag)
+- [Graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) (1 shared tag)
+- [Handoff to User](/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/index.md) (1 shared tag)
+- [HTTP request](/docs/user-guide/sdk/tools/vended-tools/http-request/index.md) (1 shared tag)

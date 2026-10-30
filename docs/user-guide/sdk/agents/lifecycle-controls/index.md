@@ -4,7 +4,7 @@ This page collects the controls the [agent loop](/docs/user-guide/sdk/agents/age
 
 ## Cap the work one call can do
 
-To bound a single invocation, pass a set of limits alongside the prompt. You can cap the number of turns (loop iterations), the output tokens, or the total tokens. All three are optional.
+To bound a single invocation, pass a set of limits alongside the prompt. You can cap the number of turns (loop iterations), the output tokens, the total tokens, or [failed structured output attempts](/docs/user-guide/sdk/agents/structured-output-behavior/index.md#limit-attempts). Each is optional.
 
 (( tab "Python" ))
 ```python
@@ -54,7 +54,7 @@ if (result.stopReason === 'limitTurns') {
 The same option works with `stream`. Each cap must be a positive finite number.
 (( /tab "TypeScript" ))
 
-Limits are checked at the top of each loop iteration, not mid-call. A single turn can overshoot its token budget, but the check fires before the next turn starts, and tools requested by the previous turn always finish first. When several caps trip at once, the reported stop reason follows priority order: turns, then total tokens, then output tokens.
+Limits are checked at the top of each loop iteration, not mid-call. A single turn can overshoot its token budget, but the check fires before the next turn starts, and tools requested by the previous turn always finish first. When several caps trip at once, the reported stop reason follows priority order: turns, then total tokens, then output tokens, then structured output attempts.
 
 Limits apply to the current invocation only. A reused agent starts each call with fresh counters, and the message history stays in a valid, reinvokable state, so you can retry with a higher budget.
 
@@ -63,12 +63,12 @@ Limits apply to the current invocation only. A reused agent starts each call wit
 Most invocations return a result with a stop reason that tells your application what to do next. Read it from `result.stop_reason``result.stopReason`.
 
 -   `end_turn``endTurn` or `stop_sequence``stopSequence`: return the completed result.
--   `limit_turns``limitTurns`, `limit_total_tokens``limitTotalTokens`, or `limit_output_tokens``limitOutputTokens`: report budget exhaustion or reinvoke with a higher limit.
+-   `limit_turns``limitTurns`, `limit_total_tokens``limitTotalTokens`, `limit_output_tokens``limitOutputTokens`, or `limit_structured_output_attempts``limitStructuredOutputAttempts`: report budget exhaustion or reinvoke with a higher limit.
 -   `cancelled`: treat the result as a caller- or application-initiated stop. The incomplete assembled model message is omitted from the result and history. Streamed deltas already delivered to your consumer remain visible.
 -   `content_filtered``contentFiltered` or `guardrail_intervened``guardrailIntervened`: apply your application’s policy rather than retrying blindly.
 -   `interrupt`: collect the requested human input and resume the agent. See [Interrupts](/docs/user-guide/sdk/interrupts/index.md).
 
-The three limit reasons signal graceful budget exhaustion, not failure. Content filtering and guardrail intervention both terminate the loop and should be handled deliberately rather than retried blindly.
+The limit reasons signal graceful budget exhaustion, not failure. Content filtering and guardrail intervention both terminate the loop and should be handled deliberately rather than retried blindly.
 
 ## Stop a running agent
 
@@ -268,7 +268,12 @@ def classify(stop_reason: str) -> Outcome:
         return Outcome.COMPLETED
     if stop_reason == "cancelled":
         return Outcome.CANCELLED
-    if stop_reason in ("limit_turns", "limit_total_tokens", "limit_output_tokens"):
+    if stop_reason in (
+        "limit_turns",
+        "limit_total_tokens",
+        "limit_output_tokens",
+        "limit_structured_output_attempts",
+    ):
         return Outcome.BUDGET_EXCEEDED
     if stop_reason in ("content_filtered", "guardrail_intervened"):
         return Outcome.BLOCKED
@@ -313,7 +318,8 @@ function classify(stopReason: string): Outcome {
   if (
     stopReason === 'limitTurns' ||
     stopReason === 'limitTotalTokens' ||
-    stopReason === 'limitOutputTokens'
+    stopReason === 'limitOutputTokens' ||
+    stopReason === 'limitStructuredOutputAttempts'
   ) {
     return 'budgetExceeded'
   }

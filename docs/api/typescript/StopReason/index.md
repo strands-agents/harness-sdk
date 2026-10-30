@@ -8,6 +8,7 @@ type StopReason =
   | "interrupt"
   | "maxTokens"
   | "limitOutputTokens"
+  | "limitStructuredOutputAttempts"
   | "limitTotalTokens"
   | "limitTurns"
   | "pauseTurn"
@@ -19,7 +20,7 @@ type StopReason =
 };
 ```
 
-Defined in: [src/types/messages.ts:710](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L710)
+Defined in: [src/types/messages.ts:711](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L711)
 
 Reason why the model stopped generating content.
 
@@ -31,6 +32,7 @@ Reason why the model stopped generating content.
 -   `interrupt` - Agent execution was interrupted for human input
 -   `maxTokens` - The model provider’s per-call token cap was reached
 -   `limitOutputTokens` - Agent loop stopped because `InvokeOptions.limits.outputTokens` was reached
+-   `limitStructuredOutputAttempts` - Agent loop stopped because `InvokeOptions.limits.structuredOutputAttempts` was reached
 -   `limitTotalTokens` - Agent loop stopped because `InvokeOptions.limits.totalTokens` was reached
 -   `limitTurns` - Agent loop stopped because `InvokeOptions.limits.turns` was reached
 -   `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue

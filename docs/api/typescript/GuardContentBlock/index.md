@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:907](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L907)
+Defined in: [src/types/messages.ts:914](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L914)
 
 Guard content block for guardrail evaluation. Marks content that should be evaluated by guardrails for safety, grounding, or other policies. Can be used in both message content and system prompts.
 
@@ -15,7 +15,7 @@ Guard content block for guardrail evaluation. Marks content that should be evalu
 new GuardContentBlock(data): GuardContentBlock;
 ```
 
-Defined in: [src/types/messages.ts:925](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L925)
+Defined in: [src/types/messages.ts:932](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L932)
 
 #### Parameters
 
@@ -35,7 +35,7 @@ Defined in: [src/types/messages.ts:925](https://github.com/strands-agents/harnes
 readonly type: "guardContentBlock";
 ```
 
-Defined in: [src/types/messages.ts:913](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L913)
+Defined in: [src/types/messages.ts:920](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L920)
 
 Discriminator for guard content.
 
@@ -47,7 +47,7 @@ Discriminator for guard content.
 readonly text?: GuardContentText;
 ```
 
-Defined in: [src/types/messages.ts:918](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L918)
+Defined in: [src/types/messages.ts:925](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L925)
 
 Text content with evaluation qualifiers.
 
@@ -63,7 +63,7 @@ Text content with evaluation qualifiers.
 readonly image?: GuardContentImage;
 ```
 
-Defined in: [src/types/messages.ts:923](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L923)
+Defined in: [src/types/messages.ts:930](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L930)
 
 Image content with evaluation qualifiers.
 
@@ -92,7 +92,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/types/messages.ts:945](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L945)
+Defined in: [src/types/messages.ts:952](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L952)
 
 Serializes the GuardContentBlock to a JSON-compatible ContentBlockData object. Called automatically by JSON.stringify(). Uint8Array image bytes are encoded as base64 string.
 
@@ -117,14 +117,14 @@ Serializes the GuardContentBlock to a JSON-compatible ContentBlockData object. C
 
 | Name | Type | Description | Defined in |
 | --- | --- | --- | --- |
-| `guardContent` | { `text?`: { `qualifiers`: [`GuardQualifier`](/docs/api/typescript/GuardQualifier/index.md)\[\]; `text`: `string`; }; `image?`: { `format`: [`GuardImageFormat`](/docs/api/typescript/GuardImageFormat/index.md); `source`: { `bytes`: `string`; }; }; } | \- | [src/types/messages.ts:945](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L945) |
-| `guardContent.text?` | { `qualifiers`: [`GuardQualifier`](/docs/api/typescript/GuardQualifier/index.md)\[\]; `text`: `string`; } | Text content with evaluation qualifiers. | [src/types/messages.ts:894](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L894) |
-| `guardContent.text.qualifiers` | [`GuardQualifier`](/docs/api/typescript/GuardQualifier/index.md)\[\] | Qualifiers that specify how this content should be evaluated. | [src/types/messages.ts:863](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L863) |
-| `guardContent.text.text` | `string` | The text content to be evaluated. | [src/types/messages.ts:868](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L868) |
-| `guardContent.image?` | { `format`: [`GuardImageFormat`](/docs/api/typescript/GuardImageFormat/index.md); `source`: { `bytes`: `string`; }; } | Image content with evaluation qualifiers. | [src/types/messages.ts:899](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L899) |
-| `guardContent.image.format` | [`GuardImageFormat`](/docs/api/typescript/GuardImageFormat/index.md) | Image format. | [src/types/messages.ts:878](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L878) |
-| `guardContent.image.source` | { `bytes`: `string`; } | Image source (bytes only). | [src/types/messages.ts:883](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L883) |
-| `guardContent.image.source.bytes` | `string` | \- | [src/types/messages.ts:854](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L854) |
+| `guardContent` | { `text?`: { `qualifiers`: [`GuardQualifier`](/docs/api/typescript/GuardQualifier/index.md)\[\]; `text`: `string`; }; `image?`: { `format`: [`GuardImageFormat`](/docs/api/typescript/GuardImageFormat/index.md); `source`: { `bytes`: `string`; }; }; } | \- | [src/types/messages.ts:952](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L952) |
+| `guardContent.text?` | { `qualifiers`: [`GuardQualifier`](/docs/api/typescript/GuardQualifier/index.md)\[\]; `text`: `string`; } | Text content with evaluation qualifiers. | [src/types/messages.ts:901](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L901) |
+| `guardContent.text.qualifiers` | [`GuardQualifier`](/docs/api/typescript/GuardQualifier/index.md)\[\] | Qualifiers that specify how this content should be evaluated. | [src/types/messages.ts:870](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L870) |
+| `guardContent.text.text` | `string` | The text content to be evaluated. | [src/types/messages.ts:875](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L875) |
+| `guardContent.image?` | { `format`: [`GuardImageFormat`](/docs/api/typescript/GuardImageFormat/index.md); `source`: { `bytes`: `string`; }; } | Image content with evaluation qualifiers. | [src/types/messages.ts:906](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L906) |
+| `guardContent.image.format` | [`GuardImageFormat`](/docs/api/typescript/GuardImageFormat/index.md) | Image format. | [src/types/messages.ts:885](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L885) |
+| `guardContent.image.source` | { `bytes`: `string`; } | Image source (bytes only). | [src/types/messages.ts:890](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L890) |
+| `guardContent.image.source.bytes` | `string` | \- | [src/types/messages.ts:861](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L861) |
 
 #### Implementation of
 
@@ -138,7 +138,7 @@ Serializes the GuardContentBlock to a JSON-compatible ContentBlockData object. C
 static fromJSON(data): GuardContentBlock;
 ```
 
-Defined in: [src/types/messages.ts:966](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L966)
+Defined in: [src/types/messages.ts:973](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L973)
 
 Creates a GuardContentBlock instance from its wrapped data format. Base64-encoded image bytes are decoded back to Uint8Array.
 

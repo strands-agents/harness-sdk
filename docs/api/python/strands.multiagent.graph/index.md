@@ -501,7 +501,7 @@ Dictionary events during graph execution, such as:
 def serialize_state() -> dict[str, Any]
 ```
 
-Defined in: [src/strands/multiagent/graph.py:1340](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1340)
+Defined in: [src/strands/multiagent/graph.py:1354](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1354)
 
 Serialize the current graph state to a dictionary.
 
@@ -511,14 +511,14 @@ Serialize the current graph state to a dictionary.
 def deserialize_state(payload: dict[str, Any]) -> None
 ```
 
-Defined in: [src/strands/multiagent/graph.py:1364](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1364)
+Defined in: [src/strands/multiagent/graph.py:1378](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1378)
 
 Restore graph state from a session dict and prepare for execution.
 
 This method handles two scenarios:
 
-1.  If the graph execution ended (no next\_nodes\_to\_execute, eg: Completed, or Failed with dead end nodes), resets all nodes and graph state to allow re-execution from the beginning.
-2.  If the graph execution was interrupted mid-execution (has next\_nodes\_to\_execute), restores the persisted state and prepares to resume execution from the next ready nodes.
+1.  If the graph execution ended (no next\_nodes\_to\_execute and no interrupted nodes, eg: Completed, or Failed with dead end nodes), resets all nodes and graph state to allow re-execution from the beginning.
+2.  If the graph execution was interrupted mid-execution (has next\_nodes\_to\_execute or interrupted nodes), restores the persisted state and prepares to resume execution from the next ready nodes.
 
 **Arguments**:
 

@@ -40,7 +40,7 @@ Only the SDK creates instances; pass `limits=` to a top-level call to start a li
 def __init__() -> None
 ```
 
-Defined in: [src/strands/agent/invocation\_context.py:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L57)
+Defined in: [src/strands/agent/invocation\_context.py:58](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L58)
 
 Reject direct construction.
 
@@ -55,7 +55,7 @@ Reject direct construction.
 def usage() -> InvocationContextUsage
 ```
 
-Defined in: [src/strands/agent/invocation\_context.py:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L66)
+Defined in: [src/strands/agent/invocation\_context.py:67](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L67)
 
 What the work in this context has used so far.
 

@@ -54,7 +54,7 @@ A span of lines to retrieve (1-indexed, inclusive).
 class ShouldOffload(Protocol)
 ```
 
-Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:154](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L154)
+Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:157](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L157)
 
 Callback protocol for deciding whether a tool result should be offloaded.
 
@@ -65,7 +65,7 @@ def __call__(tool_name: str, token_count: int,
              **kwargs: Any) -> bool | Awaitable[bool]
 ```
 
-Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:157](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L157)
+Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:160](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L160)
 
 Return True to offload, False to keep the result in context. May be sync or async.
 
@@ -81,7 +81,7 @@ Return True to offload, False to keep the result in context. May be sync or asyn
 class ContextOffloader(Plugin)
 ```
 
-Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:169](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L169)
+Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:172](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L172)
 
 Plugin that offloads oversized tool results to reduce context consumption.
 
@@ -140,7 +140,7 @@ def __init__(storage: Storage | _LegacyStorage | None = None,
              evict_after_cycles: int | None = 20) -> None
 ```
 
-Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:225](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L225)
+Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:228](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L228)
 
 Initialize the ContextOffloader plugin.
 
@@ -163,7 +163,7 @@ Initialize the ContextOffloader plugin.
 def init_agent(agent: Agent) -> None
 ```
 
-Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:316](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L316)
+Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:319](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L319)
 
 Conditionally register the retrieval tool and bind storage.
 
@@ -181,7 +181,7 @@ async def retrieve_offloaded_content(
         context_lines: int | None = None) -> dict | str
 ```
 
-Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:369](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L369)
+Defined in: [src/strands/vended\_plugins/context\_offloader/plugin.py:374](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/context_offloader/plugin.py#L374)
 
 Retrieve offloaded content by reference.
 

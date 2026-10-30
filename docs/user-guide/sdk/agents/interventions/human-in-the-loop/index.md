@@ -346,7 +346,7 @@ await agent.invoke('Read config.json then delete /tmp/old-logs')
 
 When trust is enabled, a human can respond with `'t'` or `'trust'` to approve the current tool call AND remember that decision for the rest of the session. Subsequent calls to the same tool skip the prompt entirely. Trust works in all modes: interrupt/resume, stdio, and custom callbacks.
 
-Trust state is stored in `agent.state``agent.appState` and persists across turns within a session but resets when the agent is re-created. Negated tools (`"!tool_name"`) cannot be trusted and always prompt.
+Trust state is stored in `agent.state``agent.appState` and persists across turns within a session but resets when the agent is re-created. It is only read while trust is enabled. Negated tools (`"!tool_name"`) cannot be trusted and always prompt.
 
 (( tab "Python" ))
 ```python
@@ -461,7 +461,7 @@ Use `HumanInTheLoop` when you want tool-level approval gating with minimal code:
 - [Available Sandboxes](/docs/user-guide/sdk/sandbox/available-sandboxes/index.md) (1 shared tag)
 - [Building a Custom Sandbox](/docs/user-guide/sdk/sandbox/custom-sandbox/index.md) (1 shared tag)
 - [Sandbox](/docs/user-guide/sdk/sandbox/index.md) (1 shared tag)
-- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (1 shared tag)
+- [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
 
 
 ## Implementation

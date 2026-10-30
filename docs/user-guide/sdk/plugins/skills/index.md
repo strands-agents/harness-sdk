@@ -386,7 +386,7 @@ Use skills when you want a single agent that can handle a wide range of tasks by
 - [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (1 shared tag)
 - [Prompt Engineering](/docs/user-guide/sdk/safety-security/prompt-engineering/index.md) (1 shared tag)
 - [Prompts](/docs/user-guide/sdk/agents/prompts/index.md) (1 shared tag)
-- [GoalLoop](/docs/user-guide/sdk/plugins/goal-loop/index.md) (1 shared tag)
+- [Agent Configuration](/docs/user-guide/sdk/experimental/agent-config/index.md) (1 shared tag)
 
 
 ## Implementation

@@ -1,78 +1,3 @@
-Content-related type definitions for bidirectional streaming.
-
-#### BidiUserContentBlock
-
-A complete text or image block supplied by a user.
-
-#### BidiContentBlock
-
-A complete text, image, or tool result block.
-
-#### BidiContentDelta
-
-An audio delta for the live input stream.
-
-#### BidiUserContentBlockData
-
-Dictionary form of one user content block.
-
-#### BidiContentBlockData
-
-Dictionary form of one text, image, or tool result block.
-
-#### BidiContentDeltaData
-
-Dictionary form of an audio delta.
-
-## BidiMessage
-
-```python
-@dataclass
-class BidiMessage()
-```
-
-Defined in: [src/strands/bidi/types/content.py:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/content.py#L33)
-
-An input message containing ordered content blocks.
-
-Callers must supply at least one block when sending and must not mix tool results with user text or images. Send streaming deltas individually.
-
-**Attributes**:
-
--   `content` - Ordered list of complete content blocks.
-
-## BidiContentMetadata
-
-```python
-class BidiContentMetadata(TypedDict)
-```
-
-Defined in: [src/strands/bidi/types/content.py:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/content.py#L46)
-
-Streamed content metadata stored under a message’s metadata.custom.bidi.
-
-**Attributes**:
-
--   `kind` - Identifies the message as text, reasoning, or a transcript.
--   `status` - Whether the content is pending, complete, or incomplete.
-
-Agent-related type definitions for bidirectional streaming.
-
-This module defines the types used for BidiAgent.
-
-#### BidiAgentInput
-
-User input accepted by `BidiAgent.send()` and returned by input streams.
-
-Supported forms:
-
--   Text: a string, `TextBlock`, or a dictionary with a `text` key.
--   Image: `ImageBlock` or a dictionary with an `image` key.
--   Streaming audio: `AudioDelta` or a dictionary with an `audio_delta` key.
--   Grouped content: a nonempty list of strings, text/image blocks, or their dictionary forms.
-
-A list forms one user message and preserves block order. Send audio deltas individually, outside these lists.
-
 Media input types for bidirectional streaming.
 
 ## AudioDelta
@@ -200,6 +125,81 @@ Process output events from the agent.
 **Arguments**:
 
 -   `event` - Output event from the agent (audio, text, tool calls, etc.)
+
+Agent-related type definitions for bidirectional streaming.
+
+This module defines the types used for BidiAgent.
+
+#### BidiAgentInput
+
+User input accepted by `BidiAgent.send()` and returned by input streams.
+
+Supported forms:
+
+-   Text: a string, `TextBlock`, or a dictionary with a `text` key.
+-   Image: `ImageBlock` or a dictionary with an `image` key.
+-   Streaming audio: `AudioDelta` or a dictionary with an `audio_delta` key.
+-   Grouped content: a nonempty list of strings, text/image blocks, or their dictionary forms.
+
+A list forms one user message and preserves block order. Send audio deltas individually, outside these lists.
+
+Content-related type definitions for bidirectional streaming.
+
+#### BidiUserContentBlock
+
+A complete text or image block supplied by a user.
+
+#### BidiContentBlock
+
+A complete text, image, or tool result block.
+
+#### BidiContentDelta
+
+An audio delta for the live input stream.
+
+#### BidiUserContentBlockData
+
+Dictionary form of one user content block.
+
+#### BidiContentBlockData
+
+Dictionary form of one text, image, or tool result block.
+
+#### BidiContentDeltaData
+
+Dictionary form of an audio delta.
+
+## BidiMessage
+
+```python
+@dataclass
+class BidiMessage()
+```
+
+Defined in: [src/strands/bidi/types/content.py:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/content.py#L33)
+
+An input message containing ordered content blocks.
+
+Callers must supply at least one block when sending and must not mix tool results with user text or images. Send streaming deltas individually.
+
+**Attributes**:
+
+-   `content` - Ordered list of complete content blocks.
+
+## BidiContentMetadata
+
+```python
+class BidiContentMetadata(TypedDict)
+```
+
+Defined in: [src/strands/bidi/types/content.py:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/content.py#L46)
+
+Streamed content metadata stored under a message’s metadata.custom.bidi.
+
+**Attributes**:
+
+-   `kind` - Identifies the message as text, reasoning, or a transcript.
+-   `status` - Whether the content is pending, complete, or incomplete.
 
 Output event types for bidirectional streaming.
 

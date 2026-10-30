@@ -76,7 +76,7 @@ The request this tool call belongs to; pass it to [InvokeOptions.invocationConte
 interrupt<T>(params): T;
 ```
 
-Defined in: [src/interrupt.ts:398](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L398)
+Defined in: [src/interrupt.ts:462](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L462)
 
 #### Type Parameters
 

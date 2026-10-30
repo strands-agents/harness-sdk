@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:890](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L890)
+Defined in: [src/types/messages.ts:897](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L897)
 
 Data for a guard content block. Can contain either text or image content for guardrail evaluation.
 
@@ -10,7 +10,7 @@ Data for a guard content block. Can contain either text or image content for gua
 text?: GuardContentText;
 ```
 
-Defined in: [src/types/messages.ts:894](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L894)
+Defined in: [src/types/messages.ts:901](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L901)
 
 Text content with evaluation qualifiers.
 
@@ -22,6 +22,6 @@ Text content with evaluation qualifiers.
 image?: GuardContentImage;
 ```
 
-Defined in: [src/types/messages.ts:899](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L899)
+Defined in: [src/types/messages.ts:906](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L906)
 
 Image content with evaluation qualifiers.

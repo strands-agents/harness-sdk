@@ -19,6 +19,10 @@
     -   [Io](/docs/api/python/strands.bidi.io)
     -   [Models](/docs/api/python/strands.bidi.models)
     -   [Types](/docs/api/python/strands.bidi.types)
+-   **Decisions**
+    -   [Decision Model](/docs/api/python/strands.decisions.decision_model)
+    -   [Llm Decision Model](/docs/api/python/strands.decisions.llm_decision_model)
+    -   [Types](/docs/api/python/strands.decisions.types)
 -   **Event Loop**
     -   [Event Loop](/docs/api/python/strands.event_loop.event_loop)
     -   [Streaming](/docs/api/python/strands.event_loop.streaming)
@@ -186,6 +190,8 @@
 -   **Vended Tools**
     -   **A2a Client**
         -   [A2a Client](/docs/api/python/strands.vended_tools.a2a_client.a2a_client)
+    -   **Edit**
+        -   [Edit](/docs/api/python/strands.vended_tools.edit.edit)
     -   **File Editor**
         -   [File Editor](/docs/api/python/strands.vended_tools.file_editor.file_editor)
     -   **Graph**
@@ -205,6 +211,8 @@
     -   **Python Repl**
         -   [Python Repl](/docs/api/python/strands.vended_tools.python_repl.python_repl)
         -   [Types](/docs/api/python/strands.vended_tools.python_repl.types)
+    -   **Read**
+        -   [Read](/docs/api/python/strands.vended_tools.read.read)
     -   **Shell**
         -   [Shell](/docs/api/python/strands.vended_tools.shell.shell)
         -   [Types](/docs/api/python/strands.vended_tools.shell.types)
@@ -221,6 +229,8 @@
     -   **Web Fetch**
         -   [Types](/docs/api/python/strands.vended_tools.web_fetch.types)
         -   [Web Fetch](/docs/api/python/strands.vended_tools.web_fetch.web_fetch)
+    -   **Write**
+        -   [Write](/docs/api/python/strands.vended_tools.write.write)
 -   **Experimental**
     -   [Agent Config](/docs/api/python/strands.experimental.agent_config)
     -   **Checkpoint**

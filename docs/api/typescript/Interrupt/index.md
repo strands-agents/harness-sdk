@@ -1,4 +1,4 @@
-Defined in: [src/interrupt.ts:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L28)
+Defined in: [src/interrupt.ts:29](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L29)
 
 Represents an interrupt that can pause agent execution for human-in-the-loop workflows.
 
@@ -10,7 +10,7 @@ Represents an interrupt that can pause agent execution for human-in-the-loop wor
 readonly id: string;
 ```
 
-Defined in: [src/interrupt.ts:32](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L32)
+Defined in: [src/interrupt.ts:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L33)
 
 Unique identifier for this interrupt.
 
@@ -22,7 +22,7 @@ Unique identifier for this interrupt.
 readonly name: string;
 ```
 
-Defined in: [src/interrupt.ts:37](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L37)
+Defined in: [src/interrupt.ts:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L38)
 
 User-defined name for the interrupt.
 
@@ -34,7 +34,7 @@ User-defined name for the interrupt.
 readonly reason?: JSONValue;
 ```
 
-Defined in: [src/interrupt.ts:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L42)
+Defined in: [src/interrupt.ts:43](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L43)
 
 User-provided reason for raising the interrupt.
 
@@ -46,7 +46,7 @@ User-provided reason for raising the interrupt.
 response?: JSONValue;
 ```
 
-Defined in: [src/interrupt.ts:47](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L47)
+Defined in: [src/interrupt.ts:48](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L48)
 
 Human response provided when resuming the agent after an interrupt.
 
@@ -58,7 +58,7 @@ Human response provided when resuming the agent after an interrupt.
 readonly source: InterruptSource;
 ```
 
-Defined in: [src/interrupt.ts:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L54)
+Defined in: [src/interrupt.ts:55](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L55)
 
 Where this interrupt was raised from — a tool callback, an agent-level hook, or a multi-agent orchestrator hook. Always populated. When deserializing a snapshot produced by an older SDK that did not record this field, defaults to `'hook'`.
 
@@ -76,7 +76,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/interrupt.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L73)
+Defined in: [src/interrupt.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L74)
 
 Serializes the interrupt to a JSON-compatible object.
 
@@ -94,8 +94,8 @@ Serializes the interrupt to a JSON-compatible object.
 
 | Name | Type | Defined in |
 | --- | --- | --- |
-| `id` | `string` | [src/interrupt.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L73) |
-| `name` | `string` | [src/interrupt.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L73) |
-| `reason?` | [`JSONValue`](/docs/api/typescript/JSONValue/index.md) | [src/interrupt.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L73) |
-| `response?` | [`JSONValue`](/docs/api/typescript/JSONValue/index.md) | [src/interrupt.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L73) |
-| `source` | [`InterruptSource`](/docs/api/typescript/InterruptSource/index.md) | [src/interrupt.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L73) |
+| `id` | `string` | [src/interrupt.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L74) |
+| `name` | `string` | [src/interrupt.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L74) |
+| `reason?` | [`JSONValue`](/docs/api/typescript/JSONValue/index.md) | [src/interrupt.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L74) |
+| `response?` | [`JSONValue`](/docs/api/typescript/JSONValue/index.md) | [src/interrupt.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L74) |
+| `source` | [`InterruptSource`](/docs/api/typescript/InterruptSource/index.md) | [src/interrupt.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L74) |

@@ -440,6 +440,8 @@ const deleteFiles = tool({
 
 Persist interrupt state with a session manager so a user can answer later, in a new agent session. You can also persist the responses themselves, so a trusted approval does not prompt again on later tool calls.
 
+Session state is trusted input, so do not load sessions from untrusted sources, such as session files inside a cloned repository.
+
 (( tab "Python" ))
 ```python
 ##### server.py #####

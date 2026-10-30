@@ -1,6 +1,6 @@
-Built-in LLM risk classifier for the HumanInTheLoop handler.
+Built-in risk classifiers for the HumanInTheLoop handler.
 
-Uses an inner agent with structured output to evaluate whether a tool call requires human approval based on risk criteria.
+The LLM classifier uses an inner agent with structured output; the decision model classifier asks any `DecisionModel` a single boolean question. Both evaluate whether a tool call requires human approval against the same risk criteria.
 
 ## ClassifierResult
 
@@ -9,7 +9,7 @@ Uses an inner agent with structured output to evaluate whether a tool call requi
 class ClassifierResult()
 ```
 
-Defined in: [src/strands/vended\_interventions/hitl/classifier.py:22](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L22)
+Defined in: [src/strands/vended\_interventions/hitl/classifier.py:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L27)
 
 Result from a classifier evaluation.
 
@@ -20,7 +20,7 @@ Result from a classifier evaluation.
 class HumanInTheLoopClassifier(Protocol)
 ```
 
-Defined in: [src/strands/vended\_interventions/hitl/classifier.py:30](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L30)
+Defined in: [src/strands/vended\_interventions/hitl/classifier.py:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L35)
 
 Callable (sync or async) that decides whether a tool call requires human approval.
 
@@ -31,7 +31,7 @@ def __call__(event: BeforeToolCallEvent,
              **kwargs: Any) -> ClassifierResult | Awaitable[ClassifierResult]
 ```
 
-Defined in: [src/strands/vended\_interventions/hitl/classifier.py:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L33)
+Defined in: [src/strands/vended\_interventions/hitl/classifier.py:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L38)
 
 Evaluate whether a tool call requires human approval.
 
@@ -51,9 +51,11 @@ ClassifierResult indicating whether approval is required.
 class LLMClassifierConfig()
 ```
 
-Defined in: [src/strands/vended\_interventions/hitl/classifier.py:47](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L47)
+Defined in: [src/strands/vended\_interventions/hitl/classifier.py:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py#L52)
 
 Configuration for the built-in LLM risk classifier.
+
+Kept for backwards compatibility. Prefer passing a `DecisionModel` as the classifier for new code.
 
 **Arguments**:
 

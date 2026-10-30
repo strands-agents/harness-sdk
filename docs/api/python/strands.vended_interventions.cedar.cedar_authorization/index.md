@@ -64,13 +64,23 @@ Initialize the Cedar authorization handler.
 **Arguments**:
 
 -   `policies` - Inline Cedar policy text or path to a .cedar file.
+    
 -   `tools` - MCP tool definitions for auto schema generation.
+    
 -   `entities` - Entity data as inline list, JSON string, or path to .json file.
+    
 -   `schema` - Cedar schema as inline text or path to .cedarschema file.
+    
 -   `principal` - Static principal identity.
+    
 -   `principal_resolver` - Dynamic principal resolver from invocation\_state.
+    
 -   `context_enricher` - Callback to inject extra fields into context.session.
--   `on_error` - Error handling mode for user callback exceptions.
+    
+-   `on_error` - What to do when `principal_resolver` or `context_enricher` raises: `'throw'` (default) re-raises, `'deny'` denies the tool call (fail-closed, recommended alternative to the default).
+    
+    **Warning:** `'proceed'` is fail-open. When a callback raises, the tool call runs without any Cedar authorization check. Never use it when the agent relies on Cedar to enforce access.
+    
 
 #### before\_tool\_call
 
@@ -79,7 +89,7 @@ def before_tool_call(event: BeforeToolCallEvent,
                      **kwargs: Any) -> Proceed | Deny
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:155](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L155)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:161](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L161)
 
 Evaluate Cedar policy before tool execution.
 
@@ -89,7 +99,7 @@ Evaluate Cedar policy before tool execution.
 def reload() -> None
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:230](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L230)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:236](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L236)
 
 Reload policies/entities/schema from disk. Validates before committing.
 
@@ -99,7 +109,7 @@ Reload policies/entities/schema from disk. Validates before committing.
 def reset_call_counts(agent: Agent | None = None) -> None
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:250](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L250)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:256](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L256)
 
 Clear all rate-limit call counters.
 
