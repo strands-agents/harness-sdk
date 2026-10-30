@@ -1,0 +1,9 @@
+name: paxa-mcp
+description: MCP server giving Strands agents Paxa Labs text to speech in Thai, English and Mandarin, plus transcription, document OCR and translation into Thai.
+integrationType: tool
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/paxalabs/mcp
+docsUrl: https://paxalabs.com/docs/integrations/strands
+addedDate: 2026-10-27
