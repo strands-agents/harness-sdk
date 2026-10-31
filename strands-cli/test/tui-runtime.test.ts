@@ -48,6 +48,7 @@ vi.mock('../src/tui/mcp.js', async (importOriginal) => ({
 
 import {
   createInteractiveChat as createInteractiveChatRuntime,
+  createInteractiveRuntime,
   interactiveBackgroundTasks,
 } from '../src/tui/runtime.js'
 import { CliConfigStore } from '../src/tui/config.js'
@@ -122,6 +123,49 @@ describe('interactiveBackgroundTasks', () => {
 })
 
 describe('interactive runtime lifecycle', () => {
+  it('owns a backend without a controller and forbids in-process reconstruction when disabled', async () => {
+    const flush = vi.fn(async () => {})
+    const agent = fakeAgent('anthropic.claude-old', 'single-generation', { flush })
+    const mcpDispose = vi.fn(async () => {})
+    mocks.createHarness.mockResolvedValue(agent)
+    mocks.loadMcp.mockResolvedValue({ clients: [], warnings: [], dispose: mcpDispose })
+    const owner = await createInteractiveRuntime({
+      config: CliConfigStore.memory(),
+      sessionRoot: testSessionRoot,
+      agentOptions: { model: 'bedrock/anthropic.claude-old', session: false },
+      allowRebuild: false,
+      configurationEnabled: true,
+    })
+    const request = {
+      workspace: dirname(testSessionRoot),
+      sessionDirectory: testSessionRoot,
+      peerEndpointId: 'agent-1',
+    }
+    const owned = await owner.createBackend(request)
+    try {
+      expect(owned.backend.agent).toBe(agent)
+      expect(owned.configuration).toBeDefined()
+      expect(owned.runtime.sessionId).toBeUndefined()
+      await expect(owned.runtime.prepareRestart('bedrock/anthropic.claude-old')).resolves.toMatchObject({
+        model: 'bedrock/anthropic.claude-old',
+        preserveConversation: true,
+        preserveReasoning: true,
+      })
+      await expect(owned.backend.restartModel('bedrock/anthropic.claude-old')).rejects.toThrow(
+        'This runtime cannot rebuild the agent.'
+      )
+      await expect(owned.backend.clear()).rejects.toThrow('This runtime cannot rebuild the agent.')
+      await expect(owned.backend.setEffort('medium')).rejects.toThrow('This runtime cannot rebuild the agent.')
+      expect(mocks.createHarness).toHaveBeenCalledOnce()
+    } finally {
+      await Promise.all([owner.dispose(), owned.backend.dispose(), owned.mcp.dispose()])
+    }
+    expect(agent.cancel).toHaveBeenCalledOnce()
+    expect(flush).toHaveBeenCalledOnce()
+    expect(mcpDispose).toHaveBeenCalledOnce()
+    await expect(owner.createBackend(request)).rejects.toThrow('Runtime is disposed.')
+  })
+
   it('loads the saved name when starting with an explicit session ID', async () => {
     const sessionDirectory = join(dirname(testSessionRoot), 'named-sessions')
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })

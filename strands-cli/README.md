@@ -231,6 +231,10 @@ The file exports `agent`, ready to import into another application, and each new
 reads the latest edits. No separate JSON snapshot or chat runner is included. TypeScript
 projects include `npm run build` for compiling code to import into another application.
 
+In interactive mode, each TypeScript conversation runs in its own process. Reloading or
+rebuilding its agent evaluates the source again, so module globals reset and are not shared
+between conversations. Model changes and reloads keep the conversation; `/clear` starts fresh.
+
 Run `strands --agent ./agent.zip` directly: the CLI extracts the project into its cache and
 installs its declared dependencies on first launch.
 For an existing source folder, install its dependencies (`npm install`, or create `.venv`

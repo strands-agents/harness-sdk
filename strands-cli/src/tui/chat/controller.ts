@@ -49,7 +49,7 @@ import { type ChatSessionRuntime, type SessionTarget } from '../session/sessions
 import { sessionResumeCommand, type ResumeSession } from '../session/resume.js'
 import { unquote } from '../session/conversation-helpers.js'
 import type { ChatSkillsRuntime, SkillActivation, SkillInfo } from '../skills.js'
-import type { LoadedMcp, McpServerInfo } from '../mcp.js'
+import type { McpServerInfo } from '../mcp.js'
 import { mcpFailure } from '../mcp/diagnostics.js'
 import { type PeerMessage } from '../messaging.js'
 import { modelDisplayName } from '../model/display.js'
@@ -125,6 +125,7 @@ interface PendingUserSubmission {
 
 type PendingSubmission = PendingUserSubmission | { kind: 'peer'; id: string; message: PeerMessage }
 type PendingSteering = { prompt: string }
+type SteeringDrain = { projector: TurnProjector; pending?: Promise<void> }
 
 export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
@@ -142,7 +143,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _skills: ChatSkillsRuntime | undefined
   private _skillRefresh: Promise<readonly SkillInfo[]> | undefined
   private readonly _skillNames = new Set<string>()
-  private readonly _mcp: LoadedMcp | undefined
+  private readonly _mcp: ChatControllerOptions['mcp']
   private readonly _mcpDetails = new Map<string, McpServerInfo>()
   private _mcpStartup: ChatMcpStartup | undefined
   private _stopWatchingMcpStartup: (() => void) | undefined
@@ -169,6 +170,8 @@ export class ChatController implements ChatControllerApi {
   private _presentationAbort: AbortController | undefined
   private readonly _pendingSubmissions: PendingSubmission[] = []
   private readonly _pendingSteering: PendingSteering[] = []
+  private _steeringDrain: SteeringDrain | undefined
+  private readonly _pendingPermissionReplies = new Set<string>()
   private _pendingSubmissionRun: Promise<void> | undefined
   private _stopWatchingTasks: (() => void) | undefined
   private _stopWatchingPermissions: (() => void) | undefined
@@ -500,7 +503,9 @@ export class ChatController implements ChatControllerApi {
       return undefined
     }
     const pending = this._enqueueSubmission(prompt, true)
-    this.cancel()
+    if (!this._steeringDrain) {
+      this.cancel()
+    }
     return pending
   }
 
@@ -698,7 +703,10 @@ export class ChatController implements ChatControllerApi {
     } finally {
       clearTimeout(toolOutputEmitTimer)
       clearTimeout(responseDelayTimer)
-      this._queueUndeliveredSteering(this._backend.drainSteering?.() ?? [])
+      const steeringDrain = this._drainSteering(projector)
+      if (steeringDrain) {
+        await steeringDrain
+      }
       const wasDetachedByCancellation = this._drainingProjector === projector
       if (!wasDetachedByCancellation) {
         this._completedTurns.push(projector.snapshot())
@@ -709,6 +717,7 @@ export class ChatController implements ChatControllerApi {
       if (wasDetachedByCancellation) {
         this._drainingProjector = undefined
       }
+      this._steeringDrain = undefined
       this._clearDeliveredBackgroundTaskNotices()
       if (this._presentationAbort === presentationAbort) {
         this._presentationAbort = undefined
@@ -790,15 +799,14 @@ export class ChatController implements ChatControllerApi {
 
   cancel(): boolean {
     if (this._activeProjector) {
-      const undeliveredSteering = this._backend.drainSteering?.() ?? []
       const projector = this._activeProjector
       projector.markCancelled()
       this._completedTurns.push(projector.snapshot())
       this._activeProjector = undefined
       this._drainingProjector = projector
+      void this._drainSteering(projector)
       this._presentationAbort?.abort()
       this._backend.cancel()
-      this._queueUndeliveredSteering(undeliveredSteering)
       this._emit()
       return true
     }
@@ -824,7 +832,7 @@ export class ChatController implements ChatControllerApi {
       this._hardExitCode = this._exitCode
       this._activeProjector?.markCancelled()
       this._presentationAbort?.abort()
-      this._backend.drainSteering?.()
+      void this._drainSteering(this._activeProjector ?? this._drainingProjector!)
       this._pendingSteering.length = 0
       this._backend.cancel()
     }
@@ -838,7 +846,7 @@ export class ChatController implements ChatControllerApi {
     this._stopWatchingUsage()
     if (this._activeProjector || this._drainingProjector) {
       this._presentationAbort?.abort()
-      this._backend.drainSteering?.()
+      void this._drainSteering(this._activeProjector ?? this._drainingProjector!)
       this._pendingSteering.length = 0
       this._backend.cancel()
     }
@@ -883,18 +891,27 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _queueLiveSteering(prompt: string): boolean {
-    if (!this._activeProjector || !this._backend.queueSteering) {
+    if (!this._activeProjector || this._steeringDrain || !this._backend.queueSteering) {
       return false
     }
     const projector = this._activeProjector
     let receipt: PendingSteering | undefined
     let consumed = false
     const queued = this._backend.queueSteering(prompt, () => {
-      if (consumed) {
+      if (consumed || this._closed || (receipt && !this._pendingSteering.includes(receipt))) {
         return
       }
       consumed = true
       projector.appendUserMessage(prompt)
+      const turn = projector.snapshot()
+      const completedIndex = this._completedTurns.findIndex((completed) => completed.id === turn.id)
+      if (completedIndex >= 0) {
+        const completed = this._completedTurns[completedIndex]!
+        const received = turn.entries.filter(
+          (entry) => entry.type === 'user' && !completed.entries.some((existing) => existing.id === entry.id)
+        )
+        this._completedTurns[completedIndex] = { ...completed, entries: [...completed.entries, ...received] }
+      }
       if (receipt) {
         const index = this._pendingSteering.indexOf(receipt)
         if (index >= 0) {
@@ -915,7 +932,36 @@ export class ChatController implements ChatControllerApi {
     return true
   }
 
+  private _drainSteering(projector: TurnProjector): void | Promise<void> {
+    if (this._steeringDrain?.projector === projector) {
+      return this._steeringDrain.pending
+    }
+    const drain: SteeringDrain = { projector }
+    this._steeringDrain = drain
+    const failed = (error: unknown): void => {
+      this._pendingSteering.length = 0
+      if (!this._closed) {
+        this._addNotice('error', `Steering delivery could not be confirmed: ${errorMessage(error)}`)
+        this._emit()
+      }
+    }
+    try {
+      const prompts = this._backend.drainSteering?.() ?? []
+      if (Array.isArray(prompts)) {
+        this._queueUndeliveredSteering(prompts)
+      } else {
+        drain.pending = prompts.then((undelivered) => this._queueUndeliveredSteering(undelivered), failed)
+      }
+    } catch (error) {
+      failed(error)
+    }
+    return drain.pending
+  }
+
   private _queueUndeliveredSteering(prompts: readonly string[]): void {
+    if (this._closed) {
+      return
+    }
     for (const prompt of prompts) {
       const index = this._pendingSteering.findIndex((pending) => pending.prompt === prompt)
       if (index >= 0) {
@@ -2417,7 +2463,7 @@ export class ChatController implements ChatControllerApi {
     return true
   }
 
-  private _respondPermission(value: string): boolean {
+  private async _respondPermission(value: string): Promise<boolean> {
     const [prefix, encodedRequestId, encodedOptionId, encodedRule] = value.split(':')
     if (prefix !== 'permission' || !encodedRequestId || !encodedOptionId || this._panel?.kind !== 'permission') {
       return false
@@ -2425,7 +2471,7 @@ export class ChatController implements ChatControllerApi {
     const request = this._panel.request
     const requestId = decodeURIComponent(encodedRequestId)
     const optionId = decodeURIComponent(encodedOptionId)
-    if (request.id !== requestId) {
+    if (this._closed || request.id !== requestId || this._pendingPermissionReplies.has(requestId)) {
       return false
     }
     if (optionId === 'back' && this._panel.stage) {
@@ -2442,11 +2488,24 @@ export class ChatController implements ChatControllerApi {
       return true
     }
     const rule = encodedRule === undefined ? undefined : decodeURIComponent(encodedRule)
-    if (!this._backend.respondPermission?.(requestId, optionId, rule)) {
+    this._pendingPermissionReplies.add(requestId)
+    try {
+      const response = this._backend.respondPermission?.(requestId, optionId, rule) ?? false
+      const accepted = typeof response === 'boolean' ? response : await response
+      if (!accepted || this._closed) {
+        return false
+      }
+      this._closePermissionPanel(requestId)
+      return true
+    } catch (error) {
+      if (!this._closed) {
+        this._addNotice('error', `Permission response failed: ${errorMessage(error)}`)
+        this._emit()
+      }
       return false
+    } finally {
+      this._pendingPermissionReplies.delete(requestId)
     }
-    this._closePermissionPanel()
-    return true
   }
 
   private _openPermissionPanel(request: ChatPermissionRequest): void {
@@ -2526,11 +2585,13 @@ export class ChatController implements ChatControllerApi {
     return this._activeProjector?.snapshot().id ?? this._completedTurns.at(-1)?.id
   }
 
-  private _closePermissionPanel(): void {
-    const panels = this._panelStack.filter((panel) => panel.kind !== 'permission')
+  private _closePermissionPanel(requestId?: string): void {
+    const matches = (panel: ChatPanel): boolean =>
+      panel.kind === 'permission' && (requestId === undefined || panel.request.id === requestId)
+    const panels = this._panelStack.filter((panel) => !matches(panel))
     const removed = panels.length !== this._panelStack.length
     this._panelStack.splice(0, this._panelStack.length, ...panels)
-    if (this._panel?.kind === 'permission') {
+    if (this._panel && matches(this._panel)) {
       this._panel = this._panelStack.pop()
     } else if (!removed) {
       return

@@ -1,10 +1,19 @@
 import { execFile } from 'node:child_process'
+import { createServer, type ServerResponse } from 'node:http'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
 import { promisify } from 'node:util'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { ImageBlock, Message } from '@strands-agents/sdk'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { parseArgs } from '../src/cli/arguments.js'
+import { CliConfigStore } from '../src/tui/config.js'
+import { AgentMessaging } from '../src/tui/messaging.js'
+import { importAgentProject } from '../src/tui/project/import.js'
+import { TypescriptBackend, type TypescriptInit } from '../src/tui/project/typescript-backend.js'
+import { createTypescriptChat } from '../src/tui/project/run.js'
 
 import { projectOptions } from '../src/tui/project/typescript.js'
 
@@ -354,4 +363,358 @@ export const agent = await createHarness({ ...${JSON.stringify(defaults)}, name:
     expect(loaded.agents[0]!.name).toBe('Host harness')
     expect(await readFile(entrypoint)).toEqual(authored)
   })
+})
+
+describe('TypeScript process runtime', () => {
+  const backends: TypescriptBackend[] = []
+
+  afterEach(async () => {
+    await Promise.all(backends.splice(0).map((backend) => backend.dispose()))
+  })
+
+  function source(gate?: string, session = false): string {
+    return `
+import { appendFileSync } from 'node:fs'
+import { createHarness } from '@strands-agents/harness'
+import { Model } from '@strands-agents/sdk'
+import { value } from './value.js'
+appendFileSync(${JSON.stringify(join(root, 'pids'))}, String(process.pid) + String.fromCharCode(10))
+console.log('authored stdout is not the protocol')
+class LocalModel extends Model {
+  getConfig() { return { modelId: ${JSON.stringify(defaults.model.slice('bedrock/'.length))}, contextWindowLimit: 10000 } }
+  updateConfig() {}
+  async *stream(messages, options) {
+    const text = messages.filter(message => message.role === 'user')
+      .flatMap(message => message.content.filter(block => block.type === 'textBlock').map(block => block.text)).join('|')
+    if (${JSON.stringify(gate ?? '')} && text.startsWith('blocked') && !text.includes('redirect')) {
+      await fetch(${JSON.stringify(gate ?? '')}, { signal: options?.cancelSignal })
+    }
+    if (${session} && text.startsWith('primary history')) await agent.contextManager.stash.loadSnapshot({ fixture: { marker: 'from primary' } })
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'PID=' + process.pid + ';' + value + ';' + text } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+}
+export const agent = await createHarness({ ...${JSON.stringify(defaults)}, name: 'Process fixture', description: value, contextManager: ${JSON.stringify(session ? 'auto' : false)}, session: ${JSON.stringify(session ? { dir: join(root, 'sessions') } : false)} })
+agent.model = new LocalModel()
+`
+  }
+
+  async function open(overrides: Partial<Omit<TypescriptInit, 'config'>> = {}): Promise<TypescriptBackend> {
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const { backend } = await TypescriptBackend.open(
+      {
+        project: importAgentProject(project().entrypoint),
+        args: parseArgs([]),
+        cwd: root,
+        initialWorkspace: root,
+        peerEndpointId: 'agent-1',
+        mcpPaths: [],
+        mcpStrictPaths: [],
+        ...overrides,
+      },
+      config,
+      new AgentMessaging(),
+      AbortSignal.timeout(15000)
+    )
+    backends.push(backend)
+    return backend
+  }
+
+  async function pids(): Promise<number[]> {
+    return (await readFile(join(root, 'pids'), 'utf8')).trim().split('\n').map(Number)
+  }
+
+  async function stopped(pid: number): Promise<void> {
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 2000 })
+  }
+
+  async function answer(backend: TypescriptBackend, prompt: string): Promise<string> {
+    let text = ''
+    for await (const event of backend.stream(prompt)) {
+      if (event.type === 'textDelta') text += event.text
+    }
+    return text
+  }
+
+  it('replaces complete source generations and preserves binary messages without loading them in the parent', async () => {
+    await writeFile(join(root, 'value.ts'), "export const value = 'v0'\n")
+    const authored = source()
+    await writeFile(project().entrypoint, authored)
+    const bytes = new Uint8Array(1024 * 1024).fill(91)
+    const message = new Message({ role: 'user', content: [new ImageBlock({ format: 'png', source: { bytes } })] })
+    const backend = await open({ seed: { model: defaults.model, thinking: 'off', messages: [message.toJSON()] } })
+    let previous = (await pids()).at(-1)!
+    expect(previous).not.toBe(process.pid)
+    for (let generation = 1; generation <= 5; generation++) {
+      await writeFile(join(root, 'value.ts'), `export const value = 'v${generation}'\n`)
+      await backend.restartModel(defaults.model)
+      await stopped(previous)
+      const observed = await pids()
+      previous = observed.at(-1)!
+      expect(new Set(observed).size).toBe(generation + 1)
+      expect(backend.info().description).toBe(`v${generation}`)
+      expect((await backend.captureFork()).messages).toEqual([message.toJSON()])
+    }
+    expect(await readFile(project().entrypoint, 'utf8')).toBe(authored)
+    await backend.dispose()
+    await stopped(previous)
+  }, 30000)
+
+  it('keeps the old process usable after a replacement evaluates and fails', async () => {
+    await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
+    const authored = source()
+    await writeFile(project().entrypoint, authored)
+    const backend = await open()
+    const original = (await pids())[0]!
+    expect(await answer(backend, 'first')).toContain(`PID=${original};original;first`)
+    await writeFile(join(root, 'value.ts'), "export const value = 'rejected'\n")
+    await writeFile(project().entrypoint, authored + "\nthrow new Error('replacement rejected')\n")
+    await expect(backend.restartModel(defaults.model)).rejects.toThrow('replacement rejected')
+    const failed = (await pids()).at(-1)!
+    expect(failed).not.toBe(original)
+    await stopped(failed)
+    expect(() => process.kill(original, 0)).not.toThrow()
+    expect(backend.info().description).toBe('original')
+    expect(await answer(backend, 'second')).toContain(`PID=${original};original;first|second`)
+  }, 15000)
+
+  it.each(['idle', 'blocked'] as const)(
+    'flushes buffered memory before %s child disposal completes',
+    async (state) => {
+      const flushed = join(root, 'flushed.json')
+      const blocked = join(root, 'blocked')
+      await writeFile(
+        project().entrypoint,
+        `
+import { writeFileSync } from 'node:fs'
+import { createHarness } from '@strands-agents/harness'
+import { Model, MemoryManager, IntervalTrigger } from '@strands-agents/sdk'
+writeFileSync(${JSON.stringify(join(root, 'pids'))}, String(process.pid))
+class LocalModel extends Model {
+  getConfig() { return { modelId: ${JSON.stringify(defaults.model.slice('bedrock/'.length))}, contextWindowLimit: 10000 } }
+  updateConfig() {}
+  async *stream(messages) {
+    if (messages.some(message => message.content.some(block => block.text === 'blocked'))) {
+      writeFileSync(${JSON.stringify(blocked)}, 'started')
+      await new Promise(() => {})
+    }
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'startup reply' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+}
+const memory = new MemoryManager({ injection: false, searchToolConfig: false, stores: [{
+  name: 'buffered', writable: true, extraction: { trigger: new IntervalTrigger({ turns: 100 }) },
+  async search() { return [] },
+  async addMessages(messages) {
+    await new Promise(resolve => setTimeout(resolve, 1800))
+    writeFileSync(${JSON.stringify(flushed)}, JSON.stringify(messages.map(message => ({
+      role: message.role, text: message.content[0].text
+    }))))
+  }
+}] })
+export const agent = await createHarness({ ...${JSON.stringify(defaults)}, model: new LocalModel(), memory })
+await agent.invoke('startup request')
+`
+      )
+      const backend = await open()
+      const pid = (await pids())[0]!
+      let running: Promise<unknown> | undefined
+      if (state === 'blocked') {
+        running = answer(backend, 'blocked').catch((error: unknown) => error)
+        await vi.waitFor(async () => expect(await readFile(blocked, 'utf8')).toBe('started'))
+      }
+      await backend.dispose()
+      await running
+      expect(JSON.parse(await readFile(flushed, 'utf8'))).toEqual([
+        { role: 'user', text: 'startup request' },
+        { role: 'assistant', text: 'startup reply' },
+        ...(state === 'blocked' ? [{ role: 'user', text: 'blocked' }] : []),
+      ])
+      await stopped(pid)
+    },
+    15000
+  )
+
+  it('forks, resumes and reloads a real process roster with session provenance', async () => {
+    await writeFile(join(root, 'value.ts'), "export const value = 'roster'\n")
+    await writeFile(project().entrypoint, source(undefined, true))
+    const saved = await open()
+    await answer(saved, 'target only')
+    const savedSession = saved.sessionId!
+    await saved.dispose()
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = { args: parseArgs([]), cwd: root, initialWorkspace: root, mcpPaths: [], mcpStrictPaths: [] }
+    const setup = vi.fn()
+    const first = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), setup)
+    let reloaded: Awaited<ReturnType<typeof createTypescriptChat>> | undefined
+    try {
+      const primary = first.backend as TypescriptBackend
+      await first.submit('primary history')
+      expect(first.getSnapshot().completedTurns.at(-1)?.status).toBe('complete')
+      const primarySeed = await primary.captureFork()
+      expect(primarySeed.stash).toMatchObject({ fixture: { marker: 'from primary' } })
+      await first.submit('/fork')
+      const fork = first.backend as TypescriptBackend
+      expect(fork).not.toBe(primary)
+      expect(fork.sessionId).not.toBe(primary.sessionId)
+      expect(await fork.captureFork()).toMatchObject({ messages: primarySeed.messages, stash: primarySeed.stash })
+      expect(fork.modelSelection()).toEqual(primary.modelSelection())
+      await first.submit('fork history')
+      await first.submit('/sessions')
+      const row = first.getSnapshot().panel?.rows.find((candidate) => candidate.label === savedSession)
+      expect(row).toBeDefined()
+      expect(await first.activatePanelRow(row!)).toBe(true)
+      const resumed = first.backend as TypescriptBackend
+      expect(resumed.sessionId).toBe(savedSession)
+      const resumedMessages = JSON.stringify((await resumed.captureFork()).messages)
+      expect(resumedMessages).toContain('target only')
+      expect(resumedMessages).not.toContain('fork history')
+      expect(resumed.modelSelection()).toEqual(fork.modelSelection())
+      const captured = await first.captureConversations()
+      expect(captured.entries).toHaveLength(3)
+      const oldPids = (await pids()).slice(1)
+      await writeFile(join(root, 'value.ts'), "export const value = 'reloaded'\n")
+      reloaded = await createTypescriptChat(
+        project().entrypoint,
+        config,
+        options,
+        AbortSignal.timeout(30000),
+        setup,
+        captured
+      )
+      const restored = await reloaded.captureConversations()
+      expect(restored.activeId).toBe(captured.activeId)
+      expect(
+        restored.entries.map(({ id, title, conversation }) => ({
+          id,
+          title,
+          session: conversation.session,
+          selection: conversation.sourceSelection,
+        }))
+      ).toEqual(
+        captured.entries.map(({ id, title, conversation }) => ({
+          id,
+          title,
+          session: conversation.session,
+          selection: conversation.sourceSelection,
+        }))
+      )
+      expect(reloaded.backend.info?.().description).toBe('reloaded')
+      await first.dispose()
+      await Promise.all(oldPids.map(stopped))
+      await reloaded.submit('after reload')
+      expect(reloaded.getSnapshot().completedTurns.at(-1)?.status).toBe('complete')
+    } finally {
+      await Promise.all([first.dispose(), reloaded?.dispose()])
+    }
+  }, 30000)
+
+  it.each(['cancel', 'dispose'] as const)(
+    'stops a pending replacement before its first model invocation on %s',
+    async (ending) => {
+      let reached!: () => void
+      const requested = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      const server = createServer(() => reached())
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Expected local server address')
+      let backend: TypescriptBackend | undefined
+      try {
+        await writeFile(join(root, 'value.ts'), "export const value = 'replacement'\n")
+        const authored = source()
+        await writeFile(project().entrypoint, authored)
+        backend = await open()
+        const original = (await pids())[0]!
+        await writeFile(
+          project().entrypoint,
+          authored.replace('export const agent', `await fetch('http://127.0.0.1:${address.port}');\nexport const agent`)
+        )
+        await backend.setEffort('high')
+        const pending = answer(backend, 'must not invoke').catch((error: unknown) => error)
+        await Promise.race([
+          requested,
+          pending.then((result) => {
+            throw new Error(`Replacement did not reach gate: ${String(result)}`)
+          }),
+        ])
+        const candidate = (await pids()).at(-1)!
+        expect(candidate).not.toBe(original)
+        if (ending === 'cancel') backend.cancel()
+        else await backend.dispose()
+        expect(await pending).toBeInstanceOf(Error)
+        await stopped(candidate)
+        if (ending === 'cancel') {
+          expect(() => process.kill(original, 0)).not.toThrow()
+          expect(JSON.stringify((await backend.captureFork()).messages)).not.toContain('must not invoke')
+        } else await stopped(original)
+      } finally {
+        await backend?.dispose()
+        server.closeAllConnections()
+        await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+      }
+    },
+    15000
+  )
+
+  it.each(['consumed', 'drained', 'disposed'] as const)(
+    'settles real steering and pending stream work when %s',
+    async (ending) => {
+      let reached!: (response: ServerResponse) => void
+      const requested = new Promise<ServerResponse>((resolve) => {
+        reached = resolve
+      })
+      const server = createServer((_request, response) => reached(response))
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Expected local server address')
+      let backend: TypescriptBackend | undefined
+      try {
+        await writeFile(join(root, 'value.ts'), "export const value = 'steering'\n")
+        await writeFile(project().entrypoint, source(`http://127.0.0.1:${address.port}`))
+        backend = await open()
+        const pid = (await pids())[0]!
+        const running = answer(backend, 'blocked').catch((error: unknown) => error)
+        const response = await Promise.race([
+          requested,
+          running.then((result) => {
+            throw new Error(`Model did not reach gate: ${String(result)}`)
+          }),
+        ])
+        const consumed = vi.fn()
+        expect(backend.queueSteering('redirect', consumed)).toBe(true)
+        if (ending === 'consumed') {
+          response.end('ready')
+          await running
+          expect(consumed).toHaveBeenCalledOnce()
+          expect(await backend.drainSteering()).toEqual([])
+        } else if (ending === 'drained') {
+          expect(await backend.drainSteering()).toEqual(['redirect'])
+          backend.cancel()
+          response.end('ready')
+          await running
+          expect(consumed).not.toHaveBeenCalled()
+          expect(await backend.drainSteering()).toEqual([])
+          expect(await answer(backend, 'redirect')).toContain('redirect')
+        } else {
+          await backend.dispose()
+          await running
+          await stopped(pid)
+          expect(consumed).not.toHaveBeenCalled()
+        }
+      } finally {
+        await backend?.dispose()
+        server.closeAllConnections()
+        await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+      }
+    },
+    15000
+  )
 })

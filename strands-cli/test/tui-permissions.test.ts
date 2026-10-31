@@ -24,7 +24,18 @@ describe('CedarPermissions', () => {
       await saveMode(mode)
     })
     const broker = new ToolPermissionBroker()
-    const permissions = new CedarPermissions({ config, broker, cwd: process.cwd() })
+    const permissions = new CedarPermissions({
+      config: {
+        snapshot: () => config.snapshot(),
+        setPermissionMode: (mode) => config.setPermissionMode(mode),
+        allowTool: (rule) => config.allowTool(rule),
+        denyTool: (rule) => config.denyTool(rule),
+        removeAllowedTool: (rule) => config.removeAllowedTool(rule),
+        removeDeniedTool: (rule) => config.removeDeniedTool(rule),
+      },
+      broker,
+      cwd: process.cwd(),
+    })
     const resumedMode = broker.request('write', {}).then(() => config.snapshot().permissions.mode)
     const changing = permissions.setPermissionMode('bypassPermissions')
     await Promise.resolve()

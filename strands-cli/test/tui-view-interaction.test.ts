@@ -50,7 +50,6 @@ describe('MCP panel input', () => {
     const controller = new ChatController(idleBackend(), {
       settings: { animations: false },
       mcp: {
-        clients: [],
         paths: [],
         warnings: [],
         list: async () =>

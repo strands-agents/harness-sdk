@@ -1571,6 +1571,185 @@ describe('ChatController', () => {
     await running
   })
 
+  it.each(['complete', 'cancel', 'error'] as const)(
+    'settles remote steering before queued work after %s',
+    async (ending) => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let finishDrain!: (prompts: string[]) => void
+      const drain = new Promise<string[]>((resolve) => {
+        finishDrain = resolve
+      })
+      const prompts: string[] = []
+      const receipts: Array<() => void> = []
+      const target = backend(async function* (prompt) {
+        prompts.push(prompt)
+        if (prompt === 'first') {
+          yield { type: 'textDelta', text: 'Working.' }
+          await gate
+          if (ending === 'error') throw new Error('stream failed')
+          if (ending === 'cancel') yield { type: 'textDelta', text: 'Ignored after cancellation.' }
+        }
+        return { stopReason: 'endTurn' }
+      })
+      target.queueSteering = (_prompt, consumed) => {
+        receipts.push(consumed)
+        return true
+      }
+      target.drainSteering = vi.fn().mockReturnValueOnce(drain).mockReturnValue([])
+      const controller = new ChatController(target)
+      const running = controller.submit('first')
+      await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+      await controller.steer('same prompt')
+      await controller.steer('same prompt')
+      const queued = controller.submit('ordinary follow-up')
+      if (ending === 'cancel') {
+        expect(controller.cancel()).toBe(true)
+        expect(target.cancel).toHaveBeenCalledOnce()
+        expect(controller.getSnapshot().completedTurns[0]?.status).toBe('cancelled')
+      }
+      release()
+      await vi.waitFor(() => expect(target.drainSteering).toHaveBeenCalledOnce())
+      expect(prompts).toEqual(['first'])
+      receipts[0]!()
+      finishDrain(['same prompt'])
+      await Promise.all([running, queued])
+      receipts[0]!()
+      receipts[1]!()
+      expect(prompts).toEqual(['first', 'same prompt', 'ordinary follow-up'])
+      expect(controller.getSnapshot().pendingSteering).toEqual([])
+      expect(controller.getSnapshot().completedTurns[0]?.status).toBe(ending === 'cancel' ? 'cancelled' : ending)
+      expect(controller.getSnapshot().completedTurns[0]?.entries.filter((entry) => entry.type === 'user')).toEqual([
+        expect.objectContaining({ text: 'same prompt' }),
+      ])
+      if (ending === 'cancel') {
+        expect(controller.getSnapshot().completedTurns[0]?.entries[0]).toMatchObject({
+          type: 'assistant',
+          text: 'Working.',
+        })
+      }
+      await controller.dispose()
+    }
+  )
+
+  it.each(['complete', 'error'] as const)('queues new steering behind an outstanding %s drain', async (ending) => {
+    let finishDrain!: (prompts: string[]) => void
+    const drain = new Promise<string[]>((resolve) => {
+      finishDrain = resolve
+    })
+    const prompts: string[] = []
+    const target = backend(async function* (prompt) {
+      prompts.push(prompt)
+      yield* []
+      if (prompt === 'first' && ending === 'error') throw new Error('stream failed')
+      return { stopReason: 'endTurn' }
+    })
+    target.queueSteering = vi.fn(() => true)
+    target.drainSteering = vi.fn().mockReturnValueOnce(drain).mockReturnValue([])
+    const controller = new ChatController(target)
+    const first = controller.submit('first')
+    await vi.waitFor(() => expect(target.drainSteering).toHaveBeenCalledOnce())
+    const next = controller.steer('after drain started')
+    expect(target.queueSteering).not.toHaveBeenCalled()
+    expect(target.cancel).not.toHaveBeenCalled()
+    expect(prompts).toEqual(['first'])
+    finishDrain([])
+    await Promise.all([first, next])
+    expect(prompts).toEqual(['first', 'after drain started'])
+    expect(controller.getSnapshot().completedTurns[0]?.status).toBe(ending)
+    await controller.dispose()
+  })
+
+  it.each(['throw', 'reject'] as const)(
+    'does not replay uncertain steering when drain fails by %s',
+    async (failure) => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const prompts: string[] = []
+      const target = backend(async function* (prompt) {
+        prompts.push(prompt)
+        await gate
+        yield* []
+        return { stopReason: 'endTurn' }
+      })
+      let consumed = (): void => {}
+      target.queueSteering = (_prompt, onConsumed) => {
+        consumed = onConsumed
+        return true
+      }
+      target.drainSteering = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          if (failure === 'throw') throw new Error('worker stopped')
+          return Promise.reject(new Error('worker stopped'))
+        })
+        .mockReturnValue([])
+      const controller = new ChatController(target)
+      const first = controller.submit('first')
+      await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+      await controller.steer('delivery uncertain')
+      release()
+      await first
+      consumed()
+      expect(prompts).toEqual(['first'])
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'idle',
+        pendingSteering: [],
+        queuedPrompts: [],
+        notices: [expect.objectContaining({ status: 'error', text: expect.stringContaining('worker stopped') })],
+      })
+      expect(controller.getSnapshot().completedTurns[0]?.entries).toEqual([])
+      await controller.dispose()
+    }
+  )
+
+  it.each(['close', 'dispose'] as const)(
+    'discards remote steering while %s settles outstanding work',
+    async (ending) => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let finishDrain!: (prompts: string[]) => void
+      let rejectDrain!: (error: Error) => void
+      const drain = new Promise<string[]>((resolve, reject) => {
+        finishDrain = resolve
+        rejectDrain = reject
+      })
+      const prompts: string[] = []
+      const target = backend(async function* (prompt) {
+        prompts.push(prompt)
+        await gate
+        yield* []
+        return { stopReason: 'endTurn' }
+      })
+      target.queueSteering = () => true
+      target.drainSteering = vi.fn(() => drain)
+      target.dispose = vi.fn(async () => {
+        if (ending === 'close') finishDrain(['must not replay'])
+        else rejectDrain(new Error('disposed'))
+        release()
+      })
+      const controller = new ChatController(target)
+      const first = controller.submit('first')
+      await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+      await controller.steer('must not replay')
+      const queued = controller.submit('also discarded')
+      controller.cancel()
+      if (ending === 'close') controller.close()
+      await controller.dispose()
+      await Promise.all([first, queued])
+      expect(target.dispose).toHaveBeenCalledOnce()
+      expect(target.drainSteering).toHaveBeenCalledOnce()
+      expect(prompts).toEqual(['first'])
+      expect(controller.getSnapshot()).toMatchObject({ status: 'closed', queuedPrompts: [], pendingSteering: [] })
+    }
+  )
+
   it('closes on exit words and converts backend failures into turn errors', async () => {
     const target = backend(async function* () {
       yield* []
@@ -2330,9 +2509,10 @@ describe('ChatController', () => {
     await openingSettings
     expect(controller.dismissPanel()).toBe(true)
     expect(controller.getSnapshot().panel).toEqual(permissionPanel)
-    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+    const answering = controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
     expect(target.respondPermission).toHaveBeenCalledWith('permission-1', 'allow', undefined)
     expect(controller.getSnapshot().panel).toBeUndefined()
+    await answering
 
     release()
     await running
@@ -2477,6 +2657,79 @@ describe('ChatController', () => {
         await running
         await controller.dispose()
       }
+    }
+  )
+
+  it('keeps newer and hidden permission panels when a remote acknowledgement arrives', async () => {
+    let notify: (request: ChatPermissionRequest | undefined) => void = () => {}
+    let acknowledge!: (accepted: boolean) => void
+    const response = new Promise<boolean>((resolve) => {
+      acknowledge = resolve
+    })
+    const target = backend()
+    target.watchPermissions = (listener) => {
+      notify = listener
+      return () => {}
+    }
+    target.respondPermission = vi.fn(() => response)
+    const controller = new ChatController(target)
+    const request: ChatPermissionRequest = {
+      id: 'first',
+      toolName: 'bash',
+      input: {},
+      options: [{ id: 'allow', label: 'Allow once', kind: 'allow_once' }],
+    }
+    notify(request)
+    const row = controller.getSnapshot().panel!.rows[0]!
+    const pending = controller.activatePanelRow(row)
+    expect(controller.getSnapshot().panel?.kind).toBe('permission')
+    expect(await controller.activatePanelRow(row)).toBe(false)
+    expect(target.respondPermission).toHaveBeenCalledOnce()
+    notify(undefined)
+    notify({ ...request, id: 'second' })
+    await controller.submit('/settings')
+    acknowledge(true)
+    expect(await pending).toBe(true)
+    expect(controller.getSnapshot().panel?.kind).toBe('settings')
+    controller.dismissPanel()
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'permission', request: { id: 'second' } })
+    await controller.dispose()
+  })
+
+  it.each(['false', 'reject', 'closed'] as const)(
+    'handles remote permission response %s without hiding the request',
+    async (outcome) => {
+      let notify: (request: ChatPermissionRequest | undefined) => void = () => {}
+      let acknowledge!: (accepted: boolean) => void
+      let reject!: (error: Error) => void
+      const response = new Promise<boolean>((resolve, rejectResponse) => {
+        acknowledge = resolve
+        reject = rejectResponse
+      })
+      const target = backend()
+      target.watchPermissions = (listener) => {
+        notify = listener
+        return () => {}
+      }
+      target.respondPermission = () => response
+      const controller = new ChatController(target)
+      notify({
+        id: 'first',
+        toolName: 'bash',
+        input: {},
+        options: [{ id: 'allow', label: 'Allow', kind: 'allow_once' }],
+      })
+      const pending = controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      if (outcome === 'closed') controller.close()
+      if (outcome === 'reject') reject(new Error('worker stopped'))
+      else acknowledge(outcome === 'closed')
+      expect(await pending).toBe(false)
+      expect(controller.getSnapshot().panel).toMatchObject({ kind: 'permission', request: { id: 'first' } })
+      if (outcome === 'reject')
+        expect(controller.getSnapshot().notices).toEqual([
+          expect.objectContaining({ status: 'error', text: expect.stringContaining('worker stopped') }),
+        ])
+      await controller.dispose()
     }
   )
 
@@ -2974,7 +3227,6 @@ describe('ChatController', () => {
     const list = vi.fn(async () => [])
     const controller = new ChatController(backend(), {
       mcp: {
-        clients: [],
         paths: ['/Users/test/.strands/mcp.json'],
         list,
         dispose: async () => undefined,
@@ -3006,7 +3258,6 @@ describe('ChatController', () => {
   ])('keeps an actionable MCP summary and the complete failure in details: %s', async (error, summary) => {
     const controller = new ChatController(backend(), {
       mcp: {
-        clients: [],
         paths: ['/Users/test/.strands/mcp.json'],
         warnings: ['Skipped invalid server in /Users/test/.codex/config.toml'],
         list: async () => [
@@ -3069,7 +3320,6 @@ describe('ChatController', () => {
     const controller = new ChatController(backend(), {
       setSettings,
       mcp: {
-        clients: [],
         paths: [],
         warnings: [],
         list: async () => [server],
@@ -3106,7 +3356,6 @@ describe('ChatController', () => {
     const controller = new ChatController(backend(), {
       setSettings,
       mcp: {
-        clients: [],
         paths: [],
         warnings: [],
         list: async () => [

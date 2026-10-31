@@ -50,7 +50,6 @@ describe('ConversationManager', () => {
     })
     const primary = new ChatController(backend('primary', emptyRun), {
       mcp: {
-        clients: [],
         paths: [],
         warnings: [],
         list: async () => [server],

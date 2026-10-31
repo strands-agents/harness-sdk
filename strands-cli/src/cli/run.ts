@@ -230,6 +230,25 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
             launch?.conversationId
           )
         }
+        if (project?.language === 'typescript') {
+          const { createTypescriptChat } = await import('../tui/project/run.js')
+          return createTypescriptChat(
+            project.entrypoint,
+            config,
+            {
+              args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
+              cwd: initialWorkspace,
+              initialWorkspace,
+              mcpPaths: initialMcp.paths,
+              mcpStrictPaths: initialMcp.strictPaths,
+              ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
+            },
+            signal,
+            requestSetup,
+            conversations,
+            launch?.conversationId
+          )
+        }
         const { createInteractiveChat } = await import('../tui/runtime.js')
         signal.throwIfAborted()
         if (launch?.configuration) config.applyProviderEnvironment()

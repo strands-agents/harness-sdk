@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentStreamEvent } from '@strands-agents/sdk'
 import { CliConfigStore } from '../src/tui/config.js'
+import type { runInkChat } from '../src/tui/run.js'
 
 const createHarness = vi.hoisted(() => vi.fn())
+const interactive = vi.hoisted(() => ({ run: vi.fn(), createTypescriptChat: vi.fn() }))
+vi.mock('../src/tui/terminal/ink.js', () => ({}))
+vi.mock('../src/tui/run.js', () => ({ runInkChat: interactive.run }))
+vi.mock('../src/tui/project/run.js', () => ({ createTypescriptChat: interactive.createTypescriptChat }))
 vi.mock('@strands-agents/harness', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@strands-agents/harness')>()),
   createHarness,
@@ -50,10 +58,56 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   createHarness.mockReset()
+  interactive.run.mockReset()
+  interactive.createTypescriptChat.mockReset()
   process.exitCode = undefined
 })
 
 describe('main', () => {
+  it.each(['flag', 'saved'] as const)(
+    'routes an interactive TypeScript source from %s to the child runtime before evaluating it',
+    async (selection) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'strands-main-source-')))
+      const entrypoint = join(root, 'agent.ts')
+      await writeFile(entrypoint, "throw new Error('Authored source must not execute in the UI process')\n")
+      const config = CliConfigStore.memory({}, { mcpDiscovery: false })
+      if (selection === 'saved') await config.useAgentProject(entrypoint)
+      vi.mocked(CliConfigStore.load).mockResolvedValue(config)
+      const signal = new AbortController().signal
+      const requestSetup = vi.fn()
+      const childChat = {}
+      interactive.createTypescriptChat.mockResolvedValue(childChat)
+      interactive.run.mockImplementation(async (source: Parameters<typeof runInkChat>[0]) => {
+        if (typeof source !== 'function') throw new Error('Expected the interactive startup factory')
+        expect(await source(signal, requestSetup, undefined, undefined, async () => false)).toBe(childChat)
+        return 0
+      })
+      const stdinTty = process.stdin.isTTY
+      const stdoutTty = process.stdout.isTTY
+      process.stdin.isTTY = true
+      process.stdout.isTTY = true
+      try {
+        await main(selection === 'flag' ? ['--agent', entrypoint] : [])
+        expect(process.exitCode, errWrites.join('')).toBe(0)
+        expect(createHarness).not.toHaveBeenCalled()
+        expect(interactive.createTypescriptChat).toHaveBeenCalledWith(
+          entrypoint,
+          config,
+          expect.objectContaining({ cwd: process.cwd(), initialWorkspace: process.cwd(), mcpPaths: [] }),
+          signal,
+          requestSetup,
+          undefined,
+          undefined
+        )
+        expect(errWrites.join('')).not.toContain('Authored source must not execute')
+      } finally {
+        process.stdin.isTTY = stdinTty
+        process.stdout.isTTY = stdoutTty
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('runs a one-shot turn with --print', async () => {
     const agent = fakeAgent()
     createHarness.mockResolvedValue(agent)

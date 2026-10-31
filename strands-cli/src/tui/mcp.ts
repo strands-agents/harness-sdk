@@ -40,6 +40,8 @@ export interface LoadedMcp {
   readonly warnings: readonly string[]
   /** Present when `backgroundConnect` deferred the connections. */
   readonly startup?: McpStartup
+  /** Observes deferred and server-initiated tool changes after the agent registry updates. */
+  subscribeTools?(listener: () => void): () => void
   list(connect?: boolean): Promise<readonly McpServerInfo[]>
   /**
    * Connects or disconnects a server and registers/withdraws its tools on the live agent.
@@ -74,6 +76,10 @@ export async function loadMcp(
     .filter(([name, client]) => client !== undefined && (options.backgroundConnect || !disabledServers.has(name)))
     .map(([, client]) => client!)
   let startup: McpStartup | undefined
+  const toolListeners = new Set<() => void>()
+  const notifyTools = (): void => {
+    for (const listener of toolListeners) listener()
+  }
   const deferredByName = new Map<string, DeferredConnection>()
   if (options.backgroundConnect) {
     const listeners = new Set<() => void>()
@@ -96,6 +102,7 @@ export async function loadMcp(
       const deferred = deferConnection(
         client,
         !disabledServers.has(name),
+        notifyTools,
         transportType(definition) === 'stdio'
           ? undefined
           : (): Promise<void> => refreshRemoteTransport(client, name, definition)
@@ -122,7 +129,17 @@ export async function loadMcp(
   }
   return {
     clients,
-    ...(startup ? { startup } : {}),
+    ...(startup
+      ? {
+          startup,
+          subscribeTools(listener: () => void): () => void {
+            toolListeners.add(listener)
+            return (): void => {
+              toolListeners.delete(listener)
+            }
+          },
+        }
+      : {}),
     paths: paths.map(sanitizeTerminalText),
     warnings: warnings.map(sanitizeTerminalText),
     async list(connect = false): Promise<readonly McpServerInfo[]> {
@@ -168,6 +185,7 @@ export async function loadMcp(
       return enabled ? deferred.enable() : deferred.disable()
     },
     async dispose(): Promise<void> {
+      toolListeners.clear()
       await Promise.allSettled(
         [...clientsByName].map(([name, client]) => deferredByName.get(name)?.disable() ?? client?.disconnect())
       )
@@ -201,6 +219,7 @@ interface DeferredConnection {
 function deferConnection(
   client: McpClient,
   autoConnect: boolean,
+  notifyTools: () => void,
   refreshTransport?: () => Promise<void>
 ): DeferredConnection {
   const baseListTools = client.listTools.bind(client)
@@ -283,12 +302,17 @@ function deferConnection(
     configurable: true,
     set(callback: ToolsChangedCallback | undefined) {
       toolsChanged = callback
-      Reflect.set(McpClient.prototype, 'onToolsChanged', callback, client)
-      if (callback && pendingTools) {
+        ? (oldTools, newTools): void => {
+            callback(oldTools, newTools)
+            delivered = newTools.map((tool) => tool.name)
+            notifyTools()
+          }
+        : undefined
+      Reflect.set(McpClient.prototype, 'onToolsChanged', toolsChanged, client)
+      if (toolsChanged && pendingTools) {
         const tools = pendingTools
         pendingTools = undefined
-        delivered = tools.map((tool) => tool.name)
-        callback([], tools)
+        toolsChanged([], tools)
       }
     },
   })
@@ -299,7 +323,6 @@ function deferConnection(
     }
     const previous = delivered
     if (toolsChanged) {
-      delivered = tools.map((tool) => tool.name)
       toolsChanged(previous, tools)
     } else {
       pendingTools = tools

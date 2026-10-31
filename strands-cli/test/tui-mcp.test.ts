@@ -4,7 +4,7 @@ import { join, sep } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { SdkErrorCode } from '@modelcontextprotocol/client'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
-import { McpClient } from '@strands-agents/sdk'
+import { Agent, McpClient } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultMcpPaths, loadMcp, projectMcpPaths, readMcpDefinitions } from '../src/tui/mcp.js'
@@ -49,6 +49,7 @@ describe('loadMcp', () => {
   it('connects to a legacy stdio server that closes on protocol discovery', async () => {
     const server = `
       const readline = require('node:readline')
+      let name = 'probe'
       readline.createInterface({ input: process.stdin }).on('line', (line) => {
         const request = JSON.parse(line)
         if (request.method === 'server/discover') process.exit(0)
@@ -56,12 +57,17 @@ describe('loadMcp', () => {
         if (request.method === 'initialize') {
           result = {
             protocolVersion: '2025-11-25',
-            capabilities: { tools: {} },
+            capabilities: { tools: { listChanged: true } },
             serverInfo: { name: 'legacy', version: '1.0' },
           }
         }
         if (request.method === 'tools/list') {
-          result = { tools: [{ name: 'probe', inputSchema: { type: 'object' } }] }
+          result = { tools: [{ name, inputSchema: { type: 'object' } }] }
+        }
+        if (request.method === 'tools/call') {
+          name = 'updated'
+          result = { content: [{ type: 'text', text: 'updated' }] }
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }) + '\\n')
         }
         if (result) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n')
       })
@@ -72,11 +78,25 @@ describe('loadMcp', () => {
       backgroundConnect: true,
     })
     try {
+      const agent = new Agent({ tools: [...loaded.clients], printer: false })
+      const registered: string[][] = []
+      const stop = loaded.subscribeTools?.(() => registered.push(agent.toolRegistry.list().map((tool) => tool.name)))
+      await agent.initialize()
       await vi.waitFor(() => expect(loaded.startup?.progress()).toEqual({ total: 1, connected: 1, failed: 0 }))
       expect(await loaded.list(true)).toMatchObject([
         { name: 'legacy', state: 'connected', toolCount: 1, source: 'Agent configuration', canRetry: true },
       ])
-      expect((await loaded.clients[0]!.listTools()).map((tool) => tool.name)).toEqual(['legacy_probe'])
+      await vi.waitFor(() => expect(registered).toContainEqual(['legacy_probe']))
+      const client = loaded.clients[0]!
+      const [tool] = await client.listTools()
+      await client.callTool(tool!, {})
+      await vi.waitFor(() => expect(registered).toContainEqual(['legacy_updated']))
+      await loaded.setEnabled?.('legacy', false)
+      expect(registered.at(-1)).toEqual([])
+      stop?.()
+      const notifications = registered.length
+      await loaded.setEnabled?.('legacy', true)
+      expect(registered).toHaveLength(notifications)
     } finally {
       await loaded.dispose()
     }

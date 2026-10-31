@@ -8,7 +8,7 @@ import { containsPath } from '../paths.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { buildFileChangePreview, sanitizeDiffPreview } from './file-change-preview.js'
 import { canonicalPath, permissionAction, permissionRuleDecision, permissionScopes } from './rules.js'
-import { CliConfigStore, type PermissionMode, type CliConfigSnapshot } from '../config.js'
+import { CliConfigStore, type PermissionMode, type CliConfigSnapshot, type RuntimeConfig } from '../config.js'
 import { isRecord } from '../values.js'
 
 export const DEFAULT_CEDAR_POLICIES = `
@@ -166,9 +166,14 @@ export class ToolPermissionBroker {
   }
 }
 
+type PermissionConfig = Pick<
+  RuntimeConfig,
+  'snapshot' | 'setPermissionMode' | 'allowTool' | 'denyTool' | 'removeAllowedTool' | 'removeDeniedTool'
+>
+
 interface CedarPermissionsOptions {
   broker: ToolPermissionBroker
-  config?: CliConfigStore
+  config?: PermissionConfig
   cwd: string
   policies?: string
   configurationPreview?: () => ChatDiffPreview | undefined
@@ -180,7 +185,7 @@ export class CedarPermissions extends InterventionHandler {
   override readonly onError = 'deny'
 
   private readonly _broker: ToolPermissionBroker
-  private readonly _config: CliConfigStore
+  private readonly _config: PermissionConfig
   private readonly _cedar: CedarAuthorization
   private readonly _configurationPreview: CedarPermissionsOptions['configurationPreview']
   private readonly _configurationDenied: CedarPermissionsOptions['configurationDenied']
@@ -290,14 +295,17 @@ export function requestToolPermission(
   })
 }
 
-export async function savePermissionDecision(config: CliConfigStore, decision: PermissionDecision): Promise<void> {
+export async function savePermissionDecision(
+  config: Pick<RuntimeConfig, 'allowTool' | 'denyTool'>,
+  decision: PermissionDecision
+): Promise<void> {
   if (decision.type === 'allow-always') await config.allowTool(decision.rule)
   if (decision.type === 'deny-always') await config.denyTool(decision.rule)
 }
 
 /** Saves a forever choice and returns the intervention action for the call being decided. */
 export async function applyPermissionDecision(
-  config: CliConfigStore,
+  config: Pick<RuntimeConfig, 'allowTool' | 'denyTool'>,
   toolName: string,
   decision: PermissionDecision
 ): Promise<ReturnType<CedarAuthorization['beforeToolCall']>> {

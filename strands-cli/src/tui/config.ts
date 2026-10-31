@@ -85,6 +85,18 @@ export interface SetupConfiguration {
   settings?: Partial<ChatSettings>
 }
 
+/** @internal */
+export type RuntimeConfig = Pick<
+  CliConfigStore,
+  | 'snapshot'
+  | 'providerEnvironment'
+  | 'setPermissionMode'
+  | 'allowTool'
+  | 'denyTool'
+  | 'removeAllowedTool'
+  | 'removeDeniedTool'
+>
+
 type ConfigDocument = Record<string, unknown>
 type ConfigNullPath = (string | number)[]
 const NULL_PATHS_KEY = '__strands_null_paths'

@@ -17,11 +17,17 @@ export interface PeerMessage {
 
 interface PeerEndpoint extends PeerParticipant {
   status(): PeerEndpointInfo['status'] | undefined
-  enqueue(message: PeerMessage): boolean
+  enqueue(message: PeerMessage): boolean | Promise<boolean>
 }
 
 export type PeerEndpointInfo = PeerParticipant & {
   status: 'idle' | 'working'
+}
+
+/** @internal */
+export interface PeerMessageRouter {
+  list(senderId: string): readonly PeerEndpointInfo[] | Promise<readonly PeerEndpointInfo[]>
+  send(senderId: string, to: string, body: string): string | Promise<string>
 }
 
 export class AgentMessaging {
@@ -51,8 +57,16 @@ export class AgentMessaging {
     }
   }
 
-  list(): readonly PeerEndpointInfo[] {
-    return this._list()
+  list(senderId?: string): readonly PeerEndpointInfo[] {
+    if (senderId !== undefined) this._requireSender(senderId)
+    const peers: PeerEndpointInfo[] = []
+    for (const endpoint of this._endpoints.values()) {
+      const status = endpoint.status()
+      if (endpoint.id !== senderId && status) {
+        peers.push({ id: endpoint.id, name: endpoint.name, status })
+      }
+    }
+    return peers.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
   }
 
   subscribe(listener: () => void): () => void {
@@ -67,7 +81,10 @@ export class AgentMessaging {
     this._agentEndpoints.delete(agent)
   }
 
-  createPlugin(endpointId: string): Required<Pick<Plugin, 'name' | 'initAgent' | 'getTools'>> {
+  createPlugin(
+    endpointId: string,
+    router: PeerMessageRouter = this
+  ): Required<Pick<Plugin, 'name' | 'initAgent' | 'getTools'>> {
     const messageAgent = tool({
       name: 'message_agent',
       description: 'List the other live agents or send one an asynchronous message.',
@@ -94,13 +111,15 @@ export class AgentMessaging {
       callback: (input, context) => {
         if (!context) throw new Error('Tool context is required for agent_message.')
         const parsed = readAgentMessageInput(input)
+        const senderId = this._requireSenderId(context.agent)
         if (parsed.action === 'list') {
-          return { agents: this._list(this._requireSenderId(context.agent)) }
+          const peers = router.list(senderId)
+          return peers instanceof Promise ? peers.then((agents) => ({ agents: [...agents] })) : { agents: [...peers] }
         }
-        return {
-          status: 'queued',
-          recipient: this._send(context.agent, parsed.to, parsed.message),
-        }
+        const recipient = router.send(senderId, parsed.to, parsed.message)
+        return recipient instanceof Promise
+          ? recipient.then((name) => ({ status: 'queued', recipient: name }))
+          : { status: 'queued', recipient }
       },
     })
     return {
@@ -112,34 +131,18 @@ export class AgentMessaging {
     }
   }
 
-  private _list(senderId?: string): PeerEndpointInfo[] {
-    const peers: PeerEndpointInfo[] = []
-    for (const endpoint of this._endpoints.values()) {
-      const status = endpoint.status()
-      if (endpoint.id !== senderId && status) {
-        peers.push({ id: endpoint.id, name: endpoint.name, status })
-      }
-    }
-    return peers.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
-  }
-
   private _emit(): void {
     for (const listener of this._listeners) {
       listener()
     }
   }
 
-  private _send(agent: LocalAgent, to: string, body: string): string {
-    const senderId = this._requireSenderId(agent)
+  send(senderId: string, to: string, body: string): string | Promise<string> {
+    const sender = this._requireSender(senderId)
     if (senderId === to) {
       throw new Error('An agent cannot send a peer message to itself.')
     }
-    const sender = this._requireEndpoint(senderId)
     const recipient = this._requireEndpoint(to)
-    if (!recipient.status()) {
-      throw new Error(`Agent ${JSON.stringify(to)} is not available for peer messages.`)
-    }
-
     const cleanBody = body.trim()
     if (!cleanBody) {
       throw new Error('Peer message content must not be empty.')
@@ -152,18 +155,39 @@ export class AgentMessaging {
       from: { id: sender.id, name: sender.name },
       body: cleanBody,
     }
-    if (!recipient.enqueue(message)) {
-      throw new Error(`Agent ${JSON.stringify(to)} could not accept the peer message.`)
+    const complete = (accepted: boolean): string => {
+      if (!accepted) {
+        throw new Error(`Agent ${JSON.stringify(to)} could not accept the peer message.`)
+      }
+      return recipient.name
     }
-    return recipient.name
+    const accepted = this.deliver(to, message)
+    return accepted instanceof Promise ? accepted.then(complete) : complete(accepted)
+  }
+
+  /** @internal Receives a message whose sender was validated by the owning registry. */
+  deliver(to: string, message: PeerMessage): boolean | Promise<boolean> {
+    const recipient = this._requireEndpoint(to)
+    if (!recipient.status()) {
+      throw new Error(`Agent ${JSON.stringify(to)} is not available for peer messages.`)
+    }
+    return recipient.enqueue(message)
   }
 
   private _requireSenderId(agent: LocalAgent): string {
     const id = this._agentEndpoints.get(agent)
-    if (!id || !this._endpoints.has(id)) {
+    if (!id) {
       throw new Error('This agent is not registered for peer messaging.')
     }
     return id
+  }
+
+  private _requireSender(id: string): PeerEndpoint {
+    const sender = this._endpoints.get(id)
+    if (!sender) {
+      throw new Error('This agent is not registered for peer messaging.')
+    }
+    return sender
   }
 
   private _requireEndpoint(id: string): PeerEndpoint {

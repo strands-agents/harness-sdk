@@ -14,7 +14,13 @@ import { Message, TextBlock, tool, type Agent, type Tool } from '@strands-agents
 
 import { validateNoConfigSecrets } from './project/configuration.js'
 import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } from './builtin-tools.js'
-import { PROVIDER_IDS, type CliConfigStore, type SetupConfiguration, type ProviderId } from './config.js'
+import {
+  PROVIDER_IDS,
+  type CliConfigStore,
+  type RuntimeConfig,
+  type SetupConfiguration,
+  type ProviderId,
+} from './config.js'
 import { resolveModelTarget, validateModelSelection } from './model/selection.js'
 import { discoverProviderModels } from './provider/discovery.js'
 import type { ChatBuiltinToolsRuntime, ChatDiffPreview } from './chat/types.js'
@@ -73,7 +79,7 @@ export function createBuiltinToolsRuntime(
 }
 
 interface ConfigurationToolOptions {
-  config: CliConfigStore
+  config: Pick<RuntimeConfig, 'snapshot' | 'providerEnvironment'>
   profile(): HarnessAgentConfig
   agent(): Agent | undefined
   source?: string

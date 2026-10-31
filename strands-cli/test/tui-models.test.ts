@@ -183,12 +183,24 @@ describe('AgentModelRuntime thinking controls', () => {
     ['high', 'bedrock/us.anthropic.claude-3-haiku-20240307-v1:0', 'auto'],
     ['max', 'bedrock/openai.gpt-oss-120b-1:0', 'auto'],
     ['high', 'bedrock/openai.gpt-oss-120b-1:0', 'high'],
+    [null, 'bedrock/anthropic.claude-opus-4-8', 'auto'],
   ] as const)('carries %s effort into %s as %s', async (thinking, target, expected) => {
     const requested: (EffortInput | undefined)[] = []
     const runtime = runtimeFor('global.anthropic.claude-opus-4-8', thinking, (options) => {
       requested.push(options.thinking)
       return Promise.resolve({ model: { modelId: 'x' } } as unknown as Agent)
     })
+
+    const agent = runtime.agent
+    await expect(runtime.prepareRestart(target)).resolves.toMatchObject({
+      model: target,
+      thinking: expected,
+      preserveConversation: true,
+      preserveReasoning: target.includes('anthropic.'),
+    })
+    expect(requested).toEqual([])
+    expect(runtime.agent).toBe(agent)
+    expect(runtime.thinking).toBe(thinking)
 
     await runtime.restart(target)
 

@@ -225,13 +225,7 @@ async function main() {
         await waitFor(['Enter choose'], 8_000, false, start)
         terminal.write('\r')
       }
-      await waitFor(
-        [...markers, ...(exportLanguage === 'typescript' ? ['__PLATFORM_IDLE__'] : [])],
-        15_000,
-        false,
-        start
-      )
-      await waitForStableScreen(['Enter to send'])
+      await waitForStableScreen([...markers, 'Worked for', 'Enter to send'], 15_000, start)
     }
 
     if (setupImportMode) {

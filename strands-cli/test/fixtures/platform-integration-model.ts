@@ -61,7 +61,6 @@ async function* response(text: string): AsyncIterable<ModelStreamEvent> {
   yield { type: 'modelContentBlockStopEvent' }
   yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
   yield metadata()
-  process.stderr.write('__PLATFORM_IDLE__\n')
 }
 
 function metadata(): ModelStreamEvent {

@@ -22,7 +22,10 @@ afterEach(() => {
 function configurationTool(config: CliConfigStore, source?: string) {
   const agent = new Agent()
   const control = createConfigurationTool({
-    config,
+    config: {
+      snapshot: () => config.snapshot(),
+      providerEnvironment: () => config.providerEnvironment(),
+    },
     profile: () => config.snapshot().profile,
     agent: () => agent,
     ...(source ? { source } : {}),

@@ -26,7 +26,8 @@ import {
   type EffortInput,
 } from './selection.js'
 
-interface AgentBuildRequest {
+/** @internal */
+export interface AgentBuildRequest {
   model: string
   thinking: EffortInput
   sessionId?: string | null
@@ -184,17 +185,7 @@ export class AgentModelRuntime {
   }
 
   changeMode(modelId: string): 'live' | 'restart' {
-    const target = resolveModelTarget(modelId)
-    if (target.provider !== this.provider) {
-      return 'restart'
-    }
-    if (target.modelId === this.current) {
-      return 'live'
-    }
-    if (this.provider === 'bedrock' && bedrockLiveSwitchKey(target.modelId) === bedrockLiveSwitchKey(this.current)) {
-      return 'live'
-    }
-    return 'restart'
+    return modelChangeMode(this.current, this.provider, modelId)
   }
 
   async switch(modelId: string): Promise<string> {
@@ -215,28 +206,30 @@ export class AgentModelRuntime {
     if (!this._restartAgent) {
       throw new Error('This runtime cannot rebuild the agent.')
     }
+    const request = await this.prepareRestart(modelId)
+    this._agent = await this._restartAgent(request, this._agent)
+    this._thinking = request.thinking === undefined ? 'auto' : request.thinking
+    this._appliedThinking = this._thinking
+    this._target = resolveModelTarget(request.model)
+    await this._notifyModelChange()
+    return this.current
+  }
+
+  async prepareRestart(modelId: string): Promise<AgentBuildRequest> {
     const target = resolveModelTarget(modelId)
     if (!this._isActive(modelId)) {
       await validateModelSelection(modelId, this._discoverProviderModels, this._providerEnvironment)
     }
     const thinking = effortForModel(target.specifier, this._thinking)
     const currentModelId = this._target?.modelId ?? this.current
-    this._agent = await this._restartAgent(
-      {
-        model: target.specifier,
-        thinking,
-        ...(this._sessionId ? { sessionId: this._sessionId } : {}),
-        sessionDir: this._sessionDirectory,
-        preserveConversation: true,
-        preserveReasoning: reasoningProvider(currentModelId) === reasoningProvider(target.modelId),
-      },
-      this._agent
-    )
-    this._thinking = thinking
-    this._appliedThinking = thinking
-    this._target = target
-    await this._notifyModelChange()
-    return this.current
+    return {
+      model: target.specifier,
+      thinking,
+      ...(this._sessionId ? { sessionId: this._sessionId } : {}),
+      sessionDir: this._sessionDirectory,
+      preserveConversation: true,
+      preserveReasoning: reasoningProvider(currentModelId) === reasoningProvider(target.modelId),
+    }
   }
 
   async setEffort(effort: string): Promise<string> {
@@ -379,6 +372,17 @@ export class AgentModelRuntime {
     const modelId = this._target?.modelId ?? this.current
     return target.provider === provider && target.modelId === modelId
   }
+}
+
+/** @internal */
+export function modelChangeMode(current: string, provider: string, modelId: string): 'live' | 'restart' {
+  const target = resolveModelTarget(modelId)
+  if (target.provider !== provider) return 'restart'
+  if (target.modelId === current) return 'live'
+  if (provider === 'bedrock' && bedrockLiveSwitchKey(target.modelId) === bedrockLiveSwitchKey(current)) {
+    return 'live'
+  }
+  return 'restart'
 }
 
 function modelProvider(model: Model): string {

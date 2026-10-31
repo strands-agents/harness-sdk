@@ -354,7 +354,8 @@ export interface ChatBackend {
   setEffort?(effort: string): Promise<string | void>
   streamShell?(command: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   queueSteering?(prompt: string, onConsumed: () => void): boolean
-  drainSteering?(): string[]
+  /** Completes after consumed callbacks; removes and returns all unconsumed prompts. */
+  drainSteering?(): string[] | Promise<string[]>
   generateSessionName?(cancelSignal: AbortSignal): Promise<string>
   forkState?(): ChatForkState
   forkStash?(): Promise<Record<string, JSONValue> | undefined>
@@ -375,7 +376,7 @@ export interface ChatBackend {
   streamBackgroundResults?(): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   getTaskActivity?(taskId: string): BackgroundAgentActivity | undefined
   watchTaskActivity?(taskId: string, listener: (activity: BackgroundAgentActivity | undefined) => void): () => void
-  respondPermission?(requestId: string, optionId?: string, rule?: string): boolean
+  respondPermission?(requestId: string, optionId?: string, rule?: string): boolean | Promise<boolean>
   dispose?(): void | Promise<void>
 }
 
@@ -630,7 +631,7 @@ export interface ChatControllerOptions {
   sessions?: ChatSessionRuntime
   skills?: ChatSkillsRuntime
   skillNames?: readonly string[]
-  mcp?: LoadedMcp
+  mcp?: Omit<LoadedMcp, 'clients'>
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
   initialConfigurationBaseline?: ChatConfigurationBaseline
