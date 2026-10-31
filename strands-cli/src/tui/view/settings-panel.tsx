@@ -40,7 +40,7 @@ export function SettingsPicker({
   onFilterElement,
   onCategoriesElement,
 }: Omit<PanelRowsProps, 'panel' | 'onPanelElement'> & {
-  panel: ChatPanel
+  panel: Extract<ChatPanel, { kind: 'settings' }>
   allRows: readonly ChatPanelRow[]
   height: number
   focus: SettingsPanelFocus

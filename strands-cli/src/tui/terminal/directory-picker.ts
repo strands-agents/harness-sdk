@@ -31,6 +31,29 @@ function run() {
 }
 `
 
+const MACOS_FILE_PICKER = `
+ObjC.import('AppKit')
+
+function run(argv) {
+  const app = $.NSApplication.sharedApplication
+  app.setActivationPolicy($.NSApplicationActivationPolicyAccessory)
+  const panel = $.NSOpenPanel.openPanel
+  panel.title = argv[0] || 'Attach files'
+  panel.message = 'Choose files to attach to your next message'
+  panel.canChooseFiles = true
+  panel.canChooseDirectories = false
+  panel.allowsMultipleSelection = true
+  panel.makeKeyAndOrderFront(null)
+  app.activateIgnoringOtherApps(true)
+  if (panel.runModal !== $.NSModalResponseOK) return ''
+  const paths = []
+  for (let index = 0; index < panel.URLs.count; index++) {
+    paths.push(ObjC.unwrap(panel.URLs.objectAtIndex(index).path))
+  }
+  return JSON.stringify(paths)
+}
+`
+
 const MACOS_SAVE_PICKER = `
 on run argv
   try
@@ -88,13 +111,26 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 }
 `
 
+const WINDOWS_FILE_PICKER = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = $env:STRANDS_PICKER_PROMPT
+$dialog.Filter = 'Supported files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.csv;*.html;*.txt;*.md;*.json;*.xml|All files (*.*)|*.*'
+$dialog.Multiselect = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+  [Console]::Write((ConvertTo-Json -InputObject @($dialog.FileNames) -Compress))
+}
+`
+
 interface PickerInvocation {
   command: string
   args: readonly string[]
   environment?: Readonly<Record<string, string>>
 }
 
-export function canChooseDirectory(platform = process.platform): boolean {
+export function canUseNativePicker(platform = process.platform): boolean {
   return platform === 'darwin' || platform === 'win32'
 }
 
@@ -120,6 +156,17 @@ export function chooseAgentProject(): Promise<string | undefined> {
   return runPicker({ command: '/usr/bin/osascript', args: ['-l', 'JavaScript', '-e', MACOS_AGENT_PICKER] })
 }
 
+export async function chooseFiles(prompt = 'Attach files'): Promise<string[]> {
+  const output =
+    process.platform === 'win32'
+      ? await runPicker(windowsPicker(WINDOWS_FILE_PICKER, { STRANDS_PICKER_PROMPT: prompt }))
+      : await runPicker({
+          command: '/usr/bin/osascript',
+          args: ['-l', 'JavaScript', '-e', MACOS_FILE_PICKER, '--', prompt],
+        })
+  return output ? (JSON.parse(output) as string[]) : []
+}
+
 export function chooseSaveFile(prompt: string, defaultName: string): Promise<string | undefined> {
   if (process.platform === 'win32') {
     return runPicker(
@@ -132,7 +179,7 @@ export function chooseSaveFile(prompt: string, defaultName: string): Promise<str
 let pickerActive = false
 
 async function runPicker(invocation: PickerInvocation): Promise<string | undefined> {
-  if (!canChooseDirectory() || pickerActive) {
+  if (!canUseNativePicker() || pickerActive) {
     return undefined
   }
   pickerActive = true
@@ -155,7 +202,8 @@ async function runPicker(invocation: PickerInvocation): Promise<string | undefin
         }
       )
     })
-    return stdout.trim() || undefined
+    // osascript appends one LF; all other whitespace belongs to the selected path.
+    return (invocation.command === '/usr/bin/osascript' ? stdout.replace(/\n$/, '') : stdout) || undefined
   } finally {
     pickerActive = false
   }

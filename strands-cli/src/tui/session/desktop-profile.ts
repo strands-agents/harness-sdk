@@ -12,6 +12,7 @@ const HIDDEN_DESKTOP_ENVELOPES = [
   ['<strands_session_recovery>', '</strands_session_recovery>'],
   ['<strands_recovered_conversation>', '</strands_recovered_conversation>'],
   ['<strands_reply_context>', '</strands_reply_context>'],
+  ['<strands_skill_activation>', '</strands_skill_activation>'],
 ] as const
 
 export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message[] {

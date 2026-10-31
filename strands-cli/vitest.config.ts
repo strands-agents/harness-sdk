@@ -4,8 +4,15 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
     setupFiles: ['test/fixtures/isolated-home.ts'],
-    // Integration tests hit a live model; they run via test:integ, never the default unit run.
-    exclude: [...configDefaults.exclude, 'test/integration/**'],
+    // Avoid competing subprocess teardown and temporary-directory locks on Windows.
+    maxWorkers: process.platform === 'win32' ? 1 : undefined,
+    // Slower integration suites have dedicated configs and scripts.
+    exclude: [
+      ...configDefaults.exclude,
+      'test/integration/**',
+      'test/platform-integration/**',
+      'test/tui-integration/**',
+    ],
     coverage: {
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/main.ts'],

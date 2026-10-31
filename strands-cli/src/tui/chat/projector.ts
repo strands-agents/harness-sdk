@@ -1,4 +1,4 @@
-import type { Message } from '@strands-agents/sdk'
+import type { ContentBlock, Message } from '@strands-agents/sdk'
 
 import { readPeerMessageMetadata } from '../messaging.js'
 import { visibleDesktopPrompt } from '../session/desktop-profile.js'
@@ -7,6 +7,7 @@ import { errorMessage, sanitizeTerminalText, sanitizeTerminalValue } from '../te
 import { projectMediaContent, projectS3Location, projectToolResultContent } from './sdk-projector.js'
 import type {
   ChatDocumentSource,
+  ChatAttachmentSummary,
   ChatEntry,
   ChatEvent,
   ChatImageSource,
@@ -42,11 +43,21 @@ export class TurnProjector {
     prompt: string,
     agentName = 'Strands harness',
     source?: ChatTurn['source'],
-    peer?: ChatTurn['peer']
+    peer?: ChatTurn['peer'],
+    attachments?: readonly ChatAttachmentSummary[]
   ) {
     this._turn = {
       id,
       prompt: sanitizeTerminalText(prompt),
+      ...(attachments?.length
+        ? {
+            attachments: attachments.map(({ name, size, kind }) => ({
+              name: sanitizeTerminalText(name),
+              size,
+              kind,
+            })),
+          }
+        : {}),
       agentName: sanitizeTerminalText(agentName),
       ...(source ? { source } : {}),
       ...(peer ? { peer: { ...peer } } : {}),
@@ -95,6 +106,7 @@ export class TurnProjector {
   }
 
   markCancelled(): void {
+    this.setResponseDelayed(false)
     this._finishTiming()
     this._turn.status = 'cancelled'
     this._settleRunningTools('cancelled')
@@ -104,7 +116,16 @@ export class TurnProjector {
     this._turn.usage = { ...usage }
   }
 
+  setResponseDelayed(delayed: boolean): void {
+    if (delayed && this._turn.status === 'running') {
+      this._turn.responseDelayed = true
+    } else {
+      delete this._turn.responseDelayed
+    }
+  }
+
   finish(result: ChatRunResult): void {
+    this.setResponseDelayed(false)
     this._finishTiming()
     if (this._turn.status === 'cancelled') {
       this._turn.stopReason = 'cancelled'
@@ -130,7 +151,8 @@ export class TurnProjector {
     }
   }
 
-  fail(error: unknown): void {
+  fail(error: unknown, recoveryHint?: string): void {
+    this.setResponseDelayed(false)
     this._finishTiming()
     if (this._turn.status === 'cancelled') {
       this._settleRunningTools('cancelled')
@@ -138,22 +160,36 @@ export class TurnProjector {
     }
     this._turn.status = 'error'
     this._turn.error = errorMessage(error)
+    if (recoveryHint) {
+      this._turn.recoveryHint = sanitizeTerminalText(recoveryHint)
+    } else {
+      delete this._turn.recoveryHint
+    }
     this._settleRunningTools('error', this._turn.error)
+  }
+
+  hasTool(matches: (name: string) => boolean): boolean {
+    return this._turn.entries.some((entry) => entry.type === 'tool' && matches(entry.name))
   }
 
   snapshot(): ChatTurn {
     return {
       id: this._turn.id,
       prompt: this._turn.prompt,
+      ...(this._turn.attachments
+        ? { attachments: this._turn.attachments.map((attachment) => ({ ...attachment })) }
+        : {}),
       agentName: this._turn.agentName,
       ...(this._turn.source ? { source: this._turn.source } : {}),
       ...(this._turn.peer ? { peer: { ...this._turn.peer } } : {}),
       entries: this._turn.entries.map(cloneChatEntry),
       status: this._turn.status,
+      ...(this._turn.responseDelayed ? { responseDelayed: true } : {}),
       ...(this._turn.durationMs !== undefined ? { durationMs: this._turn.durationMs } : {}),
       ...(this._turn.usage ? { usage: { ...this._turn.usage } } : {}),
       ...(this._turn.stopReason ? { stopReason: this._turn.stopReason } : {}),
       ...(this._turn.error ? { error: this._turn.error } : {}),
+      ...(this._turn.recoveryHint ? { recoveryHint: this._turn.recoveryHint } : {}),
     }
   }
 
@@ -286,7 +322,7 @@ export class TurnProjector {
 export function projectMessages(messages: readonly Message[], agentName = 'Strands harness'): ChatTurn[] {
   const turns: ChatTurn[] = []
   let current:
-    | (Pick<ChatTurn, 'id' | 'prompt' | 'source' | 'peer' | 'usage'> & {
+    | (Pick<ChatTurn, 'id' | 'prompt' | 'source' | 'peer' | 'usage' | 'attachments'> & {
         entries: ChatEntry[]
         nextEntry: number
         tools: Map<string, Extract<ChatEntry, { type: 'tool' }>>
@@ -312,6 +348,7 @@ export function projectMessages(messages: readonly Message[], agentName = 'Stran
     turns.push({
       id: current.id,
       prompt: current.prompt,
+      ...(current.attachments ? { attachments: current.attachments } : {}),
       agentName: sanitizeTerminalText(agentName),
       ...(current.source ? { source: current.source } : {}),
       ...(current.peer ? { peer: { ...current.peer } } : {}),
@@ -331,9 +368,16 @@ export function projectMessages(messages: readonly Message[], agentName = 'Stran
         .trim()
       const prompt =
         (peerMessage ? sanitizeTerminalText(peerMessage.body).trim() : undefined) ?? visibleDesktopPrompt(restoredText)
-      if (prompt) {
+      const attachments = message.content.flatMap((block) => {
+        const attachment = projectUserAttachment(block)
+        return attachment ? [attachment] : []
+      })
+      if (prompt || attachments.length > 0) {
         finish()
         const turn = ensureTurn(prompt)
+        if (attachments.length > 0) {
+          turn.attachments = attachments
+        }
         if (peerMessage) {
           turn.source = 'peer'
           turn.peer = {
@@ -408,6 +452,42 @@ export function projectMessages(messages: readonly Message[], agentName = 'Stran
   }
   finish()
   return turns
+}
+
+function projectUserAttachment(block: ContentBlock): ChatAttachmentSummary | undefined {
+  if (block.type === 'imageBlock') {
+    return {
+      name: `image.${block.format}`,
+      size: block.source.type === 'imageSourceBytes' ? block.source.bytes.byteLength : 0,
+      kind: 'image',
+    }
+  }
+  if (block.type === 'documentBlock') {
+    const size =
+      block.source.type === 'documentSourceBytes'
+        ? block.source.bytes.byteLength
+        : block.source.type === 'documentSourceText'
+          ? Buffer.byteLength(block.source.text)
+          : 0
+    return {
+      name: restoredDocumentName(block.name, block.format, block.context),
+      size,
+      kind: 'document',
+    }
+  }
+  return undefined
+}
+
+function restoredDocumentName(name: string, format: string, context?: string): string {
+  const originalName = context?.match(/^Original filename: (.+)$/)?.[1]
+  if (originalName) {
+    return sanitizeTerminalText(originalName)
+  }
+  const cleanName = sanitizeTerminalText(name)
+  const extensionSuffix = ` ${format}`
+  return cleanName.toLowerCase().endsWith(extensionSuffix)
+    ? `${cleanName.slice(0, -extensionSuffix.length)}.${format}`
+    : `${cleanName}.${format}`
 }
 
 function appendText(

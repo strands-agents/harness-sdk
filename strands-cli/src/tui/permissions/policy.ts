@@ -95,12 +95,7 @@ export class ToolPermissionBroker {
       id: `strands-permission-${this._nextRequest++}`,
       toolName: sanitizeTerminalText(toolName),
       input: globalThis.structuredClone(input),
-      options: PERMISSION_OPTIONS.map((option) => ({
-        ...option,
-        ...(option.kind === 'allow_always' || option.kind === 'reject_always'
-          ? { description: `Save rule: ${scopes[0]?.rule ?? toolName}` }
-          : {}),
-      })),
+      options: PERMISSION_OPTIONS.map((option) => ({ ...option })),
       scopes: scopes.map((scope) => ({ ...scope })),
       ...(action !== undefined ? { action } : {}),
       ...(diff ? { diff } : {}),

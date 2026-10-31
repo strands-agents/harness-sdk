@@ -8,7 +8,10 @@ import { McpClient } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultMcpPaths, loadMcp, projectMcpPaths, readMcpDefinitions } from '../src/tui/mcp.js'
+import { ChatController } from '../src/tui/chat/controller.js'
+import { idleBackend } from './fixtures/chat-backend.js'
 import { startRemoteMcpServer } from './fixtures/remote-mcp.js'
+import { temporaryDirectory } from './fixtures/tempdir.js'
 
 const stdioTransports = vi.hoisted(() => [] as Record<string, unknown>[])
 const stdioClientConfigs = vi.hoisted(() => [] as { prefix?: string; applicationName?: string }[])
@@ -35,14 +38,11 @@ vi.mock('@modelcontextprotocol/client/stdio', async (importOriginal) => {
   return { ...actual, StdioClientTransport: RecordingStdioClientTransport }
 })
 
-const temporaryDirectories: string[] = []
-
-afterEach(async () => {
+afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   stdioTransports.length = 0
   stdioClientConfigs.length = 0
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
 describe('loadMcp', () => {
@@ -101,8 +101,7 @@ describe('loadMcp', () => {
   })
 
   it('translates Codex TOML servers, auth headers, and tool filters', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-codex-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-codex-')
     const path = join(directory, 'config.toml')
     await writeFile(
       path,
@@ -136,8 +135,7 @@ describe('loadMcp', () => {
   })
 
   it('loads Claude user and current-project local scopes from ~/.claude.json shape', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-claude-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-claude-')
     const path = join(directory, '.claude.json')
     await writeFile(
       path,
@@ -172,8 +170,7 @@ describe('loadMcp', () => {
   })
 
   it.each(['inline', 'file'] as const)('preserves SDK OAuth credentials from %s configuration', async (source) => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-auth-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-auth-')
     const path = join(directory, 'mcp.json')
     const auth = {
       clientId: '${env:MCP_CLIENT_ID}',
@@ -263,8 +260,7 @@ describe('loadMcp', () => {
   })
 
   it('lets profile servers replace or disable discovered servers', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-profile-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-profile-')
     const path = join(directory, 'mcp.json')
     await writeFile(
       path,
@@ -290,8 +286,7 @@ describe('loadMcp', () => {
   })
 
   it('tracks the winning configuration source and removes disabled inherited sources', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-sources-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-sources-')
     const user = join(directory, 'user.json')
     const project = join(directory, 'project.json')
     await writeFile(
@@ -333,8 +328,7 @@ describe('loadMcp', () => {
   })
 
   it('loads a server named __proto__ and honors its profile override', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-name-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-name-')
     const path = join(directory, 'mcp.json')
     const server = await startRemoteMcpServer('http', {}, { toolNames: ['probe'] })
     await writeFile(path, JSON.stringify({ mcpServers: { ['__proto__']: { url: server.url } } }))
@@ -501,8 +495,7 @@ describe('loadMcp', () => {
   })
 
   it('reconnects a disabled stdio server and restores its tools across repeated toggles', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-reconnect-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-reconnect-')
     const loaded = await loadMcp({
       paths: [],
       servers: {
@@ -1016,6 +1009,44 @@ describe('loadMcp', () => {
     }
   })
 
+  it('toggles distinct server identities whose terminal labels are identical', async () => {
+    const server = await startRemoteMcpServer('http', {})
+    const names = ['lo\u0007cal', 'local']
+    let controller: ChatController | undefined
+    try {
+      const loaded = await loadMcp({
+        paths: [],
+        servers: Object.fromEntries(names.map((name) => [name, { type: 'http', url: server.url }])),
+        backgroundConnect: true,
+      })
+      const setSettings = vi.fn()
+      controller = new ChatController(idleBackend(), { mcp: loaded, setSettings })
+      await controller.submit('/mcp')
+      const rows = controller.getSnapshot().panel!.rows
+      expect(rows.map((row) => row.label)).toEqual(['local', 'local'])
+      expect(rows.map((row) => row.value)).toEqual(names.map((name) => `mcp:toggle:${encodeURIComponent(name)}`))
+
+      for (const [index, name] of names.entries()) {
+        const disabling = controller.activatePanelRow(rows[index]!)
+        expect(controller.getSnapshot().composerStatus).toBe('Disconnecting local...')
+        await disabling
+        expect(await loaded.list()).toMatchObject(
+          names.map((candidate) => ({ name: candidate, state: candidate === name ? 'disabled' : 'connected' }))
+        )
+        expect(setSettings).toHaveBeenLastCalledWith({ disabledMcpServers: [name] })
+
+        const enabling = controller.activatePanelRow(rows[index]!)
+        expect(controller.getSnapshot().composerStatus).toBe('Connecting local...')
+        await enabling
+        expect(await loaded.list()).toMatchObject(names.map((candidate) => ({ name: candidate, state: 'connected' })))
+        expect(setSettings).toHaveBeenLastCalledWith({ disabledMcpServers: [] })
+      }
+    } finally {
+      await controller?.dispose()
+      await server.close()
+    }
+  })
+
   it('reads Gemini settings with comments and its httpUrl/url transport spelling', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-gemini-'))
     const path = join(directory, '.gemini', 'settings.json')
@@ -1066,7 +1097,7 @@ describe('loadMcp', () => {
   })
 
   it("skips what it cannot read in another tool's configuration and reports it instead of failing", async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-foreign-'))
+    const directory = await temporaryDirectory('strands-mcp-foreign-')
     const claude = join(directory, '.claude.json')
     const kiro = join(directory, '.kiro', 'settings', 'mcp.json')
     const codex = join(directory, '.codex', 'config.toml')
@@ -1090,8 +1121,7 @@ describe('loadMcp', () => {
   })
 
   it('rejects malformed foreign configuration when the path was supplied explicitly', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-explicit-foreign-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-explicit-foreign-')
     const path = join(directory, '.claude.json')
     await writeFile(path, '{ not json')
 
@@ -1101,8 +1131,7 @@ describe('loadMcp', () => {
   })
 
   it("honors a Claude project's opt-out of user-scope servers", async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-claude-disabled-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-claude-disabled-')
     const path = join(directory, '.claude.json')
     await writeFile(
       path,
@@ -1119,8 +1148,7 @@ describe('loadMcp', () => {
   })
 
   it('refuses a project configuration that changes after approval before creating clients', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-mcp-changed-'))
-    temporaryDirectories.push(directory)
+    const directory = await temporaryDirectory('strands-mcp-changed-')
     const path = join(directory, 'mcp.json')
     const loadServers = vi.spyOn(McpClient, 'loadServers')
     await writeFile(path, JSON.stringify({ mcpServers: { local: { command: 'first' } } }))

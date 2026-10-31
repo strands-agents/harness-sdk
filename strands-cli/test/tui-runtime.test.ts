@@ -1,8 +1,8 @@
-import { parse, stringify } from 'smol-toml'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { unzipSync } from 'fflate'
 import {
   Message,
   TextBlock,
@@ -23,7 +23,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
-import { unzipSync } from 'fflate'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 const mocks = vi.hoisted(() => ({
@@ -59,6 +58,7 @@ import { LiveSteering } from '../src/tui/steering.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../src/tui/provider/discovery.js'
 import * as projectWatch from '../src/tui/project/watch.js'
+import { parse, stringify } from 'smol-toml'
 
 let testSessionRoot = ''
 
@@ -156,90 +156,19 @@ describe('interactive runtime lifecycle', () => {
     }
   })
 
-  it('disposes partial replacement resources without changing the original roster', async () => {
-    const model = 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'
-    const agents = [0, 1, 2].map(() => new Agent({ model: new BedrockModel({ modelId: model }) }))
-    mocks.createHarness
-      .mockResolvedValueOnce(agents[0])
-      .mockResolvedValueOnce(agents[1])
-      .mockResolvedValueOnce(agents[2])
-      .mockRejectedValueOnce(new Error('Second replacement failed'))
-    const originalDispose = vi.fn(async () => {})
-    const replacementDispose = vi.fn(async () => {})
-    mocks.loadMcp
-      .mockResolvedValueOnce({ clients: [], warnings: [], dispose: originalDispose })
-      .mockResolvedValueOnce({ clients: [], warnings: [], dispose: originalDispose })
-      .mockResolvedValue({ clients: [], warnings: [], dispose: replacementDispose })
-    const options = { agentOptions: { model, session: false as const } }
-    const original = await createInteractiveChat(options)
-    try {
-      await original.submit('/fork')
-      const captured = await original.captureConversations()
-      await expect(createInteractiveChat(options, captured)).rejects.toThrow('Second replacement failed')
-      expect(replacementDispose).toHaveBeenCalledTimes(2)
-      expect(originalDispose).not.toHaveBeenCalled()
-      expect(await original.captureConversations()).toMatchObject({
-        activeId: captured.activeId,
-        entries: captured.entries.map(({ id, title }) => ({ id, title })),
-      })
-    } finally {
-      await original.dispose()
-    }
-  })
+  it('applies an explicit context offload threshold to preset context management', async () => {
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const controller = await createInteractiveChat({
+      config: CliConfigStore.memory({}, { contextOffloadThreshold: 2_500 }),
+    })
 
-  it('restores every conversation with stable IDs and applies setup to its initiating chat', async () => {
-    const model = 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'
-    const replacementModel = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
-    const workspace = dirname(testSessionRoot)
-    const agents: Agent[] = []
-    mocks.createHarness.mockImplementation(async (options) => {
-      const agent = new Agent({ model: new BedrockModel({ modelId: options.model.slice('bedrock/'.length) }) })
-      agents.push(agent)
-      return agent
-    })
-    const previous = await createInteractiveChat({
-      cwd: workspace,
-      agentOptions: { model, effort: 'low', session: { dir: testSessionRoot } },
-    })
-    let current: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
     try {
-      mocks.createHarness.mockRejectedValueOnce(new Error('Fork startup failed'))
-      await previous.submit('/fork')
-      previous.dismissPanel()
-      await previous.submit('/fork')
-      await previous.backend.setEffort?.('high')
-      agents[0]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Primary state' }] }))
-      agents[1]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Fork state' }] }))
-      agents[0]!.appState.set('owner', 'primary')
-      agents[1]!.appState.set('owner', 'fork')
-      const captured = await previous.captureConversations()
-      expect(captured.activeId).toBe('agent-3')
-      expect(captured.entries.map(({ id }) => id)).toEqual(['agent-1', 'agent-3'])
-      const options = {
-        cwd: workspace,
-        agentOptions: { model: replacementModel, effort: 'low' as const, session: { dir: testSessionRoot } },
+      const contextManager = mocks.createHarness.mock.calls[0]?.[0].contextManager as {
+        strategies: readonly { _threshold?: number; _utilizationThreshold?: number }[]
       }
-      current = await createInteractiveChat(options, captured, 'agent-1')
-      const restored = await current.captureConversations()
-      expect(restored.activeId).toBe(captured.activeId)
-      expect(restored.entries.map(({ id, title, description }) => ({ id, title, description }))).toEqual(
-        captured.entries.map(({ id, title, description }) => ({ id, title, description }))
-      )
-      expect(restored.entries.map(({ conversation }) => conversation.session)).toEqual(
-        captured.entries.map(({ conversation }) => conversation.session)
-      )
-      expect(restored.entries.map(({ conversation }) => conversation.selection)).toEqual([
-        { model: replacementModel, thinking: 'low' },
-        { model, thinking: 'high' },
-      ])
-      expect(agents[2]!.messages).toEqual(agents[0]!.messages)
-      expect(agents[3]!.messages).toEqual(agents[1]!.messages)
-      expect(agents[2]!.appState.get('owner')).toBe('primary')
-      expect(agents[3]!.appState.get('owner')).toBe('fork')
-      await current.submit('/fork')
-      expect((await current.captureConversations()).activeId).toBe('agent-4')
+      expect(contextManager.strategies).toMatchObject([{ _threshold: 2_500 }, { _utilizationThreshold: 0.85 }])
     } finally {
-      await Promise.all([previous.dispose(), current?.dispose()])
+      await controller.dispose()
     }
   })
 
@@ -253,6 +182,63 @@ describe('interactive runtime lifecycle', () => {
     try {
       expect(mocks.loadMcp).toHaveBeenCalledWith(expect.objectContaining({ servers }))
       expect(mocks.createHarness).toHaveBeenCalledWith(expect.not.objectContaining({ mcpServers: expect.anything() }))
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('exports the displayed draft and its skills without applying it to the running agent', async () => {
+    const projectExport =
+      await vi.importActual<typeof import('../src/tui/project/export.js')>('../src/tui/project/export.js')
+    mocks.exportAgentProject.mockImplementation(projectExport.exportAgentProject)
+    const root = dirname(testSessionRoot)
+    await mkdir(join(root, 'skills', 'review'), { recursive: true })
+    await writeFile(join(root, 'skills', 'review', 'SKILL.md'), '# Review')
+    const profile = defineHarnessAgentConfig({
+      instructions: 'Original instructions.',
+      skills: false,
+      model: 'bedrock/anthropic.claude-old',
+    })
+    const config = CliConfigStore.memory({}, {}, { profile, profileBaseDir: root })
+    const agent = fakeAgent('old')
+    mocks.createHarness.mockResolvedValueOnce(agent)
+    const requestSetup = vi.fn()
+    const controller = await createInteractiveChat({
+      config,
+      agentProfile: profile,
+      agentOptions: { model: profile.model, skills: false, backgroundTasks: false },
+      requestSetup,
+    })
+    try {
+      const configuration = mocks.createHarness.mock.calls[0]?.[0].tools.find(
+        (candidate: Tool) => candidate.name === 'strands_config'
+      )
+      agent.stream = async function* () {
+        yield* []
+        await configuration.invoke(
+          { action: 'update', profile: { instructions: 'Draft instructions.', skills: ['./skills'] } },
+          { agent }
+        )
+        return { stopReason: 'endTurn' } as AgentResult
+      }
+      await controller.submit('Draft new instructions and add the review skill.')
+      await controller.submit('/config')
+
+      for (const language of ['typescript', 'python'] as const) {
+        const preview = controller.getSnapshot().configuration!.documents[language]
+        expect(preview.error).toBeUndefined()
+        expect(preview.source).toContain('Draft instructions.')
+        const destination = join(root, `${language}.zip`)
+        await controller.submit(`/export ${language} "${destination}"`)
+        const entries = unzipSync(await readFile(destination))
+        const entrypoint = language === 'python' ? 'agent/agent.py' : 'agent/agent.ts'
+
+        expect(Buffer.from(entries[entrypoint]!).toString()).toBe(preview.source)
+        expect(entries).toHaveProperty('agent/skills/review/SKILL.md')
+      }
+      expect(config.snapshot().profile.instructions).toBe('Original instructions.')
+      expect(requestSetup).not.toHaveBeenCalled()
+      expect(mocks.createHarness).toHaveBeenCalledOnce()
     } finally {
       await controller.dispose()
     }
@@ -423,26 +409,44 @@ describe('interactive runtime lifecycle', () => {
       await controller.backend.restartModel?.('bedrock/anthropic.claude-new')
       await controller.backend.setEffort?.('high')
       await controller.submit('/export')
-      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      await controller.activatePanelRow(controller.getSnapshot().panel!.rows.find((row) => row.label === 'TypeScript')!)
+      await controller.activatePanelRow({
+        label: 'Continue',
+        description: 'portable',
+        value: 'export:name:typescript:portable',
+      })
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.label === 'Default folder')!
+      )
 
       expect(mocks.exportAgentProject).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Portable', model: 'bedrock/anthropic.claude-new', effort: 'high' }),
         'typescript',
         expect.any(Array),
         process.cwd(),
-        undefined
+        expect.stringMatching(/[/\\]\.strands[/\\]harnesses[/\\]portable$/u),
+        'directory'
       )
       expect(controller.getSnapshot().panel?.title).toBe('Export complete')
       controller.dismissPanel()
       await controller.submit('/fork')
       await controller.submit('/export')
-      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      await controller.activatePanelRow(controller.getSnapshot().panel!.rows.find((row) => row.label === 'TypeScript')!)
+      await controller.activatePanelRow({
+        label: 'Continue',
+        description: 'portable',
+        value: 'export:name:typescript:portable',
+      })
+      await controller.activatePanelRow(
+        controller.getSnapshot().panel!.rows.find((row) => row.label === 'Default folder')!
+      )
       expect(mocks.exportAgentProject).toHaveBeenLastCalledWith(
         expect.objectContaining({ name: 'Portable', model: 'bedrock/anthropic.claude-new', effort: 'high' }),
         'typescript',
         expect.any(Array),
         process.cwd(),
-        undefined
+        expect.stringMatching(/[/\\]\.strands[/\\]harnesses[/\\]portable$/u),
+        'directory'
       )
     } finally {
       modelDiscovery.mockRestore()
@@ -496,24 +500,34 @@ describe('interactive runtime lifecycle', () => {
       expect(controller.getSnapshot()).toMatchObject({
         panel: {
           kind: 'permissions',
-          body: expect.stringContaining('WARNING'),
+          searchable: true,
+          slider: {
+            options: [
+              { id: 'ask', label: 'Ask' },
+              { id: 'bypass', label: 'Bypass', active: true },
+              { id: 'custom', label: 'Custom' },
+            ],
+          },
           rows: [
-            { label: 'Ask when needed (HITL)' },
-            { label: 'Allow all tools', badge: { text: 'Active' } },
             { label: 'bash', control: { kind: 'toggle', checked: true } },
             { label: 'write', control: { kind: 'toggle', checked: true } },
-            { label: 'config', description: configPath },
           ],
         },
       })
       const writePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
       expect(writePermission).toBeDefined()
       expect(writePermission?.value).toBeUndefined()
-      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      await controller.activatePanelRow({
+        label: 'Permission mode',
+        description: 'Custom',
+        value: 'permissions:preset:custom',
+      })
       const configurableWritePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
       expect(configurableWritePermission?.value).toBeDefined()
       await controller.activatePanelRow(configurableWritePermission!)
-      expect(parse(await readFile(configPath, 'utf8')).permissions).toMatchObject({ allow: ['bash', 'write'] })
+      expect(parse(await readFile(configPath, 'utf8'))).toMatchObject({
+        permissions: { allow: ['bash', 'write'] },
+      })
     } finally {
       await controller.dispose()
       await rm(directory, { recursive: true, force: true })
@@ -806,13 +820,13 @@ describe('interactive runtime lifecycle', () => {
   })
 
   it.each([true, false])(
-    'honors peer messaging and discovery settings in new and forked agents (%s)',
+    'honors peer messaging in new and forked agents while MCP discovery is off (%s)',
     async (enabled) => {
       const firstAgent = fakeAgent('old', 'first')
       const forkAgent = fakeAgent('old', 'fork')
       mocks.createHarness.mockResolvedValueOnce(firstAgent).mockResolvedValueOnce(forkAgent)
       const controller = await createInteractiveChat({
-        config: CliConfigStore.memory({}, { agentMessaging: enabled, mcpDiscovery: enabled, skillDiscovery: enabled }),
+        config: CliConfigStore.memory({}, { agentMessaging: enabled, mcpDiscovery: false }),
         agentOptions: { skills: false },
       })
 
@@ -824,10 +838,10 @@ describe('interactive runtime lifecycle', () => {
         const forkPlugin = mocks.createHarness.mock.calls[1]?.[0].plugins?.find(
           (candidate: { name?: string }) => candidate.name === 'strands:agent-messaging'
         )
+        expect(mocks.loadMcp).toHaveBeenCalledWith(expect.objectContaining({ paths: [] }))
         if (!enabled) {
           expect(mainPlugin).toBeUndefined()
           expect(forkPlugin).toBeUndefined()
-          expect(mocks.loadMcp).toHaveBeenCalledWith(expect.objectContaining({ paths: [] }))
           return
         }
         expect(mainPlugin).toBeDefined()
@@ -1065,6 +1079,93 @@ describe('interactive runtime lifecycle', () => {
       )
     } finally {
       await Promise.all([previous.dispose(), current.dispose()])
+    }
+  })
+
+  it('restores every conversation with stable IDs and applies setup to its initiating chat', async () => {
+    const model = 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'
+    const replacementModel = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
+    const workspace = dirname(testSessionRoot)
+    const agents: Agent[] = []
+    mocks.createHarness.mockImplementation(async (options) => {
+      const agent = new Agent({ model: new BedrockModel({ modelId: options.model.slice('bedrock/'.length) }) })
+      agents.push(agent)
+      return agent
+    })
+    const previous = await createInteractiveChat({
+      cwd: workspace,
+      agentOptions: { model, effort: 'low', session: { dir: testSessionRoot } },
+    })
+    let current: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
+    try {
+      mocks.createHarness.mockRejectedValueOnce(new Error('Fork startup failed'))
+      await previous.submit('/fork')
+      previous.dismissPanel()
+      await previous.submit('/fork')
+      await previous.backend.setEffort?.('high')
+      agents[0]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Primary state' }] }))
+      agents[1]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Fork state' }] }))
+      agents[0]!.appState.set('owner', 'primary')
+      agents[1]!.appState.set('owner', 'fork')
+      const captured = await previous.captureConversations()
+      expect(captured.activeId).toBe('agent-3')
+      expect(captured.entries.map(({ id }) => id)).toEqual(['agent-1', 'agent-3'])
+      const options = {
+        cwd: workspace,
+        agentOptions: { model: replacementModel, effort: 'low' as const, session: { dir: testSessionRoot } },
+      }
+      current = await createInteractiveChat(options, captured, 'agent-1')
+      const restored = await current.captureConversations()
+      expect(restored.activeId).toBe(captured.activeId)
+      expect(restored.entries.map(({ id, title, description }) => ({ id, title, description }))).toEqual(
+        captured.entries.map(({ id, title, description }) => ({ id, title, description }))
+      )
+      expect(restored.entries.map(({ conversation }) => conversation.session)).toEqual(
+        captured.entries.map(({ conversation }) => conversation.session)
+      )
+      expect(restored.entries.map(({ conversation }) => conversation.selection)).toEqual([
+        { model: replacementModel, thinking: 'low' },
+        { model, thinking: 'high' },
+      ])
+      expect(agents[2]!.messages).toEqual(agents[0]!.messages)
+      expect(agents[3]!.messages).toEqual(agents[1]!.messages)
+      expect(agents[2]!.appState.get('owner')).toBe('primary')
+      expect(agents[3]!.appState.get('owner')).toBe('fork')
+      await current.submit('/fork')
+      expect((await current.captureConversations()).activeId).toBe('agent-4')
+    } finally {
+      await Promise.all([previous.dispose(), current?.dispose()])
+    }
+  })
+
+  it('disposes partial replacement resources without changing the original roster', async () => {
+    const model = 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'
+    const agents = [0, 1, 2].map(() => new Agent({ model: new BedrockModel({ modelId: model }) }))
+    mocks.createHarness
+      .mockResolvedValueOnce(agents[0])
+      .mockResolvedValueOnce(agents[1])
+      .mockResolvedValueOnce(agents[2])
+      .mockRejectedValueOnce(new Error('Second replacement failed'))
+    const originalDispose = vi.fn(async () => {})
+    const replacementDispose = vi.fn(async () => {})
+    mocks.loadMcp
+      .mockResolvedValueOnce({ clients: [], warnings: [], dispose: originalDispose })
+      .mockResolvedValueOnce({ clients: [], warnings: [], dispose: originalDispose })
+      .mockResolvedValue({ clients: [], warnings: [], dispose: replacementDispose })
+    const options = { agentOptions: { model, session: false as const } }
+    const original = await createInteractiveChat(options)
+    try {
+      await original.submit('/fork')
+      const captured = await original.captureConversations()
+      await expect(createInteractiveChat(options, captured)).rejects.toThrow('Second replacement failed')
+      expect(replacementDispose).toHaveBeenCalledTimes(2)
+      expect(originalDispose).not.toHaveBeenCalled()
+      expect(await original.captureConversations()).toMatchObject({
+        activeId: captured.activeId,
+        entries: captured.entries.map(({ id, title }) => ({ id, title })),
+      })
+    } finally {
+      await original.dispose()
     }
   })
 
@@ -1370,10 +1471,11 @@ describe('interactive runtime lifecycle', () => {
         ])
       )
       expect(mocks.loadMcp).toHaveBeenNthCalledWith(2, {
-        backgroundConnect: true,
         cwd: secondWorkspace,
         paths: [explicitMcp],
         strictPaths: [explicitMcp],
+        backgroundConnect: true,
+        disabledServers: [],
       })
       expect(controller.getSnapshot().runtime).toMatchObject({
         cwd: secondWorkspace,

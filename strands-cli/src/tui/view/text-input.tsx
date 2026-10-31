@@ -1,5 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react'
-import { useStdout } from 'ink'
+import type { ReactElement } from 'react'
 import stringWidth from 'string-width'
 
 import { graphemes, promptViewport, type PromptViewportRow } from '../terminal/composer.js'
@@ -8,34 +7,13 @@ import { Text, useTheme } from './theme.js'
 
 const TEXT_INPUT_PLACEHOLDER = 'Click to enter text'
 
-export function BlinkingCursor({
-  character = ' ',
-  animate = true,
-  color,
-}: {
-  character?: string
-  animate?: boolean
-  color?: string
-}): ReactElement {
-  const { stdout } = useStdout()
+export function Cursor({ character = ' ', color }: { character?: string; color?: string }): ReactElement {
   const { accent } = useTheme()
-  const [visible, setVisible] = useState(true)
-  const enabled = animate && stdout.isTTY
-
-  useEffect(() => {
-    setVisible(true)
-    if (!enabled) {
-      return
-    }
-    const timer = setInterval(() => setVisible((current) => !current), 500)
-    return (): void => clearInterval(timer)
-  }, [enabled])
-
   if (character === ' ') {
-    return <Text color={color ?? accent}>{visible ? '▌' : ' '}</Text>
+    return <Text color={color ?? accent}>▌</Text>
   }
   return (
-    <Text inverse={visible} {...(color ? { color } : {})}>
+    <Text inverse {...(color ? { color } : {})}>
       {character}
     </Text>
   )
@@ -47,7 +25,6 @@ export function EditableText({
   width,
   maxRows = 1,
   active,
-  animate = true,
   masked = false,
   placeholder = TEXT_INPUT_PLACEHOLDER,
 }: {
@@ -56,7 +33,6 @@ export function EditableText({
   width: number
   maxRows?: number
   active: boolean
-  animate?: boolean
   masked?: boolean
   placeholder?: string
 }): ReactElement {
@@ -77,11 +53,7 @@ export function EditableText({
       {rows.map((row, index) => (
         <Text key={index} dimColor={!active} wrap="truncate-end">
           {row.before}
-          {active && row.current !== undefined ? (
-            <BlinkingCursor character={row.current} animate={animate} />
-          ) : (
-            row.current
-          )}
+          {active && row.current !== undefined ? <Cursor character={row.current} /> : row.current}
           {row.after}
         </Text>
       ))}

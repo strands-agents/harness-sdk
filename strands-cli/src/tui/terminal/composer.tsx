@@ -5,13 +5,18 @@ import { commandAssistance, type LocalCommandSpec } from '../chat/commands.js'
 import { sanitizeTerminalText } from './sanitize.js'
 
 const SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-export const MIN_PROMPT_HEIGHT = 7
+export const MIN_PROMPT_HEIGHT = 4
 export const MIN_PROMPT_ROWS = 2
 export const DEFAULT_MAX_PROMPT_ROWS = 8
 export const PROMPT_PADDING_WIDTH = 2
+// Fixed height shared by command-plus-input, loading, and inline panel states; taller than the resting prompt.
+export const COMPOSER_PANEL_HEIGHT = 10
 
 export function composerMaxRows(terminalHeight: number, statusRows = 0): number {
-  return Math.max(MIN_PROMPT_ROWS, Math.min(12, Math.floor(terminalHeight) - 10 - Math.max(0, statusRows)))
+  return Math.max(
+    MIN_PROMPT_ROWS,
+    Math.min(DEFAULT_MAX_PROMPT_ROWS, Math.floor(terminalHeight) - 10 - Math.max(0, statusRows))
+  )
 }
 
 export function promptEditorHeight(
@@ -27,14 +32,8 @@ export function promptEditorHeight(
   if (hasStatus) {
     return Math.min(minimumHeight, maxHeight)
   }
-  const promptPrefix = input.startsWith('!') ? '◆ shell ' : ''
-  const rows = promptViewport(
-    input,
-    cursor,
-    width - stringWidth(promptPrefix) - PROMPT_PADDING_WIDTH,
-    Math.max(MIN_PROMPT_ROWS, maxRows)
-  )
-  return Math.min(maxHeight, Math.max(minimumHeight, rows.length + (party && input ? 2 : 1)))
+  const rows = promptViewport(input, cursor, width - PROMPT_PADDING_WIDTH - 2, Math.max(MIN_PROMPT_ROWS, maxRows))
+  return Math.min(maxHeight, Math.max(minimumHeight, rows.length + 2))
 }
 
 export interface EditorState {
@@ -50,7 +49,6 @@ export type InputPhase = 'idle' | 'running'
 type InputResult =
   | { state: EditorState; action: 'none' }
   | { state: EditorState; action: 'submit'; prompt: string }
-  | { state: EditorState; action: 'steer'; prompt: string }
   | { state: EditorState; action: 'cancel' }
 
 export interface PromptViewportRow {
@@ -67,17 +65,9 @@ export function reduceInput(state: EditorState, character: string, key: Partial<
   if (key.escape && phase === 'running') {
     return { state, action: 'cancel' }
   }
-  if (key.ctrl && character === 'g' && phase === 'running') {
-    const submitted = submitEditor(state, state.input)
-    return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
-  }
   const characters = graphemes(state.input)
   if (character === '\n' || (key.ctrl && character === 'j')) {
     return edit(state, characters, state.cursor, state.cursor, ['\n'])
-  }
-  if (key.return && phase === 'running' && (key.ctrl || key.meta || key.super)) {
-    const submitted = submitEditor(state, state.input)
-    return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
   }
   if (key.return) {
     return submitEditor(state, state.input)
@@ -206,9 +196,19 @@ export function promptViewport(
   width: number,
   maxRows: number = MIN_PROMPT_ROWS
 ): PromptViewportRow[] {
+  return promptLayout(input, cursor, width, maxRows).rows
+}
+
+/** The visible prompt rows plus how many wrapped rows the viewport hides above and below them. */
+export function promptLayout(
+  input: string,
+  cursor: number,
+  width: number,
+  maxRows: number = MIN_PROMPT_ROWS
+): { rows: PromptViewportRow[]; hiddenAbove: number; hiddenBelow: number } {
   const safeWidth = Math.max(1, width)
   const characters = graphemes(input).map((character) =>
-    character === '\t' ? ' '.repeat(Math.min(4, safeWidth)) : character
+    character === '\t' ? ' '.repeat(Math.min(4, safeWidth)) : sanitizeTerminalText(character) || '�'
   )
   const safeCursor = Math.max(0, Math.min(cursor, characters.length))
   const lines: Array<{ start: number; end: number }> = []
@@ -253,7 +253,7 @@ export function promptViewport(
 
   const rowCount = Math.max(1, maxRows)
   const viewportStart = Math.max(0, cursorRow - rowCount + 1)
-  return lines.slice(viewportStart, viewportStart + rowCount).map((line, index) => {
+  const rows = lines.slice(viewportStart, viewportStart + rowCount).map((line, index) => {
     if (viewportStart + index !== cursorRow) {
       return {
         before: characters.slice(line.start, line.end).join(''),
@@ -269,6 +269,7 @@ export function promptViewport(
       after: cursorEndsLine ? '' : characters.slice(safeCursor + 1, line.end).join(''),
     }
   })
+  return { rows, hiddenAbove: viewportStart, hiddenBelow: Math.max(0, lines.length - viewportStart - rows.length) }
 }
 
 export function graphemes(value: string): string[] {

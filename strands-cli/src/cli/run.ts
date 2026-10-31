@@ -4,10 +4,10 @@ import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/ha
 
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
-import { withWorkspaceSessionDirectory } from '../tui/session/sessions.js'
 import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
+import { withWorkspaceSessionDirectory } from '../tui/session/sessions.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
@@ -204,7 +204,8 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
     config.useEnvironmentFiles(args.envFiles)
     const initialWorkspace = process.cwd()
     let pinged = false
-    process.exitCode = await runInkChat(
+    let updateRequested = false
+    const exitCode = await runInkChat(
       async (signal, requestSetup, conversations, launch, confirmMcp) => {
         signal.throwIfAborted()
         const initialMcp = await resolveMcpConfig(args.mcpConfig, {
@@ -274,8 +275,17 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         intro: config.snapshot().settings.animations,
         setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
         config,
+        onUpdateRequested: () => {
+          updateRequested = true
+        },
       }
     )
+    if (updateRequested) {
+      const { updateCli } = await import('./update.js')
+      process.exitCode = await updateCli()
+    } else {
+      process.exitCode = exitCode
+    }
   } catch (err) {
     process.stderr.write(`error: ${errorMessage(err)}\n`)
     process.exitCode = 1

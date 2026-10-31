@@ -1,11 +1,22 @@
 import type { JSONValue } from '@strands-agents/sdk'
 import stringWidth from 'string-width'
 
-import type { ChatEntry, ChatPanel, ChatSnapshot } from '../chat/controller.js'
+import type { ChatDetailPanel, ChatEntry, ChatPermissionPanel, ChatSnapshot } from '../chat/controller.js'
+import type { BackgroundAgentActivity } from '../background/activity.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from '../chat/types.js'
 import { modelDisplayName } from '../model/display.js'
+import { escapePermissionText } from '../chat/panels.js'
+import { FILE_TOOLS } from '../permissions/rules.js'
+import { permissionModeDisplayLabel } from '../permissions/settings.js'
 import { graphemes } from '../terminal/composer.js'
-import { detailPageSize } from './interaction.js'
+import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import {
+  COMPOSER_RESOURCE_PANEL_HEIGHT,
+  COMPOSER_EXPANDED_PANEL_HEIGHT,
+  detailPageSize,
+  permissionPanelLayout,
+  permissionPreviewCapacity,
+} from './interaction.js'
 import { getTheme } from './theme.js'
 import { isRecord } from '../values.js'
 
@@ -16,50 +27,74 @@ interface MetadataPlacement {
   text: string
   width: number
   alignment: 'flex-start' | 'center' | 'flex-end'
-  controls?: { target: 'model' | 'effort' | 'context'; text: string }[]
+  controls?: { target: 'model' | 'effort' | 'permissions' | 'context'; text: string }[]
+  actions?: { target: 'settings' | 'update'; text: string }[]
 }
 
-export function permissionPageSize(terminalHeight: number, optionRows: number): number {
-  return Math.max(3, Math.min(12, terminalHeight - optionRows - 8))
+export function maxPermissionScroll(
+  panel: ChatPermissionPanel,
+  terminalHeight: number,
+  terminalWidth: number,
+  composerHeight = Math.min(COMPOSER_EXPANDED_PANEL_HEIGHT, Math.max(1, terminalHeight - 2)),
+  selected = 0
+): number {
+  const layout = permissionPanelLayout(Math.max(1, terminalWidth - 2), composerHeight, panel.rows.length)
+  const lines = permissionLines(panel, layout.previewTextWidth, undefined, selected)
+  return Math.max(0, lines.length - permissionPreviewCapacity(lines.length, layout.previewHeight))
 }
 
-export function maxPermissionScroll(panel: ChatPanel, terminalHeight: number, terminalWidth: number): number {
-  const width = Math.min(panel.diff ? 100 : 68, terminalWidth - 4) - 6
-  return Math.max(0, permissionLines(panel, width).length - permissionPageSize(terminalHeight, panel.rows.length))
+export interface PermissionLine {
+  label: string
+  text: string
+  color?: string
+  bold?: boolean
+  dimColor?: boolean
 }
+
+export const PERMISSION_LABEL_WIDTH = 9
 
 export function permissionLines(
-  panel: ChatPanel,
+  panel: ChatPermissionPanel,
   width: number,
-  palette: ThemeColors = getTheme(DEFAULT_CHAT_SETTINGS)
-): DetailLine[] {
-  const wrap = (value: string): string[] => wrapCells(value, Math.max(1, width))
-  const lines: DetailLine[] = []
-  if (panel.diff) {
-    lines.push(...wrap(panel.diff.path).map((text) => ({ text })))
-    for (const line of panel.diff.lines) {
-      const prefix = line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '
-      const color =
-        line.kind === 'add'
-          ? palette.diffAdd
-          : line.kind === 'remove'
-            ? palette.diffRemove
-            : line.kind === 'header'
-              ? palette.accent
-              : undefined
-      const oldLine = String(line.oldLine ?? '').padStart(4)
-      const newLine = String(line.newLine ?? '').padStart(4)
-      const content = line.kind === 'header' ? line.text : `${oldLine} ${newLine} ${prefix}${line.text}`
-      lines.push(
-        ...wrap(content).map((text) => ({ text, ...(color ? { color } : {}), dimColor: line.kind === 'context' }))
-      )
+  palette: ThemeColors = getTheme(DEFAULT_CHAT_SETTINGS),
+  selected = 0
+): PermissionLine[] {
+  const { request } = panel
+  const lines: PermissionLine[] = []
+  const field = (label: string, value: string, style: Omit<PermissionLine, 'label' | 'text'> = {}): void => {
+    for (const [index, text] of wrapCells(value, Math.max(1, width - PERMISSION_LABEL_WIDTH)).entries()) {
+      lines.push({ label: index === 0 ? label : '', text, ...style })
     }
-    if (panel.diff.truncated) {
-      lines.push(...wrap('Diff preview truncated; full input follows.').map((text) => ({ text, dimColor: true })))
-    }
-    lines.push({ text: '' })
   }
-  lines.push(...wrap(panel.body ?? '').map((text) => ({ text })))
+  field('Tool', request.toolName, { color: palette.accent, bold: true })
+  const scope = panel.stage ? request.scopes?.[selected] : undefined
+  if (scope) {
+    field('Rule', escapePermissionText(scope.rule), {
+      color: panel.stage === 'deny-always' ? palette.error : palette.success,
+      bold: true,
+    })
+  }
+  if (request.action !== undefined) {
+    field('Action', escapePermissionText(request.action), { bold: true })
+  }
+  const diff = request.diff
+  if (diff && !FILE_TOOLS.has(request.toolName)) {
+    field('File', diff.path)
+  }
+  const added = diff?.lines.filter((line) => line.kind === 'add').length ?? 0
+  const removed = diff?.lines.filter((line) => line.kind === 'remove').length ?? 0
+  if (added + removed > 0) {
+    field('Changes', `+${added} -${removed} lines${diff?.truncated ? ' (preview truncated)' : ''}`, { dimColor: true })
+  }
+  for (const line of diff?.lines ?? []) {
+    field(line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : '', escapePermissionText(line.text), {
+      ...(line.kind === 'add' ? { color: palette.success } : line.kind === 'remove' ? { color: palette.error } : {}),
+      dimColor: line.kind === 'header',
+    })
+  }
+  if (!diff || diff.truncated) {
+    field('Input', panel.body ?? '')
+  }
   return lines
 }
 
@@ -84,12 +119,17 @@ function wrapCells(value: string, width: number): string[] {
   return lines
 }
 
-export function maxDetailScroll(panel: ChatPanel, width: number, height: number): number {
-  return Math.max(0, detailLines(panel, Math.max(10, width - 8)).length - detailPageSize(height, panel.rows.length))
+export function maxDetailScroll(
+  panel: ChatDetailPanel,
+  terminalWidth: number,
+  composerHeight = COMPOSER_RESOURCE_PANEL_HEIGHT
+): number {
+  return Math.max(0, detailLines(panel, Math.max(1, terminalWidth - 6)).length - detailPageSize(composerHeight))
 }
 
 interface DetailLine {
   text: string
+  label?: string
   color?: string
   bold?: boolean
   dimColor?: boolean
@@ -97,24 +137,34 @@ interface DetailLine {
 }
 
 export function detailLines(
-  panel: ChatPanel,
+  panel: ChatDetailPanel,
   width: number,
   palette: ThemeColors = getTheme(DEFAULT_CHAT_SETTINGS)
 ): DetailLine[] {
-  return panel.activity
+  const labelWidth = Math.min(Math.max(0, ...panel.rows.map((row) => stringWidth(row.label))), Math.floor(width / 2))
+  const valueWidth = Math.max(1, width - labelWidth - 2)
+  const metadata = panel.rows.flatMap((row) => {
+    const labels = wrapCells(normalizeDetailText(row.label), Math.max(1, labelWidth))
+    const values = wrapCells(normalizeDetailText(row.description), valueWidth)
+    return Array.from({ length: Math.max(labels.length, values.length) }, (_, index): DetailLine => {
+      const label = labels[index] ?? ''
+      return {
+        label: label + ' '.repeat(Math.max(0, labelWidth - stringWidth(label)) + 2),
+        text: values[index] ?? '',
+      }
+    })
+  })
+  const body = panel.activity
     ? activityDetailLines(panel.activity, width, palette)
-    : wrapLines(panel.body ?? '', width).map((text) => ({ text }))
+    : wrapCells(normalizeDetailText(panel.body ?? ''), Math.max(1, width)).map((text) => ({ text }))
+  return metadata.length > 0 ? [...metadata, { text: '' }, ...body] : body
 }
 
-function activityDetailLines(
-  activity: NonNullable<ChatPanel['activity']>,
-  width: number,
-  palette: ThemeColors
-): DetailLine[] {
+function activityDetailLines(activity: BackgroundAgentActivity, width: number, palette: ThemeColors): DetailLine[] {
   const lines: DetailLine[] = []
   const push = (text: string, style: Omit<DetailLine, 'text'>, prefix = ''): void => {
     const contentWidth = Math.max(1, width - prefix.length)
-    for (const [index, chunk] of wrapLines(text, contentWidth).entries()) {
+    for (const [index, chunk] of wrapCells(normalizeDetailText(text), contentWidth).entries()) {
       lines.push({ text: `${index === 0 ? prefix : ' '.repeat(prefix.length)}${chunk}`, ...style })
     }
   }
@@ -143,7 +193,7 @@ function activityDetailLines(
     const marker = entry.status === 'running' ? '◐' : entry.status === 'success' ? '✓' : '×'
     const color =
       entry.status === 'running' ? palette.warning : entry.status === 'success' ? palette.success : palette.error
-    push(`${marker} ${toolAction(entry.name)}  ${summarizeValue(entry.input)}`, {
+    push(`${marker} ${toolAction(entry.name)}  ${summarizeToolInput(entry.name, entry.input)}`, {
       color,
       bold: true,
       backgroundColor: palette.surface,
@@ -217,19 +267,42 @@ export function contextColor(context: ChatSnapshot['context'], palette: ThemeCol
   return percentage >= 90 ? palette.error : percentage >= 75 ? palette.warning : palette.accent
 }
 
-export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number): MetadataPlacement[] {
+export function metadataPlacements(
+  snapshot: ChatSnapshot,
+  terminalWidth: number,
+  availableUpdate?: string
+): MetadataPlacement[] {
   const separatorWidth = 2
   const available = Math.max(0, Math.floor(terminalWidth) - METADATA_START_COLUMN)
   const model = modelDisplayName(snapshot.runtime.model)
   const effort = model && snapshot.runtime.effort ? ` • ${snapshot.runtime.effort}` : ''
-  const modelLabel = model ? `${model}${effort}` : (snapshot.runtime.effort ?? '')
-  const settingsText = truncateText('/settings', available)
+  const baseModelLabel = model ? `${model}${effort}` : (snapshot.runtime.effort ?? '')
+  const permission = snapshot.permissionMode
+    ? permissionModeDisplayLabel(snapshot.permissionMode, snapshot.permissionPreset)
+    : ''
+  const permissionSuffix = permission ? `${baseModelLabel ? ' • ' : ''}${permission}` : ''
+  const modelLabel = `${baseModelLabel}${permissionSuffix}`
+  const settingsAction = { target: 'settings' as const, text: '/settings' }
+  const fullUpdateAction = { target: 'update' as const, text: `↑ Update ${availableUpdate}` }
+  const compactUpdateAction = { target: 'update' as const, text: '↑ Update' }
+  const fullActionsWidth = stringWidth(`${fullUpdateAction.text}  ${settingsAction.text}`)
+  const compactActionsWidth = stringWidth(`${compactUpdateAction.text}  ${settingsAction.text}`)
+  const actions = !availableUpdate
+    ? [{ ...settingsAction, text: truncateText(settingsAction.text, available) }]
+    : fullActionsWidth <= available
+      ? [fullUpdateAction, settingsAction]
+      : compactActionsWidth <= available
+        ? [compactUpdateAction, settingsAction]
+        : [{ ...compactUpdateAction, text: truncateText(compactUpdateAction.text, available) }]
+  const settingsText = actions.map(({ text }) => text).join('  ')
   const settingsWidth = stringWidth(settingsText)
   const leftWidth = Math.max(0, available - settingsWidth - separatorWidth)
   const context = formatContext(snapshot.context)
   const minimumContextWidth = stringWidth(formatContext(snapshot.context, 1))
   const controlSeparatorWidth = modelLabel ? stringWidth(' • ') : 0
-  const minimumModelWidth = Math.min(stringWidth(modelLabel), Math.max(1, stringWidth(effort) + 1))
+  const permissionRequiredWidth =
+    stringWidth(model ? effort : baseModelLabel) + stringWidth(permissionSuffix) + Number(Boolean(model))
+  const minimumModelWidth = Math.min(stringWidth(modelLabel), Math.max(1, permissionRequiredWidth))
   const contextBudget = Math.max(0, leftWidth - minimumModelWidth - controlSeparatorWidth)
   const contextWidth =
     contextBudget >= minimumContextWidth
@@ -243,11 +316,14 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
     Math.max(0, leftWidth - contextWidth - (contextWidth ? controlSeparatorWidth : 0))
   )
   const showEffort = !model || (effort && modelWidth > stringWidth(effort))
-  const modelName = truncateText(model, modelWidth - (showEffort ? stringWidth(effort) : 0))
+  const showPermission = Boolean(permission && modelWidth >= permissionRequiredWidth)
+  const visiblePermissionWidth = showPermission ? stringWidth(permissionSuffix) : 0
+  const modelName = truncateText(model, modelWidth - (showEffort ? stringWidth(effort) : 0) - visiblePermissionWidth)
   const effortLabel = showEffort ? truncateText(snapshot.runtime.effort ?? '', modelWidth) : ''
   const controls = [
     { target: 'model' as const, text: modelName },
     { target: 'effort' as const, text: effortLabel },
+    { target: 'permissions' as const, text: showPermission ? permission : '' },
     {
       target: 'context' as const,
       text: contextWidth ? formatContext(snapshot.context, contextWidth - minimumContextWidth + 1) : '',
@@ -256,7 +332,11 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
   const modelText = controls.map((control) => control.text).join(' • ')
   const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
   const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
-  const pathText = truncateText(snapshot.runtime.cwd, Math.max(0, pathMaximumEnd - pathMinimumStart), true)
+  const pathText = truncateText(
+    sanitizeTerminalText(snapshot.runtime.cwd),
+    Math.max(0, pathMaximumEnd - pathMinimumStart),
+    true
+  )
   const pathWidth = stringWidth(pathText)
   const pathStart = Math.max(
     pathMinimumStart,
@@ -282,6 +362,7 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
       text: settingsText,
       width: available - modelSlotWidth - pathWidth,
       alignment: 'flex-end' as const,
+      actions: actions.filter(({ text }) => text),
     },
   ].filter((placement) => placement.text)
 }
@@ -355,11 +436,18 @@ function summarizeValue(value: unknown): string {
 }
 
 const TOOL_ACTIONS: Readonly<Record<string, string>> = {
-  bash: 'Run',
+  bash: 'Shell',
   edit: 'Edit',
-  subagent: 'Delegate',
+  message_agent: 'Message',
+  subagent: 'Subagent',
   read: 'Read',
-  strands_manage_background_task: 'Manage task',
+  retrieve_context: 'Retrieve',
+  retrieve_offloaded_content: 'Retrieve',
+  search_memory: 'Memory',
+  shell: 'Shell',
+  skills: 'Skills',
+  strands_config: 'Strands Config',
+  strands_manage_background_task: 'Background',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
   web_search: 'Search',
@@ -367,12 +455,44 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
 }
 
 export function toolAction(name: string): string {
-  return TOOL_ACTIONS[name.replaceAll('-', '_').toLowerCase()] ?? name
+  const key = name.replaceAll('-', '_').toLowerCase()
+  return Object.hasOwn(TOOL_ACTIONS, key) ? TOOL_ACTIONS[key]! : name
+}
+
+function summarizeStrandsConfigInput(input: Record<string, JSONValue>): string | undefined {
+  const action = typeof input.action === 'string' ? input.action : undefined
+  if (!action) {
+    return undefined
+  }
+  if (action === 'models') {
+    const detail = [input.provider, input.query].filter((value): value is string => typeof value === 'string')
+    return truncateText(detail.length > 0 ? `models: ${detail.join(' · ')}` : 'models', 160)
+  }
+  if (action === 'update') {
+    const profile = input.profile
+    const profileObject = isRecord(profile) ? profile : undefined
+    const fields = profileObject ? Object.keys(profileObject) : []
+    if (fields.length === 1 && fields[0] === 'model') {
+      const model = profileObject?.model
+      if (typeof model === 'string') {
+        return truncateText(`update model: ${modelDisplayName(model)}`, 160)
+      }
+    }
+    return truncateText(fields.length > 0 ? `update: ${fields.join(', ')}` : 'update', 160)
+  }
+  return truncateText(action, 160)
 }
 
 export function summarizeToolInput(name: string, input: JSONValue): string {
   if (isRecord(input)) {
-    if (name.replaceAll('-', '_').toLowerCase() === 'subagent') {
+    const normalizedName = name.replaceAll('-', '_').toLowerCase()
+    if (normalizedName === 'strands_config') {
+      const summary = summarizeStrandsConfigInput(input)
+      if (summary) {
+        return summary
+      }
+    }
+    if (normalizedName === 'subagent') {
       return truncateText(typeof input.task === 'string' ? input.task : '', 160)
     }
     if (typeof input.command === 'string') {

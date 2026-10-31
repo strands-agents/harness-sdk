@@ -120,8 +120,8 @@ export class FileSessionRuntime implements ChatSessionRuntime {
         return listed.map((session) => ({
           ...session,
           reference: root.directory === this._directory ? session.id : sessionReference(root.directory, session.id),
-          directory: sanitizeTerminalText(root.directory),
-          workspace: sanitizeTerminalText(root.workspace),
+          directory: root.directory,
+          workspace: root.workspace,
         }))
       })
     )

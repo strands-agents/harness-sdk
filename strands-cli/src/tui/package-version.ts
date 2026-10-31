@@ -36,8 +36,15 @@ function installedPackageVersion(packageName: string): string {
 
 export const HARNESS_VERSION = installedPackageVersion('@strands-agents/harness')
 
+let cliVersion: string | undefined
+
 /** Reads the CLI manifest from either the source tree or the installed build. */
 export function readCliVersion(): string {
+  cliVersion ??= resolveCliVersion()
+  return cliVersion
+}
+
+function resolveCliVersion(): string {
   try {
     for (let dir = dirname(fileURLToPath(import.meta.url)); dirname(dir) !== dir; dir = dirname(dir)) {
       const manifest = join(dir, 'package.json')

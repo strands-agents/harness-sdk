@@ -1,21 +1,18 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { discoverAwsConfiguration, requireBedrockRegion } from '../src/tui/provider/aws-config.js'
 
-const directories: string[] = []
+import { temporaryDirectory } from './fixtures/tempdir.js'
 
 afterEach(() => {
   vi.unstubAllEnvs()
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
 describe('Bedrock token region validation', () => {
-  it('discovers AWS profiles without offering SSO sessions or service sections as profiles', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'strands-region-'))
-    directories.push(directory)
+  it('discovers AWS profiles without offering SSO sessions or service sections as profiles', async () => {
+    const directory = await temporaryDirectory('strands-region-')
     const config = join(directory, 'config')
     const credentials = join(directory, 'credentials')
     writeFileSync(credentials, '[default]\nregion = us-east-1\n[legacy name]\nregion = eu-west-1\n')
@@ -32,9 +29,8 @@ describe('Bedrock token region validation', () => {
     })
   })
 
-  it.each(['review', 'constructor'])('requires a token region and accepts the %s profile region', (profile) => {
-    const directory = mkdtempSync(join(tmpdir(), 'strands-region-'))
-    directories.push(directory)
+  it.each(['review', 'constructor'])('requires a token region and accepts the %s profile region', async (profile) => {
+    const directory = await temporaryDirectory('strands-region-')
     const config = join(directory, 'config')
     vi.stubEnv('AWS_CONFIG_FILE', config)
     vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(directory, 'credentials'))

@@ -97,7 +97,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
       'Inspect, recommend, and change the persistent agent definition. inspect shows all supported profile fields and current values. ' +
       'Credential-bearing values are shown as [redacted]; omit them from patches to preserve their existing values. ' +
       'Use environment placeholders such as ${env:API_KEY} for new credentials. ' +
-      'models lists provider models. update stages a patch in memory; draft profile changes appear in /export. ' +
+      'models lists provider models. update stages a patch in memory; draft profile changes appear in /config and /export. ' +
       'Arrays replace existing arrays and object fields merge one level. ' +
       'apply requires the latest revision returned by inspect or update. ' +
       'apply saves the draft and reloads the agent after this turn, keeping the conversation. ' +

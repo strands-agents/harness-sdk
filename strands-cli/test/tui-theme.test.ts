@@ -345,19 +345,26 @@ describe('themed Ink output', () => {
         kind: 'permission',
         title: 'Review',
         rows: [],
-        diff: {
-          path: 'file.ts',
-          lines: [
-            { kind: 'add', text: 'added' },
-            { kind: 'remove', text: 'removed' },
-          ],
+        request: {
+          id: 'request',
+          toolName: 'write',
+          input: { path: 'file.ts' },
+          options: [],
+          action: 'file.ts',
+          diff: {
+            path: 'file.ts',
+            lines: [
+              { kind: 'add', text: 'added' },
+              { kind: 'remove', text: 'removed' },
+            ],
+          },
         },
       },
       80,
       palette
     )
-    expect(details.find((line) => line.text.includes('+added'))).toMatchObject({ color: palette.diffAdd })
-    expect(details.find((line) => line.text.includes('-removed'))).toMatchObject({ color: palette.diffRemove })
+    expect(details.find((line) => line.label === 'Tool')).toMatchObject({ text: 'write', color: palette.accent })
+    expect(details.find((line) => line.label === 'Changes')).toMatchObject({ text: '+1 -1 lines' })
     const activity = detailLines(
       {
         id: 'task',

@@ -38,12 +38,11 @@ import {
   savePermissionDecision,
   ToolPermissionBroker,
 } from '../permissions/policy.js'
-
 import { createDiffPreview } from '../permissions/file-change-preview.js'
 import { canonicalPath, permissionRuleDecision } from '../permissions/rules.js'
 import { terminateProcessTree } from '../terminal/process-tree.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
-import type { SkillInfo } from '../skills.js'
+import type { SkillActivation, SkillInfo } from '../skills.js'
 
 function decodeBytes(_key: string, value: unknown): unknown {
   if (value && typeof value === 'object' && '$bytes' in value && typeof value.$bytes === 'string') {
@@ -331,9 +330,10 @@ export class PythonBackend implements ChatBackend {
     return result.stopReason === 'compacted' ? { ...result.context } : undefined
   }
 
-  async activateSkill(name: string): Promise<SkillInfo | undefined> {
-    await this._request({ type: 'skill', name })
-    return this.skills.find((skill) => skill.name === name)
+  async activateSkill(name: string): Promise<SkillActivation | undefined> {
+    const result = await this._request({ type: 'skill', name })
+    const skill = this.skills.find((candidate) => candidate.name === name)
+    return skill ? { skill, content: result.finalText ?? skill.instructions } : undefined
   }
 
   async fork(options: PythonOptions, signal?: AbortSignal): Promise<PythonBackend> {
@@ -407,7 +407,6 @@ export class PythonBackend implements ChatBackend {
   removeAllowedPermission(name: string): Promise<void> {
     return this._config.removeAllowedTool(name)
   }
-
   removeDeniedPermission(rule: string): Promise<void> {
     return this._config.removeDeniedTool(rule)
   }

@@ -22,7 +22,7 @@ vi.mock('../src/tui/provider/discovery.js', async (original) => ({
 
 vi.mock('../src/tui/terminal/directory-picker.js', async (original) => ({
   ...(await original<typeof import('../src/tui/terminal/directory-picker.js')>()),
-  canChooseDirectory: () => true,
+  canUseNativePicker: () => true,
   chooseAgentProject: vi.fn(async () => undefined),
 }))
 

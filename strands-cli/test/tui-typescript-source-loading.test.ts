@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { URL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -27,7 +27,6 @@ let root: string
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'strands-source-reload-'))
   await writeFile(join(root, 'package.json'), '{"type":"module"}')
-  await symlink(resolve(import.meta.dirname, '../../node_modules'), join(root, 'node_modules'), 'junction')
 })
 
 afterEach(async () => {
@@ -331,7 +330,6 @@ console.log(JSON.stringify(names))
   })
 
   it('uses the host harness without changing source', async () => {
-    await rm(join(root, 'node_modules'), { recursive: true, force: true })
     const packageRoot = join(root, 'node_modules/@strands-agents/harness')
     await mkdir(packageRoot, { recursive: true })
     await writeFile(

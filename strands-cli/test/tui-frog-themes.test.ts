@@ -8,6 +8,7 @@ import {
   renderFrogBrandEasterEggFrame,
   renderFrogSpiralFrame,
   renderFrogStartupLockup,
+  renderVoiceFrogRuns,
   type FrogRenderOptions,
 } from '../src/tui/view/frog-intro-renderer.js'
 
@@ -26,6 +27,9 @@ describe('frog themes', () => {
           .map((run) => run.text)
           .join('\n')
       ),
+      renderVoiceFrogRuns(18, 8, 1, 960, true, true, theme, options)
+        .map((run) => run.text)
+        .join('\n'),
     ]
 
     for (const frame of frames) {

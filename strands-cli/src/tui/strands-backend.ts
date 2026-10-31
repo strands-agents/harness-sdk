@@ -1,8 +1,9 @@
 import {
+  Agent,
   Message,
   SummarizingConversationManager,
   TextBlock,
-  Agent,
+  type ContentBlockData,
   type JSONValue,
   type Snapshot,
   type Usage,
@@ -34,6 +35,7 @@ import { ShellRunner } from './chat/shell.js'
 import { clearStoredContext, persistContext, restoreContext, storeContext } from './session/context.js'
 import type { LiveSteering } from './steering.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
+import { ContextBreakdownCapture } from './context-breakdown.js'
 
 interface HarnessTodo {
   content: string
@@ -370,7 +372,7 @@ export class StrandsChatBackend implements ChatBackend {
     return readBackgroundTasks(this._runtime.agent).some((task) => task.deliveryState === 'ready')
   }
 
-  async *stream(prompt: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+  async *stream(prompt: string | ContentBlockData[]): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
     return yield* this._streamAgent(prompt)
   }
 
@@ -394,6 +396,7 @@ export class StrandsChatBackend implements ChatBackend {
   async *_streamAgent(args: Parameters<Agent['stream']>[0]): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
     await this._runtime.prepareInvocation()
     const snapshot = this._runtime.agent.takeSnapshot({ preset: 'session' })
+    const contextCapture = new ContextBreakdownCapture()
     const initialTasks = this._taskUpdate()
     if (initialTasks) {
       yield initialTasks
@@ -411,6 +414,9 @@ export class StrandsChatBackend implements ChatBackend {
         const event = next.value
         const rootEvent = !('agent' in event) || event.agent === this._runtime.agent
         if (rootEvent) {
+          if (event.type === 'beforeModelCallEvent') {
+            contextCapture.beforeModelCall(this._runtime.agent)
+          }
           latestModelUsage = latestRootModelUsage(this._runtime.agent, event) || latestModelUsage
           for (const projected of projectAgentEvent(event, projectionOptions)) {
             yield projected
@@ -426,6 +432,8 @@ export class StrandsChatBackend implements ChatBackend {
       }
       const usage = runUsage.total()
       const result = projectAgentResult(this._runtime.agent, next.value, latestModelUsage, usage)
+      const breakdown = contextCapture.breakdown(result.context)
+      if (breakdown && result.context) result.context.breakdown = breakdown
       if (usage?.incomplete) {
         result.watchUsage = (listener): (() => void) =>
           runUsage.onComplete((total) => {
@@ -461,6 +469,8 @@ export class StrandsChatBackend implements ChatBackend {
         )
       }
       throw error
+    } finally {
+      contextCapture.dispose()
     }
   }
 

@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../src/tui/config.js'
 import { createInteractiveChat } from '../src/tui/runtime.js'
 import { ChatController } from '../src/tui/chat/controller.js'
+import { idleBackend } from './fixtures/chat-backend.js'
 
 import { configuredSkillSources, defaultSkillPaths, AgentSkillsRuntime, resolveSkillPaths } from '../src/tui/skills.js'
 
@@ -128,7 +129,7 @@ describe('skill discovery', () => {
         })
         await chat.submit('/skills')
         expect(chat.getSnapshot().panel).toMatchObject({
-          title: 'skills (1)',
+          title: 'Skills (1)',
           rows: [{ label: 'review', description: 'Review' }],
         })
         expect(chat.backend.info?.().tools).toEqual(
@@ -154,8 +155,8 @@ describe('skill discovery', () => {
 
     await expect(runtime.list()).resolves.toMatchObject([{ name: 'review', active: false }])
     await expect(runtime.activate('REVIEW')).resolves.toMatchObject({
-      name: 'review',
-      active: true,
+      skill: { name: 'review', active: true },
+      content: expect.stringContaining('Review the code.'),
     })
     await expect(runtime.list()).resolves.toMatchObject([{ name: 'review', active: true }])
     expect(agent.messages).toEqual([])
@@ -173,26 +174,22 @@ describe('skill discovery', () => {
       () => agent,
       () => plugin
     )
-    const stream = vi.fn(async function* () {
-      yield* []
-      return { stopReason: 'endTurn' }
-    })
-    const controller = new ChatController(
-      { id: 'skills-test', name: 'Skills', protocol: 'strands', stream, cancel: vi.fn() },
-      { skills: runtime }
-    )
+    const stream = vi.fn(idleBackend().stream)
+    const controller = new ChatController(idleBackend({ stream }), { skills: runtime })
 
     await controller.submit('/skills')
     const rows = controller.getSnapshot().panel!.rows
     expect(rows.filter((row) => row.label === 'review')).toHaveLength(2)
     expect(new Set(rows.map((row) => row.value)).size).toBe(3)
+    expect(controller.commandAssistance('/rev')?.completions.map((command) => command.usage)).toEqual(
+      expect.arrayContaining(['/review [request]', '/REVIEW [request]'])
+    )
     for (const [index, name] of names.entries()) {
       const row = rows.find((row) => row.value === encodeURIComponent(name))!
       expect(controller.openSkillDetail(decodeURIComponent(row.value!))).toBe(true)
       expect(controller.getSnapshot().panel?.body).toBe(`Review ${index}`)
-      await controller.submit('/skills')
-      await controller.activatePanelRow(row)
-      expect(stream).toHaveBeenCalledTimes(index + 1)
+      await controller.submit(`/${decodeURIComponent(row.value!)}`)
+      expect(stream.mock.calls.at(-1)?.[0]).toContain(`Review ${index}`)
       expect(plugin.getActivatedSkills(agent)).toEqual(names.slice(0, index + 1))
     }
     expect(plugin.getActivatedSkills(agent)).toEqual(names)
@@ -213,7 +210,7 @@ describe('skill discovery', () => {
     const activation = runtime.activate('review')
     selected = second
 
-    await expect(activation).resolves.toMatchObject({ active: true })
+    await expect(activation).resolves.toMatchObject({ skill: { active: true } })
     expect(plugin.getActivatedSkills(first)).toEqual(['review'])
     expect(plugin.getActivatedSkills(second)).toEqual([])
   })

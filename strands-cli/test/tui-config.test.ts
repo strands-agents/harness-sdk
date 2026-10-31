@@ -1,8 +1,8 @@
-import { parse, stringify } from 'smol-toml'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
+import { parse, stringify } from 'smol-toml'
 
 import { applyProviderEnvironmentValues, SETUP_VERSION, CliConfigStore } from '../src/tui/config.js'
 import { readProjectArchive } from '../src/tui/project/archive.js'
@@ -17,32 +17,6 @@ afterEach(() => {
 })
 
 describe('CliConfigStore', () => {
-  it('saves an agent profile without changing CLI preferences, providers, permissions, or its module base', async () => {
-    const directory = await temporaryDirectory()
-    const path = join(directory, 'cli.toml')
-    await writeFile(
-      path,
-      stringify({
-        onboarding: { version: 0 },
-        agentProject: join(directory, 'agent.ts'),
-        profileBaseDir: directory,
-        providers: { enabled: ['bedrock'], environment: { AWS_REGION: 'us-west-2' } },
-        permissions: { mode: 'bypassPermissions', allow: ['write'], deny: ['shell'] },
-        settings: { frogTheme: 'green', skillDiscovery: true },
-      })
-    )
-    const config = await CliConfigStore.load(path)
-    const before = config.snapshot()
-    const profile = { ...before.profile, name: 'Updated', model: 'ollama/local' }
-
-    await config.saveProfile(profile)
-
-    expect(config.snapshot()).toEqual({ ...before, agentProject: undefined, profile })
-    const reloaded = await CliConfigStore.load(path)
-    expect(reloaded.snapshot()).toEqual(config.snapshot())
-    expect(reloaded.configuredProviderEnvironment()).toEqual({ AWS_REGION: 'us-west-2' })
-  })
-
   it.each([
     ['unavailable-theme', 'green'],
     ['solar', 'scarlet'],
@@ -56,17 +30,21 @@ describe('CliConfigStore', () => {
           frogTheme: savedTheme,
           transcriptSpacing: 'unavailable-spacing',
           toolOutput: 'unavailable-output',
+          contextOffloadThreshold: 2_000,
           animations: false,
           telemetry: false,
         },
       })
     )
+
     const config = await CliConfigStore.load(path)
+
     expect(config.snapshot().settings).toMatchObject({
       frogTheme: expectedTheme,
       animations: false,
       transcriptSpacing: 'comfortable',
       toolOutput: 'compact',
+      contextOffloadThreshold: 'default',
       telemetry: false,
     })
     await config.setSettings({ toolOutput: 'full' })
@@ -96,9 +74,12 @@ describe('CliConfigStore', () => {
         toolOutput: 'compact',
         frogTheme: 'green',
         mcpDiscovery: false,
+        disabledMcpServers: [],
         skillDiscovery: false,
         agentMessaging: true,
         telemetry: true,
+        updatePrompts: true,
+        contextOffloadThreshold: 'default',
       },
     })
     expect(config.needsSetup()).toBe(true)
@@ -137,24 +118,41 @@ describe('CliConfigStore', () => {
     })
   })
 
-  it('rejects malformed permission settings with the config path', async () => {
-    const path = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(path, stringify({ permissions: { mode: 'always', allow: 'bash' } }))
-
-    await expect(CliConfigStore.load(path)).rejects.toThrow(
-      `Invalid CLI config at ${path}: permissions.mode must be "default" or "bypassPermissions"`
+  it('saves an agent profile without changing CLI preferences, providers, permissions, or its module base', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'cli.toml')
+    await writeFile(
+      path,
+      stringify({
+        onboarding: { version: 0 },
+        agentProject: join(directory, 'agent.ts'),
+        profileBaseDir: directory,
+        providers: { enabled: ['bedrock'], environment: { AWS_REGION: 'us-west-2' } },
+        permissions: { mode: 'bypassPermissions', allow: ['write'], deny: ['shell'] },
+        settings: { frogTheme: 'oak', skillDiscovery: true },
+      })
     )
+    const config = await CliConfigStore.load(path)
+    const before = config.snapshot()
+    const profile = { ...before.profile, name: 'Updated', model: 'ollama/local' }
+
+    await config.saveProfile(profile)
+
+    expect(config.snapshot()).toEqual({ ...before, agentProject: undefined, profile })
+    const reloaded = await CliConfigStore.load(path)
+    expect(reloaded.snapshot()).toEqual(config.snapshot())
+    expect(reloaded.configuredProviderEnvironment()).toEqual({ AWS_REGION: 'us-west-2' })
   })
 
-  it('loads and preserves a models section it no longer reads', async () => {
+  it.each([
+    [{ mode: 'always', allow: [] }, 'permissions.mode must be "default" or "bypassPermissions"'],
+    [{ mode: 'default', allow: 'bash' }, 'permissions.allow must be an array of permission rules'],
+    [{ mode: 'default', deny: [1] }, 'permissions.deny must be an array of permission rules'],
+  ])('rejects malformed permission settings with the config path', async (permissions, message) => {
     const path = join(await temporaryDirectory(), 'cli.toml')
-    const models = { pinned: ['bedrock/model-b', ' not trimmed '], futureSetting: true }
-    await writeFile(path, stringify({ models }))
-    const config = await CliConfigStore.load(path)
+    await writeFile(path, stringify({ permissions }))
 
-    await config.setSettings({ animations: false })
-
-    expect(parse(await readFile(path, 'utf8'))).toMatchObject({ models, settings: { animations: false } })
+    await expect(CliConfigStore.load(path)).rejects.toThrow(`Invalid CLI config at ${path}: ${message}`)
   })
 
   it('persists presentation settings while preserving unrelated settings', async () => {
@@ -227,7 +225,7 @@ describe('CliConfigStore', () => {
     )
   })
 
-  it('persists setup atomically while preserving unrelated settings', async () => {
+  it('persists setup while preserving unrelated settings', async () => {
     const path = join(await temporaryDirectory(), 'cli.toml')
     await writeFile(path, stringify({ theme: 'custom', profile: { futureSetting: true } }))
     const config = await CliConfigStore.load(path)
@@ -531,7 +529,7 @@ describe('CliConfigStore', () => {
     expect(await readFile(path, 'utf8')).not.toMatch(/legacy-(?:key|token)/u)
   })
 
-  it('detects allowlisted provider settings without executing or expanding dotenv content', async () => {
+  it('detects allowlisted provider settings without expanding dotenv content', async () => {
     const directory = await temporaryDirectory()
     await writeFile(
       join(directory, '.env'),

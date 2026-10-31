@@ -31,7 +31,7 @@ import {
   profileSkillPaths,
   profileSkillsEnabled,
 } from './profile-fields.js'
-import { canChooseDirectory } from '../../terminal/directory-picker.js'
+import { canUseNativePicker } from '../../terminal/directory-picker.js'
 import type { ChatSettings } from '../../chat/types.js'
 import { SETTING_DEFINITIONS } from '../../settings.js'
 import { PERMISSION_CHOICES, permissionToolDescription, permissionToolNames } from '../../permissions/settings.js'
@@ -166,7 +166,7 @@ export function rowsForStep(
         field: 'importPath',
         activate: edit('importPath', importPath),
       },
-      ...(canChooseDirectory()
+      ...(canUseNativePicker()
         ? [
             {
               id: 'import-browse',

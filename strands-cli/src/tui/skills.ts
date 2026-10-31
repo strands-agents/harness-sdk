@@ -18,9 +18,14 @@ export interface SkillInfo {
   compatibility?: string
 }
 
+export interface SkillActivation {
+  skill: SkillInfo
+  content: string
+}
+
 export interface ChatSkillsRuntime {
   list(): Promise<readonly SkillInfo[]>
-  activate(name: string): Promise<SkillInfo | undefined>
+  activate(name: string): Promise<SkillActivation | undefined>
 }
 
 export class AgentSkillsRuntime implements ChatSkillsRuntime {
@@ -51,7 +56,7 @@ export class AgentSkillsRuntime implements ChatSkillsRuntime {
       }))
   }
 
-  async activate(name: string): Promise<SkillInfo | undefined> {
+  async activate(name: string): Promise<SkillActivation | undefined> {
     const agent = this._getAgent()
     const skills = await this._list(agent)
     const skill =
@@ -64,7 +69,10 @@ export class AgentSkillsRuntime implements ChatSkillsRuntime {
     if (result.status === 'error' || !this._getSkills(agent)?.getActivatedSkills(agent).includes(skill.name)) {
       throw result.error ?? new Error(toolResultText(result.content) || `Failed to activate skill ${skill.name}.`)
     }
-    return { ...skill, active: true }
+    return {
+      skill: { ...skill, active: true },
+      content: toolResultText(result.content) || skill.instructions,
+    }
   }
 }
 

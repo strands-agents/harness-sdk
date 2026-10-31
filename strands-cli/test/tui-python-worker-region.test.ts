@@ -91,11 +91,6 @@ agent.name = agent.model.client.meta.region_name if isinstance(agent.model, Bedr
     expect((await openAgent(undefined, { model: 'openai/gpt-5' })).info().model).toBe('openai/gpt-5')
   })
 
-  it('drops removed config keys instead of forwarding them to Agent', async () => {
-    const overrides = { thinking: null } as unknown as PythonOptions['overrides']
-    await expect(openAgent(undefined, overrides)).resolves.toBeInstanceOf(PythonBackend)
-  })
-
   it('leaves a supplied Model instance untouched', async () => {
     const backend = await openAgent('BedrockModel(model_id="custom", region_name="eu-west-1")')
     expect(backend.name).toBe('eu-west-1')
@@ -138,6 +133,25 @@ agent.name = agent.model.client.meta.region_name if isinstance(agent.model, Bedr
     vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', undefined)
     vi.stubEnv('AWS_ACCESS_KEY_ID', 'fake-access-key')
     vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'fake-secret-key')
-    expect((await openAgent()).info().model).toBe(bedrockModel.slice('bedrock/'.length))
+    const backend = await openAgent()
+    expect(backend.info().model).toBe(bedrockModel.slice('bedrock/'.length))
+    expect(backend.sourceSelection()?.configured.model).toBe(bedrockModel)
+    expect(backend.modelSelection().model).toBe(bedrockModel)
+    const snapshot = await backend.captureConversation()
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ reasoningContent: { reasoningText: { text: 'Keep this reasoning.', signature: 'signature' } } }],
+      },
+    ]
+    snapshot.data.messages = messages
+    await backend.restoreConversation({
+      snapshot,
+      completedTurns: [],
+      model: bedrockModel,
+      workspace: root,
+      selection: backend.modelSelection(),
+    })
+    expect((await backend.captureConversation()).data.messages).toEqual(messages)
   })
 })

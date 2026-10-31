@@ -7,9 +7,10 @@ import type { ChatControllerApi, ChatConversations } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
+import { createInkOutputs, enterAlternateScreen, saveTerminalTitle, setTerminalTitle } from './terminal/terminal.js'
 import { observeTerminalColorMode } from './view/theme-detection.js'
-import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
 import { sessionResumeCommand } from './session/resume.js'
+import { sanitizeTerminalText } from './terminal/sanitize.js'
 
 interface RunInkChatOptions {
   firstRequest?: string
@@ -21,17 +22,46 @@ interface RunInkChatOptions {
   setup?: boolean
   config?: CliConfigStore
   renderApp?: typeof render
+  checkForUpdate?: () => Promise<string | undefined>
+  onUpdateRequested?: () => void
 }
 
 type ChatControllerFactory = (
   signal: AbortSignal,
   requestSetup: RequestSetup,
-  conversation: ChatConversations | undefined,
+  conversations: ChatConversations | undefined,
   launch: ChatLaunch | undefined,
   confirmMcp: SetupBridge['confirmMcp']
 ) => Promise<ChatControllerApi>
 
 type ChatControllerSource = ChatControllerApi | ChatControllerFactory
+
+/** Keeps the previous chat on screen, read-only, while its replacement starts. */
+function reloadingController(previous: ChatControllerApi, close: (exitCode: number) => void): ChatControllerApi {
+  const snapshot = { ...previous.getSnapshot(), composerStatus: 'Reloading agent...' }
+  return {
+    subscribe: () => () => {},
+    getSnapshot: () => snapshot,
+    busy: false,
+    hardExitCode: undefined,
+    actionableCommandToken: () => undefined,
+    start: async (): Promise<void> => {},
+    submit: async () => undefined,
+    steer: async () => undefined,
+    updateQueuedPrompt: () => false,
+    moveQueuedPrompt: () => false,
+    cancel: () => false,
+    close,
+    dispose: async (): Promise<void> => {},
+    dismissPanel: () => false,
+    activatePanelRow: async () => false,
+    openSkillDetail: () => false,
+    openMcpDetail: () => false,
+    retryMcpServer: async () => false,
+    openModelPanel: async (): Promise<void> => {},
+    openContextPanel: (): void => {},
+  }
+}
 
 function ChatSession({
   onCancelStartup,
@@ -55,13 +85,30 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const alternateScreen = options.alternateScreen !== false
   const inkOutputs = createInkOutputs(output, errorOutput, alternateScreen)
   let leaveTerminalMode = (): void => {}
+  let restoreTerminalTitle = (): void => {}
+  let stopWatchingTitle = (): void => {}
+  let terminalTitle: string | undefined
+  const watchTerminalTitle = (active: ChatControllerApi): void => {
+    stopWatchingTitle()
+    const update = (): void => {
+      const title = active.getSnapshot().runtime.sessionName ?? 'Strands'
+      if (title === terminalTitle) return
+      terminalTitle = title
+      setTerminalTitle(title, output)
+    }
+    stopWatchingTitle = active.subscribe(update)
+    update()
+  }
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
+    stopWatchingTitle()
     leaveTerminalMode()
+    restoreTerminalTitle()
     terminalTheme.dispose()
     return hardExitProcessTree(exitCode)
   }
   let controller: ChatControllerApi | undefined
+  let reloading: ChatControllerApi | undefined
   let controllerFactory: ChatControllerFactory | undefined
   let instance: Instance | undefined
   const startTasks: Promise<void>[] = []
@@ -85,6 +132,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       }),
   }
   let resolveSetup: (exitCode: 0 | 130) => void = () => {}
+  let exitAfterSetup = false
   const setupTask = options.setup
     ? new Promise<0 | 130>((resolve) => {
         resolveSetup = resolve
@@ -97,10 +145,11 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       const previousController = controller
       const resumeVoiceInput = previousController.pauseVoiceInput?.()
       controller = undefined
+      reloading = reloadingController(previousController, closeForExit)
       instance.rerender(chatRoot())
       replacementTask = (async (): Promise<void> => {
-        const conversation = await previousController.captureConversations?.()
-        const replacement = await initializeController(launch, conversation)
+        const conversations = await previousController.captureConversations?.()
+        const replacement = await initializeController(launch, conversations)
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
           replacement.close(pendingExitCode)
@@ -116,7 +165,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           } catch (recordingError) {
             message += `\nCould not save the setup failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`
           }
-          inkOutputs.stderr.write(`error: Failed to apply setup: ${message}\n`)
+          inkOutputs.stderr.write(`error: Failed to apply setup: ${sanitizeTerminalText(message)}\n`)
           controller = previousController
           previousController.showError?.('Setup failed', message)
           if (pendingExitCode !== undefined) {
@@ -125,12 +174,14 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         })
         .finally(() => {
           replacementTask = undefined
+          reloading = undefined
+          resumeVoiceInput?.()
           if (pendingExitCode === undefined && controller) {
+            watchTerminalTitle(controller)
             instance!.rerender(chatRoot())
             if (controller !== previousController) {
               startTasks.push(controller.start())
             }
-            resumeVoiceInput?.()
           }
         })
     }
@@ -138,7 +189,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const startupAbort = new AbortController()
   const initializeController = async (
     launch?: ChatLaunch,
-    conversation?: ChatConversations
+    conversations?: ChatConversations
   ): Promise<ChatControllerApi> => {
     const config = options.config
     const previous = config?.snapshot()
@@ -154,7 +205,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       replacement = await controllerFactory!(
         startupAbort.signal,
         (change) => setupBridge.request(change),
-        conversation,
+        conversations,
         launch,
         (workspace, paths) => setupBridge.confirmMcp(workspace, paths)
       )
@@ -191,17 +242,31 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     controller?.close(pendingExitCode)
     instance?.unmount()
   }
-  const chatRoot = (): ReactElement =>
-    createElement(ChatSession, {
-      ...(controller ? { controller } : {}),
+  const chatRoot = (): ReactElement => {
+    const shown = controller ?? reloading
+    return createElement(ChatSession, {
+      ...(shown ? { controller: shown } : {}),
       intro: options.intro !== false,
       setup: options.setup === true,
       ...(options.config ? { config: options.config } : {}),
       ...(trustRequest ? { trustRequest } : {}),
       setupBridge,
       onSetupComplete: completeSetup,
+      ...(options.checkForUpdate ? { checkForUpdate: options.checkForUpdate } : {}),
+      promptForUpdate: options.firstRequest === undefined,
+      onExitSetup: (exitCode) => {
+        exitAfterSetup = true
+        resolveSetup(exitCode)
+        closeForExit(exitCode)
+      },
+      onUpdateRequested: () => {
+        options.onUpdateRequested?.()
+        resolveSetup(130)
+        closeForExit(0)
+      },
       onCancelStartup: () => closeForExit(130),
     })
+  }
   const renderChat = (): void => {
     if (instance) {
       instance.rerender(chatRoot())
@@ -227,14 +292,16 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   process.on('SIGHUP', onSighup)
 
   try {
+    restoreTerminalTitle = saveTerminalTitle(output)
     if (typeof source === 'function') {
       controllerFactory = source
     } else {
       controller = source
+      watchTerminalTitle(controller)
     }
     if (controller || controllerFactory || options.setup) renderChat()
     const setupExit = await Promise.race([setupTask, startupExitTask])
-    if (setupExit !== 0) {
+    if (setupExit !== 0 || exitAfterSetup) {
       instance?.unmount()
       return setupExit
     }
@@ -259,6 +326,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         controller.close(pendingExitCode)
         return pendingExitCode
       }
+      watchTerminalTitle(controller)
       renderChat()
     }
     if (!controller) {
@@ -273,7 +341,9 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     process.off('SIGHUP', onSighup)
     instance?.unmount()
     instance?.cleanup()
+    stopWatchingTitle()
     leaveTerminalMode()
+    restoreTerminalTitle()
     terminalTheme.dispose()
 
     const resumeSession = controller?.resumeSession

@@ -210,7 +210,7 @@ describe('presentChatStream', () => {
     expect(thrown).toBe(sourceError)
   })
 
-  it('ends presentation delays immediately when cancellation aborts the signal', async () => {
+  it('forwards the cancellation signal to presentation delays', async () => {
     async function* source(): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
       yield { type: 'textDelta', text: 'cancelled output' }
       return { stopReason: 'cancelled' }

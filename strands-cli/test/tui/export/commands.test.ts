@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 import { unzipSync } from 'fflate'
@@ -8,24 +8,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const picker = vi.hoisted(() => ({
   available: false,
+  chooseDirectory: vi.fn<() => Promise<string | undefined>>(),
   chooseSaveFile: vi.fn<() => Promise<string | undefined>>(),
 }))
 
 vi.mock('../../../src/tui/terminal/directory-picker.js', () => ({
-  canChooseDirectory: () => picker.available,
+  canUseNativePicker: () => picker.available,
+  chooseDirectory: picker.chooseDirectory,
   chooseSaveFile: picker.chooseSaveFile,
 }))
 
-import {
-  ChatController,
-  type ChatBackend,
-  type ChatControllerApi,
-  type ChatPanelRow,
-} from '../../../src/tui/chat/controller.js'
+import { ChatController, type ChatControllerApi, type ChatPanelRow } from '../../../src/tui/chat/controller.js'
 import { CliConfigStore } from '../../../src/tui/config.js'
 import { createInteractiveChat } from '../../../src/tui/runtime.js'
 import { exportSavedAgent } from '../../../src/tui/project/export.js'
 import { agentLaunchCommand } from '../../../src/tui/project/import.js'
+import { unquote } from '../../../src/tui/session/conversation-helpers.js'
+import { idleBackend } from '../../fixtures/chat-backend.js'
 
 const model = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
 const profile = defineHarnessAgentConfig({
@@ -48,6 +47,8 @@ beforeEach(async () => {
   workspace = join(root, 'workspace')
   await mkdir(workspace)
   picker.available = false
+  picker.chooseDirectory.mockReset()
+  picker.chooseDirectory.mockResolvedValue(root)
   picker.chooseSaveFile.mockReset()
   vi.stubEnv('AWS_REGION', 'us-east-1')
 })
@@ -66,6 +67,24 @@ function config(agentProfile = profile): CliConfigStore {
   )
 }
 
+async function chooseExport(
+  controller: ChatController,
+  language: 'typescript' | 'python',
+  name = 'my-agent'
+): Promise<void> {
+  await controller.activatePanelRow(row(controller, language === 'typescript' ? 'TypeScript' : 'Python'))
+  expect(controller.getSnapshot().panel).toMatchObject({
+    kind: 'export',
+    title: 'Name exported folder',
+    nameInput: { language },
+  })
+  await controller.activatePanelRow({
+    label: 'Continue',
+    description: name,
+    value: `export:name:${language}:${encodeURIComponent(name)}`,
+  })
+}
+
 async function profileChat(agentProfile = profile): Promise<ChatControllerApi> {
   const controller = await createInteractiveChat({
     config: config(agentProfile),
@@ -78,21 +97,8 @@ async function profileChat(agentProfile = profile): Promise<ChatControllerApi> {
   return controller
 }
 
-function backend(): ChatBackend {
-  return {
-    id: 'test',
-    name: 'My agent',
-    protocol: 'strands',
-    async *stream() {
-      yield* []
-      return { stopReason: 'endTurn' }
-    },
-    cancel() {},
-  }
-}
-
 function presentationChat(options: NonNullable<ConstructorParameters<typeof ChatController>[1]> = {}): ChatController {
-  const controller = new ChatController(backend(), options)
+  const controller = new ChatController(idleBackend({ name: 'My agent' }), options)
   controllers.push(controller)
   return controller
 }
@@ -113,11 +119,12 @@ it.each(['typescript', 'python'] as const)('writes a %s profile ZIP to an explic
   await controller.submit(`/export ${language} ${name}`)
 
   const path = join(workspace, name)
+  const entries = unzipSync(await readFile(path))
   expect(controller.getSnapshot().panel).toMatchObject({
     title: 'Export complete',
-    body: expect.stringContaining(path),
+    body: 'Saved a copy. No automatic updates.',
+    rows: expect.arrayContaining([expect.objectContaining({ value: 'export:copy-path', description: path })]),
   })
-  const entries = unzipSync(await readFile(path))
   expect(entries).toHaveProperty(language === 'typescript' ? 'agent/agent.ts' : 'agent/agent.py')
   expect(Buffer.from(entries['agent/skills/review/SKILL.md']!).toString('utf8')).toBe(skillSource)
   expect(picker.chooseSaveFile).not.toHaveBeenCalled()
@@ -148,16 +155,22 @@ it.each(['rust agent.zip', 'typescript', 'typescript ""'])('rejects invalid expo
   expect(exportAgentProject).not.toHaveBeenCalled()
 })
 
-it('shows command guidance when a native save picker is unavailable', async () => {
-  const controller = await profileChat()
+it('offers the default harness folder and command guidance when browsing is unavailable', async () => {
+  const exportAgentProject = vi.fn(async (_language: string, destination?: string) => destination)
+  const controller = presentationChat({ exportAgentProject })
   await controller.submit('/export')
 
-  expect(controller.getSnapshot().panel?.body).toContain('/export <typescript|python> <path.zip>')
-  await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
-  expect(controller.getSnapshot().panel).toMatchObject({
-    kind: 'error',
-    rows: [expect.objectContaining({ description: 'Use /export typescript <path.zip> to save this agent.' })],
-  })
+  await chooseExport(controller, 'typescript', 'Customer Harness')
+  expect(row(controller, 'Default folder').description).toBe('~/.strands/harnesses/customer-harness')
+  expect(row(controller, 'Custom path').description).toBe('/export typescript <path.zip>')
+  expect(row(controller, 'Custom path').value).toBeUndefined()
+
+  await controller.activatePanelRow(row(controller, 'Default folder'))
+  expect(exportAgentProject).toHaveBeenCalledWith(
+    'typescript',
+    join(homedir(), '.strands', 'harnesses', 'customer-harness'),
+    'directory'
+  )
 })
 
 it.each(['typescript', 'python'] as const)('shows only the authored %s source language', async (language) => {
@@ -172,13 +185,17 @@ it.each(['typescript', 'python'] as const)('shows only the authored %s source la
 
   expect(controller.getSnapshot().panel).toMatchObject({
     kind: 'export',
-    title: 'Export · My agent',
-    body: expect.stringContaining(project.entrypoint),
+    title: 'Export My agent',
+    body: 'Export a separate copy of these source files.',
     rows: [expect.objectContaining({ value: `export:${language}` })],
   })
 })
 
 describe('export completion', () => {
+  it('preserves backslashes in a double-quoted Windows export path', () => {
+    expect(unquote('"C:\\temp\\new agent.zip"')).toBe('C:\\temp\\new agent.zip')
+  })
+
   it('copies a PowerShell-safe Windows launch command', () => {
     expect(agentLaunchCommand("C:\\Users\\O'Brien\\agent.zip", 'win32')).toBe(
       "strands --agent 'C:\\Users\\O''Brien\\agent.zip'"
@@ -194,7 +211,8 @@ describe('export completion', () => {
     const copyText = vi.fn(async (_text: string) => true)
     const controller = presentationChat({ copyText, exportAgentProject: async () => path })
     await controller.submit('/export')
-    await controller.activatePanelRow(row(controller, 'Python'))
+    await chooseExport(controller, 'python')
+    await controller.activatePanelRow(row(controller, 'Choose parent folder'))
 
     await controller.activatePanelRow(row(controller, 'Copy path'))
     expect(copyText).toHaveBeenLastCalledWith(path)
@@ -233,10 +251,13 @@ describe('export completion', () => {
         },
       })
       await controller.submit('/export')
-      await controller.activatePanelRow(row(controller, 'TypeScript'))
+      await chooseExport(controller, 'typescript')
+      await controller.activatePanelRow(row(controller, 'Choose parent folder'))
 
       if (outcome === 'cancel') {
-        expect(controller.getSnapshot().panel?.title).toBe('Export · My agent')
+        expect(controller.getSnapshot().panel?.title).toBe('Save TypeScript copy')
+        expect(controller.dismissPanel()).toBe(true)
+        expect(controller.getSnapshot().panel?.title).toBe('Name exported folder')
       } else if (outcome === 'error') {
         expect(controller.getSnapshot().panel?.kind).toBe('error')
       } else {
@@ -250,9 +271,21 @@ describe('export completion', () => {
 
 describe('exportSavedAgent', () => {
   it('writes the saved profile to a path relative to the working directory', async () => {
-    const archive = await exportSavedAgent({ profile }, 'typescript', 'saved-agent', workspace)
+    const skill = join(workspace, '.agent', 'skills', 'review')
+    await mkdir(skill, { recursive: true })
+    await writeFile(join(skill, 'SKILL.md'), '# Review')
+    const skillsProfile = defineHarnessAgentConfig({ ...profile, skills: true })
+    const archive = await exportSavedAgent(
+      { profile: skillsProfile, profileBaseDir: workspace },
+      'typescript',
+      'saved-agent',
+      workspace
+    )
+    const entries = unzipSync(await readFile(archive))
+
     expect(archive).toBe(join(workspace, 'saved-agent.zip'))
-    expect(Object.keys(unzipSync(await readFile(archive)))).toContain('package.json')
+    expect(Object.keys(entries)).toContain('package.json')
+    expect(Buffer.from(entries['agent/skills/review/SKILL.md']!).toString('utf8')).toBe('# Review')
   })
 
   it('sends agents authored in code to /export', async () => {

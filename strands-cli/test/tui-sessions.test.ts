@@ -1,8 +1,12 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { sessionRows } from '../src/tui/chat/panels.js'
+import { ChatController } from '../src/tui/chat/controller.js'
+import { filterPanelRows } from '../src/tui/view/interaction.js'
+import { idleBackend } from './fixtures/chat-backend.js'
 import {
   FileSessionRuntime,
   sessionRootDirectory,
@@ -12,6 +16,51 @@ import {
 } from '../src/tui/session/sessions.js'
 
 describe('session catalog', () => {
+  it.skipIf(process.platform === 'win32')(
+    'keeps distinct custom directories separate when their labels match',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'strands-session-filter-'))
+      const paths = [join(directory, 'custom'), join(directory, 'cu\u001b[31mstom')]
+      const workspaces = [join(directory, 'workspace'), join(directory, 'work\u001b[31mspace')]
+      const catalog = await SessionRootCatalog.load(join(directory, 'catalog'))
+      const sessions = new FileSessionRuntime({ sessionId: undefined, sessionDirectory: paths[0]! }, paths[0]!, {
+        workspace: workspaces[0]!,
+        catalog,
+      })
+      const controller = new ChatController(idleBackend(), { sessions })
+      try {
+        for (let index = 0; index < paths.length; index++) {
+          await mkdir(join(paths[index]!, `saved-${index}`), { recursive: true })
+          await catalog.register(paths[index]!, workspaces[index]!)
+        }
+        const listed = await sessions.list()
+        expect(listed.map((session) => session.directory)).toEqual(expect.arrayContaining(paths))
+        expect(listed.map((session) => session.workspace)).toEqual(expect.arrayContaining(workspaces))
+        await controller.submit('/sessions')
+        const panel = controller.getSnapshot().panel!
+        const filters = panel.filters!.filter((filter) => filter.id !== 'all')
+        expect(filters).toHaveLength(2)
+        expect(new Set(filters.map((filter) => filter.id)).size).toBe(2)
+        expect(filters.map((filter) => filter.label)).toEqual(['workspace', 'workspace'])
+        expect(JSON.stringify(panel)).not.toContain('\\u001b')
+        for (const filter of filters) {
+          const rows = filterPanelRows(panel.rows, '', filter.id)
+          expect(rows).toHaveLength(1)
+          const index = Number(rows[0]!.label.slice('saved-'.length))
+          expect(filter.id).toBe(`directory:${encodeURIComponent(paths[index]!)}`)
+          await expect(controller.sessionTarget(rows[0]!.value!)).resolves.toMatchObject({
+            sessionDirectory: paths[index],
+            workspace: workspaces[index],
+            sessionId: `saved-${index}`,
+          })
+        }
+      } finally {
+        await controller.dispose()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('only exposes resumable file-backed identities and follows the current session after clear', () => {
     const workspace = process.cwd()
     const host = { sessionId: 'first-session', sessionDirectory: join(workspace, 'sessions') }
@@ -301,5 +350,22 @@ describe('session catalog', () => {
     expect(first.startsWith(root)).toBe(true)
     expect(second).not.toBe(first)
     expect(workspaceSessionDirectory(join(tmpdir(), 'a', 'my project'), root)).toBe(first)
+  })
+})
+
+describe('session timestamps', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it.each([
+    ['America/New_York', '2026-01-01T02:30:00Z', '12/31 21:30 EST'],
+    ['America/New_York', '2026-07-01T02:30:00Z', '06/30 22:30 EDT'],
+    ['Asia/Kathmandu', '2026-01-01T02:30:00Z', '01/01 08:15 GMT+5:45'],
+    ['UTC', '2026-01-01T00:00:00Z', '01/01 00:00 UTC'],
+  ])('shows local time in %s for %s', (timeZone, updatedAt, expected) => {
+    vi.stubEnv('TZ', timeZone)
+    const [row] = sessionRows([{ id: 'saved-session', active: false, updatedAt }])
+    expect(row?.columns?.[2]).toBe(expected)
   })
 })

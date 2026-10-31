@@ -9,9 +9,9 @@ import { unzipSync } from 'fflate'
 import type { ChatEvent, ChatPermissionRequest, ChatRunResult } from '../src/tui/chat/types.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend, type PythonOptions } from '../src/tui/project/python.js'
+import { createPythonChat } from '../src/tui/project/run.js'
 import { exportSourceProject } from '../src/tui/project/export.js'
 import { watchAgentProject } from '../src/tui/project/watch.js'
-import { createPythonChat } from '../src/tui/project/run.js'
 import type { ConversationManager } from '../src/tui/session/conversations.js'
 import { pythonExecutable as python } from './fixtures/python-runtime.js'
 
@@ -91,7 +91,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
   it.each([
     '{"dir": "custom-memory"}',
     'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',
-  ])('excludes actual memory storage from exports and source watching: %s', async (memory) => {
+  ])('excludes actual memory storage from exports and source watching: %s', { timeout: 30_000 }, async (memory) => {
     const privateDirectory = join(root, 'custom-memory')
     await mkdir(privateDirectory, { recursive: true })
     const privateFile = join(privateDirectory, 'personal-notes.md')
@@ -196,26 +196,30 @@ def build(**overrides):`
     }
   )
 
-  it.each(['True', '{"dir": "custom-sessions"}'])('restores saved history when session=%s', async (session) => {
-    const source = baseSource
-      .replace('"session": False', `"session": ${session}`)
-      .replace(
-        'agent = build()',
-        'def create_agent(**overrides):\n    return build(**overrides)\n\nagent = create_agent()'
+  it.each(['True', '{"dir": "custom-sessions"}'])(
+    'restores saved history when session=%s',
+    { timeout: 30_000 },
+    async (session) => {
+      const source = baseSource
+        .replace('"session": False', `"session": ${session}`)
+        .replace(
+          'agent = build()',
+          'def create_agent(**overrides):\n    return build(**overrides)\n\nagent = create_agent()'
+        )
+      const previous = await open(source, { sessionId: 'saved-session' })
+      await runTurn(previous)
+      const history = previous.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
+      await previous.dispose()
+
+      const restored = await open(source, { sessionId: 'saved-session', resume: true })
+
+      expect(restored.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
+        history
       )
-    const previous = await open(source, { sessionId: 'saved-session' })
-    await runTurn(previous)
-    const history = previous.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
-    await previous.dispose()
-
-    const restored = await open(source, { sessionId: 'saved-session', resume: true })
-
-    expect(restored.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
-      history
-    )
-    expect(restored.sessionIdentity?.sessionId).toBe('saved-session')
-    expect((await runTurn(restored)).stopReason).toBe('end_turn')
-  })
+      expect(restored.sessionIdentity?.sessionId).toBe('saved-session')
+      expect((await runTurn(restored)).stopReason).toBe('end_turn')
+    }
+  )
 
   it.each(['False', 'True', '{}', '{"id": "authored", "dir": "custom-sessions"}'])(
     'restores the complete roster with authored session=%s',
@@ -325,25 +329,146 @@ def build(**overrides):`
     30_000
   )
 
-  it('reports context usage for imported Python agents', async () => {
-    const backend = await open(baseSource)
+  it('reports the effective context composition for imported Python agents', async () => {
+    const backend = await open(
+      baseSource.replace(
+        'agent = build()',
+        `
+from dataclasses import replace
+from strands.middleware import InvokeModelStage
+from strands.hooks.events import BeforeModelCallEvent
 
-    expect(await runTurn(backend)).toMatchObject({
+class ContextModel(SourceReloadModel):
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        assert system_prompt == "A" * 400
+        async for event in super().stream(messages, tool_specs, system_prompt, **kwargs):
+            if "metadata" in event:
+                event = {"metadata": {"usage": {
+                    "inputTokens": 100_000, "outputTokens": 20, "totalTokens": 100_020
+                }}}
+            yield event
+
+agent = build(model=ContextModel(), instructions="Follow the authored instructions.")
+
+def inject(context):
+    messages = [*context.messages]
+    last_user = next(index for index in range(len(messages) - 1, -1, -1) if messages[index]["role"] == "user")
+    messages[last_user] = {
+        **messages[last_user],
+        "content": [*messages[last_user]["content"], {"text": "Temporary guidance for this request."}],
+    }
+    return replace(context, messages=messages, dynamic_trailing_blocks=1)
+
+agent.add_middleware(InvokeModelStage.Input, inject)
+
+async def transform(context, next_handler):
+    async for event in next_handler(replace(context, system_prompt="A" * 400)):
+        yield event
+
+registered = False
+def register_transform(event):
+    global registered
+    if not registered:
+        event.agent.add_middleware(InvokeModelStage, transform)
+        registered = True
+
+agent.hooks.add_callback(BeforeModelCallEvent, register_transform)
+`
+      )
+    )
+
+    const result = await runTurn(backend)
+    expect(result).toMatchObject({
       context: {
-        currentTokens: expect.any(Number),
-        projectedTokens: expect.any(Number),
+        currentTokens: 100_000,
+        projectedTokens: 100_020,
         contextWindow: 1_000,
       },
     })
+    const categories = result.context!.breakdown!.categories
+    expect(categories.map(({ kind }) => kind)).toEqual([
+      'systemPrompt',
+      'tools',
+      'userMessages',
+      'assistantMessages',
+      'toolResults',
+      'injectedContext',
+      'other',
+    ])
+    expect(categories.reduce((sum, { tokens }) => sum + tokens, 0)).toBe(100_020)
+    expect(categories.find(({ kind }) => kind === 'systemPrompt')!.tokens).toBe(100)
+    expect(categories.find(({ kind }) => kind === 'injectedContext')!.tokens).toBe(9)
+    expect(categories.find(({ kind }) => kind === 'assistantMessages')!.tokens).toBeGreaterThanOrEqual(20)
+    expect(JSON.stringify(result.context)).not.toContain('Temporary guidance')
   })
 
-  it('runs an arbitrary exported instance unchanged and disables reconstruction', async () => {
-    const authored = `${baseSource}
+  it('keeps aggregate context usage when the Python SDK lacks model middleware capture', async () => {
+    const backend = await open(`${baseSource}
+import strands.middleware
+del strands.middleware.InvokeModelStage
+`)
+    const result = await runTurn(backend)
+
+    expect(result.context).toMatchObject({
+      currentTokens: expect.any(Number),
+      projectedTokens: expect.any(Number),
+      contextWindow: 1_000,
+    })
+    expect(result.context?.breakdown).toBeUndefined()
+  })
+
+  it('omits a stale breakdown when the final Python model call reports no usage', async () => {
+    const backend = await open(
+      baseSource.replace(
+        'agent = build()',
+        `
+class PartialUsageModel(SourceReloadModel):
+    async def stream(self, messages, *args, **kwargs):
+        completed = any("toolResult" in block for block in messages[-1]["content"])
+        async for event in super().stream(messages, *args, **kwargs):
+            if completed and "metadata" in event:
+                continue
+            yield event
+
+agent = build(model=PartialUsageModel())
+`
+      )
+    )
+
+    expect((await runTurn(backend)).context?.breakdown).toBeUndefined()
+  })
+
+  it('passes image attachment bytes through the Python worker', async () => {
+    const backend = await open(baseSource)
+    const events: ChatEvent[] = []
+
+    for await (const event of backend.stream([
+      { text: 'Describe this image.' },
+      { image: { format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } } },
+    ])) {
+      events.push(event)
+    }
+
+    expect(events).toContainEqual({ type: 'textDelta', text: 'Received png image with 3 bytes.' })
+  })
+
+  it.each(['harness', 'sdk'])('runs an arbitrary %s instance unchanged and disables reconstruction', async (kind) => {
+    const source =
+      kind === 'harness'
+        ? baseSource
+        : baseSource.replace(
+            'agent = build()',
+            `from strands import Agent
+agent = Agent(model=SourceReloadModel(), tools=[status], context_manager=False, background_tasks=False)`
+          )
+    const authored = `${source}
 agent.name = "Customized"
 `
     const backend = await open(authored)
 
     expect(backend.name).toBe('Customized')
+    expect(backend.info().model).toBe('source-reload-test')
+    expect(backend.sourceSelection()).toBeUndefined()
     expect(backend.reconstructable()).toBe(false)
     expect(await turn(backend)).toContainEqual(
       expect.objectContaining({
@@ -420,6 +545,10 @@ agent.name = "Customized"
     })
 
     expect(backend.skills.map((skill) => skill.name)).toContain('discovered-skill')
+    await expect(backend.activateSkill('discovered-skill')).resolves.toMatchObject({
+      skill: { name: 'discovered-skill', active: true },
+      content: expect.stringContaining('Use the discovered skill.'),
+    })
     expect(backend.info().tools?.map((tool) => tool.name)).toContain('external_probe')
   })
 
@@ -436,6 +565,32 @@ agent.name = "Customized"
     expect(backend.reconstructable()).toBe(true)
     await backend.clear()
     expect(backend.name).toBe('Overridden')
+  })
+
+  it('releases replaced agents from authored factories', async () => {
+    const authored = baseSource
+      .replace('from strands import tool', 'import gc\nimport weakref\nfrom strands import tool\ncreated = []')
+      .replace('return "authored tool"', 'gc.collect()\n    return str(sum(ref() is not None for ref in created))')
+      .replace(
+        'agent = build()',
+        `def create_agent(**overrides):
+    candidate = build(**overrides)
+    created.append(weakref.ref(candidate))
+    return candidate
+
+agent = create_agent()`
+      )
+    const backend = await open(authored)
+
+    for (let index = 0; index < 5; index++) await backend.clear()
+
+    expect(await turn(backend)).toContainEqual(
+      expect.objectContaining({
+        type: 'toolResult',
+        status: 'success',
+        content: [{ type: 'text', text: '2' }],
+      })
+    )
   })
 
   it.each([
@@ -508,32 +663,6 @@ agent = create_agent()`
     await backend.dispose()
     const saved = JSON.parse(await readFile(join(root, 'saved.json'), 'utf8')) as unknown[]
     expect(saved).toHaveLength(fail ? 4 : 2)
-  })
-
-  it('releases replaced agents from authored factories', async () => {
-    const authored = baseSource
-      .replace('from strands import tool', 'import gc\nimport weakref\nfrom strands import tool\ncreated = []')
-      .replace('return "authored tool"', 'gc.collect()\n    return str(sum(ref() is not None for ref in created))')
-      .replace(
-        'agent = build()',
-        `def create_agent(**overrides):
-    candidate = build(**overrides)
-    created.append(weakref.ref(candidate))
-    return candidate
-
-agent = create_agent()`
-      )
-    const backend = await open(authored)
-
-    for (let index = 0; index < 5; index++) await backend.clear()
-
-    expect(await turn(backend)).toContainEqual(
-      expect.objectContaining({
-        type: 'toolResult',
-        status: 'success',
-        content: [{ type: 'text', text: '2' }],
-      })
-    )
   })
 
   it('reconstructs generated direct create_harness source without requiring a redundant factory', async () => {

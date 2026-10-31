@@ -28,6 +28,7 @@ import { createHarness, makeSubagent } from '@strands-agents/harness'
 import { readBackgroundTasks } from '../src/tui/background/tasks.js'
 import { ChatController } from '../src/tui/chat/controller.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
+import { LiveSteering } from '../src/tui/steering.js'
 
 describe('usage normalization', () => {
   it('includes Anthropic cache reads and writes in prompt occupancy', () => {
@@ -265,7 +266,7 @@ describe('delegated run usage', () => {
     }
   )
 
-  async function detachedAgents(): Promise<{ root: Agent; child: Agent; release: () => void }> {
+  async function detachedAgents(steering?: LiveSteering): Promise<{ root: Agent; child: Agent; release: () => void }> {
     let release!: () => void
     const ready = new Promise<void>((resolve) => {
       release = resolve
@@ -283,6 +284,7 @@ describe('delegated run usage', () => {
       builtinTools: [],
       builtinPlugins: [],
       backgroundTasks: { waitForCompletion: false },
+      ...(steering ? { interventions: [steering] } : {}),
       session: false,
       memory: false,
       caching: false,
@@ -292,6 +294,41 @@ describe('delegated run usage', () => {
     })
     return { root, child, release }
   }
+
+  // https://github.com/strands-agents/harness-sdk/issues/4702
+  it('accepts steering and follow-ups while detached work runs and delivers its result once', async () => {
+    const steering = new LiveSteering()
+    const { root, child, release } = await detachedAgents(steering)
+    const backend = new StrandsChatBackend(new AgentModelRuntime(root), { steering })
+    const controller = new ChatController(backend)
+    try {
+      await controller.submit('Start background work')
+      await Promise.all([controller.steer('Change direction'), controller.submit('Follow up')])
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'idle',
+        pendingSteering: [],
+        queuedPrompts: [],
+        completedTurns: [{ status: 'complete' }, { status: 'complete' }, { status: 'complete' }],
+      })
+      expect(readBackgroundTasks(root)).toEqual([expect.objectContaining({ status: 'working' })])
+      expect(child.cancelSignal.aborted).toBe(false)
+      const firstTurn = controller.getSnapshot().completedTurns[0]!
+      expect(firstTurn.entries).toContainEqual(expect.objectContaining({ type: 'tool', background: true }))
+
+      release()
+      await vi.waitFor(() => {
+        expect(controller.getSnapshot().completedTurns.filter((turn) => turn.source === 'background')).toEqual([
+          expect.objectContaining({ status: 'complete' }),
+        ])
+        expect(backend.hasReadyBackgroundResults()).toBe(false)
+      })
+      expect(child.cancelSignal.aborted).toBe(false)
+      expect(readBackgroundTasks(root)).toEqual([])
+    } finally {
+      release()
+      await controller.dispose()
+    }
+  })
 
   it('waits for background retries decided by late hooks before reporting final spend', async () => {
     const { root, child, release } = await detachedAgents()
@@ -405,16 +442,18 @@ describe('delegated run usage', () => {
         await vi.waitFor(() => {
           expect(controller.getSnapshot().completedTurns[0]?.usage?.totalTokens).toBe(116)
         })
-        expect(finalizedContext).toHaveBeenCalledWith({
-          currentTokens: 5,
-          projectedTokens: 8,
-          contextWindow: 1000,
-          inputTokens: 100,
-          outputTokens: 16,
-          totalTokens: 116,
-          cacheReadInputTokens: 0,
-          cacheWriteInputTokens: 0,
-        })
+        expect(finalizedContext).toHaveBeenCalledWith(
+          expect.objectContaining({
+            currentTokens: 5,
+            projectedTokens: 8,
+            contextWindow: 1000,
+            inputTokens: 100,
+            outputTokens: 16,
+            totalTokens: 116,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+          })
+        )
         await vi.waitFor(() => {
           expect(controller.getSnapshot().completedTurns[1]).toMatchObject({
             source: 'background',

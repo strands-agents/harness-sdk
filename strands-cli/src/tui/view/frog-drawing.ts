@@ -225,6 +225,22 @@ export function drawFrog(
   }
 }
 
+export function drawFrogMouth(canvas: Canvas, transform: FrogTransform, pose: FrogPose, openness: number): void {
+  const open = clamp(openness)
+  if (open <= 0) {
+    return
+  }
+  const deformation = frogDeformation(pose)
+  const mouth = brandPoint({ x: -5.1, y: -3 + open * 0.8 }, transform, deformation)
+  const cover = brandPoint({ x: -5.1, y: -3.3 }, transform, deformation)
+  const scale = transform.scale
+  fillEllipse(canvas, cover.x, cover.y, 1.7 * scale, 0.75 * scale, frogFillColor(canvas, 7, 5), 111)
+  fillEllipse(canvas, mouth.x, mouth.y, (0.75 + open * 0.85) * scale, (0.08 + open * 1.8) * scale, 'ink', 112)
+  if (open > 0.45) {
+    fillEllipse(canvas, mouth.x - 0.12 * scale, mouth.y + 0.7 * scale, 0.95 * scale, 0.48 * scale, 'tongue', 113)
+  }
+}
+
 function frogFillColor(canvas: Canvas, row: number, column: number): Color {
   if (canvas.theme === 'homeland') {
     const westernLand =

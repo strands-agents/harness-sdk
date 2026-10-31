@@ -5,11 +5,6 @@ const CONTROLS = [
   ['Send a message', 'Enter', 'Send your message, or queue it while the harness is working.'],
   ['Add a line', 'Ctrl+J', 'Ctrl+J inserts a newline without sending.'],
   [
-    'Steer running work',
-    'Ctrl+G',
-    'Ctrl+G sends your draft immediately; with an empty draft it steers the first queued message.',
-  ],
-  [
     'Interrupt or exit',
     'Esc / Ctrl+C',
     'Esc interrupts running work when no panel is open. Ctrl+C or Ctrl+D cancels busy work, or exits when idle.',
@@ -29,7 +24,7 @@ const CONTROLS = [
     '↑↓ / PgUp / PgDn',
     '↑/↓ or the mouse wheel scrolls; Page Up/Down scrolls a page, Home/End jumps to the ends. Esc, Enter, or Backspace goes back.',
   ],
-  ['Copy text', 'Drag', 'Drag across visible text and release to copy the selection.'],
+  ['Copy text', 'Click and drag', 'Click and drag across visible text, then release to copy.'],
   [
     'Scroll conversation',
     'Wheel / PgUp / PgDn',
@@ -39,20 +34,30 @@ const CONTROLS = [
 
 export function helpRows(
   backend: ChatBackend,
-  options: { sessions: boolean; skills: boolean; mcp: boolean; setup: boolean; tools: boolean; export: boolean }
+  options: {
+    sessions: boolean
+    skills: boolean
+    mcp: boolean
+    setup: boolean
+    tools: boolean
+    export: boolean
+    config: boolean
+  }
 ): ChatPanelRow[] {
   const support: Record<string, boolean> = {
     compact: backend.compact !== undefined,
     clear: backend.clear !== undefined,
     sessions: options.sessions,
+    rename: options.sessions,
     skills: options.skills,
     mcp: options.mcp,
     permissions: backend.permissionStatus !== undefined,
     setup: options.setup,
     tools: options.tools,
     export: options.export,
+    config: options.config,
   }
-  const managedCommands = new Set(['fork', 'agents', 'rename', 'voice'])
+  const managedCommands = new Set(['fork', 'agents', 'voice', 'file'])
   const tools = backend.info?.().tools
   return [
     ...CONTROLS.map(([label, shortcut, description], index) => ({

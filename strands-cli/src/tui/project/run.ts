@@ -4,6 +4,7 @@ import { TurnRenderer } from '../../console.js'
 import { importAgentProject } from './import.js'
 import { exportSourceProject } from './export.js'
 import { ChatController, type ChatConversation, type ChatConversations } from '../chat/controller.js'
+import { configurationSource } from '../configuration-source.js'
 import type { RequestSetup } from '../agent-configuration.js'
 import type { CliConfigStore } from '../config.js'
 import { HARNESS_VERSION } from '../package-version.js'
@@ -39,15 +40,19 @@ export async function createPythonChat(
       settings: snapshot.settings,
       initialMessages: backend.messages,
       ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+      ...(conversation?.configurationBaseline
+        ? { initialConfigurationBaseline: conversation.configurationBaseline }
+        : {}),
       sessions,
       skills: { list: () => Promise.resolve(backend.skills), activate: (name) => backend.activateSkill(name) },
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
       project,
-      exportAgentProject: (language, destination): Promise<string | undefined> => {
-        return exportSourceProject(project, backend.name, language, backend.privatePaths, destination)
+      exportAgentProject: (language, destination, output): Promise<string | undefined> => {
+        return exportSourceProject(project, backend.name, language, backend.privatePaths, destination, output)
       },
+      configurationSource: () => configurationSource(config.snapshot().profile, project),
     })
   }
   const openController = async (

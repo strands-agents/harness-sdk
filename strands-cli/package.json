@@ -23,7 +23,7 @@
     "start": "node bin/strands.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --exclude test/tui-pty-lifecycle.test.ts && vitest run test/tui-pty-lifecycle.test.ts",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint bin scripts src test",
     "lint:fix": "eslint bin scripts src test --fix",
     "format": "prettier --write bin scripts src test",
@@ -32,7 +32,8 @@
     "type-check:test": "tsc --noEmit --project tsconfig.json",
     "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage",
     "test:integ": "vitest run --config vitest.integration.config.ts",
-    "test:voice": "node scripts/test-voice.mjs"
+    "test:voice": "node scripts/test-voice.mjs",
+    "test:tui-integration": "vitest run --config vitest.tui-integration.config.ts"
   },
   "keywords": [
     "agents",
@@ -45,7 +46,7 @@
   "author": "AWS",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "repository": {
     "type": "git",
@@ -94,6 +95,7 @@
     "@xterm/headless": "6.0.0",
     "eslint": "^10.6.0",
     "prettier": "^3.9.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "node-pty": "^1.1.0"
   }
 }

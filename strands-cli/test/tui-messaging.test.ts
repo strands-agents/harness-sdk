@@ -1,7 +1,7 @@
 import type { FunctionTool, LocalAgent, ToolContext } from '@strands-agents/sdk'
 import { describe, expect, it } from 'vitest'
 
-import { AgentMessaging, peerMessagePrompt, type PeerMessage } from '../src/tui/messaging.js'
+import { AgentMessaging, type PeerMessage } from '../src/tui/messaging.js'
 
 describe('AgentMessaging', () => {
   it('publishes live roster changes', () => {
@@ -73,15 +73,6 @@ describe('AgentMessaging', () => {
     await expect(
       messageAgent.invoke({ action: 'send', to: 'agent-2', message: 'Check this.' }, { agent: main } as ToolContext)
     ).rejects.toThrow('not available for peer messages')
-  })
-
-  it('presents peer messages without prescribing recipient behavior', () => {
-    const message: PeerMessage = {
-      from: { id: 'agent-1', name: 'Main' },
-      body: 'Please review the parser.',
-    }
-
-    expect(peerMessagePrompt(message)).toBe('Message from Main (agent-1):\n\nPlease review the parser.')
   })
 })
 

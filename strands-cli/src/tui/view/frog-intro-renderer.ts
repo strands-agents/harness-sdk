@@ -10,6 +10,7 @@ import {
   hopState,
   drawArrivalRipple,
   drawFrog,
+  drawFrogMouth,
   oakGrainColor,
   interpolatePose,
   fillEllipse,
@@ -80,7 +81,6 @@ interface Scene {
   centerY: number
   wordY: number
   sourceX: number
-  source: WordShape
   particles: readonly Particle[]
 }
 
@@ -252,6 +252,32 @@ export function renderFrogAnimationRuns(
   return canvas.runs(color)
 }
 
+export function renderVoiceFrogRuns(
+  width: number,
+  height: number,
+  entryProgress: number,
+  elapsedMs: number,
+  speaking: boolean,
+  color = false,
+  theme: FrogTheme = 'green',
+  options: FrogRenderOptions = {}
+): FrogAnimationRun[] {
+  const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, false, 0, options)
+  const destination = { x: canvas.width - 7.5, y: canvas.height * 2 - 7, scale: 0.68 }
+  const progress = clamp(entryProgress)
+  const state =
+    progress < 1
+      ? hopState({ x: canvas.width + 8, y: destination.y }, destination, progress)
+      : { transform: destination, pose: FROG_POSES.settled }
+  state.transform.scale = destination.scale
+  drawFrog(canvas, state.transform, state.pose, elapsedMs)
+  if (speaking) {
+    const mouthCycle = (Math.sin(elapsedMs / 85) + 1) / 2
+    drawFrogMouth(canvas, state.transform, state.pose, 0.18 + mouthCycle * 0.82)
+  }
+  return canvas.runs(color)
+}
+
 function drawFrogHop(canvas: Canvas, progress: number, elapsedMs: number): void {
   const groundY = canvas.height * 2 - 9
   const stops = [canvas.width + 10, canvas.width * 0.76, canvas.width * 0.52, canvas.width * 0.28, -10].map((x) => ({
@@ -406,7 +432,6 @@ function createScene(width: number, height: number, wordY: number): Scene {
     centerX: Math.floor(width / 2),
     centerY: wordY + 2,
     particles,
-    source: BRAND_WORD,
     sourceX: Math.floor((width - BRAND_WORD.width) / 2),
     wordY,
   }

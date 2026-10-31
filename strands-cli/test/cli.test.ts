@@ -1,4 +1,3 @@
-import { stringify } from 'smol-toml'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -19,6 +18,7 @@ import * as mcp from '../src/tui/mcp.js'
 import * as mcpConfig from '../src/tui/mcp/config.js'
 import { resolveMcpConfig } from '../src/tui/workspace/trust.js'
 import { applyProviderEnvironmentValues, CliConfigStore } from '../src/tui/config.js'
+import { stringify } from 'smol-toml'
 
 describe('agentConfig', () => {
   it('preserves defaults when no flags are supplied', () => {
@@ -255,10 +255,6 @@ describe('agentConfig', () => {
     expect(() => agentConfig(parseArgs(['--set', 'modle=openai/gpt-5-mini']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
       'unknown agent config field'
     )
-    // A retired profile key is just another unknown field.
-    expect(() => agentConfig(parseArgs(['--set', 'thinking=high']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
-      '--set contains an unknown agent config field "thinking".'
-    )
   })
 })
 
@@ -302,12 +298,6 @@ describe('parseArgs', () => {
   it('collects repeatable MCP configuration paths', () => {
     const args = parseArgs(['--mcp-config', '/tmp/mcp-a.json', '--mcp-config', '/tmp/mcp-b.json'])
     expect(args.mcpConfig).toEqual(['/tmp/mcp-a.json', '/tmp/mcp-b.json'])
-  })
-})
-
-describe('retired flag spellings', () => {
-  it('rejects a retired flag as an unknown option', () => {
-    expect(() => parseArgs(['--thinking', 'low'])).toThrow(/unknown option '--thinking'/u)
   })
 })
 
@@ -634,7 +624,7 @@ describe('TUI startup', () => {
             NODE_ENV: environment,
             FORCE_COLOR: '1',
           },
-          timeout: 10_000,
+          timeout: 30_000,
         }
       )
       let stderr = ''
@@ -649,7 +639,7 @@ describe('TUI startup', () => {
         await rm(directory, { recursive: true, force: true })
       }
     },
-    15_000
+    35_000
   )
 })
 

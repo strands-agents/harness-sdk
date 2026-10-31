@@ -13,8 +13,8 @@ import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
-import { errorMessage, isControlCharacter } from './terminal/sanitize.js'
 import { canonicalPermissionRule } from './permissions/rules.js'
+import { errorMessage, isControlCharacter } from './terminal/sanitize.js'
 import {
   applyProviderEnvironmentValues,
   detectEnvironment,
@@ -24,8 +24,8 @@ import {
   type ProviderEnvironment,
   type ProviderEnvironmentKey,
 } from './provider/environment.js'
-import { isMissingPathError, strandsUserPath } from './paths.js'
 import { isRecord } from './values.js'
+import { isMissingPathError, strandsUserPath } from './paths.js'
 
 export {
   applyProviderEnvironmentValues,
@@ -261,8 +261,7 @@ export class CliConfigStore {
     )
   }
 
-  // `async` so validation failures reject the returned promise instead of throwing synchronously,
-  // which the setup wizard's `.catch` could never observe (leaving it stuck in the saving state).
+  // Validation errors must reject so setup's save handler can leave its saving state.
   async saveSetup(
     configuration: SetupConfiguration,
     options: { onboardingVersion?: number; agentProject?: string | undefined; persist?: boolean } = {}
@@ -628,6 +627,7 @@ function restoreConfigNulls(document: ConfigDocument): ConfigDocument {
   return restored
 }
 
+/** Validates a permission rule: a tool name, optionally scoped as `tool(pattern)`. */
 export function normalizeToolName(toolName: string): string {
   const normalized = toolName.trim()
   if (!normalized || normalized !== toolName || [...normalized].some(isControlCharacter)) {

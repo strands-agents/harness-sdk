@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
+import { ChatController } from '../src/tui/chat/controller.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend } from '../src/tui/project/python.js'
 import { createPythonChat } from '../src/tui/project/run.js'
 import { ConversationManager } from '../src/tui/session/conversations.js'
 import { FileSessionRuntime } from '../src/tui/session/sessions.js'
+import { idleBackend } from './fixtures/chat-backend.js'
 
 describe('/rename', () => {
   it('loads the saved name when opening a Python session', async () => {
@@ -16,7 +17,7 @@ describe('/rename', () => {
     const source = join(directory, 'agent.py')
     const sessionDirectory = join(directory, 'sessions')
     const backend = {
-      ...testBackend(),
+      ...idleBackend(),
       cwd: directory,
       sessionId: 'saved-session',
       sessionDirectory,
@@ -56,7 +57,7 @@ describe('/rename', () => {
     const sessions = new FileSessionRuntime({ sessionId: 'saved-session', sessionDirectory: directory }, directory, {
       workspace: directory,
     })
-    const primary = new ChatController(testBackend(), { sessions })
+    const primary = new ChatController(idleBackend(), { sessions })
     const manager = new ConversationManager(primary, { fork: async () => primary })
 
     try {
@@ -82,7 +83,7 @@ describe('/rename', () => {
     let finish!: (name: string) => void
     let signal!: AbortSignal
     const backend = {
-      ...testBackend(),
+      ...idleBackend(),
       generateSessionName: vi.fn(
         (request: AbortSignal) =>
           new Promise<string>((resolve) => {
@@ -120,17 +121,3 @@ describe('/rename', () => {
     }
   })
 })
-
-function testBackend(): ChatBackend {
-  return {
-    id: 'primary',
-    name: 'Strands harness',
-    protocol: 'strands',
-    stream: async function* () {
-      yield { type: 'textDelta', text: '' }
-      return { stopReason: 'endTurn' }
-    },
-    cancel: vi.fn(),
-    dispose: vi.fn(),
-  }
-}

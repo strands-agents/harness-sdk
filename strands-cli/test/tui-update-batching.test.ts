@@ -27,7 +27,7 @@ function shellBurstBackend(): ChatBackend {
         type: 'toolResult',
         toolUseId: 'shell-1',
         status: 'success',
-        content: [{ type: 'text', text: 'x'.repeat(100) }],
+        content: [],
       }
       return { stopReason: 'endTurn' }
     },

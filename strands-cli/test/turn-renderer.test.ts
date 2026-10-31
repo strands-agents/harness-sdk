@@ -84,15 +84,17 @@ describe('TurnRenderer', () => {
           delta: { type: 'reasoningContentDelta', text: 'reason\tone\nreason\u001b[2Jtwo' },
         },
       } as AgentStreamEvent,
-      textDelta('answer\u0007 text\u009b31m safe'),
+      textDelta('answer\u0007 text\u009b31m\tsafe'),
       toolCall('ba\u001b]52;c;clipboard\u0007sh', 'printf\u0090hidden\u009c done'),
+      toolResult('success', [{ type: 'textBlock', text: 'item\tvalue\nalpha\tbeta' }]),
     ])
 
     expect(out).toContain('thinking >')
     expect(out).toContain('agent >')
     expect(out).toContain('reason\tone\nreasontwo')
-    expect(out).toContain('answer text safe')
+    expect(out).toContain('answer text\tsafe')
     expect(out).toContain('⚙ bash(printf done)')
+    expect(out).toContain('item\tvalue\nalpha\tbeta')
     for (const control of ['\u0007', '\u001b', '\u0090', '\u009b', '\u009c']) {
       expect(out).not.toContain(control)
     }

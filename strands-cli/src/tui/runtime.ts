@@ -3,10 +3,12 @@ import { resolve } from 'node:path'
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
 import type { Message, Agent, Tool } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { createBuiltinToolsRuntime, createConfigurationTool, type RequestSetup } from './agent-configuration.js'
+import { configurationSource } from './configuration-source.js'
 import { CONFIGURATION_INSTRUCTIONS } from './configuration-instructions.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from './project/export.js'
 import type { ImportedAgentProject } from './project/import.js'
@@ -15,11 +17,13 @@ import { BackgroundAgentActivityStore, observeSubagentActivity } from './backgro
 import { BackgroundAgentInbox } from './background/inbox.js'
 import {
   ChatController,
+  type ChatConfigurationSource,
   type ChatConversation,
   type ChatConversations,
   type ChatDiffPreview,
   type ChatForkState,
   type ChatSettings,
+  type ContextOffloadThreshold,
 } from './chat/controller.js'
 import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
 import { ConversationManager, type InitialConversations } from './session/conversations.js'
@@ -63,6 +67,7 @@ interface CreateInteractiveChatOptions {
   mcpDigests?: Readonly<Record<string, string>>
   configPath?: string
   config?: CliConfigStore
+  /** Directory holding the built-in agent's per-workspace session directories; defaults to `~/.strands/sessions`. */
   sessionRoot?: string
   requestSetup?: RequestSetup
 }
@@ -90,6 +95,7 @@ export async function createInteractiveChat(
   const sessionCatalog = await loadSessionCatalog(options.sessionRoot)
 
   const config = options.config ?? (await CliConfigStore.load(options.configPath))
+  const launchSettings = config.snapshot().settings
   const configuredInterventions = await resolveInterventions(options.agentOptions?.interventions)
   const configuredSessionId = configuredSessionSettings.id
   const {
@@ -154,7 +160,10 @@ export async function createInteractiveChat(
       throw new Error('Runtime is disposed.')
     }
     const agentOptions = { ...controllerOptions, ...overrides }
-    requireBedrockRegion(agentOptions.model)
+    const resolvedAgentOptions = options.project
+      ? agentOptions
+      : withContextOffloadThreshold(agentOptions, launchSettings.contextOffloadThreshold)
+    requireBedrockRegion(resolvedAgentOptions.model)
     let skills: AgentSkills | undefined
     const prepareOptions = (configured: HarnessAgentOptions): HarnessAgentOptions => {
       skills = configured.plugins?.find((plugin): plugin is AgentSkills => plugin instanceof AgentSkills)
@@ -168,7 +177,7 @@ export async function createInteractiveChat(
       return { ...configured, skills: skills ?? false }
     }
     const configured: HarnessAgentOptions = {
-      ...agentOptions,
+      ...resolvedAgentOptions,
       tools: [...configuredTools],
       plugins: [
         ...(agentOptions.plugins ?? []),
@@ -288,22 +297,24 @@ export async function createInteractiveChat(
         ? new WorkspaceSandbox(workspace)
         : configuredSandbox
     const mcp = await loadMcp({
-      backgroundConnect: true,
       ...(await workspaceMcpOptions(options, initialWorkspace, workspace, config.snapshot().settings.mcpDiscovery)),
       ...(configuredMcpServers ? { servers: configuredMcpServers } : {}),
+      backgroundConnect: true,
+      disabledServers: config.snapshot().settings.disabledMcpServers,
     })
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
       ...(restoredAgentOptions.tools ?? []),
       ...mcp.clients,
     ]
     const permissionBroker = new ToolPermissionBroker()
+    let resetConfigurationPreview: (() => void) | undefined
     const cedarPermissions = new CedarPermissions({
       broker: permissionBroker,
       config,
       cwd: workspace,
       configurationPreview: (): ChatDiffPreview | undefined => configuration?.preview(),
       configurationDenied: (revision): void => {
-        configuration?.discard(revision)
+        if (configuration?.discard(revision)) resetConfigurationPreview?.()
       },
     })
     const liveSteering: LiveSteering = new LiveSteering((candidate) => {
@@ -451,7 +462,6 @@ export async function createInteractiveChat(
         () => runtime.agent,
         (agent) => skillsByAgent.get(agent)
       )
-      const skillNames = (await skills.list()).map((skill) => skill.name)
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
@@ -462,21 +472,24 @@ export async function createInteractiveChat(
         settings: { ...configSnapshot.settings, ...request.settings },
         sessions,
         skills,
-        skillNames,
         mcp,
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         initialMessages: agent.messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+        ...(conversation?.configurationBaseline
+          ? { initialConfigurationBaseline: conversation.configurationBaseline }
+          : {}),
         setSettings: (settings): Promise<void> => config.setSettings(settings),
         ...(options.project ? { project: options.project } : {}),
-        exportAgentProject: (language, destination): Promise<string | undefined> => {
+        exportAgentProject: (language, destination, output): Promise<string | undefined> => {
           if (options.project) {
             return exportSourceProject(
               options.project,
               runtime.agent.name,
               language,
               [sessionDirectory, ...agentPrivatePaths(runtime.agent)],
-              destination
+              destination,
+              output
             )
           }
           const profile = configuration?.profile() ?? exportProfile
@@ -490,10 +503,27 @@ export async function createInteractiveChat(
               false
             ),
             baseDir,
-            destination
+            destination,
+            output
           )
         },
-        ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
+        ...(configuration
+          ? {
+              configurationSource: (): ChatConfigurationSource =>
+                configurationSource(
+                  configuration.profile(),
+                  options.project,
+                  configSnapshot.profileBaseDir ?? initialWorkspace
+                ),
+            }
+          : {}),
+        ...(options.requestSetup
+          ? {
+              requestSetup: options.requestSetup,
+              useExportedProject: (path: string): void =>
+                options.requestSetup?.({ agentProject: path, conversationId: peerEndpointId }),
+            }
+          : {}),
         ...(options.requestSetup && !options.project
           ? {
               builtinTools: createBuiltinToolsRuntime(
@@ -505,6 +535,7 @@ export async function createInteractiveChat(
           : {}),
         peerEndpointId,
       })
+      resetConfigurationPreview = (): void => controller.refreshConfiguration(true)
       if (configuration) {
         stopConfigurationWatch = controller.subscribe(() => {
           if (controller.busy) return
@@ -650,6 +681,29 @@ export async function createInteractiveChat(
   }
 }
 
+function withContextOffloadThreshold(
+  options: HarnessAgentOptions,
+  threshold: ContextOffloadThreshold
+): HarnessAgentOptions {
+  const contextManager = options.contextManager
+  if (
+    threshold === 'default' ||
+    (contextManager !== undefined && contextManager !== 'auto' && contextManager !== 'agentic')
+  ) {
+    return options
+  }
+  const summarizeUtilization = contextManager === 'agentic' ? 1 : 0.85
+  return {
+    ...options,
+    contextManager: {
+      strategies: [
+        Offload.truncate('toolResults', { previewTokens: 750 }).when({ threshold }),
+        Offload.summarize('*').when({ utilization: summarizeUtilization, preserveRecent: 4 }),
+      ],
+    },
+  }
+}
+
 function cloneConversation(messages: readonly Message[], preserveReasoning: boolean): Message[] {
   return messages.flatMap((message) => {
     const clone = message.clone()
@@ -683,9 +737,9 @@ export function interactiveBackgroundTasks(
   return { ...(configured === true ? {} : configured), waitForCompletion: false }
 }
 
-async function loadSessionCatalog(path: string | undefined): Promise<SessionRootCatalog | undefined> {
+async function loadSessionCatalog(root: string | undefined): Promise<SessionRootCatalog | undefined> {
   try {
-    return await SessionRootCatalog.load(path)
+    return await SessionRootCatalog.load(root)
   } catch {
     return undefined
   }

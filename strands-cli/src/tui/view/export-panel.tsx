@@ -1,6 +1,8 @@
 import type { ReactElement } from 'react'
 
-import { PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelHelpFooter } from './help-footer.js'
+import { badgeColor, type PanelRowsProps } from './panel-components.js'
+import { Cursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 
 export function ExportPanel({
@@ -9,23 +11,52 @@ export function ExportPanel({
   selected,
   start,
   width,
+  height,
   pressedRow,
   hoveredRow,
   onPanelElement,
   onRowElement,
-}: PanelRowsProps): ReactElement {
-  const { hover, selection, accent, surface, foreground } = useTheme()
+  query,
+}: PanelRowsProps & { height: number; query: string }): ReactElement {
+  const { accent, selection } = useTheme()
+  const nameInput = panel.kind === 'export' ? panel.nameInput : undefined
   return (
-    <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
-      <Box paddingX={1} flexDirection="column">
-        <PanelTitle title={panel.title} color={accent} />
-        {panel.body?.split('\n').map((line, index) => (
-          <Text key={index} dimColor wrap="truncate-middle">
-            {line}
+    <Box ref={onPanelElement} width={width} height={height} flexDirection="column" overflow="hidden">
+      <Box
+        height={2}
+        flexShrink={0}
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        overflow="hidden"
+      >
+        <Text color={accent} bold wrap="truncate-end">
+          {panel.title}
+        </Text>
+        {panel.body ? (
+          <Text dimColor wrap="truncate-middle">
+            {panel.body}
           </Text>
-        ))}
-        <Box marginTop={1} flexDirection="column">
-          {rows.map((row, visibleIndex) => {
+        ) : null}
+      </Box>
+      <Box flexGrow={1} overflow="hidden">
+        {nameInput ? (
+          <Box flexGrow={1} alignItems="center" justifyContent="center" paddingX={2}>
+            <Box
+              width={Math.min(48, Math.max(12, width - 8))}
+              borderStyle="single"
+              borderColor={accent}
+              paddingX={1}
+              overflow="hidden"
+            >
+              <Text {...(query ? {} : { dimColor: true })} wrap="truncate-start">
+                {query || nameInput.defaultName}
+                <Cursor />
+              </Text>
+            </Box>
+          </Box>
+        ) : (
+          rows.map((row, visibleIndex) => {
             const index = start + visibleIndex
             const active = index === selected
             const pressed = index === pressedRow
@@ -34,28 +65,35 @@ export function ExportPanel({
               <Box
                 key={`${panel.id}-${index}`}
                 ref={(element) => onRowElement?.(index, element)}
-                height={4}
-                marginBottom={visibleIndex < rows.length - 1 ? 1 : 0}
+                flexBasis={0}
+                flexGrow={1}
+                flexDirection="column"
                 alignItems="center"
                 justifyContent="center"
-                flexDirection="column"
-                backgroundColor={hovered ? selection : active ? accent : pressed ? selection : surface}
+                overflow="hidden"
+                borderStyle="single"
+                borderColor={active ? accent : undefined}
+                borderDimColor={!active}
+                backgroundColor={pressed || hovered ? selection : undefined}
+                {...(visibleIndex < rows.length - 1 ? { marginRight: 1 } : {})}
               >
-                <Text bold color={pressed ? hover : hovered ? accent : active ? surface : foreground}>
+                <Text {...(active || pressed ? { color: accent } : {})} bold wrap="truncate-end">
                   {row.label}
                 </Text>
-                <Text
-                  {...(hovered ? { color: foreground } : active ? { color: surface } : {})}
-                  dimColor={!active && !hovered}
-                  wrap="truncate-middle"
-                >
-                  {row.description}
-                </Text>
+                {row.description ? (
+                  <Box paddingX={1} justifyContent="center" overflow="hidden">
+                    <Text dimColor wrap="truncate-middle">
+                      {row.description}
+                    </Text>
+                  </Box>
+                ) : null}
+                {row.badge ? <Text color={badgeColor(row.badge.tone)}>{row.badge.text}</Text> : null}
               </Box>
             )
-          })}
-        </Box>
+          })
+        )}
       </Box>
-    </PanelOverlay>
+      <PanelHelpFooter width={width} centered />
+    </Box>
   )
 }

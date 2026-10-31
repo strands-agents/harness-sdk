@@ -14,6 +14,7 @@ import { enabledProfileTools } from '../src/tui/builtin-tools.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import * as directoryPicker from '../src/tui/terminal/directory-picker.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
+import { ChatRoot } from '../src/tui/view/chat-root.js'
 import { openingNeighbor } from '../src/tui/view/setup-wizard/opening-menu.js'
 import { PROVIDERS } from '../src/tui/view/setup-wizard/providers.js'
 import { setupStepProgress } from '../src/tui/view/setup-wizard/steps.js'
@@ -59,7 +60,7 @@ function setupSwitch(frame: string, label: string): { row: number; column: numbe
 }
 
 describe('setup presentation', () => {
-  it('renders a saved agent name safely in editing and review without changing it', async () => {
+  it('renders a saved agent name safely in launch guidance, editing and review without changing it', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-setup-name-'))
     const name = 'Agent\u001b[31mRed'
     const path = join(directory, 'cli.toml')
@@ -76,10 +77,13 @@ describe('setup presentation', () => {
       if (chunk.includes('\n')) rawFrame = chunk.toString()
     })
     const instance = render(
-      createElement(SetupWizard, {
+      createElement(ChatRoot, {
         config,
-        deferred: true,
-        onComplete: onSetupComplete,
+        setup: true,
+        intro: false,
+        setupBridge: { request: () => {}, confirmMcp: async () => false },
+        onSetupComplete,
+        onExitSetup: () => {},
         checkForUpdate: async () => undefined,
       }),
       { stdin: input, stdout: output, stderr: output }
@@ -95,6 +99,7 @@ describe('setup presentation', () => {
     }
     try {
       await instance.waitUntilRenderFlush()
+      expect(rawFrame).toContain('Esc to launch AgentRed')
       expect(rawFrame).not.toContain('\u001b[31m')
       await click('Customize')
       await click('Continue')
@@ -106,6 +111,8 @@ describe('setup presentation', () => {
       expect(rawFrame).not.toContain('\u001b[31m')
       await click('Save and Launch')
       expect(onSetupComplete).toHaveBeenCalledWith(
+        0,
+        true,
         expect.objectContaining({
           configuration: expect.objectContaining({ profile: expect.objectContaining({ name }) }),
         })
@@ -1143,7 +1150,7 @@ describe('setup presentation', () => {
     async (mode) => {
       const memoryDirectory = mode === 'typed' ? '/tmp/custom-memory' : join(await temporaryDirectory(), 'memory \n')
       if (mode === 'native') await mkdir(memoryDirectory)
-      const nativePicker = vi.spyOn(directoryPicker, 'canChooseDirectory').mockReturnValue(true)
+      const nativePicker = vi.spyOn(directoryPicker, 'canUseNativePicker').mockReturnValue(true)
       const chooseDirectory = vi.spyOn(directoryPicker, 'chooseDirectory').mockResolvedValue(memoryDirectory)
       const config = CliConfigStore.memory({}, { animations: false })
       const onComplete = vi.fn()
@@ -1996,6 +2003,8 @@ describe('setup theme', () => {
       await press('\t')
       expect(frame).toContain('Transcript spacing')
       await press('\u001b[B')
+      expect(frame).toMatch(/Tool result offloading[\s\S]*threshold/u)
+      await press('\u001b[B')
       expect(frame).toContain('Skills')
       expect(frame).toContain('Agents (peer-to-peer messaging)')
       expect(frame).toMatch(/Agents \(peer-to-peer messaging\).*On/u)
@@ -2003,6 +2012,8 @@ describe('setup theme', () => {
       await press('\u001b[C')
       await vi.waitFor(() => expect(config.snapshot().settings.mcpDiscovery).toBe(true))
       await press('\t')
+      await press('\u001b[B')
+      expect(frame).toContain('Startup update prompts')
       await press('\u001b[B')
       expect(frame).toContain('Send anonymous usage data')
       await press('\t')
@@ -2016,9 +2027,9 @@ describe('setup theme', () => {
       await press(mouseInputSequence(0, categoryColumn, categoryRow, 'M'))
       await press(mouseInputSequence(3, categoryColumn, categoryRow, 'm'))
       expect(frame).toContain('Transcript spacing')
-      const blankCategoryRow = frame.split('\n').findIndex((line) => line.includes('General')) + 2
+      const blankCategoryRow = frame.split('\n').findIndex((line) => line.includes('Telemetry')) + 2
       await press(mouseInputSequence(65, categoryColumn, blankCategoryRow, 'M'))
-      expect(frame).toContain('Skills')
+      expect(frame).toMatch(/Tool result offloading[\s\S]*threshold/u)
     } finally {
       instance.unmount()
       await instance.waitUntilExit()

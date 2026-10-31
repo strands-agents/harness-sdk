@@ -1,8 +1,8 @@
 import { createElement } from 'react'
-import { render } from 'ink'
+
 import { marked } from 'marked'
 import { describe, expect, it, vi } from 'vitest'
-import { ttyInput, ttyOutput } from './fixtures/terminal.js'
+import { render, ttyInput, ttyOutput } from './fixtures/terminal.js'
 import { snapshot as chatSnapshot } from './fixtures/chat-snapshot.js'
 
 import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot, type ChatTurn } from '../src/tui/chat/controller.js'
@@ -12,7 +12,7 @@ describe('transcript rendering', () => {
   it('does not reparse completed Markdown while the active turn streams', async () => {
     const lexer = vi.spyOn(marked, 'lexer')
     const completed = turn('completed', 'Completed **answer**')
-    const output = ttyOutput(80, 24).resume()
+    const output = ttyOutput(80, 24)
     const instance = render(
       createElement(ChatView, {
         snapshot: snapshot(completed, turn('active', 'Streaming')),
@@ -24,7 +24,7 @@ describe('transcript rendering', () => {
       {
         stdin: ttyInput(),
         stdout: output,
-        stderr: ttyOutput(80, 24).resume(),
+        stderr: ttyOutput(80, 24),
         exitOnCtrlC: false,
         patchConsole: false,
       }

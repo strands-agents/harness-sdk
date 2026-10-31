@@ -16,21 +16,36 @@ export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
 
 export type ResolvedColorMode = 'light' | 'dark'
 
+export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
+  { label: 'Default', value: 'default' },
+  { label: '1.5K', value: 1_500 },
+  { label: '2.5K', value: 2_500 },
+  { label: '5K', value: 5_000 },
+  { label: '10K', value: 10_000 },
+] as const
+
+export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
+
 export const SETTINGS_CATEGORIES = [
   {
     id: 'Appearance',
     label: 'Appearance',
-    description: 'Theme, transcript, reasoning, tool output, and animations',
+  },
+  {
+    id: 'Agent',
+    label: 'Agent',
   },
   {
     id: 'Auto-Discovery',
     label: 'Auto-Discovery',
-    description: 'MCP servers, agent skills, and peer-to-peer messaging',
   },
   {
-    id: 'General',
-    label: 'General',
-    description: 'Launch behavior and telemetry',
+    id: 'Updates',
+    label: 'Updates',
+  },
+  {
+    id: 'Telemetry',
+    label: 'Telemetry',
   },
 ] as const
 
@@ -65,12 +80,18 @@ export interface ChatSettings {
   frogTheme: FrogTheme
   /** Load MCP servers configured for other tools (Claude Code, Kiro, Gemini CLI, Codex). */
   mcpDiscovery: boolean
+  /** Configured MCP servers the user turned off in /mcp. */
+  disabledMcpServers: readonly string[]
   /** Load Agent Skills from other tools' and the workspace's conventional directories. */
   skillDiscovery: boolean
   /** Allow agents to discover and message other live conversations. */
   agentMessaging: boolean
   /** Send one anonymous usage ping per interactive start (see README → Telemetry). */
   telemetry: boolean
+  /** Ask at interactive startup before installing an available CLI update. */
+  updatePrompts: boolean
+  /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
+  contextOffloadThreshold: ContextOffloadThreshold
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -82,9 +103,12 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   toolOutput: 'compact',
   frogTheme: 'green',
   mcpDiscovery: false,
+  disabledMcpServers: [],
   skillDiscovery: false,
   agentMessaging: true,
   telemetry: true,
+  updatePrompts: true,
+  contextOffloadThreshold: 'default',
 }
 
 export type SettingKey =
@@ -97,13 +121,15 @@ export type SettingKey =
   | 'skillDiscovery'
   | 'agentMessaging'
   | 'telemetry'
+  | 'updatePrompts'
+  | 'contextOffloadThreshold'
 
 export interface SettingDefinition {
   key: SettingKey
   label: string
   section: SettingsCategory
   control: 'segmented' | 'toggle'
-  options: readonly { label: string; value: string | boolean }[]
+  options: readonly { label: string; value: string | number | boolean }[]
 }
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
@@ -186,9 +212,26 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
+    key: 'contextOffloadThreshold',
+    label: 'Tool result offloading threshold',
+    section: 'Agent',
+    control: 'segmented',
+    options: CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
+  },
+  {
+    key: 'updatePrompts',
+    label: 'Startup update prompts',
+    section: 'Updates',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
     key: 'telemetry',
     label: 'Send anonymous usage data',
-    section: 'General',
+    section: 'Telemetry',
     control: 'toggle',
     options: [
       { label: 'On', value: true },
@@ -221,6 +264,12 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.telemetry
         ? 'on · one anonymous ping per launch: CLI version, provider, built-in tools and plugins · applies at next launch'
         : 'off · nothing is sent · applies at next launch'
+    case 'updatePrompts':
+      return settings.updatePrompts
+        ? 'on · asks before installing an available update'
+        : 'off · available updates remain visible in the footer'
+    case 'contextOffloadThreshold':
+      return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
     default:
       return settings[key]
   }
@@ -253,6 +302,15 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
       : DEFAULT_CHAT_SETTINGS.toolOutput
   const savedFrogTheme = value.frogTheme === 'solar' || value.frogTheme === 'crimson' ? 'scarlet' : value.frogTheme
   const frogTheme = FROG_THEMES.find((theme) => theme === savedFrogTheme) ?? DEFAULT_CHAT_SETTINGS.frogTheme
+  const contextOffloadThreshold =
+    CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value: option }) => option === value.contextOffloadThreshold)?.value ??
+    DEFAULT_CHAT_SETTINGS.contextOffloadThreshold
+
+  const disabledMcpServers = value.disabledMcpServers ?? DEFAULT_CHAT_SETTINGS.disabledMcpServers
+  if (!Array.isArray(disabledMcpServers) || disabledMcpServers.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`Invalid CLI config at ${path}: settings.disabledMcpServers must be an array of strings`)
+  }
+
   return {
     transcriptSpacing,
     animations,
@@ -260,9 +318,12 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     toolOutput,
     frogTheme,
     mcpDiscovery: booleanSetting('mcpDiscovery'),
+    disabledMcpServers: disabledMcpServers as readonly string[],
     skillDiscovery: booleanSetting('skillDiscovery'),
     agentMessaging: booleanSetting('agentMessaging'),
     telemetry: booleanSetting('telemetry'),
+    updatePrompts: booleanSetting('updatePrompts'),
+    contextOffloadThreshold,
   }
 }
 
@@ -285,6 +346,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'skillDiscovery':
     case 'agentMessaging':
     case 'telemetry':
+    case 'updatePrompts':
       return { [name]: !current[name] }
     case 'toolOutput':
       if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {
@@ -298,6 +360,13 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'frogTheme': {
       const frogTheme = FROG_THEMES.find((theme) => theme === selected)
       return frogTheme === undefined ? undefined : { frogTheme }
+    }
+    case 'contextOffloadThreshold': {
+      const threshold =
+        selected === 'default'
+          ? 'default'
+          : CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      return threshold === undefined ? undefined : { contextOffloadThreshold: threshold }
     }
     default:
       return undefined

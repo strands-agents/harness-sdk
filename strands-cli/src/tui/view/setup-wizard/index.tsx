@@ -31,7 +31,7 @@ import { DEFAULT_SETTINGS_CATEGORY, SETTINGS_CATEGORIES } from '../../settings.j
 import { parseMouseInput, type MouseInput } from '../../terminal/mouse-input.js'
 import { emptyEditor, graphemes, reduceInputSequence } from '../../terminal/composer.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/sanitize.js'
-import { canChooseDirectory, chooseAgentProject, chooseDirectory } from '../../terminal/directory-picker.js'
+import { canUseNativePicker, chooseAgentProject, chooseDirectory } from '../../terminal/directory-picker.js'
 import { setTerminalMouseMotion } from '../../terminal/terminal.js'
 import {
   elementAtMouse,
@@ -45,7 +45,7 @@ import {
 } from '../interaction.js'
 import { wrapLines } from '../presentation.js'
 import { Text, ThemeProvider, useTheme } from '../theme.js'
-import { BlinkingCursor, EditableText } from '../text-input.js'
+import { Cursor, EditableText } from '../text-input.js'
 import { Fade, useFadeTransition } from '../fade-in.js'
 
 import {
@@ -668,7 +668,7 @@ function SetupWizardContent({
     : []
   const directoryRows = new Map(
     rows.flatMap((row, index) =>
-      canChooseDirectory() && !row.disabled && (row.field === 'memoryDir' || row.field === 'skills')
+      canUseNativePicker() && !row.disabled && (row.field === 'memoryDir' || row.field === 'skills')
         ? [[index, row.field] as const]
         : []
     )
@@ -2749,11 +2749,11 @@ function SetupWizardContent({
                             ? (editing.cursor ?? graphemes(editing.value).length)
                             : graphemes(importPath).length
                         }
-                        width={Math.max(1, bubbleWidth - (canChooseDirectory() ? 21 : 8))}
+                        width={Math.max(1, bubbleWidth - (canUseNativePicker() ? 21 : 8))}
                         active={editing?.field === 'importPath'}
                       />
                     </Box>
-                    {canChooseDirectory() ? (
+                    {canUseNativePicker() ? (
                       <Box
                         ref={(element) => registerElement(rowElements.current, 1, element)}
                         width={12}
@@ -2993,7 +2993,7 @@ function SetupWizardContent({
                                   {modelSearchFocused ? (
                                     <>
                                       {modelQuery}
-                                      <BlinkingCursor />
+                                      <Cursor />
                                     </>
                                   ) : (
                                     <Text dimColor>/ {modelQuery || 'Search models'}</Text>

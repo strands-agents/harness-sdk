@@ -1,20 +1,15 @@
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BeforeToolCallEvent, JSONValue } from '@strands-agents/sdk'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+import { temporaryDirectory } from './fixtures/tempdir.js'
 
 import { CedarPermissions, ToolPermissionBroker } from '../src/tui/permissions/policy.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { createDiffPreview } from '../src/tui/permissions/file-change-preview.js'
 import { formatPermissionPanelBody } from '../src/tui/chat/panels.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
-
-const temporaryDirectories: string[] = []
-
-afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
-})
 
 describe('CedarPermissions', () => {
   it('saves the new mode before releasing a pending tool approval', async () => {
@@ -58,7 +53,7 @@ describe('CedarPermissions', () => {
 
   it.each(['deny', 'deny-always'])('allows configuration drafting and reports an apply %s', async (denial) => {
     const broker = new ToolPermissionBroker()
-    const preview = createDiffPreview('cli.toml', 'default', 'bypassPermissions')
+    const preview = createDiffPreview('config.json', 'default', 'bypassPermissions')
     const configurationDenied = vi.fn()
     const permissions = new CedarPermissions({
       broker,
@@ -159,7 +154,7 @@ describe('CedarPermissions', () => {
   })
 
   it('saves the chosen scope of a forever choice and applies it to later calls', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     const config = CliConfigStore.memory()
     const broker = new ToolPermissionBroker()
     const permissions = new CedarPermissions({ broker, config, cwd: workspace })
@@ -182,7 +177,7 @@ describe('CedarPermissions', () => {
   })
 
   it('applies deny-forever rules before allow rules and bypass mode', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     const config = CliConfigStore.memory({ allow: ['shell'] })
     const broker = new ToolPermissionBroker()
     const permissions = new CedarPermissions({ broker, config, cwd: workspace })
@@ -198,7 +193,7 @@ describe('CedarPermissions', () => {
   })
 
   it('saves a deny-forever choice and denies the call being decided', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     const config = CliConfigStore.memory()
     const broker = new ToolPermissionBroker()
     const permissions = new CedarPermissions({ broker, config, cwd: workspace })
@@ -212,7 +207,7 @@ describe('CedarPermissions', () => {
     expect(config.snapshot().permissions.deny).toEqual(['write'])
   })
   it('permits workspace reads and sends writes through interactive approval', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     await writeFile(join(workspace, 'inside.txt'), 'inside')
     const broker = new ToolPermissionBroker()
     const permissions = new CedarPermissions({ broker, cwd: workspace })
@@ -248,7 +243,7 @@ describe('CedarPermissions', () => {
     'permits %s without interactive approval',
     async (toolName) => {
       const broker = new ToolPermissionBroker()
-      const permissions = new CedarPermissions({ broker, cwd: await temporaryWorkspace() })
+      const permissions = new CedarPermissions({ broker, cwd: await temporaryDirectory('strands-permissions-') })
       const requests: string[] = []
       broker.subscribe((request) => {
         if (request) {
@@ -265,8 +260,8 @@ describe('CedarPermissions', () => {
   )
 
   it('does not auto-permit reads that escape through paths or symlinks', async () => {
-    const workspace = await temporaryWorkspace()
-    const outside = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
+    const outside = await temporaryDirectory('strands-permissions-')
     await writeFile(join(outside, 'secret.txt'), 'secret')
     await symlink(join(outside, 'secret.txt'), join(workspace, 'linked.txt'))
     const broker = new ToolPermissionBroker()
@@ -292,7 +287,7 @@ describe('CedarPermissions', () => {
   })
 
   it('serializes concurrent permission prompts', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     const broker = new ToolPermissionBroker()
     const permissions = new CedarPermissions({ broker, cwd: workspace })
     const requests: { id: string; tool: string }[] = []
@@ -318,7 +313,7 @@ describe('CedarPermissions', () => {
   })
 
   it('persists always-allowed tools across permission runtimes', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     const configPath = join(workspace, 'cli.toml')
     const firstConfig = await CliConfigStore.load(configPath)
     const firstBroker = new ToolPermissionBroker()
@@ -349,7 +344,7 @@ describe('CedarPermissions', () => {
   })
 
   it('bypasses Cedar prompts only when the user config explicitly enables bypass mode', async () => {
-    const workspace = await temporaryWorkspace()
+    const workspace = await temporaryDirectory('strands-permissions-')
     const config = CliConfigStore.memory({ mode: 'bypassPermissions' })
     const broker = new ToolPermissionBroker()
     const permissions = new CedarPermissions({ broker, config, cwd: workspace })
@@ -365,12 +360,6 @@ describe('CedarPermissions', () => {
     expect(prompted).not.toHaveBeenCalled()
   })
 })
-
-async function temporaryWorkspace(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'strands-permissions-'))
-  temporaryDirectories.push(directory)
-  return directory
-}
 
 function toolEvent(name: string, input: JSONValue, readText?: (path: string) => Promise<string>): BeforeToolCallEvent {
   const state = new Map<string, unknown>()

@@ -1,4 +1,5 @@
 import { tool, type JSONValue, type LocalAgent, type Plugin } from '@strands-agents/sdk'
+
 import { isRecord } from './values.js'
 
 const MAX_MESSAGE_CHARS = 20_000

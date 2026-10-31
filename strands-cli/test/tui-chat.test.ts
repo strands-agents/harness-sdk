@@ -1,10 +1,12 @@
 import { setImmediate } from 'node:timers'
 
+import type { ContentBlockData } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   ChatController,
   type ChatBackend,
+  type ChatConfigurationSource,
   type ChatContextUsage,
   type ChatEvent,
   type ChatPermissionRequest,
@@ -13,6 +15,8 @@ import {
 } from '../src/tui/chat/controller.js'
 import type { BackgroundAgentActivity } from '../src/tui/background/activity.js'
 import { ModelControlError, resolveModelTarget } from '../src/tui/model/selection.js'
+import { idleBackend } from './fixtures/chat-backend.js'
+import type { McpServerInfo } from '../src/tui/mcp.js'
 
 function backend(
   run: (prompt: string) => AsyncGenerator<ChatEvent, ChatRunResult, undefined> = async function* () {
@@ -25,294 +29,310 @@ function backend(
     id: 'test',
     name: 'Test',
     protocol: 'strands',
-    stream: run,
+    stream(prompt) {
+      if (typeof prompt !== 'string') {
+        throw new Error('This test backend only accepts text prompts.')
+      }
+      return run(prompt)
+    },
     cancel,
   }
 }
 
 describe('ChatController', () => {
-  it.each([
-    { queued: false, fails: false },
-    { queued: false, fails: true },
-    { queued: true, fails: false },
-    { queued: true, fails: true },
-  ])('resumes work after a live setting save, queued=$queued fails=$fails', async ({ queued, fails }) => {
-    let finishTurn!: () => void
-    const turnGate = new Promise<void>((resolve) => {
-      finishTurn = resolve
+  it('opens the live configuration source in either language without running a turn', async () => {
+    const stream = vi.fn<ChatBackend['stream']>()
+    const controller = new ChatController(backend(), {
+      configurationSource: () => ({
+        preferredLanguage: 'typescript',
+        documents: {
+          typescript: { source: 'export const agent = await createHarness({})', generated: true },
+          python: { source: 'agent = create_harness()', generated: true },
+        },
+      }),
     })
-    let finishSave!: () => void
-    const saveGate = new Promise<void>((resolve) => {
-      finishSave = resolve
-    })
-    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
-    let resultReady = false
-    const runs: string[] = []
-    const target = backend(async function* (prompt) {
-      runs.push(prompt)
-      if (prompt === 'first') await turnGate
-      yield { type: 'textDelta', text: `reply to ${prompt}` }
-      return { stopReason: 'endTurn' }
-    })
-    target.watchTasks = (listener) => {
-      taskListener = listener
-      listener([])
-      return () => {}
-    }
-    target.hasReadyBackgroundResults = () => resultReady
-    target.streamBackgroundResults = async function* () {
-      runs.push('background')
-      resultReady = false
-      yield { type: 'textDelta', text: 'Background result received.' }
-      return { stopReason: 'endTurn' }
-    }
-    const controller = new ChatController(target, {
-      settings: { animations: true },
-      setSettings: async () => {
-        await saveGate
-        if (fails) throw new Error('Settings could not be saved')
+    Object.assign(controller.backend, { stream })
+
+    await controller.submit('/config python')
+
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'config',
+      title: 'Configuration',
+      language: 'python',
+      configuration: {
+        documents: { python: { source: 'agent = create_harness()' } },
       },
     })
-    try {
-      const first = controller.submit('first')
-      await vi.waitFor(() => expect(runs).toEqual(['first']))
-      const second = queued ? controller.submit('second') : undefined
-      await controller.submit('/settings')
-      const saving = controller.activatePanelRow({ label: '', description: '', value: 'animations=false' })
-      resultReady = true
-      taskListener?.([
-        { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
-      ])
-      finishTurn()
-      await first
-      expect(runs).toEqual(['first'])
+    expect(stream).not.toHaveBeenCalled()
 
-      finishSave()
-      expect(await saving).toBe(!fails)
-      await vi.waitFor(() => expect(runs).toEqual(queued ? ['first', 'second', 'background'] : ['first', 'background']))
-      await second
-      await vi.waitFor(() => expect(controller.busy).toBe(false))
-      expect(controller.getSnapshot().settings.animations).toBe(fails)
-      expect(controller.getSnapshot().queuedPrompts).toEqual([])
-    } finally {
-      finishTurn()
-      finishSave()
-      await controller.dispose()
-    }
+    await controller.submit('/config rust')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'unknown configuration language',
+    })
   })
 
-  it.each([false, true])(
-    'resumes queued input after an overlapping model change settles (failure=%s)',
-    async (fail) => {
-      let finishTurn!: () => void
-      const turnPending = new Promise<void>((resolve) => {
-        finishTurn = resolve
-      })
-      let finishChange!: () => void
-      const changePending = new Promise<void>((resolve) => {
-        finishChange = resolve
-      })
-      const prompts: string[] = []
-      const target = backend(async function* (prompt) {
-        prompts.push(prompt)
-        if (prompt === 'first') await turnPending
-        yield { type: 'textDelta', text: prompt }
-        return { stopReason: 'endTurn' }
-      })
-      target.switchModel = async () => {
-        await changePending
-        if (fail) throw new Error('Unable to save selection')
-        return 'next-model'
-      }
-      const controller = new ChatController(target)
-      try {
-        const first = controller.submit('first')
-        const queued = controller.submit('queued')
-        const changing = controller.submit('/model next-model')
-        finishTurn()
-        await first
-        expect(prompts).toEqual(['first'])
-        finishChange()
-        await changing
-        await vi.waitFor(() => expect(prompts).toEqual(['first', 'queued']))
-        await queued
-        expect(controller.busy).toBe(false)
-      } finally {
-        await controller.dispose()
-      }
-    }
-  )
-
-  it('waits for an overlapping settings save before applying a deferred model restart', async () => {
+  it('refreshes the embedded configuration after strands_config changes it', async () => {
+    let revision = 'before'
+    let finishTool!: () => void
     let finishTurn!: () => void
+    const toolPending = new Promise<void>((resolve) => {
+      finishTool = resolve
+    })
     const turnPending = new Promise<void>((resolve) => {
       finishTurn = resolve
     })
-    let finishSave!: () => void
-    const savePending = new Promise<void>((resolve) => {
-      finishSave = resolve
-    })
-    const operations: string[] = []
-    const target = backend(async function* (prompt) {
-      operations.push(prompt)
-      if (prompt === 'first') await turnPending
-      yield { type: 'textDelta', text: prompt }
-      return { stopReason: 'endTurn' }
-    })
-    target.modelChangeMode = () => 'restart'
-    target.restartModel = vi.fn(async () => {
-      operations.push('restart')
-      return 'next-model'
-    })
-    const controller = new ChatController(target, {
-      setSettings: async () => {
-        await savePending
-        operations.push('saved')
-      },
-    })
-    try {
-      const first = controller.submit('first')
-      const queued = controller.submit('queued')
-      await controller.submit('/model next-model')
-      const saving = controller.setSettings({ animations: false })
-      finishTurn()
-      await first
-      expect(target.restartModel).not.toHaveBeenCalled()
-      expect(operations).toEqual(['first'])
-
-      finishSave()
-      await saving
-      await queued
-      expect(operations).toEqual(['first', 'saved', 'restart', 'queued'])
-      expect(controller.busy).toBe(false)
-    } finally {
-      finishTurn()
-      finishSave()
-      await controller.dispose()
-    }
-  })
-
-  it('does not apply a queued generated name after clearing the conversation', async () => {
-    let releaseRename!: () => void
-    const renameBlocked = new Promise<void>((resolve) => {
-      releaseRename = resolve
-    })
-    let current = 'session-1'
-    const target = backend()
-    target.generateSessionName = vi
-      .fn()
-      .mockResolvedValueOnce('First Generated Name')
-      .mockResolvedValueOnce('Second Generated Name')
-    target.clear = vi.fn(async () => {
-      current = 'session-2'
-    })
-    target.info = () => ({ sessionId: current })
-    const renameCurrent = vi.fn(async (name: string) => {
-      await renameBlocked
-      return { sessionId: current, name }
-    })
-    const controller = new ChatController(target, {
-      sessions: {
-        get current() {
-          return current
-        },
-        directory: '/tmp/sessions',
-        list: vi.fn(async () => [{ id: current, active: true }]),
-        resolve: async () => ({
-          sessionId: current,
-          sessionDirectory: '/tmp/sessions',
-          workspace: '/tmp',
-          active: true,
+    const controller = new ChatController(
+      backend(async function* () {
+        yield { type: 'toolStart', toolUseId: 'config-1', name: 'strands_config', input: { action: 'update' } }
+        await toolPending
+        revision = 'after'
+        yield { type: 'toolResult', toolUseId: 'config-1', status: 'success', content: [] }
+        await turnPending
+        return { stopReason: 'endTurn' }
+      }),
+      {
+        configurationSource: () => ({
+          preferredLanguage: 'typescript',
+          documents: {
+            typescript: { source: `createHarness({ name: '${revision}' })`, generated: true },
+            python: { source: `create_harness(name="${revision}")`, generated: true },
+          },
         }),
-        renameCurrent,
-      },
-    })
-
-    await controller.submit('/sessions rename')
-    await vi.waitFor(() => expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('First Generated Name'))
-    await controller.submit('/sessions rename')
-    await vi.waitFor(() => expect(target.generateSessionName).toHaveBeenCalledTimes(2))
-    await controller.submit('/clear')
-    releaseRename()
-
-    await vi.waitFor(() => expect(controller.getSnapshot().runtime.session).toBe('session-2'))
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(renameCurrent).toHaveBeenCalledTimes(1)
-  })
-
-  it('cancels a generated session name when an explicit rename supersedes it', async () => {
-    let resolveName!: (name: string) => void
-    let signal!: AbortSignal
-    const target = backend()
-    target.generateSessionName = vi.fn(
-      (cancelSignal) =>
-        new Promise<string>((resolve) => {
-          signal = cancelSignal
-          resolveName = resolve
-        })
+      }
     )
-    const renameCurrent = vi.fn(async (name: string) => ({ sessionId: 'session-1', name }))
-    const controller = new ChatController(target, {
-      runtime: { session: 'Original name' },
-      sessions: {
-        current: 'session-1',
-        directory: '/tmp/sessions',
-        list: vi.fn(async () => [{ id: 'session-1', name: 'Original name', active: true }]),
-        resolve: async () => ({
-          sessionId: 'session-1',
-          sessionDirectory: '/tmp/sessions',
-          workspace: '/tmp',
-          active: true,
-        }),
-        renameCurrent,
-      },
-    })
 
-    await controller.submit('/sessions rename')
-    await controller.submit('/sessions rename Chosen name')
-    resolveName('Stale Generated Name')
-
-    await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    const running = controller.submit('Update the config')
     await vi.waitFor(() =>
-      expect(controller.getSnapshot().notices).toMatchObject([
-        { status: 'delivered', text: 'Session naming cancelled' },
+      expect(controller.getSnapshot().activeTurn?.entries).toContainEqual(
+        expect.objectContaining({ type: 'tool', name: 'strands_config', status: 'running' })
+      )
+    )
+    expect(controller.getSnapshot().configuration?.documents.typescript.source).toContain('before')
+    await controller.submit('/config')
+    expect(controller.getSnapshot().panel?.kind).toBe('config')
+
+    finishTool()
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().configuration?.documents.typescript.source).toContain('after')
+    )
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'config',
+      configuration: { documents: { typescript: { source: expect.stringContaining('after') } } },
+    })
+    expect(controller.getSnapshot().configurationDiffs?.typescript?.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'remove', text: expect.stringContaining('before') }),
+        expect.objectContaining({ kind: 'add', text: expect.stringContaining('after') }),
       ])
     )
-    expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('Chosen name')
-    expect(controller.getSnapshot().runtime.session).toBe('Chosen name')
+    expect(controller.getSnapshot().activeTurn).toBeDefined()
+
+    finishTurn()
+    await running
   })
 
-  it('does not resume background work when a pending setting save finishes after disposal', async () => {
-    let finishSave!: () => void
-    const saveGate = new Promise<void>((resolve) => {
-      finishSave = resolve
+  it('keeps the configuration diff through apply and into the next session until the next prompt', async () => {
+    let revision = 'before'
+    let applyStarted = false
+    const source = (): ChatConfigurationSource => ({
+      preferredLanguage: 'typescript',
+      documents: {
+        typescript: { source: `createHarness({\n  name: '${revision}',\n})`, generated: true },
+        python: { source: `create_harness(name="${revision}")`, generated: true },
+      },
     })
-    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
-    const target = backend()
-    target.watchTasks = (listener) => {
-      taskListener = listener
-      listener([])
-      return () => {}
-    }
-    target.hasReadyBackgroundResults = () => true
-    const background = vi.fn(async function* () {
-      yield { type: 'textDelta' as const, text: 'Background result received.' }
+    const target = backend(async function* () {
+      yield { type: 'toolStart', toolUseId: 'config-1', name: 'strands_config', input: { action: 'update' } }
+      revision = 'after'
+      yield { type: 'toolResult', toolUseId: 'config-1', status: 'success', content: [] }
+      yield { type: 'toolStart', toolUseId: 'config-2', name: 'strands_config', input: { action: 'apply' } }
+      applyStarted = true
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      yield { type: 'toolResult', toolUseId: 'config-2', status: 'success', content: [] }
       return { stopReason: 'endTurn' }
     })
-    target.streamBackgroundResults = background
-    const controller = new ChatController(target, { setSettings: () => saveGate })
-    const saving = controller.setSettings({ animations: false })
-    taskListener?.([
-      { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+    target.captureConversation = vi.fn(
+      async () => ({}) as Awaited<ReturnType<NonNullable<ChatBackend['captureConversation']>>>
+    )
+    const controller = new ChatController(target, { configurationSource: source })
+    const changed = expect.arrayContaining([
+      expect.objectContaining({ kind: 'context', text: 'createHarness({' }),
+      expect.objectContaining({ kind: 'remove', text: "  name: 'before'," }),
+      expect.objectContaining({ kind: 'add', text: "  name: 'after'," }),
     ])
-    expect(background).not.toHaveBeenCalled()
-    await controller.dispose()
-    finishSave()
-    await saving
-    expect(background).not.toHaveBeenCalled()
+
+    const running = controller.submit('Update the config')
+    await vi.waitFor(() => expect(applyStarted).toBe(true))
+    expect(controller.getSnapshot().configurationDiffs?.typescript?.lines).toEqual(changed)
+    await running
+    expect(controller.getSnapshot().configurationDiffs?.typescript?.lines).toEqual(changed)
+
+    const conversation = await controller.captureConversation()
+    const reloaded = new ChatController(backend(), {
+      configurationSource: source,
+      initialTurns: conversation.completedTurns,
+      ...(conversation.configurationBaseline
+        ? { initialConfigurationBaseline: conversation.configurationBaseline }
+        : {}),
+    })
+    expect(reloaded.getSnapshot().configurationDiffs?.typescript?.lines).toEqual(changed)
   })
 
-  it('sanitizes runtime metadata exposed through snapshots', () => {
+  it('clears a denied draft from an earlier turn without showing a reverse configuration diff', async () => {
+    let name = 'Active'
+    let finishDenial!: () => void
+    const denialPending = new Promise<void>((resolve) => {
+      finishDenial = resolve
+    })
+    const controller = new ChatController(
+      backend(async function* (prompt) {
+        const applying = prompt === 'apply'
+        yield {
+          type: 'toolStart',
+          toolUseId: 'config',
+          name: 'strands_config',
+          input: { action: applying ? 'apply' : 'update' },
+        }
+        if (applying) {
+          await denialPending
+          yield {
+            type: 'toolResult',
+            toolUseId: 'config',
+            status: 'error',
+            content: [{ type: 'text', text: 'DENIED: Tool call denied by the user: strands_config' }],
+          }
+        } else {
+          name = prompt
+          yield { type: 'toolResult', toolUseId: 'config', status: 'success', content: [] }
+        }
+        return { stopReason: 'endTurn' }
+      }),
+      {
+        configurationSource: () => ({
+          preferredLanguage: 'typescript',
+          documents: {
+            typescript: { source: `createHarness({ name: '${name}' })`, generated: true },
+            python: { source: `create_harness(name="${name}")`, generated: true },
+          },
+        }),
+      }
+    )
+
+    await controller.submit('Rejected')
+    expect(controller.getSnapshot().configurationDiffs?.typescript?.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'remove', text: expect.stringContaining('Active') }),
+        expect.objectContaining({ kind: 'add', text: expect.stringContaining('Rejected') }),
+      ])
+    )
+    const applying = controller.submit('apply')
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().activeTurn?.entries).toContainEqual(
+        expect.objectContaining({ type: 'tool', name: 'strands_config', status: 'running' })
+      )
+    )
+    await controller.submit('/config')
+    name = 'Active'
+    controller.refreshConfiguration(true)
+
+    expect(controller.getSnapshot().configuration?.documents.typescript.source).toContain('Active')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'config',
+      configuration: { documents: { typescript: { source: expect.stringContaining('Active') } } },
+    })
+    expect(controller.getSnapshot().configurationDiffs).toBeUndefined()
+    finishDenial()
+    await applying
+    expect(controller.getSnapshot().configurationDiffs).toBeUndefined()
+
+    await controller.submit('Next')
+    for (const language of ['typescript', 'python'] as const) {
+      const lines = controller.getSnapshot().configurationDiffs?.[language]?.lines
+      expect(lines).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'remove', text: expect.stringContaining('Active') }),
+          expect.objectContaining({ kind: 'add', text: expect.stringContaining('Next') }),
+        ])
+      )
+      expect(lines?.some((line) => line.text.includes('Rejected'))).toBe(false)
+    }
+  })
+
+  it('offers to reload the session from a directory export so source edits hot-reload', async () => {
+    const useExportedProject = vi.fn()
+    const exportAgentProject = vi.fn(async () => '/tmp/exported-agent')
+    const controller = new ChatController(backend(), { exportAgentProject, useExportedProject })
+
+    await controller.submit('/export')
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows.find((row) => row.label === 'TypeScript')!)
+    await controller.activatePanelRow({
+      label: 'Continue',
+      description: 'portable',
+      value: 'export:name:typescript:portable',
+    })
+    await controller.activatePanelRow(
+      controller.getSnapshot().panel!.rows.find((row) => row.label === 'Default folder')!
+    )
+    expect(exportAgentProject).toHaveBeenCalledWith('typescript', expect.any(String), 'directory')
+    const panel = controller.getSnapshot().panel!
+    expect(panel.title).toBe('Export complete')
+    expect(panel.body).toBe('Saved a copy. No automatic updates.')
+    expect(panel.rows[0]).toMatchObject({ label: 'Use for this session', value: 'export:use-project' })
+
+    await controller.activatePanelRow(panel.rows[0]!)
+    expect(useExportedProject).toHaveBeenCalledExactlyOnceWith('/tmp/exported-agent')
+  })
+
+  it('does not offer to reload from a zip export', async () => {
+    const useExportedProject = vi.fn()
+    const exportAgentProject = vi.fn(async () => '/tmp/exported-agent.zip')
+    const controller = new ChatController(backend(), { exportAgentProject, useExportedProject })
+
+    await controller.submit('/export typescript /tmp/exported-agent.zip')
+    expect(exportAgentProject).toHaveBeenCalled()
+    const panel = controller.getSnapshot().panel!
+    expect(panel.title).toBe('Export complete')
+    expect(panel.rows.map((row) => row.label)).toEqual(['Copy path', 'Copy launch command'])
+    expect(useExportedProject).not.toHaveBeenCalled()
+  })
+
+  it('sends attachment content and keeps its display metadata on the turn', async () => {
+    const prompts: Array<string | ContentBlockData[]> = []
+    const controller = new ChatController(
+      idleBackend({
+        id: 'attachment-test',
+        async *stream(prompt) {
+          prompts.push(prompt)
+          yield { type: 'textDelta', text: 'I can see it.' }
+          return { stopReason: 'endTurn' }
+        },
+      })
+    )
+    const bytes = new Uint8Array([1, 2, 3])
+
+    const turn = await controller.submit({
+      text: 'Describe this',
+      attachments: [
+        {
+          path: '/tmp/frog.png',
+          name: 'frog.png',
+          size: bytes.byteLength,
+          kind: 'image',
+          content: { image: { format: 'png', source: { bytes } } },
+        },
+      ],
+    })
+
+    expect(prompts).toEqual([[{ text: 'Describe this' }, { image: { format: 'png', source: { bytes } } }]])
+    expect(turn).toMatchObject({
+      prompt: 'Describe this',
+      attachments: [{ name: 'frog.png', size: 3, kind: 'image' }],
+      entries: [{ type: 'assistant', text: 'I can see it.' }],
+    })
+  })
+
+  it('sanitizes runtime display metadata while preserving the workspace path', () => {
     const target = backend()
     Object.assign(target, {
       id: 'test\u0007',
@@ -335,7 +355,7 @@ describe('ChatController', () => {
       backendId: 'test',
       model: 'model',
       session: 'saved',
-      cwd: '/tmp/project',
+      cwd: '/tmp/\u009b31mproject',
       tools: [{ name: 'read', description: 'line\tone\nlinetwo' }],
       configuration: [{ label: 'source', value: 'local' }],
     })
@@ -344,7 +364,17 @@ describe('ChatController', () => {
   it.each(['synchronous', 'late'] as const)(
     'refreshes latest context spend on %s completion without retaining unavailable token splits',
     async (timing) => {
-      const occupancy = { currentTokens: 5, projectedTokens: 8, contextWindow: 1000 }
+      const occupancy: ChatContextUsage = {
+        currentTokens: 5,
+        projectedTokens: 8,
+        contextWindow: 1000,
+        breakdown: {
+          categories: [
+            { kind: 'userMessages', tokens: 5 },
+            { kind: 'assistantMessages', tokens: 3 },
+          ],
+        },
+      }
       const total = { totalTokens: 116, cacheReadInputTokens: 10, cacheWriteInputTokens: 2 }
       let publish!: (usage: ChatRunResult['usage']) => void
       const unsubscribe = vi.fn()
@@ -520,6 +550,53 @@ describe('ChatController', () => {
     })
   })
 
+  it('selects a context offload threshold from settings', async () => {
+    const setSettings = vi.fn(async () => {})
+    const controller = new ChatController(backend(), { setSettings })
+
+    await controller.submit('/settings')
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Agent' })
+    const threshold = controller.getSnapshot().panel!.rows.find((row) => row.value === 'contextOffloadThreshold')!
+
+    expect(threshold).toMatchObject({
+      description: 'Default · tool-result tokens · applies at next launch',
+      control: {
+        kind: 'segmented',
+        options: [
+          { label: 'Default', value: 'default', active: true },
+          { label: '1.5K', value: '1500' },
+          { label: '2.5K', value: '2500' },
+          { label: '5K', value: '5000' },
+          { label: '10K', value: '10000' },
+        ],
+      },
+    })
+
+    expect(await controller.activatePanelRow({ ...threshold, value: 'contextOffloadThreshold=5000' })).toBe(true)
+    expect(setSettings).toHaveBeenCalledWith({ contextOffloadThreshold: 5_000 })
+    expect(controller.getSnapshot().settings.contextOffloadThreshold).toBe(5_000)
+  })
+
+  it('disables startup update prompts outside the settings panel', async () => {
+    const setSettings = vi.fn(async () => {})
+    const controller = new ChatController(backend(), { setSettings })
+
+    await controller.submit('/settings')
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Updates' })
+    expect(controller.getSnapshot().panel?.rows.find((row) => row.value === 'updatePrompts')).toMatchObject({
+      label: 'Startup update prompts',
+      control: { kind: 'toggle', checked: true },
+    })
+
+    expect(await controller.setSettings({ updatePrompts: false })).toBe(true)
+    expect(setSettings).toHaveBeenCalledWith({ updatePrompts: false })
+    expect(controller.getSnapshot().settings.updatePrompts).toBe(false)
+    expect(controller.getSnapshot().panel?.rows.find((row) => row.value === 'updatePrompts')).toMatchObject({
+      description: 'off · available updates remain visible in the footer',
+      control: { kind: 'toggle', checked: false },
+    })
+  })
+
   it('runs bang commands through the active backend shell stream', async () => {
     const modelPrompts: string[] = []
     const shellCommands: string[] = []
@@ -584,7 +661,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('queues a bang command behind a running turn instead of injecting it as steering', async () => {
+  it('queues a bang command behind a running turn', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -610,9 +687,7 @@ describe('ChatController', () => {
 
     expect(target.queueSteering).not.toHaveBeenCalled()
     expect(controller.getSnapshot().queuedPrompts).toEqual([{ id: 'queued-1', prompt: '!pwd' }])
-    expect(controller.steerQueued()).toBe(true)
-    expect(target.queueSteering).not.toHaveBeenCalled()
-    expect(target.cancel).toHaveBeenCalledOnce()
+    expect(target.cancel).not.toHaveBeenCalled()
 
     release()
     await running
@@ -666,6 +741,30 @@ describe('ChatController', () => {
     await controller.submit('/tasks')
     taskListener?.([
       {
+        id: 'task-completed',
+        label: 'Archive report',
+        status: 'completed',
+        source: 'background',
+      },
+      {
+        id: 'todo-1',
+        label: 'Update documentation',
+        status: 'in_progress',
+        source: 'todo',
+      },
+      {
+        id: 'task-failed',
+        label: 'Run deployment',
+        status: 'failed',
+        source: 'background',
+      },
+      {
+        id: 'task-waiting',
+        label: 'Await approval',
+        status: 'paused',
+        source: 'background',
+      },
+      {
         id: 'task-1',
         label: 'Review authentication',
         status: 'working',
@@ -675,15 +774,34 @@ describe('ChatController', () => {
     ])
 
     expect(controller.getSnapshot()).toMatchObject({
-      tasks: [{ id: 'task-1', status: 'working' }],
+      tasks: [
+        { id: 'task-completed' },
+        { id: 'todo-1' },
+        { id: 'task-failed' },
+        { id: 'task-waiting' },
+        { id: 'task-1' },
+      ],
       panel: {
         kind: 'tasks',
-        title: 'tasks (1)',
+        title: 'Tasks (4)',
+        searchable: true,
         rows: [
           {
             label: 'Review authentication',
-            description: 'working | subagent | task-1',
-            section: 'Background tasks',
+            description: 'subagent · task-1',
+            badge: { text: 'running', tone: 'success' },
+          },
+          {
+            label: 'Await approval',
+            badge: { text: 'waiting', tone: 'warning' },
+          },
+          {
+            label: 'Archive report',
+            badge: { text: 'completed', tone: 'success' },
+          },
+          {
+            label: 'Run deployment',
+            badge: { text: 'failed', tone: 'danger' },
           },
         ],
       },
@@ -772,9 +890,11 @@ describe('ChatController', () => {
       })
     )
     expect(detailUpdates).toHaveBeenCalledOnce()
-    expect(controller.getSnapshot().panel?.activity?.entries).toContainEqual(
-      expect.objectContaining({ type: 'tool', name: 'read', status: 'success' })
-    )
+    expect(controller.getSnapshot().panel).toMatchObject({
+      activity: {
+        entries: expect.arrayContaining([expect.objectContaining({ type: 'tool', name: 'read', status: 'success' })]),
+      },
+    })
 
     expect(controller.dismissPanel()).toBe(true)
     expect(stopActivity).toHaveBeenCalledOnce()
@@ -944,14 +1064,22 @@ describe('ChatController', () => {
       result: 'done',
     }
 
-    taskListener?.([ready])
-    await vi.waitFor(() => expect(controller.getSnapshot().completedTurns).toHaveLength(1))
-    taskListener?.([ready])
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(attempts).toBe(1)
+    vi.useFakeTimers()
+    try {
+      taskListener?.([ready])
+      await vi.runAllTimersAsync()
+      expect(controller.getSnapshot().completedTurns).toHaveLength(1)
+      taskListener?.([ready])
+      await vi.runAllTimersAsync()
+      expect(attempts).toBe(1)
 
-    taskListener?.([{ ...ready, id: 'task-2' }])
-    await vi.waitFor(() => expect(attempts).toBe(2))
+      taskListener?.([{ ...ready, id: 'task-2' }])
+      await vi.runAllTimersAsync()
+      expect(attempts).toBe(2)
+    } finally {
+      await controller.dispose()
+      vi.useRealTimers()
+    }
   })
 
   it('shows unknown context values before the first model response', async () => {
@@ -1077,6 +1205,56 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().completedTurns.map((turn) => turn.status)).toEqual(['cancelled', 'complete'])
   })
 
+  it('keeps attachment content while a prompt waits in the queue', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const prompts: Array<string | ContentBlockData[]> = []
+    const controller = new ChatController(
+      idleBackend({
+        id: 'attachment-queue-test',
+        async *stream(prompt) {
+          prompts.push(prompt)
+          yield { type: 'textDelta', text: 'Done.' }
+          if (typeof prompt === 'string') {
+            await gate
+          }
+          return { stopReason: 'endTurn' }
+        },
+      })
+    )
+    const first = controller.submit('first')
+    await vi.waitFor(() => expect(prompts).toEqual(['first']))
+    const queued = controller.submit({
+      text: 'second',
+      attachments: [
+        {
+          path: '/tmp/notes.md',
+          name: 'notes.md',
+          size: 5,
+          kind: 'document',
+          content: { document: { name: 'notes md', format: 'md', source: { text: 'hello' } } },
+        },
+      ],
+    })
+
+    expect(controller.getSnapshot().queuedPrompts).toEqual([
+      {
+        id: 'queued-1',
+        prompt: 'second',
+        attachments: [{ name: 'notes.md', size: 5, kind: 'document' }],
+      },
+    ])
+
+    release()
+    await Promise.all([first, queued])
+    expect(prompts).toEqual([
+      'first',
+      [{ text: 'second' }, { document: { name: 'notes md', format: 'md', source: { text: 'hello' } } }],
+    ])
+  })
+
   it('accepts and runs queued prompts in order while the active turn continues', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
@@ -1115,6 +1293,106 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
     expect(controller.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual(['first', 'second', 'third'])
     await vi.waitFor(() => expect(idle).toHaveBeenCalledOnce())
+  })
+
+  it.each([
+    { queued: false, fails: false },
+    { queued: false, fails: true },
+    { queued: true, fails: false },
+    { queued: true, fails: true },
+  ])('resumes work after a live setting save, queued=$queued fails=$fails', async ({ queued, fails }) => {
+    let finishTurn!: () => void
+    const turnGate = new Promise<void>((resolve) => {
+      finishTurn = resolve
+    })
+    let finishSave!: () => void
+    const saveGate = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
+    let resultReady = false
+    const runs: string[] = []
+    const target = backend(async function* (prompt) {
+      runs.push(prompt)
+      if (prompt === 'first') await turnGate
+      yield { type: 'textDelta', text: `reply to ${prompt}` }
+      return { stopReason: 'endTurn' }
+    })
+    target.watchTasks = (listener) => {
+      taskListener = listener
+      listener([])
+      return () => {}
+    }
+    target.hasReadyBackgroundResults = () => resultReady
+    target.streamBackgroundResults = async function* () {
+      runs.push('background')
+      resultReady = false
+      yield { type: 'textDelta', text: 'Background result received.' }
+      return { stopReason: 'endTurn' }
+    }
+    const controller = new ChatController(target, {
+      settings: { animations: true },
+      setSettings: async () => {
+        await saveGate
+        if (fails) throw new Error('Settings could not be saved')
+      },
+    })
+    try {
+      const first = controller.submit('first')
+      await vi.waitFor(() => expect(runs).toEqual(['first']))
+      const second = queued ? controller.submit('second') : undefined
+      await controller.submit('/settings')
+      const saving = controller.activatePanelRow({ label: '', description: '', value: 'animations=false' })
+      resultReady = true
+      taskListener?.([
+        { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+      ])
+      finishTurn()
+      await first
+      expect(runs).toEqual(['first'])
+
+      finishSave()
+      expect(await saving).toBe(!fails)
+      await vi.waitFor(() => expect(runs).toEqual(queued ? ['first', 'second', 'background'] : ['first', 'background']))
+      await second
+      await vi.waitFor(() => expect(controller.busy).toBe(false))
+      expect(controller.getSnapshot().settings.animations).toBe(fails)
+      expect(controller.getSnapshot().queuedPrompts).toEqual([])
+    } finally {
+      finishTurn()
+      finishSave()
+      await controller.dispose()
+    }
+  })
+
+  it('does not resume background work when a pending setting save finishes after disposal', async () => {
+    let finishSave!: () => void
+    const saveGate = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
+    const target = backend()
+    target.watchTasks = (listener) => {
+      taskListener = listener
+      listener([])
+      return () => {}
+    }
+    target.hasReadyBackgroundResults = () => true
+    const background = vi.fn(async function* () {
+      yield { type: 'textDelta' as const, text: 'Background result received.' }
+      return { stopReason: 'endTurn' }
+    })
+    target.streamBackgroundResults = background
+    const controller = new ChatController(target, { setSettings: () => saveGate })
+    const saving = controller.setSettings({ animations: false })
+    taskListener?.([
+      { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+    ])
+    expect(background).not.toHaveBeenCalled()
+    await controller.dispose()
+    finishSave()
+    await saving
+    expect(background).not.toHaveBeenCalled()
   })
 
   it('queues peer messages at the turn boundary without interpreting them as local commands', async () => {
@@ -1226,6 +1504,8 @@ describe('ChatController', () => {
       }
       return { stopReason: 'endTurn' }
     })
+    target.queueSteering = vi.fn(() => true)
+    target.drainSteering = vi.fn().mockReturnValueOnce(['change direction now']).mockReturnValue([])
     const controller = new ChatController(target)
 
     const first = controller.submit('first')
@@ -1233,6 +1513,8 @@ describe('ChatController', () => {
     const queued = controller.submit('ordinary follow-up')
     const steering = controller.steer('change direction now')
 
+    expect(target.cancel).not.toHaveBeenCalled()
+    expect(controller.cancel()).toBe(true)
     expect(target.cancel).toHaveBeenCalledOnce()
     expect(controller.getSnapshot().queuedPrompts.map((prompt) => prompt.prompt)).toEqual([
       'change direction now',
@@ -1289,69 +1571,6 @@ describe('ChatController', () => {
     await running
   })
 
-  it('turns a queued prompt into live steering without cancelling the turn', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const target = backend(async function* () {
-      yield { type: 'textDelta', text: 'Working.' }
-      await gate
-      return { stopReason: 'endTurn' }
-    })
-    target.queueSteering = vi.fn(() => true)
-    const controller = new ChatController(target)
-
-    const running = controller.submit('first')
-    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    const queued = controller.submit('change direction now')
-    const queuedId = controller.getSnapshot().queuedPrompts[0]!.id
-
-    expect(controller.steerQueued(queuedId)).toBe(true)
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
-    expect(target.cancel).not.toHaveBeenCalled()
-    expect(controller.getSnapshot().queuedPrompts).toEqual([])
-    await expect(queued).resolves.toBeUndefined()
-
-    release()
-    await running
-  })
-
-  it('promotes an existing queued prompt for steering without duplicating it', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const prompts: string[] = []
-    const target = backend(async function* (prompt) {
-      prompts.push(prompt)
-      if (prompt === 'first') {
-        yield { type: 'textDelta', text: 'Initial direction.' }
-        await gate
-      }
-      return { stopReason: 'endTurn' }
-    })
-    const controller = new ChatController(target)
-
-    const first = controller.submit('first')
-    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    const second = controller.submit('ordinary follow-up')
-    const third = controller.submit('steer with this')
-    const steeringId = controller.getSnapshot().queuedPrompts[1]!.id
-
-    expect(controller.steerQueued(steeringId)).toBe(true)
-    expect(target.cancel).toHaveBeenCalledOnce()
-    expect(controller.getSnapshot()).toMatchObject({
-      status: 'interrupting',
-      queuedPrompts: [{ id: steeringId, prompt: 'steer with this' }, { prompt: 'ordinary follow-up' }],
-    })
-
-    release()
-    await Promise.all([first, second, third])
-
-    expect(prompts).toEqual(['first', 'steer with this', 'ordinary follow-up'])
-  })
-
   it('closes on exit words and converts backend failures into turn errors', async () => {
     const target = backend(async function* () {
       yield* []
@@ -1369,23 +1588,149 @@ describe('ChatController', () => {
     expect(controller.getSnapshot()).toMatchObject({ status: 'closed', exitCode: 0 })
   })
 
-  it.each([true, false])('shows all built-in provider filters when discovery returns models: %s', async (hasModels) => {
-    const target = backend()
-    target.info = () => ({ model: 'bedrock/anthropic.claude-current' })
-    target.listModels = vi.fn(() =>
-      hasModels
-        ? [
-            {
-              id: 'anthropic.claude-current',
-              name: 'Current model',
-              description: '',
-              value: 'bedrock/anthropic.claude-current',
-              catalog: 'bedrock',
-              active: true,
-            },
-          ]
-        : []
+  it.each([false, true])('surfaces a credential failure with session recovery (attachment=%s)', async (attachment) => {
+    const target = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('The security token included in the request is expired')
+      },
+    })
+    Object.assign(target, {
+      sessionIdentity: {
+        sessionId: 'saved-session',
+        sessionDirectory: '/tmp/saved-sessions',
+        workspace: process.cwd(),
+        configured: { sessionId: null, sessionDir: '/tmp/saved-sessions' },
+      },
+    })
+    const controller = new ChatController(target, { streamPresentation: {} })
+
+    await controller.submit(
+      attachment
+        ? {
+            text: '!describe this image',
+            attachments: [
+              {
+                path: '/tmp/image.png',
+                name: 'image.png',
+                size: 1,
+                kind: 'image',
+                content: { image: { format: 'png', source: { bytes: new Uint8Array([0]) } } },
+              },
+            ],
+          }
+        : 'hello'
     )
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'idle',
+      completedTurns: [
+        {
+          status: 'error',
+          error: 'The security token included in the request is expired',
+          recoveryHint: expect.stringContaining('Refresh your credentials, then resend your message.'),
+        },
+      ],
+    })
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain('strands --session-id saved-session')
+    expect(controller.getSnapshot().activeTurn).toBeUndefined()
+    expect(controller.busy).toBe(false)
+    await controller.dispose()
+  })
+
+  it('marks a silent response as delayed, clears on progress, and allows exit while cancellation is stuck', async () => {
+    vi.useFakeTimers()
+    let respond!: () => void
+    let finish!: () => void
+    const response = new Promise<void>((resolve) => {
+      respond = resolve
+    })
+    const completion = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const target = backend(async function* () {
+      await response
+      yield { type: 'textDelta', text: 'Still here' }
+      await completion
+      return { stopReason: 'cancelled' }
+    })
+    let permissionChanged!: (request: ChatPermissionRequest | undefined) => void
+    target.watchPermissions = (listener) => {
+      permissionChanged = listener
+      return () => {}
+    }
+    const controller = new ChatController(target)
+    const running = controller.submit('hello')
+    try {
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(controller.getSnapshot().activeTurn?.responseDelayed).toBeUndefined()
+      permissionChanged({ id: 'background-permission', toolName: 'shell', input: {}, options: [] })
+      await vi.advanceTimersByTimeAsync(1)
+      expect(controller.getSnapshot().panel?.kind).toBe('permission')
+      permissionChanged(undefined)
+      expect(controller.getSnapshot().panel).toBeUndefined()
+      expect(controller.getSnapshot().activeTurn?.responseDelayed).toBe(true)
+      respond()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(controller.getSnapshot().activeTurn?.responseDelayed).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(controller.getSnapshot().activeTurn?.responseDelayed).toBe(true)
+      controller.cancel()
+      expect(controller.getSnapshot().completedTurns[0]).toMatchObject({ status: 'cancelled' })
+      expect(controller.getSnapshot().completedTurns[0]?.responseDelayed).toBeUndefined()
+      await controller.submit('/exit')
+      expect(controller.getSnapshot().status).toBe('closed')
+      expect(controller.hardExitCode).toBe(130)
+    } finally {
+      respond()
+      finish()
+      await running
+      await controller.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['tool', 'permission', 'shell'] as const)(
+    'does not label a %s wait as a delayed model response',
+    async (kind) => {
+      vi.useFakeTimers()
+      let finish!: () => void
+      const completion = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const stream = async function* (): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+        if (kind === 'tool') {
+          yield { type: 'toolStart', toolUseId: 'slow-tool', name: 'shell', input: {} }
+        } else if (kind === 'permission') {
+          yield {
+            type: 'permission',
+            request: { id: 'permission', toolName: 'shell', input: {}, options: [] },
+          }
+        }
+        await completion
+        return { stopReason: 'endTurn' }
+      }
+      const target = backend(stream)
+      target.streamShell = stream
+      const controller = new ChatController(target)
+      const running = controller.submit(kind === 'shell' ? '!sleep 60' : 'hello')
+      try {
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(controller.getSnapshot().activeTurn?.status).toBe('running')
+        expect(controller.getSnapshot().activeTurn?.responseDelayed).toBeUndefined()
+      } finally {
+        finish()
+        await running
+        await controller.dispose()
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('shows all built-in provider filters when discovery returns no models', async () => {
+    const target = backend()
+    target.info = () => ({ model: 'bedrock/current-model' })
+    target.listModels = vi.fn(() => [])
     const controller = new ChatController(target)
 
     await controller.openModelPanel()
@@ -1402,9 +1747,7 @@ describe('ChatController', () => {
       { id: 'litellm', label: 'LiteLLM' },
     ])
     expect(panel.rows).toHaveLength(1)
-    expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual(
-      hasModels ? ['bedrock/anthropic.claude-current'] : []
-    )
+    expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual([])
     expect(target.listModels).toHaveBeenCalledOnce()
   })
 
@@ -1436,13 +1779,13 @@ describe('ChatController', () => {
         context: { currentTokens: 800, projectedTokens: 850, contextWindow: 200_000 },
       }
     })
-    const currentId = 'global.anthropic.claude-opus-4-8'
-    const nextId = 'bedrock/anthropic.claude-sonnet-5'
+    const currentId = 'bedrock/current-model'
+    const nextId = 'bedrock/next-model'
     let currentModel = currentId
     target.info = () => ({ model: currentModel })
     target.listModels = () => [
-      { id: currentId, name: 'Claude Opus 4.8', description: 'current', active: true },
-      { id: nextId, name: 'Claude Sonnet 5', description: 'other family' },
+      { id: currentId, name: 'Current Model', description: 'current', active: true },
+      { id: nextId, name: 'Next Model', description: 'other model' },
     ]
     target.modelChangeMode = () => 'restart'
     target.switchModel = vi.fn()
@@ -1457,100 +1800,63 @@ describe('ChatController', () => {
     await controller.submit('/model')
     expect(controller.getSnapshot().panel?.kind).toBe('models')
     expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Claude Opus 4.8',
+      label: 'Current Model',
       badge: { text: 'current', tone: 'success' },
     })
     expect(controller.getSnapshot().panel?.rows[1]).toMatchObject({
-      label: 'Claude Sonnet 5',
+      label: 'Next Model',
     })
     expect(controller.getSnapshot().panel?.rows[1]?.badge).toBeUndefined()
     expect(controller.getSnapshot().panel?.rows[1]?.tone).toBeUndefined()
-    expect(controller.getSnapshot().panel?.body).toBe('Claude Opus 4.8\nglobal.anthropic.claude-opus-4-8')
+    expect(controller.getSnapshot().panel?.body).toBe('bedrock/current-model\nbedrock/current-model')
     const nextIndex = controller.getSnapshot().panel?.rows.findIndex((row) => row.value === nextId) ?? -1
     expect(nextIndex).toBeGreaterThanOrEqual(0)
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[nextIndex]!)
     expect(target.restartModel).toHaveBeenCalledWith(nextId)
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'models',
-      body: `Claude Sonnet 5\n${nextId}`,
-      rows: [{ label: 'Claude Opus 4.8' }, { label: 'Claude Sonnet 5', badge: { text: 'current', tone: 'success' } }],
+      body: `${nextId}\n${nextId}`,
+      rows: [{ label: 'Current Model' }, { label: 'Next Model', badge: { text: 'current', tone: 'success' } }],
     })
     expect(controller.getSnapshot().runtime.model).toBe(nextId)
     expect(controller.getSnapshot().context).toEqual({})
   })
 
-  it('changes effort from the model panel without invoking model selection', async () => {
+  it('continues to effort after selecting a model that supports it', async () => {
     const target = backend()
-    let effort = 'high'
-    target.info = () => ({
-      model: 'global.anthropic.claude-opus-4-8',
-      effort: effort === 'off' ? 'Model default' : 'High',
-    })
-    target.listModels = vi.fn(() => [
-      {
-        id: 'global.anthropic.claude-opus-4-8',
-        name: 'Claude Opus 4.8',
-        description: '',
-        active: true,
-      },
-    ])
-    target.listEfforts = () => [
-      {
-        id: 'off',
-        label: 'Model default',
-        ...(effort === 'off' ? { active: true } : {}),
-      },
-      { id: 'high', label: 'High', ...(effort === 'high' ? { active: true } : {}) },
+    let model = 'bedrock/current-model'
+    target.info = () => ({ model, effort: 'Low' })
+    target.listModels = () => [
+      { id: model, name: 'Current Model', description: '', active: true },
+      { id: 'bedrock/next-model', name: 'Next Model', description: '' },
     ]
-    target.switchModel = vi.fn()
-    target.restartModel = vi.fn()
-    target.setEffort = vi.fn(async (selected) => {
-      effort = selected
+    target.listEfforts = vi.fn(() => [
+      { id: 'low', label: 'Low', active: true },
+      { id: 'high', label: 'High' },
+    ])
+    target.switchModel = vi.fn(async (selected) => {
+      model = selected
       return selected
     })
     const controller = new ChatController(target)
 
-    await controller.submit('/model')
-    const panelId = controller.getSnapshot().panel?.id
+    await controller.openModelPanel()
+    expect(controller.getSnapshot().panel).not.toHaveProperty('slider')
+    expect(target.listEfforts).not.toHaveBeenCalled()
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
 
     expect(controller.getSnapshot().panel).toMatchObject({
-      body: 'Claude Opus 4.8\nglobal.anthropic.claude-opus-4-8',
-      slider: {
-        label: 'Effort',
-        options: [
-          { id: 'off', label: 'Model default' },
-          { id: 'high', label: 'High', active: true },
-        ],
-      },
-    })
-    expect(controller.getSnapshot().panel?.rows).toHaveLength(1)
-    await controller.activatePanelRow({
-      label: 'Effort',
-      description: 'Model default',
-      value: 'effort:off',
-    })
-
-    expect(target.setEffort).toHaveBeenCalledWith('off')
-    expect(target.listModels).toHaveBeenCalledOnce()
-    expect(target.switchModel).not.toHaveBeenCalled()
-    expect(target.restartModel).not.toHaveBeenCalled()
-    expect(controller.getSnapshot()).toMatchObject({
-      panel: {
-        id: panelId,
-        slider: {
-          options: [{ id: 'off', active: true }, { id: 'high' }],
-        },
-      },
-      runtime: { effort: 'Model default' },
+      kind: 'effort',
+      body: 'bedrock/next-model\nbedrock/next-model',
     })
   })
 
   it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
     const target = backend()
     let effort = 'high'
-    target.info = () => ({ model: 'global.anthropic.claude-opus-4-8', effort: effort === 'low' ? 'Low' : 'High' })
+    target.info = () => ({ model: 'bedrock/current-model', effort: effort === 'low' ? 'Low' : 'High' })
     target.listModels = vi.fn(() => [
-      { id: 'global.anthropic.claude-opus-4-8', name: 'Claude Opus 4.8', description: '', active: true },
+      { id: 'bedrock/current-model', name: 'Current Model', description: '', active: true },
     ])
     target.listEfforts = () => [
       { id: 'low', label: 'Low', ...(effort === 'low' ? { active: true } : {}) },
@@ -1572,19 +1878,19 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'effort',
       rows: [],
-      slider: { focused: true, options: [{ id: 'low', active: true }, { id: 'high' }] },
+      slider: { options: [{ id: 'low', active: true }, { id: 'high' }] },
     })
     expect(target.listModels).not.toHaveBeenCalled()
 
     await controller.activatePanelRow({ label: 'Effort', description: 'High', value: 'effort:high' })
     expect(target.setEffort).toHaveBeenLastCalledWith('high')
-    expect(controller.getSnapshot().panel?.slider?.options).toEqual([
+    expect(controller.getSnapshot().panel).toHaveProperty('slider.options', [
       { id: 'low', label: 'Low' },
       expect.objectContaining({ id: 'high', active: true }),
     ])
 
     await controller.submit('/model')
-    expect(controller.getSnapshot().panel?.slider?.focused).toBeUndefined()
+    expect(controller.getSnapshot().panel?.kind).toBe('models')
   })
 
   it('reports /effort as unavailable when the model has no effort levels', async () => {
@@ -1617,7 +1923,7 @@ describe('ChatController', () => {
 
   it('catches invalid model arguments before backend mode selection can escape the TUI', async () => {
     const target = backend()
-    target.info = () => ({ model: 'ollama/qwen3:8b', effort: 'Auto' })
+    target.info = () => ({ model: 'ollama/test-model', effort: 'Auto' })
     target.modelChangeMode = (model) => {
       resolveModelTarget(model)
       return 'restart'
@@ -1630,7 +1936,7 @@ describe('ChatController', () => {
       kind: 'error',
       rows: [{ description: 'Unsupported model provider "unknown". Use /model to choose a model.' }],
     })
-    expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
+    expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/test-model', effort: 'Auto' })
     expect(target.restartModel).not.toHaveBeenCalled()
   })
 
@@ -1653,29 +1959,14 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
   })
 
-  it('disables effort in the model panel when the model has no effort choices', async () => {
-    const target = backend()
-    target.listModels = () => [{ id: 'openai.gpt-5', name: 'GPT-5', description: '', active: true }]
-    target.listEfforts = () => [{ id: 'off', label: 'Model default', active: true }]
-    const controller = new ChatController(target)
-
-    await controller.submit('/model')
-
-    expect(controller.getSnapshot().panel?.slider).toEqual({
-      label: 'Effort',
-      options: [{ id: 'off', label: 'Model default', active: true }],
-      disabled: true,
-    })
-  })
-
-  it('defers the latest model change and settles a superseded notice', async () => {
+  it('keeps live controls available and defers the latest model change', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const currentId = 'global.anthropic.claude-opus-4-8'
-    const nextId = 'bedrock/anthropic.claude-sonnet-5'
-    const latestId = 'bedrock/anthropic.claude-opus-5'
+    const currentId = 'bedrock/current-model'
+    const nextId = 'bedrock/next-model'
+    const latestId = 'bedrock/latest-model'
     let currentModel = currentId
     const target = backend(async function* () {
       yield { type: 'textDelta', text: 'Working.' }
@@ -1684,9 +1975,9 @@ describe('ChatController', () => {
     })
     target.info = () => ({ model: currentModel })
     target.listModels = () => [
-      { id: currentId, name: 'Claude Opus 4.8', description: 'current', active: true },
-      { id: nextId, name: 'Claude Sonnet 5', description: 'other family' },
-      { id: latestId, name: 'Claude Opus 5', description: 'latest choice' },
+      { id: currentId, name: 'Current Model', description: 'current', active: true },
+      { id: nextId, name: 'Next Model', description: 'other model' },
+      { id: latestId, name: 'Latest Model', description: 'latest choice' },
     ]
     target.modelChangeMode = () => 'restart'
     target.switchModel = vi.fn()
@@ -1699,9 +1990,11 @@ describe('ChatController', () => {
     const running = controller.submit('long task')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
 
-    controller.openContextPanel()
+    await controller.submit('/settings')
+    expect(controller.getSnapshot().panel?.kind).toBe('settings')
+    await controller.submit('/context')
     expect(controller.getSnapshot().panel?.kind).toBe('context')
-    await controller.openModelPanel()
+    await controller.submit('/model')
     expect(controller.getSnapshot().panel?.kind).toBe('models')
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
     expect(target.cancel).not.toHaveBeenCalled()
@@ -1713,7 +2006,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().notices).toEqual([
       expect.objectContaining({
         status: 'running',
-        text: 'Model change queued for after the current turn: Claude Sonnet 5',
+        text: 'Model change queued for after the current turn: bedrock/next-model',
       }),
     ])
 
@@ -1724,11 +2017,11 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().notices).toEqual([
       expect.objectContaining({
         status: 'delivered',
-        text: 'Model change to Claude Sonnet 5 superseded by Claude Opus 5',
+        text: 'Model change to bedrock/next-model superseded by bedrock/latest-model',
       }),
       expect.objectContaining({
         status: 'running',
-        text: 'Model change queued for after the current turn: Claude Opus 5',
+        text: 'Model change queued for after the current turn: bedrock/latest-model',
       }),
     ])
 
@@ -1740,7 +2033,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().runtime.model).toBe(latestId)
     expect(controller.getSnapshot().notices[1]).toMatchObject({
       status: 'delivered',
-      text: 'Model changed to Claude Opus 5',
+      text: 'Model changed to bedrock/latest-model',
     })
   })
 
@@ -1813,7 +2106,7 @@ describe('ChatController', () => {
     expect(list).toHaveBeenCalledTimes(2)
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'sessions',
-      title: 'sessions (1)',
+      title: 'Sessions (1)',
       rows: [{ label: 'Initial name' }],
     })
 
@@ -1821,7 +2114,7 @@ describe('ChatController', () => {
       { id: 'session-1', name: 'Updated name', active: true },
       { id: 'session-2', active: false },
     ])
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('sessions (2)'))
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Sessions (2)'))
     expect(controller.getSnapshot().panel).toMatchObject({
       id: cachedPanelId,
       rows: [{ label: 'Updated name' }, { label: 'session-2' }],
@@ -1863,7 +2156,8 @@ describe('ChatController', () => {
         rows: [
           {
             label: 'Release planning',
-            description: 'unknown workspace · not saved yet',
+            description: '',
+            columns: ['unknown workspace', '—', 'not saved yet'],
             current: true,
           },
         ],
@@ -1871,7 +2165,136 @@ describe('ChatController', () => {
     })
   })
 
-  it('holds a permission panel until the backend receives a response', async () => {
+  it('generates a session name in the background without replacing another panel', async () => {
+    let resolveName!: (name: string) => void
+    const generated = new Promise<string>((resolve) => {
+      resolveName = resolve
+    })
+    const target = backend()
+    target.generateSessionName = vi.fn(() => generated)
+    const renameCurrent = vi.fn(async (name: string) => ({ sessionId: 'session-1', name }))
+    const controller = new ChatController(target, {
+      runtime: { session: 'Original name' },
+      sessions: {
+        current: 'session-1',
+        directory: '/tmp/sessions',
+        list: vi.fn(async () => [{ id: 'session-1', name: 'Original name', active: true }]),
+        resolve: async () => ({
+          sessionId: 'session-1',
+          sessionDirectory: '/tmp/sessions',
+          workspace: '/tmp',
+          active: true,
+        }),
+        renameCurrent,
+      },
+    })
+
+    await controller.submit('/sessions rename')
+    expect(controller.busy).toBe(false)
+    expect(controller.getSnapshot().notices).toMatchObject([{ status: 'running', text: 'Generating session name' }])
+    await controller.submit('/help')
+    const panel = controller.getSnapshot().panel
+    resolveName('Generated Session Name')
+
+    await vi.waitFor(() => expect(renameCurrent).toHaveBeenCalledWith('Generated Session Name'))
+    expect(controller.getSnapshot()).toMatchObject({
+      runtime: { session: 'Generated Session Name' },
+      notices: [{ status: 'success', text: 'Session renamed: Generated Session Name' }],
+    })
+    expect(controller.getSnapshot().panel).toEqual(panel)
+  })
+
+  it('cancels a generated session name when an explicit rename supersedes it', async () => {
+    let resolveName!: (name: string) => void
+    let signal!: AbortSignal
+    const target = backend()
+    target.generateSessionName = vi.fn(
+      (cancelSignal) =>
+        new Promise<string>((resolve) => {
+          signal = cancelSignal
+          resolveName = resolve
+        })
+    )
+    const renameCurrent = vi.fn(async (name: string) => ({ sessionId: 'session-1', name }))
+    const controller = new ChatController(target, {
+      runtime: { session: 'Original name' },
+      sessions: {
+        current: 'session-1',
+        directory: '/tmp/sessions',
+        list: vi.fn(async () => [{ id: 'session-1', name: 'Original name', active: true }]),
+        resolve: async () => ({
+          sessionId: 'session-1',
+          sessionDirectory: '/tmp/sessions',
+          workspace: '/tmp',
+          active: true,
+        }),
+        renameCurrent,
+      },
+    })
+
+    await controller.submit('/sessions rename')
+    await controller.submit('/sessions rename Chosen name')
+    resolveName('Stale Generated Name')
+
+    await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().notices).toMatchObject([
+        { status: 'delivered', text: 'Session naming cancelled' },
+      ])
+    )
+    expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('Chosen name')
+    expect(controller.getSnapshot().runtime.session).toBe('Chosen name')
+  })
+
+  it('does not apply a queued generated name after clearing the conversation', async () => {
+    let releaseRename!: () => void
+    const renameBlocked = new Promise<void>((resolve) => {
+      releaseRename = resolve
+    })
+    let current = 'session-1'
+    const target = backend()
+    target.generateSessionName = vi
+      .fn()
+      .mockResolvedValueOnce('First Generated Name')
+      .mockResolvedValueOnce('Second Generated Name')
+    target.clear = vi.fn(async () => {
+      current = 'session-2'
+    })
+    target.info = () => ({ sessionId: current })
+    const renameCurrent = vi.fn(async (name: string) => {
+      await renameBlocked
+      return { sessionId: current, name }
+    })
+    const controller = new ChatController(target, {
+      sessions: {
+        get current() {
+          return current
+        },
+        directory: '/tmp/sessions',
+        list: vi.fn(async () => [{ id: current, active: true }]),
+        resolve: async () => ({
+          sessionId: current,
+          sessionDirectory: '/tmp/sessions',
+          workspace: '/tmp',
+          active: true,
+        }),
+        renameCurrent,
+      },
+    })
+
+    await controller.submit('/sessions rename')
+    await vi.waitFor(() => expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('First Generated Name'))
+    await controller.submit('/sessions rename')
+    await vi.waitFor(() => expect(target.generateSessionName).toHaveBeenCalledTimes(2))
+    await controller.submit('/clear')
+    releaseRename()
+
+    await vi.waitFor(() => expect(controller.getSnapshot().runtime.session).toBe('session-2'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(renameCurrent).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens settings during a pending permission and restores it without responding', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -1896,11 +2319,19 @@ describe('ChatController', () => {
     const controller = new ChatController(target)
     const running = controller.submit('do it')
     await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permission'))
-    expect(controller.getSnapshot().panel?.body).toBe('Tool: bash\nInputs:\n{\n  "command": "rm file"\n}')
+    expect(controller.getSnapshot().panel?.body).toBe('{\n  "command": "rm file"\n}')
     expect(target.cancel).not.toHaveBeenCalled()
     expect(controller.dismissPanel()).toBe(false)
+    const permissionPanel = controller.getSnapshot().panel
+    const openingSettings = controller.submit('/settings')
+    expect(controller.getSnapshot().panel?.kind).toBe('settings')
+    expect(controller.getSnapshot().queuedPrompts).toEqual([])
+    expect(target.respondPermission).not.toHaveBeenCalled()
+    await openingSettings
+    expect(controller.dismissPanel()).toBe(true)
+    expect(controller.getSnapshot().panel).toEqual(permissionPanel)
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
-    expect(target.respondPermission).toHaveBeenCalledWith('permission-1', 'allow')
+    expect(target.respondPermission).toHaveBeenCalledWith('permission-1', 'allow', undefined)
     expect(controller.getSnapshot().panel).toBeUndefined()
 
     release()
@@ -1926,15 +2357,16 @@ describe('ChatController', () => {
       id: 'permission-1',
       toolName: 'bash',
       input: { command: 'git status' },
+      action: 'git status',
       options: [
         { id: 'allow-once', label: 'Allow once', kind: 'allow_once' },
-        {
-          id: 'allow-tool-always',
-          label: 'Always allow tool',
-          description: 'Save this tool to cli.toml',
-          kind: 'allow_always',
-        },
-        { id: 'deny', label: 'Deny', kind: 'reject_once' },
+        { id: 'allow-always', label: 'Allow forever', kind: 'allow_always' },
+        { id: 'deny', label: 'Deny once', kind: 'reject_once' },
+        { id: 'deny-always', label: 'Deny forever', kind: 'reject_always' },
+      ],
+      scopes: [
+        { rule: 'bash(git status)', label: 'git status' },
+        { rule: 'bash', label: '* any command' },
       ],
     }
     permissionListener?.(request)
@@ -1945,13 +2377,38 @@ describe('ChatController', () => {
         kind: 'permission',
         rows: [
           { label: 'Allow once' },
-          { label: 'Always allow tool', description: 'Save this tool to cli.toml' },
-          { label: 'Deny', tone: 'danger' },
+          { label: 'Allow forever…', description: 'Always allow · choose how broadly' },
+          { label: 'Deny once', tone: 'danger' },
+          { label: 'Deny forever…', tone: 'danger' },
         ],
       },
     })
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
-    expect(target.respondPermission).toHaveBeenCalledWith('permission-1', 'allow-tool-always')
+    expect(target.respondPermission).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'permission',
+      stage: 'allow-always',
+      rows: [
+        { label: 'git status', description: 'Always allow bash(git status) · remember in CLI settings' },
+        { label: '* any command', description: 'Always allow bash · remember in CLI settings' },
+        { label: '← Back' },
+      ],
+    })
+    const scopePanel = controller.getSnapshot().panel
+    for (const command of ['/settings', '/help', '/settings', '/settings']) {
+      await controller.submit(command)
+      expect(controller.getSnapshot().panel?.kind).toBe(command.slice(1))
+      expect(target.respondPermission).not.toHaveBeenCalled()
+    }
+    expect(controller.dismissPanel()).toBe(true)
+    expect(controller.getSnapshot().panel).toEqual(scopePanel)
+    expect(controller.dismissPanel()).toBe(false)
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[2]!)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'permission', selected: 1 })
+    expect(controller.getSnapshot().panel).not.toHaveProperty('stage')
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+    expect(target.respondPermission).toHaveBeenCalledWith('permission-1', 'allow-always', 'bash')
     expect(controller.getSnapshot().panel?.kind).toBe('tasks')
 
     permissionListener?.({
@@ -1961,12 +2418,67 @@ describe('ChatController', () => {
       input: { command: 'replace file' },
     })
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[2]!)
-    expect(target.respondPermission).toHaveBeenCalledWith('permission-2', 'deny')
+    expect(target.respondPermission).toHaveBeenCalledWith('permission-2', 'deny', undefined)
     expect(controller.getSnapshot().panel?.kind).toBe('tasks')
 
     await controller.dispose()
     expect(stopWatching).toHaveBeenCalledOnce()
   })
+
+  it.each(['watcher', 'cancel'] as const)(
+    'does not restore a hidden permission after it is cleared by %s',
+    async (clear) => {
+      let permissionListener: ((request: ChatPermissionRequest | undefined) => void) | undefined
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const target = backend(async function* () {
+        yield {
+          type: 'permission',
+          request: {
+            id: 'permission-1',
+            toolName: 'bash',
+            input: { command: 'git status' },
+            options: [{ id: 'allow', label: 'Allow once', kind: 'allow_once' }],
+          },
+        }
+        await gate
+        return { stopReason: 'endTurn' }
+      })
+      target.watchPermissions = (listener) => {
+        permissionListener = listener
+        return () => {}
+      }
+      target.cancel.mockImplementation(() => {
+        permissionListener?.(undefined)
+      })
+      target.respondPermission = vi.fn(() => true)
+      const controller = new ChatController(target)
+      const running = controller.submit('do it')
+      try {
+        await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permission'))
+        const openingSettings = controller.submit('/settings')
+        expect(controller.getSnapshot().panel?.kind).toBe('settings')
+        await openingSettings
+
+        if (clear === 'watcher') {
+          permissionListener?.(undefined)
+        } else {
+          expect(controller.cancel()).toBe(true)
+        }
+
+        expect(controller.getSnapshot().panel?.kind).toBe('settings')
+        expect(controller.dismissPanel()).toBe(true)
+        expect(controller.getSnapshot().panel).toBeUndefined()
+        expect(target.respondPermission).not.toHaveBeenCalled()
+      } finally {
+        release()
+        await running
+        await controller.dispose()
+      }
+    }
+  )
 
   it('persists permission modes and toggles always-allowed tools through /permissions', async () => {
     let mode: 'default' | 'bypassPermissions' = 'default'
@@ -1983,7 +2495,7 @@ describe('ChatController', () => {
       mode,
       allowedTools: [...allowedTools],
       deniedTools: [],
-      configPath: '/Users/test/.strands/cli/config.json',
+      configPath: '/Users/test/.strands/cli.toml',
     })
     target.setPermissionMode = vi.fn(async (nextMode) => {
       mode = nextMode
@@ -1995,29 +2507,45 @@ describe('ChatController', () => {
       allowedTools = allowedTools.filter((candidate) => candidate !== toolName)
     })
     const controller = new ChatController(target)
+    expect(controller.getSnapshot().permissionMode).toBe('default')
+    expect(controller.getSnapshot().permissionPreset).toBe('custom')
 
     await controller.submit('/permissions')
     expect(controller.getSnapshot()).toMatchObject({
       panel: {
         kind: 'permissions',
-        title: 'permissions',
+        title: 'Permissions',
+        searchable: true,
+        slider: {
+          label: 'Permission mode',
+          options: [
+            { id: 'ask', label: 'Ask' },
+            { id: 'bypass', label: 'Bypass' },
+            { id: 'custom', label: 'Custom', active: true },
+          ],
+        },
         rows: [
-          { label: 'Ask when needed (HITL)', badge: { text: 'Active' } },
-          { label: 'Allow all tools', tone: 'danger' },
           { label: 'bash', control: { kind: 'toggle', checked: true } },
           { label: 'write', control: { kind: 'toggle', checked: false } },
-          { label: 'config', description: '/Users/test/.strands/cli/config.json' },
         ],
       },
     })
     expect(controller.getSnapshot().panel?.body).toBeUndefined()
     const permissionsPanelId = controller.getSnapshot().panel?.id
 
-    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+    await controller.activatePanelRow({
+      label: 'Permission mode',
+      description: 'Bypass',
+      value: 'permissions:preset:bypass',
+    })
     expect(target.setPermissionMode).toHaveBeenCalledWith('bypassPermissions')
+    expect(controller.getSnapshot().permissionMode).toBe('bypassPermissions')
     expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
-    expect(controller.getSnapshot().panel?.body).toContain('WARNING')
-    const bypassedToolRows = controller.getSnapshot().panel?.rows.slice(2, 4) ?? []
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'permissions',
+      slider: { options: expect.arrayContaining([expect.objectContaining({ id: 'bypass', active: true })]) },
+    })
+    const bypassedToolRows = controller.getSnapshot().panel?.rows ?? []
     expect(bypassedToolRows).toMatchObject([
       { label: 'bash', control: { kind: 'toggle', checked: true } },
       { label: 'write', control: { kind: 'toggle', checked: true } },
@@ -2025,8 +2553,9 @@ describe('ChatController', () => {
     expect(bypassedToolRows.every((row) => row.value === undefined)).toBe(true)
 
     await controller.submit('/permissions default')
+    expect(controller.getSnapshot().permissionMode).toBe('default')
     expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
-    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[3]!)
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
     expect(target.allowPermission).toHaveBeenCalledWith('write')
     expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     expect(controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')?.control).toEqual({
@@ -2034,7 +2563,7 @@ describe('ChatController', () => {
       checked: true,
     })
 
-    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[2]!)
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
     expect(target.removeAllowedPermission).toHaveBeenCalledWith('bash')
     expect(controller.getSnapshot().panel?.rows.find((row) => row.label === 'bash')?.control).toEqual({
       kind: 'toggle',
@@ -2042,6 +2571,19 @@ describe('ChatController', () => {
     })
 
     expect(target.setPermissionMode).toHaveBeenLastCalledWith('default')
+
+    await controller.activatePanelRow({
+      label: 'Permission mode',
+      description: 'Ask',
+      value: 'permissions:preset:ask',
+    })
+    expect(target.removeAllowedPermission).toHaveBeenCalledWith('write')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'permissions',
+      slider: { options: expect.arrayContaining([expect.objectContaining({ id: 'ask', active: true })]) },
+    })
+    expect(controller.getSnapshot().permissionPreset).toBe('ask')
+    expect(controller.getSnapshot().panel?.rows.every((row) => row.value === undefined)).toBe(true)
   })
 
   it('toggles built-in tools through /tools and applies the selection on close', async () => {
@@ -2059,6 +2601,7 @@ describe('ChatController', () => {
     await controller.submit('/tools')
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'tools',
+      title: 'Tools',
       rows: [
         { label: 'shell', control: { kind: 'toggle', checked: true } },
         { label: 'web_search', tone: 'warning', control: { kind: 'toggle', checked: false } },
@@ -2085,6 +2628,114 @@ describe('ChatController', () => {
     await controller.submit('/tools')
     controller.dismissPanel()
     expect(apply).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'resumes queued input after an overlapping model change settles (failure=%s)',
+    async (fail) => {
+      let finishTurn!: () => void
+      const turnPending = new Promise<void>((resolve) => {
+        finishTurn = resolve
+      })
+      let finishChange!: () => void
+      const changePending = new Promise<void>((resolve) => {
+        finishChange = resolve
+      })
+      const prompts: string[] = []
+      const target = backend(async function* (prompt) {
+        prompts.push(prompt)
+        if (prompt === 'first') await turnPending
+        yield { type: 'textDelta', text: prompt }
+        return { stopReason: 'endTurn' }
+      })
+      target.switchModel = async () => {
+        await changePending
+        if (fail) throw new Error('Unable to save selection')
+        return 'next-model'
+      }
+      const controller = new ChatController(target)
+      try {
+        const first = controller.submit('first')
+        const queued = controller.submit('queued')
+        const changing = controller.submit('/model next-model')
+        finishTurn()
+        await first
+        expect(prompts).toEqual(['first'])
+        finishChange()
+        await changing
+        await vi.waitFor(() => expect(prompts).toEqual(['first', 'queued']))
+        await queued
+        expect(controller.busy).toBe(false)
+      } finally {
+        await controller.dispose()
+      }
+    }
+  )
+
+  it('waits for an overlapping settings save before applying a deferred model restart', async () => {
+    let finishTurn!: () => void
+    const turnPending = new Promise<void>((resolve) => {
+      finishTurn = resolve
+    })
+    let finishSave!: () => void
+    const savePending = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    const operations: string[] = []
+    const target = backend(async function* (prompt) {
+      operations.push(prompt)
+      if (prompt === 'first') await turnPending
+      yield { type: 'textDelta', text: prompt }
+      return { stopReason: 'endTurn' }
+    })
+    target.modelChangeMode = () => 'restart'
+    target.restartModel = vi.fn(async () => {
+      operations.push('restart')
+      return 'next-model'
+    })
+    const controller = new ChatController(target, {
+      setSettings: async () => {
+        await savePending
+        operations.push('saved')
+      },
+    })
+    try {
+      const first = controller.submit('first')
+      const queued = controller.submit('queued')
+      await controller.submit('/model next-model')
+      const saving = controller.setSettings({ animations: false })
+      finishTurn()
+      await first
+      expect(target.restartModel).not.toHaveBeenCalled()
+      expect(operations).toEqual(['first'])
+
+      finishSave()
+      await saving
+      await queued
+      expect(operations).toEqual(['first', 'saved', 'restart', 'queued'])
+      expect(controller.busy).toBe(false)
+    } finally {
+      finishTurn()
+      finishSave()
+      await controller.dispose()
+    }
+  })
+
+  it('shows /model as loading until models are discovered', async () => {
+    let resolveModels: (models: Awaited<ReturnType<NonNullable<ChatBackend['listModels']>>>) => void = () => {}
+    const target = backend()
+    target.listModels = () => new Promise((resolve) => (resolveModels = resolve))
+    const controller = new ChatController(target)
+
+    const opening = controller.submit('/model')
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models', loading: true, rows: [] })
+    )
+
+    resolveModels([{ id: 'bedrock/test', name: 'Test', description: '', active: true }])
+    await opening
+    expect(controller.getSnapshot().panel).not.toHaveProperty('loading')
+    expect(controller.getSnapshot().panel?.rows).toHaveLength(1)
   })
 
   it('toggles reasoning visibility through terminal settings', async () => {
@@ -2119,11 +2770,11 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().completedTurns).toEqual([])
     requestSetup.mockClear()
     await controller.submit('/settings')
-    await controller.activatePanelRow({ label: '', description: '', value: 'colorMode=light' })
-    await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'frogTheme=minimal' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Agent' })
     const rows = controller.getSnapshot().panel?.rows ?? []
-    expect(rows.map(({ value }) => value)).toEqual(['telemetry'])
-    await controller.submit('/setup')
+    expect(rows.map(({ value }) => value)).toEqual(['contextOffloadThreshold', 'settings-action:setup'])
+    expect(await controller.activatePanelRow(rows[1]!)).toBe(true)
     expect(requestSetup).toHaveBeenCalledOnce()
   })
 
@@ -2196,15 +2847,41 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
   })
 
-  it('activates direct slash and dollar skills through the skills runtime before running their prompts', async () => {
+  it('shows clearing in the composer while work is active without opening a panel', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const target = backend()
+    target.clear = vi.fn(async () => {
+      await gate
+    })
+    const controller = new ChatController(target)
+
+    const clearing = controller.submit('/clear')
+    await vi.waitFor(() => expect(controller.getSnapshot().composerStatus).toBe('Starting fresh conversation...'))
+
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    await expect(controller.submit('do not queue')).resolves.toBeUndefined()
+    release()
+    await clearing
+
+    expect(controller.getSnapshot().composerStatus).toBeUndefined()
+    expect(controller.getSnapshot().queuedPrompts).toEqual([])
+  })
+
+  it('activates slash and dollar skills once while preserving their visible commands', async () => {
     const prompts: string[] = []
     const activate = vi.fn(async (name: string) =>
       name.toLowerCase() === 'review'
         ? {
-            name: 'review',
-            description: 'Review code',
-            instructions: 'Inspect carefully.',
-            active: true,
+            skill: {
+              name: 'review',
+              description: 'Review code',
+              instructions: 'Inspect carefully.',
+              active: true,
+            },
+            content: 'Inspect carefully.\nAvailable resources:\n  references/checklist.md',
           }
         : undefined
     )
@@ -2229,13 +2906,25 @@ describe('ChatController', () => {
 
     expect(activate).toHaveBeenNthCalledWith(1, 'review')
     expect(activate).toHaveBeenNthCalledWith(2, 'review')
-    expect(prompts).toEqual(['this change', 'that change'])
+    expect(prompts).toHaveLength(2)
+    expect(prompts[0]).toContain('It is already activated; do not call the skills tool again.')
+    expect(prompts[0]).toContain('Inspect carefully.\nAvailable resources:\n  references/checklist.md')
+    expect(prompts[0]).toContain('</strands_skill_activation>\n\n/review this change')
+    expect(prompts[1]).toContain('</strands_skill_activation>\n\n$review that change')
+    expect(prompts.join('\n')).not.toContain('Use the review skill.')
+    expect(controller.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
+      '/review this change',
+      '$review that change',
+    ])
   })
 
-  it('runs a skill chosen from the skills panel and keeps its details reachable', async () => {
+  it('runs a skill command and keeps its panel details reachable', async () => {
     const prompts: string[] = []
     const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
-    const activate = vi.fn(async () => ({ ...review, active: true }))
+    const activate = vi.fn(async () => ({
+      skill: { ...review, active: true },
+      content: review.instructions,
+    }))
     const controller = new ChatController(
       backend(async function* (prompt) {
         prompts.push(prompt)
@@ -2250,12 +2939,59 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().panel).toMatchObject({ kind: 'detail', body: 'Inspect carefully.' })
     controller.dismissPanel()
 
-    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.value === 'review')!
-    await controller.activatePanelRow(row)
+    controller.dismissPanel()
+    await controller.submit('/review')
 
     expect(activate).toHaveBeenCalledWith('review')
-    expect(prompts).toEqual(['Use the review skill.'])
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain('<skill_instructions>\nInspect carefully.\n</skill_instructions>')
+    expect(prompts[0]).toContain('</strands_skill_activation>\n\n/review')
+    expect(controller.getSnapshot().completedTurns.at(-1)?.prompt).toBe('/review')
     expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('discovers skill command names after startup returns', async () => {
+    const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
+    const list = vi.fn(async () => [review])
+    const controller = new ChatController(backend(), { skills: { list, activate: async () => undefined } })
+
+    await controller.start()
+
+    expect(list).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(controller.actionableCommandToken('$review')).toBe('$review'))
+    expect(controller.commandAssistance('/rev')?.completions).toEqual([
+      {
+        name: 'review',
+        usage: '/review [request]',
+        description: 'Review code',
+      },
+    ])
+    expect(controller.commandAssistance('/review ')?.signature).toBe('/review [request]')
+    expect(list).toHaveBeenCalledOnce()
+  })
+
+  it('represents an empty MCP configuration as zero servers with its checked path', async () => {
+    const list = vi.fn(async () => [])
+    const controller = new ChatController(backend(), {
+      mcp: {
+        clients: [],
+        paths: ['/Users/test/.strands/mcp.json'],
+        list,
+        dispose: async () => undefined,
+        warnings: [],
+      },
+    })
+
+    await controller.submit('/mcp')
+
+    expect(list).toHaveBeenCalledWith(true)
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'mcp',
+      title: 'MCP servers (0)',
+      rows: [],
+      body: expect.stringContaining('Checked: /Users/test/.strands/mcp.json'),
+    })
+    expect(controller.getSnapshot().panel?.searchable).toBeUndefined()
   })
 
   it.each([
@@ -2267,12 +3003,12 @@ describe('ChatController', () => {
       'Version negotiation failed: the connection closed during the server/discover probe. ' + 'diagnostic '.repeat(30),
       'Server closed the connection',
     ],
-  ])('keeps an actionable MCP failure summary in the server list: %s', async (error, summary) => {
+  ])('keeps an actionable MCP summary and the complete failure in details: %s', async (error, summary) => {
     const controller = new ChatController(backend(), {
       mcp: {
         clients: [],
         paths: ['/Users/test/.strands/mcp.json'],
-        warnings: [],
+        warnings: ['Skipped invalid server in /Users/test/.codex/config.toml'],
         list: async () => [
           {
             name: 'failing/server',
@@ -2288,34 +3024,108 @@ describe('ChatController', () => {
       },
     })
     await controller.submit('/mcp')
-    expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'failing/server',
-      description: `failed | stdio | ${summary}`,
-      tone: 'danger',
+    const panel = controller.getSnapshot().panel!
+    expect(panel.rows[0]).toMatchObject({
+      value: 'mcp:toggle:failing%2Fserver',
+      description: `stdio | ${summary}`,
     })
+    expect(panel.rows[0]?.control).toBeUndefined()
+    expect(panel).toHaveProperty('canRetry', false)
+    expect(controller.openMcpDetail('failing/server')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'detail',
+      title: 'MCP: failing/server',
+      rows: [
+        { label: 'Problem', description: summary },
+        { label: 'Next step', description: expect.any(String) },
+        { label: 'Source', description: '/Users/test/.strands/mcp.json' },
+        { label: 'Transport', description: 'stdio' },
+        { label: 'Target', description: 'node' },
+      ],
+      body: `Full error\n${error}\n\nConfiguration warnings\nSkipped invalid server in /Users/test/.codex/config.toml`,
+    })
+    controller.dismissPanel()
+    expect(controller.getSnapshot().panel?.id).toBe(panel.id)
   })
 
-  it('represents an empty MCP configuration as zero servers with its checked path', async () => {
-    const list = vi.fn(async () => [])
+  it('retries a failed MCP server without changing saved settings or losing the panel', async () => {
+    let server: McpServerInfo = {
+      name: 'docs/server',
+      transport: 'streamable-http',
+      target: 'https://example.test/mcp',
+      state: 'failed',
+      error: 'ECONNREFUSED',
+    }
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const setEnabled = vi.fn(async () => {
+      await pending
+      server = { ...server, state: 'connected', toolCount: 2 }
+      return undefined
+    })
+    const setSettings = vi.fn(async () => {})
     const controller = new ChatController(backend(), {
+      setSettings,
       mcp: {
         clients: [],
-        paths: ['/Users/test/.strands/cli/mcp.json'],
-        list,
-        dispose: async () => undefined,
+        paths: [],
         warnings: [],
+        list: async () => [server],
+        setEnabled,
+        dispose: async () => undefined,
       },
     })
-
     await controller.submit('/mcp')
-
-    expect(list).toHaveBeenCalledWith(true)
+    const panelId = controller.getSnapshot().panel?.id
+    const retry = controller.retryMcpServer('docs/server')
+    expect(controller.busy).toBe(true)
+    expect(await controller.retryMcpServer('docs/server')).toBe(false)
+    expect(controller.dismissPanel()).toBe(false)
+    finish()
+    expect(await retry).toBe(true)
+    expect(setEnabled).toHaveBeenCalledExactlyOnceWith('docs/server', true)
+    expect(setSettings).not.toHaveBeenCalled()
     expect(controller.getSnapshot().panel).toMatchObject({
+      id: panelId,
       kind: 'mcp',
-      title: 'MCP servers (0)',
-      rows: [],
-      body: expect.stringContaining('Checked: /Users/test/.strands/cli/mcp.json'),
+      canRetry: false,
+      rows: [{ badge: { text: 'connected' }, control: { checked: true } }],
     })
-    expect(controller.getSnapshot().panel?.searchable).toBeUndefined()
+    expect(controller.getSnapshot().composerStatus).toBeUndefined()
+  })
+
+  it('keeps failed MCP servers toggleable without offering unsupported retry', async () => {
+    let state: McpServerInfo['state'] = 'failed'
+    const setEnabled = vi.fn(async (_name: string, enabled: boolean) => {
+      state = enabled ? 'failed' : 'disabled'
+      return enabled ? 'Environment variable "MCP_URL" is not set.' : undefined
+    })
+    const setSettings = vi.fn(async () => {})
+    const controller = new ChatController(backend(), {
+      setSettings,
+      mcp: {
+        clients: [],
+        paths: [],
+        warnings: [],
+        list: async () => [
+          { name: 'creds', transport: 'stdio', target: 'creds', state, canRetry: false, error: 'Missing environment' },
+        ],
+        setEnabled,
+        dispose: async () => undefined,
+      },
+    })
+    await controller.submit('/mcp')
+    expect(await controller.retryMcpServer('creds')).toBe(false)
+    expect(setEnabled).not.toHaveBeenCalled()
+    expect(await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)).toBe(true)
+    expect(setEnabled).toHaveBeenLastCalledWith('creds', false)
+    expect(setSettings).toHaveBeenLastCalledWith({ disabledMcpServers: ['creds'] })
+    expect(controller.getSnapshot().panel?.rows[0]?.control).toEqual({ kind: 'toggle', checked: false })
+    expect(await controller.retryMcpServer('creds')).toBe(false)
+    expect(await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)).toBe(true)
+    expect(setSettings).toHaveBeenLastCalledWith({ disabledMcpServers: [] })
+    expect(controller.getSnapshot().panel?.rows[0]?.badge?.text).toBe('failed')
   })
 })
