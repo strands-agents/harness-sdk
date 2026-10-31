@@ -384,6 +384,45 @@ describe('BackgroundTasks', () => {
     expect(persistedTasks(restored)).toBeUndefined()
   })
 
+  it('stops waiting for running tasks when the invocation is cancelled', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const work = tool({
+      name: 'work',
+      description: 'Perform deferred work.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'done'
+      },
+    })
+    const abort = tool({
+      name: 'abort',
+      description: 'Cancel the invocation.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        context!.agent.cancel()
+        return 'aborting'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } },
+        { type: 'toolUseBlock', name: 'abort', toolUseId: 'abort-use', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'unreachable' })
+    const agent = new Agent({ model, tools: [work, abort], backgroundTasks: {}, printer: false })
+
+    const result = await agent.invoke('Run work.')
+
+    expect(result.stopReason).toBe('cancelled')
+    expect(persistedTasks(agent)![0]!.status).toBe('working')
+    release()
+    await expect.poll(() => persistedTasks(agent)![0]!.status).toBe('completed')
+  })
+
   it('fails interrupted work restored from appState', async () => {
     const createdAt = '2026-08-27T12:00:00.000Z'
     const source = new Agent({ model: new MockMessageModel(), tools: [], printer: false })

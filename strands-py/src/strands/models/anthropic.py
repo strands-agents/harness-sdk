@@ -426,6 +426,27 @@ class AnthropicModel(Model):
 
         return False
 
+    def _auto_caching_unsupported(self) -> bool:
+        """Whether the default ``"auto"`` strategy must skip caching for this model.
+
+        ``"auto"`` defers to the model info: a model it says does not support prompt caching gets no
+        cache points. An explicit strategy caches regardless.
+        """
+        cache_config = self.config.get("cache_config")
+        if cache_config is None or cache_config.strategy != "auto":
+            return False
+
+        if self.model_info.capabilities.prompt_caching != "unsupported":
+            return False
+
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+        warnings.warn(
+            "cache_config is enabled but the model info says this model does not support prompt caching;"
+            " prompt caching is disabled",
+            stacklevel=1,
+        )
+        return True
+
     def _resolve_tools_cache(self) -> dict[str, Any] | None:
         """Return the Anthropic ``cache_control`` payload for tool definitions, if enabled.
 
@@ -434,9 +455,12 @@ class AnthropicModel(Model):
         """
         cache_config = self.config.get("cache_config")
         if cache_config is None or cache_config.tools_ttl is None:
-            return self._resolve_deprecated_cache_tools()
+            return None if self._auto_caching_unsupported() else self._resolve_deprecated_cache_tools()
 
         if cache_config.tools_ttl is False or cache_config.strategy not in ("auto", "anthropic"):
+            return None
+
+        if self._auto_caching_unsupported():
             return None
 
         tools_ttl = cache_config.tools_ttl
@@ -498,6 +522,9 @@ class AnthropicModel(Model):
                 " prompt caching is disabled",
                 stacklevel=1,
             )
+            return messages, None
+
+        if self._auto_caching_unsupported():
             return messages, None
 
         target_idx = next(
@@ -636,7 +663,11 @@ class AnthropicModel(Model):
             The API system value (string or text blocks), or None when no system prompt is given.
         """
         cache_config = self.config.get("cache_config")
-        if cache_config is None or cache_config.strategy not in ("auto", "anthropic"):
+        if (
+            cache_config is None
+            or cache_config.strategy not in ("auto", "anthropic")
+            or self._auto_caching_unsupported()
+        ):
             managed_ttl: str | None = None
             auto_inject = False
         else:
@@ -1177,6 +1208,7 @@ class AnthropicModel(Model):
             unsupported_mechanisms("anthropic", self.config["model_id"], structured_output_model),
             cast(dict[str, Any] | None, tool_choice),
             structured_output_model,
+            self.model_info,
         )[0]
         if mechanism == "native" and not _SDK_SUPPORTS_NATIVE_OUTPUT:
             warnings.warn(

@@ -8,6 +8,7 @@
 import type { z } from 'zod'
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ToolChoice } from '../tools/types.js'
+import type { ModelInfo } from './model-info.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
@@ -91,6 +92,7 @@ export const NATIVE_OUTPUT_REJECTED_MESSAGES = [
  * @param modelId - The model the request is sent to
  * @param toolChoice - The requested tool choice; forcing is only tried when it forces a tool
  * @param schema - The schema the response must produce
+ * @param modelInfo - What the SDK knows about the model; a known-unsupported mechanism is skipped without a request
  * @returns The mechanisms to try in order; never empty, since auto is always available
  *
  * @internal
@@ -99,9 +101,12 @@ export function structuredOutputMechanisms(
   provider: string,
   modelId: string,
   toolChoice: ToolChoice | undefined,
-  schema: z.ZodType
+  schema: z.ZodType,
+  modelInfo: ModelInfo = {}
 ): StructuredOutputMechanism[] {
-  const unsupported = unsupportedMechanisms(provider, modelId, schema)
+  const unsupported = new Set(unsupportedMechanisms(provider, modelId, schema))
+  if (modelInfo.capabilities?.forcedToolChoice === false) unsupported.add('forced')
+  if (modelInfo.capabilities?.nativeStructuredOutput === false) unsupported.add('native')
   const forcesTool = toolChoice !== undefined && ('any' in toolChoice || 'tool' in toolChoice)
   const feature = unsupported.has('native')
     ? undefined

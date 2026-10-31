@@ -3,12 +3,12 @@ import { Agent } from '../agent.js'
 import { AgentAsTool } from '../agent-as-tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
-import { createMockContext } from '../../__fixtures__/tool-helpers.js'
+import { createMockContext, createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { ToolValidationError } from '../../errors.js'
 import { BeforeModelCallEvent } from '../../hooks/events.js'
 import { createErrorResult, Tool, ToolStreamEvent } from '../../tools/tool.js'
 import { DELEGATION_DESCRIPTION_SUFFIX } from '../agent-as-tool.js'
-import { ToolResultBlock } from '../../types/messages.js'
+import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { SessionManager } from '../../session/session-manager.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { SnapshotStorage } from '../../session/storage.js'
@@ -147,6 +147,42 @@ describe('AgentAsTool', () => {
         input: { input: 'Hello agent' },
       })
       context.cancelSignal = controller.signal
+
+      const { result } = await collectGenerator(tool.stream(context))
+
+      expect(result).toEqual(createErrorResult("Agent 'test-agent' cancelled", 'tool-1'))
+    })
+
+    it('returns a success result when the wrapped agent ends via a deferred cancel (stop tool)', async () => {
+      const stop = createMockTool('stop', () => {
+        agent.cancel({ message: 'Answer is 42', afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('Answer is 42')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent: Agent = new Agent({ model, name: 'test-agent', tools: [stop], printer: false })
+      const tool = new AgentAsTool({ agent })
+      const context = createMockContext({ name: 'test-agent', toolUseId: 'tool-1', input: { input: 'Hello agent' } })
+
+      const { result } = await collectGenerator(tool.stream(context))
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('Answer is 42')] })
+      )
+    })
+
+    it('returns an error when the wrapped agent is cancelled immediately from a tool', async () => {
+      const abort = createMockTool('abort', () => {
+        agent.cancel()
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('aborting')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'abort', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent: Agent = new Agent({ model, name: 'test-agent', tools: [abort], printer: false })
+      const tool = new AgentAsTool({ agent })
+      const context = createMockContext({ name: 'test-agent', toolUseId: 'tool-1', input: { input: 'Hello agent' } })
 
       const { result } = await collectGenerator(tool.stream(context))
 

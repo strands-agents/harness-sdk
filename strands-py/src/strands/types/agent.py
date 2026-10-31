@@ -158,19 +158,20 @@ class Limits(TypedDict, total=False):
     it stops at whichever limit is reached first, its own or the request's.
 
     Auxiliary calls (summarization, routing, memory extraction, steering, HITL, goal judging,
-    web-fetch) add their tokens to the request's usage, but no limits apply to them. The same
-    holds for an agent that an extension point (a conversation manager, context or routing
-    strategy, or memory extractor) runs with the ``invocation_context`` it receives, unless the
-    extension point also passes ``limits``. Usage starts from zero on each top-level call; pass
-    ``result.invocation_context`` to a later call to continue on the same limits and usage.
+    web-fetch) and decision models asked with the request's ``invocation_context`` add their
+    tokens to the request's usage, but no limits apply to them. The same holds for an agent that
+    an extension point (a conversation manager, context or routing strategy, or memory extractor)
+    runs with the ``invocation_context`` it receives, unless the extension point also passes
+    ``limits``. Usage starts from zero on each top-level call; pass ``result.invocation_context``
+    to a later call to continue on the same limits and usage.
 
     Limits are checked before each turn, so tools requested by the previous turn finish first
     and ``agent.messages`` stays reinvokable. Each limit, when set, must be a positive ``int``;
     omit a field (or pass ``limits=None``) for no limit on that dimension.
 
     Priority when several are reached at once (highest first): ``turns``, ``total_tokens``,
-    ``output_tokens``, with ``stop_reason`` ``"limit_turns"``, ``"limit_total_tokens"``, or
-    ``"limit_output_tokens"``.
+    ``output_tokens``, ``structured_output_attempts``, with ``stop_reason`` ``"limit_turns"``,
+    ``"limit_total_tokens"``, ``"limit_output_tokens"``, or ``"limit_structured_output_attempts"``.
 
     Attributes:
         turns: Maximum number of turns. One turn is one model call plus any tool execution
@@ -181,11 +182,17 @@ class Limits(TypedDict, total=False):
         total_tokens: Maximum cumulative input + output tokens across every model call in the
             request. Each model call's input includes prior turns, so this compounds across the
             run and approximates total token spend. Soft limit, same caveat as ``output_tokens``.
+        structured_output_attempts: Maximum failed structured output attempts across the request.
+            A model response counts as one failed attempt when it calls the structured output tool
+            with invalid input, or doesn't return valid structured output while the tool is forced.
+            When omitted, retries are unbounded and a failed forced response raises
+            ``StructuredOutputException``.
     """
 
     turns: int
     output_tokens: int
     total_tokens: int
+    structured_output_attempts: int
 
 
 _LIMITS_KEYS = tuple(Limits.__annotations__)

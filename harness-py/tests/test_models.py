@@ -177,6 +177,7 @@ def test_default_effort_on_model_instance_does_not_warn(caplog):
         ("bedrock/us.anthropic.claude-sonnet-4-6", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/global.anthropic.claude-fable-5-1", ("additional_request_fields", "output_config", "effort")),
         ("bedrock/openai.gpt-5.6-sol", ("additional_request_fields", "reasoning", "effort")),
+        ("bedrock/us.openai.gpt-5.5", ("additional_request_fields", "reasoning", "effort")),
         ("bedrock/global.openai.gpt-6-astra", ("additional_request_fields", "reasoning", "effort")),
         ("bedrock/openai.gpt-oss-120b-1:0", ("additional_request_fields", "reasoning_effort")),
         ("bedrock/qwen.qwen3-32b-v1:0", ("additional_request_fields", "reasoning_effort")),
@@ -243,13 +244,52 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
     assert model.config["additional_request_fields"] == {"reasoning": {"effort": "max"}}
 
 
-@pytest.mark.parametrize("model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra"])
-def test_astra_on_bedrock_resolves_effort(model_id):
+@pytest.mark.parametrize(
+    "model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us.openai.gpt-6.1-sol"]
+)
+def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
+    for effort, level in [("auto", "high"), ("low", "low"), ("max", "max")]:
+        model = resolve(f"bedrock/{model_id}", effort=effort)
+        assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
+    assert "additional_request_fields" not in resolve(f"bedrock/{model_id}", effort="off").config
+    with pytest.raises(ValueError, match="not supported"):
+        resolve(f"bedrock/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize(
+    "model_id", ["openai.gpt-5.4", "us.openai.gpt-5.4", "openai.gpt-5.5", "us.openai.gpt-5.5", "global.openai.gpt-5.5"]
+)
+def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
+    # https://github.com/strands-agents/harness-sdk/issues/5191
+    for effort, level in [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
+        model = resolve(f"bedrock/{model_id}", effort=effort)
+        assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
+    for effort in ("minimal", "max"):
+        with pytest.raises(ValueError, match="not supported"):
+            resolve(f"bedrock/{model_id}", effort=effort)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "openai.gpt-5.6-cyber",
+        "us.openai.gpt-6-sol",
+        "us.openai.gpt-6.1-terra",
+        "openai.gpt-daybreak-blue-5.6-sol",
+        "us.openai.gpt-daybreak-blue-5.6-sol",
+    ],
+)
+def test_gpt_5_6_6_and_daybreak_on_bedrock_resolve_every_effort(model_id):
     for effort, level in [("auto", "high"), ("low", "low"), ("max", "max"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     with pytest.raises(ValueError, match="not supported"):
         resolve(f"bedrock/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize("model_id", ["bedrock/openai.gpt-5.4", "bedrock/us.openai.gpt-5.5"])
+def test_gpt_5_line_on_bedrock_reports_thinking(model_id):
+    assert supports_thinking(model_id) is True
 
 
 def test_gpt_oss_on_bedrock_uses_its_reasoning_field_and_levels():
@@ -459,6 +499,11 @@ def test_bedrock_mantle_web_search_with_effort_off():
 
 def test_bedrock_mantle_web_search_on_gpt_6():
     model = resolve("bedrock-mantle/openai.gpt-6-astra", effort="off", web_search=True)
+    assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
+
+
+def test_bedrock_mantle_web_search_on_daybreak_blue():
+    model = resolve("bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol", effort="off", web_search=True)
     assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
 
 

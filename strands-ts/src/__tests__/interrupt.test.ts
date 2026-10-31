@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { Interrupt, InterruptError, InterruptState, interruptFromAgent } from '../interrupt.js'
+import {
+  Interrupt,
+  InterruptError,
+  InterruptState,
+  interruptFromAgent,
+  type PendingToolExecution,
+} from '../interrupt.js'
 import { InterruptResponseContent } from '../types/interrupt.js'
+import { ToolResultBlock } from '../types/messages.js'
+import { SessionError } from '../errors.js'
+import { anyTrackingId } from '../__fixtures__/message-helpers.js'
+
+const pendingToolExecution: PendingToolExecution = {
+  assistantMessageData: {
+    role: 'assistant',
+    content: [
+      { toolUse: { name: 'tool', toolUseId: 't-0', input: {} } },
+      { toolUse: { name: 'tool', toolUseId: 't-1', input: {} } },
+    ],
+  },
+  completedToolResults: {
+    't-0': { toolResult: { toolUseId: 't-0', status: 'success', content: [] } },
+  },
+}
 
 describe('Interrupt', () => {
   it('constructs with all fields and supports response mutation', () => {
@@ -214,15 +236,7 @@ describe('InterruptState', () => {
       const original = new InterruptState()
       original.getOrCreateInterrupt('int-1', 'test')
       original.activate()
-      original.setPendingToolExecution({
-        assistantMessageData: {
-          role: 'assistant' as const,
-          content: [{ toolUse: { name: 'tool', toolUseId: 't-1', input: {} } }],
-        },
-        completedToolResults: {
-          't-0': { toolResult: { toolUseId: 't-0', status: 'success' as const, content: [] } },
-        },
-      })
+      original.setPendingToolExecution(pendingToolExecution)
 
       const serialized = JSON.stringify(original)
       const deserialized = InterruptState.fromJSON(JSON.parse(serialized))
@@ -247,6 +261,103 @@ describe('InterruptState', () => {
         },
         resumeResponses: [{ interruptResponse: { interruptId: 'int-1', response: 'yes' } }],
       })
+    })
+
+    it('drops a pending tool execution when the interrupt state is not activated', () => {
+      const state = InterruptState.fromJSON({ interrupts: {}, activated: false, pendingToolExecution })
+
+      expect(state.pendingToolExecution).toBeUndefined()
+    })
+
+    it.each([
+      {
+        description: 'a non-assistant message',
+        pending: {
+          ...pendingToolExecution,
+          assistantMessageData: { ...pendingToolExecution.assistantMessageData, role: 'user' },
+        },
+        message: 'field=<pendingToolExecution.assistantMessageData.role>',
+      },
+      {
+        description: 'an unparseable message',
+        pending: { ...pendingToolExecution, assistantMessageData: { role: 'assistant', content: 'not-a-list' } },
+        message: 'field=<pendingToolExecution.assistantMessageData>',
+      },
+      {
+        description: 'a message without tool uses',
+        pending: {
+          assistantMessageData: { role: 'assistant', content: [{ text: 'hello' }] },
+          completedToolResults: {},
+        },
+        message: 'field=<pendingToolExecution.assistantMessageData.content>',
+      },
+      {
+        description: 'non-object completed tool results',
+        pending: { ...pendingToolExecution, completedToolResults: ['t-0'] },
+        message: 'field=<pendingToolExecution.completedToolResults>',
+      },
+      {
+        description: 'a completed tool result for an unknown tool use',
+        pending: {
+          ...pendingToolExecution,
+          completedToolResults: { 't-9': { toolResult: { toolUseId: 't-9', status: 'success', content: [] } } },
+        },
+        message: 'field=<pendingToolExecution.completedToolResults>, tool_use_id=<t-9>',
+      },
+      {
+        description: 'an unparseable completed tool result',
+        pending: { ...pendingToolExecution, completedToolResults: { 't-0': { toolResult: { toolUseId: 't-0' } } } },
+        message: 'field=<pendingToolExecution.completedToolResults>, tool_use_id=<t-0>',
+      },
+    ])('throws SessionError when the restored pending tool execution has $description', ({ pending, message }) => {
+      const restore = (): InterruptState =>
+        InterruptState.fromJSON({
+          interrupts: {},
+          activated: true,
+          pendingToolExecution: pending as unknown as PendingToolExecution,
+        })
+
+      expect(restore).toThrow(SessionError)
+      expect(restore).toThrow(message)
+    })
+
+    it('keeps the parse error as the cause when the restored pending assistant message is unparseable', () => {
+      const restore = (): InterruptState =>
+        InterruptState.fromJSON({
+          interrupts: {},
+          activated: true,
+          pendingToolExecution: {
+            assistantMessageData: { role: 'assistant', content: 'not-a-list' },
+            completedToolResults: {},
+          } as unknown as PendingToolExecution,
+        })
+
+      expect(restore).toThrow(expect.objectContaining({ name: 'SessionError', cause: expect.any(TypeError) }))
+    })
+  })
+
+  describe('getPendingExecution', () => {
+    it('returns undefined when the interrupt state is not activated', () => {
+      const state = new InterruptState()
+      state.setPendingToolExecution(pendingToolExecution)
+
+      expect(state.getPendingExecution()).toBeUndefined()
+    })
+
+    it('returns the reconstructed pending execution when the interrupt state is activated', () => {
+      const state = new InterruptState()
+      state.activate()
+      state.setPendingToolExecution(pendingToolExecution)
+
+      const pending = state.getPendingExecution()
+
+      expect(pending?.assistantMessage.toJSON()).toEqual({
+        ...pendingToolExecution.assistantMessageData,
+        trackingId: anyTrackingId,
+      })
+      expect(pending?.completedToolResults).toEqual(
+        new Map([['t-0', ToolResultBlock.fromJSON(pendingToolExecution.completedToolResults['t-0']!)]])
+      )
     })
   })
 })

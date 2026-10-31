@@ -78,6 +78,7 @@ _WEB_FETCH_MODELS = {
 _CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
 
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
+_BEDROCK_GPT_PREFIXES = ("openai.gpt-5.", "openai.gpt-daybreak-", "openai.gpt-6-", "openai.gpt-6.")
 
 # Small regional summarizer per Bedrock model family, keyed by family prefix. These ids are served
 # regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
@@ -93,6 +94,9 @@ _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
 _ANTHROPIC_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _OPENAI_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "none")
 _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
+# Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
+_BEDROCK_GPT_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
+_BEDROCK_GPT_NO_NONE_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _BEDROCK_GPT_OSS_LEVELS = ("low", "medium", "high")
 _BEDROCK_QWEN_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
@@ -165,7 +169,11 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
         return _ANTHROPIC_LEVELS if _claude_thinking_mode(family) is not None else ()
     if family.startswith("amazon.nova-2"):
         return _BEDROCK_NOVA_LEVELS
-    if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
+    if family.startswith(("openai.gpt-5.4", "openai.gpt-5.5")):
+        return _BEDROCK_GPT_NO_MAX_LEVELS
+    if family.startswith(("openai.gpt-6-astra", "openai.gpt-6.1-sol")):
+        return _BEDROCK_GPT_NO_NONE_LEVELS
+    if family.startswith(_BEDROCK_GPT_PREFIXES):
         return _BEDROCK_GPT_LEVELS
     if family.startswith("openai.gpt-oss-"):
         return _BEDROCK_GPT_OSS_LEVELS
@@ -194,7 +202,7 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
         return _claude_thinking_block(family, effort, _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS)
     if family.startswith("amazon.nova-2"):
         return {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}}
-    if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
+    if family.startswith(_BEDROCK_GPT_PREFIXES):
         return {"reasoning": {"effort": effort}}
     if family.startswith("openai.gpt-oss-"):
         return {"reasoning_effort": effort}
@@ -306,7 +314,7 @@ class Provider(NamedTuple):
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
-    bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no mechanism.
+    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock Converse has no mechanism.
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock and Anthropic direct (the harness sets cache points and tool caching)
@@ -389,8 +397,8 @@ def _has_web_search(provider_name: str, name: str) -> bool:
     provider = _PROVIDERS.get(provider_name)
     if provider is None or not provider.web_search:
         return False
-    # Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-    return provider_name != "bedrock-mantle" or name.startswith(("openai.gpt-5.", "openai.gpt-6-", "openai.gpt-6."))
+    # Only Mantle's GPT-5, GPT-6, and Daybreak models serve Bedrock Web Search; others reject the tool (HTTP 400).
+    return provider_name != "bedrock-mantle" or name.startswith(_BEDROCK_GPT_PREFIXES)
 
 
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:

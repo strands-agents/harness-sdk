@@ -53,7 +53,7 @@ class ToolRegistry:
                 1. Local file path to a module based tool: `./path/to/module/tool.py`
                 2. Module import path
 
-                    2.1. Path to a module based tool: `strands_tools.file_read`
+                    2.1. Path to a module based tool: `my_package.my_tool`
                     2.2. Path to a module with multiple AgentTool instances (@tool decorated):
                         `tests.fixtures.say_tool`
                     2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
@@ -311,6 +311,17 @@ class ToolRegistry:
             self.dynamic_tools[tool_name] = new_tool
         elif tool_name in self.dynamic_tools:
             del self.dynamic_tools[tool_name]
+
+    def remove(self, tool_name: str) -> None:
+        """Remove a tool by its registered name, including any dynamic registration.
+
+        Does nothing if the tool does not exist.
+
+        Args:
+            tool_name: Name of the tool to remove.
+        """
+        self.registry.pop(tool_name, None)
+        self.dynamic_tools.pop(tool_name, None)
 
     def get_tools_dirs(self) -> list[Path]:
         """Get all tool directory paths.

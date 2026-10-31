@@ -501,6 +501,9 @@ class Swarm(MultiAgentBase):
             finally:
                 # On stream close this finally runs before _execute_swarm's teardown, so roll back here too.
                 self._rollback_uncommitted_turn()
+                # Before AfterMultiAgentInvocationEvent, so session managers persist the cleared state.
+                if self.state.completion_status == Status.FAILED:
+                    self._clear_interrupts()
                 self.state.execution_time = self._commit_active_interval(self.state.execution_time)
                 await self.hooks.invoke_callbacks_async(
                     AfterMultiAgentInvocationEvent(
@@ -1182,6 +1185,12 @@ class Swarm(MultiAgentBase):
 
         self._resume_from_session = True
         self._from_dict(payload)
+
+    def _clear_interrupts(self) -> None:
+        """Drop pending interrupts of this swarm and of its node agents."""
+        for node in self.nodes.values():
+            node.executor._interrupt_state.deactivate()
+        super()._clear_interrupts()
 
     def _reset_for_fresh_run(self) -> None:
         """Discard restored state so the next invocation runs the task from the initial node."""

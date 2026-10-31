@@ -74,7 +74,7 @@ async function _createTurndownService(): Promise<TurndownService> {
   })
 
   // Replace data: URI images with alt text only (they can be enormous blobs).
-  // Strip javascript: src values entirely.
+  // Strip javascript: and vbscript: src values entirely.
   td.addRule('safeImage', {
     filter: 'img',
     replacement: (_content, node) => {
@@ -84,7 +84,7 @@ async function _createTurndownService(): Promise<TurndownService> {
       if (!src) return alt
       try {
         const scheme = new URL(_stripInvisible(src)).protocol
-        if (scheme === 'javascript:') return ''
+        if (scheme === 'javascript:' || scheme === 'vbscript:') return ''
         if (scheme === 'data:') return alt
       } catch {
         // not an absolute URL — pass through as-is
@@ -93,13 +93,14 @@ async function _createTurndownService(): Promise<TurndownService> {
     },
   })
 
-  // Strip javascript: hrefs — render link text only.
+  // Render only the link text for javascript:, vbscript:, and data: hrefs.
   td.addRule('safeLink', {
     filter: (node) => {
       if (node.nodeName !== 'A') return false
       const href = ((node as HTMLAnchorElement).getAttribute('href') ?? '').trim()
       try {
-        return new URL(_stripInvisible(href)).protocol === 'javascript:'
+        const scheme = new URL(_stripInvisible(href)).protocol
+        return scheme === 'javascript:' || scheme === 'vbscript:' || scheme === 'data:'
       } catch {
         return false
       }

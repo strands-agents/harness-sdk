@@ -51,17 +51,17 @@
     "prettier": "^3.9.10",
     "reading-time": "^1.5.0",
     "sanitize-html": "^2.18.1",
-    "satori": "^0.62.0",
+    "satori": "^0.63.2",
     "turndown": "^7.2.2",
     "turndown-plugin-gfm": "^1.0.2",
     "typedoc": "^0.28.20",
     "typescript": "^5.9.3",
-    "vite": "^8.3.4"
+    "vite": "^8.3.5"
   },
   "devDependencies": {
-    "@astrojs/markdown-remark": "^7.3.3",
-    "@astrojs/markdown-satteri": "^0.3.4",
-    "@astrojs/starlight": "^0.42.6",
+    "@astrojs/markdown-remark": "^7.3.4",
+    "@astrojs/markdown-satteri": "^0.4.5",
+    "@astrojs/starlight": "^0.42.7",
     "@octokit/rest": "^22.0.1",
     "@types/js-yaml": "^4.0.9",
     "@types/jsdom": "^30.0.0",
@@ -79,7 +79,7 @@
     "sitemapper": "^4.1.4",
     "tsx": "^4.21.0",
     "typedoc": "^0.28.20",
-    "typedoc-plugin-markdown": "^4.14.0",
+    "typedoc-plugin-markdown": "^4.14.1",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",
     "vitest": "^4.1.6"

@@ -1,11 +1,11 @@
 ---
 title: Collect the Strands CLI's traces and metrics
-description: Add the Strands CLI's own spans and metrics to the records file from Getting started, beside the box's decisions, and read both together with otel-tui or jq.
+description: Add the Strands CLI's own spans and metrics to the records file from the quickstart, beside the box's decisions, and read both together with otel-tui or jq.
 sidebar:
   label: "Collect CLI traces and metrics"
 ---
 
-The box from [Getting started](../getting-started.md) writes its decisions to one
+The box from [the quickstart](../quickstart.md) writes its decisions to one
 records file. The agent can write to the same file: its own spans, which show what the
 model loop did, and its own metrics, which count tokens and cycles. Then one file
 answers both "what did the agent do?" and "what did the box allow?".
@@ -23,7 +23,7 @@ Pin the release you download.
 
 ## Before you start
 
-- The box from [Getting started](../getting-started.md) under `~/box-tutorial`, with
+- The box from [the quickstart](../quickstart.md) under `~/box-tutorial`, with
   your Amazon Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`. Run every command in this
   guide from `~/box-tutorial`.
 - `jq`, for the records file.
@@ -222,8 +222,8 @@ to whatever you set `OTEL_SERVICE_NAME` to.
 | Spans but no `resourceMetrics` | Either the metric block is missing from the end of `proxy-preload.mjs`, or the run was shorter than `OTEL_METRIC_EXPORT_INTERVAL`. The reader sends on that interval and once more at exit, and the exit send can be lost. Lower the interval, or hold the chat open longer. |
 
 For errors from the box itself, see
-[If something goes wrong](../getting-started.md#if-something-goes-wrong) in Getting
-started.
+[If something goes wrong](../quickstart.md#if-something-goes-wrong) in the
+quickstart.
 
 ## Next steps
 

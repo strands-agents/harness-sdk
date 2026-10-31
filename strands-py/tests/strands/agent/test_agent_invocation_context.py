@@ -1,6 +1,7 @@
 """Tests for request-wide limits and usage accounting via ``InvocationContext``."""
 
 import pytest
+from pydantic import BaseModel
 
 from strands import Agent, tool
 from strands.agent.conversation_manager import NullConversationManager
@@ -183,6 +184,27 @@ async def test_invoke_async_stops_nested_invoke_on_its_own_tighter_limit_and_cou
     assert result.stop_reason == "limit_turns"
     assert model.index == 1
     assert enclosing.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_invoke_async_counts_nested_invoke_structured_output_failures_toward_request():
+    class Answer(BaseModel):
+        value: int
+
+    model = MockedModelProvider([_tool_use(Answer.__name__, "tu-1"), _tool_use(Answer.__name__, "tu-2")])
+    agent = Agent(model=model, callback_handler=None)
+    request = _create_invocation_context({"structured_output_attempts": 1})
+
+    result = await agent.invoke_async(
+        "go",
+        structured_output_model=Answer,
+        invocation_context=request,
+        limits={"structured_output_attempts": 5},
+    )
+
+    assert result.stop_reason == "limit_structured_output_attempts"
+    assert model.index == 1
+    assert request._structured_output_failures == 1
 
 
 @pytest.mark.asyncio

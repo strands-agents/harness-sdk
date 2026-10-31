@@ -213,6 +213,7 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: customModelId })
       expect(provider.getConfig()).toStrictEqual({
         modelId: customModelId,
+        maxTokens: 8192,
         contextWindowLimit: 200_000,
       })
     })
@@ -368,6 +369,7 @@ describe('BedrockModel', () => {
       expect(config).toStrictEqual({
         modelId: 'global.anthropic.claude-sonnet-4-6',
         temperature: 0.5,
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -379,6 +381,7 @@ describe('BedrockModel', () => {
       })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 200_000,
       })
     })
@@ -387,6 +390,7 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -395,6 +399,7 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'us.anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
     })
@@ -403,8 +408,18 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel()
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'global.anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 1_000_000,
       })
+    })
+
+    it('auto-populates contextWindowLimit from the modelInfo override over the shared value', () => {
+      const provider = new BedrockModel({
+        modelId: 'anthropic.claude-sonnet-4-6',
+        modelInfo: { limits: { contextWindow: 500_000 } },
+      })
+      expect(provider.getConfig().contextWindowLimit).toBe(500_000)
+      expect(provider.modelInfo.limits?.contextWindow).toBe(500_000)
     })
 
     it('does not override explicit contextWindowLimit', () => {
@@ -414,6 +429,7 @@ describe('BedrockModel', () => {
       })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'anthropic.claude-sonnet-4-6',
+        maxTokens: 128_000,
         contextWindowLimit: 100_000,
       })
     })
@@ -422,6 +438,177 @@ describe('BedrockModel', () => {
       const provider = new BedrockModel({ modelId: 'unknown.model-v1:0' })
       expect(provider.getConfig()).toStrictEqual({
         modelId: 'unknown.model-v1:0',
+      })
+    })
+  })
+
+  describe('info', () => {
+    it('reads cache points for Claude model ids from the shared model info', () => {
+      const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it('leaves caching unknown for other model ids', () => {
+      const provider = new BedrockModel({ modelId: 'amazon.nova-pro-v1:0' })
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+    })
+
+    it.each([
+      'anthropic.claude-future-9',
+      'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
+      'US.ANTHROPIC.CLAUDE-SONNET-4-6',
+    ])('auto-caches an unlisted Claude id by name: %s', async (modelId) => {
+      const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('does not auto-cache an unlisted id that is not Claude', async () => {
+      const provider = new BedrockModel({
+        modelId: 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc',
+        cacheConfig: { strategy: 'auto' },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    it('injects auto cache points on a model the info override says takes them', async () => {
+      const provider = new BedrockModel({
+        modelId: 'amazon.nova-pro-v1:0',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([
+        { text: 'Be helpful' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('skips auto cache points on a Claude model the info override marks unsupported', async () => {
+      const provider = new BedrockModel({
+        modelId: 'us.anthropic.claude-sonnet-4-6',
+        cacheConfig: { strategy: 'auto' },
+        modelInfo: { capabilities: { promptCaching: 'unsupported' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+      expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+    })
+
+    describe('maxTokens default', () => {
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const sentInferenceConfig = (): unknown => vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].inferenceConfig
+
+      it.each([
+        ['a listed model id', { modelId: 'anthropic.claude-sonnet-4-6' }, 128_000],
+        ['a cross-region model id', { modelId: 'us.anthropic.claude-sonnet-4-6' }, 128_000],
+        ['the SDK default model', {}, 128_000],
+        ['an older Claude model', { modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0' }, 8192],
+        [
+          'an inference profile ARN',
+          { modelId: 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6' },
+          128_000,
+        ],
+      ])('defaults maxTokens to the model info output ceiling for %s', (_, config, maxTokens) => {
+        const provider = new BedrockModel(config)
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens })
+      })
+
+      it('defaults maxTokens from the modelInfo override', () => {
+        const provider = new BedrockModel({ modelId: 'm1', modelInfo: { limits: { maxOutputTokens: 2_000 } } })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 2_000 })
+      })
+
+      it('leaves maxTokens unset for a model the shared model info does not list', () => {
+        const provider = new BedrockModel({ modelId: 'unknown.model-v1:0' })
+
+        collectIterator(provider.stream(messages))
+
+        expect(provider.modelInfo.limits?.maxOutputTokens).toBeUndefined()
+        expect(sentInferenceConfig()).toBeUndefined()
+      })
+
+      it('sends an explicit maxTokens over the model info output ceiling', () => {
+        const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6', maxTokens: 1 })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 1 })
+      })
+
+      it('re-resolves the default maxTokens when modelId changes', () => {
+        const provider = new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
+        provider.updateConfig({ modelId: 'anthropic.claude-haiku-4-5-20251001-v1:0' })
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 64_000 })
+      })
+
+      it.each([
+        ['a 200k-window model', { modelId: 'anthropic.claude-sonnet-4-5-20250929-v1:0' }],
+        [
+          'a user-set contextWindowLimit',
+          { modelId: 'anthropic.claude-sonnet-4-5-20250929-v1:0', contextWindowLimit: 100_000 },
+        ],
+      ])('does not cap the default maxTokens by the context window for %s', (_, config) => {
+        const provider = new BedrockModel(config)
+
+        collectIterator(provider.stream(messages))
+
+        expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 64_000 })
+      })
+
+      it('surfaces the default maxTokens in getConfig', () => {
+        expect(new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' }).getConfig().maxTokens).toBe(128_000)
+      })
+
+      it('warns once when maxTokens is defaulted', () => {
+        new BedrockModel({ modelId: 'anthropic.claude-sonnet-4-6' })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('max_tokens=<128000> | using default maxTokens')
+        )
+      })
+
+      it.each([
+        ['maxTokens is explicit', { modelId: 'anthropic.claude-sonnet-4-6', maxTokens: 1 }],
+        [
+          'it is pinned through modelInfo',
+          { modelId: 'anthropic.claude-sonnet-4-6', modelInfo: { limits: { maxOutputTokens: 2_000 } } },
+        ],
+        ['the model is unknown', { modelId: 'unknown.model-v1:0' }],
+      ])('does not warn about maxTokens when %s', (_, config) => {
+        new BedrockModel(config)
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('using default maxTokens')
+        )
       })
     })
   })
@@ -499,7 +686,7 @@ describe('BedrockModel', () => {
     it('formats the request to bedrock properly', async () => {
       const provider = new BedrockModel({
         region: 'us-west-2',
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         maxTokens: 1024,
         temperature: 0.7,
         topP: 0.9,
@@ -534,7 +721,7 @@ describe('BedrockModel', () => {
         MyExtraArg: 'ExtraArg',
         additionalModelRequestFields: ['World!'],
         additionalModelResponseFieldPaths: ['Hello!'],
-        modelId: 'anthropic.claude-test-model',
+        modelId: 'anthropic.claude-sonnet-4-6',
         messages: [
           {
             role: 'user',
@@ -624,6 +811,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             content: [
@@ -927,6 +1115,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -963,6 +1152,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'assistant',
@@ -1006,6 +1196,7 @@ describe('BedrockModel', () => {
       { modelId: 'us.amazon.nova-pro-v1:0', expReasoning: [REDACTED_REASONING] },
       { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', expReasoning: [REDACTED_REASONING] },
       { modelId: 'openai.gpt-5.5', expReasoning: [REDACTED_REASONING] },
+      { modelId: 'openai.gpt-daybreak-blue-5.6-sol', expReasoning: [REDACTED_REASONING] },
       { modelId: 'qwen.qwen3-coder-480b-a35b-v1:0', expReasoning: [REDACTED_REASONING] },
       // DeepSeek rejects reasoning content altogether.
       { modelId: 'us.deepseek.r1-v1:0', expReasoning: [] },
@@ -1044,6 +1235,7 @@ describe('BedrockModel', () => {
 
       // Verify ConverseStreamCommand was called with properly formatted request
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -1069,6 +1261,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -1095,6 +1288,7 @@ describe('BedrockModel', () => {
       await collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         messages: [
           {
             role: 'user',
@@ -1582,6 +1776,28 @@ describe('BedrockModel', () => {
         await collectIterator(
           provider.stream(messages, { ...structuredOutputOptions, structuredOutputSchema: recordSchema })
         )
+
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
+      })
+
+      it('starts at native output for a model the shared model info says cannot be forced', async () => {
+        const mockSend = mockRejections()
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(1)
+        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+      })
+
+      it('skips native output when the info override says the model lacks it', async () => {
+        mockRejections(forcedRejection)
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          modelInfo: { capabilities: { nativeStructuredOutput: false } },
+        })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
 
         expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
       })
@@ -2241,6 +2457,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2265,6 +2482,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2290,6 +2508,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2323,6 +2542,7 @@ describe('BedrockModel', () => {
 
       // Verify array is used as-is
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2352,6 +2572,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -2937,6 +3158,18 @@ describe('BedrockModel', () => {
         expect(cachePoints()).toStrictEqual([undefined, undefined])
       })
 
+      it('warns through warnOnce when auto finds no caching support', async () => {
+        const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: {} })
+
+        await collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(cachePoints()).toStrictEqual([undefined, undefined])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('does not support automatic caching')
+        )
+      })
+
       it('applies the shared ttl to both sections', async () => {
         // Bedrock requires checkpoint TTLs to be non-increasing across toolConfig then messages, which
         // equal values satisfy.
@@ -3430,7 +3663,6 @@ describe('BedrockModel', () => {
     })
 
     it('logs warning and disables caching for non-caching models', async () => {
-      const warnSpy = vi.spyOn(console, 'warn')
       const provider = new BedrockModel({
         modelId: 'amazon.titan-text-express-v1',
         cacheConfig: { strategy: 'auto' },
@@ -3443,7 +3675,10 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       // Verify warning was logged
-      expect(warnSpy).toHaveBeenCalled()
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('does not support automatic caching')
+      )
 
       // Verify no cache points were added
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
@@ -3456,8 +3691,6 @@ describe('BedrockModel', () => {
         ],
         system: [{ text: 'You are a helpful assistant' }],
       })
-
-      warnSpy.mockRestore()
     })
 
     it('enables caching with anthropic strategy for application inference profiles', async () => {
@@ -3490,6 +3723,7 @@ describe('BedrockModel', () => {
 
       // Empty array should not set system field
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3518,6 +3752,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3559,6 +3794,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3599,6 +3835,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3637,6 +3874,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3804,6 +4042,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -3845,6 +4084,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages))
 
       expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
         modelId: 'global.anthropic.claude-sonnet-4-6',
         messages: [
           {
@@ -4627,6 +4867,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 128_000 },
           messages: [
             {
               content: [
@@ -4666,6 +4907,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 128_000 },
           messages: [
             {
               content: [
@@ -4707,6 +4949,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+          inferenceConfig: { maxTokens: 8192 },
           messages: [
             {
               content: [

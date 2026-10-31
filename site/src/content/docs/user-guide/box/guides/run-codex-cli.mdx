@@ -10,7 +10,7 @@ this guide the project stays out of Codex's own reach, so its shell tool is its 
 to a project file. Each command it runs goes to Strands Shell, the box's own shell,
 where the policy decides the command and every file it reads, writes, or deletes. By
 the end you have Codex working on the project from
-[Getting started](../getting-started.md), and you have watched the policy permit three
+[the quickstart](../quickstart.md), and you have watched the policy permit three
 tasks and refuse two, with the refusal text Codex quoted back.
 
 The files are in
@@ -24,7 +24,7 @@ build you install (`./box-core/box --version`).
 
 ## Before you start
 
-- The box from [Getting started](../getting-started.md) under `~/box-tutorial`: Box in
+- The box from [the quickstart](../quickstart.md) under `~/box-tutorial`: Box in
   `box-core`, the project in `my-project`, and your Amazon Bedrock API key in
   `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. The key needs access to
   `openai.gpt-5.6-terra` on Bedrock. Run every command in this guide from
@@ -49,7 +49,7 @@ build you install (`./box-core/box --version`).
 
 ## Step 1: Copy the example
 
-Clone the Box repository, unless `box-src` is already there from Getting started, and
+Clone the Box repository, unless `box-src` is already there from the quickstart, and
 copy the example directory to `~/box-tutorial/codex`:
 
 ```bash
@@ -187,7 +187,7 @@ project stays out of `read` and `write`
 
 The complete file is
 [`policy.dw`](https://github.com/strands-agents/box/blob/main/examples/codex-cli/policy.dw)
-in the example directory. It keeps the rules from Getting started, with
+in the example directory. It keeps the rules from the quickstart, with
 `bedrock-mantle.us-west-2.api.aws` as the model host, adds `project_write` for writes
 in the project, and adds four `forbid` rules. The tasks below exercise two of them, and
 each carries an `@id` and a `@description` that the denial text quotes:

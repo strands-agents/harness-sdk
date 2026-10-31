@@ -11,6 +11,7 @@ import pydantic
 import pytest
 
 import strands
+from strands.models import ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.tools import convert_pydantic_to_tool_spec
@@ -1714,6 +1715,38 @@ class TestCountTokens:
         assert result >= 0
 
 
+def test_model_info_reads_cache_points_from_the_shared_model_info(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
+
+
+def test_model_info_exposes_the_output_ceiling_from_the_shared_model_info(anthropic_client):
+    """``limits.max_output_tokens`` is readable even though ``max_tokens`` stays a required config key."""
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
+    assert model.model_info.limits.max_output_tokens == 128_000
+
+    model.update_config(model_id="claude-opus-4-1")
+
+    assert model.model_info.limits.max_output_tokens == 32_000
+
+
+def test_model_info_override_wins_over_the_shared_output_ceiling(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(
+        model_id="claude-sonnet-4-6",
+        max_tokens=1,
+        model_info=ModelInfo(limits=ModelLimits(max_output_tokens=8_000)),
+    )
+
+    assert model.model_info.limits.max_output_tokens == 8_000
+
+
 @pytest.mark.filterwarnings("ignore:cache_tools is deprecated:DeprecationWarning")
 class TestPromptCaching:
     """Prompt caching via ``cache_config`` / ``cache_tools``.
@@ -2284,6 +2317,43 @@ class TestPromptCaching:
             request = model.format_request(messages)
 
         assert self._breakpoints(request) == []
+
+    def test_auto_is_off_when_the_model_info_override_says_caching_is_unsupported(self, model, messages, tool_specs):
+        model.update_config(
+            cache_config=CacheConfig(ttl="1h"),
+            model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="unsupported")),
+        )
+
+        with pytest.warns(UserWarning, match="does not support prompt caching"):
+            request = model.format_request(messages, tool_specs)
+
+        assert self._breakpoints(request) == []
+
+    def test_auto_is_off_for_the_deprecated_cache_tools_when_the_override_says_caching_is_unsupported(
+        self, model, messages, tool_specs
+    ):
+        with pytest.warns(DeprecationWarning):
+            model.update_config(
+                cache_tools="default",
+                cache_config=CacheConfig(strategy="auto"),
+                model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="unsupported")),
+            )
+
+        with pytest.warns(UserWarning, match="does not support prompt caching"):
+            request = model.format_request(messages, tool_specs)
+
+        assert "cache_control" not in request["tools"][-1]
+        assert self._breakpoints(request) == []
+
+    def test_caches_regardless_of_the_override_when_the_anthropic_strategy_is_explicit(
+        self, model, messages, tool_specs
+    ):
+        model.update_config(
+            cache_config=CacheConfig(strategy="anthropic", ttl="1h"),
+            model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="unsupported")),
+        )
+
+        assert self._breakpoints(model.format_request(messages, tool_specs)) != []
 
     def test_manual_cache_point_ttl_is_honored(self, model):
         """A hand-placed cache point carries its own TTL; ``cache_config`` need not be set."""

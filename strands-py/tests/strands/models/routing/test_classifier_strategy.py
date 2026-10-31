@@ -10,7 +10,7 @@ import pytest
 
 from strands import Agent
 from strands.agent.invocation_context import _create_invocation_context
-from strands.models import ClassifierStrategy, ModelRouter, RoutingAttempt, RoutingCandidate
+from strands.models import ClassifierStrategy, ModelInfo, ModelRouter, RoutingAttempt, RoutingCandidate
 from strands.models.routing.classifier_strategy import (
     _CLASSIFICATION_OMISSION_MARKER,
     _DEFAULT_MESSAGE_CHARACTER_LIMIT,
@@ -61,6 +61,11 @@ class _ClassifierModel(MockedModelProvider):
 class _ConfigGuardModel(MockedModelProvider):
     def get_config(self):
         raise AssertionError("candidate configuration must not be read")
+
+    @property
+    def model_info(self):
+        # The router's stateful check resolves model_info through get_config(); the guard is for the classifier.
+        return ModelInfo()
 
 
 def _context(router: ModelRouter, messages=None, attempts=()) -> RoutingContext:

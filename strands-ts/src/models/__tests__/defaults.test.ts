@@ -47,6 +47,7 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('chat-latest')).toBe(272_000)
     expect(getContextWindowLimit('gpt-6-astra')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6.1-sol')).toBe(1_050_000)
+    expect(getContextWindowLimit('gpt-6.1-terra')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6-luna')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-5.4')).toBe(1_050_000)
@@ -95,15 +96,19 @@ describe('getContextWindowLimit', () => {
   it('resolves Bedrock GPT ids, which are not derivable from the OpenAI-hosted rows', () => {
     expect(getContextWindowLimit('openai.gpt-6-astra')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-6.1-sol')).toBe(1_000_000)
+    expect(getContextWindowLimit('openai.gpt-6.1-terra')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-6-luna')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.6-terra')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.6-luna')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.6-cyber')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-daybreak-blue-5.6-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.5')).toBe(1_050_000)
     expect(getContextWindowLimit('openai.gpt-5.4')).toBe(1_050_000)
     expect(getContextWindowLimit('us.openai.gpt-5.5')).toBe(1_050_000)
     expect(getContextWindowLimit('global.openai.gpt-6.1-sol')).toBe(1_000_000)
+    expect(getContextWindowLimit('us.openai.gpt-6.1-terra')).toBe(1_050_000)
     expect(getContextWindowLimit('in.openai.gpt-5.6-luna')).toBe(1_050_000)
   })
 
@@ -112,8 +117,11 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('global.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
   })
 
-  it('does not strip unknown prefixes', () => {
-    expect(getContextWindowLimit('custom.gpt-5.4')).toBeUndefined()
+  it('strips leading segments one at a time, like the Python SDK, so unknown prefixes and ARNs resolve', () => {
+    expect(getContextWindowLimit('custom.gpt-5.4')).toBe(getContextWindowLimit('gpt-5.4'))
+    expect(
+      getContextWindowLimit('arn:aws:bedrock:us-west-2:123:inference-profile/us.anthropic.claude-sonnet-4-6')
+    ).toBe(1_000_000)
   })
 
   it('returns undefined for unknown model IDs', () => {

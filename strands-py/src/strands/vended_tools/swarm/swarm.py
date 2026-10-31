@@ -12,10 +12,9 @@ from __future__ import annotations
 import logging
 import weakref
 from collections.abc import AsyncGenerator, Mapping
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from ...interrupt import InterruptException
 from ...multiagent._agent_tool_streamer import (
     _AgentToolStreamer,
     _ChildMultiAgentAdapter,
@@ -170,6 +169,7 @@ def make_swarm(
             interrupt_state=getattr(tool_context.agent, "_interrupt_state", None),
             tool_use_id=tool_context.tool_use["toolUseId"],
             namespace="v1:swarm",
+            raise_unfinished=True,
         )
         build = builder or _default_builder(tool_context.agent)
         specs = _resolve_specs(
@@ -190,8 +190,7 @@ def make_swarm(
                 child = build(spec)
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if tool_name in _EXCLUDED_TOOLS or child_tool in _SWARM_TOOLS:
-                        del child.tool_registry.registry[tool_name]
-                        child.tool_registry.dynamic_tools.pop(tool_name, None)
+                        child.tool_registry.remove(tool_name)
                 child_agents[spec.name] = child
         except Exception as error:
             if not tool_streamer.is_resuming():
@@ -199,8 +198,8 @@ def make_swarm(
             logger.warning(
                 "tool_use_id=<%s> | failed to rebuild interrupted swarm: %s", tool_context.tool_use["toolUseId"], error
             )
+            # Always raises: a missing child leaves the streamer unfinished.
             tool_streamer.resume(_SWARM_ADAPTER, None, _UNAVAILABLE_MESSAGE)
-            _raise_unfinished(tool_streamer)
 
         sdk_swarm = Swarm(
             id=f"v1:swarm:{quote(tool_context.tool_use['toolUseId'], safe='')}",
@@ -208,12 +207,8 @@ def make_swarm(
             entry_point=child_agents[entry_point] if entry_point is not None else None,
             **swarm_limits,
         )
-        swarm_input: MultiAgentInput = task
-        if tool_streamer.is_resuming():
-            resumed = tool_streamer.resume(_SWARM_ADAPTER, sdk_swarm, _UNAVAILABLE_MESSAGE)
-            if resumed is None:
-                _raise_unfinished(tool_streamer)
-            swarm_input = resumed
+        resumed = tool_streamer.resume(_SWARM_ADAPTER, sdk_swarm, _UNAVAILABLE_MESSAGE)
+        swarm_input: MultiAgentInput = task if resumed is None else resumed
 
         logger.info("task=<%s>, agents=<%d> | starting swarm", task[:120], len(child_agents))
         # Drop request_state so a child's stop can't halt the parent.
@@ -223,8 +218,6 @@ def make_swarm(
         )
         async for event in tool_streamer.stream(_SWARM_ADAPTER, sdk_swarm, source):
             yield event
-        if tool_streamer.error is not None or tool_streamer.interrupts is not None:
-            _raise_unfinished(tool_streamer)
         yield str(tool_streamer.result)
 
     _SWARM_TOOLS.add(swarm_tool)
@@ -232,14 +225,6 @@ def make_swarm(
 
 
 # ---- Internals ----
-
-
-def _raise_unfinished(tool_streamer: _AgentToolStreamer) -> NoReturn:
-    """Raise an unfinished streamer terminal state."""
-    if tool_streamer.interrupts:
-        # The decorator surfaces a single interrupt, so the rest are raised on later resumes.
-        raise InterruptException(tool_streamer.interrupts[0])
-    raise RuntimeError(tool_streamer.error)
 
 
 def _build_schema(
