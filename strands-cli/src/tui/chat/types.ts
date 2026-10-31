@@ -502,7 +502,7 @@ export interface ChatControllerApi {
   readonly busy: boolean
   readonly hardExitCode: number | undefined
   captureConversation?(conversationId?: string): Promise<ChatConversation>
-  pauseVoiceInput?(): (target: ChatControllerApi) => void
+  pauseVoiceInput?(): () => void
   showError?(title: string, message: string): void
   toggleVoiceMute?(): boolean
   actionableCommandToken(input: string): string | undefined

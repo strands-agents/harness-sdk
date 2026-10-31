@@ -63,7 +63,7 @@ export class ConversationManager implements ChatControllerApi {
     this._agentMessaging = options.agentMessaging
     this._voice = new ConversationVoice(options.voice, () => this._active, {
       panel: (rows): void => {
-        this._panel = rows ? this._makePanel('voice', 'voice', rows) : undefined
+        this._panel = rows ? this._makePanel('voice', 'Voice', rows) : undefined
         this._emit()
       },
       error: (title, label, message): void => this._openError(title, label, message),
@@ -88,7 +88,7 @@ export class ConversationManager implements ChatControllerApi {
     this._voice.connect(() => {
       if (this._panel?.kind === 'voice') {
         const id = this._panel.id
-        this._panel = { ...this._makePanel('voice', 'voice', this._voice.rows()), id }
+        this._panel = { ...this._makePanel('voice', 'Voice', this._voice.rows()), id }
       }
       this._emit()
     })
@@ -122,7 +122,7 @@ export class ConversationManager implements ChatControllerApi {
     return conversation.controller.captureConversation()
   }
 
-  pauseVoiceInput(): (target: ChatControllerApi) => void {
+  pauseVoiceInput(): () => void {
     return this._voice.pauseInput()
   }
 

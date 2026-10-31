@@ -144,7 +144,7 @@ describe('runInkChat', () => {
   })
 
   it.each([false, true])(
-    'preserves the applying conversation and buffers voice during reload (failure=%s)',
+    'preserves the applying conversation and rejects voice during reload (failure=%s)',
     async (fails) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-setup-'))
       const configPath = join(directory, 'config.json')
@@ -166,9 +166,10 @@ describe('runInkChat', () => {
       const primary = new ChatController({ ...backend(), captureConversation: async () => snapshot })
       const fork = new ChatController({ ...backend(), captureConversation: async () => snapshot })
       const voice = new PythonVoiceSession()
-      let transcript!: (text: string) => void
-      vi.spyOn(voice, 'onTranscript').mockImplementation((listener) => {
-        transcript = listener
+      let requestVoice!: Parameters<PythonVoiceSession['onSupervisorRequest']>[0]
+      const resolveVoice = vi.spyOn(voice, 'resolveSupervisorRequest').mockReturnValue(true)
+      vi.spyOn(voice, 'onSupervisorRequest').mockImplementation((listener) => {
+        requestVoice = listener
         return () => {}
       })
       const previous = new ConversationManager(primary, { fork: async () => fork, voice })
@@ -242,7 +243,13 @@ describe('runInkChat', () => {
         expect(await readFile(configPath, 'utf8')).toBe(saved)
         expect(captured!.completedTurns.map((turn) => turn.prompt)).toEqual(['Primary history'])
         const utterances = ['Voice one', 'Voice two']
-        for (const utterance of utterances) transcript(utterance)
+        for (const utterance of utterances) {
+          requestVoice({ requestId: utterance, action: 'send_instruction', instruction: utterance })
+          expect(resolveVoice).toHaveBeenCalledWith(utterance, {
+            ok: false,
+            error: expect.stringContaining('reloading'),
+          })
+        }
         expect(primary.getSnapshot().completedTurns).toHaveLength(1)
         expect(fork.getSnapshot().completedTurns).toHaveLength(1)
         rendered = ''
@@ -257,7 +264,6 @@ describe('runInkChat', () => {
           const active = fails ? previous : replacement
           expect(active?.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
             fails ? 'Fork history' : 'Primary history',
-            ...utterances,
           ])
           expect(active?.getSnapshot().completedTurns.every((turn) => turn.status === 'complete')).toBe(true)
         })

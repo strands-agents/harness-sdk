@@ -125,7 +125,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
             if (controller !== previousController) {
               startTasks.push(controller.start())
             }
-            resumeVoiceInput?.(controller)
+            resumeVoiceInput?.()
           }
         })
     }
