@@ -65,27 +65,38 @@ Strands Agents SDK allows you to create workflows using existing Agent objects, 
 
 In a sequential workflow, agents process tasks in a defined order, with each agent's output becoming the input for the next:
 
-```python
-from strands import Agent
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
 
-# Create specialized agents
-researcher = Agent(system_prompt="You are a research specialist. Find key information.", callback_handler=None)
-analyst = Agent(system_prompt="You analyze research data and extract insights.", callback_handler=None)
-writer = Agent(system_prompt="You create polished reports based on analysis.")
+    # Create specialized agents
+    researcher = Agent(system_prompt="You are a research specialist. Find key information.", callback_handler=None)
+    analyst = Agent(system_prompt="You analyze research data and extract insights.", callback_handler=None)
+    writer = Agent(system_prompt="You create polished reports based on analysis.")
 
-# Sequential workflow processing
-def process_workflow(topic):
-    # Step 1: Research
-    research_results = researcher(f"Research the latest developments in {topic}")
+    # Sequential workflow processing
+    def process_workflow(topic):
+        # Step 1: Research
+        research_results = researcher(f"Research the latest developments in {topic}")
 
-    # Step 2: Analysis
-    analysis = analyst(f"Analyze these research findings: {research_results}")
+        # Step 2: Analysis
+        analysis = analyst(f"Analyze these research findings: {research_results}")
 
-    # Step 3: Report writing
-    final_report = writer(f"Create a report based on this analysis: {analysis}")
+        # Step 3: Report writing
+        final_report = writer(f"Create a report based on this analysis: {analysis}")
 
-    return final_report
-```
+        return final_report
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    --8<-- "user-guide/sdk/multi-agent/workflow_imports.ts:workflow_sequential_imports"
+
+    --8<-- "user-guide/sdk/multi-agent/workflow.ts:workflow_sequential"
+    ```
+  </Tab>
+</Tabs>
 
 This sequential workflow creates a pipeline where each agent's output becomes the input for the next agent, allowing for specialized processing at each stage.
 For a functional example of sequential workflow implementation, see the [agents_workflow.py](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/python/agents_workflow.py) example in the Strands Agents SDK documentation.
