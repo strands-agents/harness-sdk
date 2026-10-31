@@ -652,67 +652,69 @@ class LlamaCppModel(Model):
             logger.debug("request=<%s>", request)
 
             logger.debug("invoking model")
-            response = await self.client.post("/v1/chat/completions", json=request)
-            response.raise_for_status()
+            async with self.client.stream("POST", "/v1/chat/completions", json=request) as response:
+                if not response.is_success:
+                    await response.aread()
+                response.raise_for_status()
 
-            logger.debug("got response from model")
-            yield self._format_chunk({"chunk_type": "message_start"})
-            yield self._format_chunk({"chunk_type": "content_start", "data_type": "text"})
+                logger.debug("got response from model")
+                yield self._format_chunk({"chunk_type": "message_start"})
+                yield self._format_chunk({"chunk_type": "content_start", "data_type": "text"})
 
-            tool_calls: dict[int, list] = {}
-            usage_data = None
-            finish_reason = None
+                tool_calls: dict[int, list] = {}
+                usage_data = None
+                finish_reason = None
 
-            async for line in response.aiter_lines():
-                if not line.strip() or not line.startswith("data: "):
-                    continue
+                async for line in response.aiter_lines():
+                    if not line.strip() or not line.startswith("data: "):
+                        continue
 
-                data_content = line[6:]  # Remove "data: " prefix
-                if data_content.strip() == "[DONE]":
-                    break
+                    data_content = line[6:]  # Remove "data: " prefix
+                    if data_content.strip() == "[DONE]":
+                        break
 
-                try:
-                    event = json.loads(data_content)
-                except json.JSONDecodeError:
-                    continue
+                    try:
+                        event = json.loads(data_content)
+                    except json.JSONDecodeError:
+                        continue
 
-                # Handle usage information
-                if "usage" in event:
-                    usage_data = event["usage"]
-                    continue
+                    # Handle usage information
+                    if "usage" in event:
+                        usage_data = event["usage"]
+                        continue
 
-                if not event.get("choices"):
-                    continue
+                    if not event.get("choices"):
+                        continue
 
-                choice = event["choices"][0]
-                delta = choice.get("delta", {})
+                    choice = event["choices"][0]
+                    delta = choice.get("delta", {})
 
-                # Handle content deltas
-                if "content" in delta and delta["content"]:
-                    yield self._format_chunk(
-                        {
-                            "chunk_type": "content_delta",
-                            "data_type": "text",
-                            "data": delta["content"],
-                        }
-                    )
+                    # Handle content deltas
+                    if "content" in delta and delta["content"]:
+                        yield self._format_chunk(
+                            {
+                                "chunk_type": "content_delta",
+                                "data_type": "text",
+                                "data": delta["content"],
+                            }
+                        )
 
-                # Handle tool calls
-                if "tool_calls" in delta:
-                    for tool_call in delta["tool_calls"]:
-                        index = tool_call["index"]
-                        if index not in tool_calls:
-                            tool_calls[index] = []
-                        tool_calls[index].append(tool_call)
+                    # Handle tool calls
+                    if "tool_calls" in delta:
+                        for tool_call in delta["tool_calls"]:
+                            index = tool_call["index"]
+                            if index not in tool_calls:
+                                tool_calls[index] = []
+                            tool_calls[index].append(tool_call)
 
-                # Capture the finish reason but do NOT break here: current
-                # llama.cpp server ordering is
-                #   finish -> usage -> [DONE]
-                # so a `break` would drop the trailing usage payload and the
-                # resulting `metadata` chunk would never reach the caller.
-                # Mirrors the OpenAI provider's drain-after-finish behavior.
-                if choice.get("finish_reason"):
-                    finish_reason = choice.get("finish_reason")
+                    # Capture the finish reason but do NOT break here: current
+                    # llama.cpp server ordering is
+                    #   finish -> usage -> [DONE]
+                    # so a `break` would drop the trailing usage payload and the
+                    # resulting `metadata` chunk would never reach the caller.
+                    # Mirrors the OpenAI provider's drain-after-finish behavior.
+                    if choice.get("finish_reason"):
+                        finish_reason = choice.get("finish_reason")
 
             yield self._format_chunk({"chunk_type": "content_stop"})
 
