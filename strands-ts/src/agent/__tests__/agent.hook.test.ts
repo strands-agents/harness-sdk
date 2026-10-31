@@ -22,8 +22,10 @@ import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
 import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { InterventionHandler } from '../../interventions/handler.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { LocalAgent } from '../../types/agent.js'
+import type { LifecycleObserver } from '../../types/lifecycle-observer.js'
 import type { Tool } from '../../tools/tool.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
@@ -1845,6 +1847,104 @@ describe('Agent Hooks Integration', () => {
 
       await expect(agent.initialize()).rejects.toBe(initializationError)
       await expect(agent.initialize()).rejects.toBe(initializationError)
+    })
+  })
+
+  describe('concurrent initialization', () => {
+    /** A promise plus its resolver, so tests can hold `initialize()` open and release it. */
+    function createGate(): { reached: Promise<void>; open: () => void } {
+      let signalOpen!: () => void
+      return { reached: new Promise<void>((resolve) => (signalOpen = resolve)), open: () => signalOpen() }
+    }
+
+    /** Counts `observeAgent()` calls without participating in the event lifecycle. */
+    class CountingObserver extends InterventionHandler implements LifecycleObserver {
+      readonly name = 'counting-observer'
+      observeAgentCalls = 0
+
+      async observeAgent(_agent: LocalAgent): Promise<void> {
+        this.observeAgentCalls += 1
+        await Promise.resolve()
+      }
+    }
+
+    // Guards #3711: the once-per-agent lifecycle steps must survive a concurrent initialize().
+    it('fires InitializedEvent and observeAgent once per agent under concurrent calls', async () => {
+      const gate = createGate()
+      let initializedEvents = 0
+      let pluginCalls = 0
+      const plugin: Plugin = {
+        name: 'gated-plugin',
+        initAgent: async () => {
+          pluginCalls += 1
+          await gate.reached
+        },
+      }
+      const observer = new CountingObserver()
+      const agent = new Agent({ model: new MockMessageModel(), plugins: [plugin], interventions: [observer] })
+      agent.addHook(InitializedEvent, () => {
+        initializedEvents += 1
+      })
+
+      const calls = Promise.all([agent.initialize(), agent.initialize(), agent.initialize()])
+      await Promise.resolve()
+      gate.open()
+      await calls
+
+      expect(pluginCalls).toBe(1)
+      expect(observer.observeAgentCalls).toBe(1)
+      expect(initializedEvents).toBe(1)
+    })
+
+    // Guards #3711: sequential callers must not re-run initialization either.
+    it('does not re-run initialization for a later call after a successful one', async () => {
+      let initializedEvents = 0
+      const observer = new CountingObserver()
+      const agent = new Agent({ model: new MockMessageModel(), interventions: [observer] })
+      agent.addHook(InitializedEvent, () => {
+        initializedEvents += 1
+      })
+
+      await agent.initialize()
+      await agent.initialize()
+
+      expect(observer.observeAgentCalls).toBe(1)
+      expect(initializedEvents).toBe(1)
+    })
+
+    // Guards #3711: concurrent callers must observe the same failure, and the once-per-agent
+    // lifecycle steps must not run on a half-initialized agent.
+    it('shares a single failure across concurrent calls', async () => {
+      const gate = createGate()
+      const initializationError = new Error('plugin initialization failed')
+      let initAgentCalls = 0
+      let initializedEvents = 0
+      const plugin: Plugin = {
+        name: 'gated-failing-plugin',
+        initAgent: async () => {
+          initAgentCalls += 1
+          await gate.reached
+          throw initializationError
+        },
+      }
+      const observer = new CountingObserver()
+      const agent = new Agent({ model: new MockMessageModel(), plugins: [plugin], interventions: [observer] })
+      agent.addHook(InitializedEvent, () => {
+        initializedEvents += 1
+      })
+
+      const calls = Promise.allSettled([agent.initialize(), agent.initialize(), agent.initialize()])
+      await Promise.resolve()
+      gate.open()
+      const results = await calls
+
+      expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected', 'rejected'])
+      expect(results.every((result) => result.status === 'rejected' && result.reason === initializationError)).toBe(
+        true
+      )
+      expect(initAgentCalls).toBe(1)
+      expect(observer.observeAgentCalls).toBe(0)
+      expect(initializedEvents).toBe(0)
     })
   })
 })
