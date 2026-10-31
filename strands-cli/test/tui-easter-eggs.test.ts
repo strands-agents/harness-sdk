@@ -5,7 +5,7 @@ import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
 import { commandAssistance } from '../src/tui/chat/commands.js'
 import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
-import { externalUrlCommand } from '../src/tui/terminal/open-url.js'
+import { systemOpenCommand } from '../src/tui/terminal/open-url.js'
 import { ChatApp } from '../src/tui/view/app.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
 import { FROG_ANIMATION_HEIGHT, parseFrogCommand } from '../src/tui/view/frog-easter-egg.js'
@@ -123,11 +123,15 @@ describe('/frog', () => {
 
 describe('/strands', () => {
   it('uses the platform browser command without shell interpolation', () => {
-    const url = 'https://strandsagents.com'
+    const url = "https://strandsagents.com/?q=a&b='value'"
 
-    expect(externalUrlCommand('darwin', url)).toEqual({ command: 'open', args: [url] })
-    expect(externalUrlCommand('linux', url)).toEqual({ command: 'xdg-open', args: [url] })
-    expect(externalUrlCommand('win32', url)).toEqual({ command: 'cmd', args: ['/c', 'start', '', url] })
+    expect(systemOpenCommand('darwin', url)).toEqual({ command: 'open', args: [url] })
+    expect(systemOpenCommand('linux', url)).toEqual({ command: 'xdg-open', args: [url] })
+    expect(systemOpenCommand('win32', url)).toEqual({
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', 'Start-Process -FilePath $env:STRANDS_CLI_OPEN_TARGET'],
+      env: { STRANDS_CLI_OPEN_TARGET: url },
+    })
   })
 
   it('opens the website without appearing in suggestions or creating a turn', async () => {
