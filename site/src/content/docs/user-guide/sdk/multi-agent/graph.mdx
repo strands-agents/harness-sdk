@@ -190,6 +190,8 @@ Legacy conditions (`Callable[[GraphState], bool]`) are detected automatically an
 
 ### Waiting for All Dependencies
 
+<Tabs>
+<Tab label="Python">
 :::note[Python only]
 In Python, the default behavior is OR semantics: a target node fires when **any** incoming edge's source completes. Use conditional edges to explicitly wait for all dependencies. In other SDKs, AND semantics are the default.
 :::
@@ -212,6 +214,15 @@ builder.add_edge("A", "Z", condition=all_dependencies_complete(["A", "B", "C"]))
 builder.add_edge("B", "Z", condition=all_dependencies_complete(["A", "B", "C"]))
 builder.add_edge("C", "Z", condition=all_dependencies_complete(["A", "B", "C"]))
 ```
+</Tab>
+<Tab label="TypeScript">
+```typescript
+--8<-- "user-guide/sdk/multi-agent/graph_imports.ts:waiting_dependencies_imports"
+
+--8<-- "user-guide/sdk/multi-agent/graph.ts:waiting_dependencies"
+```
+</Tab>
+</Tabs>
 
 ## Nested Multi-Agent Patterns
 
