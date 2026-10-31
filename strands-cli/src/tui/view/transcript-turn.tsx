@@ -6,6 +6,7 @@ import { Markdown } from './markdown.js'
 import { MediaView, ToolResultContentView } from './media.js'
 import {
   backgroundTaskDispatch,
+  expandTabs,
   formatValue,
   formatTurnMetrics,
   isBackgroundAgent,
@@ -55,7 +56,7 @@ export function TurnView({
               <Text color={theme.accent}>◆</Text> Message from {turn.peer?.name ?? 'agent'}
             </Text>
           ) : null}
-          <Text>{turn.prompt}</Text>
+          <Text>{expandTabs(turn.prompt)}</Text>
         </Box>
       ) : null}
       {entries.map((entry) =>
@@ -239,7 +240,7 @@ function EntryView({
           Reasoning
         </Text>
         <Text dimColor italic>
-          {entry.text}
+          {expandTabs(entry.text)}
         </Text>
       </Box>
     )
@@ -277,7 +278,7 @@ function EntryView({
         <Text color={color} bold>
           ◆ Message to {peerMessage.recipient}
         </Text>
-        <Text>{peerMessage.body}</Text>
+        <Text>{expandTabs(peerMessage.body)}</Text>
         {entry.error ? <Text color="red">Failed: {entry.error}</Text> : null}
       </Box>
     )

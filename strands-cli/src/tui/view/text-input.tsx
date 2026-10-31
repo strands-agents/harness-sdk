@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useStdout } from 'ink'
+import stringWidth from 'string-width'
 
-import { graphemes, promptViewport } from '../terminal/composer.js'
+import { graphemes, promptViewport, type PromptViewportRow } from '../terminal/composer.js'
+import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { Text, useTheme } from './theme.js'
 
 const TEXT_INPUT_PLACEHOLDER = 'Click to enter text'
@@ -66,7 +68,10 @@ export function EditableText({
       </Text>
     )
   }
-  const rows = promptViewport(displayValue, cursor, width, maxRows)
+  const rows =
+    maxRows === 1
+      ? [singleLineViewport(displayValue, cursor, width, active)]
+      : promptViewport(displayValue, cursor, width, maxRows)
   return (
     <>
       {rows.map((row, index) => (
@@ -82,4 +87,32 @@ export function EditableText({
       ))}
     </>
   )
+}
+
+function singleLineViewport(value: string, cursor: number, width: number, active: boolean): PromptViewportRow {
+  const safeWidth = Math.max(1, width)
+  const characters = graphemes(value).map((character) =>
+    character === '\t'
+      ? ' '.repeat(Math.min(4, safeWidth))
+      : character === '\n'
+        ? ' '
+        : sanitizeTerminalText(character) || '�'
+  )
+  const safeCursor = Math.max(0, Math.min(cursor, characters.length))
+  let current = characters[safeCursor] ?? (active ? ' ' : undefined)
+  if (current && stringWidth(current) > safeWidth) current = ' '
+  let columns = current ? stringWidth(current) : 0
+  let start = safeCursor
+  while (start > 0 && columns + stringWidth(characters[start - 1]!) <= safeWidth) {
+    columns += stringWidth(characters[--start]!)
+  }
+  let end = Math.min(characters.length, safeCursor + 1)
+  while (end < characters.length && columns + stringWidth(characters[end]!) <= safeWidth) {
+    columns += stringWidth(characters[end++]!)
+  }
+  return {
+    before: characters.slice(start, safeCursor).join(''),
+    ...(current === undefined ? {} : { current }),
+    after: characters.slice(safeCursor + 1, end).join(''),
+  }
 }

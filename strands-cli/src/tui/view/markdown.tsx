@@ -4,6 +4,8 @@ import { Box } from 'ink'
 import { marked, type Token, type Tokens } from 'marked'
 
 import { Text, useTheme, type Theme } from './theme.js'
+import { expandTabs } from './presentation.js'
+import { hyperlinkEscapes } from '../terminal/terminal.js'
 
 export const Markdown = memo(function Markdown({ children }: { children: string }): ReactElement {
   const theme = useTheme()
@@ -35,14 +37,14 @@ function renderBlock(token: Token, key: string, theme: Theme): ReactNode {
       return <Text key={key}>{renderInline((token as Tokens.Paragraph).tokens, key, theme)}</Text>
     case 'text': {
       const text = token as Tokens.Text
-      return <Text key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : text.text}</Text>
+      return <Text key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : expandTabs(text.text)}</Text>
     }
     case 'code': {
       const code = token as Tokens.Code
       return (
         <Box key={key} backgroundColor={theme.surface} paddingX={1} marginY={1} flexDirection="column">
-          {code.lang ? <Text dimColor>{code.lang}</Text> : null}
-          <Text color="green">{code.text}</Text>
+          {code.lang ? <Text dimColor>{expandTabs(code.lang)}</Text> : null}
+          <Text color="green">{expandTabs(code.text)}</Text>
         </Box>
       )
     }
@@ -71,7 +73,9 @@ function renderBlock(token: Token, key: string, theme: Theme): ReactNode {
         </Text>
       )
     default:
-      return <Text key={key}>{'text' in token && typeof token.text === 'string' ? token.text : token.raw}</Text>
+      return (
+        <Text key={key}>{expandTabs('text' in token && typeof token.text === 'string' ? token.text : token.raw)}</Text>
+      )
   }
 }
 
@@ -134,17 +138,18 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
       case 'codespan':
         return (
           <Text key={key} color={theme.warning} backgroundColor={theme.surface}>
-            {` ${(token as Tokens.Codespan).text} `}
+            {` ${expandTabs((token as Tokens.Codespan).text)} `}
           </Text>
         )
       case 'link': {
         const link = token as Tokens.Link
-        const target = process.env.TERM_PROGRAM === 'Apple_Terminal' ? undefined : hyperlinkTarget(link.href)
+        const target = hyperlinkTarget(link.href)
+        const escapes = target ? hyperlinkEscapes(target) : undefined
         return (
           <Text key={key} color={theme.accent} underline>
-            {target ? `\u001b]8;;${target}\u0007` : ''}
+            {escapes?.open ?? ''}
             {renderInline(link.tokens, key, theme)}
-            {target ? '\u001b]8;;\u0007' : link.text === link.href ? '' : ` (${link.href})`}
+            {escapes ? escapes.close : link.text === link.href ? '' : ` (${expandTabs(link.href)})`}
           </Text>
         )
       }
@@ -152,7 +157,7 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
         const image = token as Tokens.Image
         return (
           <Text key={key} color={theme.accent}>
-            [image: {image.text || image.href}]
+            [image: {expandTabs(image.text || image.href)}]
           </Text>
         )
       }
@@ -160,10 +165,12 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
         return '\n'
       case 'text': {
         const text = token as Tokens.Text
-        return <Fragment key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : text.text}</Fragment>
+        return (
+          <Fragment key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : expandTabs(text.text)}</Fragment>
+        )
       }
       default:
-        return <Fragment key={key}>{'text' in token ? String(token.text) : token.raw}</Fragment>
+        return <Fragment key={key}>{expandTabs('text' in token ? String(token.text) : token.raw)}</Fragment>
     }
   })
 }

@@ -6,10 +6,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { snapshot } from './fixtures/chat-snapshot.js'
 
 import { ChatView } from '../src/tui/view/chat-view.js'
+import { TurnView } from '../src/tui/view/transcript-turn.js'
 import { Markdown } from '../src/tui/view/markdown.js'
 import { panelControlTarget, panelRowCapacity, revealPanelSelection } from '../src/tui/view/interaction.js'
-import { formatContext, maxPermissionScroll, permissionLines } from '../src/tui/view/presentation.js'
-import { DEFAULT_CHAT_SETTINGS, type ChatPanel } from '../src/tui/chat/controller.js'
+import {
+  formatContext,
+  maxPermissionScroll,
+  permissionLines,
+  summarizeToolResult,
+  wrapLines,
+} from '../src/tui/view/presentation.js'
+import { DEFAULT_CHAT_SETTINGS, type ChatPanel, type ChatTurn } from '../src/tui/chat/controller.js'
 import { formatPermissionPanelBody, settingsRows } from '../src/tui/chat/panels.js'
 import { SETTINGS_CATEGORIES } from '../src/tui/settings.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
@@ -20,6 +27,42 @@ afterEach(() => {
 })
 
 describe('ChatView', () => {
+  it('wraps setup text by terminal cells without splitting graphemes', () => {
+    expect(wrapLines('abcd😀x\n你好吗\n\te\u0301\r\n', 5)).toEqual(['abcd', '😀x', '你好', '吗', '    e\u0301', ''])
+    expect(wrapLines('ab', 0)).toEqual(['a', 'b'])
+  })
+
+  it('wraps tabbed transcript text with its displayed indentation while retaining the stored prompt', () => {
+    const turn: ChatTurn = {
+      id: 'tabbed',
+      prompt: '\tchanged',
+      agentName: 'Agent',
+      status: 'complete',
+      entries: [
+        { id: 'reasoning', type: 'reasoning', text: '\treason' },
+        {
+          id: 'peer',
+          type: 'tool',
+          toolUseId: 'peer',
+          name: 'message_agent',
+          input: { action: 'send', to: 'Reviewer', message: '\tpeer' },
+          status: 'success',
+        },
+      ],
+    }
+    const output = renderToString(
+      createElement(TurnView, {
+        turn,
+        settings: { ...DEFAULT_CHAT_SETTINGS, showReasoning: true },
+        expandedToolGroups: new Set<string>(),
+      }),
+      { columns: 15 }
+    )
+    expect(output).not.toContain('\t')
+    for (const text of ['changed', 'reason', 'peer']) expect(output).toContain(`    ${text}`)
+    expect(turn.prompt).toBe('\tchanged')
+  })
+
   it('shows notices before the first turn below the startup banner', () => {
     const output = renderView({
       snapshot: snapshot({ notices: [{ id: 'notice-1', status: 'delivered', text: 'Nothing to compact yet' }] }),
@@ -726,6 +769,70 @@ describe('ChatView', () => {
     expect(lines[prompt + 2]).toContain('Tool activity')
   })
 
+  // https://github.com/strands-agents/harness-sdk/issues/4839
+  it.each([
+    'item\tvalue',
+    '```txt\nitem\tvalue\n```',
+    '| item\tvalue |\n| --- |\n| alpha\tbeta |',
+    '- **item\tvalue**',
+    '> item\tvalue',
+    '`item\tvalue`',
+    '![item\tvalue](image.png)',
+    '<span>item\tvalue</span>',
+  ])('expands displayed Markdown tabs in %j', (source) => {
+    const output = renderToString(createElement(Markdown, { children: source }), { columns: 80 })
+    expect(output).not.toContain('\t')
+    expect(sanitizeTerminalText(output)).toContain('item    value')
+  })
+
+  it('preserves tab-indented Markdown structure when expanding displayed text', () => {
+    const renderMarkdown = (source: string): string =>
+      renderToString(createElement(Markdown, { children: source }), { columns: 80 })
+    expect(renderMarkdown(' \tcode\n')).toBe(renderMarkdown('    code\n'))
+  })
+
+  it.each(['compact', 'full'] as const)('expands %s tool-result tabs without changing stored text', (toolOutput) => {
+    const text = 'item\tvalue\nalpha\tbeta\n'
+    const state = snapshot({
+      settings: { ...DEFAULT_CHAT_SETTINGS, toolOutput },
+      completedTurns: [
+        {
+          id: 'turn-1',
+          prompt: 'read tabs',
+          agentName: 'Strands harness',
+          status: 'complete',
+          entries: [
+            {
+              id: 'turn-1:1',
+              type: 'tool',
+              toolUseId: 'read-1',
+              name: 'read',
+              input: { path: 'tabs.tsv' },
+              status: 'success',
+              result: [{ type: 'text', text }],
+            },
+          ],
+        },
+      ],
+    })
+    const original = globalThis.structuredClone(state)
+    const output = renderView({
+      snapshot: state,
+      terminalWidth: 80,
+      terminalHeight: 30,
+      expandedToolGroups: new Set(['turn-1:1']),
+    })
+    expect(output).not.toContain('\t')
+    expect(sanitizeTerminalText(output)).toContain('item    value')
+    expect(sanitizeTerminalText(output)).toContain('alpha    beta')
+    expect(state).toEqual(original)
+  })
+
+  it('expands Compact tool-result tabs before truncating the preview', () => {
+    const preview = summarizeToolResult([{ type: 'text', text: `${'x'.repeat(176)}\tEND` }])
+    expect(preview).toEqual({ lines: [`${'x'.repeat(176)}   …`], hiddenLines: 0 })
+  })
+
   it.each([80, 20])('renders clickable Markdown labels at %i columns without repeating URLs', (columns) => {
     vi.stubEnv('TERM_PROGRAM', 'ghostty')
     const output = renderToString(
@@ -735,6 +842,13 @@ describe('ChatView', () => {
     expect(output).toContain('\u001b]8;;https://strandsagents.com/\u0007')
     expect(output).toContain('\u001b]8;;\u0007')
     expect(sanitizeTerminalText(output).replace(/\s+/gu, ' ')).toBe('Visit Strands docs for details.')
+    const tabbedLink = renderToString(
+      createElement(Markdown, { children: '[item\tvalue](https://example.com/a%09b)' }),
+      { columns }
+    )
+    expect(tabbedLink).toContain('\u001b]8;;https://example.com/a%09b\u0007')
+    expect(tabbedLink).not.toContain('\t')
+    expect(sanitizeTerminalText(tabbedLink)).toContain('item    value')
     const unsafe = renderToString(createElement(Markdown, { children: '[Unsupported](javascript:alert)' }), { columns })
     expect(unsafe).not.toContain('\u001b]8;;')
     vi.stubEnv('TERM_PROGRAM', 'Apple_Terminal')

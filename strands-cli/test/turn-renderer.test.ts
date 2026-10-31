@@ -58,6 +58,18 @@ describe('TurnRenderer', () => {
     expect(render([toolResult('success')])).toContain('✓ done')
   })
 
+  it.each(['😀', 'e\u0301', '👨‍👩‍👧‍👦'])('truncates tool inputs without splitting %s', (character) => {
+    const prefix = 'a'.repeat(78)
+    const out = render([toolCall('echo', prefix + character + 'xx')])
+    expect(out).toContain(`⚙ echo(${prefix}…)`)
+    expect(out).not.toContain(character)
+  })
+
+  it('keeps tool inputs within the existing length budget', () => {
+    expect(render([toolCall('echo', 'a'.repeat(80))])).toContain(`⚙ echo(${'a'.repeat(80)})`)
+    expect(render([toolCall('echo', 'a'.repeat(81))])).toContain(`⚙ echo(${'a'.repeat(79)}…)`)
+  })
+
   it('renders a failed tool result', () => {
     const out = render([toolCall('bash', { command: 'boom' }), toolResult('error')])
     expect(out).toContain('error')

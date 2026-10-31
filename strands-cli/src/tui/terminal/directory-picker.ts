@@ -43,38 +43,117 @@ on run argv
 end run
 `
 
-export function canChooseDirectory(): boolean {
-  return process.platform === 'darwin'
+const WINDOWS_SAVE_PICKER = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$dialog = New-Object System.Windows.Forms.SaveFileDialog
+$dialog.Title = $env:STRANDS_PICKER_PROMPT
+$dialog.FileName = $env:STRANDS_PICKER_DEFAULT_NAME
+$dialog.Filter = 'ZIP archive (*.zip)|*.zip|All files (*.*)|*.*'
+$dialog.DefaultExt = 'zip'
+$dialog.AddExtension = $true
+$dialog.OverwritePrompt = $true
+$downloads = Join-Path $env:USERPROFILE 'Downloads'
+if (Test-Path -LiteralPath $downloads) {
+  $dialog.InitialDirectory = $downloads
+}
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+  [Console]::Write($dialog.FileName)
+}
+`
+
+const WINDOWS_FOLDER_PICKER = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = $env:STRANDS_PICKER_PROMPT
+$dialog.ShowNewFolderButton = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+  [Console]::Write($dialog.SelectedPath)
+}
+`
+
+const WINDOWS_AGENT_PICKER = `
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Import an agent'
+$dialog.Filter = 'Agent projects (*.zip;*.ts;*.js;*.mjs;*.mts;*.py)|*.zip;*.ts;*.js;*.mjs;*.mts;*.py|All files (*.*)|*.*'
+$dialog.Multiselect = $false
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+  [Console]::Write($dialog.FileName)
+}
+`
+
+interface PickerInvocation {
+  command: string
+  args: readonly string[]
+  environment?: Readonly<Record<string, string>>
+}
+
+export function canChooseDirectory(platform = process.platform): boolean {
+  return platform === 'darwin' || platform === 'win32'
+}
+
+function windowsPicker(script: string, environment?: Readonly<Record<string, string>>): PickerInvocation {
+  return {
+    command: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    ...(environment ? { environment } : {}),
+  }
 }
 
 export function chooseDirectory(prompt = 'Choose a directory'): Promise<string | undefined> {
-  return runPicker(['-e', MACOS_FOLDER_PICKER, '--', prompt])
+  if (process.platform === 'win32') {
+    return runPicker(windowsPicker(WINDOWS_FOLDER_PICKER, { STRANDS_PICKER_PROMPT: prompt }))
+  }
+  return runPicker({ command: '/usr/bin/osascript', args: ['-e', MACOS_FOLDER_PICKER, '--', prompt] })
 }
 
 export function chooseAgentProject(): Promise<string | undefined> {
-  return runPicker(['-l', 'JavaScript', '-e', MACOS_AGENT_PICKER])
+  if (process.platform === 'win32') {
+    return runPicker(windowsPicker(WINDOWS_AGENT_PICKER))
+  }
+  return runPicker({ command: '/usr/bin/osascript', args: ['-l', 'JavaScript', '-e', MACOS_AGENT_PICKER] })
 }
 
 export function chooseSaveFile(prompt: string, defaultName: string): Promise<string | undefined> {
-  return runPicker(['-e', MACOS_SAVE_PICKER, '--', prompt, defaultName])
+  if (process.platform === 'win32') {
+    return runPicker(
+      windowsPicker(WINDOWS_SAVE_PICKER, { STRANDS_PICKER_PROMPT: prompt, STRANDS_PICKER_DEFAULT_NAME: defaultName })
+    )
+  }
+  return runPicker({ command: '/usr/bin/osascript', args: ['-e', MACOS_SAVE_PICKER, '--', prompt, defaultName] })
 }
 
 let pickerActive = false
 
-async function runPicker(args: readonly string[]): Promise<string | undefined> {
+async function runPicker(invocation: PickerInvocation): Promise<string | undefined> {
   if (!canChooseDirectory() || pickerActive) {
     return undefined
   }
   pickerActive = true
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
-      execFile('/usr/bin/osascript', args, { encoding: 'utf8' }, (error, stdout) => {
-        if (error) {
-          reject(new Error('Unable to open the picker.', { cause: error }))
-          return
+      execFile(
+        invocation.command,
+        invocation.args,
+        {
+          encoding: 'utf8',
+          windowsHide: true,
+          ...(invocation.environment ? { env: { ...process.env, ...invocation.environment } } : {}),
+        },
+        (error, output) => {
+          if (error) {
+            reject(new Error('Unable to open the picker.', { cause: error }))
+            return
+          }
+          resolve(output)
         }
-        resolve(stdout)
-      })
+      )
     })
     return stdout.trim() || undefined
   } finally {

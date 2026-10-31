@@ -9,6 +9,7 @@ import {
   type Usage,
 } from '@strands-agents/sdk'
 import type { ChatEvent } from './tui/chat/types.js'
+import { graphemes } from './tui/terminal/composer.js'
 import { sanitizeTerminalText } from './tui/terminal/sanitize.js'
 import { normalizeUsage, RunUsage, type NormalizedUsage } from './usage.js'
 
@@ -32,7 +33,13 @@ function style(text: string, code: string): string {
 function summarizeToolInput(toolInput: unknown): string {
   const text = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput ?? '')
   const clean = sanitizeTerminalText(text)
-  return clean.length <= MAX_TOOL_INPUT ? clean : clean.slice(0, MAX_TOOL_INPUT - 1) + '…'
+  if (clean.length <= MAX_TOOL_INPUT) return clean
+  let summary = ''
+  for (const character of graphemes(clean)) {
+    if (summary.length + character.length >= MAX_TOOL_INPUT) break
+    summary += character
+  }
+  return summary + '…'
 }
 
 /**

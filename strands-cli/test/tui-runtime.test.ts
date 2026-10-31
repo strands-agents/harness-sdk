@@ -603,82 +603,89 @@ describe('interactive runtime lifecycle', () => {
     }
   )
 
-  it('exposes a live background subagent as a temporary task-addressed message endpoint', async () => {
-    let steering!: LiveSteering
-    let child!: LocalAgent
-    const subagent = fakeSubagent(
-      () => steering,
-      (agent) => {
-        child = agent
-      }
-    )
-    const parent = fakeAgent('old', 'first')
-    parent.toolRegistry.get = vi.fn((name: string) => (name === 'subagent' ? subagent : undefined))
-    exposeBackgroundTask(parent)
-    mocks.createHarness.mockResolvedValueOnce(parent)
-    const controller = await createInteractiveChat()
-
-    try {
-      steering = mocks.createHarness.mock.calls[0]?.[0].interventions?.find(
-        (candidate: unknown) => candidate instanceof LiveSteering
-      ) as LiveSteering
-      const plugin = mocks.createHarness.mock.calls[0]?.[0].plugins?.find(
-        (candidate: { name?: string }) => candidate.name === 'strands:agent-messaging'
+  it.each([
+    ['Review authentication.', 'Review authentication.'],
+    ['a'.repeat(79) + '👩‍💻tail', 'a'.repeat(79) + '👩‍💻'],
+    ['a'.repeat(79) + 'e\u0301tail', 'a'.repeat(79) + 'e\u0301'],
+  ])(
+    'exposes a live background subagent as a temporary task-addressed message endpoint (%s)',
+    async (task, summary) => {
+      let steering!: LiveSteering
+      let child!: LocalAgent
+      const subagent = fakeSubagent(
+        () => steering,
+        (agent) => {
+          child = agent
+        }
       )
-      expect(steering).toBeInstanceOf(LiveSteering)
-      expect(plugin).toBeDefined()
-      await plugin!.initAgent(parent)
-      const messageAgent = plugin!.getTools?.()[0] as FunctionTool
-      const stream = subagent.stream(backgroundToolContext(parent, 'Review authentication.'))
+      const parent = fakeAgent('old', 'first')
+      parent.toolRegistry.get = vi.fn((name: string) => (name === 'subagent' ? subagent : undefined))
+      exposeBackgroundTask(parent)
+      mocks.createHarness.mockResolvedValueOnce(parent)
+      const controller = await createInteractiveChat()
 
-      await stream.next()
-      await expect(
-        messageAgent.invoke({ action: 'list' }, { agent: parent } as unknown as ToolContext)
-      ).resolves.toEqual({
-        agents: [{ id: 'task-1', name: 'subagent: Review authentication.', status: 'working' }],
-      })
-      await controller.submit('/agents')
-      expect(controller.getSnapshot().panel).toMatchObject({
-        kind: 'agents',
-        title: 'Agents',
-        rows: [
-          expect.objectContaining({
-            label: 'Strands harness',
-            description: 'Primary agent',
-            current: true,
-            badge: { text: 'idle', tone: 'success' },
-          }),
-          expect.objectContaining({
-            label: 'subagent: Review authentication.',
-            current: false,
-            badge: { text: 'working', tone: 'success' },
-          }),
-        ],
-      })
-      await messageAgent.invoke({ action: 'send', to: 'task-1', message: 'Check the authorization tests.' }, {
-        agent: parent,
-      } as unknown as ToolContext)
-      applySteering(steering, child)
-      expect(child.messages).toMatchObject([
-        {
-          role: 'user',
-          content: [
-            { type: 'textBlock', text: 'Message from Strands harness (agent-1):\n\nCheck the authorization tests.' },
+      try {
+        steering = mocks.createHarness.mock.calls[0]?.[0].interventions?.find(
+          (candidate: unknown) => candidate instanceof LiveSteering
+        ) as LiveSteering
+        const plugin = mocks.createHarness.mock.calls[0]?.[0].plugins?.find(
+          (candidate: { name?: string }) => candidate.name === 'strands:agent-messaging'
+        )
+        expect(steering).toBeInstanceOf(LiveSteering)
+        expect(plugin).toBeDefined()
+        await plugin!.initAgent(parent)
+        const messageAgent = plugin!.getTools?.()[0] as FunctionTool
+        const stream = subagent.stream(backgroundToolContext(parent, task))
+
+        await stream.next()
+        await expect(
+          messageAgent.invoke({ action: 'list' }, { agent: parent } as unknown as ToolContext)
+        ).resolves.toEqual({
+          agents: [{ id: 'task-1', name: `subagent: ${summary}`, status: 'working' }],
+        })
+        await controller.submit('/agents')
+        expect(controller.getSnapshot().panel).toMatchObject({
+          kind: 'agents',
+          title: 'Agents',
+          rows: [
+            expect.objectContaining({
+              label: 'Strands harness',
+              description: 'Primary agent',
+              current: true,
+              badge: { text: 'idle', tone: 'success' },
+            }),
+            expect.objectContaining({
+              label: `subagent: ${summary}`,
+              current: false,
+              badge: { text: 'working', tone: 'success' },
+            }),
           ],
-        },
-      ])
+        })
+        await messageAgent.invoke({ action: 'send', to: 'task-1', message: 'Check the authorization tests.' }, {
+          agent: parent,
+        } as unknown as ToolContext)
+        applySteering(steering, child)
+        expect(child.messages).toMatchObject([
+          {
+            role: 'user',
+            content: [
+              { type: 'textBlock', text: 'Message from Strands harness (agent-1):\n\nCheck the authorization tests.' },
+            ],
+          },
+        ])
 
-      await stream.next()
-      await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Agents'))
-      await expect(
-        messageAgent.invoke({ action: 'list' }, { agent: parent } as unknown as ToolContext)
-      ).resolves.toEqual({
-        agents: [],
-      })
-    } finally {
-      await controller.dispose()
+        await stream.next()
+        await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Agents'))
+        await expect(
+          messageAgent.invoke({ action: 'list' }, { agent: parent } as unknown as ToolContext)
+        ).resolves.toEqual({
+          agents: [],
+        })
+      } finally {
+        await controller.dispose()
+      }
     }
-  })
+  )
 
   it('isolates identical background task IDs across forked conversations', async () => {
     let mainSteering!: LiveSteering

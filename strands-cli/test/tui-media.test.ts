@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToString } from 'ink'
 import {
   DocumentBlock,
   ImageBlock,
@@ -12,7 +14,8 @@ import {
 
 import { projectMessages, TurnProjector } from '../src/tui/chat/projector.js'
 import { projectMediaContent, projectToolResultContent } from '../src/tui/chat/sdk-projector.js'
-import { terminalImageProtocol, terminalImageSequence } from '../src/tui/view/media.js'
+import { MediaView } from '../src/tui/view/media.js'
+import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 
 describe('SDK media projection', () => {
   const bytes = new Uint8Array([1, 2, 3])
@@ -110,19 +113,24 @@ describe('SDK media projection', () => {
 })
 
 describe('terminal media', () => {
-  it('detects Kitty and iTerm image protocols', () => {
-    expect(terminalImageProtocol({ TERM: 'xterm-kitty' })).toBe('kitty')
-    expect(terminalImageProtocol({ TERM_PROGRAM: 'iTerm.app' })).toBe('iterm2')
-    expect(terminalImageProtocol({ TERM: 'xterm-256color' })).toBeUndefined()
+  it('expands document preview tabs before terminal layout without changing the document', () => {
+    const content = {
+      type: 'document' as const,
+      name: 'table',
+      format: 'txt' as const,
+      source: { type: 'text' as const, text: 'item\tvalue' },
+    }
+    const rendered = renderToString(createElement(MediaView, { content }), { columns: 40 })
+    expect(rendered).toContain('item    value')
+    expect(rendered).not.toContain('\t')
+    expect(content.source.text).toBe('item\tvalue')
   })
 
-  it('encodes iTerm and chunked Kitty image sequences', () => {
+  it('renders a compact image label without dropping attachment bytes', () => {
     const bytes = new Uint8Array([1, 2, 3])
-    expect(terminalImageSequence(bytes, 'iterm2', 20, 4)).toContain(
-      '\u001b]1337;File=inline=1;width=20;height=4;preserveAspectRatio=1:AQID\u0007'
-    )
-    const kitty = terminalImageSequence(new Uint8Array(4_000), 'kitty')
-    expect(kitty).toContain('\u001b_Ga=T,f=100,q=2')
-    expect(kitty.endsWith('\u001b\\')).toBe(true)
+    const content = { type: 'image' as const, format: 'png' as const, source: { type: 'bytes' as const, bytes } }
+    const rendered = renderToString(createElement(MediaView, { content }), { columns: 40 })
+    expect(sanitizeTerminalText(rendered)).toBe('image: png, 3 bytes')
+    expect(content.source.bytes).toEqual(new Uint8Array([1, 2, 3]))
   })
 })

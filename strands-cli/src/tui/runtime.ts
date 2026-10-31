@@ -44,6 +44,7 @@ import { FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './s
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
+import { graphemes } from './terminal/composer.js'
 import { errorMessage } from './terminal/sanitize.js'
 import { PythonVoiceSession } from './voice/session.js'
 import { inspectWorkspaceMcp, isWorkspaceMcpTrusted } from './workspace/trust.js'
@@ -228,7 +229,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       const summary = endpoint.task.replace(/\s+/g, ' ').trim()
       agentMessaging.register({
         id: endpointId,
-        name: summary ? `${endpoint.name}: ${summary.slice(0, 80)}` : endpoint.name,
+        name: summary ? `${endpoint.name}: ${graphemes(summary).slice(0, 80).join('')}` : endpoint.name,
         status: () => 'working',
         enqueue: (message): boolean => backgroundInbox.send(endpoint.taskId, peerMessagePrompt(message)),
       })

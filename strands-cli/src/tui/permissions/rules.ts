@@ -264,7 +264,8 @@ function parseShell(command: string): ShellParse {
 
 function shellStep(state: ShellState, command: string, index: number): number {
   const character = command[index]!
-  if (character === '\\' && state.quote !== "'") {
+  // PowerShell escapes with backticks; a backslash must not hide a command separator.
+  if (character === '\\' && state.quote !== "'" && process.platform !== 'win32') {
     state.token += command.slice(index, index + 2)
     return index + 1
   }

@@ -66,6 +66,19 @@ describe('permission rule decisions', () => {
     expect(decide('shell', { command: 'echo "rm -rf build"' }, ['shell'], ['shell(rm *)'])).toBe('allow')
   })
 
+  it('treats a backslash before a PowerShell separator as a literal character', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      expect(decide('shell', { command: 'git status \\; Remove-Item example.txt' }, ['shell(git *)'])).toBeUndefined()
+      expect(
+        decide('shell', { command: 'git status \\; Remove-Item example.txt' }, ['shell'], ['shell(Remove-Item *)'])
+      ).toBe('deny')
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+    }
+  })
+
   it('matches path and URL prefixes on segment boundaries', async () => {
     const workspace = await temporaryWorkspace()
     const rules = { allow: [`write(${join(workspace, 'src', '*')})`], deny: [] }

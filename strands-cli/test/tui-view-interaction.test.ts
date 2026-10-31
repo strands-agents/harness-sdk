@@ -36,6 +36,14 @@ describe('panel helpers', () => {
     { label: 'GPT', description: 'OpenAI', filter: 'current' },
   ]
 
+  it('truncates tool summaries without splitting graphemes or changing the input', () => {
+    const input = { command: `${'a'.repeat(158)}😀x` }
+    expect(summarizeToolInput('shell', input)).toBe(`${'a'.repeat(158)}…`)
+    expect(input.command).toBe(`${'a'.repeat(158)}😀x`)
+    expect(summarizeToolInput('custom', `${'a'.repeat(155)}😀xxx`)).toBe(`"${'a'.repeat(155)}😀x…`)
+    expect(summarizeToolInput('shell', { command: 'e\u0301'.repeat(161) })).toBe(`${'e\u0301'.repeat(159)}…`)
+  })
+
   it('presents the SDK Background Tasks management tool', () => {
     expect(toolAction('strands_manage_background_task')).toBe('Manage task')
     expect(summarizeToolInput('strands_manage_background_task', { mode: 'cancel', taskId: 'task-1' })).toBe(

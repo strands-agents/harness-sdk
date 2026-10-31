@@ -33,26 +33,7 @@ export function permissionLines(
   width: number,
   palette: ThemeColors = getTheme(DEFAULT_CHAT_SETTINGS)
 ): DetailLine[] {
-  const wrap = (value: string): string[] => {
-    const lines: string[] = []
-    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-    for (const line of value.split('\n')) {
-      let current = ''
-      let cells = 0
-      for (const { segment } of segmenter.segment(line)) {
-        const size = stringWidth(segment)
-        if (current && cells + size > Math.max(1, width)) {
-          lines.push(current)
-          current = ''
-          cells = 0
-        }
-        current += segment
-        cells += size
-      }
-      lines.push(current)
-    }
-    return lines
-  }
+  const wrap = (value: string): string[] => wrapCells(value, Math.max(1, width))
   const lines: DetailLine[] = []
   if (panel.diff) {
     lines.push(...wrap(panel.diff.path).map((text) => ({ text })))
@@ -79,6 +60,27 @@ export function permissionLines(
     lines.push({ text: '' })
   }
   lines.push(...wrap(panel.body ?? '').map((text) => ({ text })))
+  return lines
+}
+
+function wrapCells(value: string, width: number): string[] {
+  const lines: string[] = []
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  for (const line of value.split('\n')) {
+    let current = ''
+    let cells = 0
+    for (const { segment } of segmenter.segment(line)) {
+      const size = stringWidth(segment)
+      if (current && cells + size > width) {
+        lines.push(current)
+        current = ''
+        cells = 0
+      }
+      current += segment
+      cells += size
+    }
+    lines.push(current)
+  }
   return lines
 }
 
@@ -169,25 +171,15 @@ function activityDetailLines(
 }
 
 export function wrapLines(value: string, width: number): string[] {
-  return normalizeDetailText(value)
-    .split('\n')
-    .flatMap((line) => {
-      if (!line) {
-        return ['']
-      }
-      const chunks: string[] = []
-      let remaining = line
-      while (remaining.length > width) {
-        chunks.push(remaining.slice(0, width))
-        remaining = remaining.slice(width)
-      }
-      chunks.push(remaining)
-      return chunks
-    })
+  return wrapCells(normalizeDetailText(value), Math.max(1, width))
+}
+
+export function expandTabs(value: string): string {
+  return value.replaceAll('\t', '    ')
 }
 
 function normalizeDetailText(value: string): string {
-  return value.replaceAll('\t', '    ').replaceAll('\r', '')
+  return expandTabs(value).replaceAll('\r', '')
 }
 
 export function formatContext(context: ChatSnapshot['context'], width = 10): string {
@@ -231,7 +223,7 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
   const model = modelDisplayName(snapshot.runtime.model)
   const effort = model && snapshot.runtime.effort ? ` • ${snapshot.runtime.effort}` : ''
   const modelLabel = model ? `${model}${effort}` : (snapshot.runtime.effort ?? '')
-  const settingsText = truncateMetadata('/settings', available)
+  const settingsText = truncateText('/settings', available)
   const settingsWidth = stringWidth(settingsText)
   const leftWidth = Math.max(0, available - settingsWidth - separatorWidth)
   const context = formatContext(snapshot.context)
@@ -251,8 +243,8 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
     Math.max(0, leftWidth - contextWidth - (contextWidth ? controlSeparatorWidth : 0))
   )
   const showEffort = !model || (effort && modelWidth > stringWidth(effort))
-  const modelName = truncateMetadata(model, modelWidth - (showEffort ? stringWidth(effort) : 0))
-  const effortLabel = showEffort ? truncateMetadata(snapshot.runtime.effort ?? '', modelWidth) : ''
+  const modelName = truncateText(model, modelWidth - (showEffort ? stringWidth(effort) : 0))
+  const effortLabel = showEffort ? truncateText(snapshot.runtime.effort ?? '', modelWidth) : ''
   const controls = [
     { target: 'model' as const, text: modelName },
     { target: 'effort' as const, text: effortLabel },
@@ -264,7 +256,7 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
   const modelText = controls.map((control) => control.text).join(' • ')
   const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
   const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
-  const pathText = truncateMetadata(snapshot.runtime.cwd, Math.max(0, pathMaximumEnd - pathMinimumStart), true)
+  const pathText = truncateText(snapshot.runtime.cwd, Math.max(0, pathMaximumEnd - pathMinimumStart), true)
   const pathWidth = stringWidth(pathText)
   const pathStart = Math.max(
     pathMinimumStart,
@@ -294,7 +286,7 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
   ].filter((placement) => placement.text)
 }
 
-function truncateMetadata(value: string, width: number, middle = false): string {
+function truncateText(value: string, width: number, middle = false): string {
   if (width <= 0) {
     return ''
   }
@@ -350,16 +342,6 @@ function formatDuration(durationMs: number): string {
   return `${hours}h ${minutes}m`
 }
 
-function truncateEnd(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value
-  }
-  if (maxLength <= 1) {
-    return value.slice(0, maxLength)
-  }
-  return `${value.slice(0, maxLength - 1)}…`
-}
-
 export function formatValue(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2)
@@ -369,8 +351,7 @@ export function formatValue(value: unknown): string {
 }
 
 function summarizeValue(value: unknown): string {
-  const text = formatValue(value).replace(/\s+/g, ' ').trim()
-  return text.length <= 160 ? text : `${text.slice(0, 157)}...`
+  return truncateText(formatValue(value).replace(/\s+/g, ' ').trim(), 160)
 }
 
 const TOOL_ACTIONS: Readonly<Record<string, string>> = {
@@ -392,30 +373,30 @@ export function toolAction(name: string): string {
 export function summarizeToolInput(name: string, input: JSONValue): string {
   if (isRecord(input)) {
     if (name.replaceAll('-', '_').toLowerCase() === 'subagent') {
-      return truncateEnd(typeof input.task === 'string' ? input.task : '', 160)
+      return truncateText(typeof input.task === 'string' ? input.task : '', 160)
     }
     if (typeof input.command === 'string') {
-      return truncateEnd(input.command, 160)
+      return truncateText(input.command, 160)
     }
     if (typeof input.path === 'string') {
       const offset = typeof input.offset === 'number' ? input.offset : undefined
       const limit = typeof input.limit === 'number' ? input.limit : undefined
       const range =
         offset !== undefined ? `:${offset}${limit !== undefined ? `-${offset + Math.max(0, limit - 1)}` : ''}` : ''
-      return truncateEnd(`${input.path}${range}`, 160)
+      return truncateText(`${input.path}${range}`, 160)
     }
     if (typeof input.url === 'string') {
-      return truncateEnd(input.url, 160)
+      return truncateText(input.url, 160)
     }
     if (typeof input.query === 'string') {
-      return truncateEnd(input.query, 160)
+      return truncateText(input.query, 160)
     }
     const action =
       typeof input.action === 'string' ? input.action : typeof input.mode === 'string' ? input.mode : undefined
     const taskId =
       typeof input.task_id === 'string' ? input.task_id : typeof input.taskId === 'string' ? input.taskId : undefined
     if (action || taskId) {
-      return truncateEnd([action, taskId].filter(Boolean).join(' · '), 160)
+      return truncateText([action, taskId].filter(Boolean).join(' · '), 160)
     }
     if (Object.keys(input).length === 0) {
       return ''
@@ -454,7 +435,7 @@ export function sentPeerMessage(
     }
   }
   return {
-    recipient: truncateEnd(recipient, 80),
+    recipient: truncateText(recipient, 80),
     body: entry.input.message,
   }
 }
@@ -486,7 +467,7 @@ export function summarizeToolResult(result: NonNullable<Extract<ChatEntry, { typ
   const lines = result
     .map((item) => {
       if (item.type === 'text') {
-        return item.text
+        return expandTabs(item.text)
       }
       if (item.type === 'json') {
         return formatValue(item.value)
@@ -502,6 +483,6 @@ export function summarizeToolResult(result: NonNullable<Extract<ChatEntry, { typ
   while (lines.at(-1) === '') {
     lines.pop()
   }
-  const visible = lines.slice(0, 3).map((line) => truncateEnd(line, 180))
+  const visible = lines.slice(0, 3).map((line) => truncateText(line, 180))
   return { lines: visible, hiddenLines: lines.length - visible.length }
 }

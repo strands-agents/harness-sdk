@@ -83,6 +83,10 @@ export function reduceInput(state: EditorState, character: string, key: Partial<
     return submitEditor(state, state.input)
   }
   if (key.upArrow) {
+    const lineAbove = verticalCursor(characters, state.cursor, -1)
+    if (lineAbove !== undefined) {
+      return moveCursor(state, lineAbove)
+    }
     if (state.history.length === 0) {
       return { state, action: 'none' }
     }
@@ -95,6 +99,10 @@ export function reduceInput(state: EditorState, character: string, key: Partial<
     }
   }
   if (key.downArrow) {
+    const lineBelow = verticalCursor(characters, state.cursor, 1)
+    if (lineBelow !== undefined) {
+      return moveCursor(state, lineBelow)
+    }
     if (state.historyIndex >= state.history.length) {
       return { state, action: 'none' }
     }
@@ -198,9 +206,11 @@ export function promptViewport(
   width: number,
   maxRows: number = MIN_PROMPT_ROWS
 ): PromptViewportRow[] {
-  const characters = graphemes(input)
-  const safeCursor = Math.max(0, Math.min(cursor, characters.length))
   const safeWidth = Math.max(1, width)
+  const characters = graphemes(input).map((character) =>
+    character === '\t' ? ' '.repeat(Math.min(4, safeWidth)) : character
+  )
+  const safeCursor = Math.max(0, Math.min(cursor, characters.length))
   const lines: Array<{ start: number; end: number }> = []
   let start = 0
   let columns = 0
@@ -272,14 +282,19 @@ function edit(
   end: number,
   insertion: readonly string[] = []
 ): InputResult {
-  const next = [...characters.slice(0, start), ...insertion, ...characters.slice(end)].join('')
+  const prefix = [...characters.slice(0, start), ...insertion].join('')
+  const next = prefix + characters.slice(end).join('')
   return {
-    state: updateInput(state, next, start + insertion.length),
+    state: updateInput(state, next, graphemes(prefix).length),
     action: 'none',
   }
 }
 
+// Editing a recalled entry leaves the unsent draft intact; navigating away discards the edit.
 function updateInput(state: EditorState, input: string, cursor: number): EditorState {
+  if (browsingHistory(state)) {
+    return { ...state, input, cursor }
+  }
   return {
     ...state,
     input,
@@ -287,6 +302,28 @@ function updateInput(state: EditorState, input: string, cursor: number): EditorS
     historyIndex: state.history.length,
     draft: input,
   }
+}
+
+/** Whether the editor shows a history entry rather than the unsent draft. */
+export function browsingHistory(state: EditorState): boolean {
+  return state.historyIndex < state.history.length
+}
+
+/** The cursor one logical line up or down at the same column, or undefined on the first or last line. */
+function verticalCursor(characters: readonly string[], cursor: number, direction: -1 | 1): number | undefined {
+  const lineStart = logicalLineStart(characters, cursor)
+  const column = cursor - lineStart
+  if (direction === -1) {
+    return lineStart === 0 ? undefined : Math.min(logicalLineStart(characters, lineStart - 1) + column, lineStart - 1)
+  }
+  const lineEnd = characters.indexOf('\n', cursor)
+  if (lineEnd < 0) return undefined
+  const nextEnd = characters.indexOf('\n', lineEnd + 1)
+  return Math.min(lineEnd + 1 + column, nextEnd < 0 ? characters.length : nextEnd)
+}
+
+function logicalLineStart(characters: readonly string[], index: number): number {
+  return index <= 0 ? 0 : characters.lastIndexOf('\n', index - 1) + 1
 }
 
 function moveCursor(state: EditorState, cursor: number): InputResult {

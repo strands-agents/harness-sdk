@@ -19,6 +19,14 @@ export interface TerminalOutput {
   write(value: string): unknown
 }
 
+// Apple's Terminal renders OSC 8 markers as literal text instead of a hyperlink.
+export function hyperlinkEscapes(url: string): { open: string; close: string } | undefined {
+  if (process.env.TERM_PROGRAM === 'Apple_Terminal') {
+    return undefined
+  }
+  return { open: `\u001b]8;;${url}\u0007`, close: '\u001b]8;;\u0007' }
+}
+
 export function enterAlternateScreen(output: TerminalOutput = process.stdout): () => void {
   let active = true
   output.write(`${RESET_KITTY_KEYBOARD}${ENTER_ALTERNATE_SCREEN}${ENABLE_MOUSE}`)

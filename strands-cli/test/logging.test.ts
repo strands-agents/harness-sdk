@@ -91,22 +91,25 @@ describe('createFileLogger', () => {
     }
   })
 
-  it.skipIf(process.platform === 'win32')('tightens a pre-existing directory and log file', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'strands-log-'))
-    const filePath = join(dir, 'strands', 'cli.log')
-    try {
-      await mkdir(dirname(filePath), { mode: 0o755 })
-      await writeFile(filePath, 'old\n', { mode: 0o644 })
-      await chmod(dirname(filePath), 0o755)
-      await chmod(filePath, 0o644)
-      createFileLogger(filePath).info('hello')
-      expect((await stat(dirname(filePath))).mode & 0o777).toBe(0o700)
-      expect((await stat(filePath)).mode & 0o777).toBe(0o600)
-      expect(await readFile(filePath, 'utf8')).toContain('old')
-    } finally {
-      await rm(dir, { recursive: true, force: true })
+  it.skipIf(process.platform === 'win32')(
+    'preserves parent permissions and tightens a pre-existing log file',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'strands-log-'))
+      const filePath = join(dir, 'strands', 'cli.log')
+      try {
+        await mkdir(dirname(filePath), { mode: 0o750 })
+        await writeFile(filePath, 'old\n', { mode: 0o644 })
+        await chmod(dirname(filePath), 0o750)
+        await chmod(filePath, 0o644)
+        createFileLogger(filePath).info('hello')
+        expect((await stat(dirname(filePath))).mode & 0o777).toBe(0o750)
+        expect((await stat(filePath)).mode & 0o777).toBe(0o600)
+        expect(await readFile(filePath, 'utf8')).toContain('old')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('degrades to a no-op when the directory cannot be created', () => {
     const logger = createFileLogger('/dev/null/nope/cli.log')

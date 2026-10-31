@@ -2,68 +2,11 @@ import type { ReactElement } from 'react'
 import { Box } from 'ink'
 
 import type { ChatMediaContent, ChatToolResultContent } from '../chat/controller.js'
-import { formatValue } from './presentation.js'
+import { expandTabs, formatValue } from './presentation.js'
 import { Text, useTheme } from './theme.js'
 
-type TerminalImageProtocol = 'iterm2' | 'kitty'
-
-export function terminalImageProtocol(environment: NodeJS.ProcessEnv = process.env): TerminalImageProtocol | undefined {
-  if (environment.KITTY_WINDOW_ID || environment.TERM === 'xterm-kitty') {
-    return 'kitty'
-  }
-  if (environment.TERM_PROGRAM === 'iTerm.app' || environment.LC_TERMINAL === 'iTerm2') {
-    return 'iterm2'
-  }
-  return undefined
-}
-
-export function terminalImageSequence(
-  bytes: Uint8Array,
-  protocol: TerminalImageProtocol,
-  columns = 56,
-  rows = 10
-): string {
-  const data = Buffer.from(bytes).toString('base64')
-  if (protocol === 'iterm2') {
-    return `\u001b]1337;File=inline=1;width=${columns};height=${rows};preserveAspectRatio=1:${data}\u0007`
-  }
-
-  const chunks = data.match(/.{1,4096}/g) ?? ['']
-  return chunks
-    .map((chunk, index) => {
-      const more = index < chunks.length - 1 ? 1 : 0
-      const parameters = index === 0 ? `a=T,f=100,q=2,c=${columns},r=${rows},m=${more}` : `m=${more}`
-      return `\u001b_G${parameters};${chunk}\u001b\\`
-    })
-    .join('')
-}
-
-export function MediaView({
-  content,
-  maxColumns = 56,
-}: {
-  content: ChatMediaContent
-  maxColumns?: number
-}): ReactElement {
+export function MediaView({ content }: { content: ChatMediaContent }): ReactElement {
   const theme = useTheme()
-  if (content.type === 'image') {
-    const protocol = terminalImageProtocol()
-    if (protocol && content.source.type === 'bytes') {
-      const rows = 10
-      return (
-        <Box flexDirection="column">
-          <Text>{terminalImageSequence(content.source.bytes, protocol, maxColumns, rows)}</Text>
-          {Array.from({ length: rows }, (_, index) => (
-            <Text key={`image-row-${index}`}> </Text>
-          ))}
-          <Text dimColor>
-            image: {content.format}, {content.source.bytes.byteLength.toLocaleString()} bytes
-          </Text>
-        </Box>
-      )
-    }
-  }
-
   if (content.type !== 'document') {
     return (
       <Text color={theme.accent}>
@@ -92,7 +35,7 @@ export function ToolResultContentView({ content }: { content: readonly ChatToolR
         if (item.type === 'text' || item.type === 'json') {
           return (
             <Text key={`${item.type}-${index}`} dimColor>
-              {item.type === 'text' ? item.text : formatValue(item.value)}
+              {item.type === 'text' ? expandTabs(item.text) : formatValue(item.value)}
             </Text>
           )
         }
@@ -110,7 +53,7 @@ function DocumentPreview({ text }: { text: string }): ReactElement {
     <Box backgroundColor={theme.surface} paddingX={1} flexDirection="column" marginTop={1}>
       {visible.map((line, index) => (
         <Text key={`document-${index}`} dimColor>
-          {line || ' '}
+          {expandTabs(line) || ' '}
         </Text>
       ))}
       {lines.length > visible.length ? <Text dimColor>... {lines.length - visible.length} more lines</Text> : null}
