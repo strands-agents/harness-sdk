@@ -85,7 +85,11 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
     ``create_harness`` selects it only when the setting is ``"exa"``."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
-    web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
+    web_fetch_model = resolve_web_fetch_model(
+        parent_config["model"],
+        web_fetch_config.pop("model", None),
+        warn_unmapped_family=not web_fetch_config.pop("quiet_fallback", False),
+    )
     tools = (
         make_shell(**_builtin_tool_config(enabled, "shell")),
         make_read(**{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}),

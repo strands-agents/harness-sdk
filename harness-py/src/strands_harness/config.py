@@ -328,6 +328,7 @@ class _WebFetchConfig(_Model):
         "Input should be a non-empty string or a model module reference", (str, NonBlankStr), (dict, _ModelReference)
     ) = _UNSET
     transport: WebFetchTransport = _UNSET
+    quiet_fallback: bool = _UNSET
 
 
 class _ProgrammaticToolCallerConfig(_Model):
