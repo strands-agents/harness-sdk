@@ -1,0 +1,9 @@
+name: schemagate
+description: MCP server that gives a Strands agent only the database tables a question needs, out of those the caller's roles may read, and runs read-only SQL against them.
+integrationType: tool
+languages:
+  python:
+    package: schemagate[mcp]
+github: https://github.com/ashishsinha1602/schemagate
+docsUrl: https://github.com/ashishsinha1602/schemagate/blob/main/docs/strands.md
+addedDate: 2026-10-31
