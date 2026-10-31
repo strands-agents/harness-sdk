@@ -1,43 +1,42 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { LocalFileStorage } from '../../local-file-storage.js'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { QmdSearchStrategy } from '../qmd.js'
+import type { LocalFileStorage } from '../../local-file-storage.js'
 
 vi.mock('@tobilu/qmd', () => ({
   createStore: vi.fn(),
 }))
 
-vi.mock('node:path', () => ({
-  resolve: (...args: string[]) => args.join('/'),
-  dirname: (path: string) => path.split('/').slice(0, -1).join('/') || '/',
-  basename: (path: string) => path.split('/').pop() || '',
-}))
-
-vi.mock('node:fs/promises', () => ({
-  mkdir: vi.fn().mockResolvedValue(undefined),
-}))
-
 describe('QmdSearchStrategy', () => {
+  let tempDir: string
+  let mockStorage: LocalFileStorage
   const mockQmdStore = {
     update: vi.fn().mockResolvedValue(undefined),
     searchLex: vi.fn().mockResolvedValue([]),
     close: vi.fn().mockResolvedValue(undefined),
   }
 
-  const mockStorage = {
-    baseDir: '/tmp/test-storage',
-    write: vi.fn(),
-    read: vi.fn(),
-    delete: vi.fn(),
-    list: vi.fn(),
-  } as unknown as LocalFileStorage
-
   beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'strands-qmd-test-'))
+    mockStorage = {
+      baseDir: join(tempDir, 'storage'),
+      write: vi.fn(),
+      read: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+    } as unknown as LocalFileStorage
     vi.clearAllMocks()
     mockQmdStore.searchLex.mockResolvedValue([])
     const { createStore } = await (import('@tobilu/qmd' as string) as Promise<{
       createStore: ReturnType<typeof vi.fn>
     }>)
     vi.mocked(createStore).mockResolvedValue(mockQmdStore as never)
+  })
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true })
   })
 
   describe('search', () => {
@@ -49,11 +48,12 @@ describe('QmdSearchStrategy', () => {
 
       await strategy.search(mockStorage, 'test query')
 
+      expect((await stat(mockStorage.baseDir)).isDirectory()).toBe(true)
       expect(createStore).toHaveBeenCalledWith({
-        dbPath: '/tmp/.test-storage-qmd.sqlite',
+        dbPath: join(tempDir, '.storage-qmd.sqlite'),
         config: {
           collections: {
-            storage: { path: '/tmp/test-storage', pattern: '**/*' },
+            storage: { path: mockStorage.baseDir, pattern: '**/*' },
           },
         },
       })
@@ -74,11 +74,12 @@ describe('QmdSearchStrategy', () => {
       const { createStore } = await (import('@tobilu/qmd' as string) as Promise<{
         createStore: ReturnType<typeof vi.fn>
       }>)
-      const strategy = new QmdSearchStrategy({ dbPath: '/custom/index.sqlite' })
+      const dbPath = join(tempDir, 'custom.sqlite')
+      const strategy = new QmdSearchStrategy({ dbPath })
 
       await strategy.search(mockStorage, 'test query')
 
-      expect(createStore).toHaveBeenCalledWith(expect.objectContaining({ dbPath: '/custom/index.sqlite' }))
+      expect(createStore).toHaveBeenCalledWith(expect.objectContaining({ dbPath }))
     })
 
     it('returns empty array when no matches', async () => {
@@ -176,8 +177,8 @@ describe('QmdSearchStrategy', () => {
       const storeB = newQmdStore()
       createStore.mockResolvedValueOnce(storeA).mockResolvedValueOnce(storeB)
       const strategy = new QmdSearchStrategy()
-      const storageA = storageAt('/tmp/.strands/memory/a')
-      const storageB = storageAt('/tmp/.strands/memory/b')
+      const storageA = storageAt(join(tempDir, 'memory', 'a'))
+      const storageB = storageAt(join(tempDir, 'memory', 'b'))
 
       await strategy.search(storageA, 'query one')
       await strategy.search(storageB, 'query two')
@@ -186,10 +187,10 @@ describe('QmdSearchStrategy', () => {
 
       expect(createStore).toHaveBeenCalledTimes(2)
       expect(createStore).toHaveBeenCalledWith(
-        expect.objectContaining({ dbPath: '/tmp/.strands/memory/.a-qmd.sqlite' })
+        expect.objectContaining({ dbPath: join(tempDir, 'memory', '.a-qmd.sqlite') })
       )
       expect(createStore).toHaveBeenCalledWith(
-        expect.objectContaining({ dbPath: '/tmp/.strands/memory/.b-qmd.sqlite' })
+        expect.objectContaining({ dbPath: join(tempDir, 'memory', '.b-qmd.sqlite') })
       )
       expect(storeA.close).not.toHaveBeenCalled()
       expect(storeB.close).not.toHaveBeenCalled()
@@ -206,9 +207,9 @@ describe('QmdSearchStrategy', () => {
       createStore.mockResolvedValueOnce(storeA).mockResolvedValueOnce(storeB)
       const strategy = new QmdSearchStrategy()
 
-      const searchA = strategy.search(storageAt('/tmp/memory/a'), 'query one')
+      const searchA = strategy.search(storageAt(join(tempDir, 'memory', 'a')), 'query one')
       await vi.waitFor(() => expect(storeA.update).toHaveBeenCalled())
-      await strategy.search(storageAt('/tmp/memory/b'), 'query two')
+      await strategy.search(storageAt(join(tempDir, 'memory', 'b')), 'query two')
       finishUpdateA()
       await searchA
 
@@ -221,12 +222,10 @@ describe('QmdSearchStrategy', () => {
       let finishOpen!: (store: typeof mockQmdStore) => void
       createStore.mockReturnValueOnce(new Promise((resolve) => (finishOpen = resolve)))
       const strategy = new QmdSearchStrategy()
-      const storage = storageAt('/tmp/memory/a')
+      const storage = storageAt(join(tempDir, 'memory', 'a'))
 
       const first = strategy.search(storage, 'one')
-      // Start the second search once the first is inside createStore, not in the same tick:
-      // two simultaneous imports of the mocked node:path can get the real module, whose
-      // resolve() gives a different key on Windows.
+      // Start the second search while the first createStore call is pending.
       await vi.waitFor(() => expect(createStore).toHaveBeenCalled())
       const second = strategy.search(storage, 'two')
       finishOpen(newQmdStore())
@@ -241,8 +240,8 @@ describe('QmdSearchStrategy', () => {
       const storeB = newQmdStore()
       createStore.mockResolvedValueOnce(storeA).mockResolvedValueOnce(storeB)
       const strategy = new QmdSearchStrategy()
-      await strategy.search(storageAt('/tmp/memory/a'), 'query')
-      await strategy.search(storageAt('/tmp/memory/b'), 'query')
+      await strategy.search(storageAt(join(tempDir, 'memory', 'a')), 'query')
+      await strategy.search(storageAt(join(tempDir, 'memory', 'b')), 'query')
 
       await strategy.close()
 
@@ -254,7 +253,7 @@ describe('QmdSearchStrategy', () => {
       const createStore = await mockedCreateStore()
       createStore.mockRejectedValueOnce(new Error('disk full'))
       const strategy = new QmdSearchStrategy()
-      const storage = storageAt('/tmp/memory/a')
+      const storage = storageAt(join(tempDir, 'memory', 'a'))
 
       await expect(strategy.search(storage, 'query')).rejects.toThrow('disk full')
       await strategy.search(storage, 'query')
@@ -264,13 +263,16 @@ describe('QmdSearchStrategy', () => {
 
     it('throws when an explicit dbPath is used with a second directory', async () => {
       const createStore = await mockedCreateStore()
-      const strategy = new QmdSearchStrategy({ dbPath: '/custom/index.sqlite' })
-      await strategy.search(storageAt('/tmp/memory/a'), 'query')
+      const dbPath = join(tempDir, 'index.sqlite')
+      const storageA = storageAt(join(tempDir, 'memory', 'a'))
+      const storageB = storageAt(join(tempDir, 'memory', 'b'))
+      const strategy = new QmdSearchStrategy({ dbPath })
+      await strategy.search(storageA, 'query')
 
-      await expect(strategy.search(storageAt('/tmp/memory/b'), 'query')).rejects.toThrow(
-        "QmdSearchStrategy dbPath '/custom/index.sqlite' already indexes '/tmp/memory/a' and cannot also index '/tmp/memory/b'"
+      await expect(strategy.search(storageB, 'query')).rejects.toThrow(
+        `QmdSearchStrategy dbPath '${dbPath}' already indexes '${storageA.baseDir}' and cannot also index '${storageB.baseDir}'`
       )
-      await strategy.search(storageAt('/tmp/memory/a'), 'query')
+      await strategy.search(storageA, 'query')
       expect(createStore).toHaveBeenCalledTimes(1)
     })
   })
