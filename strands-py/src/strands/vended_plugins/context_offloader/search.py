@@ -103,8 +103,40 @@ def _truncate(output: str, max_chars: int, message: str) -> str:
     return output[:slice_end] + f"\n\n[{message}]"
 
 
-def _format_lines(lines: list[str], indices: list[int], matched_set: set[int]) -> str:
-    """Format line indices with line numbers, > prefixes for matches, and --- separators."""
+def _window_around_match(line: str, match_start: int, budget: int) -> str:
+    """Return a window of ``line`` centred on ``match_start``, marked with an ellipsis where it was cut.
+
+    A matched line can be far longer than the output budget. Showing its start hides a match that
+    sits deep inside it, so the header reports a match the output never shows. The window keeps
+    the match inside the budget instead.
+    """
+    if len(line) <= budget:
+        return line
+
+    # Leave room for the ellipsis markers so the result stays within the budget.
+    content = max(1, budget - 2)
+    half = content // 2
+    start = max(0, match_start - half)
+    end = min(len(line), start + content)
+    if end - start < content:
+        start = max(0, end - content)
+
+    prefix = "\u2026" if start > 0 else ""
+    suffix = "\u2026" if end < len(line) else ""
+    return f"{prefix}{line[start:end]}{suffix}"
+
+
+def _format_lines(
+    lines: list[str],
+    indices: list[int],
+    matched_set: set[int],
+    display: dict[int, str] | None = None,
+) -> str:
+    """Format line indices with line numbers, > prefixes for matches, and --- separators.
+
+    ``display`` overrides the text shown for a line, used to show a window of a matched
+    line that is longer than the output budget.
+    """
     if not indices:
         return ""
     pad_width = len(str(indices[-1] + 1))
@@ -114,7 +146,8 @@ def _format_lines(lines: list[str], indices: list[int], matched_set: set[int]) -
             output.append("---")
         line_num = str(idx + 1).rjust(pad_width)
         prefix = ">" if idx in matched_set else " "
-        output.append(f"{prefix} {line_num}| {lines[idx]}")
+        text = display.get(idx, lines[idx]) if display else lines[idx]
+        output.append(f"{prefix} {line_num}| {text}")
     return "\n".join(output)
 
 
@@ -138,9 +171,12 @@ def _search_by_pattern(
         regex = re.compile(re.escape(safe_input))
 
     matched_set: set[int] = set()
+    match_starts: dict[int, int] = {}
     for i in range(scope_start, scope_end + 1):
-        if regex.search(lines[i]):
+        match = regex.search(lines[i])
+        if match:
             matched_set.add(i)
+            match_starts[i] = match.start()
 
     if not matched_set:
         return f"No matches found for pattern '{pattern}'{scope_label} (searched {scope_end - scope_start + 1} lines)."
@@ -152,7 +188,10 @@ def _search_by_pattern(
 
     safe_pattern = re.sub(r"[\n\r/\]]", " ", pattern)[:50]
     header = f"[{len(matched_set)} match{'es' if len(matched_set) > 1 else ''} for /{safe_pattern}/{scope_label}]"
-    body = _format_lines(lines, sorted(visible), matched_set)
+    # A matched line longer than the budget is shown as a window around the match, so the match
+    # the header reports is also visible in the output.
+    display = {idx: _window_around_match(lines[idx], start, max_chars) for idx, start in match_starts.items()}
+    body = _format_lines(lines, sorted(visible), matched_set, display)
     truncated_body = _truncate(body, max_chars, "output truncated, narrow your search")
     return f"{header}\n\n{truncated_body}"
 
