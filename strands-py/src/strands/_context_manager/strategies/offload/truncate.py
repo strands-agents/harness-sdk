@@ -6,7 +6,8 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from ....types.content import ContentBlock, Message
+from ....types.content import ContentBlock, Message, Messages
+from ...methods.summarize import _has_message_summary
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
 from ...stash import Stash, _format_stash_refs
 from ...types import is_text_block
@@ -15,6 +16,7 @@ from .base import (
     OffloadConditions,
     OffloadTarget,
     _build_conditions,
+    _collect_removable_with_pair,
     _insert_marker,
     _repair_alternation,
     _splice_with_pairs,
@@ -152,23 +154,37 @@ class EmergencyTruncateStrategy(TruncateStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Drop the oldest 20% of non-head messages each pass.
 
-        Pins are intentionally ignored so an all-pinned overflow is still recoverable.
+        Summaries stand in for history that is already gone, so they and their tool-pair partners
+        are kept while anything else remains. Pins are intentionally ignored so an all-pinned
+        overflow is still recoverable.
         """
         messages = context.messages
         if len(messages) <= 3:
             return False
 
-        removable = [msg for index, msg in enumerate(messages) if index > 0]
-        remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
-        # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
-        if removable[remove_count]["role"] != "assistant":
-            remove_count += 1
-        to_remove = removable[:remove_count]
+        protected: set[int] = set()
+        for index, message in enumerate(messages):
+            if index > 0 and _has_message_summary(message):
+                protected.update(id(kept) for kept in (message, *_collect_removable_with_pair(messages, index)))
+        removable = [msg for index, msg in enumerate(messages) if index > 0 and id(msg) not in protected]
 
-        removed, lowest_index = _splice_with_pairs(messages, to_remove)
+        removed, lowest_index = _drop_oldest(messages, removable)
+        if removed == 0 and protected:
+            removed, lowest_index = _drop_oldest(messages, messages[1:])
         if removed == 0:
             return False
 
         _insert_marker(messages, lowest_index, self._make_removal_marker(removed))
         _repair_alternation(messages)
         return True
+
+
+def _drop_oldest(messages: Messages, removable: list[Message]) -> tuple[int, int]:
+    """Splice out the oldest 20% of ``removable`` from ``messages``; returns the count removed and the gap index."""
+    if len(removable) < 2:
+        return 0, len(messages)
+    remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+    # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
+    if removable[remove_count]["role"] != "assistant":
+        remove_count += 1
+    return _splice_with_pairs(messages, removable[:remove_count])

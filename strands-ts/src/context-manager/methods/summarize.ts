@@ -34,6 +34,17 @@ export function formatSummarized(description: string, tokens: number, summary?: 
   return summary ? `${header}\n\n${summary}` : header
 }
 
+const MESSAGE_SUMMARY_HEADER = /^\[Summarized: \d+ messages, ~/
+
+/**
+ * Whether the message carries a message-level summary, which stands in for removed history.
+ *
+ * @internal
+ */
+export function hasMessageSummary(message: Message): boolean {
+  return message.content.some((block) => block instanceof TextBlock && MESSAGE_SUMMARY_HEADER.test(block.text))
+}
+
 // Subject to change as we benchmark summarization quality.
 const DEFAULT_SYSTEM_PROMPT = [
   'You are a summarization assistant. Produce a concise factual summary that preserves:',

@@ -7,6 +7,8 @@ import pytest
 
 from strands._context_manager.methods.summarize import (
     _flatten_messages_to_content,
+    _format_summarized,
+    _has_message_summary,
     _summarize_content,
     _tool_result_to_content_blocks,
 )
@@ -37,6 +39,21 @@ def _make_stream_events(text: str):
         yield {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}}}
 
     return gen
+
+
+@pytest.mark.parametrize(
+    "content, expected",
+    [
+        ([ContentBlock(text=_format_summarized("7 messages", 1234, "facts"))], True),
+        ([ContentBlock(text="a1"), ContentBlock(text=_format_summarized("1 messages", 50))], True),
+        ([ContentBlock(text=_format_summarized("tool result", 1234, "facts"))], False),
+        ([ContentBlock(text="[... 2 messages elided ...]")], False),
+        ([ContentBlock(toolUse=ToolUse(toolUseId="t1", name="tool", input={}))], False),
+    ],
+    ids=["message-summary", "appended-to-carrier", "block-summary", "elided-marker", "tool-use"],
+)
+def test_has_message_summary(content, expected):
+    assert _has_message_summary(Message(role="assistant", content=content)) is expected
 
 
 class TestToolResultToContentBlocks:

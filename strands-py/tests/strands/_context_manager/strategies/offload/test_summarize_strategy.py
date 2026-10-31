@@ -6,6 +6,7 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.strategies.offload import Offload
+from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands._context_manager.types import ContextState
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
@@ -343,6 +344,29 @@ class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
         )
         summaries = [b for msg in messages for b in msg["content"] if b.get("text", "").startswith("[Summarized:")]
         assert len(summaries) == 1
+
+
+class TestSummaryOutlivesEmergencyTruncation:
+    """Emergency truncation after a summarize pass must not drop the summary it just produced."""
+
+    @pytest.mark.asyncio
+    async def test_summary_survives_emergency_pass(self, mock_agent):
+        mock_agent.model.stream = _make_stream_events("The launch code is 4242.")
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=1.2)
+        messages: Messages = [Message(role="user", content=[ContentBlock(text="task")])]
+        for index in range(10):
+            messages.append(Message(role="assistant", content=[ContentBlock(text=f"a{index}")]))
+            messages.append(Message(role="user", content=[ContentBlock(text=f"u{index}")]))
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.2, overflow=True)
+
+        assert await Offload.summarize("*").when(utilization=0.8, preserve_recent=0.7).apply(context) is True
+        context.overflow = False
+        assert await EmergencyTruncateStrategy().apply(context) is True
+
+        assert "The launch code is 4242." in messages[1]["content"][0]["text"]
+        assert messages[1]["content"][0]["text"].startswith("[Summarized: 5 messages")
+        assert len(messages) < 15
 
 
 class TestSummarizationWithToolCalls:

@@ -19,6 +19,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
+import { hasMessageSummary } from '../../methods/summarize.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -530,6 +531,15 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
 const EMERGENCY_REMOVAL_RATIO = 0.2
 
+/** Splice out the oldest 20% of `removable` from `messages`; returns the count removed and the gap index. */
+function dropOldest(messages: Message[], removable: Message[]): { removed: number; lowestIndex: number } {
+  if (removable.length < 2) return { removed: 0, lowestIndex: messages.length }
+  let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
+  // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
+  if (removable[removeCount]?.role !== 'assistant') removeCount += 1
+  return spliceWithPairs(messages, removable.slice(0, removeCount))
+}
+
 /**
  * Last-resort strategy that recomputes utilization and drops the oldest 20% of messages
  * when the context window is still overflowing after all user-configured strategies have run.
@@ -560,21 +570,29 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     return this._applyPerMessage(context)
   }
 
-  /** Drop the oldest 20% of non-head messages each pass. */
+  /**
+   * Drop the oldest 20% of non-head messages each pass.
+   *
+   * Summaries stand in for history that is already gone, so they and their tool-pair partners
+   * are kept while anything else remains.
+   */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages } = context
     if (messages.length <= 3) return false
 
-    const removable = messages.filter((_, index) => index > 0)
-    let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
-    // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
-    if (removable[removeCount]?.role !== 'assistant') removeCount += 1
-    const toRemove = removable.slice(0, removeCount)
+    const protectedMessages = new Set<Message>()
+    messages.forEach((message, index) => {
+      if (index > 0 && hasMessageSummary(message)) {
+        for (const kept of [message, ...collectRemovableWithPair(messages, index)]) protectedMessages.add(kept)
+      }
+    })
+    const removable = messages.filter((message, index) => index > 0 && !protectedMessages.has(message))
 
-    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
-    if (removed === 0) return false
+    let result = dropOldest(messages, removable)
+    if (result.removed === 0 && protectedMessages.size > 0) result = dropOldest(messages, messages.slice(1))
+    if (result.removed === 0) return false
 
-    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
+    insertMarker(messages, result.lowestIndex, this._makeRemovalMarker(result.removed))
     repairAlternation(messages)
     return true
   }
