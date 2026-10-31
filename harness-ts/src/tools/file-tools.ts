@@ -44,11 +44,16 @@ function validatePath(path: string): void {
   }
 }
 
-function numberLines(content: string, start: number): string {
-  return content
-    .split('\n')
-    .map((line, i) => `${String(i + start).padStart(6)}\t${line}`)
-    .join('\n')
+/** Split text into lines; a trailing newline terminates the last line rather than starting an empty one. */
+function splitLines(content: string): string[] {
+  if (content === '') return []
+  const lines = content.split('\n')
+  if (content.endsWith('\n')) lines.pop()
+  return lines
+}
+
+function numberLines(lines: readonly string[], start: number): string {
+  return lines.map((line, i) => `${String(i + start).padStart(6)}\t${line}`).join('\n')
 }
 
 function extension(path: string): string {
@@ -94,7 +99,10 @@ function mediaPlaceholder(path: string, kind: string, mediaFormat: string, size:
 const READ_SCHEMA = z.object({
   path: z.string().describe('Absolute path to the file.'),
   offset: z.number().optional().describe('1-indexed line to start from. Defaults to the first line. Text files only.'),
-  limit: z.number().optional().describe('Maximum number of lines to return. Defaults to 2000. Text files only.'),
+  limit: z
+    .number()
+    .optional()
+    .describe('Maximum number of lines to return (at least 1). Defaults to 2000. Text files only.'),
 })
 
 const READ_DESCRIPTION =
@@ -136,7 +144,14 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
 
     const content = await context.agent.sandbox.readText(input.path)
 
-    const lines = content.split('\n')
+    if (input.limit !== undefined && input.limit < 1) {
+      throw new Error('limit must be at least 1.')
+    }
+
+    const lines = splitLines(content)
+    if (lines.length === 0) {
+      return '[File is empty.]'
+    }
     const start = Math.max(0, input.offset ? input.offset - 1 : 0)
     const count = input.limit ?? READ_DEFAULT_LIMIT
     const window = lines.slice(start, start + count)
@@ -144,7 +159,7 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
       return `[File has ${lines.length} lines; offset ${input.offset} is past the end.]`
     }
 
-    let numbered = numberLines(window.join('\n'), start + 1)
+    let numbered = numberLines(window, start + 1)
     if (start > 0 || start + count < lines.length) {
       const shownEnd = start + window.length
       numbered += `\n[Showing lines ${start + 1}-${shownEnd} of ${lines.length}. Use offset/limit to read more.]`
@@ -191,7 +206,7 @@ export const write = tool({
     if (!context) throw new Error('Tool context is required for write.')
     validatePath(input.path)
     await context.agent.sandbox.writeText(input.path, input.content)
-    const lineCount = input.content === '' ? 0 : input.content.split('\n').length
+    const lineCount = splitLines(input.content).length
     return `Wrote ${lineCount} lines to ${input.path}.`
   },
 })
