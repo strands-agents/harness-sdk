@@ -37,7 +37,6 @@ export function FrogEasterEgg({
   top,
   animate,
   theme,
-  customBase = 'green',
   onComplete,
 }: {
   animationId: number
@@ -46,7 +45,6 @@ export function FrogEasterEgg({
   top: number
   animate: boolean
   theme: FrogTheme
-  customBase?: Exclude<FrogTheme, 'custom'>
   onComplete(id: number): void
 }): ReactElement {
   const colors = useTheme()
@@ -72,8 +70,6 @@ export function FrogEasterEgg({
   const progress = animate ? elapsedMs / durationMs : ANIMATIONS[variant].staticProgress
   const runs = renderFrogAnimationRuns(width, FROG_ANIMATION_HEIGHT, variant, progress, elapsedMs, true, theme, {
     colorMode: colors.mode,
-    customBase,
-    ...(theme === 'custom' ? { frogColor: colors.frog } : {}),
   })
   return (
     <Box

@@ -42,14 +42,15 @@ interface ProviderDiscovery {
 
 export function useProviderDiscovery(config: CliConfigStore): ProviderDiscovery {
   const [refreshVersion, setRefreshVersion] = useState(0)
-  const [detectedEnvironment, setDetectedEnvironment] = useState(() => config.providerEnvironment())
+  const [detectedEnvironment, setDetectedEnvironment] = useState(() => config.providerEnvironment({}))
   const [providerEnvironment, setProviderEnvironment] = useState(() => config.configuredProviderEnvironment())
-  const [awsDiscovery, setAwsDiscovery] = useState(() =>
-    discoverAwsConfiguration({
-      AWS_CONFIG_FILE: detectedEnvironment.AWS_CONFIG_FILE?.value,
-      AWS_SHARED_CREDENTIALS_FILE: detectedEnvironment.AWS_SHARED_CREDENTIALS_FILE?.value,
+  const [awsDiscovery, setAwsDiscovery] = useState(() => {
+    const environment = config.providerEnvironment()
+    return discoverAwsConfiguration({
+      AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,
+      AWS_SHARED_CREDENTIALS_FILE: environment.AWS_SHARED_CREDENTIALS_FILE?.value,
     })
-  )
+  })
   const [ollamaDiscovery, setOllamaDiscovery] = useState<OllamaDiscovery>()
   const [liteLlmDiscovery, setLiteLlmDiscovery] = useState<LiteLlmDiscovery>()
   const [providerModels, setProviderModels] = useState<ProviderModels>({
@@ -72,8 +73,8 @@ export function useProviderDiscovery(config: CliConfigStore): ProviderDiscovery 
   )
 
   const recheck = useCallback((): void => {
-    const environment = config.providerEnvironment()
-    setDetectedEnvironment(environment)
+    const environment = config.providerEnvironment(providerEnvironment)
+    setDetectedEnvironment(config.providerEnvironment({}))
     setAwsDiscovery(
       discoverAwsConfiguration({
         AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,
@@ -81,7 +82,7 @@ export function useProviderDiscovery(config: CliConfigStore): ProviderDiscovery 
       })
     )
     setRefreshVersion((version) => version + 1)
-  }, [config])
+  }, [config, providerEnvironment])
 
   return {
     detectedEnvironment,

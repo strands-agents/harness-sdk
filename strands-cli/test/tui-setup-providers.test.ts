@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
+import {
+  DEFAULT_HARNESS_AGENT_CONFIG,
+  defineHarnessAgentConfig,
+  harnessAgentOptionsFromConfig,
+  type HarnessAgentConfig,
+  type HarnessConfigBuiltinTools,
+} from '@strands-agents/harness'
 
 import type { DetectedProviderEnvironment } from '../src/tui/config.js'
 import {
@@ -15,7 +21,197 @@ import {
   webSearchFallback,
   withWebSearchFallback,
 } from '../src/tui/builtin-tools.js'
-import { CAPABILITY_DESCRIPTION_MAX_LENGTH, rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
+import { rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
+import { resolveSkillSources } from '../src/tui/skills.js'
+
+function setupControls(profile: Partial<HarnessAgentConfig>, discovery = true) {
+  let draft = quickstartDraft('bedrock', {})
+  draft.profile = defineHarnessAgentConfig(profile)
+  draft.settings.skillDiscovery = discovery
+  return {
+    get draft() {
+      return draft
+    },
+    row(step: number, id: string) {
+      return rowsForStep(
+        step,
+        'customize',
+        draft,
+        '',
+        {},
+        {},
+        'bedrock',
+        [],
+        { profiles: [], regions: [] },
+        undefined,
+        (update) => {
+          draft = update(draft)
+        },
+        (update) => {
+          draft = { ...draft, profile: { ...draft.profile, ...update } }
+        },
+        () => {}
+      ).find((row) => row.id === id)!
+    },
+  }
+}
+
+const configuredTools: HarnessConfigBuiltinTools = {
+  shell: { description: 'Custom shell' },
+  read: { media: false },
+  web_fetch: { model: 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0' },
+  programmatic_tool_caller: { timeout: 60, allowedTools: ['read'] },
+  subagent: { maxDepth: 0 },
+}
+
+describe('setup feature controls', () => {
+  it.each([false, true])('preserves configured sources and discovery=%s across both pages', (discovery) => {
+    const skills = ['./team-skills', 'https://example.com/SKILL.md']
+    const controls = setupControls({ skills }, discovery)
+    for (const step of [4, 5]) {
+      expect(controls.row(step, 'skills').active).toBe(true)
+      controls.row(step, 'skills').activate()
+      expect(controls.draft.profile.skills).toBe(false)
+      expect(controls.draft.settings.skillDiscovery).toBe(discovery)
+      controls.row(step, 'skills').activate()
+      expect(controls.draft.profile.skills).toEqual(skills)
+      expect(controls.draft.settings.skillDiscovery).toBe(discovery)
+    }
+  })
+
+  it.each([
+    { skills: false, discovery: false },
+    { skills: false, discovery: true },
+    { skills: [], discovery: false },
+    { skills: [], discovery: true },
+  ] as const)('reflects disabled skills and enables sources: %j', ({ skills, discovery }) => {
+    for (const step of [4, 5]) {
+      const controls = setupControls({ skills }, discovery)
+      const sources = () => {
+        const value = controls.draft.profile.skills
+        return resolveSkillSources(
+          typeof value === 'object' ? [...value] : value,
+          process.cwd(),
+          controls.draft.settings.skillDiscovery
+        )
+      }
+      expect(sources()).toEqual([])
+      expect(controls.row(step, 'skills').active).toBe(false)
+      controls.row(step, 'skills').activate()
+      expect(controls.row(step, 'skills').active).toBe(true)
+      expect(sources().length).toBeGreaterThan(0)
+      controls.row(step, 'skills').activate()
+      expect(controls.row(step, 'skills').active).toBe(false)
+      expect(sources()).toEqual([])
+    }
+  })
+
+  it.each([true, { dir: './private-memory' }])('preserves memory %j across both pages', (memory) => {
+    const controls = setupControls({ memory })
+    for (const step of [4, 5]) {
+      controls.row(step, 'memory').activate()
+      expect(controls.draft.profile.memory).toBe(false)
+      controls.row(step, 'memory').activate()
+      expect(controls.draft.profile.memory).toEqual(memory)
+    }
+  })
+
+  it('preserves context strategy and background task limits', async () => {
+    const controls = setupControls({
+      contextManager: 'agentic',
+      agentConfig: { backgroundTasks: { maxConcurrency: 2, timeout: 23000 } },
+    })
+    const before = controls.draft.profile
+    await harnessAgentOptionsFromConfig(before)
+    for (const id of ['context', 'background-tasks']) {
+      controls.row(4, id).activate()
+      expect(controls.row(4, id).active).toBe(false)
+      controls.row(4, id).activate()
+      expect(defineHarnessAgentConfig(controls.draft.profile)).toEqual(before)
+    }
+    controls
+      .row(5, 'context')
+      .choices!.find((choice) => choice.label === 'Automatic')!
+      .activate()
+    controls
+      .row(5, 'context')
+      .choices!.find((choice) => choice.label === 'Off')!
+      .activate()
+    controls.row(4, 'context').activate()
+    expect(controls.draft.profile.contextManager).toBe('auto')
+  })
+
+  it.each(Object.keys(configuredTools))('preserves the %s tool configuration', async (id) => {
+    const controls = setupControls({ builtinTools: configuredTools })
+    const before = controls.draft.profile
+    await harnessAgentOptionsFromConfig(before)
+    const disable = controls.row(3, id).activate
+    disable()
+    disable()
+    expect(controls.row(3, id).active).toBe(false)
+    controls.row(3, id).activate()
+    expect(defineHarnessAgentConfig(controls.draft.profile)).toEqual(before)
+  })
+
+  it.each([false, true])('preserves all feature options and discovery=%s through bulk toggles', async (discovery) => {
+    const profile = defineHarnessAgentConfig({
+      skills: ['./team-skills'],
+      memory: { dir: './private-memory' },
+      contextManager: 'agentic',
+      agentConfig: { backgroundTasks: { maxConcurrency: 2, timeout: 23000 }, maxParallelTools: 3 },
+    })
+    const controls = setupControls(profile, discovery)
+    await harnessAgentOptionsFromConfig(profile)
+    expect(controls.row(4, 'select-all').label).toBe('Deselect all')
+    controls.row(4, 'select-all').activate()
+    expect(controls.draft.profile).toMatchObject({
+      skills: false,
+      memory: false,
+      contextManager: false,
+      agentConfig: { backgroundTasks: false },
+    })
+    expect(controls.draft.settings.skillDiscovery).toBe(discovery)
+    controls.row(4, 'select-all').activate()
+    expect(defineHarnessAgentConfig(controls.draft.profile)).toEqual(profile)
+    expect(controls.draft.settings.skillDiscovery).toBe(discovery)
+    controls.row(4, 'memory').activate()
+    controls.row(4, 'select-all').activate()
+    expect(defineHarnessAgentConfig(controls.draft.profile)).toEqual(profile)
+  })
+
+  it.each([false, true])('preserves configured tools and explicit Exa=%s through bulk toggles', async (exa) => {
+    const tools = { ...configuredTools, web_search: exa ? ('exa' as const) : false }
+    const controls = setupControls({ builtinTools: tools })
+    await harnessAgentOptionsFromConfig(controls.draft.profile)
+    expect(controls.row(3, 'select-all').label).toBe('Deselect all')
+    controls.row(3, 'select-all').activate()
+    expect(enabledProfileTools(controls.draft.profile.builtinTools)).toEqual([])
+    controls.row(3, 'select-all').activate()
+    expect(controls.draft.profile.builtinTools).toMatchObject(tools)
+    expect(controls.row(3, 'select-all').label).toBe('Deselect all')
+  })
+
+  it('enables defaults without adding Exa or converting a tool list to a mapping', () => {
+    const controls = setupControls({
+      skills: [],
+      memory: false,
+      contextManager: false,
+      agentConfig: { backgroundTasks: false },
+      builtinTools: ['read'],
+    })
+    controls.row(4, 'select-all').activate()
+    expect(controls.draft.profile).toMatchObject({
+      skills: true,
+      memory: true,
+      contextManager: 'auto',
+      agentConfig: { backgroundTasks: true },
+    })
+    controls.row(3, 'select-all').activate()
+    expect(Array.isArray(controls.draft.profile.builtinTools)).toBe(true)
+    expect(enabledProfileTools(controls.draft.profile.builtinTools)).not.toContain('web_search')
+    expect(controls.row(3, 'select-all').label).toBe('Deselect all')
+  })
+})
 
 describe('setup provider credentials', () => {
   const aws = {
@@ -25,29 +221,59 @@ describe('setup provider credentials', () => {
   }
 
   it.each([
-    ['valid', 'success'],
-    ['expired', 'error'],
-    ['missing', 'error'],
-    ['unavailable', 'error'],
-  ] as const)('distinguishes %s AWS credentials in provider status', (credentialStatus, status) => {
-    const rows = rowsForStep(
-      1,
-      'quickstart',
-      quickstartDraft('bedrock', {}),
-      '',
-      {},
-      {},
-      'bedrock',
-      credentialStatus === 'valid' ? ['bedrock', 'bedrock-mantle'] : [],
-      { ...aws, credentialStatus },
-      undefined,
-      () => {},
-      () => {},
-      () => {}
-    )
-    expect(rows.find((row) => row.id === 'bedrock')?.status).toBe(status)
-    expect(rows.find((row) => row.id === 'bedrock-mantle')?.status).toBe(status)
-  })
+    {
+      credentialStatus: 'valid',
+      status: 'success',
+      description: 'Credentials detected',
+      warning: undefined,
+    },
+    {
+      credentialStatus: 'expired',
+      status: 'error',
+      description: 'Credentials expired',
+      warning: 'AWS credentials expired.',
+    },
+    {
+      credentialStatus: 'missing',
+      status: 'error',
+      description: 'Credentials not found',
+      warning: 'AWS credentials were not detected.',
+    },
+    {
+      credentialStatus: 'unavailable',
+      status: 'error',
+      description: 'Credentials unavailable',
+      warning: 'AWS credentials could not be verified.',
+    },
+  ] as const)(
+    'distinguishes $credentialStatus AWS credentials in provider status',
+    ({ credentialStatus, status, description, warning }) => {
+      const assessment = providerAssessment('bedrock', {}, { ...aws, credentialStatus }, undefined)
+      const rows = rowsForStep(
+        1,
+        'quickstart',
+        quickstartDraft('bedrock', {}),
+        '',
+        {},
+        {},
+        'bedrock',
+        credentialStatus === 'valid' ? ['bedrock', 'bedrock-mantle'] : [],
+        { ...aws, credentialStatus },
+        undefined,
+        () => {},
+        () => {},
+        () => {}
+      )
+      for (const provider of ['bedrock', 'bedrock-mantle']) {
+        expect(rows.find((row) => row.id === provider)).toMatchObject({
+          status,
+          description,
+        })
+      }
+      if (warning === undefined) expect(assessment.warning).toBeUndefined()
+      else expect(assessment.warning).toContain(warning)
+    }
+  )
 
   it('follows the selected profile and refreshed AWS config without retaining an inferred region', () => {
     const detected = { AWS_REGION: { value: 'us-west-2', source: 'aws-profile' as const } }
@@ -71,12 +297,12 @@ describe('setup provider credentials', () => {
     if (key === 'AWS_DEFAULT_REGION') expect(environment.AWS_REGION).toBeUndefined()
   })
 
-  it('keeps shell profile and region values ahead of setup overrides', () => {
+  it.each(['process', 'session'] as const)('keeps %s profile and region values ahead of setup overrides', (source) => {
     const environment = effectiveProviderEnvironment(
       { AWS_PROFILE: 'review', AWS_REGION: 'eu-west-1' },
       {
-        AWS_PROFILE: { value: 'default', source: 'process' },
-        AWS_REGION: { value: 'us-east-2', source: 'process' },
+        AWS_PROFILE: { value: 'default', source },
+        AWS_REGION: { value: 'us-east-2', source },
       },
       aws
     )
@@ -240,12 +466,10 @@ describe('setup provider credentials', () => {
     })
   })
 
-  it('keeps missing-credential guidance concise and points to the shell profile', () => {
-    vi.stubEnv('SHELL', '/bin/zsh')
+  it('keeps missing-credential guidance concise', () => {
     const warning = providerAssessment('openai', {}, { profiles: [], regions: [] }, undefined).warning
 
     expect(warning).toBe('OPENAI_API_KEY was not detected.')
-    vi.unstubAllEnvs()
   })
 
   it('keeps local-provider guidance concise', () => {
@@ -364,14 +588,10 @@ describe('setup web_search availability', () => {
     }
   )
 
-  it('excludes web_search even when the quickstart model supports native search', () => {
-    expect(quickstartDraft('bedrock-mantle', {}).profile.builtinTools).not.toContain('web_search')
-  })
-
   it.each([
-    ['bedrock', 'Exa', 'exa'],
-    ['bedrock-mantle', 'Native', 'native'],
-  ] as const)('offers an explicit %s web search opt-in for %s', (provider, label, mode) => {
+    ['Exa', 'bedrock', 'exa'],
+    ['Native', 'bedrock-mantle', 'native'],
+  ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
     const draft = quickstartDraft(provider, {})
     let profile = draft.profile
     const rows = rowsForStep(
@@ -403,36 +623,10 @@ describe('setup web_search availability', () => {
     expect(webSearchFallback(profile.builtinTools)).toBe(mode === 'exa' ? 'exa' : undefined)
   })
 
-  it('drops the plain web_search default without native search but keeps the Exa opt-in', () => {
+  it('keeps the Exa web search opt-in for Bedrock', () => {
     const bedrock = quickstartDraft('bedrock', {}).profile
-    expect(bedrock.builtinTools).not.toContain('web_search')
     const exa = { ...bedrock, builtinTools: { web_search: 'exa' as const } }
-    expect(compatibleProfile(exa)).toBe(exa)
-  })
-
-  it.each([
-    ['tools', 3, 'bedrock'],
-    ['plugins', 4, 'bedrock'],
-  ] as const)('keeps %s descriptions short enough to render on one line', (_, step, provider) => {
-    const noop = (): void => {}
-    const rows = rowsForStep(
-      step,
-      'customize',
-      quickstartDraft(provider, {}),
-      '',
-      {},
-      {},
-      provider,
-      [],
-      { profiles: [], regions: [] },
-      undefined,
-      noop,
-      noop,
-      noop
-    )
-    for (const { description } of rows) {
-      expect([...description].length).toBeLessThanOrEqual(CAPABILITY_DESCRIPTION_MAX_LENGTH)
-    }
+    expect(compatibleProfile(exa).builtinTools).toMatchObject({ web_search: 'exa' })
   })
 
   it.each([

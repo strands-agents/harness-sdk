@@ -107,7 +107,7 @@ describe('panel helpers', () => {
     expect(revealAgentGridSelection(8, 0, 6, 10, 3)).toBe(3)
     expect(panelRowCapacity('models', 20)).toBe(7)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
-    expect(panelRowCapacity('settings', 20)).toBe(5)
+    expect(panelRowCapacity('settings', 20)).toBe(12)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)
     expect(scrollPanelViewport(15, 1, 20, 5)).toBe(15)
     expect(scrollPanelViewport(8, -1, 20, 5, 3)).toBe(5)

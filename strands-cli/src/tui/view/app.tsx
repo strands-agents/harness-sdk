@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { renderToString, useApp, useInput, useStdout, type DOMElement, type Key } from 'ink'
 
-import type { ChatControllerApi } from '../chat/controller.js'
+import type { ChatControllerApi, ChatPanel, ChatPanelSlider } from '../chat/controller.js'
 import { commandAssistance } from '../chat/commands.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { useTerminalSize } from '../terminal/size.js'
@@ -35,7 +35,7 @@ import { openExternalUrl } from '../terminal/open-url.js'
 import { ChatView, type QueuedPromptAction, type QueuedPromptTarget } from './chat-view.js'
 import {
   activateMetadataTarget,
-  adjacentSettingOption,
+  settingArrowValue,
   adjacentSliderOption,
   agentGridCapacity,
   agentGridColumns,
@@ -59,15 +59,12 @@ import {
   scrollPanelViewport,
   scrollTranscript,
   shouldToggleVoiceMute,
-  settingsLayout,
-  settingsThemeLayout,
   sliderOptionAtMouse,
   type MetadataTarget,
   type ModelPanelFocus,
 } from './interaction.js'
 import { parseFrogCommand, type FrogVariant } from './frog-easter-egg.js'
 import { maxDetailScroll, maxPermissionScroll } from './presentation.js'
-import { CustomThemeEditor, type Appearance } from './custom-theme-editor.js'
 import type { ChatPanelRow } from '../chat/types.js'
 
 export function ChatApp({
@@ -80,30 +77,13 @@ export function ChatApp({
   openUrl?: (url: string) => void
 }): ReactElement {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
-  const [appearanceOpen, setAppearanceOpen] = useState(false)
-  const [previewAppearance, setPreviewAppearance] = useState<Appearance>()
   const [footerElements, registerFooterElement] = useElementMap<'settings' | 'setup' | 'help'>()
   const activateRow = useCallback(
     (row: ChatPanelRow): Promise<boolean> => {
-      if (
-        controller.getSnapshot().panel?.kind === 'settings' &&
-        (row.value === 'frogTheme=custom' ||
-          (row.value === 'frogTheme' && controller.getSnapshot().settings.frogTheme === 'custom'))
-      ) {
-        setAppearanceOpen(true)
-        return Promise.resolve(true)
-      }
       return controller.activatePanelRow(row)
     },
     [controller]
   )
-  const closeAppearance = useCallback((): void => {
-    setAppearanceOpen(false)
-    setPreviewAppearance(undefined)
-  }, [])
-  useEffect(() => {
-    if (snapshot.panel?.kind !== 'settings') closeAppearance()
-  }, [snapshot.panel?.kind, closeAppearance])
   const { exit } = useApp()
   const { stdout } = useStdout()
   const { columns: width, rows: height } = useTerminalSize()
@@ -345,7 +325,7 @@ export function ChatApp({
     setPressedQueuedPrompt(undefined)
     setDetailScroll(0)
     panelSliderDraggingRef.current = false
-    panelSliderValueRef.current = snapshot.panel?.slider?.options.find((option) => option.active)?.id
+    panelSliderValueRef.current = panelSlider(snapshot.panel)?.options.find((option) => option.active)?.id
   }, [snapshot.panel?.id, resetPanelPosition, resetHover])
 
   useEffect(() => {
@@ -364,7 +344,7 @@ export function ChatApp({
   }, [editingQueuedPromptId, snapshot.queuedPrompts])
 
   useEffect(() => {
-    panelSliderValueRef.current = snapshot.panel?.slider?.options.find((option) => option.active)?.id
+    panelSliderValueRef.current = panelSlider(snapshot.panel)?.options.find((option) => option.active)?.id
   }, [snapshot.panel?.slider])
 
   useEffect(() => {
@@ -473,7 +453,9 @@ export function ChatApp({
       const queuedPromptTarget = !snapshot.panel ? elementAtMouse(queuedPromptElements, mouse) : undefined
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
       const sliderElement =
-        snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' ? panelSliderElement.current : undefined
+        snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'voice'
+          ? panelSliderElement.current
+          : undefined
       const sliderHit = sliderElement ? elementContainsMouse(sliderElement, mouse) : false
       const searchElement = snapshot.panel?.kind === 'models' ? panelSearchElement.current : undefined
       const searchHit = searchElement ? elementContainsMouse(searchElement, mouse) : false
@@ -552,7 +534,7 @@ export function ChatApp({
         resetPressed()
       }
       const updateSliderSelection = (): void => {
-        const slider = snapshot.panel?.slider
+        const slider = panelSlider(snapshot.panel)
         if (!sliderElement || !slider || slider.disabled) {
           return
         }
@@ -564,7 +546,7 @@ export function ChatApp({
         void activateRow({
           label: slider.label,
           description: option.label,
-          value: `effort:${option.id}`,
+          value: snapshot.panel?.kind === 'voice' ? `voice:enabled=${option.id}` : `effort:${option.id}`,
         })
       }
 
@@ -715,7 +697,6 @@ export function ChatApp({
 
   const handleInput = useCallback(
     (character: string, key: Key): void => {
-      if (appearanceOpen) return
       const {
         snapshot,
         terminalWidth,
@@ -967,29 +948,12 @@ export function ChatApp({
         }
         if (
           (snapshot.panel.kind === 'settings' || snapshot.panel.kind === 'voice') &&
-          (key.leftArrow || key.rightArrow || (snapshot.panel.kind === 'settings' && (key.upArrow || key.downArrow)))
+          (key.leftArrow || key.rightArrow)
         ) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
-          if (selected?.value && selected.control?.kind === 'segmented') {
-            const { columns } =
-              selected.value === 'frogTheme'
-                ? settingsThemeLayout(terminalWidth - 4)
-                : settingsLayout(terminalWidth - 4, selected.value)
-            const index = adjacentSettingOption(selected.control, key, columns)
-            const option = index === undefined ? undefined : selected.control.options[index]
-            if (option) {
-              if (!option.active) {
-                void activateRow({
-                  ...selected,
-                  value: `${selected.value}=${option.value}`,
-                })
-              }
-              return
-            }
-          }
-          if (key.leftArrow || key.rightArrow) {
-            return
-          }
+          const value = selected && settingArrowValue(selected, key.leftArrow ? -1 : 1)
+          if (value) void activateRow({ ...selected!, value })
+          return
         }
         if (
           (snapshot.panel.kind === 'settings' ||
@@ -1045,25 +1009,6 @@ export function ChatApp({
         }
         const nextSelection = moveSelection(panelSelectionRef.current, key, rows.length, rowCapacity)
         if (nextSelection !== undefined) {
-          if (snapshot.panel.kind === 'settings' && key.upArrow && nextSelection < panelSelectionRef.current) {
-            const row = rows[nextSelection]
-            if (row?.value && row.control?.kind === 'segmented') {
-              const { columns } =
-                row.value === 'frogTheme'
-                  ? settingsThemeLayout(terminalWidth - 4)
-                  : settingsLayout(terminalWidth - 4, row.value)
-              const options = row.control.options
-              const active = Math.max(
-                0,
-                options.findIndex((option) => option.active)
-              )
-              const lastRow = Math.floor((options.length - 1) / columns) * columns
-              const option = options[Math.min(options.length - 1, lastRow + (active % columns))]
-              if (option && !option.active) {
-                void activateRow({ ...row, value: `${row.value}=${option.value}` })
-              }
-            }
-          }
           selectPanelRow(nextSelection, rowCapacity, rows.length)
           return
         }
@@ -1178,7 +1123,6 @@ export function ChatApp({
     },
     [
       activateRow,
-      appearanceOpen,
       controller,
       dispatchPrompt,
       editingQueuedPromptId,
@@ -1196,31 +1140,10 @@ export function ChatApp({
     <ChatView
       {...viewProps}
       {...(introStartedAt !== undefined ? { introStartedAt } : {})}
-      snapshot={
-        previewAppearance ? { ...snapshot, settings: { ...snapshot.settings, ...previewAppearance } } : snapshot
-      }
+      snapshot={snapshot}
       onActionElement={registerFooterElement}
       settingsHovered={settingsHovered}
       {...(hoveredMetadata ? { hoveredMetadata } : {})}
-      {...(appearanceOpen
-        ? {
-            overlay: (
-              <CustomThemeEditor
-                settings={snapshot.settings}
-                animate={snapshot.settings.animations}
-                width={width}
-                height={height}
-                onPreview={setPreviewAppearance}
-                onClose={closeAppearance}
-                onApply={async (appearance) => {
-                  const value = `customTheme=${encodeURIComponent(JSON.stringify(appearance.customTheme))}`
-                  const applied = await controller.activatePanelRow({ label: 'Theme', description: '', value })
-                  if (!applied) throw new Error('Could not save the theme.')
-                }}
-              />
-            ),
-          }
-        : {})}
       {...(controller.voice ? { voice: controller.voice } : {})}
       onMaxTranscriptScroll={updateMaxTranscriptScroll}
       onMetadataElement={registerMetadataElement}
@@ -1274,4 +1197,12 @@ function parseQueuedPromptTarget(target: QueuedPromptTarget): { id: string; acti
     return undefined
   }
   return { id, action }
+}
+
+function panelSlider(panel: ChatPanel | undefined): ChatPanelSlider | undefined {
+  if (panel?.kind !== 'voice') return panel?.slider
+  const control = panel.rows.find((row) => row.value === 'voice:enabled')?.control
+  return control?.kind === 'segmented'
+    ? { label: 'Voice', options: control.options.map(({ value: id, ...option }) => ({ id, ...option })) }
+    : undefined
 }

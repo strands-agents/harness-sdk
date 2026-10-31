@@ -7,6 +7,7 @@ import type { ChatControllerApi, ChatConversations } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
+import { observeTerminalColorMode } from './view/theme-detection.js'
 import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
 import { sessionResumeCommand } from './session/resume.js'
 
@@ -49,12 +50,15 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   const errorOutput = options.errorOutput ?? process.stderr
+  const terminalTheme = observeTerminalColorMode(input, output)
+  await terminalTheme.ready
   const alternateScreen = options.alternateScreen !== false
   const inkOutputs = createInkOutputs(output, errorOutput, alternateScreen)
   let leaveTerminalMode = (): void => {}
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
     leaveTerminalMode()
+    terminalTheme.dispose()
     return hardExitProcessTree(exitCode)
   }
   let controller: ChatControllerApi | undefined
@@ -205,7 +209,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     }
     if (alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
     instance = renderApp(chatRoot(), {
-      stdin: input,
+      stdin: terminalTheme.input,
       ...inkOutputs,
       exitOnCtrlC: false,
       patchConsole: true,
@@ -270,6 +274,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     instance?.unmount()
     instance?.cleanup()
     leaveTerminalMode()
+    terminalTheme.dispose()
 
     const resumeSession = controller?.resumeSession
     if (resumeSession && controller?.getSnapshot().status === 'closed') {

@@ -1,9 +1,9 @@
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import { DEFAULT_MEMORY_DIR, DEFAULT_SKILLS_DIR } from '@strands-agents/harness/internal'
 
-/** Whether a profile loads skills at all (`skills: false` is the only off switch). */
+/** Whether a profile configures any skills, before optional source discovery. */
 export function profileSkillsEnabled(profile: Pick<HarnessAgentConfig, 'skills'>): boolean {
-  return profile.skills !== false
+  return profile.skills !== false && (!Array.isArray(profile.skills) || profile.skills.length > 0)
 }
 
 /** The skill directories a profile configures; the `true` default spells the library's default directory. */
@@ -25,7 +25,7 @@ export function profileMemoryDir(profile: Pick<HarnessAgentConfig, 'memory'>): s
 
 /** A `memory` value with the given directory: the default directory keeps the plain `true`. */
 export function memoryForDir(dir: string): HarnessAgentConfig['memory'] {
-  return dir.trim() === '' || dir.trim() === DEFAULT_MEMORY_DIR ? true : { dir: dir.trim() }
+  return dir === '' || dir === DEFAULT_MEMORY_DIR ? true : { dir }
 }
 
 export function contextManagerLabel(value: HarnessAgentConfig['contextManager']): string {

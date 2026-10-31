@@ -70,7 +70,7 @@ describe('ChatView', () => {
       terminalHeight: 24,
     })
 
-    expect(output).toContain('╚══════╝')
+    expect(output).toContain('╚════╝')
     expect(output).toContain('Nothing to compact yet')
   })
 
@@ -1121,7 +1121,7 @@ describe('ChatView', () => {
   it.each([40, 80])(
     'keeps settings controls and their hints visible at %sx24 for first and last selections',
     (width) => {
-      const config = { ...DEFAULT_CHAT_SETTINGS, colorMode: 'light' as const }
+      const config = { ...DEFAULT_CHAT_SETTINGS }
       const rows = settingsRows(config, 'Appearance')
       const capacity = panelRowCapacity('settings', 24, width, rows)
       for (const selected of [0, rows.length - 1]) {
@@ -1135,7 +1135,7 @@ describe('ChatView', () => {
                 title: 'Appearance',
                 rows,
                 settingsCategory: 'Appearance',
-                settingsCategories: SETTINGS_CATEGORIES,
+                filters: SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label })),
               },
             }),
             terminalWidth: width,
@@ -1146,8 +1146,10 @@ describe('ChatView', () => {
         )
         const lines = output.split('\n')
         expect(lines.length).toBeLessThanOrEqual(24)
-        expect(output).toContain(rows[selected]!.label)
-        expect(output).toContain(selected === 0 ? 'Dark' : 'Full')
+        expect(output).toContain(width === 40 ? rows[selected]!.label.split(' ')[0]! : rows[selected]!.label)
+        expect(output).toContain(
+          selected === 0 ? (width === 40 ? 'Classi' : 'Classic') : width === 40 ? 'Comp' : 'Compact'
+        )
         expect(output).toContain('←→ change')
         expect(output).toContain('Esc back')
         expect(output).not.toContain('/help')
@@ -1164,6 +1166,8 @@ describe('ChatView', () => {
           id: 'settings',
           kind: 'settings',
           title: 'Settings',
+          settingsCategory: 'Appearance',
+          filters: SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label })),
           rows: [
             {
               label: 'transcript spacing',
@@ -1318,7 +1322,7 @@ describe('ChatView', () => {
     expect(wide).not.toContain('bedrock/anthropic.claude-sonnet')
   })
 
-  it('highlights hovered controls or rows and reserves purple for presses across panel renderers', () => {
+  it('highlights hovered controls or rows and pressed choices across panel renderers', () => {
     const kinds: ChatPanel['kind'][] = ['models', 'settings', 'agents', 'export', 'sessions', 'voice']
     const frames = kinds.flatMap((kind) =>
       ['idle', 'hover', 'press'].map((interaction) => ({
@@ -1376,7 +1380,7 @@ describe('ChatView', () => {
         expect(button).toContain('Option B')
         expect(button).not.toContain('Option A')
         expect(button).not.toContain('Choose this')
-      } else {
+      } else if (kind !== 'voice') {
         expect(
           hoverFrame.split('\n').find((line) => line.includes('Choose this')),
           kind
@@ -1385,13 +1389,15 @@ describe('ChatView', () => {
       const purpleText = rendered[index * 3 + 2]!.split('\u001b[38;2;192;132;252m')
         .slice(1)
         .map((segment) => sanitizeTerminalText(segment.split('\u001b[39m')[0]!))
-      expect(
-        purpleText.some((text) => text.includes('Choose this')),
-        kind
-      ).toBe(true)
-      if (kind === 'settings') {
-        expect(purpleText.join('')).toContain('Option B')
-        expect(purpleText.join('')).not.toContain('Option A')
+      if (kind === 'settings' || kind === 'voice') {
+        expect(rendered[index * 3 + 2], kind).not.toBe(rendered[index * 3])
+        expect(purpleText, kind).toHaveLength(0)
+        expect(sanitizeTerminalText(rendered[index * 3 + 2]!), kind).toContain('Choose this')
+      } else {
+        expect(
+          purpleText.some((text) => text.includes('Choose this')),
+          kind
+        ).toBe(true)
       }
     }
   }, 15_000)

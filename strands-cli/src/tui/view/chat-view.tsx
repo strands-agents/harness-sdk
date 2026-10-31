@@ -151,7 +151,7 @@ function ChatViewContent({
   clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
   party?: boolean
 }): ReactElement {
-  const { surface, background, canvas } = useTheme()
+  const { surface, background } = useTheme()
   const resolvedCommandAssistance =
     commandAssistance ??
     (suggestions === undefined ? commandAssistanceForInput(input, actionableCommandToken) : undefined)
@@ -207,7 +207,6 @@ function ChatViewContent({
         animate={settings.animations}
         {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
-        customBase={settings.customTheme.base}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
         {...(frogBrandAnimationId !== undefined ? { frogBrandElapsedMs } : {})}
         {...(onFrogElement ? { onFrogElement } : {})}
@@ -221,7 +220,6 @@ function ChatViewContent({
       settings.animations,
       introStartedAt,
       settings.frogTheme,
-      settings.customTheme.base,
       partyFrame,
       frogBrandAnimationId,
       frogBrandElapsedMs,
@@ -237,7 +235,6 @@ function ChatViewContent({
       paddingX={1}
       overflow="hidden"
       position="relative"
-      backgroundColor={canvas}
     >
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {hasActivity ? (
@@ -366,7 +363,6 @@ function ChatViewContent({
           top={Math.max(0, terminalHeight - commandDeckHeight - FROG_ANIMATION_HEIGHT)}
           animate={snapshot.settings.animations}
           theme={snapshot.settings.frogTheme}
-          customBase={snapshot.settings.customTheme.base}
           onComplete={onFrogComplete}
         />
       ) : null}

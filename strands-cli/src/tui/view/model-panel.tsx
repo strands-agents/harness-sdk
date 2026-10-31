@@ -276,22 +276,25 @@ export function EffortSlider({
   slider,
   width,
   compact,
-  pressed = false,
-  hovered,
   focused = false,
+  pressed = false,
+  hovered = false,
   onElement,
   showStops = false,
+  paintBackground = true,
 }: {
   slider: ChatPanelSlider
   width: number
   compact: boolean
+  focused?: boolean
   pressed?: boolean
   hovered?: boolean
-  focused?: boolean
   onElement?: (element: DOMElement | null) => void
   showStops?: boolean
+  paintBackground?: boolean
 }): ReactElement {
-  const { accent, hover, selection } = useTheme()
+  const { accent, selection, hover } = useTheme()
+  const highlightFocus = !paintBackground && focused && !slider.disabled
   const activeIndex = Math.max(
     0,
     slider.options.findIndex((option) => option.active)
@@ -315,11 +318,8 @@ export function EffortSlider({
     <Box marginTop={compact ? 0 : 1} flexDirection="column" alignItems="center">
       {!showStops ? (
         <Box>
-          <Text dimColor>{slider.label} </Text>
-          <Text
-            {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })}
-            bold={slider.disabled !== true}
-          >
+          <Text {...(highlightFocus ? { color: accent, bold: true } : { dimColor: true })}>{slider.label} </Text>
+          <Text {...(slider.disabled ? { dimColor: true } : { color: accent })} bold={slider.disabled !== true}>
             {activeOption?.label ?? 'Unavailable'}
           </Text>
         </Box>
@@ -327,10 +327,12 @@ export function EffortSlider({
       <Box
         ref={onElement}
         width={width}
-        backgroundColor={!showStops && (hovered || pressed || focused) ? selection : undefined}
+        backgroundColor={paintBackground && !showStops && (focused || hovered || pressed) ? selection : undefined}
         flexDirection="column"
       >
-        <Text {...(slider.disabled ? { dimColor: true } : { color: accent })}>{track.join('')}</Text>
+        <Text {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })} bold={highlightFocus}>
+          {track.join('')}
+        </Text>
         {showStops ? (
           <Box width={width} height={1}>
             {slider.options.map((option, index) => {

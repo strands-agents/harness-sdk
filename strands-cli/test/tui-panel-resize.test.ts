@@ -51,7 +51,7 @@ function createController() {
     setEffort,
   }
   const controller = new ChatController(backend, {
-    settings: { animations: false, colorMode: 'light' },
+    settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
   })
   return { controller, switchModel, setEffort }
@@ -122,15 +122,15 @@ describe('mounted panel resizing', () => {
     await controller.submit('/settings')
     await vi.waitFor(() => expect(view.screen()).toContain('Auto-Discovery'))
     for (let index = 0; index < 2; index++) await view.press('\t')
-    await vi.waitFor(() => expect(view.screen()).toContain('Usage ping (telemetry)'))
+    await vi.waitFor(() => expect(view.screen()).toContain('Send anonymous usage data'))
     await view.press('\u001b[B')
 
     for (const [width, height] of terminalSizes) {
       await view.resize(width, height)
       await vi.waitFor(() => {
         view.fits()
-        expect(view.screen()).toContain('Usage ping')
-        expect(view.screen()).toContain('(telemetry)')
+        expect(view.screen()).toContain('Send')
+        expect(view.screen()).toContain('General')
         expect(view.screen()).toContain('Esc back')
         expect(view.screen()).not.toContain('/help')
       })

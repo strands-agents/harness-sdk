@@ -43,13 +43,39 @@ describe('CliConfigStore', () => {
     expect(reloaded.configuredProviderEnvironment()).toEqual({ AWS_REGION: 'us-west-2' })
   })
 
-  it.each(['aurora', 'moonlight', 'magma'])('loads the retired %s theme as Classic', async (frogTheme) => {
+  it.each([
+    ['unavailable-theme', 'green'],
+    ['solar', 'scarlet'],
+    ['crimson', 'scarlet'],
+  ])('loads saved theme %s as %s without losing other settings', async (savedTheme, expectedTheme) => {
     const path = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(path, stringify({ settings: { frogTheme, animations: false } }))
-
+    await writeFile(
+      path,
+      stringify({
+        settings: {
+          frogTheme: savedTheme,
+          transcriptSpacing: 'unavailable-spacing',
+          toolOutput: 'unavailable-output',
+          animations: false,
+          telemetry: false,
+        },
+      })
+    )
     const config = await CliConfigStore.load(path)
-
-    expect(config.snapshot().settings).toMatchObject({ frogTheme: 'green', animations: false })
+    expect(config.snapshot().settings).toMatchObject({
+      frogTheme: expectedTheme,
+      animations: false,
+      transcriptSpacing: 'comfortable',
+      toolOutput: 'compact',
+      telemetry: false,
+    })
+    await config.setSettings({ toolOutput: 'full' })
+    expect((await CliConfigStore.load(path)).snapshot().settings).toMatchObject({
+      frogTheme: expectedTheme,
+      animations: false,
+      toolOutput: 'full',
+      telemetry: false,
+    })
   })
 
   it('uses safe defaults when the user config does not exist', async () => {
@@ -69,8 +95,6 @@ describe('CliConfigStore', () => {
         showReasoning: true,
         toolOutput: 'compact',
         frogTheme: 'green',
-        colorMode: 'auto',
-        customTheme: { base: 'green', light: {}, dark: {} },
         mcpDiscovery: false,
         skillDiscovery: false,
         agentMessaging: true,
@@ -586,6 +610,26 @@ describe('CliConfigStore', () => {
     await writeFile(path, '')
     config.applyProviderEnvironment()
     expect(process.env.OPENAI_API_KEY).toBeUndefined()
+  })
+
+  it('resolves a provider draft without replacing saved values or session and shell credentials', async () => {
+    const path = join(await temporaryDirectory(), 'provider.env')
+    vi.stubEnv('AWS_PROFILE', undefined)
+    vi.stubEnv('OPENAI_API_KEY', undefined)
+    await writeFile(path, 'AWS_PROFILE=fallback\nOPENAI_API_KEY=file-key')
+    const config = CliConfigStore.memory({}, {}, { providerEnvironment: { AWS_PROFILE: 'saved' } })
+    config.useEnvironmentFiles([path])
+    config.setSessionProviderCredential('OPENAI_API_KEY', 'session-key')
+    expect(config.providerEnvironment({})).toMatchObject({
+      AWS_PROFILE: { value: 'fallback', source: 'env-file' },
+      OPENAI_API_KEY: { value: 'session-key', source: 'session' },
+    })
+    vi.stubEnv('OPENAI_API_KEY', 'shell-key')
+    expect(config.providerEnvironment({ AWS_PROFILE: 'draft' })).toMatchObject({
+      AWS_PROFILE: { value: 'draft', source: 'config' },
+      OPENAI_API_KEY: { value: 'shell-key', source: 'process' },
+    })
+    expect(config.providerEnvironment().AWS_PROFILE?.value).toBe('saved')
   })
 
   it.each(['', ...(process.platform === 'win32' ? [] : [' '])])(

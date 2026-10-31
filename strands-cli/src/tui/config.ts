@@ -221,12 +221,8 @@ export class CliConfigStore {
     })
   }
 
-  providerEnvironment(): DetectedProviderEnvironment {
-    const environment = detectEnvironment(
-      this._environmentFiles,
-      this._providerEnvironment,
-      this._sessionProviderEnvironment
-    )
+  providerEnvironment(stored: ProviderEnvironment = this._providerEnvironment): DetectedProviderEnvironment {
+    const environment = detectEnvironment(this._environmentFiles, stored, this._sessionProviderEnvironment)
     return Object.fromEntries(
       PROVIDER_ENVIRONMENT_KEYS.flatMap((key) => (environment[key] ? [[key, environment[key]]] : []))
     )

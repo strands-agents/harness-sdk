@@ -21,10 +21,11 @@ import {
 import { AgentsPanel } from './agents-panel.js'
 import { ExportPanel } from './export-panel.js'
 import { ModelPicker } from './model-panel.js'
+import { VoicePanel } from './voice-panel.js'
 import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
-import { SettingsControl, SettingsPanel } from './settings-panel.js'
+import { SettingsControl, SettingsPicker } from './settings-panel.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 
@@ -274,18 +275,40 @@ export function ResourcePanel({
     )
   }
   if (panel.kind === 'settings' || panel.kind === 'voice') {
+    const height = Math.max(1, terminalHeight - 4)
     return (
-      <SettingsPanel
-        height={terminalHeight}
-        {...(pressedFilter ? { pressedFilter } : {})}
-        {...(hoveredFilter ? { hoveredFilter } : {})}
-        appearance={settings}
-        {...(pressedControl ? { pressedControl } : {})}
-        {...(hoveredControl ? { hoveredControl } : {})}
-        {...rowProps}
-        {...(onFilterElement ? { onFilterElement } : {})}
-        {...(onControlElement ? { onControlElement } : {})}
-      />
+      <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
+        {panel.kind === 'settings' ? (
+          <SettingsPicker
+            {...rowProps}
+            allRows={allRows}
+            width={Math.max(1, width - 2)}
+            height={height}
+            focus="settings"
+            {...(pressedFilter ? { pressedFilter } : {})}
+            {...(hoveredFilter ? { hoveredFilter } : {})}
+            {...(pressedControl ? { pressedControl } : {})}
+            {...(hoveredControl ? { hoveredControl } : {})}
+            {...(onFilterElement ? { onFilterElement } : {})}
+            {...(onControlElement ? { onControlElement } : {})}
+          />
+        ) : (
+          <VoicePanel
+            title={panel.title}
+            rows={allRows}
+            selected={selected}
+            width={Math.max(1, width - 2)}
+            height={height}
+            {...(pressedRow !== undefined ? { pressedRow } : {})}
+            {...(hoveredRow !== undefined ? { hoveredRow } : {})}
+            {...(pressedControl ? { pressedControl } : {})}
+            {...(hoveredControl ? { hoveredControl } : {})}
+            {...(onRowElement ? { onRowElement } : {})}
+            {...(onControlElement ? { onControlElement } : {})}
+            {...(onSliderElement ? { onSliderElement } : {})}
+          />
+        )}
+      </PanelOverlay>
     )
   }
   if (panel.kind === 'agents') {

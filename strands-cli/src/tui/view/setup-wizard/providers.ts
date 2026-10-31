@@ -369,7 +369,7 @@ export function effectiveProviderEnvironment(
   const environment = { ...detected }
   for (const key of PROVIDER_ENVIRONMENT_KEYS) {
     const value = configured[key]
-    if (value && detected[key]?.source !== 'process') {
+    if (value && detected[key]?.source !== 'process' && detected[key]?.source !== 'session') {
       environment[key] = { value, source: 'config' }
     }
   }

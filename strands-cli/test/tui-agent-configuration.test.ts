@@ -104,7 +104,7 @@ describe('strands_config tool', () => {
 
       await config.setPermissionMode('bypassPermissions')
       await config.allowTool('write')
-      await config.setSettings({ frogTheme: 'green', skillDiscovery: true })
+      await config.setSettings({ frogTheme: 'oak', skillDiscovery: true })
       if (timing === 'before apply') await control.invoke({ action: 'apply', revision: 1 })
 
       const change = control.takePending()!
@@ -112,13 +112,13 @@ describe('strands_config tool', () => {
       expect(config.snapshot()).toMatchObject({
         profile: { name: 'Renamed' },
         permissions: { mode: 'bypassPermissions', allow: ['write'] },
-        settings: { frogTheme: 'green', skillDiscovery: true },
+        settings: { frogTheme: 'oak', skillDiscovery: true },
       })
     }
   )
 
   it('exposes only agent fields in the schema, inspection, draft response, and preview', async () => {
-    const config = CliConfigStore.memory({ mode: 'bypassPermissions', allow: ['shell'] }, { frogTheme: 'green' })
+    const config = CliConfigStore.memory({ mode: 'bypassPermissions', allow: ['shell'] }, { frogTheme: 'oak' })
     const control = configurationTool(config)
     expect(Object.keys(control.tool.toolSpec.inputSchema!.properties!)).toEqual([
       'action',
@@ -228,7 +228,7 @@ describe('strands_config tool', () => {
     const config = CliConfigStore.memory(
       {},
       {
-        frogTheme: 'green',
+        frogTheme: 'oak',
         transcriptSpacing: 'compact',
         animations: false,
         showReasoning: false,

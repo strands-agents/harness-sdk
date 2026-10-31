@@ -16,17 +16,14 @@ afterEach(() => {
 })
 
 describe('TUI mouse input', () => {
-  it.each([80, 60])('traverses Color mode and inline Theme segments at %i columns', async (width) => {
+  it.each([80, 60])('traverses theme and transcript settings at %i columns', async (width) => {
     const input = ttyInput()
     const output = ttyOutput(width, 30)
-    const frame = captureFrame(output)
-    const controller = new ChatController(backend(), {
-      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
-    })
+    const controller = new ChatController(backend())
     const instance = render(createElement(ChatApp, { controller }), {
       stdin: input,
       stdout: output,
-      stderr: ttyOutput(width, 30),
+      stderr: output,
       exitOnCtrlC: false,
       patchConsole: false,
       interactive: true,
@@ -34,25 +31,12 @@ describe('TUI mouse input', () => {
     instances.push(instance)
     await controller.submit('/settings')
     await instance.waitUntilRenderFlush()
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.settingsCategory).toBe('Appearance'))
-
     input.write('\u001b[C')
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('light'))
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
     input.write('\u001b[B')
     await instance.waitUntilRenderFlush()
-    input.write('\u001b[C')
-    if (width === 80) {
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
-      input.write('\u001b[B')
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('kikker'))
-    } else {
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('dark'))
-      input.write('\u001b[B')
-      await instance.waitUntilRenderFlush()
-      input.write('\u001b[C')
-      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
-    }
-    expect(frame().join('\n')).not.toContain('Choose a theme')
+    input.write('\u001b[D')
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.transcriptSpacing).toBe('compact'))
   })
 
   it('activates model metadata and the Settings button from direct clicks', async () => {
@@ -371,7 +355,7 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Models'))
   })
 
-  it.each([80, 60])('clicks live theme settings and opens the custom editor at %i columns', async (width) => {
+  it.each([80, 60])('clicks visible or overflow theme controls at %i columns', async (width) => {
     const input = ttyInput()
     const output = ttyOutput(width, 30)
     const frame = captureFrame(output)
@@ -392,31 +376,18 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel?.settingsCategory).toBe('Appearance'))
     await instance.waitUntilRenderFlush()
 
-    for (const theme of ['Classic', 'Minimal', 'Homeland', 'Merlin', 'Kikker', 'Cyborg', 'Spectre', 'Custom']) {
-      expect(frame().join('\n')).toContain(theme)
-    }
-
     const panelId = controller.getSnapshot().panel?.id
-    const light = findText(frame(), 'Light')
-    input.write(mouseInputSequence(0, light.column, light.row, 'M'))
-    input.write(mouseInputSequence(3, light.column, light.row, 'm'))
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.colorMode).toBe('light'))
-    expect(controller.getSnapshot().panel?.id).toBe(panelId)
-
-    const kikker = findText(frame(), 'Kikker')
-    input.write(mouseInputSequence(0, kikker.column, kikker.row, 'M'))
-    input.write(mouseInputSequence(3, kikker.column, kikker.row, 'm'))
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('kikker'))
-    expect(controller.getSnapshot().settings.colorMode).toBe('light')
-    expect(controller.getSnapshot().panel?.id).toBe(panelId)
-
-    const custom = findText(frame(), 'Custom')
-    input.write(mouseInputSequence(0, custom.column, custom.row, 'M'))
-    input.write(mouseInputSequence(3, custom.column, custom.row, 'm'))
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Customize theme'))
-    input.write('\u001b')
-    await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Customize theme'))
-    expect(controller.getSnapshot().settings.frogTheme).toBe('kikker')
+    const minimal =
+      width === 80
+        ? findText(frame(), 'Minimal')
+        : (() => {
+            const row = frame().findIndex((line) => line.includes('Classic'))
+            expect(row).toBeGreaterThanOrEqual(0)
+            return { row, column: frame()[row]!.lastIndexOf('›') }
+          })()
+    input.write(mouseInputSequence(0, minimal.column, minimal.row, 'M'))
+    input.write(mouseInputSequence(3, minimal.column, minimal.row, 'm'))
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
     expect(controller.getSnapshot().panel?.id).toBe(panelId)
   })
 

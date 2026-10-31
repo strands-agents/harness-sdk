@@ -1,36 +1,44 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatPanel, ChatPanelRow, ChatSettings, SettingsCategory } from '../../chat/types.js'
+import type { ChatPanel, ChatPanelRow, SettingsCategory } from '../../chat/types.js'
 import { SETTINGS_CATEGORIES } from '../../settings.js'
-import { panelControlTarget, parsePanelControlTarget } from '../interaction.js'
-import { SettingsPanel } from '../settings-panel.js'
+import { panelControlTarget, parsePanelControlTarget, type SettingsPanelFocus } from '../interaction.js'
+import { SettingsPicker } from '../settings-panel.js'
 import type { WizardRow } from './types.js'
 
 export type SetupSettingsChoiceTarget = `choice:${number}:${number}` | `category:${SettingsCategory}`
 
 export function SetupSettingsPanel({
   rows,
+  allRows = rows,
   category,
-  settings,
   start,
   selected,
   width,
   height,
+  focus = 'settings',
+  focusActive = true,
+  hoveredRow,
   hoveredControl,
   onRowElement,
   onChoiceElement,
+  onCategoriesElement,
 }: {
   rows: readonly WizardRow[]
+  allRows?: readonly WizardRow[]
   category: SettingsCategory
-  settings: ChatSettings
   start: number
   selected: number
   width: number
   height: number
+  focus?: SettingsPanelFocus
+  focusActive?: boolean
+  hoveredRow?: number
   hoveredControl?: string
   onRowElement(index: number, element: DOMElement | null): void
   onChoiceElement(target: SetupSettingsChoiceTarget, element: DOMElement | null): void
+  onCategoriesElement?: (element: DOMElement | null) => void
 }): ReactElement {
   const panelRows = rows.map(setupPanelRow)
   const panel: ChatPanel = {
@@ -38,20 +46,24 @@ export function SetupSettingsPanel({
     kind: 'settings',
     title: category,
     rows: panelRows,
-    settingsCategories: SETTINGS_CATEGORIES,
+    filters: SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label })),
     settingsCategory: category,
   }
   const hoveredTarget = setupHoveredTarget(hoveredControl, rows, start)
   return (
-    <SettingsPanel
-      embedded
+    <SettingsPicker
       panel={panel}
       rows={panelRows}
+      allRows={allRows.map(setupPanelRow)}
       selected={selected}
       start={start}
       width={width}
       height={height}
-      appearance={settings}
+      focus={focus}
+      focusActive={focusActive}
+      paintBackground={false}
+      {...(onCategoriesElement ? { onCategoriesElement } : {})}
+      {...(hoveredRow === undefined ? {} : { hoveredRow })}
       {...(hoveredTarget ? { hoveredControl: hoveredTarget } : {})}
       {...(hoveredControl?.startsWith('category:') ? { hoveredFilter: `settings:${hoveredControl.slice(9)}` } : {})}
       onRowElement={onRowElement}

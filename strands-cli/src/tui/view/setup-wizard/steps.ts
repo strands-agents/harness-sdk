@@ -6,15 +6,19 @@ import {
   type ProviderEnvironment,
   type ProviderId,
 } from '../../config.js'
-import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch, type HarnessAgentConfig } from '@strands-agents/harness'
+import {
+  DEFAULT_HARNESS_AGENT_CONFIG,
+  supportsWebSearch,
+  type BuiltinToolName,
+  type HarnessAgentConfig,
+  type HarnessConfigBuiltinTools,
+} from '@strands-agents/harness'
 import type { AwsConfigurationDiscovery, LiteLlmDiscovery, OllamaDiscovery } from '../../provider/discovery.js'
 import { effortOptions, profileEffort, effortDisplayLabel, effortForModel } from '../../model/selection.js'
 import {
-  BUILTIN_TOOLS,
   builtinToolChoices,
   enabledProfileTools,
   profileToolEnabled,
-  webSearchFallback,
   withBuiltinToolChoice,
   withProfileTool,
   withoutProfileTool,
@@ -29,7 +33,7 @@ import {
 } from './profile-fields.js'
 import { canChooseDirectory } from '../../terminal/directory-picker.js'
 import type { ChatSettings } from '../../chat/types.js'
-import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS } from '../../settings.js'
+import { SETTING_DEFINITIONS } from '../../settings.js'
 import { PERMISSION_CHOICES, permissionToolDescription, permissionToolNames } from '../../permissions/settings.js'
 import {
   PROVIDERS,
@@ -43,7 +47,7 @@ import {
 import type { AppearanceSettings, EditableField, SetupDraft, SetupFlow, WizardRow } from './types.js'
 
 export const CUSTOMIZE_STEPS = ['Model', 'Agent', 'Tools', 'Plugins & features', 'Data', 'Safety', 'Review'] as const
-export const APPEARANCE_STEP = CUSTOMIZE_STEPS.length + 1
+export const SETTINGS_STEP = CUSTOMIZE_STEPS.length + 1
 export const OPENING_CHOICES = [
   { id: 'quickstart', title: 'Quickstart', description: 'Pick a model and start working with your harness!' },
   {
@@ -52,7 +56,6 @@ export const OPENING_CHOICES = [
     description: 'Customize your harness from scratch. Model, prompt, tools, and beyond.',
   },
   { id: 'import', title: 'Import', description: 'Load in your custom harness from a file or zip.' },
-  { id: 'resume', title: 'Resume', description: 'Return to your harness and continue working.' },
 ] as const
 const SETUP_STEP_INSTRUCTIONS = {
   quickstart: ['Pick a model for your agent'],
@@ -72,7 +75,7 @@ export function setupStepProgress(
   flow: SetupFlow | undefined,
   step: number
 ): { current: number; total: number; instruction: string; label?: string } | undefined {
-  if (!flow || step === 0 || step === APPEARANCE_STEP || (flow === 'import' && step === 1)) {
+  if (!flow || step === 0 || step === SETTINGS_STEP || (flow === 'import' && step === 1)) {
     return undefined
   }
   const instruction = SETUP_STEP_INSTRUCTIONS[flow][step - 1]!
@@ -84,17 +87,12 @@ export function setupStepProgress(
   return step > total ? { current: total, total, instruction, label: 'Review' } : { current: step, total, instruction }
 }
 
-// Fits beside the widest capability label in an 80-column terminal.
-export const CAPABILITY_DESCRIPTION_MAX_LENGTH = 44
-
 const noop = (): void => {}
 
 export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
-  const { frogTheme, colorMode, customTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
+  const { frogTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
   return {
     frogTheme,
-    colorMode,
-    customTheme: globalThis.structuredClone(customTheme),
     transcriptSpacing,
     animations,
     showReasoning,
@@ -102,33 +100,22 @@ export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
   }
 }
 
-export function wizardSettingsRows(
-  settings: ChatSettings,
-  update: (settings: ChatSettings) => void,
-  openThemePicker: () => void,
-  scope: 'visual' | 'all' = 'visual'
-): WizardRow[] {
-  return (scope === 'all' ? SETTING_DEFINITIONS : VISUAL_SETTING_DEFINITIONS).map(
-    ({ key, label, section, options }) => ({
-      id: key,
-      label,
-      description: '',
-      section,
-      choices: options.map(({ label: optionLabel, value }) => ({
-        label: optionLabel,
-        value,
-        active: settings[key] === value,
-        activate: (): void => {
-          if (key === 'frogTheme' && value === 'custom') {
-            openThemePicker()
-          } else {
-            update({ ...settings, [key]: value } as ChatSettings)
-          }
-        },
-      })),
-      activate: noop,
-    })
-  )
+export function wizardSettingsRows(settings: ChatSettings, update: (settings: ChatSettings) => void): WizardRow[] {
+  return SETTING_DEFINITIONS.map(({ key, label, section, options }) => ({
+    id: key,
+    label,
+    description: '',
+    section,
+    choices: options.map(({ label: optionLabel, value }) => ({
+      label: optionLabel,
+      value,
+      active: settings[key] === value,
+      activate: (): void => {
+        update({ ...settings, [key]: value } as ChatSettings)
+      },
+    })),
+    activate: noop,
+  }))
 }
 
 export function rowsForStep(
@@ -152,7 +139,7 @@ export function rowsForStep(
 ): WizardRow[] {
   const environment = effectiveProviderEnvironment(providerEnvironment, detectedEnvironment, awsDiscovery)
   if (flow === 'customize' && step === 3) {
-    return toolSelectionRows(draft, setDraft, updateProfile)
+    return toolSelectionRows(draft, setDraft)
   }
   if (flow === 'customize' && step === 4) {
     return pluginSelectionRows(draft, setDraft, updateProfile)
@@ -317,7 +304,7 @@ export function rowsForStep(
           label: 'Name',
           description: draft.profile.name,
           field: 'name',
-          activate: edit('name', draft.profile.name),
+          activate: edit('name', draft.profile.name === DEFAULT_HARNESS_AGENT_CONFIG.name ? '' : draft.profile.name),
         },
         {
           id: 'instructions',
@@ -337,7 +324,10 @@ export function rowsForStep(
           choices: (['auto', 'agentic', false] as const).map((value) => ({
             label: value === 'auto' ? 'Automatic' : value === 'agentic' ? 'Agentic' : 'Off',
             active: draft.profile.contextManager === value,
-            activate: () => updateProfile({ contextManager: value }),
+            activate: () =>
+              value === false
+                ? setDraft((current) => setFeatureEnabled(current, 'contextManager', false))
+                : updateProfile({ contextManager: value }),
           })),
           activate: noop,
         },
@@ -353,7 +343,8 @@ export function rowsForStep(
           label: 'Long-term memory',
           description: profileMemoryEnabled(draft.profile) ? profileMemoryDir(draft.profile) : 'off',
           active: profileMemoryEnabled(draft.profile),
-          activate: () => updateProfile({ memory: !profileMemoryEnabled(draft.profile) }),
+          activate: () =>
+            setDraft((current) => setFeatureEnabled(current, 'memory', !profileMemoryEnabled(current.profile))),
         },
         {
           id: 'memory-dir',
@@ -369,17 +360,7 @@ export function rowsForStep(
           description: skillsEnabled ? 'On · load reusable SKILL.md instructions on demand' : 'Off · no skills loaded',
           active: skillsEnabled,
           activate: () =>
-            setDraft((current) => {
-              const enabled = profileSkillsEnabled(current.profile)
-              return {
-                ...current,
-                ...(enabled && current.profile.skills !== false ? { disabledSkills: current.profile.skills } : {}),
-                profile: {
-                  ...current.profile,
-                  skills: enabled ? false : (current.disabledSkills ?? true),
-                },
-              }
-            }),
+            setDraft((current) => setFeatureEnabled(current, 'skills', !profileSkillsEnabled(current.profile))),
         },
         ...(skillsEnabled
           ? [
@@ -452,7 +433,13 @@ export function rowsForStep(
           : []),
       ]
     }
-    default:
+    default: {
+      const context =
+        draft.profile.contextManager === false
+          ? 'Context off'
+          : draft.profile.contextManager === 'auto'
+            ? 'Automatic context'
+            : 'Agentic context'
       return [
         {
           id: 'provider',
@@ -465,44 +452,43 @@ export function rowsForStep(
         {
           id: 'tools',
           label: 'Tools',
-          description: `${enabledProfileTools(compatibleProfile(draft.profile).builtinTools).length} tools`,
+          description: `${enabledProfileTools(compatibleProfile(draft.profile).builtinTools).length} enabled`,
           activate: noop,
         },
         {
           id: 'plugins',
           label: 'Plugins & features',
-          description: `${draft.profile.builtinPlugins.length} plugins`,
+          description: `${draft.profile.builtinPlugins.length} plugins · MCP ${draft.settings.mcpDiscovery ? 'on' : 'off'}`,
           activate: noop,
         },
         {
           id: 'data',
           label: 'Data',
-          description: `${contextManagerLabel(draft.profile.contextManager)} context · memory ${profileMemoryEnabled(draft.profile) ? 'on' : 'off'} · skills ${profileSkillsEnabled(draft.profile) ? 'on' : 'off'}`,
+          description: `${context} · Memory ${profileMemoryEnabled(draft.profile) ? 'on' : 'off'} · Skills ${profileSkillsEnabled(draft.profile) ? 'on' : 'off'}`,
           activate: noop,
         },
         {
           id: 'safety',
           label: 'Approvals',
           description: draft.customPermissions
-            ? `custom · ${draft.allowedTools.length} always allowed`
+            ? `Custom · ${draft.allowedTools.length} ${draft.allowedTools.length === 1 ? 'tool' : 'tools'} allowed without asking`
             : draft.permissionMode === 'default'
-              ? 'default HITL'
-              : 'bypass',
+              ? 'Ask before sensitive actions'
+              : PERMISSION_CHOICES.bypassPermissions.label,
           activate: noop,
         },
       ]
+    }
   }
 }
 
 function toolSelectionRows(
   draft: SetupDraft,
-  setDraft: (update: (current: SetupDraft) => SetupDraft) => void,
-  updateProfile: (update: Partial<HarnessAgentConfig>) => void
+  setDraft: (update: (current: SetupDraft) => SetupDraft) => void
 ): WizardRow[] {
-  const tools = toolRows(draft, updateProfile)
+  const choices = builtinToolChoices(draft.profile)
   const nativeSearch = supportsWebSearch(draft.profile.model)
-  const bulkTools = BUILTIN_TOOLS.map(([id]) => id).filter((id) => nativeSearch || id !== 'web_search')
-  const allSelected = tools.every((row) => (row.id === 'web_search' && !nativeSearch) || row.disabled || row.active)
+  const allSelected = choices.every((choice) => (choice.id === 'web_search' && !nativeSearch) || choice.active)
   return [
     {
       id: 'select-all',
@@ -510,20 +496,26 @@ function toolSelectionRows(
       description: '',
       activate: (): void => {
         const enabled = !allSelected
-        setDraft((current) => ({
-          ...current,
-          profile: compatibleProfile({
-            ...current.profile,
-            builtinTools: enabled
-              ? webSearchFallback(current.profile.builtinTools) === 'exa'
-                ? withWebSearchFallback(bulkTools)
-                : bulkTools
-              : [],
-          }),
-        }))
+        setDraft((current) => {
+          const next = builtinToolChoices(current.profile).reduce(
+            (next, choice) =>
+              enabled && choice.thirdParty && current.disabledTools?.web_search !== 'exa'
+                ? next
+                : setToolEnabled(next, choice.id, enabled),
+            current
+          )
+          return { ...next, profile: compatibleProfile(next.profile) }
+        })
       },
     },
-    ...tools.map((row): WizardRow => ({ ...row, section: 'Tools' })),
+    ...choices.map((choice): WizardRow => ({
+      id: choice.id,
+      description: choice.description,
+      label: choice.id,
+      active: choice.active,
+      section: 'Tools',
+      activate: () => setDraft((current) => setToolEnabled(current, choice.id, !choice.active)),
+    })),
   ]
 }
 
@@ -532,7 +524,7 @@ function pluginSelectionRows(
   setDraft: (update: (current: SetupDraft) => SetupDraft) => void,
   updateProfile: (update: Partial<HarnessAgentConfig>) => void
 ): WizardRow[] {
-  const skillsEnabled = profileSkillsEnabled(draft.profile) || draft.settings.skillDiscovery
+  const skillsEnabled = profileSkillsEnabled(draft.profile)
   const pluginsAndFeatures: WizardRow[] = [
     {
       id: 'todos',
@@ -553,15 +545,8 @@ function pluginSelectionRows(
       label: 'Skills',
       description: 'Discover skills across workspace and tools',
       active: skillsEnabled,
-      activate: (): void =>
-        setDraft((current) => ({
-          ...current,
-          settings: { ...current.settings, skillDiscovery: !skillsEnabled },
-          profile: {
-            ...current.profile,
-            skills: !skillsEnabled,
-          },
-        })),
+      activate: () =>
+        setDraft((current) => setFeatureEnabled(current, 'skills', !profileSkillsEnabled(current.profile))),
     },
     {
       id: 'mcp',
@@ -590,7 +575,8 @@ function pluginSelectionRows(
       label: 'Memory',
       description: 'Remember information between conversations',
       active: profileMemoryEnabled(draft.profile),
-      activate: () => updateProfile({ memory: !profileMemoryEnabled(draft.profile) }),
+      activate: () =>
+        setDraft((current) => setFeatureEnabled(current, 'memory', !profileMemoryEnabled(current.profile))),
     },
     {
       id: 'context',
@@ -598,9 +584,7 @@ function pluginSelectionRows(
       description: 'Manage long conversations and large outputs',
       active: draft.profile.contextManager !== false,
       activate: () =>
-        updateProfile({
-          contextManager: draft.profile.contextManager === false ? 'auto' : false,
-        }),
+        setDraft((current) => setFeatureEnabled(current, 'contextManager', current.profile.contextManager === false)),
     },
     {
       id: 'background-tasks',
@@ -608,12 +592,9 @@ function pluginSelectionRows(
       description: 'Run long-running tools in the background',
       active: draft.profile.agentConfig.backgroundTasks !== false,
       activate: () =>
-        updateProfile({
-          agentConfig: {
-            ...draft.profile.agentConfig,
-            backgroundTasks: draft.profile.agentConfig.backgroundTasks === false,
-          },
-        }),
+        setDraft((current) =>
+          setBackgroundTasksEnabled(current, current.profile.agentConfig.backgroundTasks === false)
+        ),
     },
   ]
   const allSelected = pluginsAndFeatures.every((row) => row.disabled || row.active)
@@ -624,18 +605,20 @@ function pluginSelectionRows(
       description: '',
       activate: (): void => {
         const enabled = !allSelected
-        setDraft((current) => ({
-          ...current,
-          settings: { mcpDiscovery: enabled, skillDiscovery: enabled, agentMessaging: enabled },
-          profile: compatibleProfile({
-            ...current.profile,
-            builtinPlugins: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins : [],
-            skills: enabled,
-            memory: enabled,
-            contextManager: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.contextManager : false,
-            agentConfig: { ...current.profile.agentConfig, backgroundTasks: enabled },
-          }),
-        }))
+        setDraft((current) => {
+          let next = setBackgroundTasksEnabled(current, enabled)
+          for (const key of ['skills', 'memory', 'contextManager'] as const) {
+            next = setFeatureEnabled(next, key, enabled)
+          }
+          return {
+            ...next,
+            settings: { ...next.settings, mcpDiscovery: enabled, agentMessaging: enabled },
+            profile: {
+              ...next.profile,
+              builtinPlugins: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins : [],
+            },
+          }
+        })
       },
     },
     ...pluginsAndFeatures.map((row): WizardRow => ({
@@ -645,18 +628,59 @@ function pluginSelectionRows(
   ]
 }
 
-function toolRows(draft: SetupDraft, updateProfile: (update: Partial<HarnessAgentConfig>) => void): WizardRow[] {
-  return builtinToolChoices(draft.profile).map((choice) => ({
-    id: choice.id,
-    label: choice.id,
-    description: choice.description,
-    active: choice.active,
-    activate: (): void => {
-      updateProfile({ builtinTools: withBuiltinToolChoice(draft.profile, choice, !choice.active) })
-    },
-  }))
-}
-
 function toggle<const T extends string>(values: readonly T[], value: T): T[] {
   return values.includes(value) ? values.filter((candidate) => candidate !== value) : [...values, value]
+}
+
+function setFeatureEnabled(
+  current: SetupDraft,
+  key: 'skills' | 'memory' | 'contextManager',
+  enabled: boolean
+): SetupDraft {
+  const active = key === 'skills' ? profileSkillsEnabled(current.profile) : current.profile[key] !== false
+  if (active === enabled) return current
+  return {
+    ...current,
+    ...(!enabled ? { disabledFeatures: { ...current.disabledFeatures, [key]: current.profile[key] } } : {}),
+    profile: {
+      ...current.profile,
+      [key]: enabled ? (current.disabledFeatures?.[key] ?? DEFAULT_HARNESS_AGENT_CONFIG[key]) : false,
+    },
+  }
+}
+
+function setBackgroundTasksEnabled(current: SetupDraft, enabled: boolean): SetupDraft {
+  const value = current.profile.agentConfig.backgroundTasks
+  if ((value !== false) === enabled) return current
+  return {
+    ...current,
+    ...(!enabled ? { disabledBackgroundTasks: value } : {}),
+    profile: {
+      ...current.profile,
+      agentConfig: {
+        ...current.profile.agentConfig,
+        backgroundTasks: enabled ? (current.disabledBackgroundTasks ?? true) : false,
+      },
+    },
+  }
+}
+
+function setToolEnabled(current: SetupDraft, name: BuiltinToolName, enabled: boolean): SetupDraft {
+  const choice = builtinToolChoices(current.profile).find((choice) => choice.id === name)!
+  if (choice.active === enabled) return current
+  const mapping = Array.isArray(current.profile.builtinTools)
+    ? undefined
+    : (current.profile.builtinTools as HarnessConfigBuiltinTools)
+  const saved = current.disabledTools?.[choice.id]
+  return {
+    ...current,
+    ...(!enabled ? { disabledTools: { ...current.disabledTools, [choice.id]: mapping?.[choice.id] } } : {}),
+    profile: {
+      ...current.profile,
+      builtinTools:
+        enabled && mapping && saved !== undefined
+          ? { ...mapping, [choice.id]: saved }
+          : withBuiltinToolChoice(current.profile, choice, enabled),
+    },
+  }
 }

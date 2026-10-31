@@ -1,4 +1,4 @@
-import type { FrogTheme } from '../chat/types.js'
+import type { FrogTheme, ResolvedColorMode } from '../chat/types.js'
 
 const ESC = '\u001b['
 
@@ -30,9 +30,7 @@ type Rgb = readonly [number, number, number]
 type FrogPalette = Record<Color, Rgb>
 
 export interface FrogRenderOptions {
-  colorMode?: 'light' | 'dark'
-  frogColor?: string
-  customBase?: Exclude<FrogTheme, 'custom'>
+  colorMode?: ResolvedColorMode
 }
 
 const FROG_PALETTES = {
@@ -50,23 +48,24 @@ const FROG_PALETTES = {
     dim: [90, 90, 90],
     tongue: [195, 195, 195],
   },
-  circuit: {
-    ...BASE_PALETTE,
-    white: [247, 250, 252],
-    mint: [224, 229, 234],
-    lime: [174, 182, 191],
-    green: [116, 125, 135],
-    emerald: [94, 103, 113],
-    forest: [65, 72, 81],
-    ink: [14, 18, 23],
-    gray: [143, 151, 160],
-    dim: [76, 84, 94],
-    tongue: [255, 54, 72],
-    red: [255, 54, 72],
-    orange: [237, 78, 91],
-    yellow: [255, 202, 207],
-    purple: [151, 24, 41],
-    pink: [255, 91, 105],
+  oak: {
+    white: [232, 208, 170],
+    mint: [202, 151, 99],
+    lime: [163, 106, 63],
+    green: [125, 75, 40],
+    emerald: [107, 60, 30],
+    forest: [80, 47, 25],
+    ink: [39, 23, 17],
+    gray: [161, 131, 105],
+    dim: [93, 65, 45],
+    tongue: [193, 130, 82],
+    red: [169, 84, 47],
+    orange: [193, 128, 68],
+    yellow: [219, 175, 113],
+    cyan: [203, 164, 119],
+    blue: [131, 91, 58],
+    purple: [146, 94, 64],
+    pink: [207, 151, 109],
   },
   homeland: {
     white: [235, 249, 255],
@@ -91,10 +90,10 @@ const FROG_PALETTES = {
     ...BASE_PALETTE,
     white: [250, 239, 255],
     mint: [224, 190, 255],
-    lime: [192, 132, 252],
-    green: [160, 100, 224],
-    emerald: [131, 77, 191],
-    forest: [98, 59, 142],
+    lime: [130, 101, 194],
+    green: [108, 80, 167],
+    emerald: [84, 57, 136],
+    forest: [63, 44, 101],
     ink: [25, 14, 40],
     gray: [171, 153, 190],
     dim: [91, 68, 120],
@@ -118,7 +117,7 @@ const FROG_PALETTES = {
   spectre: {
     ...BASE_PALETTE,
     white: [222, 226, 232],
-    mint: [153, 161, 172],
+    mint: [182, 190, 202],
     lime: [0, 0, 0],
     green: [40, 44, 53],
     emerald: [61, 66, 77],
@@ -131,20 +130,26 @@ const FROG_PALETTES = {
     cyan: [201, 51, 69],
     blue: [136, 30, 47],
   },
-  solar: {
-    ...BASE_PALETTE,
-    white: [255, 250, 225],
-    mint: [255, 235, 156],
-    lime: [255, 209, 102],
-    green: [232, 169, 48],
-    emerald: [190, 122, 28],
-    forest: [116, 72, 18],
-    ink: [42, 27, 5],
-    gray: [177, 151, 102],
-    dim: [96, 70, 31],
-    tongue: [255, 143, 105],
+  scarlet: {
+    white: [255, 255, 255],
+    mint: [222, 69, 86],
+    lime: [224, 47, 63],
+    green: [160, 21, 44],
+    emerald: [112, 14, 35],
+    forest: [89, 12, 29],
+    ink: [54, 6, 20],
+    gray: [173, 116, 131],
+    dim: [96, 37, 54],
+    tongue: [255, 139, 158],
+    red: [247, 65, 85],
+    orange: [236, 78, 102],
+    yellow: [255, 196, 204],
+    cyan: [244, 119, 145],
+    blue: [155, 28, 61],
+    purple: [115, 23, 53],
+    pink: [255, 153, 177],
   },
-} satisfies Record<Exclude<FrogTheme, 'custom'>, FrogPalette>
+} satisfies Record<FrogTheme, FrogPalette>
 
 const PARTY_COLORS = ['pink', 'yellow', 'cyan', 'purple', 'orange', 'lime', 'blue'] as const
 const COLOR_NAMES = Object.keys(BASE_PALETTE) as Color[]
@@ -175,7 +180,8 @@ export class Canvas implements PixelSink {
   private readonly _partyOffset: number
   private readonly _foregroundCodes: readonly string[]
   private readonly _backgroundCodes: readonly string[]
-  readonly theme: Exclude<FrogTheme, 'custom'>
+  readonly theme: FrogTheme
+  readonly colorMode: ResolvedColorMode
 
   constructor(
     readonly width: number,
@@ -187,8 +193,9 @@ export class Canvas implements PixelSink {
   ) {
     const cells = width * height
     this._partyOffset = Math.floor(partyElapsedMs / 80)
-    this.theme = _party ? 'green' : theme === 'custom' ? (options.customBase ?? 'green') : theme
-    const palette = frogPalette(this.theme, _party ? { colorMode: options.colorMode ?? 'dark' } : options)
+    this.theme = _party ? 'green' : theme
+    this.colorMode = options.colorMode ?? 'dark'
+    const palette = frogPalette(this.theme, options)
     this._foregroundCodes = colorCodes(palette, 38)
     this._backgroundCodes = colorCodes(palette, 48)
     this._pixelWidth = width * 2
@@ -370,7 +377,7 @@ function anchorGlyphToBottom(visual: VisualCell): VisualCell {
   }
 }
 
-function frogPalette(theme: Exclude<FrogTheme, 'custom'>, options: FrogRenderOptions): FrogPalette {
+function frogPalette(theme: FrogTheme, options: FrogRenderOptions): FrogPalette {
   const palette: FrogPalette = { ...FROG_PALETTES[theme] }
   if (options.colorMode === 'light') {
     for (const name of COLOR_NAMES) {
@@ -385,21 +392,8 @@ function frogPalette(theme: Exclude<FrogTheme, 'custom'>, options: FrogRenderOpt
       palette.ink = palette.lime
     } else if (theme === 'spectre') {
       palette.ink = [17, 19, 25]
-    }
-  }
-  if (options.frogColor && /^#[\da-f]{6}$/i.test(options.frogColor)) {
-    const rgb: Rgb = [
-      Number.parseInt(options.frogColor.slice(1, 3), 16),
-      Number.parseInt(options.frogColor.slice(3, 5), 16),
-      Number.parseInt(options.frogColor.slice(5, 7), 16),
-    ]
-    palette.lime = rgb
-    palette.green = mixColor(rgb, [0, 0, 0], 0.18)
-    palette.emerald = mixColor(rgb, [0, 0, 0], 0.35)
-    palette.forest = mixColor(rgb, [0, 0, 0], 0.5)
-    palette.mint = mixColor(rgb, [255, 255, 255], 0.45)
-    if (theme === 'minimal') {
-      palette.ink = rgb
+    } else if (theme === 'scarlet') {
+      palette.white = FROG_PALETTES.scarlet.white
     }
   }
   return palette

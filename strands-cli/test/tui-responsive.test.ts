@@ -12,7 +12,7 @@ import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
 // Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
-const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const STRANDS_WORDMARK = /STRANDS|╚════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 const instances: Instance[] = []
 const controllers: ChatController[] = []
@@ -94,7 +94,7 @@ describe('responsive welcome art', () => {
     [120, 35, 12],
     [80, 34, 6],
     [73, 34, 6],
-    [64, 34, 2],
+    [64, 34, 6],
     [120, 20, 8],
     [80, 19, 6],
     [40, 11, 2],
@@ -163,7 +163,7 @@ describe('responsive welcome art', () => {
         }
         if (rows >= 37) {
           const lines = view.screen().split('\n')
-          const titleRows = ['Quickstart', 'Customize', 'Import', 'Resume'].map((title) =>
+          const titleRows = ['Quickstart', 'Customize', 'Import'].map((title) =>
             lines.findIndex((line) =>
               line
                 .trim()
@@ -172,7 +172,7 @@ describe('responsive welcome art', () => {
             )
           )
           expect(titleRows.every((row) => row >= 0)).toBe(true)
-          expect(new Set(titleRows).size).toBe(columns >= 66 ? 2 : 4)
+          expect(new Set(titleRows).size).toBe(columns >= 66 ? 2 : 3)
         }
         expect(view.screen()).toContain('Shift+Tab')
         expect(view.screen()).toMatch(/[Cc]lick/)

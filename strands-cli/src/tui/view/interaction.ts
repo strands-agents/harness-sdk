@@ -9,74 +9,6 @@ export const MODEL_COPY_TARGET = 'model:copy-id'
 
 export type ModelPanelFocus = 'effort' | 'search' | 'providers' | 'models' | 'copy'
 
-export function settingsLayout(
-  panelWidth: number,
-  setting?: string
-): {
-  contentWidth: number
-  labelWidth: number
-  columns: number
-  optionWidth: number
-} {
-  const contentWidth = Math.max(1, Math.min(68, panelWidth - 4))
-  const longLabel = setting === 'agentMessaging' || setting === 'telemetry'
-  const labelWidth =
-    setting === 'frogTheme'
-      ? Math.floor(contentWidth / 3)
-      : longLabel
-        ? Math.min(contentWidth, 32, Math.max(15, contentWidth - 14))
-        : Math.min(contentWidth, 23, Math.max(15, Math.floor(contentWidth / 3)))
-  const optionWidth = setting === 'frogTheme' ? 11 : 14
-  return {
-    contentWidth,
-    labelWidth,
-    columns: Math.min(4, Math.max(1, Math.floor((contentWidth - labelWidth) / optionWidth))),
-    optionWidth,
-  }
-}
-
-export function settingsThemeLayout(panelWidth: number): {
-  columns: number
-  optionWidth: number
-  optionHeight: number
-  offset: number
-} {
-  const { contentWidth, labelWidth } = settingsLayout(panelWidth)
-  const offset = contentWidth >= 54 ? labelWidth : 0
-  const gridWidth = contentWidth - offset
-  const columns = gridWidth >= 30 ? 3 : gridWidth >= 20 ? 2 : 1
-  return {
-    columns,
-    optionWidth: Math.floor(gridWidth / columns),
-    optionHeight: contentWidth >= 54 ? 3 : 1,
-    offset,
-  }
-}
-
-export function adjacentSettingOption(
-  control: NonNullable<ChatPanelRow['control']>,
-  key: Partial<Key>,
-  columns: number
-): number | undefined {
-  if (control.kind !== 'segmented') {
-    return undefined
-  }
-  const active = Math.max(
-    0,
-    control.options.findIndex((option) => option.active)
-  )
-  if (key.leftArrow || key.rightArrow) {
-    return Math.max(0, Math.min(control.options.length - 1, active + (key.leftArrow ? -1 : 1)))
-  }
-  if (key.upArrow && active >= columns) {
-    return active - columns
-  }
-  if (key.downArrow && Math.floor(active / columns) < Math.floor((control.options.length - 1) / columns)) {
-    return Math.min(control.options.length - 1, active + columns)
-  }
-  return undefined
-}
-
 const AGENT_GRID_TILE_ROWS = 8
 
 export function agentGridColumns(terminalWidth: number): number {
@@ -282,46 +214,11 @@ export function panelPageSize(terminalHeight: number): number {
 export function panelRowCapacity(
   kind: ChatPanel['kind'],
   terminalHeight: number,
-  terminalWidth = 80,
+  _terminalWidth = 80,
   rows: readonly ChatPanelRow[] = []
 ): number {
   if (kind === 'settings') {
-    if (rows.length === 0) {
-      return Math.max(1, Math.floor((terminalHeight - 10) / 2))
-    }
-    const heights = rows.map((row) => {
-      const { columns, labelWidth } = settingsLayout(Math.min(84, terminalWidth - 4), row.value)
-      let labelHeight = 1
-      let lineWidth = 0
-      for (const word of row.label.split(' ')) {
-        if (lineWidth && lineWidth + 1 + word.length > labelWidth) {
-          labelHeight++
-          lineWidth = 0
-        }
-        lineWidth += (lineWidth ? 1 : 0) + word.length
-      }
-      const controlRows = row.control?.kind === 'segmented' ? Math.ceil(row.control.options.length / columns) : 1
-      if (row.value === 'frogTheme') {
-        const { columns: themeColumns, optionHeight } = settingsThemeLayout(terminalWidth - 4)
-        const themeOptions = row.control?.kind === 'segmented' ? row.control.options.length : 1
-        return 2 + Math.ceil(themeOptions / themeColumns) * optionHeight
-      }
-      return 1 + Math.max(labelHeight, controlRows)
-    })
-    let capacity = Math.max(1, rows.length)
-    for (let start = 0; start < rows.length; start++) {
-      let height = 0
-      for (let index = start; index < rows.length; index++) {
-        const row = rows[index]!
-        const section = row.section && (index === start || row.section !== rows[index - 1]?.section)
-        height += heights[index]! + (section ? (index === start ? 2 : 3) : 0)
-        if (height > terminalHeight - 10) {
-          capacity = Math.min(capacity, Math.max(1, index - start))
-          break
-        }
-      }
-    }
-    return capacity
+    return Math.max(1, terminalHeight - 8)
   }
   if (kind === 'permissions' || kind === 'tools') {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size
@@ -485,4 +382,47 @@ export async function activateMetadataTarget(
   } else {
     controller.openContextPanel()
   }
+}
+
+export const PANEL_SECTION_BORDER_COLUMNS = 2
+export const PANEL_SECTION_BORDER_ROWS = 2
+export const PANEL_SECTION_PADDING_X = 1
+export const PANEL_SECTION_HEADER_HEIGHT = 1
+export const PANEL_SECTION_HEADER_GAP = 1
+export const FULL_LOCKUP_TOP_PADDING = 6
+export const COMPACT_LOCKUP_TOP_PADDING = 2
+const SECTIONED_PANEL_SIDEBAR_DIVISOR = 3
+
+export type SettingsPanelFocus = 'categories' | 'settings'
+
+export function startupLockupTopPadding(fullLockup: boolean, height: number): number {
+  return fullLockup ? FULL_LOCKUP_TOP_PADDING : height > 2 ? COMPACT_LOCKUP_TOP_PADDING : 1
+}
+
+export function startupLockupLeft(width: number, lockupWidth: number, offset = 0): number {
+  return Math.max(0, Math.min(width - lockupWidth, Math.round((width - lockupWidth) / 2 + offset)))
+}
+
+export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = Infinity): number {
+  return Math.max(1, Math.min(Math.floor(panelWidth / SECTIONED_PANEL_SIDEBAR_DIVISOR), preferredWidth))
+}
+
+export function trailingWindowStart(selected: number, capacity: number, total: number): number {
+  return Math.max(0, Math.min(selected - capacity + 1, total - capacity))
+}
+
+export function settingArrowValue(row: ChatPanelRow, direction: -1 | 1): string | undefined {
+  const { control, value } = row
+  if (!value || !control) {
+    return undefined
+  }
+  if (control.kind === 'toggle') {
+    return control.checked === direction > 0 ? undefined : value
+  }
+  const active = Math.max(
+    0,
+    control.options.findIndex((option) => option.active)
+  )
+  const option = control.options[active + direction]
+  return option ? `${value}=${option.value}` : undefined
 }

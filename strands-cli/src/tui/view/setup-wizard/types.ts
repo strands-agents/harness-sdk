@@ -1,4 +1,4 @@
-import type { HarnessAgentConfig } from '@strands-agents/harness'
+import type { HarnessAgentConfig, HarnessConfigBuiltinTools } from '@strands-agents/harness'
 
 import type { PermissionMode, ProviderEnvironmentKey, ProviderId } from '../../config.js'
 import type { ChatSettings } from '../../chat/types.js'
@@ -8,7 +8,7 @@ export type SetupFlow = 'quickstart' | 'customize' | 'import'
 
 export type AppearanceSettings = Pick<
   ChatSettings,
-  'frogTheme' | 'colorMode' | 'customTheme' | 'transcriptSpacing' | 'animations' | 'showReasoning' | 'toolOutput'
+  'frogTheme' | 'transcriptSpacing' | 'animations' | 'showReasoning' | 'toolOutput'
 >
 
 export interface SetupDraft {
@@ -17,7 +17,9 @@ export interface SetupDraft {
   permissionMode: PermissionMode
   allowedTools: string[]
   customPermissions: boolean
-  disabledSkills?: Exclude<HarnessAgentConfig['skills'], false>
+  disabledFeatures?: Partial<Pick<HarnessAgentConfig, 'skills' | 'memory' | 'contextManager'>>
+  disabledTools?: HarnessConfigBuiltinTools
+  disabledBackgroundTasks?: unknown
   settings: Pick<ChatSettings, 'mcpDiscovery' | 'skillDiscovery' | 'agentMessaging'>
 }
 
@@ -33,7 +35,7 @@ export interface WizardRow {
   selectOptions?: readonly SelectOption[]
   status?: 'success' | 'warning' | 'error'
   descriptionColor?: string
-  choices?: readonly { label: string; value?: string | boolean; active: boolean; activate(): void }[]
+  choices?: readonly { label: string; value?: string | number | boolean; active: boolean; activate(): void }[]
   activate(): void
 }
 

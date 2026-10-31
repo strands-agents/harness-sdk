@@ -229,7 +229,7 @@ describe('prompt editor input', () => {
         })
       )
       expect(output).toContain(
-        '\u001b[38;2;104;245;138m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
+        '\u001b[38;2;0;204;96m/model\u001b[38;2;236;239;241m improve the respons\u001b[7me\u001b[27m'
       )
     } finally {
       chalk.level = level

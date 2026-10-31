@@ -41,9 +41,9 @@ export function permissionLines(
       const prefix = line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '
       const color =
         line.kind === 'add'
-          ? palette.success
+          ? palette.diffAdd
           : line.kind === 'remove'
-            ? palette.error
+            ? palette.diffRemove
             : line.kind === 'header'
               ? palette.accent
               : undefined

@@ -1,14 +1,13 @@
 import { createElement } from 'react'
-import { render } from 'ink'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CliConfigStore } from '../src/tui/config.js'
 import { captureNpm } from '../src/tui/npm.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
-import { ttyInput, ttyOutput } from './fixtures/terminal.js'
+import { render, ttyInput, ttyOutput } from './fixtures/terminal.js'
 
-const NOTICE = 'Strands CLI 0.1.3 is available. Run `strands update` to install it.'
+const NOTICE = 'Strands CLI 0.1.3 is available! Run `strands update` to install it.'
 
 vi.mock('../src/tui/package-version.js', async (original) => ({
   ...(await original<typeof import('../src/tui/package-version.js')>()),
@@ -29,7 +28,7 @@ vi.mock('../src/tui/provider/discovery.js', async (original) => ({
   discoverProviderModels: vi.fn(async () => ({ available: true, models: [] })),
 }))
 
-async function renderSetup(props: { appearanceOnly?: boolean } = {}): Promise<{
+async function renderSetup(): Promise<{
   frame: () => string
   settle: () => Promise<void>
   close: () => Promise<void>
@@ -45,7 +44,6 @@ async function renderSetup(props: { appearanceOnly?: boolean } = {}): Promise<{
     createElement(SetupWizard, {
       config: CliConfigStore.memory({}, { animations: false }),
       onComplete: () => {},
-      ...props,
     }),
     {
       stdin: ttyInput(),
@@ -85,7 +83,7 @@ describe('setup update notice', () => {
       expect(captureNpm).toHaveBeenCalledWith(['view', '@strands-agents/cli@latest', 'version', '--json'], {
         timeout: 3_000,
       })
-      expect(setup.frame()).toContain('Resume')
+      expect(setup.frame()).toContain('Quickstart')
     } finally {
       await setup.close()
     }
@@ -106,17 +104,8 @@ describe('setup update notice', () => {
     const setup = await renderSetup()
     try {
       await setup.settle()
-      expect(setup.frame()).toContain('Resume')
+      expect(setup.frame()).toContain('Quickstart')
       expect(setup.frame()).not.toContain('is available')
-    } finally {
-      await setup.close()
-    }
-  })
-
-  it('skips the check when setup only opens appearance settings', async () => {
-    const setup = await renderSetup({ appearanceOnly: true })
-    try {
-      expect(captureNpm).not.toHaveBeenCalled()
     } finally {
       await setup.close()
     }
