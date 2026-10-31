@@ -7,9 +7,10 @@ import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import { unzipSync } from 'fflate'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
-import { exportSourceProject, writeAgentProject } from '../src/tui/project/export.js'
-import { importAgentProject } from '../src/tui/project/import.js'
-import { npmInvocation } from '../src/tui/npm.js'
+import { exportSourceProject, writeAgentProject } from '../../../src/tui/project/export.js'
+import { npmInvocation } from '../../../src/tui/npm.js'
+import { importAgentProject } from '../../../src/tui/project/import.js'
+import { sourceBase } from '../../../src/tui/project/packaging.js'
 
 const run = promisify(execFile)
 let root: string
@@ -26,6 +27,12 @@ async function file(path: string, contents: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, contents)
 }
+
+it.skipIf(process.platform !== 'win32')('rejects source paths on different Windows drives', () => {
+  expect(() => sourceBase(['C:\\project\\tool.ts', 'D:\\shared\\helper.ts'], 'C:\\project')).toThrow(
+    'Export sources must share a filesystem root.'
+  )
+})
 
 it('packages shared local module source once and keeps its relative layout', async () => {
   const source = join(root, 'source')
@@ -73,7 +80,7 @@ it('builds and runs a packaged local tool after its original source is removed',
   const project = importAgentProject(archive)
   await rm(source, { recursive: true })
   // The CLI installs standalone, so its deps live under strands-cli/node_modules, not a hoisted ../../node_modules.
-  await symlink(resolve(import.meta.dirname, '../node_modules'), join(project.root, 'node_modules'), 'junction')
+  await symlink(resolve(import.meta.dirname, '../../../node_modules'), join(project.root, 'node_modules'), 'junction')
   const npm = npmInvocation(['run', 'build'])
   await run(npm.command, npm.args, { cwd: project.root })
   const { stdout } = await run(
@@ -132,6 +139,14 @@ it('emits a truthful generated README and no unused instructions file', async ()
   expect(readme).not.toContain('agent/instructions.md')
   expect(entries).not.toHaveProperty('agent/instructions.md')
   expect(Buffer.from(entries['agent/agent.ts']!).toString()).toContain("instructions: 'Embedded instructions'")
+})
+
+it('rejects archive names that Windows cannot extract', async () => {
+  const skill = join(root, 'CON')
+  await file(join(skill, 'SKILL.md'), '# Reserved')
+  await expect(
+    writeAgentProject(defineHarnessAgentConfig({ skills: [skill] }), 'typescript', [skill], join(root, 'agent.zip'))
+  ).rejects.toThrow('not portable to Windows')
 })
 
 // Windows has no POSIX executable bit to preserve.

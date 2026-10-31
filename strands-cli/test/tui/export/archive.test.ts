@@ -9,9 +9,9 @@ import { ZipFile } from 'yazl'
 const execute = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execute }))
 
-import { prepareArchiveDependencies } from '../src/tui/project/archive.js'
-import { npmInvocation } from '../src/tui/npm.js'
-import { importAgentProject } from '../src/tui/project/import.js'
+import { prepareArchiveDependencies } from '../../../src/tui/project/archive.js'
+import { importAgentProject } from '../../../src/tui/project/import.js'
+import { npmInvocation } from '../../../src/tui/npm.js'
 
 let temporary: string | undefined
 
@@ -35,6 +35,15 @@ it('removes the extraction directory when the ZIP contains no agent', async () =
 
   expect(() => importAgentProject(archive)).toThrow('The ZIP must contain a project with agent.ts, agent.py')
   expect(await readdir(join(temporary, '.strands', 'cli', 'cache', 'agents'))).toEqual([])
+})
+
+it('rejects Windows-reserved paths', async () => {
+  temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
+  stubHome(temporary)
+  const archive = join(temporary, 'agent.zip')
+  await writeFile(archive, zipSync({ 'agent/agent.ts': strToU8(''), 'agent/CON': strToU8('reserved') }))
+
+  expect(() => importAgentProject(archive)).toThrow('not portable to Windows')
 })
 
 it.each(['missing.py', '../outside.py', 'notes.txt'] as const)(
@@ -150,27 +159,39 @@ it.each([
   expect(await readFile(join(project.root, lockfile))).toEqual(changedLock)
 })
 
-// Windows has no POSIX executable bit, so there is nothing to restore there.
-it.skipIf(process.platform === 'win32').each([false, true])(
-  'restores executable permissions without privileged bits from ZIP64=%s',
-  async (zip64) => {
-    const archive = await archiveWithMode(0o107777, zip64)
+it.each([
+  { zip64: false, compress: false },
+  { zip64: false, compress: true },
+  { zip64: true, compress: false },
+  { zip64: true, compress: true },
+])(
+  'preserves filenames and executable permissions from ZIP64=$zip64 compressed=$compress',
+  async ({ zip64, compress }) => {
+    const archive = await archiveWithMode(0o107777, zip64, compress)
     const project = importAgentProject(archive)
-    expect((await stat(join(project.root, 'helper.sh'))).mode & 0o7777).toBe(0o755)
+    for (const name of ['helper.sh', '__proto__']) {
+      expect(await readFile(join(project.root, name), 'utf8')).toBe('#!/bin/sh\nprintf helper-ran\n')
+      // Windows has no POSIX executable bit.
+      if (process.platform !== 'win32') {
+        expect((await stat(join(project.root, name))).mode & 0o7777).toBe(0o755)
+      }
+    }
   }
 )
 
-it.each([false, true])('rejects symbolic links in ZIP64=%s before extraction', async (zip64) => {
+it.each([false, true])('rejects symbolic links in ZIP64=%s', async (zip64) => {
   const archive = await archiveWithMode(0o120777, zip64)
   expect(() => importAgentProject(archive)).toThrow('symbolic links')
 })
 
-async function archiveWithMode(mode: number, zip64: boolean): Promise<string> {
+async function archiveWithMode(mode: number, zip64: boolean, compress = true): Promise<string> {
   temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
   stubHome(temporary)
   const zip = new ZipFile()
   zip.addBuffer(Buffer.from(''), 'agent/agent.ts')
-  zip.addBuffer(Buffer.from('#!/bin/sh\nprintf helper-ran\n'), 'helper.sh', { mode })
+  for (const name of ['helper.sh', '__proto__']) {
+    zip.addBuffer(Buffer.from('#!/bin/sh\nprintf helper-ran\n'), name, { mode, compress })
+  }
   const chunks: Buffer[] = []
   const completed = new Promise<Buffer>((resolve, reject) => {
     zip.outputStream.on('data', (chunk: Buffer) => chunks.push(chunk))

@@ -1,13 +1,15 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { unzipSync } from 'fflate'
 
 import type { ChatEvent, ChatRunResult } from '../src/tui/chat/types.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend, type PythonOptions } from '../src/tui/project/python.js'
+import { exportSourceProject } from '../src/tui/project/export.js'
 import { pythonExecutable as python } from './fixtures/python-runtime.js'
 
 const baseSource = `from strands import tool
@@ -80,6 +82,81 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
     }
     return next.value
   }
+
+  it.each([
+    '{"dir": "custom-memory"}',
+    'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',
+  ])('excludes actual memory storage from exports: %s', async (memory) => {
+    const privateDirectory = join(root, 'custom-memory')
+    await mkdir(privateDirectory, { recursive: true })
+    const privateFile = join(privateDirectory, 'personal-notes.md')
+    await writeFile(privateFile, 'PRIVATE MEMORY SENTINEL')
+    await writeFile(join(root, 'custom-memory-public.md'), 'public source')
+    const backend = await open(
+      `from strands.memory import MemoryManager
+from strands.storage import LocalFileStorage
+from strands.vended_memory_stores.file_memory_store import FileMemoryStore
+${baseSource.replace('"memory": False', `"memory": ${memory}`)}`
+    )
+    expect(backend.privatePaths).toContain(privateDirectory)
+
+    const project = { root, entrypoint: join(root, 'agent.py'), language: 'python' as const }
+    const archive = join(root, '.agent', 'export.zip')
+    await exportSourceProject(project, 'Private memory', 'python', backend.privatePaths, archive)
+    const files = unzipSync(await readFile(archive))
+    expect(files).not.toHaveProperty('custom-memory/personal-notes.md')
+    expect(files).toHaveProperty('custom-memory-public.md')
+  })
+
+  it.each([false, true])(
+    'excludes context stash storage from exports with a custom namespace=%s',
+    async (namespaced) => {
+      await writeFile(join(root, 'public.txt'), 'PUBLIC SOURCE')
+      const backend = await open(`from strands.experimental.context_manager import ContextManager
+from strands.storage import LocalFileStorage
+${baseSource
+  .replace(
+    'def build(**overrides):',
+    `@tool
+async def stash_note(note: str) -> str:
+    """Save content in the context stash.
+
+    Args:
+        note: Private content to store.
+    """
+    await agent.context_manager.stash.store("private-note", 0, note.encode())
+    return "saved"
+
+def build(**overrides):`
+  )
+  .replace('"tools": [status]', '"tools": [status, stash_note]')
+  .replace(
+    '"context_manager": False',
+    `"context_manager": ContextManager(stash={"storage": LocalFileStorage("custom-stash")${namespaced ? '.namespace("")' : ''}})`
+  )}`)
+      for await (const _event of backend.stream(
+        JSON.stringify({ tool: 'stash_note', input: { note: 'PRIVATE STASH SENTINEL' } })
+      )) {
+        // Drain the actual tool turn before exporting its persisted state.
+      }
+      const privateDirectory = join(root, 'custom-stash', ...(namespaced ? [] : ['context']))
+      expect(backend.privatePaths).toContain(privateDirectory)
+      const stored = (await readdir(privateDirectory, { recursive: true })).find((name) =>
+        name.endsWith('private-note_0')
+      )
+      expect(stored).toBeDefined()
+      expect(await readFile(join(privateDirectory, stored!), 'utf8')).toBe('PRIVATE STASH SENTINEL')
+      const project = { root, entrypoint: join(root, 'agent.py'), language: 'python' as const }
+      const archive = join(root, '.agent', 'export.zip')
+      await exportSourceProject(project, 'Private context', 'python', backend.privatePaths, archive)
+      const files = unzipSync(await readFile(archive))
+      expect(Buffer.from(files['public.txt']!).toString()).toBe('PUBLIC SOURCE')
+      expect(Object.values(files).some((contents) => Buffer.from(contents).includes('PRIVATE STASH SENTINEL'))).toBe(
+        false
+      )
+      expect(Object.keys(files).some((name) => name.includes('private-note'))).toBe(false)
+    }
+  )
 
   it('reports context usage for imported Python agents', async () => {
     const backend = await open(baseSource)

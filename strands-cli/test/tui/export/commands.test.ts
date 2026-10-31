@@ -11,7 +11,7 @@ const picker = vi.hoisted(() => ({
   chooseSaveFile: vi.fn<() => Promise<string | undefined>>(),
 }))
 
-vi.mock('../src/tui/terminal/directory-picker.js', () => ({
+vi.mock('../../../src/tui/terminal/directory-picker.js', () => ({
   canChooseDirectory: () => picker.available,
   chooseSaveFile: picker.chooseSaveFile,
 }))
@@ -21,10 +21,11 @@ import {
   type ChatBackend,
   type ChatControllerApi,
   type ChatPanelRow,
-} from '../src/tui/chat/controller.js'
-import { CliConfigStore } from '../src/tui/config.js'
-import { createInteractiveChat } from '../src/tui/runtime.js'
-import { exportSavedAgent } from '../src/tui/project/export.js'
+} from '../../../src/tui/chat/controller.js'
+import { CliConfigStore } from '../../../src/tui/config.js'
+import { createInteractiveChat } from '../../../src/tui/runtime.js'
+import { exportSavedAgent } from '../../../src/tui/project/export.js'
+import { agentLaunchCommand } from '../../../src/tui/project/import.js'
 
 const model = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
 const profile = defineHarnessAgentConfig({
@@ -57,19 +58,19 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-function config(): CliConfigStore {
+function config(agentProfile = profile): CliConfigStore {
   return CliConfigStore.memory(
     {},
     { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false },
-    { profile, profileBaseDir: workspace }
+    { profile: agentProfile, profileBaseDir: workspace }
   )
 }
 
-async function profileChat(): Promise<ChatControllerApi> {
+async function profileChat(agentProfile = profile): Promise<ChatControllerApi> {
   const controller = await createInteractiveChat({
-    config: config(),
-    agentProfile: profile,
-    agentOptions: { ...(await harnessAgentOptionsFromConfig(profile, workspace)), backgroundTasks: false },
+    config: config(agentProfile),
+    agentProfile,
+    agentOptions: { ...(await harnessAgentOptionsFromConfig(agentProfile, workspace)), backgroundTasks: false },
     cwd: workspace,
     sessionCatalogPath: join(root, 'catalog.json'),
   })
@@ -103,7 +104,11 @@ function row(controller: ChatController, label: string): ChatPanelRow {
 }
 
 it.each(['typescript', 'python'] as const)('writes a %s profile ZIP to an explicit path', async (language) => {
-  const controller = await profileChat()
+  const skill = join(workspace, '.agent', 'skills', 'review')
+  const skillSource = '---\nname: review\ndescription: Review changes\n---\n\n# Review\n'
+  await mkdir(skill, { recursive: true })
+  await writeFile(join(skill, 'SKILL.md'), skillSource)
+  const controller = await profileChat(defineHarnessAgentConfig({ ...profile, skills: true }))
   const name = `my ${language} agent.zip`
   await controller.submit(`/export ${language} ${name}`)
 
@@ -112,9 +117,9 @@ it.each(['typescript', 'python'] as const)('writes a %s profile ZIP to an explic
     title: 'Export complete',
     body: expect.stringContaining(path),
   })
-  expect(unzipSync(await readFile(path))).toHaveProperty(
-    language === 'typescript' ? 'agent/agent.ts' : 'agent/agent.py'
-  )
+  const entries = unzipSync(await readFile(path))
+  expect(entries).toHaveProperty(language === 'typescript' ? 'agent/agent.ts' : 'agent/agent.py')
+  expect(Buffer.from(entries['agent/skills/review/SKILL.md']!).toString('utf8')).toBe(skillSource)
   expect(picker.chooseSaveFile).not.toHaveBeenCalled()
 })
 
@@ -174,6 +179,12 @@ it.each(['typescript', 'python'] as const)('shows only the authored %s source la
 })
 
 describe('export completion', () => {
+  it('copies a PowerShell-safe Windows launch command', () => {
+    expect(agentLaunchCommand("C:\\Users\\O'Brien\\agent.zip", 'win32')).toBe(
+      "strands --agent 'C:\\Users\\O''Brien\\agent.zip'"
+    )
+  })
+
   beforeEach(() => {
     picker.available = true
   })
@@ -190,12 +201,22 @@ describe('export completion', () => {
     await controller.activatePanelRow(row(controller, 'Copy launch command'))
     const launchCommand = copyText.mock.lastCall![0]
     expect(row(controller, 'Copy launch command').badge?.text).toBe('Copied')
-    expect(
-      // Resolve `sh` from PATH: Windows runners get it from Git for Windows, not /bin/sh.
-      execFileSync('sh', ['-c', `${launchCommand.replace(/^strands /u, 'set -- ')}; printf '%s' "$2"`], {
-        encoding: 'utf8',
-      })
-    ).toBe(path)
+    const output =
+      process.platform === 'win32'
+        ? execFileSync(
+            'pwsh',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              `function strands { [Console]::Write($args[1]) }; ${launchCommand}`,
+            ],
+            { encoding: 'utf8' }
+          )
+        : execFileSync('sh', ['-c', `${launchCommand.replace(/^strands /u, 'set -- ')}; printf '%s' "$2"`], {
+            encoding: 'utf8',
+          })
+    expect(output).toBe(path)
   })
 
   it.each(['cancel', 'error', 'copy-false', 'copy-error'] as const)(

@@ -15,6 +15,10 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
   const optionName = (key: string): string =>
     python ? key.replace(/[A-Z]/gu, (letter) => `_${letter.toLowerCase()}`) : key
   const options = new Map<string, string>()
+  const backgroundKeys: Record<string, string> = {
+    waitForCompletion: 'wait_for_completion',
+    maxConcurrency: 'max_concurrency',
+  }
   for (const [key, value] of Object.entries(config.agentConfig)) {
     if (python && key === 'printer' && typeof value === 'boolean') {
       if (!value) {
@@ -22,7 +26,11 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
       }
       continue
     }
-    options.set(python ? pythonAgentOptionName(key) : key, literal(value))
+    const configured =
+      python && key === 'backgroundTasks' && isRecord(value)
+        ? Object.fromEntries(Object.entries(value).map(([key, value]) => [backgroundKeys[key] ?? key, value]))
+        : value
+    options.set(python ? pythonAgentOptionName(key) : key, literal(configured))
   }
   const set = (key: string, value: unknown): void => {
     options.set(optionName(key), literal(value))
@@ -86,7 +94,10 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     options.delete(optionName('effort'))
   }
   if (Object.keys(config.mcpServers).length > 0) {
-    expression('mcpServers', sourceLiteral(mcpServersForSource(config.mcpServers), python, 0, true, projectPath))
+    expression(
+      'mcpServers',
+      sourceLiteral(mcpServersForSource(config.mcpServers, python), python, 0, true, projectPath)
+    )
   }
   for (const key of ['builtinTools', 'builtinPlugins', 'caching'] as const) {
     // Passing the default tools explicitly changes unsupported-provider handling in the factory.
@@ -103,12 +114,14 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     options.delete(optionName('contextManager'))
   }
   if (!sameJson(config.skills, DEFAULT_HARNESS_AGENT_CONFIG.skills)) {
+    const skill = (value: string): string =>
+      value.startsWith('https://') ? literal(value) : projectPath(literal(value))
     expression(
       'skills',
       typeof config.skills === 'string'
-        ? projectPath(literal(config.skills))
+        ? skill(config.skills)
         : Array.isArray(config.skills)
-          ? `[${config.skills.map((skill) => projectPath(literal(skill))).join(', ')}]`
+          ? `[${config.skills.map(skill).join(', ')}]`
           : literal(config.skills)
     )
   } else {
@@ -283,28 +296,19 @@ function sourceLiteral(
       : `[\n${items.map((item) => `${indent.repeat(depth + 1)}${item},`).join('\n')}\n${indent.repeat(depth)}]`
   }
   if (value && typeof value === 'object') {
-    const renamed: Record<string, string> = {
-      continueOnError: 'continue_on_error',
-      toolFilters: 'tool_filters',
-      clientId: 'client_id',
-      clientSecret: 'client_secret',
-      waitForCompletion: 'wait_for_completion',
-      maxConcurrency: 'max_concurrency',
-    }
     const entries = Object.entries(value)
     if (entries.length === 0) {
       return '{}'
     }
     return `{\n${entries
       .map(([key, item]) => {
-        const name = python ? (renamed[key] ?? key) : key
         const property = python
-          ? sourceString(name, true)
-          : name === '__proto__'
-            ? `[${sourceString(name, false)}]`
-            : /^[a-z_$][\w$]*$/iu.test(name)
-              ? name
-              : sourceString(name, false)
+          ? sourceString(key, true)
+          : key === '__proto__'
+            ? `[${sourceString(key, false)}]`
+            : /^[a-z_$][\w$]*$/iu.test(key)
+              ? key
+              : sourceString(key, false)
         let rendered = sourceLiteral(item, python, depth + 1, mcp, projectPath)
         if (mcp && depth === 1 && key === 'cwd' && typeof item === 'string') {
           rendered = projectPath?.(rendered) ?? rendered
@@ -326,7 +330,10 @@ function sourceLiteral(
   return typeof value === 'string' ? sourceString(value, python) : JSON.stringify(value)
 }
 
-function mcpServersForSource(servers: HarnessAgentConfig['mcpServers']): HarnessAgentConfig['mcpServers'] {
+function mcpServersForSource(
+  servers: HarnessAgentConfig['mcpServers'],
+  python: boolean
+): HarnessAgentConfig['mcpServers'] {
   if (typeof servers === 'string') return servers
   return Object.fromEntries(
     Object.entries(servers).map(([name, server]) => {
@@ -334,7 +341,27 @@ function mcpServersForSource(servers: HarnessAgentConfig['mcpServers']): Harness
       const localRunner =
         typeof server.command === 'string' &&
         /^(?:node|python(?:\d+(?:\.\d+)*)?|(?:ba|da|z)?sh)(?:\.exe)?$/iu.test(server.command)
-      return [name, localRunner && server.cwd === undefined ? { ...server, cwd: '.' } : server]
+      const configured = localRunner && server.cwd === undefined ? { ...server, cwd: '.' } : server
+      if (!python) return [name, configured]
+      return [
+        name,
+        Object.fromEntries(
+          Object.entries(configured).map(([key, value]) => {
+            if (key === 'continueOnError') return ['continue_on_error', value]
+            if (key === 'toolFilters') return ['tool_filters', value]
+            if (key !== 'auth' || !isRecord(value)) return [key, value]
+            return [
+              key,
+              Object.fromEntries(
+                Object.entries(value).map(([key, value]) => [
+                  key === 'clientId' ? 'client_id' : key === 'clientSecret' ? 'client_secret' : key,
+                  value,
+                ])
+              ),
+            ]
+          })
+        ),
+      ]
     })
   )
 }

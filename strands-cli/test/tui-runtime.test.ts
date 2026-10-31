@@ -7,6 +7,9 @@ import {
   TextBlock,
   ToolResultBlock,
   Agent,
+  FileStorage,
+  MemoryManager,
+  SessionManager,
   type AgentResult,
   type BeforeModelCallEvent,
   type FunctionTool,
@@ -17,6 +20,9 @@ import {
 } from '@strands-agents/sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
+import { unzipSync } from 'fflate'
 
 const mocks = vi.hoisted(() => ({
   createHarness: vi.fn(),
@@ -118,6 +124,143 @@ describe('interactive runtime lifecycle', () => {
       expect(mocks.createHarness).toHaveBeenCalledWith(expect.not.objectContaining({ mcpServers: expect.anything() }))
     } finally {
       await controller.dispose()
+    }
+  })
+
+  it.each([true, false])('keeps custom memory private during export (writable=%s)', async (writable) => {
+    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    mocks.createHarness.mockImplementation(createHarness)
+    const root = await mkdtemp(join(tmpdir(), 'strands-private-export-'))
+    await mkdir(root, { recursive: true })
+    const entrypoint = join(root, 'agent.ts')
+    await writeFile(entrypoint, 'export const marker = "source"\n')
+    const store = new FileMemoryStore({
+      name: 'personal',
+      storage: new LocalFileStorage(join(root, 'private-data')),
+      writable,
+      extraction: false,
+    })
+    await store.add('Private memory sentinel')
+    const controller = await createInteractiveChat({
+      cwd: root,
+      project: { root, entrypoint, language: 'typescript' },
+      agentOptions: {
+        model: new BedrockModel({ modelId: 'anthropic.claude-test' }),
+        session: false,
+        memory: new MemoryManager({ stores: [store] }),
+        skills: false,
+        builtinTools: [],
+        builtinPlugins: [],
+        contextManager: false,
+        backgroundTasks: false,
+        caching: false,
+        effort: 'off',
+      },
+    })
+    try {
+      await store.add('Another private memory')
+
+      const destination = join(root, 'agent.zip')
+      await controller.submit(`/export typescript "${destination}"`)
+      const entries = unzipSync(await readFile(destination))
+      expect(Object.keys(entries).some((path) => path.endsWith('.md'))).toBe(false)
+      expect(Buffer.from(entries['agent.ts']!).toString()).toContain('source')
+    } finally {
+      await controller.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'legacy session',
+    'unified session',
+    'inherited session',
+    'namespaced session',
+    'explicit stash',
+    'inherited stash',
+    'namespaced stash',
+  ])('keeps %s storage private during export', async (kind) => {
+    const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
+    let agent: Agent
+    mocks.createHarness.mockImplementation(async (options) => {
+      agent = await createHarness(options)
+      return agent
+    })
+    const root = await mkdtemp(join(tmpdir(), 'strands-private-export-'))
+    await mkdir(root, { recursive: true })
+    const entrypoint = join(root, 'agent.ts')
+    await writeFile(entrypoint, 'export const marker = "source"\n')
+    await writeFile(join(root, 'public.txt'), 'Public project file')
+    const storage = new LocalFileStorage(root)
+    const stash = kind.endsWith('stash')
+    const sessionStorage =
+      kind === 'legacy session'
+        ? { snapshot: new FileStorage(join(root, 'private-state')) }
+        : kind === 'namespaced session'
+          ? storage.namespace('private-state')
+          : storage
+    const controller = await createInteractiveChat({
+      cwd: root,
+      project: { root, entrypoint, language: 'typescript' },
+      agentOptions: {
+        model: new BedrockModel({ modelId: 'anthropic.claude-test' }),
+        session: false,
+        ...(!stash
+          ? {
+              sessionManager: new SessionManager({
+                sessionId: 'private-session',
+                ...(kind !== 'inherited session' ? { storage: sessionStorage } : {}),
+              }),
+            }
+          : {}),
+        ...(kind.startsWith('inherited') ? { storage } : {}),
+        contextManager: stash
+          ? {
+              strategies: [],
+              ...(kind !== 'inherited stash'
+                ? { stash: { storage: kind === 'namespaced stash' ? storage.namespace('private-state') : storage } }
+                : {}),
+            }
+          : false,
+        memory: false,
+        skills: false,
+        builtinTools: [],
+        builtinPlugins: [],
+        backgroundTasks: false,
+        caching: false,
+        effort: 'off',
+      },
+    })
+    const persist = async (text: string): Promise<void> => {
+      if (stash) {
+        await agent.contextManager!.stash!.store('private-entry', 0, Buffer.from(text))
+      } else {
+        agent.messages.push(Message.fromJSON({ role: 'user', content: [{ text }] }))
+        await agent.sessionManager!.saveSnapshot({ target: agent, isLatest: true })
+      }
+    }
+    try {
+      await persist('Private storage sentinel')
+      const privateDirectory = stash
+        ? kind === 'namespaced stash'
+          ? join('private-state', 'context')
+          : 'context'
+        : kind === 'legacy session' || kind === 'namespaced session'
+          ? 'private-state'
+          : 'session'
+
+      const destination = join(root, 'agent.zip')
+      await controller.submit(`/export typescript "${destination}"`)
+      const entries = unzipSync(await readFile(destination))
+      expect(Buffer.from(entries['agent.ts']!).toString()).toContain('source')
+      expect(Buffer.from(entries['public.txt']!).toString()).toBe('Public project file')
+      expect(Object.keys(entries).some((path) => path.startsWith(privateDirectory.replaceAll('\\', '/') + '/'))).toBe(
+        false
+      )
+      expect(Object.values(entries).some((bytes) => Buffer.from(bytes).includes('storage sentinel'))).toBe(false)
+    } finally {
+      await controller.dispose()
+      await rm(root, { recursive: true, force: true })
     }
   })
 

@@ -5,8 +5,8 @@ import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import { unzipSync } from 'fflate'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
-import { portableConfig } from '../src/tui/project/configuration.js'
-import { writeAgentProject } from '../src/tui/project/export.js'
+import { portableConfig } from '../../../src/tui/project/configuration.js'
+import { writeAgentProject } from '../../../src/tui/project/export.js'
 
 let root: string
 
@@ -28,7 +28,7 @@ it.each([
   { command: 'docker', args: ['run', '--rm', 'image', './app/server.js'] },
 ])('preserves remote command arguments without packaging host files', async (server) => {
   const profile = defineHarnessAgentConfig({ mcpServers: { remote: server } })
-  expect(portableConfig(profile, 'typescript', false, [], root).mcpServers).toEqual({ remote: server })
+  expect(portableConfig(profile, 'typescript', [], [], root).mcpServers).toEqual({ remote: server })
   const archive = join(root, 'agent.zip')
   await writeAgentProject(profile, 'typescript', [], archive, root)
   expect(Object.keys(unzipSync(await readFile(archive))).some((path) => path.startsWith('agent/mcp/'))).toBe(false)
@@ -48,7 +48,7 @@ it('packages a local MCP script and declared data while stripping export metadat
     },
   })
   const sources: Parameters<typeof portableConfig>[3] = []
-  const config = portableConfig(profile, 'typescript', false, sources, root)
+  const config = portableConfig(profile, 'typescript', [], sources, root)
   expect(config.mcpServers).toEqual({
     local: {
       command: 'node',

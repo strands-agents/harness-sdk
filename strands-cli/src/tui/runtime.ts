@@ -8,7 +8,7 @@ import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { createBuiltinToolsRuntime, createConfigurationTool, type RequestSetup } from './agent-configuration.js'
 import { CONFIGURATION_INSTRUCTIONS } from './configuration-instructions.js'
-import { exportAgentProject, exportSourceProject } from './project/export.js'
+import { agentPrivatePaths, exportAgentProject, exportSourceProject } from './project/export.js'
 import type { ImportedAgentProject } from './project/import.js'
 import type { AgentFactory } from './project/typescript.js'
 import { BackgroundAgentActivityStore, observeSubagentActivity } from './background/activity.js'
@@ -24,7 +24,6 @@ import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
 import { ConversationManager } from './session/conversations.js'
 import { CliConfigStore } from './config.js'
 import { loadMcp, type LoadMcpOptions } from './mcp.js'
-import { memoryDirectory } from './memory-options.js'
 import { AgentMessaging, peerMessagePrompt } from './messaging.js'
 import { AgentModelRuntime } from './model/runtime.js'
 import { profileEffort } from './model/selection.js'
@@ -41,7 +40,7 @@ import {
   restoreSessionAgentDefinition,
 } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
-import { configuredSkillPaths, FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
+import { FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
@@ -251,7 +250,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ? baseAgentOptions
       : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
-    const profileSkillPaths = configuredSkillPaths(configuredSkillSources, workspace)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)
@@ -414,22 +412,30 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         ...(request.conversation ? { initialTurns: request.conversation.completedTurns } : {}),
         setSettings: (settings): Promise<void> => config.setSettings(settings),
         ...(options.project ? { project: options.project } : {}),
-        exportAgentProject: (language, destination): Promise<string | undefined> =>
-          options.project
-            ? exportSourceProject(
-                options.project,
-                runtime.agent.name,
-                language,
-                [sessionDirectory, memoryDirectory(controllerOptions.memory)],
-                destination
-              )
-            : exportAgentProject(
-                exportProfile,
-                language,
-                profileSkillPaths,
-                configSnapshot.profileBaseDir ?? initialWorkspace,
-                destination
-              ),
+        exportAgentProject: (language, destination): Promise<string | undefined> => {
+          if (options.project) {
+            return exportSourceProject(
+              options.project,
+              runtime.agent.name,
+              language,
+              [sessionDirectory, ...agentPrivatePaths(runtime.agent)],
+              destination
+            )
+          }
+          const profile = configuration?.profile() ?? exportProfile
+          const baseDir = configSnapshot.profileBaseDir ?? initialWorkspace
+          return exportAgentProject(
+            profile,
+            language,
+            resolveSkillPaths(
+              typeof profile.skills === 'object' ? [...profile.skills] : profile.skills,
+              baseDir,
+              false
+            ),
+            baseDir,
+            destination
+          )
+        },
         ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
         ...(options.requestSetup && !options.project
           ? {

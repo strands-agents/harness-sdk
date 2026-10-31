@@ -3,8 +3,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 
 import type { AgentProjectLanguage } from './import.js'
-import { packageName, packageSources, realSource, type PackagedSource } from './packaging.js'
 import { containsPath } from '../paths.js'
+import { packageName, packageSources, realSource, type PackagedSource } from './packaging.js'
 import { isRecord } from '../values.js'
 
 export function packageMcpServers(

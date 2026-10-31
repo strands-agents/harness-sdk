@@ -27,6 +27,7 @@ from strands.session import SnapshotSessionManager
 from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
+from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_plugins.context_offloader import ContextOffloader
 from strands.vended_plugins.skills import AgentSkills
 from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
@@ -188,8 +189,12 @@ def agent_stash(agent):
 
 def local_stash_directory(agent):
     stash = agent_stash(agent)
-    base_directory = local_session_directory(getattr(stash, "_base_storage", None))
-    namespace = getattr(getattr(stash, "_storage", None), "_prefix", "")
+    base_storage = getattr(stash, "_base_storage", None)
+    storage = getattr(stash, "_storage", None)
+    base_directory = local_session_directory(base_storage)
+    if storage is base_storage:
+        return base_directory
+    namespace = getattr(storage, "_prefix", "")
     if base_directory is None or not namespace:
         return None
     # The namespace's first segment holds every session's stash, not just this agent's.
@@ -203,6 +208,16 @@ def local_offloader_directories(agent):
         for plugin in plugins
         if isinstance(plugin, ContextOffloader)
         and (directory := local_session_directory(getattr(plugin, "_storage", None)))
+    ]
+
+
+def local_memory_directories(agent):
+    # The SDK exposes local store paths only through the manager/store internals.
+    stores = getattr(getattr(agent, "memory_manager", None), "_stores", [])
+    return [
+        directory
+        for store in stores
+        if isinstance(store, FileMemoryStore) and (directory := local_session_directory(store._storage))
     ]
 
 
@@ -432,7 +447,7 @@ class Runtime:
                 *([session_directory] if session_directory else []),
                 *([stash_directory] if stash_directory else []),
                 *local_offloader_directories(self.agent),
-                str(Path(self.options.get("memory_dir", ".agent/memory")).resolve()),
+                *local_memory_directories(self.agent),
             ],
             "tools": [
                 {"name": spec["name"], "description": spec.get("description", "")}

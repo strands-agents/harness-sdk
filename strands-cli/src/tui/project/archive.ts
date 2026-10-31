@@ -12,16 +12,17 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { access, readFile, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import { unzipSync } from 'fflate'
+import { unzipSync, Unzip, UnzipInflate } from 'fflate'
 
 import { userDirectory } from '../config.js'
 import { npmInvocation } from '../npm.js'
 import { containsPath } from '../paths.js'
+import type { AgentProjectLanguage } from './import.js'
+import { assertPortablePathComponent, MAX_PROJECT_BYTES, MAX_PROJECT_ENTRIES } from './packaging.js'
 
-const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 export const AGENT_ENTRYPOINTS = ['ts', 'mts', 'js', 'mjs', 'py'].flatMap((extension) => [
   `agent.${extension}`,
@@ -53,31 +54,13 @@ export function extractAgentArchive(path: string): string {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
 
-  let bytes = 0
-  let count = 0
-  const files = unzipSync(archive, {
-    filter: (entry) => {
-      const name = entry.name.replace(/\/$/u, '')
-      if (
-        name.includes('\\') ||
-        /^[a-z]:/iu.test(name) ||
-        name.split('/').some((part) => part === '..' || part === '.' || !part)
-      ) {
-        throw new Error(`Unsafe path in agent ZIP: ${JSON.stringify(entry.name)}`)
-      }
-      bytes += entry.originalSize
-      if (bytes > MAX_PROJECT_BYTES || ++count > 10_000) {
-        throw new Error('The agent ZIP exceeds 50 MB of extracted files or 10,000 entries.')
-      }
-      return true
-    },
-  })
+  const files = readProjectArchive(archive)
   const modes = archiveExecutableModes(archive)
 
   mkdirSync(cache, { recursive: true, mode: 0o700 })
   const temporary = mkdtempSync(join(cache, '.extract-'))
   try {
-    for (const [name, contents] of Object.entries(files)) {
+    for (const [name, contents] of files) {
       const target = join(temporary, name)
       if (name.endsWith('/')) {
         mkdirSync(target, { recursive: true })
@@ -94,8 +77,67 @@ export function extractAgentArchive(path: string): string {
   }
 }
 
+export function readProjectArchive(archive: Uint8Array): Map<string, Uint8Array> {
+  let bytes = 0
+  let count = 0
+  const names = new Set<string>()
+  const sizes = new Map<string, number>()
+  unzipSync(archive, {
+    filter: (entry) => {
+      const name = entry.name.replace(/\/$/u, '')
+      const parts = name.split('/')
+      if (
+        name.includes('\\') ||
+        /^[a-z]:/iu.test(name) ||
+        parts.some((part) => part === '..' || part === '.' || !part)
+      ) {
+        throw new Error(`Unsafe path in agent ZIP: ${JSON.stringify(entry.name)}`)
+      }
+      for (const part of parts) {
+        assertPortablePathComponent(part)
+      }
+      const key = name.toLowerCase()
+      if (names.has(key)) {
+        throw new Error(`Duplicate path in agent ZIP: ${JSON.stringify(entry.name)}`)
+      }
+      names.add(key)
+      bytes += entry.originalSize
+      if (bytes > MAX_PROJECT_BYTES || ++count > MAX_PROJECT_ENTRIES) {
+        throw new Error('The agent ZIP exceeds 50 MB of extracted files or 10,000 entries.')
+      }
+      sizes.set(entry.name, entry.originalSize)
+      return false
+    },
+  })
+  const files = new Map<string, Uint8Array>()
+  const unzip = new Unzip((file) => {
+    const expected = sizes.get(file.name)
+    if (expected === undefined) throw new Error('The agent ZIP file headers do not match its directory.')
+    sizes.delete(file.name)
+    const chunks: Uint8Array[] = []
+    let size = 0
+    file.ondata = (error, data, final): void => {
+      if (error) throw error
+      size += data.length
+      if (size > expected || (final && size !== expected)) {
+        throw new Error('The agent ZIP file size does not match its directory.')
+      }
+      chunks.push(data)
+      if (final) files.set(file.name, Buffer.concat(chunks))
+    }
+    file.start()
+  })
+  unzip.register(UnzipInflate)
+  // Bound each inflate allocation before checking the emitted size.
+  for (let offset = 0; offset < archive.length; offset += 16_384) {
+    unzip.push(archive.subarray(offset, offset + 16_384), offset + 16_384 >= archive.length)
+  }
+  if (sizes.size > 0 || files.size !== count) throw new Error('The agent ZIP is missing file contents.')
+  return files
+}
+
 // fflate does not expose the central directory's file permissions.
-function archiveExecutableModes(archive: Buffer): Map<string, number> {
+export function archiveExecutableModes(archive: Buffer): Map<string, number> {
   let end = archive.length - 22
   while (end >= 0 && archive.readUInt32LE(end) !== 0x06054b50) {
     end -= 1
@@ -124,7 +166,7 @@ function archiveExecutableModes(archive: Buffer): Map<string, number> {
   return modes
 }
 
-export async function prepareArchiveDependencies(root: string, language: 'typescript' | 'python'): Promise<void> {
+export async function prepareArchiveDependencies(root: string, language: AgentProjectLanguage): Promise<void> {
   let cache: string
   try {
     cache = realpathSync(archiveCache())
@@ -133,8 +175,7 @@ export async function prepareArchiveDependencies(root: string, language: 'typesc
     throw error
   }
   root = realpathSync(root)
-  const path = relative(cache, root)
-  if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return
+  if (root === cache || !containsPath(cache, root)) return
   let preparation = preparations.get(root)
   if (!preparation) {
     preparation = installDependencies(root, language).finally(() => {
@@ -145,7 +186,7 @@ export async function prepareArchiveDependencies(root: string, language: 'typesc
   await preparation
 }
 
-async function installDependencies(root: string, language: 'typescript' | 'python'): Promise<void> {
+async function installDependencies(root: string, language: AgentProjectLanguage): Promise<void> {
   const manifests =
     language === 'typescript'
       ? ['package.json', 'package-lock.json', 'npm-shrinkwrap.json']
