@@ -193,14 +193,6 @@ export class StrandsChatBackend implements ChatBackend {
     return { ...this._sourceDefinition, selected: { model, thinking } }
   }
 
-  backgroundTasksWaitForCompletion(): boolean | undefined {
-    return this._runtime.backgroundTasksWaitForCompletion
-  }
-
-  setBackgroundTasksWaitForCompletion(waitForCompletion: boolean): Promise<void> {
-    return this._runtime.setBackgroundTasksWaitForCompletion(waitForCompletion)
-  }
-
   async compact(): Promise<ChatContextUsage | undefined> {
     const agent = this._runtime.agent
     if (agent.messages.length <= COMPACT_PRESERVE_RECENT_MESSAGES) {
@@ -343,11 +335,8 @@ export class StrandsChatBackend implements ChatBackend {
   }
 
   async *_streamAgent(args: Parameters<Agent['stream']>[0]): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    await this._runtime.prepareInvocation()
     const snapshot = this._runtime.agent.takeSnapshot({ preset: 'session' })
-    const projectionOptions =
-      this.backgroundTasksWaitForCompletion() === undefined
-        ? {}
-        : { alwaysBackgroundTools: ALWAYS_BACKGROUND_TOOL_NAMES }
     const initialTasks = this._taskUpdate()
     if (initialTasks) {
       yield initialTasks
@@ -358,6 +347,9 @@ export class StrandsChatBackend implements ChatBackend {
       const runUsage = RunUsage.start(this._runtime.agent)
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
+      const projectionOptions = this._runtime.agent.tools.some((tool) => tool.name === 'strands_manage_background_task')
+        ? { alwaysBackgroundTools: ALWAYS_BACKGROUND_TOOL_NAMES }
+        : {}
       while (!next.done) {
         const event = next.value
         const rootEvent = !('agent' in event) || event.agent === this._runtime.agent

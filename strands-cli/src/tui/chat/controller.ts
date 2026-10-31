@@ -23,7 +23,6 @@ import {
   builtinToolRows,
   mcpRows,
   mcpOptions,
-  BACKGROUND_TASK_WAIT_TOGGLE,
 } from './panels.js'
 import { LOCAL_COMMAND_NAMES, parseCommandInvocation } from './commands.js'
 import { helpRows } from './help.js'
@@ -802,9 +801,7 @@ export class ChatController implements ChatControllerApi {
         await this.submit(`$${row.value}`)
         return true
       case 'tasks':
-        return row.value === BACKGROUND_TASK_WAIT_TOGGLE
-          ? this._toggleBackgroundTaskWaitMode()
-          : this._openTaskDetail(row.value)
+        return this._openTaskDetail(row.value)
       case 'permissions':
         return this._updatePermissions(row.value)
       case 'tools':
@@ -1071,47 +1068,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openTasksPanel(): void {
-    this._openPanel(
-      'tasks',
-      `tasks (${this._tasks.length})`,
-      taskRows(this._tasks, this._backend.backgroundTasksWaitForCompletion?.())
-    )
-  }
-
-  private async _toggleBackgroundTaskWaitMode(): Promise<boolean> {
-    const current = this._backend.backgroundTasksWaitForCompletion?.()
-    if (current === undefined || !this._backend.setBackgroundTasksWaitForCompletion) {
-      return false
-    }
-    if (this._hasUnresolvedBackgroundTasks()) {
-      this._openError(
-        'task mode change blocked',
-        'Wait for completion',
-        'Background work is still running or waiting to be delivered. Finish or cancel it before rebuilding the agent.'
-      )
-      return false
-    }
-
-    const next = !current
-    this._resourceChanging = true
-    this._openPanel('tasks', 'updating background behavior', [
-      {
-        label: 'Wait for completion',
-        description: `Rebuilding the agent with wait for completion ${next ? 'on' : 'off'}.`,
-      },
-    ])
-    try {
-      await this._backend.setBackgroundTasksWaitForCompletion(next)
-      this._context = {}
-      this._refreshRuntime()
-      this._openTasksPanel()
-      return true
-    } catch (error) {
-      this._openError('task mode change failed', 'Wait for completion', errorMessage(error))
-      return false
-    } finally {
-      this._resourceChanging = false
-    }
+    this._openPanel('tasks', `tasks (${this._tasks.length})`, taskRows(this._tasks))
   }
 
   private _openEffortPanel(): void {
@@ -1845,7 +1802,7 @@ export class ChatController implements ChatControllerApi {
       this._panel = {
         ...this._panel,
         title: `tasks (${this._tasks.length})`,
-        rows: sanitizeRows(taskRows(this._tasks, this._backend.backgroundTasksWaitForCompletion?.())),
+        rows: sanitizeRows(taskRows(this._tasks)),
       }
     }
     if (this._openTaskDetailId) {

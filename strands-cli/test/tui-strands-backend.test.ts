@@ -25,7 +25,7 @@ import { StrandsChatBackend } from '../src/tui/strands-backend.js'
 import { AgentModelRuntime } from '../src/tui/model/runtime.js'
 
 function withSnapshotMethods<T extends object>(agent: T): T {
-  return Object.assign(agent, {
+  return Object.assign({ tools: [] }, agent, {
     addHook: () => {},
     takeSnapshot: () => ({}),
     loadSnapshot: () => {},
@@ -82,8 +82,6 @@ describe('StrandsChatBackend', () => {
     await expect(backend.restartModel('openai/other-model')).rejects.toThrow('cannot rebuild')
     await expect(backend.setEffort('unsupported')).rejects.toThrow('is not supported')
     await expect(backend.clear()).rejects.toThrow('cannot rebuild')
-    await expect(backend.setBackgroundTasksWaitForCompletion(true)).rejects.toThrow('Background Tasks are disabled')
-    expect(backend.backgroundTasksWaitForCompletion()).toBeUndefined()
     const fork = backend.forkState()
     expect(fork.messages).toEqual(agent.messages)
     expect(fork.messages[0]).not.toBe(agent.messages[0])

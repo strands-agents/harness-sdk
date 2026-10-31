@@ -224,7 +224,6 @@ export interface ChatForkState {
   stash?: Record<string, JSONValue>
   model: string
   thinking: string | boolean | null
-  backgroundTasksWaitForCompletion: boolean
 }
 
 export interface ChatModelOption {
@@ -271,8 +270,6 @@ export interface ChatBackend {
   setPermissionMode?(mode: ChatPermissionMode): Promise<void>
   allowPermission?(toolName: string): Promise<void>
   removeAllowedPermission?(toolName: string): Promise<void>
-  backgroundTasksWaitForCompletion?(): boolean | undefined
-  setBackgroundTasksWaitForCompletion?(waitForCompletion: boolean): Promise<void>
   /** Summarizes older conversation context and returns the new context usage, or undefined when nothing changed. */
   compact?(): Promise<ChatContextUsage | undefined>
   clear?(): Promise<void>

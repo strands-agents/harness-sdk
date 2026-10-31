@@ -410,69 +410,6 @@ describe('ChatController', () => {
     expect(stopWatching).toHaveBeenCalledOnce()
   })
 
-  it('shows and toggles the native wait-for-completion control', async () => {
-    let waitForCompletion = false
-    const setWaitForCompletion = vi.fn(async (value: boolean) => {
-      waitForCompletion = value
-    })
-    const target = backend(async function* () {
-      yield* []
-      return { stopReason: 'endTurn', context: { currentTokens: 800, projectedTokens: 850, contextWindow: 200_000 } }
-    })
-    target.backgroundTasksWaitForCompletion = () => waitForCompletion
-    target.setBackgroundTasksWaitForCompletion = setWaitForCompletion
-    const controller = new ChatController(target)
-
-    await controller.submit('seed context')
-    expect(controller.getSnapshot().context.projectedTokens).toBe(850)
-    await controller.submit('/tasks')
-    expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Wait for completion',
-      badge: { text: 'off', tone: 'warning' },
-    })
-
-    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
-
-    expect(setWaitForCompletion).toHaveBeenCalledWith(true)
-    expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Wait for completion',
-      badge: { text: 'on', tone: 'success' },
-    })
-    expect(controller.getSnapshot().context).toEqual({})
-  })
-
-  it('blocks wait-mode changes while background work is unresolved', async () => {
-    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
-    const setWaitForCompletion = vi.fn(async () => {})
-    const target = backend()
-    target.backgroundTasksWaitForCompletion = () => false
-    target.setBackgroundTasksWaitForCompletion = setWaitForCompletion
-    target.watchTasks = (listener) => {
-      taskListener = listener
-      listener([])
-      return () => {}
-    }
-    const controller = new ChatController(target)
-    taskListener?.([
-      {
-        id: 'task-1',
-        label: 'background bash',
-        status: 'working',
-        source: 'background',
-        deliveryState: 'pending',
-      },
-    ])
-
-    await controller.submit('/tasks')
-    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
-
-    expect(controller.getSnapshot().panel).toMatchObject({
-      kind: 'error',
-      title: 'task mode change blocked',
-    })
-    expect(setWaitForCompletion).not.toHaveBeenCalled()
-  })
-
   it('opens a live background task detail panel and releases its subscription on close', async () => {
     let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
     let activityListener: ((activity: BackgroundAgentActivity | undefined) => void) | undefined

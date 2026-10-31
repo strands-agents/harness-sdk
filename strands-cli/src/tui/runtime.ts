@@ -148,8 +148,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     configuredTools: NonNullable<HarnessAgentOptions['tools']>,
     peerEndpointId: string,
     backgroundActivity: BackgroundAgentActivityStore,
-    overrides: Partial<HarnessAgentOptions>,
-    waitForCompletion: boolean
+    overrides: Partial<HarnessAgentOptions>
   ): Promise<Agent> => {
     if (disposed) {
       throw new Error('Runtime is disposed.')
@@ -173,7 +172,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           : []),
         ...(config.snapshot().settings.agentMessaging ? [agentMessaging.createPlugin(peerEndpointId)] : []),
       ],
-      backgroundTasks: interactiveBackgroundTasks(agentOptions, waitForCompletion),
+      backgroundTasks: interactiveBackgroundTasks(agentOptions),
       printer: false,
     }).catch(rethrowWithProviderHint)
     await initializeAgentDefinition(agent)
@@ -302,14 +301,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     if (configuration) configuredTools.push(configuration.tool)
     let stopConfigurationWatch: (() => void) | undefined
     try {
-      agent = await buildAgent(
-        controllerOptions,
-        configuredTools,
-        peerEndpointId,
-        backgroundActivity,
-        {},
-        request.seed?.backgroundTasksWaitForCompletion ?? false
-      )
+      agent = await buildAgent(controllerOptions, configuredTools, peerEndpointId, backgroundActivity, {})
       if (request.seed && request.restoreSeedMessages !== false) {
         agent.messages = [...request.seed.messages]
         // The fork has its own session id, so the `[ref: …]` in the copied messages resolve only against a
@@ -335,9 +327,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         thinking: controllerOptions.effort,
         ...(sessionId ? { sessionId } : {}),
         sessionDir: sessionDirectory,
-        ...(controllerOptions.backgroundTasks === false
-          ? {}
-          : { backgroundTasksWaitForCompletion: request.seed?.backgroundTasksWaitForCompletion ?? false }),
         newSessionId: createInteractiveSessionId,
         onModelChange: async (change): Promise<void> => {
           exportProfile = {
@@ -351,9 +340,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           }
         },
         restartAgent: async (restartRequest, previousAgent): Promise<Agent> => {
-          const snapshot = restartRequest.preserveSnapshot
-            ? previousAgent.takeSnapshot({ preset: 'session' })
-            : undefined
           let nextAgent: Agent | undefined
           try {
             const overrides: Partial<HarnessAgentOptions> = {
@@ -373,12 +359,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
               configuredTools,
               peerEndpointId,
               backgroundActivity,
-              overrides,
-              restartRequest.backgroundTasksWaitForCompletion
+              overrides
             )
-            if (snapshot) {
-              nextAgent.loadSnapshot(snapshot)
-            } else if (restartRequest.preserveConversation) {
+            if (restartRequest.preserveConversation) {
               nextAgent.messages = cloneConversation(previousAgent.messages, restartRequest.preserveReasoning !== false)
             }
           } catch (error) {
@@ -571,14 +554,13 @@ function createInteractiveSessionId(): string {
 }
 
 export function interactiveBackgroundTasks(
-  options: HarnessAgentOptions,
-  waitForCompletion = false
+  options: HarnessAgentOptions
 ): Exclude<HarnessAgentOptions['backgroundTasks'], undefined> {
   const configured = options.backgroundTasks
   if (configured === false) {
     return false
   }
-  return { ...(configured === true ? {} : configured), waitForCompletion }
+  return { ...(configured === true ? {} : configured), waitForCompletion: false }
 }
 
 async function loadSessionCatalog(path: string | undefined): Promise<SessionRootCatalog | undefined> {

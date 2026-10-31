@@ -27,8 +27,6 @@ import {
 } from './types.js'
 import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../settings.js'
 
-export const BACKGROUND_TASK_WAIT_TOGGLE = 'background-tasks:toggle-wait-for-completion'
-
 export function permissionRequestRows(request: ChatPermissionRequest): ChatPanelRow[] {
   return request.options.map((option) => ({
     label: option.label,
@@ -169,24 +167,7 @@ export function settingsRows(settings: ChatSettings, category?: SettingsCategory
   )
 }
 
-export function taskRows(tasks: readonly ChatTask[], waitForCompletion: boolean | undefined): ChatPanelRow[] {
-  const controls: ChatPanelRow[] =
-    waitForCompletion === undefined
-      ? []
-      : [
-          {
-            label: 'Wait for completion',
-            description: waitForCompletion
-              ? 'Finish background work and continue the agent before returning the turn.'
-              : 'Keep chatting while work runs; resume the agent automatically when results arrive.',
-            value: BACKGROUND_TASK_WAIT_TOGGLE,
-            section: 'Background behavior',
-            badge: {
-              text: waitForCompletion ? 'on' : 'off',
-              tone: waitForCompletion ? 'success' : 'warning',
-            },
-          },
-        ]
+export function taskRows(tasks: readonly ChatTask[]): ChatPanelRow[] {
   const rows =
     tasks.length === 0
       ? [{ label: 'none', description: 'No todos, agent plans, or background tasks are active.' }]
@@ -196,7 +177,7 @@ export function taskRows(tasks: readonly ChatTask[], waitForCompletion: boolean 
           section: task.source === 'todo' ? 'Todos' : task.source === 'acp' ? 'ACP plan' : 'Background tasks',
           value: `task:${encodeURIComponent(task.id)}`,
         }))
-  return [...controls, ...rows]
+  return rows
 }
 
 export function sanitizePanelRow(row: ChatPanelRow): ChatPanelRow {

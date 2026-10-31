@@ -89,15 +89,17 @@ describe('interactiveBackgroundTasks', () => {
     expect(interactiveBackgroundTasks({ backgroundTasks: true })).toEqual({ waitForCompletion: false })
   })
 
-  it('preserves custom policy while applying the selected interactive wait mode', () => {
-    expect(interactiveBackgroundTasks({ backgroundTasks: { always: ['read'], maxConcurrency: 2 } })).toEqual({
+  it('preserves custom policy and disables background waiting for interactive use', () => {
+    const configured = { always: ['read'], maxConcurrency: 2, waitForCompletion: true }
+    expect(interactiveBackgroundTasks({ backgroundTasks: configured })).toEqual({
       always: ['read'],
       maxConcurrency: 2,
       waitForCompletion: false,
     })
-    expect(interactiveBackgroundTasks({ backgroundTasks: { never: ['*'] } }, true)).toEqual({
+    expect(configured.waitForCompletion).toBe(true)
+    expect(interactiveBackgroundTasks({ backgroundTasks: { never: ['*'] } })).toEqual({
       never: ['*'],
-      waitForCompletion: true,
+      waitForCompletion: false,
     })
     expect(interactiveBackgroundTasks({ backgroundTasks: false })).toBe(false)
   })

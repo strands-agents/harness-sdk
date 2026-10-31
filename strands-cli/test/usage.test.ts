@@ -186,7 +186,7 @@ describe('delegated run usage', () => {
     expect(totals).toEqual([166, 8])
   })
 
-  it.each(['backend', 'acp', 'plain'] as const)(
+  it.each(['backend', 'effort rebuild', 'failed effort rebuild', 'acp', 'plain'] as const)(
     'includes subagent and background grandchild usage through %s without using their context size',
     async (mode) => {
       const grandchild = new Agent({ name: 'grandchild', model: new MeteredModel(90, 10), printer: false })
@@ -204,9 +204,28 @@ describe('delegated run usage', () => {
       })
       // Two root calls, three child calls (including background delivery), one grandchild call.
       const expected = 2 * 8 + 3 * 25 + 100
-      if (mode === 'backend') {
-        const backend = new StrandsChatBackend(new AgentModelRuntime(root))
+      if (mode === 'backend' || mode === 'effort rebuild' || mode === 'failed effort rebuild') {
+        const previous = new Agent({ model: new MeteredModel(5, 3), printer: false })
+        const restartAgent = vi.fn(async () => root)
+        const runtime = new AgentModelRuntime(mode === 'backend' ? root : previous, {
+          initialModel: 'bedrock/anthropic.claude-sonnet-4-6',
+          thinking: 'high',
+          restartAgent,
+        })
+        const backend = new StrandsChatBackend(runtime)
         try {
+          if (mode !== 'backend') {
+            await runtime.setEffort('low')
+          }
+          if (mode === 'failed effort rebuild') {
+            restartAgent.mockRejectedValueOnce(new Error('replacement failed'))
+            const snapshot = vi.spyOn(previous, 'takeSnapshot')
+            await expect(backend.stream('work').next()).rejects.toThrow('replacement failed')
+            expect(runtime.agent).toBe(previous)
+            expect(snapshot).not.toHaveBeenCalled()
+            expect((await previous.invoke('still usable')).stopReason).toBe('endTurn')
+            snapshot.mockRestore()
+          }
           const stream = backend.stream('work')
           let next = await stream.next()
           while (!next.done) {
@@ -324,9 +343,14 @@ describe('delegated run usage', () => {
     }
   })
 
-  it.each(['after turn', 'before subscription'] as const)(
-    'displays completed detached spend on the originating TUI turn when it finishes %s',
-    async (timing) => {
+  it.each([
+    ['after turn', false],
+    ['before subscription', false],
+    ['after turn', true],
+    ['before subscription', true],
+  ] as const)(
+    'displays completed detached spend on the originating TUI turn when it finishes %s (effort rebuild: %s)',
+    async (timing, rebuild) => {
       const { root, release } = await detachedAgents()
       let finishContext!: () => void
       let contextStarted!: () => void
@@ -336,7 +360,18 @@ describe('delegated run usage', () => {
       const contextReady = new Promise<void>((resolve) => {
         contextStarted = resolve
       })
-      const backend = new StrandsChatBackend(new AgentModelRuntime(root, { backgroundTasksWaitForCompletion: false }), {
+      const runtime = new AgentModelRuntime(
+        rebuild ? new Agent({ model: new MeteredModel(5, 3), printer: false }) : root,
+        {
+          initialModel: 'bedrock/anthropic.claude-sonnet-4-6',
+          thinking: 'high',
+          restartAgent: async () => root,
+        }
+      )
+      if (rebuild) {
+        await runtime.setEffort('low')
+      }
+      const backend = new StrandsChatBackend(runtime, {
         contextWindow: async () => {
           contextStarted()
           await contextGate
