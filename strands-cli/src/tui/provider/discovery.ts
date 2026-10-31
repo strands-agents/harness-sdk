@@ -11,6 +11,7 @@ import { listBedrockModels, MODEL_DISCOVERY_TIMEOUT_MS } from './bedrock-catalog
 import { modelDisplayName } from '../model/display.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { awsClientConfiguration } from './aws-client.js'
+import { isRecord } from '../values.js'
 
 export { discoverAwsConfiguration, type AwsConfigurationDiscovery } from './aws-config.js'
 export { discoverAwsCredentials } from './aws-client.js'
@@ -428,8 +429,4 @@ function modelVariantName(id: string): string {
 
 function ollamaApiRoot(host: string): string {
   return host.trim().replace(/\/+$/u, '').replace(/\/v1$/u, '')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

@@ -10,7 +10,7 @@ import {
   regularFile,
   resolveProjectEntrypoint,
 } from './archive.js'
-import { containsPath } from './packaging.js'
+import { containsPath } from '../paths.js'
 
 export type AgentProjectLanguage = 'typescript' | 'python'
 

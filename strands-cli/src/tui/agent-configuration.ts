@@ -26,6 +26,7 @@ import { discoverProviderModels } from './provider/discovery.js'
 import type { ChatBuiltinToolsRuntime, ChatDiffPreview } from './chat/types.js'
 import { createDiffPreview } from './permissions/file-change-preview.js'
 import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS, parseSettings } from './settings.js'
+import { isRecord } from './values.js'
 
 const CONFIGURATION_SETTING_KEYS = new Set([
   ...VISUAL_SETTING_DEFINITIONS.map(({ key }) => key),
@@ -400,7 +401,7 @@ function redactConfigValue(value: unknown, validate: (value: unknown) => void): 
     return value
   } catch {
     // Keep argument arrays together so credentials following flags cannot lose their context.
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       return '[redacted]'
     }
     return Object.fromEntries(
@@ -413,6 +414,6 @@ function redactConfigValue(value: unknown, validate: (value: unknown) => void): 
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Expected an object for ${label}.`)
-  return value as Record<string, unknown>
+  if (!isRecord(value)) throw new Error(`Expected an object for ${label}.`)
+  return value
 }

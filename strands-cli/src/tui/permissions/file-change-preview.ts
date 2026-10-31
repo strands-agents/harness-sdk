@@ -2,6 +2,7 @@ import { SandboxPathNotFoundError, type BeforeToolCallEvent } from '@strands-age
 
 import type { ChatDiffLine, ChatDiffPreview } from '../chat/controller.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { isRecord } from '../values.js'
 
 const CONTEXT_LINES = 3
 const MAX_DIFF_LINES = 320
@@ -13,7 +14,7 @@ interface DiffOperation extends ChatDiffLine {
 
 export async function buildFileChangePreview(event: BeforeToolCallEvent): Promise<ChatDiffPreview | undefined> {
   const input = event.toolUse.input
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return undefined
   }
   const path = input.path

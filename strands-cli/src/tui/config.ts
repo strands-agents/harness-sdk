@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
@@ -23,6 +22,8 @@ import {
   type ProviderEnvironment,
   type ProviderEnvironmentKey,
 } from './provider/environment.js'
+import { strandsUserPath } from './paths.js'
+import { isRecord } from './values.js'
 
 export {
   applyProviderEnvironmentValues,
@@ -85,7 +86,7 @@ type ConfigDocument = Record<string, unknown>
 
 /** Resolves a path under `~/.strands/cli`, the CLI's user-level config, state, and cache directory. */
 export function userDirectory(...segments: string[]): string {
-  return join(homedir(), '.strands', 'cli', ...segments)
+  return strandsUserPath('cli', ...segments)
 }
 
 export class CliConfigStore {
@@ -568,8 +569,4 @@ function isControlCharacter(character: string): boolean {
 
 function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right))
-}
-
-function isRecord(value: unknown): value is ConfigDocument {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

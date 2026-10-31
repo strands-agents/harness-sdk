@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
 import type { SessionRootCatalog } from './catalog.js'
+import { isRecord } from '../values.js'
 
 export { SessionRootCatalog } from './catalog.js'
 
@@ -310,10 +311,6 @@ function messagePreview(messages: readonly unknown[]): string | undefined {
     }
   }
   return undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function isMissing(error: unknown): boolean {

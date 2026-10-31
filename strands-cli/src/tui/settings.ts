@@ -1,3 +1,5 @@
+import { isRecord } from './values.js'
+
 export const FROG_THEMES = [
   'green',
   'minimal',
@@ -415,8 +417,4 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     default:
       return undefined
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

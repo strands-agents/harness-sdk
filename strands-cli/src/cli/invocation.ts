@@ -14,6 +14,7 @@ import { importAgentProject, type ImportedAgentProject } from '../tui/project/im
 import type { AgentFactory } from '../tui/project/typescript.js'
 import { requireBedrockRegion } from '../tui/provider/aws-config.js'
 import type { ResolvedMcpConfig } from '../tui/workspace/trust.js'
+import { isRecord } from '../tui/values.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
@@ -92,7 +93,7 @@ async function projectOverrides(
         const document = JSON.parse(await readFile(resolve(root, value), 'utf8'))
         value = document.mcpServers ?? document
       }
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (isRecord(value)) {
         if (field === 'agentConfig') {
           base.agentConfig = { ...base.agentConfig, [option]: globalThis.structuredClone(value) }
         } else {

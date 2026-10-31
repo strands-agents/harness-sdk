@@ -6,6 +6,7 @@ import type { Agent, ToolResultContent } from '@strands-agents/sdk'
 import { Skill, type AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { sanitizeTerminalText } from './terminal/sanitize.js'
+import { isRecord } from './values.js'
 
 export interface SkillInfo {
   name: string
@@ -150,7 +151,7 @@ function workspaceAncestors(cwd: string): string[] {
 
 function activatedSkills(agent: Agent): Set<string> {
   const state = agent.appState.get('agent_skills')
-  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+  if (!isRecord(state)) {
     return new Set()
   }
   const names = state.activatedSkills

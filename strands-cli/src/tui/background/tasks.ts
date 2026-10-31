@@ -2,6 +2,7 @@ import type { Agent } from '@strands-agents/sdk'
 
 import type { ChatTask } from '../chat/controller.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { isRecord } from '../values.js'
 
 interface StoredBackgroundTask {
   taskId: string
@@ -105,9 +106,7 @@ function isBackgroundTaskStatus(value: string | undefined): value is StoredBackg
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
+  return isRecord(value) ? value : undefined
 }
 
 function stringValue(value: unknown): string | undefined {

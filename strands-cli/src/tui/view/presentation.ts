@@ -7,6 +7,7 @@ import { modelDisplayName } from '../model/display.js'
 import { graphemes } from '../terminal/composer.js'
 import { detailPageSize } from './interaction.js'
 import { getTheme } from './theme.js'
+import { isRecord } from '../values.js'
 
 const METADATA_START_COLUMN = 2
 
@@ -389,7 +390,7 @@ export function toolAction(name: string): string {
 }
 
 export function summarizeToolInput(name: string, input: JSONValue): string {
-  if (input && typeof input === 'object' && !Array.isArray(input)) {
+  if (isRecord(input)) {
     if (name.replaceAll('-', '_').toLowerCase() === 'subagent') {
       return truncateEnd(typeof input.task === 'string' ? input.task : '', 160)
     }

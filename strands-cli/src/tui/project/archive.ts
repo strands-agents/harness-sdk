@@ -19,6 +19,7 @@ import { unzipSync } from 'fflate'
 
 import { userDirectory } from '../config.js'
 import { npmInvocation } from '../npm.js'
+import { containsPath } from '../paths.js'
 
 const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -249,8 +250,7 @@ export function resolveProjectEntrypoint(root: string, selected: string): string
     return undefined
   }
   const entrypoint = realpathSync(target)
-  const local = relative(root, entrypoint)
-  return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? entrypoint : undefined
+  return containsPath(root, entrypoint) ? entrypoint : undefined
 }
 
 export function regularFile(path: string): boolean {

@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
 import type { BeforeToolCallEvent } from '@strands-agents/sdk'
 import { InterventionActions, InterventionHandler } from '@strands-agents/sdk'
 import { CedarAuthorization } from '@strands-agents/sdk/vended-interventions/cedar'
@@ -8,6 +8,7 @@ import { type ChatDiffPreview, type ChatPermissionRequest, type ChatPermissionOp
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { buildFileChangePreview, sanitizeDiffPreview } from './file-change-preview.js'
 import { CliConfigStore, type PermissionMode, type CliConfigSnapshot } from '../config.js'
+import { containsPath } from '../paths.js'
 
 export const DEFAULT_CEDAR_POLICIES = `
 permit (
@@ -258,8 +259,7 @@ export function pathIsWithinWorkspace(value: unknown, workspace: string): boolea
     return false
   }
   const candidate = canonicalPath(resolve(workspace, value))
-  const pathFromWorkspace = relative(workspace, candidate)
-  return pathFromWorkspace !== '..' && !pathFromWorkspace.startsWith(`..${sep}`) && !isAbsolute(pathFromWorkspace)
+  return containsPath(workspace, candidate)
 }
 
 function clonePermissionRequest(request: ChatPermissionRequest): ChatPermissionRequest {

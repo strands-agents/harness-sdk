@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { userDirectory } from '../config.js'
+import { isRecord } from '../values.js'
 
 const CATALOG_LOCK_TIMEOUT_MS = 5_000
 const CATALOG_LOCK_STALE_MS = 30_000
@@ -167,10 +168,6 @@ async function catalogLockIsStale(path: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function hasErrorCode(error: unknown, ...codes: string[]): boolean {

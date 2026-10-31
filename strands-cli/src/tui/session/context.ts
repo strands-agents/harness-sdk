@@ -3,6 +3,7 @@ import type { AgentResult, Message } from '@strands-agents/sdk'
 
 import type { ChatContextUsage } from '../chat/types.js'
 import type { AgentModelRuntime } from '../model/runtime.js'
+import { isRecord } from '../values.js'
 
 const CONTEXT_METADATA_KEY = 'strands.context.v1'
 
@@ -143,8 +144,4 @@ function parseContextUsage(value: unknown): ChatContextUsage | undefined {
     parsed[field] = candidate
   }
   return Object.keys(parsed).length > 0 ? parsed : undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

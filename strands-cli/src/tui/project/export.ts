@@ -17,7 +17,9 @@ import { agentProjectSource } from './source.js'
 import { AGENT_ENTRYPOINT_FILE, regularFile, resolveProjectEntrypoint } from './archive.js'
 import type { AgentProjectLanguage, ImportedAgentProject } from './import.js'
 import { portableConfig, validateNoConfigSecrets } from './configuration.js'
-import { containsPath, type PackagedSource } from './packaging.js'
+import type { PackagedSource } from './packaging.js'
+import { containsPath } from '../paths.js'
+import { isRecord } from '../values.js'
 
 const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 
@@ -231,7 +233,7 @@ function validateLocalDependencies(root: string, excluded: ReadonlySet<string>):
     const document = JSON.parse(readFileSync(manifest, 'utf8').replace(/^\uFEFF/u, '')) as Record<string, unknown>
     for (const field of ['dependencies', 'optionalDependencies', ...(directory === root ? ['devDependencies'] : [])]) {
       const dependencies = document[field]
-      if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue
+      if (!isRecord(dependencies)) continue
       for (const [name, version] of Object.entries(dependencies)) {
         if (typeof version !== 'string') continue
         const local = version.startsWith('file:') ? version.slice(5) : version
@@ -603,19 +605,14 @@ function validateSourceConfiguration(path: string, contents: Buffer): void {
     return
   }
   if (!path.endsWith('.json')) return
-  let value: unknown
+  let document: unknown
   try {
-    value = JSON.parse(contents.toString().replace(/^\uFEFF/u, ''))
+    document = JSON.parse(contents.toString().replace(/^\uFEFF/u, ''))
   } catch {
     return
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return
-  const document = value as Record<string, unknown>
-  if (
-    basename(path) === 'mcp.json' ||
-    basename(path) === '.mcp.json' ||
-    (document.mcpServers && typeof document.mcpServers === 'object' && !Array.isArray(document.mcpServers))
-  ) {
+  if (!isRecord(document)) return
+  if (basename(path) === 'mcp.json' || basename(path) === '.mcp.json' || isRecord(document.mcpServers)) {
     validateNoConfigSecrets(normalizeHarnessAgentConfig({ mcpServers: document }))
   }
   if (basename(path) === 'package.json') {

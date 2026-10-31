@@ -7,6 +7,7 @@ import type { McpServerConfig } from '@strands-agents/sdk'
 import { parse as parseToml } from 'smol-toml'
 
 import { errorMessage } from '../terminal/sanitize.js'
+import { isRecord } from '../values.js'
 
 export interface LoadMcpOptions {
   cwd?: string
@@ -420,10 +421,6 @@ function positiveNumber(value: unknown, path: string, name: string, field: strin
 
 function configError(path: string, name: string, message: string): Error {
   return new Error(`Invalid MCP configuration at ${path}: server ${JSON.stringify(name)} ${message}`)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function isMissing(error: unknown): boolean {

@@ -1,6 +1,8 @@
 import { lstatSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
+
+import { containsPath } from '../paths.js'
 
 export type PackagedSource =
   { source: string; destination: string; directoryOnly?: boolean } | { contents: string; destination: string }
@@ -48,11 +50,6 @@ export function packageName(value: string, used: Set<string>): string {
   }
   used.add(result.toLowerCase())
   return result
-}
-
-export function containsPath(root: string, path: string): boolean {
-  const result = relative(root, path)
-  return !result.startsWith(`..${sep}`) && result !== '..' && !isAbsolute(result)
 }
 
 export function sourceBase(roots: readonly string[], cwd?: string): string {
