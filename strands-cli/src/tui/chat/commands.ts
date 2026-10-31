@@ -15,10 +15,14 @@ export const LOCAL_COMMANDS: readonly LocalCommandSpec[] = [
   { name: 'effort', usage: '/effort [level]', description: 'Show or change the reasoning effort' },
   { name: 'fork', usage: '/fork [request]', description: 'Fork this conversation into an independent agent' },
   { name: 'agents', usage: '/agents', description: 'View and switch between forked conversations' },
-  { name: 'rename', usage: '/rename <name>', description: 'Rename the currently viewed agent' },
+  {
+    name: 'rename',
+    usage: '/rename [name]',
+    description: 'Rename the current saved session (same as /sessions rename)',
+  },
   {
     name: 'sessions',
-    usage: '/sessions [rename <name>]',
+    usage: '/sessions [rename [name]]',
     description: 'Browse, resume, or rename the current saved conversation',
   },
   { name: 'tools', usage: '/tools', description: 'Choose the built-in tools the agent has' },

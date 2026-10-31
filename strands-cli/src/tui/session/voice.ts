@@ -319,6 +319,7 @@ export class ConversationVoice {
         turn?.entries.flatMap((entry) => (entry.type === 'tool' && entry.status === 'running' ? [entry.name] : [])) ??
         [],
       queued_requests: snapshot.queuedPrompts.length,
+      pending_steering: snapshot.pendingSteering.length,
       background_tasks: snapshot.tasks
         .filter((task) => !['completed', 'failed', 'cancelled'].includes(task.status))
         .map((task) => ({ label: task.label, status: task.status })),

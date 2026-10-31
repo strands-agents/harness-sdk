@@ -11,6 +11,7 @@ import {
   type ChatBackend,
   type ChatControllerApi,
   type ChatConversation,
+  type ChatConversations,
   type ChatEvent,
   type ChatRunResult,
 } from '../src/tui/chat/controller.js'
@@ -19,6 +20,7 @@ import { configurationFromStore, type RequestSetup, type SetupChange } from '../
 import { runInkChat } from '../src/tui/run.js'
 import * as processTree from '../src/tui/terminal/process-tree.js'
 import { ConversationManager } from '../src/tui/session/conversations.js'
+import { workspaceSessionDirectory } from '../src/tui/session/catalog.js'
 import { PythonVoiceSession } from '../src/tui/voice/session.js'
 
 function backend(): ChatBackend {
@@ -36,6 +38,209 @@ function backend(): ChatBackend {
 }
 
 describe('runInkChat', () => {
+  it.each([
+    { exitCode: 0, saved: true },
+    { exitCode: 130, saved: true },
+    { exitCode: 0, saved: false },
+  ])('restores the terminal before resume advice on exit ($exitCode, saved=$saved)', async ({ exitCode, saved }) => {
+    const target = backend()
+    const controller = new ChatController(target)
+    controller.close(exitCode)
+    if (saved) {
+      Object.defineProperty(controller, 'resumeSession', {
+        value: {
+          sessionId: 'saved-session',
+          sessionDirectory: workspaceSessionDirectory(process.cwd()),
+          workspace: process.cwd(),
+        },
+      })
+    }
+    const writes: string[] = []
+    const output = {
+      write: (value: string, callback?: () => void) => {
+        writes.push(value)
+        callback?.()
+        return true
+      },
+    } as unknown as NodeJS.WriteStream
+    const unmount = vi.fn()
+    const cleanup = vi.fn()
+    const instance = {
+      unmount,
+      cleanup,
+      waitUntilExit: async () => {},
+      rerender: vi.fn(),
+      clear: vi.fn(),
+    } as unknown as Instance
+    const renderApp = vi.fn((_element: unknown) => instance)
+    const sigintListeners = process.listenerCount('SIGINT')
+
+    const result = await runInkChat(controller, {
+      output,
+      renderApp: renderApp as never,
+      input: process.stdin,
+      errorOutput: process.stderr,
+      intro: false,
+    })
+
+    expect(result).toBe(exitCode)
+    expect(writes[0]).toContain('?1049h')
+    const outputText = writes.join('')
+    if (saved) {
+      expect(writes.at(-1)).toBe('\nResume with: strands --session-id saved-session\n')
+      expect(outputText.indexOf('?1049l')).toBeLessThan(outputText.indexOf('Resume with:'))
+    } else {
+      expect(writes.at(-1)).toContain('?1049l')
+      expect(outputText).not.toContain('Resume with:')
+    }
+    expect(unmount).toHaveBeenCalledOnce()
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(target.dispose).toHaveBeenCalledOnce()
+    expect(process.listenerCount('SIGINT')).toBe(sigintListeners)
+  })
+
+  it('waits for resume advice to flush before forcing an interrupted session to exit', async () => {
+    const controller = new ChatController(backend())
+    controller.close(130)
+    Object.defineProperty(controller, 'resumeSession', {
+      value: {
+        sessionId: 'interrupted-session',
+        sessionDirectory: workspaceSessionDirectory(process.cwd()),
+        workspace: process.cwd(),
+      },
+    })
+    const writes: string[] = []
+    let finishWrite: (() => void) | undefined
+    const output = {
+      write: (value: string, callback?: () => void) => {
+        writes.push(value)
+        if (callback) finishWrite = callback
+        return true
+      },
+    } as unknown as NodeJS.WriteStream
+    const stopped = new Error('process exited')
+    vi.spyOn(controller, 'hardExitCode', 'get').mockReturnValue(130)
+    const hardExit = vi.spyOn(processTree, 'hardExitProcessTree').mockImplementation(() => {
+      expect(writes.join('')).toContain('?1049l')
+      expect(writes.join('')).toContain('Resume with: strands --session-id interrupted-session')
+      throw stopped
+    })
+    try {
+      const exited = expect(
+        runInkChat(controller, {
+          output,
+          intro: false,
+          renderApp: (() => ({
+            unmount: vi.fn(),
+            cleanup: vi.fn(),
+            waitUntilExit: async () => {},
+            rerender: vi.fn(),
+            clear: vi.fn(),
+          })) as never,
+        })
+      ).rejects.toThrow(stopped)
+      await vi.waitFor(() => expect(finishWrite).toBeDefined())
+      expect(hardExit).not.toHaveBeenCalled()
+      finishWrite!()
+      await exited
+      expect(hardExit).toHaveBeenCalledExactlyOnceWith(130)
+    } finally {
+      hardExit.mockRestore()
+    }
+  })
+
+  it('returns the requested exit code while a replacement is starting', async () => {
+    const snapshot: ChatConversation['snapshot'] = {
+      scope: 'agent',
+      schemaVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      data: {},
+      appData: {},
+    }
+    const previous = new ChatController({ ...backend(), captureConversation: async () => snapshot })
+    const replacement = new ChatController(backend())
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const source = vi.fn(async (): Promise<ChatControllerApi> => {
+      if (source.mock.calls.length === 1) return previous
+      await gate
+      return replacement
+    })
+    let finish!: () => void
+    let root!: {
+      props: {
+        onSetupComplete(code: 0, changed: boolean): void
+        onCancelStartup(): void
+        controller?: ChatControllerApi
+      }
+    }
+    const instance = {
+      unmount: vi.fn(() => finish?.()),
+      cleanup: vi.fn(),
+      clear: vi.fn(),
+      waitUntilExit: () => new Promise<void>((resolve) => (finish = resolve)),
+      rerender: (element: unknown) => {
+        root = element as typeof root
+      },
+    } as unknown as Instance
+    const running = runInkChat(source, {
+      alternateScreen: false,
+      errorOutput: new PassThrough() as unknown as NodeJS.WriteStream,
+      renderApp: ((element: unknown) => {
+        root = element as typeof root
+        return instance
+      }) as never,
+    })
+    try {
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      root.props.onSetupComplete(0, true)
+      await vi.waitFor(() => expect(source).toHaveBeenCalledTimes(2))
+      root.props.onCancelStartup()
+      release()
+      await expect(running).resolves.toBe(130)
+    } finally {
+      release()
+      instance.unmount()
+      await running
+    }
+  })
+
+  it('cancels initial setup without waiting for its completion', async () => {
+    const source = vi.fn(async () => new ChatController(backend()))
+    let root!: { props: { onCancelStartup(): void; onSetupComplete(exitCode: 0 | 130, changed: boolean): void } }
+    const instance = {
+      unmount: vi.fn(),
+      cleanup: vi.fn(),
+      waitUntilExit: async () => {},
+      rerender: vi.fn(),
+    } as unknown as Instance
+    let exitCode: number | undefined
+    const running = runInkChat(source, {
+      alternateScreen: false,
+      setup: true,
+      config: CliConfigStore.memory(),
+      renderApp: ((element: unknown) => {
+        root = element as typeof root
+        return instance
+      }) as never,
+    }).then((result) => {
+      exitCode = result
+    })
+
+    try {
+      await vi.waitFor(() => expect(root).toBeDefined())
+      root.props.onCancelStartup()
+      await vi.waitFor(() => expect(exitCode).toBe(130))
+      expect(source).not.toHaveBeenCalled()
+      expect(instance.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      root.props.onSetupComplete(130, false)
+      await running
+    }
+  })
+
   it('retains chat on reload or failed setup', async () => {
     const config = CliConfigStore.memory(
       {},
@@ -67,15 +272,17 @@ describe('runInkChat', () => {
       sessionIdentity: session,
       sourceSelection: () => sourceSelection,
     }
-    const previous = new ChatController(previousBackend, { initialMessages: messages })
+    const previousController = new ChatController(previousBackend, { initialMessages: messages })
+    const previous = new ConversationManager(previousController, { fork: async () => previousController })
     let current = previous
-    const source = vi.fn(async (_signal: AbortSignal, _setup: () => void, conversation?: ChatConversation) => {
+    const source = vi.fn(async (_signal: AbortSignal, _setup: () => void, conversation?: ChatConversations) => {
       if (!conversation) return previous
       expect(previousBackend.dispose).not.toHaveBeenCalled()
-      current = new ChatController(
+      const replacement = new ChatController(
         { ...backend(), name: 'Customized Strands harness', captureConversation: async () => snapshot },
-        { initialTurns: conversation.completedTurns }
+        { initialTurns: conversation.entries.at(-1)!.conversation.completedTurns }
       )
+      current = new ConversationManager(replacement, { fork: async () => replacement })
       return current
     })
     let finish!: () => void
@@ -111,9 +318,9 @@ describe('runInkChat', () => {
       root.props.onSetupComplete(0, true)
       await vi.waitFor(() => expect(previousBackend.dispose).toHaveBeenCalledOnce())
       expect(current.getSnapshot().completedTurns).toEqual(previous.getSnapshot().completedTurns)
-      expect(source.mock.calls[1]?.[2]?.snapshot).toEqual(snapshot)
-      expect(source.mock.calls[1]?.[2]?.session).toEqual(session)
-      expect(source.mock.calls[1]?.[2]?.sourceSelection).toEqual(sourceSelection)
+      expect(source.mock.calls[1]?.[2]?.entries[0]?.conversation.snapshot).toEqual(snapshot)
+      expect(source.mock.calls[1]?.[2]?.entries[0]?.conversation.session).toEqual(session)
+      expect(source.mock.calls[1]?.[2]?.entries[0]?.conversation.sourceSelection).toEqual(sourceSelection)
       source.mockRejectedValueOnce(new Error('Invalid configuration'))
       const before = configurationFromStore(config)
       root.props.onSetupComplete(0, true, {
@@ -190,20 +397,22 @@ describe('runInkChat', () => {
         release = resolve
       })
       let requestSetup!: RequestSetup
-      let captured: ChatConversation | undefined
+      let captured: ChatConversations | undefined
       let replacement: ChatController | undefined
       const onFailure = vi.fn(async () => {})
       const source = async (
         _signal: AbortSignal,
         setup: RequestSetup,
-        conversation?: ChatConversation
+        conversation?: ChatConversations
       ): Promise<ChatControllerApi> => {
         requestSetup = setup
         if (!conversation) return previous
         captured = conversation
         await gate
         if (fails) throw new Error('Replacement failed')
-        replacement = new ChatController(backend(), { initialTurns: conversation.completedTurns })
+        replacement = new ChatController(backend(), {
+          initialTurns: conversation.entries.at(-1)!.conversation.completedTurns,
+        })
         return replacement
       }
       const input = Object.assign(new PassThrough(), {
@@ -241,7 +450,11 @@ describe('runInkChat', () => {
         expect(config.snapshot().profile.name).toBe('Replacement')
         expect(config.snapshot().agentProject).toBe(agentProject)
         expect(await readFile(configPath, 'utf8')).toBe(saved)
-        expect(captured!.completedTurns.map((turn) => turn.prompt)).toEqual(['Primary history'])
+        expect(captured!.activeId).toBe('agent-2')
+        expect(captured!.entries.map((entry) => entry.conversation.completedTurns.map((turn) => turn.prompt))).toEqual([
+          ['Primary history'],
+          ['Fork history'],
+        ])
         const utterances = ['Voice one', 'Voice two']
         for (const utterance of utterances) {
           requestVoice({ requestId: utterance, action: 'send_instruction', instruction: utterance })
@@ -262,9 +475,7 @@ describe('runInkChat', () => {
         }
         await vi.waitFor(() => {
           const active = fails ? previous : replacement
-          expect(active?.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
-            fails ? 'Fork history' : 'Primary history',
-          ])
+          expect(active?.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual(['Fork history'])
           expect(active?.getSnapshot().completedTurns.every((turn) => turn.status === 'complete')).toBe(true)
         })
         const reloaded = (await CliConfigStore.load(configPath)).snapshot()
@@ -394,7 +605,7 @@ describe('runInkChat', () => {
     }
   })
 
-  it('waits for the controller before entering the alternate screen and rendering chat', async () => {
+  it('renders startup before constructing the controller', async () => {
     const controller = new ChatController(backend())
     controller.close(0)
     const writes: string[] = []
@@ -411,8 +622,8 @@ describe('runInkChat', () => {
       return instance
     })
     const source = vi.fn(async () => {
-      expect(writes).toEqual([])
-      expect(renderApp).not.toHaveBeenCalled()
+      expect(writes[0]).toContain('?1049h')
+      expect(renderApp).toHaveBeenCalledOnce()
       return controller
     })
 
@@ -423,8 +634,8 @@ describe('runInkChat', () => {
     })
 
     expect(renderApp).toHaveBeenCalledOnce()
-    expect(source.mock.invocationCallOrder[0]).toBeLessThan(renderApp.mock.invocationCallOrder[0]!)
-    expect(instance.rerender).not.toHaveBeenCalled()
+    expect(renderApp.mock.invocationCallOrder[0]).toBeLessThan(source.mock.invocationCallOrder[0]!)
+    expect(instance.rerender).toHaveBeenCalledOnce()
     expect(writes.at(-1)).toContain('?1049l')
   })
 
@@ -435,14 +646,16 @@ describe('runInkChat', () => {
     const controllerTask = new Promise<ChatController>((resolve) => {
       resolveController = resolve
     })
+    let renderedRoot: unknown
     const instance = {
       unmount: vi.fn(),
       cleanup: vi.fn(),
       waitUntilExit: async () => {},
-      rerender: vi.fn(),
+      rerender: vi.fn((element: unknown) => {
+        renderedRoot = element
+      }),
       clear: vi.fn(),
     } as unknown as Instance
-    let renderedRoot: unknown
     const renderApp = vi.fn((element: unknown) => {
       renderedRoot = element
       return instance
@@ -457,13 +670,14 @@ describe('runInkChat', () => {
 
     try {
       await vi.waitFor(() => expect(source).toHaveBeenCalledOnce())
-      expect(renderApp).not.toHaveBeenCalled()
+      expect(renderApp).toHaveBeenCalledOnce()
       expect(start).not.toHaveBeenCalled()
     } finally {
       resolveController(controller)
       await runTask
     }
     expect(renderApp).toHaveBeenCalledOnce()
+    expect(instance.rerender).toHaveBeenCalledOnce()
     expect(start).toHaveBeenCalledExactlyOnceWith('hello')
     expect(renderApp.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]!)
     const root = renderedRoot as {

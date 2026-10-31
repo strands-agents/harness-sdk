@@ -245,13 +245,15 @@ class Runtime:
                     target = target[key]
                 target[keys[-1]] = value
         self.options = overrides_from_config(partial)
-        for source, target in (("sessionId", "session_id"), ("sessionDir", "session_dir")):
-            if source in command:
-                self.options[target] = command[source]
         self.explicit_option_keys = set(self.options)
-        model = self.options.get("model")
+        authored = getattr(module, "_strands_options", {})
+        model = self.options.get("model", authored.get("model"))
+        if model is None and hasattr(module, "_strands_options"):
+            model = DEFAULT_MODEL
         self.source_configuration = (
-            {"model": model, "thinking": self.options.get("effort", "auto")} if isinstance(model, str) else None
+            {"model": model, "thinking": self.options.get("effort", authored.get("effort", "auto"))}
+            if isinstance(model, str)
+            else None
         )
         selection = command.get("sourceSelection")
         if (
@@ -260,21 +262,38 @@ class Runtime:
             and selection["source"] == module.__file__
             and selection["configured"] == self.source_configuration
         ):
-            self.options.update(
-                model=selection["selected"]["model"],
-                effort=selection["selected"]["thinking"],
-            )
+            for field, option in (("model", "model"), ("thinking", "effort")):
+                if selection["selected"][field] != self.source_configuration[field]:
+                    self.options[option] = selection["selected"][field]
+                    self.explicit_option_keys.add(option)
+        session = self.options.get("session", authored.get("session", True))
+        session_options = session if isinstance(session, dict) else {}
         self.session_configuration = {
-            "sessionId": self.options.get("session_id"),
-            "sessionDir": str(self.options.get("session_dir", ".agent/sessions")),
+            "sessionId": session_options.get("id"),
+            "sessionDir": str(session_options.get("dir", ".agent/sessions")),
         }
-        session_directory = command.get("sessionStorageDirectory")
-        self.options["session_dir"] = str(Path(self.options.get("session_dir", ".agent/sessions")).resolve())
-        self.session_directory = (
-            str(Path(session_directory).resolve())
-            if session_directory is not None
-            else str(Path(self.options["session_dir"]) / "session")
-        )
+        restoration = command.get("restoreSession")
+        if restoration and (session is True or isinstance(session, dict)):
+            identity = restoration["identity"]
+            if restoration["preserve"] or identity["configured"] == self.session_configuration:
+                session_options = {
+                    "id": identity["sessionId"],
+                    "dir": str(Path(identity["sessionDirectory"]).parent),
+                }
+                self.options["session"] = session_options
+                self.explicit_option_keys.add("session")
+        if "sessionId" in command and (session is True or isinstance(session, dict)):
+            self.options["session"] = {
+                **session_options,
+                "id": command["sessionId"],
+                **(
+                    {"dir": str(Path(command["sessionStorageDirectory"]).parent)}
+                    if "sessionStorageDirectory" in command
+                    else {}
+                ),
+                **({"dir": str(Path(command["sessionDir"]).parent)} if "sessionDir" in command else {}),
+            }
+            self.explicit_option_keys.add("session")
         self.agent: Agent
         self.initial_agent = module.agent
         self.factory = getattr(module, "create_agent", None)
@@ -284,25 +303,32 @@ class Runtime:
         self.cancel_signal = threading.Event()
         self.reload_requested = False
 
-    async def build(self, options, snapshot=None):
+    async def build(self, options, snapshot=None, *, resume=False):
         previous = getattr(self, "agent", self.initial_agent)
         factory_options = {key: options[key] for key in self.explicit_option_keys if key in options}
         if self.initial_agent is not None and not factory_options:
             candidate = self.initial_agent
             self.initial_agent = None
         else:
-            self.initial_agent = None
             if not callable(self.factory):
                 raise ValueError(
                     "This source exports an agent instance but not create_agent(**overrides), "
                     "and is not a direct agent = create_harness(...) definition; recreation controls are unavailable."
                 )
+            manager = getattr(previous, "memory_manager", None)
+            if manager:
+                await manager.flush()
+            self.initial_agent = None
             candidate = self.factory(**factory_options)
         if inspect.isawaitable(candidate):
             candidate = await candidate
         if not isinstance(candidate, Agent):
             raise TypeError("create_harness() must return a Strands Agent")
         try:
+            if resume:
+                manager = candidate._session_manager
+                if not isinstance(manager, SnapshotSessionManager) or not await manager.restore_snapshot(candidate):
+                    raise ValueError("No saved Python session was found for this agent.")
             await self.augment(candidate)
             if snapshot:
                 candidate.load_snapshot(snapshot)
@@ -395,12 +421,16 @@ class Runtime:
 
     def state(self):
         model = self.options.get("model")
+        model_specifier = self.options.get(
+            "model", self.source_configuration["model"] if self.source_configuration else None
+        )
+        thinking = self.options.get(
+            "effort", self.source_configuration["thinking"] if self.source_configuration else "auto"
+        )
         if not isinstance(model, str):
             model = str(self.agent.model.get_config().get("model_id", type(self.agent.model).__name__))
         manager = self.agent._session_manager
-        session_id = (
-            manager.session_id if isinstance(manager, SnapshotSessionManager) else self.options.get("session_id")
-        )
+        session_id = manager.session_id if isinstance(manager, SnapshotSessionManager) else None
         storage = manager._storage if isinstance(manager, SnapshotSessionManager) else None
         session_directory = local_session_directory(storage)
         stash_directory = local_stash_directory(self.agent)
@@ -412,16 +442,16 @@ class Runtime:
             "reconstructable": callable(self.factory),
             "description": self.agent.description or "",
             "model": model,
-            **({"modelSpecifier": self.options["model"]} if isinstance(self.options.get("model"), str) else {}),
-            "thinking": self.options.get("effort", "auto"),
+            **({"modelSpecifier": model_specifier} if isinstance(model_specifier, str) else {}),
+            "thinking": thinking,
             **(
                 {
                     "sourceSelection": {
                         "source": self.module.__file__,
                         "configured": self.source_configuration,
                         "selected": {
-                            "model": self.options.get("model") or DEFAULT_MODEL,
-                            "thinking": self.options.get("effort", "auto"),
+                            "model": model_specifier,
+                            "thinking": thinking,
                         },
                     }
                 }
@@ -429,7 +459,7 @@ class Runtime:
                 else {}
             ),
             **({"sessionId": session_id} if session_id else {}),
-            "sessionDirectory": session_directory or self.options["session_dir"],
+            "sessionDirectory": session_directory or str(Path(self.session_configuration["sessionDir"]).resolve()),
             **(
                 {
                     "session": {
@@ -621,6 +651,9 @@ class Runtime:
                 await self.save()
                 self.result({"stopReason": "restored"})
             else:
+                manager = getattr(self.agent, "memory_manager", None)
+                if manager:
+                    await manager.flush()
                 snapshot = self.agent.take_snapshot(include=["messages", "state", "conversation_manager_state"])
                 self.result(
                     {
@@ -681,9 +714,10 @@ class Runtime:
             if "thinking" in command:
                 options["effort"] = command["thinking"]
                 self.explicit_option_keys.add("effort")
-            if "sessionId" in command and options.get("session", True):
-                options["session_id"] = command["sessionId"]
-                self.explicit_option_keys.add("session_id")
+            session = options.get("session", getattr(self.module, "_strands_options", {}).get("session", True))
+            if "sessionId" in command and (session is True or isinstance(session, dict)):
+                options["session"] = {**(session if isinstance(session, dict) else {}), "id": command["sessionId"]}
+                self.explicit_option_keys.add("session")
             snapshot = None if command.get("clear") else self.agent.take_snapshot(preset="session")
             await self.build(options, snapshot)
             self.result({"stopReason": "reset"})
@@ -781,8 +815,10 @@ def load_project(entrypoint, root):
     agent = getattr(module, "agent", None)
     if not isinstance(agent, Agent):
         raise TypeError('Export a Strands Agent as "agent".')
+    construction = next(((args, options) for candidate, args, options in captured if candidate is agent), None)
+    if construction is not None:
+        module._strands_options = construction[1]
     if not callable(getattr(module, "create_agent", None)) and direct_harness_assignment(entrypoint):
-        construction = next(((args, options) for candidate, args, options in captured if candidate is agent), None)
         if construction is not None:
             args, options = construction
 
@@ -797,7 +833,7 @@ async def main():
     module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
     command = json.loads(await asyncio.to_thread(sys.stdin.readline))
     runtime = Runtime(module, command)
-    await runtime.build(runtime.options)
+    await runtime.build(runtime.options, resume=command.get("resume", False))
     send({"type": "ready", "state": runtime.state()})
     running = None
     try:
@@ -823,6 +859,7 @@ async def main():
                     await runtime.command(command)
                 except Exception as error:
                     send({"type": "error", "message": str(error)})
+            del command, line
     finally:
         if running and not running.done():
             running.cancel()

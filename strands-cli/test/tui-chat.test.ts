@@ -1,3 +1,5 @@
+import { setImmediate } from 'node:timers'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -29,6 +31,287 @@ function backend(
 }
 
 describe('ChatController', () => {
+  it.each([
+    { queued: false, fails: false },
+    { queued: false, fails: true },
+    { queued: true, fails: false },
+    { queued: true, fails: true },
+  ])('resumes work after a live setting save, queued=$queued fails=$fails', async ({ queued, fails }) => {
+    let finishTurn!: () => void
+    const turnGate = new Promise<void>((resolve) => {
+      finishTurn = resolve
+    })
+    let finishSave!: () => void
+    const saveGate = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
+    let resultReady = false
+    const runs: string[] = []
+    const target = backend(async function* (prompt) {
+      runs.push(prompt)
+      if (prompt === 'first') await turnGate
+      yield { type: 'textDelta', text: `reply to ${prompt}` }
+      return { stopReason: 'endTurn' }
+    })
+    target.watchTasks = (listener) => {
+      taskListener = listener
+      listener([])
+      return () => {}
+    }
+    target.hasReadyBackgroundResults = () => resultReady
+    target.streamBackgroundResults = async function* () {
+      runs.push('background')
+      resultReady = false
+      yield { type: 'textDelta', text: 'Background result received.' }
+      return { stopReason: 'endTurn' }
+    }
+    const controller = new ChatController(target, {
+      settings: { animations: true },
+      setSettings: async () => {
+        await saveGate
+        if (fails) throw new Error('Settings could not be saved')
+      },
+    })
+    try {
+      const first = controller.submit('first')
+      await vi.waitFor(() => expect(runs).toEqual(['first']))
+      const second = queued ? controller.submit('second') : undefined
+      await controller.submit('/settings')
+      const saving = controller.activatePanelRow({ label: '', description: '', value: 'animations=false' })
+      resultReady = true
+      taskListener?.([
+        { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+      ])
+      finishTurn()
+      await first
+      expect(runs).toEqual(['first'])
+
+      finishSave()
+      expect(await saving).toBe(!fails)
+      await vi.waitFor(() => expect(runs).toEqual(queued ? ['first', 'second', 'background'] : ['first', 'background']))
+      await second
+      await vi.waitFor(() => expect(controller.busy).toBe(false))
+      expect(controller.getSnapshot().settings.animations).toBe(fails)
+      expect(controller.getSnapshot().queuedPrompts).toEqual([])
+    } finally {
+      finishTurn()
+      finishSave()
+      await controller.dispose()
+    }
+  })
+
+  it.each([false, true])(
+    'resumes queued input after an overlapping model change settles (failure=%s)',
+    async (fail) => {
+      let finishTurn!: () => void
+      const turnPending = new Promise<void>((resolve) => {
+        finishTurn = resolve
+      })
+      let finishChange!: () => void
+      const changePending = new Promise<void>((resolve) => {
+        finishChange = resolve
+      })
+      const prompts: string[] = []
+      const target = backend(async function* (prompt) {
+        prompts.push(prompt)
+        if (prompt === 'first') await turnPending
+        yield { type: 'textDelta', text: prompt }
+        return { stopReason: 'endTurn' }
+      })
+      target.switchModel = async () => {
+        await changePending
+        if (fail) throw new Error('Unable to save selection')
+        return 'next-model'
+      }
+      const controller = new ChatController(target)
+      try {
+        const first = controller.submit('first')
+        const queued = controller.submit('queued')
+        const changing = controller.submit('/model next-model')
+        finishTurn()
+        await first
+        expect(prompts).toEqual(['first'])
+        finishChange()
+        await changing
+        await vi.waitFor(() => expect(prompts).toEqual(['first', 'queued']))
+        await queued
+        expect(controller.busy).toBe(false)
+      } finally {
+        await controller.dispose()
+      }
+    }
+  )
+
+  it('waits for an overlapping settings save before applying a deferred model restart', async () => {
+    let finishTurn!: () => void
+    const turnPending = new Promise<void>((resolve) => {
+      finishTurn = resolve
+    })
+    let finishSave!: () => void
+    const savePending = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    const operations: string[] = []
+    const target = backend(async function* (prompt) {
+      operations.push(prompt)
+      if (prompt === 'first') await turnPending
+      yield { type: 'textDelta', text: prompt }
+      return { stopReason: 'endTurn' }
+    })
+    target.modelChangeMode = () => 'restart'
+    target.restartModel = vi.fn(async () => {
+      operations.push('restart')
+      return 'next-model'
+    })
+    const controller = new ChatController(target, {
+      setSettings: async () => {
+        await savePending
+        operations.push('saved')
+      },
+    })
+    try {
+      const first = controller.submit('first')
+      const queued = controller.submit('queued')
+      await controller.submit('/model next-model')
+      const saving = controller.setSettings({ animations: false })
+      finishTurn()
+      await first
+      expect(target.restartModel).not.toHaveBeenCalled()
+      expect(operations).toEqual(['first'])
+
+      finishSave()
+      await saving
+      await queued
+      expect(operations).toEqual(['first', 'saved', 'restart', 'queued'])
+      expect(controller.busy).toBe(false)
+    } finally {
+      finishTurn()
+      finishSave()
+      await controller.dispose()
+    }
+  })
+
+  it('does not apply a queued generated name after clearing the conversation', async () => {
+    let releaseRename!: () => void
+    const renameBlocked = new Promise<void>((resolve) => {
+      releaseRename = resolve
+    })
+    let current = 'session-1'
+    const target = backend()
+    target.generateSessionName = vi
+      .fn()
+      .mockResolvedValueOnce('First Generated Name')
+      .mockResolvedValueOnce('Second Generated Name')
+    target.clear = vi.fn(async () => {
+      current = 'session-2'
+    })
+    target.info = () => ({ sessionId: current })
+    const renameCurrent = vi.fn(async (name: string) => {
+      await renameBlocked
+      return { sessionId: current, name }
+    })
+    const controller = new ChatController(target, {
+      sessions: {
+        get current() {
+          return current
+        },
+        directory: '/tmp/sessions',
+        list: vi.fn(async () => [{ id: current, active: true }]),
+        resolve: async () => ({
+          sessionId: current,
+          sessionDirectory: '/tmp/sessions',
+          workspace: '/tmp',
+          active: true,
+        }),
+        renameCurrent,
+      },
+    })
+
+    await controller.submit('/sessions rename')
+    await vi.waitFor(() => expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('First Generated Name'))
+    await controller.submit('/sessions rename')
+    await vi.waitFor(() => expect(target.generateSessionName).toHaveBeenCalledTimes(2))
+    await controller.submit('/clear')
+    releaseRename()
+
+    await vi.waitFor(() => expect(controller.getSnapshot().runtime.session).toBe('session-2'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(renameCurrent).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels a generated session name when an explicit rename supersedes it', async () => {
+    let resolveName!: (name: string) => void
+    let signal!: AbortSignal
+    const target = backend()
+    target.generateSessionName = vi.fn(
+      (cancelSignal) =>
+        new Promise<string>((resolve) => {
+          signal = cancelSignal
+          resolveName = resolve
+        })
+    )
+    const renameCurrent = vi.fn(async (name: string) => ({ sessionId: 'session-1', name }))
+    const controller = new ChatController(target, {
+      runtime: { session: 'Original name' },
+      sessions: {
+        current: 'session-1',
+        directory: '/tmp/sessions',
+        list: vi.fn(async () => [{ id: 'session-1', name: 'Original name', active: true }]),
+        resolve: async () => ({
+          sessionId: 'session-1',
+          sessionDirectory: '/tmp/sessions',
+          workspace: '/tmp',
+          active: true,
+        }),
+        renameCurrent,
+      },
+    })
+
+    await controller.submit('/sessions rename')
+    await controller.submit('/sessions rename Chosen name')
+    resolveName('Stale Generated Name')
+
+    await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().notices).toMatchObject([
+        { status: 'delivered', text: 'Session naming cancelled' },
+      ])
+    )
+    expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('Chosen name')
+    expect(controller.getSnapshot().runtime.session).toBe('Chosen name')
+  })
+
+  it('does not resume background work when a pending setting save finishes after disposal', async () => {
+    let finishSave!: () => void
+    const saveGate = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    let taskListener: ((tasks: readonly ChatTask[]) => void) | undefined
+    const target = backend()
+    target.watchTasks = (listener) => {
+      taskListener = listener
+      listener([])
+      return () => {}
+    }
+    target.hasReadyBackgroundResults = () => true
+    const background = vi.fn(async function* () {
+      yield { type: 'textDelta' as const, text: 'Background result received.' }
+      return { stopReason: 'endTurn' }
+    })
+    target.streamBackgroundResults = background
+    const controller = new ChatController(target, { setSettings: () => saveGate })
+    const saving = controller.setSettings({ animations: false })
+    taskListener?.([
+      { id: 'task-1', label: 'reviewer', status: 'completed', source: 'background', deliveryState: 'ready' },
+    ])
+    expect(background).not.toHaveBeenCalled()
+    await controller.dispose()
+    finishSave()
+    await saving
+    expect(background).not.toHaveBeenCalled()
+  })
+
   it('sanitizes runtime metadata exposed through snapshots', () => {
     const target = backend()
     Object.assign(target, {
@@ -977,20 +1260,31 @@ describe('ChatController', () => {
       await gate
       return { stopReason: 'endTurn' }
     })
-    target.queueSteering = vi.fn(() => true)
+    let consumeSteering = (): void => {}
+    target.queueSteering = vi.fn((_prompt, onConsumed) => {
+      consumeSteering = onConsumed
+      return true
+    })
+    target.drainSteering = () => []
     const controller = new ChatController(target)
 
     const running = controller.submit('first')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
     await controller.steer('change direction now')
 
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now')
+    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
     expect(target.cancel).not.toHaveBeenCalled()
     expect(controller.getSnapshot()).toMatchObject({
-      notices: [],
+      pendingSteering: ['change direction now'],
       queuedPrompts: [],
     })
 
+    consumeSteering()
+    expect(controller.getSnapshot().pendingSteering).toEqual([])
+    expect(controller.getSnapshot().activeTurn?.entries).toEqual([
+      expect.objectContaining({ type: 'assistant', text: 'Working.' }),
+      expect.objectContaining({ type: 'user', text: 'change direction now' }),
+    ])
     release()
     await running
   })
@@ -1014,7 +1308,7 @@ describe('ChatController', () => {
     const queuedId = controller.getSnapshot().queuedPrompts[0]!.id
 
     expect(controller.steerQueued(queuedId)).toBe(true)
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now')
+    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
     expect(target.cancel).not.toHaveBeenCalled()
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
     await expect(queued).resolves.toBeUndefined()

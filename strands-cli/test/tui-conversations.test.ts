@@ -43,22 +43,25 @@ describe('ConversationManager', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const fork = new ChatController(
-      backend('fork', async function* () {
+    const fork = new ChatController({
+      ...backend('fork', async function* () {
         yield { type: 'textDelta', text: 'Working' }
         await gate
         return { stopReason: 'endTurn' }
-      })
-    )
+      }),
+      captureConversation: async () => snapshot,
+    })
     const manager = new ConversationManager(primary, { fork: async () => fork })
     try {
       await manager.submit('/fork')
       const running = manager.submit('Keep working')
       await vi.waitFor(() => expect(manager.busy).toBe(true))
-      await expect(manager.captureConversation('agent-1')).rejects.toThrow('all conversations')
+      await expect(manager.captureConversations()).rejects.toThrow('all conversations')
       release()
       await running
-      await expect(manager.captureConversation('agent-1')).resolves.toMatchObject({ snapshot })
+      await expect(manager.captureConversations()).resolves.toMatchObject({
+        entries: [{ conversation: { snapshot } }, { conversation: { snapshot } }],
+      })
     } finally {
       release()
       await manager.dispose()
@@ -418,7 +421,11 @@ describe('ConversationManager', () => {
     }
   })
 
-  it('forks into an independent conversation and switches between transcripts', async () => {
+  it.each([
+    ['investigate the parser', 'investigate the parser'],
+    ['a'.repeat(44) + '👩‍💻' + 'b'.repeat(10), 'a'.repeat(44) + '👩‍💻...'],
+    ['a'.repeat(44) + 'e\u0301' + 'b'.repeat(10), 'a'.repeat(44) + 'e\u0301...'],
+  ])('forks into an independent conversation and switches between transcripts (%s)', async (prompt, title) => {
     const primary = new ChatController(
       backend(
         'primary',
@@ -439,12 +446,12 @@ describe('ConversationManager', () => {
     const manager = new ConversationManager(primary, { fork: factory })
 
     await manager.submit('baseline')
-    await manager.submit('/fork "investigate the parser"')
+    await manager.submit(`/fork ${JSON.stringify(prompt)}`)
 
     expect(factory).toHaveBeenCalledWith(primary)
     expect(manager.getSnapshot().completedTurns.at(-1)).toMatchObject({
-      prompt: 'investigate the parser',
-      entries: [{ type: 'assistant', text: 'fork:investigate the parser' }],
+      prompt,
+      entries: [{ type: 'assistant', text: `fork:${prompt}` }],
     })
 
     await manager.submit('/agents')
@@ -452,6 +459,7 @@ describe('ConversationManager', () => {
       kind: 'agents',
       title: 'Agents',
     })
+    expect(manager.getSnapshot().panel?.rows).toContainEqual(expect.objectContaining({ label: title }))
     const main = manager.getSnapshot().panel?.rows.find((row) => row.label === 'Research Strands harness')
     expect(main).toBeDefined()
     await manager.activatePanelRow(main!)
@@ -536,7 +544,7 @@ describe('ConversationManager', () => {
     }
   )
 
-  it('renames the currently viewed agent and updates peer discovery', async () => {
+  it('routes /rename to saved sessions without changing peer names', async () => {
     const agentMessaging = new AgentMessaging()
     const rename = vi.spyOn(agentMessaging, 'rename')
     const primary = new ChatController(backend('primary', emptyRun))
@@ -545,39 +553,21 @@ describe('ConversationManager', () => {
       agentMessaging,
     })
 
-    await manager.submit('/rename "Lead Reviewer"')
+    await manager.submit('/rename Lead Reviewer')
+    expect(manager.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'session rename unavailable' })
     await manager.submit('/agents')
 
-    expect(rename).toHaveBeenLastCalledWith('agent-1', 'Lead Reviewer')
+    expect(rename).toHaveBeenCalledExactlyOnceWith('agent-1', 'Strands harness')
     expect(manager.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Lead Reviewer',
+      label: 'Strands harness',
       current: true,
       badge: { text: 'idle' },
     })
     expect(manager.getSnapshot().runtime.configuration).toContainEqual({
       label: 'agent',
-      value: 'Lead Reviewer (1 total)',
+      value: 'Strands harness (1 total)',
     })
-  })
-
-  it('opens a rename panel when no name is provided', async () => {
-    const primary = new ChatController(backend('primary', emptyRun))
-    const manager = new ConversationManager(primary, { fork: async () => primary })
-
-    try {
-      await manager.submit('/rename')
-      expect(manager.getSnapshot().panel).toMatchObject({
-        kind: 'rename',
-        title: 'Rename agent',
-        rows: [{ label: 'Current name', description: 'Strands harness' }],
-      })
-
-      await manager.activatePanelRow({ label: 'Rename', description: '', value: 'rename:Lead Reviewer' })
-      await manager.submit('/agents')
-      expect(manager.getSnapshot().panel?.rows[0]?.label).toBe('Lead Reviewer')
-    } finally {
-      await manager.dispose()
-    }
+    await manager.dispose()
   })
 
   it('retries failed session lookup and startup before opening a separate workspace conversation', async () => {
@@ -718,7 +708,7 @@ describe('ConversationManager', () => {
     expect(disposeShared).toHaveBeenCalledOnce()
   })
 
-  it('disposes a fork that finishes after the manager shuts down', async () => {
+  it('accepts exit while forking and disposes a fork that finishes after shutdown', async () => {
     let finishFork!: (controller: ChatController) => void
     const forkReady = new Promise<ChatController>((resolve) => {
       finishFork = resolve
@@ -729,13 +719,17 @@ describe('ConversationManager', () => {
     const manager = new ConversationManager(primary, { fork: () => forkReady })
 
     const pending = manager.submit('/fork')
-    manager.close()
+    expect(manager.getSnapshot().panel?.title).toBe('Forking agent')
+    await manager.submit('/exit')
+    expect(manager.getSnapshot().status).toBe('closed')
+    expect(manager.getSnapshot().notices).toEqual([])
     await manager.dispose()
     finishFork(fork)
     await pending
 
     expect(fork.getSnapshot().status).toBe('closed')
     expect(forkDispose).toHaveBeenCalledOnce()
+    expect(manager.getSnapshot().notices).toEqual([])
   })
 })
 

@@ -85,6 +85,7 @@ type WorkerMessage =
 
 export interface PythonOptions {
   sourceSelection?: ChatConversation['sourceSelection']
+  restoreSession?: { identity: NonNullable<ChatConversation['session']>; preserve: boolean }
   overrides?: Partial<HarnessAgentConfig>
   assignments?: readonly string[]
   interactive?: boolean
@@ -372,11 +373,17 @@ export class PythonBackend implements ChatBackend {
     return this._state.sourceSelection
   }
 
+  modelSelection(): NonNullable<ChatConversation['selection']> {
+    return { model: this._state.modelSpecifier ?? this._state.model, thinking: this._state.thinking }
+  }
+
   async restoreConversation(conversation: ChatConversation): Promise<void> {
     await this._request({
       type: 'conversation',
       snapshot: conversation.snapshot,
-      preserveReasoning: conversation.model === this.info().model,
+      preserveReasoning: conversation.selection
+        ? conversation.selection.model === this.modelSelection().model
+        : conversation.model === this.info().model,
     })
   }
 

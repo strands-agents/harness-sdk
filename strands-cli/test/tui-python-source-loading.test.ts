@@ -10,6 +10,8 @@ import type { ChatEvent, ChatPermissionRequest, ChatRunResult } from '../src/tui
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend, type PythonOptions } from '../src/tui/project/python.js'
 import { exportSourceProject } from '../src/tui/project/export.js'
+import { createPythonChat } from '../src/tui/project/run.js'
+import type { ConversationManager } from '../src/tui/session/conversations.js'
 import { pythonExecutable as python } from './fixtures/python-runtime.js'
 
 const baseSource = `from strands import tool
@@ -37,6 +39,7 @@ agent = build()
 describe.skipIf(!existsSync(python))('Python source loading', () => {
   let root: string
   const backends: PythonBackend[] = []
+  const chats: ConversationManager[] = []
 
   beforeEach(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'strands-python-options-')))
@@ -49,6 +52,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
 
   afterEach(async () => {
     await Promise.all(backends.splice(0).map((backend) => backend.dispose()))
+    await Promise.all(chats.splice(0).map((chat) => chat.dispose()))
     vi.unstubAllEnvs()
     await rm(root, { recursive: true, force: true })
   })
@@ -156,6 +160,154 @@ def build(**overrides):`
       )
       expect(Object.keys(files).some((name) => name.includes('private-note'))).toBe(false)
     }
+  )
+
+  it.each(['True', '{"dir": "custom-sessions"}', 'False'])(
+    'rejects missing saved sessions without creating one when session=%s',
+    async (session) => {
+      const source = baseSource
+        .replace('"session": False', `"session": ${session}`)
+        .replace(
+          'agent = build()',
+          'def create_agent(**overrides):\n    return build(**overrides)\n\nagent = create_agent()'
+        )
+
+      await expect(open(source, { sessionId: 'missing-session', resume: true })).rejects.toThrow(
+        'No saved Python session'
+      )
+
+      const sessions = session.includes('custom-sessions') ? 'custom-sessions' : '.agent/sessions'
+      expect(existsSync(join(root, sessions, 'session', 'missing-session'))).toBe(false)
+    }
+  )
+
+  it.each(['True', '{"dir": "custom-sessions"}'])('restores saved history when session=%s', async (session) => {
+    const source = baseSource
+      .replace('"session": False', `"session": ${session}`)
+      .replace(
+        'agent = build()',
+        'def create_agent(**overrides):\n    return build(**overrides)\n\nagent = create_agent()'
+      )
+    const previous = await open(source, { sessionId: 'saved-session' })
+    await runTurn(previous)
+    const history = previous.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
+    await previous.dispose()
+
+    const restored = await open(source, { sessionId: 'saved-session', resume: true })
+
+    expect(restored.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
+      history
+    )
+    expect(restored.sessionIdentity?.sessionId).toBe('saved-session')
+    expect((await runTurn(restored)).stopReason).toBe('end_turn')
+  })
+
+  it.each(['False', 'True', '{}', '{"id": "authored", "dir": "custom-sessions"}'])(
+    'restores the complete roster with authored session=%s',
+    async (session) => {
+      const entrypoint = join(root, 'agent.py')
+      const source = baseSource.replace(
+        'agent = build()',
+        `agent = create_harness(
+    model=SourceReloadModel(), effort="off", caching=False, builtin_tools=[], builtin_plugins=[],
+    tools=[status], memory=False, session=${session}, skills=False, context_manager=False, background_tasks=False,
+)`
+      )
+      await writeFile(entrypoint, source)
+      const config = CliConfigStore.memory()
+      await config.setPermissionMode('bypassPermissions')
+      const options = { cwd: root }
+      const requestSetup = vi.fn()
+      const previous = await createPythonChat(entrypoint, config, options, AbortSignal.timeout(30_000), requestSetup)
+      chats.push(previous)
+      await previous.submit('{"tool":"status","chat":"primary"}')
+      await previous.submit('/fork')
+      await previous.submit('{"tool":"status","chat":"fork"}')
+      const captured = await previous.captureConversations()
+      expect(captured.entries).toHaveLength(2)
+      expect(captured.activeId).toBe('agent-2')
+      await writeFile(entrypoint, source.replace('"authored tool"', '"updated tool"'))
+      const current = await createPythonChat(
+        entrypoint,
+        config,
+        options,
+        AbortSignal.timeout(30_000),
+        requestSetup,
+        captured,
+        'agent-1'
+      )
+      chats.push(current)
+      const restored = await current.captureConversations()
+      expect(restored.activeId).toBe(captured.activeId)
+      expect(
+        restored.entries.map(({ id, title, description, conversation }) => ({
+          id,
+          title,
+          description,
+          turns: conversation.completedTurns,
+          session: conversation.session,
+        }))
+      ).toEqual(
+        captured.entries.map(({ id, title, description, conversation }) => ({
+          id,
+          title,
+          description,
+          turns: conversation.completedTurns,
+          session: conversation.session,
+        }))
+      )
+      expect(restored.entries.map(({ conversation }) => conversation.snapshot.data)).toEqual(
+        captured.entries.map(({ conversation }) => conversation.snapshot.data)
+      )
+      if (session === 'False') {
+        expect(restored.entries.every(({ conversation }) => conversation.session === undefined)).toBe(true)
+      } else {
+        expect(restored.entries.every(({ conversation }) => conversation.session !== undefined)).toBe(true)
+        const repeated = await createPythonChat(
+          entrypoint,
+          config,
+          options,
+          AbortSignal.timeout(30_000),
+          requestSetup,
+          restored,
+          'agent-1'
+        )
+        chats.push(repeated)
+        expect((await repeated.captureConversations()).entries.map(({ conversation }) => conversation.session)).toEqual(
+          restored.entries.map(({ conversation }) => conversation.session)
+        )
+      }
+      if (session.includes('authored')) {
+        await writeFile(
+          entrypoint,
+          source.replace('"authored"', '"changed"').replace('custom-sessions', 'changed-sessions')
+        )
+        const changed = await createPythonChat(
+          entrypoint,
+          config,
+          options,
+          AbortSignal.timeout(30_000),
+          requestSetup,
+          restored,
+          'agent-1'
+        )
+        chats.push(changed)
+        const changedState = await changed.captureConversations()
+        expect(changedState.entries[0]!.conversation.session).toMatchObject({
+          sessionId: 'changed',
+          sessionDirectory: join(root, 'changed-sessions', 'session'),
+        })
+        expect(changedState.entries[1]!.conversation.session?.sessionId).toBe(
+          restored.entries[1]!.conversation.session?.sessionId
+        )
+        expect(changedState.entries[1]!.conversation.session?.sessionDirectory).toBe(
+          restored.entries[1]!.conversation.session?.sessionDirectory
+        )
+      }
+      await current.submit('/fork')
+      expect((await current.captureConversations()).activeId).toBe('agent-3')
+    },
+    30_000
   )
 
   it('reports context usage for imported Python agents', async () => {
@@ -269,6 +421,78 @@ agent.name = "Customized"
     expect(backend.reconstructable()).toBe(true)
     await backend.clear()
     expect(backend.name).toBe('Overridden')
+  })
+
+  it.each([
+    { capture: false, fail: false },
+    { capture: false, fail: true },
+    { capture: true, fail: false },
+    { capture: true, fail: true },
+  ])('flushes memory before reconstruction or handoff: capture=$capture fail=$fail', async ({ capture, fail }) => {
+    const backend = await open(
+      `import json
+from pathlib import Path
+from strands.memory import MemoryManager
+from strands.memory.types import MemoryStore
+from strands.memory.extraction.triggers import IntervalTrigger
+
+class Store(MemoryStore):
+    name = "buffered"
+    writable = True
+    description = None
+    max_search_results = None
+    extraction = {"trigger": IntervalTrigger(turns=100)}
+    async def search(self, query, options=None):
+        return []
+    async def add_messages(self, messages, context):
+        path = Path("saved.json")
+        saved = json.loads(path.read_text()) if path.exists() else []
+        path.write_text(json.dumps(saved + messages))
+
+class Manager(MemoryManager):
+    async def flush(self):
+        if Path("fail-flush").exists():
+            raise RuntimeError("memory flush failed")
+        await super().flush()
+
+manager = Manager(stores=[Store()], injection=False, search_tool_config=False)
+${baseSource.replace('"memory": False', '"memory": manager').replace(
+  'agent = build()',
+  `def create_agent(**overrides):
+    path = Path("build-count")
+    path.write_text(str(int(path.read_text()) + 1) if path.exists() else "1")
+    saved = Path("saved.json")
+    Path("factory-seen").write_text(str(len(json.loads(saved.read_text())) if saved.exists() else 0))
+    return build(**overrides)
+
+agent = create_agent()`
+)}`
+    )
+    await runTurn(backend)
+    const change = () => (capture ? backend.captureConversation() : backend.clear())
+    if (fail) {
+      const messages = backend.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
+      await writeFile(join(root, 'fail-flush'), '')
+      await expect(change()).rejects.toThrow('memory flush failed')
+      expect(await readFile(join(root, 'build-count'), 'utf8')).toBe('1')
+      expect(backend.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
+        messages
+      )
+      await rm(join(root, 'fail-flush'))
+      expect((await runTurn(backend)).stopReason).toBe('end_turn')
+    }
+    await change()
+    if (capture) {
+      expect(backend.messages.length).toBeGreaterThan(0)
+      await open(await readFile(join(root, 'agent.py'), 'utf8'))
+    } else {
+      expect(backend.messages).toEqual([])
+    }
+    expect(await readFile(join(root, 'factory-seen'), 'utf8')).toBe(fail ? '4' : '2')
+    await backend.dispose()
+    await backend.dispose()
+    const saved = JSON.parse(await readFile(join(root, 'saved.json'), 'utf8')) as unknown[]
+    expect(saved).toHaveLength(fail ? 4 : 2)
   })
 
   it('reconstructs generated direct create_harness source without requiring a redundant factory', async () => {

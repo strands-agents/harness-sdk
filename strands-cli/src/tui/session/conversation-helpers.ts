@@ -1,4 +1,5 @@
 import type { ChatSnapshot } from '../chat/controller.js'
+import { graphemes } from '../terminal/composer.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
 
 export function unquote(value: string): string {
@@ -26,7 +27,8 @@ export function readConversationValue(value: string | undefined): string | undef
 
 export function conversationTitle(prompt: string): string {
   const oneLine = sanitizeTerminalText(prompt).replace(/\s+/g, ' ').trim()
-  return oneLine.length <= 48 ? oneLine || 'Fork' : `${oneLine.slice(0, 45)}...`
+  const characters = graphemes(oneLine)
+  return characters.length <= 48 ? oneLine || 'Fork' : `${characters.slice(0, 45).join('')}...`
 }
 
 export function conversationStatus(snapshot: ChatSnapshot): {

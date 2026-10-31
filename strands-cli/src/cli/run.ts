@@ -4,6 +4,7 @@ import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/ha
 
 import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
+import { withWorkspaceSessionDirectory } from '../tui/session/sessions.js'
 import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
@@ -204,7 +205,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
     const initialWorkspace = process.cwd()
     let pinged = false
     process.exitCode = await runInkChat(
-      async (signal, requestSetup, conversation, launch, confirmMcp) => {
+      async (signal, requestSetup, conversations, launch, confirmMcp) => {
         signal.throwIfAborted()
         const initialMcp = await resolveMcpConfig(args.mcpConfig, {
           cwd: initialWorkspace,
@@ -223,7 +224,8 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
             await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
             signal,
             requestSetup,
-            conversation
+            conversations,
+            launch?.conversationId
           )
         }
         const { createInteractiveChat } = await import('../tui/runtime.js')
@@ -233,29 +235,36 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           launch?.configuration && !launch.agentProject
             ? {
                 profile: launch.configuration.profile,
-                options: await harnessAgentOptionsFromConfig(
+                options: withWorkspaceSessionDirectory(
+                  await harnessAgentOptionsFromConfig(
+                    launch.configuration.profile,
+                    launch.configuration.profileBaseDir ?? initialWorkspace
+                  ),
                   launch.configuration.profile,
-                  launch.configuration.profileBaseDir ?? initialWorkspace
+                  initialWorkspace
                 ),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)
         signal.throwIfAborted()
-        const chat = await createInteractiveChat({
-          agentOptions: invocation.options,
-          ...(invocation.profile ? { agentProfile: invocation.profile } : {}),
-          ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
-          ...(invocation.project ? { project: invocation.project } : {}),
-          cwd: initialWorkspace,
-          // Flags describe one run; only a profile-driven session writes model changes back to it.
-          persistModelChanges:
-            !invocation.project && (launch?.configuration !== undefined || shouldPersistModelChanges(args)),
-          config,
-          mcpPaths: initialMcp.paths,
-          mcpStrictPaths: initialMcp.strictPaths,
-          ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
-          requestSetup,
-          ...(conversation ? { conversation } : {}),
-        })
+        const chat = await createInteractiveChat(
+          {
+            agentOptions: invocation.options,
+            ...(invocation.profile ? { agentProfile: invocation.profile } : {}),
+            ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
+            ...(invocation.project ? { project: invocation.project } : {}),
+            cwd: initialWorkspace,
+            // Flags describe one run; only a profile-driven session writes model changes back to it.
+            persistModelChanges:
+              !invocation.project && (launch?.configuration !== undefined || shouldPersistModelChanges(args)),
+            config,
+            mcpPaths: initialMcp.paths,
+            mcpStrictPaths: initialMcp.strictPaths,
+            ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
+            requestSetup,
+          },
+          conversations,
+          launch?.conversationId
+        )
         // One anonymous ping per TUI launch, built-in profile only: authored agents and non-TUI modes send nothing.
         if (invocation.profile && !pinged && !signal.aborted && telemetryEnabled(config.snapshot().settings)) {
           pinged = true

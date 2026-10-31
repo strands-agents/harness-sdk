@@ -4,6 +4,7 @@ import type { BackgroundAgentActivity } from '../background/activity.js'
 import type { LoadedMcp } from '../mcp.js'
 import type { PeerMessage } from '../messaging.js'
 import type { ChatSessionRuntime } from '../session/sessions.js'
+import type { ResumeSession } from '../session/resume.js'
 import type { ChatSkillsRuntime } from '../skills.js'
 import type { StreamPresentationOptions } from '../stream-presentation.js'
 import type { VoiceSessionSnapshot } from '../voice/session.js'
@@ -214,6 +215,8 @@ export interface ChatConversation {
   snapshot: Snapshot
   completedTurns: readonly ChatTurn[]
   model: string
+  workspace: string
+  selection?: Pick<ChatForkState, 'model' | 'thinking'>
   session?: {
     sessionId: string
     sessionDirectory: string
@@ -225,6 +228,16 @@ export interface ChatConversation {
     configured: Pick<ChatForkState, 'model' | 'thinking'>
     selected: Pick<ChatForkState, 'model' | 'thinking'>
   }
+}
+
+export interface ChatConversations {
+  activeId: string
+  entries: readonly {
+    id: string
+    title: string
+    description: string
+    conversation: ChatConversation
+  }[]
 }
 
 export interface ChatForkState {
@@ -267,11 +280,14 @@ export interface ChatBackend {
   listEfforts?(): readonly ChatEffortOption[]
   setEffort?(effort: string): Promise<string | void>
   streamShell?(command: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
-  queueSteering?(prompt: string): boolean
+  queueSteering?(prompt: string, onConsumed: () => void): boolean
+  drainSteering?(): string[]
+  generateSessionName?(cancelSignal: AbortSignal): Promise<string>
   forkState?(): ChatForkState
   forkStash?(): Promise<Record<string, JSONValue> | undefined>
   captureConversation?(): Promise<Snapshot>
   sourceSelection?(): ChatConversation['sourceSelection']
+  modelSelection?(): ChatConversation['selection']
   watchTasks?(listener: (tasks: readonly ChatTask[]) => void): () => void
   watchPermissions?(listener: (request: ChatPermissionRequest | undefined) => void): () => void
   permissionStatus?(): ChatPermissionStatus | undefined
@@ -291,6 +307,7 @@ export interface ChatBackend {
 }
 
 export type ChatEntry =
+  | { id: string; type: 'user'; text: string }
   | {
       id: string
       type: 'reasoning'
@@ -440,6 +457,7 @@ export interface ChatRuntimeInfo {
   model: string
   effort?: string
   session: string
+  sessionName?: string
   cwd: string
   tools: readonly ChatToolInfo[]
   configuration?: readonly { label: string; value: string }[]
@@ -451,6 +469,8 @@ export interface ChatVoiceStore {
 }
 
 export interface ChatSnapshot {
+  conversationId?: string
+  pendingSteering: readonly string[]
   completedTurns: readonly ChatTurn[]
   activeTurn?: ChatTurn
   queuedPrompts: readonly {
@@ -510,7 +530,8 @@ export interface ChatControllerApi {
   readonly voice?: ChatVoiceStore
   readonly busy: boolean
   readonly hardExitCode: number | undefined
-  captureConversation?(conversationId?: string): Promise<ChatConversation>
+  readonly resumeSession?: ResumeSession | undefined
+  captureConversations?(): Promise<ChatConversations>
   pauseVoiceInput?(): () => void
   showError?(title: string, message: string): void
   toggleVoiceMute?(): boolean
@@ -520,6 +541,7 @@ export interface ChatControllerApi {
   enqueuePeerMessage?(message: PeerMessage): boolean
   steer(input: string): Promise<ChatTurn | undefined>
   steerQueued(id?: string): boolean
+  setSettings?(settings: Partial<ChatSettings>): Promise<boolean>
   updateQueuedPrompt(id: string, prompt: string): boolean
   moveQueuedPrompt(id: string, direction: -1 | 1): boolean
   cancel(): boolean

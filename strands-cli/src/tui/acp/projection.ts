@@ -44,7 +44,8 @@ function documentFormat(mimeType: string | null | undefined, name: string): Docu
   if (byExtension) {
     return byExtension
   }
-  return (mimeType && MIME_DOCUMENT_FORMATS[mimeType.toLowerCase()]) || 'txt'
+  const mime = mimeType?.toLowerCase()
+  return mime && Object.hasOwn(MIME_DOCUMENT_FORMATS, mime) ? MIME_DOCUMENT_FORMATS[mime]! : 'txt'
 }
 
 export async function replaySessionHistory(

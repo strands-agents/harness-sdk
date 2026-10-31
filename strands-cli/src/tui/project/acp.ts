@@ -5,6 +5,7 @@ import type { ImportedAgentProject } from './import.js'
 import { createAcpApp, validateSessionId } from '../acp/server.js'
 import { projectPrompt, replaySessionHistory, sendChatEvent, toAcpStopReason } from '../acp/projection.js'
 import type { CliConfigStore } from '../config.js'
+import { readCliVersion } from '../package-version.js'
 import { sessionAgentDefinitionFromMeta } from '../session/agent-definition.js'
 import { PythonBackend, type PythonOptions } from './python.js'
 
@@ -14,6 +15,8 @@ export async function runPythonAcpServer(
   options: PythonOptions
 ): Promise<void> {
   const sessions = new Map<string, PythonBackend>()
+  const opening = new Set<string>()
+  const shutdown = new AbortController()
   const open = async (
     sessionId: string,
     servers: acp.McpServer[],
@@ -21,21 +24,36 @@ export async function runPythonAcpServer(
     resume: boolean,
     meta?: Record<string, unknown> | null
   ): Promise<PythonBackend> => {
-    if (sessions.has(sessionId)) {
+    shutdown.signal.throwIfAborted()
+    if (sessions.has(sessionId) || opening.has(sessionId)) {
       throw acp.RequestError.invalidParams({ sessionId }, 'This session is already loaded.')
     }
     if (servers.length > 0) {
       throw new Error('ACP MCP servers cannot be added to an authored source agent; declare them in its source.')
     }
-    const backend = await PythonBackend.open(project, config, {
-      ...options,
-      overrides: { ...options.overrides, ...sessionAgentDefinitionFromMeta(meta) },
-      sessionId,
-      cwd,
-      resume,
-    })
-    sessions.set(sessionId, backend)
-    return backend
+    opening.add(sessionId)
+    try {
+      const backend = await PythonBackend.open(
+        project,
+        config,
+        {
+          ...options,
+          overrides: { ...options.overrides, ...sessionAgentDefinitionFromMeta(meta) },
+          sessionId,
+          cwd,
+          resume,
+        },
+        shutdown.signal
+      )
+      if (shutdown.signal.aborted) {
+        await backend.dispose()
+        shutdown.signal.throwIfAborted()
+      }
+      sessions.set(sessionId, backend)
+      return backend
+    } finally {
+      opening.delete(sessionId)
+    }
   }
   const app = createAcpApp({
     initialize: (params) => ({
@@ -43,9 +61,9 @@ export async function runPythonAcpServer(
       agentCapabilities: {
         loadSession: true,
         promptCapabilities: { image: true, embeddedContext: true },
-        mcpCapabilities: { http: true, sse: true },
+        mcpCapabilities: {},
       },
-      agentInfo: { name: '@strands-agents/cli', title: 'Strands harness', version: '0.0.1' },
+      agentInfo: { name: '@strands-agents/cli', title: 'Strands harness', version: readCliVersion() },
     }),
     newSession: async (params) => {
       const sessionId = randomUUID()
@@ -54,7 +72,13 @@ export async function runPythonAcpServer(
     },
     loadSession: async (params, client) => {
       const backend = await open(validateSessionId(params.sessionId), params.mcpServers, params.cwd, true, params._meta)
-      await replaySessionHistory({ messages: backend.messages }, params.sessionId, client)
+      try {
+        await replaySessionHistory({ messages: backend.messages }, params.sessionId, client)
+      } catch (error) {
+        sessions.delete(params.sessionId)
+        await backend.dispose()
+        throw error
+      }
       return {}
     },
     prompt: async (params, client) => {
@@ -98,6 +122,8 @@ export async function runPythonAcpServer(
   try {
     await connection.closed
   } finally {
+    shutdown.abort(new Error('ACP service is closed'))
     await Promise.allSettled([...sessions.values()].map((backend) => backend.dispose()))
+    sessions.clear()
   }
 }

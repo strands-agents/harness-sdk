@@ -31,7 +31,8 @@ describe('runtime metadata terminal safety', () => {
         sessionId: 'active\u0007',
         sessionDirectory: '/tmp/sessions\u001b[2J',
       },
-      '/tmp/sessions\u001b[2J'
+      '/tmp/sessions\u001b[2J',
+      { workspace: '/tmp' }
     )
     const skills = new FileSkillsRuntime([skillDirectory], () => agent)
 

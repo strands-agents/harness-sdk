@@ -10,6 +10,7 @@ import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
 import { restoreSessionAgentDefinition } from '../tui/session/agent-definition.js'
+import { withWorkspaceSessionDirectory } from '../tui/session/sessions.js'
 import { importAgentProject, type ImportedAgentProject } from '../tui/project/import.js'
 import type { AgentFactory } from '../tui/project/typescript.js'
 import { requireBedrockRegion } from '../tui/provider/aws-config.js'
@@ -62,7 +63,7 @@ export async function invocationAgentForRun(
   config.applyProviderEnvironment()
   requireBedrockRegion(profile.model)
   const options = {
-    ...(await harnessAgentOptionsFromConfig(profile, baseDir)),
+    ...withWorkspaceSessionDirectory(await harnessAgentOptionsFromConfig(profile, baseDir), profile, cwd),
     printer: false,
   }
   return {

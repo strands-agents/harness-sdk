@@ -1,7 +1,7 @@
 import type { AgentStreamEvent, Tool, ToolContext, ToolResultContent, ToolStreamGenerator } from '@strands-agents/sdk'
 
 import type { BackgroundAgentInbox } from './inbox.js'
-import type { ChatEntry } from '../chat/types.js'
+import type { ChatEntry, ChatTask } from '../chat/types.js'
 import { sanitizeTerminalText, sanitizeTerminalValue } from '../terminal/sanitize.js'
 import { isRecord } from '../values.js'
 
@@ -107,6 +107,23 @@ export class BackgroundAgentActivityStore {
     return activity ? cloneActivity(activity) : undefined
   }
 
+  retainTasks(tasks: readonly ChatTask[]): void {
+    const tools = new Set(tasks.flatMap((task) => (task.toolUseId ? [task.toolUseId] : [])))
+    for (const [toolUseId, activity] of this._activities) {
+      // A subagent can start before its first task update reaches the CLI.
+      if (!tools.has(toolUseId) && activity.status !== 'working') {
+        this._activities.delete(toolUseId)
+      }
+    }
+    for (const [toolUseId, taskId] of this._toolTasks) {
+      if (!tools.has(toolUseId)) {
+        this._toolTasks.delete(toolUseId)
+        this._taskTools.delete(taskId)
+        this._notifyTask(taskId)
+      }
+    }
+  }
+
   subscribe(taskId: string, listener: (activity: BackgroundAgentActivity | undefined) => void): () => void {
     taskId = sanitizeTerminalText(taskId)
     const listeners = this._taskListeners.get(taskId) ?? new Set()
@@ -145,8 +162,12 @@ export class BackgroundAgentActivityStore {
   }
 
   private _notifyTask(taskId: string): void {
+    const listeners = this._taskListeners.get(taskId)
+    if (!listeners?.size) {
+      return
+    }
     const activity = this.get(taskId)
-    for (const listener of this._taskListeners.get(taskId) ?? []) {
+    for (const listener of listeners) {
       listener(activity)
     }
   }

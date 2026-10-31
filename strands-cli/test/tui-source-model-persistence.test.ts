@@ -5,7 +5,7 @@ import type { HarnessAgentOptions } from '@strands-agents/harness'
 import { BedrockModel } from '@strands-agents/sdk'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import type { ChatConversation } from '../src/tui/chat/types.js'
+import type { ChatConversations } from '../src/tui/chat/types.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import * as discovery from '../src/tui/provider/discovery.js'
 import { createInteractiveChat } from '../src/tui/runtime.js'
@@ -33,30 +33,32 @@ afterEach(async () => {
 
 async function open(
   overrides: HarnessAgentOptions = {},
-  conversation?: ChatConversation,
+  conversation?: ChatConversations,
   source = join(root, 'agent.ts')
 ): Promise<ConversationManager> {
-  const chat = await createInteractiveChat({
-    project: { root, entrypoint: source, language: 'typescript' },
-    agentOptions: {
-      model: authoredModel,
-      effort: 'off',
-      builtinTools: [],
-      builtinPlugins: [],
-      session: false,
-      memory: false,
-      caching: false,
-      skills: false,
-      contextManager: false,
-      backgroundTasks: false,
-      ...overrides,
+  const chat = await createInteractiveChat(
+    {
+      project: { root, entrypoint: source, language: 'typescript' },
+      agentOptions: {
+        model: authoredModel,
+        effort: 'off',
+        builtinTools: [],
+        builtinPlugins: [],
+        session: false,
+        memory: false,
+        caching: false,
+        skills: false,
+        contextManager: false,
+        backgroundTasks: false,
+        ...overrides,
+      },
+      config: CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
+      cwd: root,
+      sessionRoot: join(root, 'sessions'),
+      persistModelChanges: false,
     },
-    config: CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
-    cwd: root,
-    sessionCatalogPath: join(root, 'catalog.json'),
-    persistModelChanges: false,
-    ...(conversation ? { conversation } : {}),
-  })
+    conversation
+  )
   chats.push(chat)
   return chat
 }
@@ -70,7 +72,7 @@ it('keeps a UI-selected model and effort only for the same unchanged source defi
     effort: 'High',
   })
 
-  const conversation = await initial.captureConversation()
+  const conversation = await initial.captureConversations()
   const prompt = await open({ systemPrompt: 'Updated instructions' }, conversation)
   const thinking = await open({ effort: 'low' }, conversation)
   const model = await open({ model: 'bedrock/anthropic.claude-opus-4-8' }, conversation)

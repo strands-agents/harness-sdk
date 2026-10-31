@@ -12,6 +12,11 @@ const agent = {
   async initialize() {},
   messages: [],
   model: { getConfig: () => ({}) },
+  memoryManager: {
+    flush() {
+      process.stderr.write('Memory flushed before the active prompt settled.\n')
+    },
+  },
   async *stream() {
     markStarted()
     await new Promise(() => {})

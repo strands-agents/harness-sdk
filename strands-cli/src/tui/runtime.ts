@@ -16,12 +16,13 @@ import { BackgroundAgentInbox } from './background/inbox.js'
 import {
   ChatController,
   type ChatConversation,
+  type ChatConversations,
   type ChatDiffPreview,
   type ChatForkState,
   type ChatSettings,
 } from './chat/controller.js'
 import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
-import { ConversationManager } from './session/conversations.js'
+import { ConversationManager, type InitialConversations } from './session/conversations.js'
 import { CliConfigStore } from './config.js'
 import { loadMcp, type LoadMcpOptions } from './mcp.js'
 import { AgentMessaging, peerMessagePrompt } from './messaging.js'
@@ -62,9 +63,8 @@ interface CreateInteractiveChatOptions {
   mcpDigests?: Readonly<Record<string, string>>
   configPath?: string
   config?: CliConfigStore
-  sessionCatalogPath?: string
+  sessionRoot?: string
   requestSetup?: RequestSetup
-  conversation?: ChatConversation
 }
 
 interface ControllerRequest {
@@ -75,14 +75,19 @@ interface ControllerRequest {
   seed?: ChatForkState
   restoreSeedMessages?: boolean
   settings?: Partial<ChatSettings>
-  conversation?: ChatConversation
+  peerEndpointId?: string
+  selection?: ChatConversation['selection']
 }
 
-export async function createInteractiveChat(options: CreateInteractiveChatOptions = {}): Promise<ConversationManager> {
+export async function createInteractiveChat(
+  options: CreateInteractiveChatOptions = {},
+  conversations?: ChatConversations,
+  conversationId = conversations?.activeId
+): Promise<ConversationManager> {
   const initialWorkspace = resolve(options.cwd ?? process.cwd())
   const configuredSessionSettings = sessionSettings(options.agentOptions?.session)
   const initialSessionDirectory = resolve(initialWorkspace, configuredSessionSettings.dir ?? DEFAULT_SESSION_DIR)
-  const sessionCatalog = await loadSessionCatalog(options.sessionCatalogPath)
+  const sessionCatalog = await loadSessionCatalog(options.sessionRoot)
 
   const config = options.config ?? (await CliConfigStore.load(options.configPath))
   const configuredInterventions = await resolveInterventions(options.agentOptions?.interventions)
@@ -111,24 +116,15 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           },
         }
       : undefined
-  const sourceSelection = options.conversation?.sourceSelection
-  const selectedAgentOptions =
-    sourceDefinition &&
-    sourceSelection?.source === sourceDefinition.source &&
-    sourceSelection.configured.model === sourceDefinition.configured.model &&
-    sourceSelection.configured.thinking === sourceDefinition.configured.thinking
-      ? {
-          ...portableAgentOptions,
-          model: sourceSelection.selected.model,
-          effort: profileEffort(sourceSelection.selected.thinking),
-        }
-      : portableAgentOptions
   const agentMessaging = new AgentMessaging()
   const subagentToolsByAgent = new Map<Agent, Tool>()
   const stopObservingSubagents = new Map<Tool, () => void>()
   const agents = new Set<Agent>()
   const controllerContexts = new WeakMap<ChatController, { workspace: string; sessionDirectory: string }>()
   let nextPeerEndpoint = 1
+  for (const entry of conversations?.entries ?? []) {
+    nextPeerEndpoint = Math.max(nextPeerEndpoint, Number(entry.id.slice('agent-'.length)) + 1)
+  }
   let nextBackgroundEndpoint = 1
   let disposed = false
 
@@ -141,6 +137,12 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       stopObservingSubagents.get(subagentTool)?.()
       stopObservingSubagents.delete(subagentTool)
     }
+  }
+
+  const disposeFailedAgent = async (candidate: Agent): Promise<void> => {
+    candidate.cancel()
+    releaseAgent(candidate)
+    await Promise.allSettled([candidate.memoryManager?.flush()])
   }
 
   const buildAgent = async (
@@ -175,22 +177,25 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       backgroundTasks: interactiveBackgroundTasks(agentOptions),
       printer: false,
     }).catch(rethrowWithProviderHint)
-    await initializeAgentDefinition(agent)
-    agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
-    await persistSessionAgentDefinition(agentOptions)
-    if (disposed) {
-      agentMessaging.unbindAgent(agent)
-      throw new Error('Runtime was disposed while building an agent.')
-    }
-    agents.add(agent)
-    const subagentTool = agent.toolRegistry.get('subagent')
-    if (subagentTool) {
-      subagentToolsByAgent.set(agent, subagentTool)
-      if (!stopObservingSubagents.has(subagentTool)) {
-        stopObservingSubagents.set(subagentTool, observeSubagentActivity(subagentTool, backgroundActivity))
+    try {
+      if (disposed) throw new Error('Runtime was disposed while building an agent.')
+      await initializeAgentDefinition(agent)
+      agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
+      await persistSessionAgentDefinition(agentOptions)
+      if (disposed) throw new Error('Runtime was disposed while building an agent.')
+      agents.add(agent)
+      const subagentTool = agent.toolRegistry.get('subagent')
+      if (subagentTool) {
+        subagentToolsByAgent.set(agent, subagentTool)
+        if (!stopObservingSubagents.has(subagentTool)) {
+          stopObservingSubagents.set(subagentTool, observeSubagentActivity(subagentTool, backgroundActivity))
+        }
       }
+      return agent
+    } catch (error) {
+      await disposeFailedAgent(agent)
+      throw error
     }
-    return agent
   }
 
   const disposeShared = async (): Promise<void> => {
@@ -209,8 +214,22 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     subagentToolsByAgent.clear()
   }
 
-  const createController = async (request: ControllerRequest): Promise<ChatController> => {
-    const peerEndpointId = `agent-${nextPeerEndpoint++}`
+  const createController = async (
+    request: ControllerRequest,
+    conversation?: ChatConversation
+  ): Promise<ChatController> => {
+    const peerEndpointId = request.peerEndpointId ?? `agent-${nextPeerEndpoint++}`
+    const sourceSelection = conversation?.sourceSelection
+    const selection =
+      sourceDefinition &&
+      sourceSelection?.source === sourceDefinition.source &&
+      sourceSelection.configured.model === sourceDefinition.configured.model &&
+      sourceSelection.configured.thinking === sourceDefinition.configured.thinking
+        ? sourceSelection.selected
+        : request.selection
+    const selectedAgentOptions = selection
+      ? { ...portableAgentOptions, model: selection.model, effort: profileEffort(selection.thinking) }
+      : portableAgentOptions
     const backgroundInbox = new BackgroundAgentInbox()
     const backgroundActivity = new BackgroundAgentActivityStore(backgroundInbox)
     const backgroundEndpointIds = new Map<string, string>()
@@ -242,7 +261,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const sessionId = sessionEnabled
       ? (request.sessionId ?? (request.sessionManager === undefined ? createInteractiveSessionId() : undefined))
       : undefined
-    await registerSessionRoot(sessionCatalog, sessionDirectory, workspace)
+    if (sessionEnabled) await registerSessionRoot(sessionCatalog, sessionDirectory, workspace)
 
     const baseAgentOptions: HarnessAgentOptions = sessionEnabled
       ? withSession(selectedAgentOptions, { id: sessionId, dir: sessionDirectory })
@@ -317,9 +336,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           isLatest: true,
         })
       }
-      if (request.conversation) {
-        agent.loadSnapshot(request.conversation.snapshot)
-        agent.messages = cloneConversation(agent.messages, request.conversation.model === agent.model.modelId)
+      if (conversation) {
+        agent.loadSnapshot(conversation.snapshot)
+        agent.messages = cloneConversation(agent.messages, conversation.model === agent.model.modelId)
         await agent.sessionManager?.saveSnapshot({ target: agent, isLatest: true })
       }
 
@@ -330,9 +349,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         discoverProviderModels,
         discoverContextWindow,
         thinking: controllerOptions.effort,
-        ...(sessionId ? { sessionId } : {}),
+        ...(sessionId ? { sessionId: agent.sessionManager?.sessionId ?? sessionId } : {}),
         sessionDir: sessionDirectory,
-        newSessionId: createInteractiveSessionId,
+        ...(sessionEnabled && request.sessionManager === undefined ? { newSessionId: createInteractiveSessionId } : {}),
         onModelChange: async (change): Promise<void> => {
           exportProfile = {
             ...exportProfile,
@@ -345,8 +364,14 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
           }
         },
         restartAgent: async (restartRequest, previousAgent): Promise<Agent> => {
+          if (!restartRequest.preserveConversation && request.sessionManager !== undefined) {
+            throw new Error(
+              'The custom session manager owns this session. Start a new session in the agent configuration.'
+            )
+          }
           let nextAgent: Agent | undefined
           try {
+            await previousAgent.memoryManager?.flush()
             const overrides: Partial<HarnessAgentOptions> = {
               model: restartRequest.model,
               effort: profileEffort(restartRequest.thinking),
@@ -371,7 +396,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
             }
           } catch (error) {
             if (nextAgent) {
-              releaseAgent(nextAgent)
+              await disposeFailedAgent(nextAgent)
             }
             throw error
           }
@@ -383,6 +408,15 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
 
       const backend = new StrandsChatBackend(runtime, {
         ...(sourceDefinition ? { sourceDefinition } : {}),
+        sessionIdentity: (): ChatConversation['session'] =>
+          sessionEnabled && request.sessionManager === undefined && runtime.sessionId
+            ? {
+                sessionId: runtime.sessionId,
+                sessionDirectory: runtime.sessionDirectory,
+                workspace,
+                configured: { sessionId: configuredSessionId ?? null, sessionDir: initialSessionDirectory },
+              }
+            : undefined,
         contextWindow: (): Promise<number | undefined> => runtime.contextWindow(),
         taskActivity: backgroundActivity,
         permissions: { broker: permissionBroker, policy: cedarPermissions },
@@ -397,13 +431,16 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       const sessions = new FileSessionRuntime(runtime, sessionDirectory, {
         ...(sessionCatalog ? { catalog: sessionCatalog } : {}),
         workspace,
+        currentSessionResumable: sessionEnabled && request.sessionManager === undefined,
       })
+      const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
       const skills = new FileSkillsRuntime(skillPaths, () => runtime.agent)
       const skillNames = (await skills.list()).map((skill) => skill.name)
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
-          session: sessionId ?? (request.sessionManager !== undefined ? 'managed' : 'in-memory'),
+          session: sessionName ?? runtime.sessionId ?? (request.sessionManager !== undefined ? 'managed' : 'in-memory'),
+          ...(sessionName ? { sessionName } : {}),
           cwd: workspace,
         },
         settings: { ...configSnapshot.settings, ...request.settings },
@@ -413,7 +450,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         mcp,
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         initialMessages: agent.messages,
-        ...(request.conversation ? { initialTurns: request.conversation.completedTurns } : {}),
+        ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
         setSettings: (settings): Promise<void> => config.setSettings(settings),
         ...(options.project ? { project: options.project } : {}),
         exportAgentProject: (language, destination): Promise<string | undefined> => {
@@ -488,7 +525,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     } catch (error) {
       permissionBroker.dispose()
       if (agent) {
-        releaseAgent(agent)
+        await disposeFailedAgent(agent)
       }
       backgroundInbox.dispose()
       await mcp.dispose()
@@ -496,48 +533,89 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     }
   }
 
+  const entries: InitialConversations['entries'][number][] = []
   try {
-    const primary = await createController({
-      workspace: initialWorkspace,
-      sessionDirectory: initialSessionDirectory,
-      ...(configuredSessionId ? { sessionId: configuredSessionId } : {}),
-      ...(configuredSessionManager !== undefined ? { sessionManager: configuredSessionManager } : {}),
-      ...(options.conversation ? { conversation: options.conversation } : {}),
-    })
-    return new ConversationManager(primary, {
-      fork: async (source): Promise<ChatController> => {
-        const seed = source.backend.forkState?.()
-        const context = controllerContexts.get(source)
-        if (!seed || !context) {
-          throw new Error('Only Strands-backed conversations can be forked.')
-        }
-        const stash = await source.backend.forkStash?.()
-        return createController({
-          workspace: context.workspace,
-          sessionDirectory: context.sessionDirectory,
-          seed: { ...seed, ...(stash && { stash }) },
-          settings: source.getSnapshot().settings,
-        })
-      },
-      resume: async (source, target: SessionTarget): Promise<ChatController> => {
-        const seed = source.backend.forkState?.()
-        if (!seed) {
-          throw new Error('Only Strands-backed conversations can open saved sessions.')
-        }
-        return createController({
-          workspace: target.workspace,
-          sessionDirectory: target.sessionDirectory,
-          sessionId: target.sessionId,
-          seed,
-          restoreSeedMessages: false,
-          settings: source.getSnapshot().settings,
-        })
-      },
-      dispose: disposeShared,
-      agentMessaging,
-      voice: new PythonVoiceSession({ cwd: initialWorkspace }),
-    })
+    if (conversations) {
+      for (const entry of conversations.entries) {
+        const session = entry.conversation.session
+        const preserveSession =
+          session &&
+          (entry.id !== conversationId ||
+            (session.configured.sessionId === (configuredSessionId ?? null) &&
+              session.configured.sessionDir === initialSessionDirectory))
+        const controller = await createController(
+          {
+            peerEndpointId: entry.id,
+            workspace: entry.conversation.workspace,
+            sessionDirectory: preserveSession ? session.sessionDirectory : initialSessionDirectory,
+            ...(preserveSession
+              ? { sessionId: session.sessionId }
+              : configuredSessionId
+                ? { sessionId: configuredSessionId }
+                : {}),
+            ...(entry.id === 'agent-1' && configuredSessionManager !== undefined
+              ? { sessionManager: configuredSessionManager }
+              : {}),
+            ...(!options.project && entry.id !== conversationId && entry.conversation.selection
+              ? { selection: entry.conversation.selection }
+              : {}),
+          },
+          entry.conversation
+        )
+        entries.push({ id: entry.id, title: entry.title, description: entry.description, controller })
+      }
+    } else {
+      const primary = await createController({
+        workspace: initialWorkspace,
+        sessionDirectory: initialSessionDirectory,
+        ...(configuredSessionId ? { sessionId: configuredSessionId } : {}),
+        ...(configuredSessionManager !== undefined ? { sessionManager: configuredSessionManager } : {}),
+      })
+      entries.push({
+        id: 'agent-1',
+        title: primary.backend.name,
+        description: primary.backend.info?.().description || 'Primary agent',
+        controller: primary,
+      })
+    }
+    return new ConversationManager(
+      { activeId: conversations?.activeId ?? 'agent-1', entries },
+      {
+        fork: async (source): Promise<ChatController> => {
+          const seed = source.backend.forkState?.()
+          const context = controllerContexts.get(source)
+          if (!seed || !context) {
+            throw new Error('Only Strands-backed conversations can be forked.')
+          }
+          const stash = await source.backend.forkStash?.()
+          return createController({
+            workspace: context.workspace,
+            sessionDirectory: context.sessionDirectory,
+            seed: { ...seed, ...(stash && { stash }) },
+            settings: source.getSnapshot().settings,
+          })
+        },
+        resume: async (source, target: SessionTarget): Promise<ChatController> => {
+          const seed = source.backend.forkState?.()
+          if (!seed) {
+            throw new Error('Only Strands-backed conversations can open saved sessions.')
+          }
+          return createController({
+            workspace: target.workspace,
+            sessionDirectory: target.sessionDirectory,
+            sessionId: target.sessionId,
+            seed,
+            restoreSeedMessages: false,
+            settings: source.getSnapshot().settings,
+          })
+        },
+        dispose: disposeShared,
+        agentMessaging,
+        voice: new PythonVoiceSession({ cwd: initialWorkspace }),
+      }
+    )
   } catch (error) {
+    await Promise.allSettled(entries.map(({ controller }) => controller.dispose()))
     await disposeShared()
     throw error
   }

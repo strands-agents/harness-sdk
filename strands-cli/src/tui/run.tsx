@@ -3,11 +3,12 @@ import { render, useInput, type Instance } from 'ink'
 
 import { ChatRoot, type ChatLaunch, type SetupBridge } from './view/chat-root.js'
 import type { McpTrustRequest } from './view/mcp-trust-prompt.js'
-import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
+import type { ChatControllerApi, ChatConversations } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
 import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
+import { sessionResumeCommand } from './session/resume.js'
 
 interface RunInkChatOptions {
   firstRequest?: string
@@ -24,7 +25,7 @@ interface RunInkChatOptions {
 type ChatControllerFactory = (
   signal: AbortSignal,
   requestSetup: RequestSetup,
-  conversation: ChatConversation | undefined,
+  conversation: ChatConversations | undefined,
   launch: ChatLaunch | undefined,
   confirmMcp: SetupBridge['confirmMcp']
 ) => Promise<ChatControllerApi>
@@ -39,7 +40,7 @@ function ChatSession({
     (input, key) => {
       if (key.ctrl && input === 'c') onCancelStartup()
     },
-    { isActive: props.trustRequest !== undefined }
+    { isActive: props.trustRequest !== undefined || (!props.controller && !props.setup) }
   )
   return createElement(ChatRoot, props)
 }
@@ -94,7 +95,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       controller = undefined
       instance.rerender(chatRoot())
       replacementTask = (async (): Promise<void> => {
-        const conversation = await previousController.captureConversation?.(launch?.conversationId)
+        const conversation = await previousController.captureConversations?.()
         const replacement = await initializeController(launch, conversation)
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
@@ -133,7 +134,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const startupAbort = new AbortController()
   const initializeController = async (
     launch?: ChatLaunch,
-    conversation?: ChatConversation
+    conversation?: ChatConversations
   ): Promise<ChatControllerApi> => {
     const config = options.config
     const previous = config?.snapshot()
@@ -224,8 +225,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     } else {
       controller = source
     }
-    if (controller || options.setup) renderChat()
-    const setupExit = await setupTask
+    if (controller || controllerFactory || options.setup) renderChat()
+    const setupExit = await Promise.race([setupTask, startupExitTask])
     if (setupExit !== 0) {
       instance?.unmount()
       return setupExit
@@ -258,7 +259,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     }
     startTasks.push(controller.start(options.firstRequest))
     await instance!.waitUntilExit()
-    return controller.getSnapshot().exitCode ?? 0
+    return pendingExitCode ?? controller?.getSnapshot().exitCode ?? 0
   } finally {
     process.off('SIGINT', onSigint)
     process.off('SIGTERM', onSigterm)
@@ -266,6 +267,13 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     instance?.unmount()
     instance?.cleanup()
     leaveTerminalMode()
+
+    const resumeSession = controller?.resumeSession
+    if (resumeSession && controller?.getSnapshot().status === 'closed') {
+      await new Promise<void>((resolve) => {
+        output.write(`\nResume with: ${sessionResumeCommand(resumeSession)}\n`, () => resolve())
+      })
+    }
 
     const hardExitCode = controller?.hardExitCode
     if (hardExitCode !== undefined) {

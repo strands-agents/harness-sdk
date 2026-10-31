@@ -4,6 +4,7 @@ export function snapshot(overrides: Partial<ChatSnapshot> = {}): ChatSnapshot {
   return {
     completedTurns: [],
     queuedPrompts: [],
+    pendingSteering: [],
     notices: [],
     tasks: [],
     context: {},

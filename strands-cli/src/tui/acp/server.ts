@@ -13,8 +13,8 @@ import {
   sessionAgentDefinitionFromMeta,
   AGENT_DEFINITION_META_KEY,
 } from '../session/agent-definition.js'
-import { HARNESS_VERSION } from '../package-version.js'
-import { sessionDir, withSession } from '../session/options.js'
+import { HARNESS_VERSION, readCliVersion } from '../package-version.js'
+import { sessionDir, sessionSettings, withSession } from '../session/options.js'
 import { DEFAULT_SESSION_DIR, hasSavedSession } from '../session/sessions.js'
 import { projectPrompt, replaySessionHistory, sendChatEvent, toAcpStopReason, toAcpUsage } from './projection.js'
 import { latestRootModelUsage, RunUsage } from '../../usage.js'
@@ -37,8 +37,10 @@ export class AcpService {
   private readonly _sharedMcpClients: readonly McpClient[]
   private readonly _sourceAgent: boolean
   private readonly _sessions = new Map<string, AcpSession>()
+  private readonly _openingSessions = new Set<string>()
 
   private _workspace: string | undefined
+  private _disposed = false
 
   constructor(
     agentOptions: HarnessAgentOptions = {},
@@ -58,14 +60,14 @@ export class AcpService {
     return {
       protocolVersion: params.protocolVersion <= acp.PROTOCOL_VERSION ? params.protocolVersion : acp.PROTOCOL_VERSION,
       agentCapabilities: {
-        loadSession: true,
+        loadSession: this._supportsSessionLoading,
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: { http: true, sse: true },
       },
       agentInfo: {
         name: '@strands-agents/cli',
         title: 'Strands harness',
-        version: '0.0.1',
+        version: readCliVersion(),
       },
       _meta: {
         [AGENT_DEFINITION_META_KEY]: true,
@@ -81,19 +83,29 @@ export class AcpService {
   }
 
   async loadSession(params: acp.LoadSessionRequest, client: acp.AgentContext): Promise<acp.LoadSessionResponse> {
+    if (!this._supportsSessionLoading) {
+      throw acp.RequestError.invalidParams(
+        { sessionId: params.sessionId },
+        'This agent does not support loading CLI-managed file sessions.'
+      )
+    }
     this._setWorkspace(params.cwd)
     const sessionId = validateSessionId(params.sessionId)
     const sessionDirectory = resolve(sessionDir(this._agentOptions) ?? DEFAULT_SESSION_DIR)
     if (!(await hasSavedSession(sessionDirectory, sessionId))) {
       throw acp.RequestError.resourceNotFound(sessionId)
     }
-    const session = await this._openSession(sessionId, params.mcpServers, sessionAgentDefinitionFromMeta(params._meta))
+    const session = await this._openSession(
+      sessionId,
+      params.mcpServers,
+      sessionAgentDefinitionFromMeta(params._meta),
+      true
+    )
     try {
       await replaySessionHistory(session.agent, sessionId, client)
     } catch (error) {
       this._sessions.delete(sessionId)
-      session.agent.cancel()
-      await disconnectMcpClients(session.mcpClients)
+      await disposeSession(session)
       throw error
     }
     return {}
@@ -107,12 +119,12 @@ export class AcpService {
     if (session.activePrompt) {
       throw new Error(`Session ${params.sessionId} is already processing a prompt.`)
     }
+    const stream = session.agent.stream(projectPrompt(params.prompt))
     let settlePrompt: () => void
     session.activePrompt = new Promise<void>((resolve) => {
       settlePrompt = resolve
     })
     try {
-      const stream = session.agent.stream(projectPrompt(params.prompt))
       const runUsage = RunUsage.start(session.agent)
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
@@ -140,6 +152,10 @@ export class AcpService {
         stopReason: toAcpStopReason(result.stopReason),
         ...(usage ? { usage } : {}),
       }
+    } catch (error) {
+      const iterator: AsyncIterator<unknown, unknown> = stream
+      await iterator.return?.().catch(() => undefined)
+      throw error
     } finally {
       settlePrompt!()
       delete session.activePrompt
@@ -151,25 +167,27 @@ export class AcpService {
   }
 
   async dispose(): Promise<void> {
-    const sessions = [...this._sessions.values()]
-    for (const session of sessions) {
-      session.agent.cancel()
-    }
-    await Promise.allSettled(sessions.map((session) => settleWithin(session.activePrompt)))
-    await Promise.allSettled(sessions.map((session) => disconnectMcpClients(session.mcpClients)))
+    this._disposed = true
+    await Promise.allSettled([...this._sessions.values()].map(disposeSession))
     this._sessions.clear()
   }
 
   private async _openSession(
     sessionId: string,
     mcpServers: readonly acp.McpServer[],
-    sessionAgentDefinition?: Pick<HarnessAgentOptions, 'name' | 'description' | 'instructions'>
+    sessionAgentDefinition?: Pick<HarnessAgentOptions, 'name' | 'description' | 'instructions'>,
+    resume = false
   ): Promise<AcpSession> {
-    if (this._sessions.has(sessionId)) {
+    this._assertOpen()
+    if (this._sessions.has(sessionId) || this._openingSessions.has(sessionId)) {
       throw acp.RequestError.invalidParams({ sessionId }, `Session ${sessionId} is already loaded.`)
     }
-    const mcpClients = await loadAcpMcpClients(mcpServers)
+    this._openingSessions.add(sessionId)
+    let mcpClients: McpClient[] = []
+    let agent: Agent | undefined
     try {
+      mcpClients = await loadAcpMcpClients(mcpServers)
+      this._assertOpen()
       const baseOptions = withSession(this._agentOptions, { id: sessionId })
       const restoredAgentOptions = this._sourceAgent ? baseOptions : await restoreSessionAgentDefinition(baseOptions)
       const agentOptions = {
@@ -179,17 +197,37 @@ export class AcpService {
         printer: false,
       }
       requireBedrockRegion(agentOptions.model)
-      const agent = await this._buildAgent(agentOptions)
+      agent = await this._buildAgent(agentOptions)
+      this._assertOpen()
+      if (resume && agent.sessionManager?.sessionId !== sessionId) {
+        throw acp.RequestError.resourceNotFound(sessionId)
+      }
       await agent.initialize()
       agent.messages = upgradeDesktopAgentProfileMessages(agent.messages)
       await persistSessionAgentDefinition(agentOptions)
+      this._assertOpen()
       const session = { agent, mcpClients }
       this._sessions.set(sessionId, session)
       return session
     } catch (error) {
-      await disconnectMcpClients(mcpClients)
+      if (agent) {
+        await disposeSession({ agent, mcpClients })
+      } else {
+        await disconnectMcpClients(mcpClients)
+      }
       throw error
+    } finally {
+      this._openingSessions.delete(sessionId)
     }
+  }
+
+  private _assertOpen(): void {
+    if (this._disposed) throw new Error('ACP service is closed.')
+  }
+
+  private get _supportsSessionLoading(): boolean {
+    const session = sessionSettings(this._agentOptions.session)
+    return session.enabled && session.manager === undefined && this._agentOptions.sessionManager === undefined
   }
 
   private _setWorkspace(cwd: string): void {
@@ -285,10 +323,15 @@ async function disconnectMcpClients(clients: readonly McpClient[]): Promise<void
   await Promise.allSettled(clients.map((client) => client.disconnect()))
 }
 
-async function settleWithin(promise: Promise<void> | undefined): Promise<void> {
-  if (!promise) {
-    return
-  }
+async function disposeSession(session: AcpSession): Promise<void> {
+  session.agent.cancel()
+  await settleWithin(Promise.resolve(session.activePrompt).then(() => session.agent.memoryManager?.flush())).catch(
+    () => undefined
+  )
+  await disconnectMcpClients(session.mcpClients)
+}
+
+async function settleWithin(promise: Promise<void>): Promise<void> {
   let timer: NodeJS.Timeout | undefined
   try {
     await Promise.race([

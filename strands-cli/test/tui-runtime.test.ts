@@ -1,7 +1,7 @@
 import { parse, stringify } from 'smol-toml'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   Message,
@@ -52,25 +52,32 @@ import {
 } from '../src/tui/runtime.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { sessionId } from '../src/tui/session/options.js'
+import { workspaceSessionDirectory } from '../src/tui/session/sessions.js'
 import { StrandsChatBackend } from '../src/tui/strands-backend.js'
 import { LiveSteering } from '../src/tui/steering.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../src/tui/provider/discovery.js'
 
-let testSessionCatalogPath = ''
+let testSessionRoot = ''
 
 function createInteractiveChat(
-  options: Parameters<typeof createInteractiveChatRuntime>[0] = {}
+  options: Parameters<typeof createInteractiveChatRuntime>[0] = {},
+  conversations?: Parameters<typeof createInteractiveChatRuntime>[1],
+  conversationId?: string
 ): ReturnType<typeof createInteractiveChatRuntime> {
-  return createInteractiveChatRuntime({
-    ...options,
-    ...(!options.config && !options.configPath ? { config: CliConfigStore.memory() } : {}),
-    sessionCatalogPath: options.sessionCatalogPath ?? testSessionCatalogPath,
-  })
+  return createInteractiveChatRuntime(
+    {
+      ...options,
+      ...(!options.config && !options.configPath ? { config: CliConfigStore.memory() } : {}),
+      sessionRoot: options.sessionRoot ?? testSessionRoot,
+    },
+    conversations,
+    conversationId
+  )
 }
 
 beforeEach(() => {
-  testSessionCatalogPath = join(tmpdir(), `strands-runtime-test-${process.pid}-${randomUUID()}.json`)
+  testSessionRoot = join(tmpdir(), `strands-runtime-test-${process.pid}-${randomUUID()}`, 'sessions')
   mocks.createHarness.mockReset()
   mocks.resolveInterventions.mockReset()
   mocks.resolveInterventions.mockImplementation(async (value) =>
@@ -87,7 +94,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await rm(testSessionCatalogPath, { force: true })
+  await rm(dirname(testSessionRoot), { recursive: true, force: true })
 })
 
 describe('interactiveBackgroundTasks', () => {
@@ -113,6 +120,127 @@ describe('interactiveBackgroundTasks', () => {
 })
 
 describe('interactive runtime lifecycle', () => {
+  it('loads the saved name when starting with an explicit session ID', async () => {
+    const sessionDirectory = join(dirname(testSessionRoot), 'named-sessions')
+    await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
+    await writeFile(
+      join(sessionDirectory, 'saved-one', 'cli-session.json'),
+      JSON.stringify({ version: 1, name: 'Release planning' })
+    )
+    const agent = fakeAgent('old')
+    Object.assign(agent, { sessionManager: { sessionId: 'saved-one' } })
+    mocks.createHarness.mockResolvedValueOnce(agent)
+    const controller = await createInteractiveChat({
+      agentOptions: { model: 'bedrock/old', session: { id: 'Saved.One', dir: sessionDirectory } },
+    })
+    try {
+      expect(controller.getSnapshot().runtime).toMatchObject({
+        session: 'Release planning',
+        sessionName: 'Release planning',
+      })
+      expect(controller.backend.info?.().sessionId).toBe('saved-one')
+      await controller.submit('/rename Shipping')
+      expect(JSON.parse(await readFile(join(sessionDirectory, 'saved-one', 'cli-session.json'), 'utf8'))).toEqual({
+        version: 1,
+        name: 'Shipping',
+      })
+      expect(await readdir(sessionDirectory)).toEqual(['saved-one'])
+      const switchModel = vi.spyOn(controller.backend, 'switchModel')
+      await controller.submit('/model bedrock/old')
+      expect(switchModel).toHaveBeenCalledWith('bedrock/old')
+      expect(controller.getSnapshot().runtime).toMatchObject({ session: 'Shipping', sessionName: 'Shipping' })
+    } finally {
+      await controller.dispose()
+    }
+  })
+
+  it('disposes partial replacement resources without changing the original roster', async () => {
+    const model = 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'
+    const agents = [0, 1, 2].map(() => new Agent({ model: new BedrockModel({ modelId: model }) }))
+    mocks.createHarness
+      .mockResolvedValueOnce(agents[0])
+      .mockResolvedValueOnce(agents[1])
+      .mockResolvedValueOnce(agents[2])
+      .mockRejectedValueOnce(new Error('Second replacement failed'))
+    const originalDispose = vi.fn(async () => {})
+    const replacementDispose = vi.fn(async () => {})
+    mocks.loadMcp
+      .mockResolvedValueOnce({ clients: [], warnings: [], dispose: originalDispose })
+      .mockResolvedValueOnce({ clients: [], warnings: [], dispose: originalDispose })
+      .mockResolvedValue({ clients: [], warnings: [], dispose: replacementDispose })
+    const options = { agentOptions: { model, session: false as const } }
+    const original = await createInteractiveChat(options)
+    try {
+      await original.submit('/fork')
+      const captured = await original.captureConversations()
+      await expect(createInteractiveChat(options, captured)).rejects.toThrow('Second replacement failed')
+      expect(replacementDispose).toHaveBeenCalledTimes(2)
+      expect(originalDispose).not.toHaveBeenCalled()
+      expect(await original.captureConversations()).toMatchObject({
+        activeId: captured.activeId,
+        entries: captured.entries.map(({ id, title }) => ({ id, title })),
+      })
+    } finally {
+      await original.dispose()
+    }
+  })
+
+  it('restores every conversation with stable IDs and applies setup to its initiating chat', async () => {
+    const model = 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'
+    const replacementModel = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
+    const workspace = dirname(testSessionRoot)
+    const agents: Agent[] = []
+    mocks.createHarness.mockImplementation(async (options) => {
+      const agent = new Agent({ model: new BedrockModel({ modelId: options.model.slice('bedrock/'.length) }) })
+      agents.push(agent)
+      return agent
+    })
+    const previous = await createInteractiveChat({
+      cwd: workspace,
+      agentOptions: { model, effort: 'low', session: { dir: testSessionRoot } },
+    })
+    let current: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
+    try {
+      mocks.createHarness.mockRejectedValueOnce(new Error('Fork startup failed'))
+      await previous.submit('/fork')
+      previous.dismissPanel()
+      await previous.submit('/fork')
+      await previous.backend.setEffort?.('high')
+      agents[0]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Primary state' }] }))
+      agents[1]!.messages.push(Message.fromJSON({ role: 'user', content: [{ text: 'Fork state' }] }))
+      agents[0]!.appState.set('owner', 'primary')
+      agents[1]!.appState.set('owner', 'fork')
+      const captured = await previous.captureConversations()
+      expect(captured.activeId).toBe('agent-3')
+      expect(captured.entries.map(({ id }) => id)).toEqual(['agent-1', 'agent-3'])
+      const options = {
+        cwd: workspace,
+        agentOptions: { model: replacementModel, effort: 'low' as const, session: { dir: testSessionRoot } },
+      }
+      current = await createInteractiveChat(options, captured, 'agent-1')
+      const restored = await current.captureConversations()
+      expect(restored.activeId).toBe(captured.activeId)
+      expect(restored.entries.map(({ id, title, description }) => ({ id, title, description }))).toEqual(
+        captured.entries.map(({ id, title, description }) => ({ id, title, description }))
+      )
+      expect(restored.entries.map(({ conversation }) => conversation.session)).toEqual(
+        captured.entries.map(({ conversation }) => conversation.session)
+      )
+      expect(restored.entries.map(({ conversation }) => conversation.selection)).toEqual([
+        { model: replacementModel, thinking: 'low' },
+        { model, thinking: 'high' },
+      ])
+      expect(agents[2]!.messages).toEqual(agents[0]!.messages)
+      expect(agents[3]!.messages).toEqual(agents[1]!.messages)
+      expect(agents[2]!.appState.get('owner')).toBe('primary')
+      expect(agents[3]!.appState.get('owner')).toBe('fork')
+      await current.submit('/fork')
+      expect((await current.captureConversations()).activeId).toBe('agent-4')
+    } finally {
+      await Promise.all([previous.dispose(), current?.dispose()])
+    }
+  })
+
   it('loads authored MCP servers through the CLI runtime', async () => {
     const servers = { authored: { command: 'node', args: ['./server.mjs'] } }
     mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
@@ -381,11 +509,19 @@ describe('interactive runtime lifecycle', () => {
     }
   })
 
-  it('mints a persistent session by default and flushes memory on teardown', async () => {
+  it.each(['close', 'clear', 'restart'])('persists memory through %s and repeated disposal', async (operation) => {
     const flush = vi.fn(async () => {})
+    const nextFlush = vi.fn(async () => {})
     mocks.createHarness.mockResolvedValueOnce(fakeAgent('old', 'agent-old', { flush }))
-    const controller = await createInteractiveChat()
+    mocks.createHarness.mockImplementationOnce(async () => {
+      expect(flush).toHaveBeenCalledOnce()
+      return fakeAgent('old', 'agent-next', { flush: nextFlush })
+    })
+    const controller = await createInteractiveChat({ agentOptions: { model: 'bedrock/old' } })
 
+    if (operation === 'clear') await controller.submit('/clear')
+    if (operation === 'restart') await controller.backend.restartModel?.('bedrock/old')
+    await controller.dispose()
     await controller.dispose()
     expect(mocks.createHarness).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -393,16 +529,110 @@ describe('interactive runtime lifecycle', () => {
       })
     )
     expect(flush).toHaveBeenCalledOnce()
+    expect(nextFlush).toHaveBeenCalledTimes(operation === 'close' ? 0 : 1)
   })
 
-  it('keeps the run ephemeral when the session is disabled', async () => {
-    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+  it.each(['construction', 'initialization'])('cleans a fork that finishes %s after disposal', async (stage) => {
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const flush = vi.fn(async () => {})
+    const late = fakeAgent('old', 'late-fork', { flush })
+    const wait = async (): Promise<void> => {
+      started()
+      await gate
+    }
+    if (stage === 'initialization') vi.mocked(late.initialize).mockImplementation(wait)
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old')).mockImplementationOnce(async () => {
+      if (stage === 'construction') await wait()
+      return late
+    })
+    const mcpDispose = vi.fn(async () => {})
+    mocks.loadMcp.mockResolvedValue({ clients: [], warnings: [], dispose: mcpDispose })
     const controller = await createInteractiveChat({ agentOptions: { session: false } })
+    const forking = controller.submit('/fork')
+    try {
+      await ready
+      controller.close()
+      await controller.dispose()
+      release()
+      await forking
+      expect(late.cancel).toHaveBeenCalledOnce()
+      expect(flush).toHaveBeenCalledOnce()
+      expect(mcpDispose).toHaveBeenCalledTimes(2)
+      expect(controller.getSnapshot().status).toBe('closed')
+    } finally {
+      release()
+      await forking
+      await controller.dispose()
+    }
+  })
+
+  it('cleans a constructed agent when initialization fails and preserves the initialization error', async () => {
+    const failure = new Error('Authored initialization failed')
+    const flush = vi.fn().mockRejectedValue(new Error('Memory unavailable'))
+    const agent = fakeAgent('old', 'failed-init', { flush })
+    vi.mocked(agent.initialize).mockRejectedValue(failure)
+    mocks.createHarness.mockResolvedValue(agent)
+    const mcpDispose = vi.fn(async () => {})
+    mocks.loadMcp.mockResolvedValue({ clients: [], warnings: [], dispose: mcpDispose })
+
+    await expect(createInteractiveChat({ agentOptions: { session: false } })).rejects.toBe(failure)
+    expect(agent.cancel).toHaveBeenCalledOnce()
+    expect(flush).toHaveBeenCalledOnce()
+    expect(mcpDispose).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the active agent usable when its memory flush rejects a restart', async () => {
+    const flush = vi.fn().mockRejectedValueOnce(new Error('Memory store unavailable')).mockResolvedValue(undefined)
+    const agent = fakeAgent('old', 'agent-old', { flush })
+    const stream = vi.spyOn(agent, 'stream')
+    mocks.createHarness.mockResolvedValueOnce(agent)
+    const controller = await createInteractiveChat({ agentOptions: { model: 'bedrock/old' } })
 
     try {
-      expect(mocks.createHarness).toHaveBeenCalledWith(expect.objectContaining({ session: false }))
-      expect(mocks.createHarness.mock.calls[0]?.[0].session).toBe(false)
-      expect(controller.getSnapshot().runtime).toMatchObject({ session: 'in-memory' })
+      await expect(controller.backend.restartModel?.('bedrock/old')).rejects.toThrow('Memory store unavailable')
+      expect(mocks.createHarness).toHaveBeenCalledOnce()
+      expect((controller.backend as StrandsChatBackend).agent).toBe(agent)
+      await controller.submit('Continue with the current agent.')
+      expect(stream).toHaveBeenCalledOnce()
+    } finally {
+      await controller.dispose()
+    }
+    expect(flush).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['in-memory', 'managed'])('keeps %s sessions without a CLI file ID through clear', async (label) => {
+    const sessionManager = { sessionId: 'managed-session' } as NonNullable<Agent['sessionManager']>
+    mocks.createHarness.mockImplementation(async () =>
+      Object.assign(fakeAgent('old'), label === 'managed' ? { sessionManager } : {})
+    )
+    const sessionOptions = label === 'managed' ? { sessionManager } : { session: false as const }
+    const controller = await createInteractiveChat({ agentOptions: { model: 'bedrock/old', ...sessionOptions } })
+
+    try {
+      expect(mocks.createHarness.mock.calls[0]?.[0]).toMatchObject(sessionOptions)
+      expect(controller.getSnapshot().runtime).toMatchObject({ session: label })
+      await controller.submit('/clear')
+      const builds = label === 'managed' ? 1 : 2
+      expect(mocks.createHarness).toHaveBeenCalledTimes(builds)
+      expect(mocks.createHarness.mock.calls[builds - 1]?.[0]).toMatchObject(sessionOptions)
+      expect(controller.getSnapshot().runtime).toMatchObject({ session: label })
+      expect(controller.backend.info?.().sessionId).toBeUndefined()
+      expect(controller.resumeSession).toBeUndefined()
+      expect(sessionManager.sessionId).toBe('managed-session')
+      if (label === 'managed') {
+        expect(controller.getSnapshot().panel).toMatchObject({
+          kind: 'error',
+          title: 'clear failed',
+          rows: [{ description: expect.stringContaining('custom session manager owns this session') }],
+        })
+      }
     } finally {
       await controller.dispose()
     }
@@ -503,7 +733,8 @@ describe('interactive runtime lifecycle', () => {
 
   it('does not expose a fork when its initial snapshot cannot be saved', async () => {
     const firstAgent = fakeAgent('old', 'first')
-    const forkAgent = fakeAgent('old', 'fork')
+    const flush = vi.fn(async () => {})
+    const forkAgent = fakeAgent('old', 'fork', { flush })
     const saveSnapshot = vi.fn(async () => Promise.reject(new Error('fork snapshot failed')))
     ;(forkAgent as unknown as { sessionManager: { saveSnapshot: typeof saveSnapshot } }).sessionManager = {
       saveSnapshot,
@@ -520,6 +751,8 @@ describe('interactive runtime lifecycle', () => {
         rows: [{ description: 'fork snapshot failed' }],
       })
       expect((controller.backend as StrandsChatBackend).agent).toBe(firstAgent)
+      expect(forkAgent.cancel).toHaveBeenCalledOnce()
+      expect(flush).toHaveBeenCalledOnce()
     } finally {
       await controller.dispose()
     }
@@ -798,11 +1031,13 @@ describe('interactive runtime lifecycle', () => {
     })
     mocks.createHarness.mockResolvedValueOnce(firstAgent).mockResolvedValueOnce(replacement)
     const previous = await createInteractiveChat({ agentOptions: { model: 'bedrock/old' } })
-    const conversation = await previous.captureConversation()
-    const current = await createInteractiveChat({
-      agentOptions: { name: 'After', model: 'bedrock/new', instructions: 'Updated instructions', builtinTools: [] },
-      conversation,
-    })
+    const conversations = await previous.captureConversations()
+    const current = await createInteractiveChat(
+      {
+        agentOptions: { name: 'After', model: 'bedrock/new', instructions: 'Updated instructions', builtinTools: [] },
+      },
+      conversations
+    )
     try {
       expect(replacement.messages).toEqual(firstAgent.messages)
       expect(replacement.appState.get('notes')).toBe('Blue frog')
@@ -939,8 +1174,12 @@ describe('interactive runtime lifecycle', () => {
     const workspace = await mkdtemp(join(tmpdir(), 'strands-runtime-session-'))
     const relativeSessionDirectory = join('state', 'sessions')
     const sessionDirectory = resolve(workspace, relativeSessionDirectory)
-    const sessionCatalogPath = join(workspace, 'config', 'session-roots.json')
+    const sessionRoot = join(workspace, 'config', 'sessions')
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
+    await writeFile(
+      join(sessionDirectory, 'saved-one', 'cli-session.json'),
+      JSON.stringify({ version: 1, name: 'Release planning' })
+    )
     const firstAgent = fakeAgent('old')
     const resumedAgent = fakeAgent('old')
     const saveResumedSnapshot = vi.fn(async () => {})
@@ -957,7 +1196,7 @@ describe('interactive runtime lifecycle', () => {
         session: { dir: relativeSessionDirectory },
         sessionManager: configuredSessionManager,
       },
-      sessionCatalogPath,
+      sessionRoot,
     })
 
     try {
@@ -975,7 +1214,7 @@ describe('interactive runtime lifecycle', () => {
       await controller.submit('/sessions')
       expect(controller.getSnapshot().panel).toMatchObject({
         kind: 'sessions',
-        rows: [{ label: 'saved-one', value: 'saved-one' }],
+        rows: [{ label: 'Release planning', value: 'saved-one' }],
       })
       await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
 
@@ -990,7 +1229,8 @@ describe('interactive runtime lifecycle', () => {
       expect(saveResumedSnapshot).not.toHaveBeenCalled()
       expect(controller.getSnapshot().runtime).toMatchObject({
         cwd: workspace,
-        session: 'saved-one',
+        session: 'Release planning',
+        sessionName: 'Release planning',
       })
       expect(controller.getSnapshot().context).toEqual({})
     } finally {
@@ -1002,7 +1242,7 @@ describe('interactive runtime lifecycle', () => {
   it('restores context stored with a compatible saved-session transcript', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'strands-runtime-session-context-'))
     const sessionDirectory = resolve(workspace, 'state', 'sessions')
-    const sessionCatalogPath = join(workspace, 'config', 'session-roots.json')
+    const sessionRoot = join(workspace, 'config', 'sessions')
     await mkdir(join(sessionDirectory, 'saved-one'), { recursive: true })
     const firstAgent = fakeAgent('old')
     const resumedAgent = fakeAgent('old')
@@ -1016,7 +1256,7 @@ describe('interactive runtime lifecycle', () => {
         session: { dir: join('state', 'sessions') },
         sessionManager: {} as NonNullable<Agent['sessionManager']>,
       },
-      sessionCatalogPath,
+      sessionRoot,
     })
 
     try {
@@ -1047,23 +1287,14 @@ describe('interactive runtime lifecycle', () => {
     const firstWorkspace = join(directory, 'first')
     const secondWorkspace = join(directory, 'second')
     const explicitMcp = join(directory, '.claude.json')
-    const firstSessions = join(firstWorkspace, '.agent', 'sessions')
-    const secondSessions = join(secondWorkspace, '.agent', 'sessions')
-    const catalogPath = join(directory, 'config', 'session-roots.json')
+    const sessionRoot = join(directory, 'config', 'sessions')
+    const firstSessions = workspaceSessionDirectory(firstWorkspace, sessionRoot)
+    const secondSessions = workspaceSessionDirectory(secondWorkspace, sessionRoot)
+    await mkdir(secondWorkspace, { recursive: true })
     await mkdir(join(secondSessions, 'saved-two'), { recursive: true })
-    await mkdir(join(directory, 'config'), { recursive: true })
     await writeFile(
-      catalogPath,
-      JSON.stringify({
-        version: 1,
-        roots: [
-          {
-            directory: secondSessions,
-            workspace: secondWorkspace,
-            lastSeenAt: '2026-08-15T00:00:00.000Z',
-          },
-        ],
-      })
+      join(secondSessions, 'workspace.json'),
+      JSON.stringify({ version: 1, workspace: secondWorkspace, lastSeenAt: '2026-08-15T00:00:00.000Z' })
     )
     mocks.createHarness
       .mockResolvedValueOnce(fakeAgent('old', 'first-agent'))
@@ -1085,10 +1316,10 @@ describe('interactive runtime lifecycle', () => {
     mocks.loadMcp.mockResolvedValueOnce(firstMcp).mockResolvedValueOnce(secondMcp)
     const controller = await createInteractiveChat({
       cwd: firstWorkspace,
-      agentOptions: { model: 'bedrock/anthropic.claude-old' },
+      agentOptions: { model: 'bedrock/anthropic.claude-old', session: { dir: firstSessions } },
       mcpPaths: [explicitMcp],
       mcpStrictPaths: [explicitMcp],
-      sessionCatalogPath: catalogPath,
+      sessionRoot,
     })
     let disposed = false
 
@@ -1110,12 +1341,12 @@ describe('interactive runtime lifecycle', () => {
       const sandbox = secondOptions.sandbox
       expect(sandbox && sandbox !== false).toBe(true)
       const realSecondWorkspace = await realpath(secondWorkspace)
-      const pwd = sandbox && sandbox !== false ? await sandbox.execute('pwd') : undefined
+      const pwd =
+        sandbox && sandbox !== false
+          ? await sandbox.execute(process.platform === 'win32' ? '(Get-Location).Path' : 'pwd')
+          : undefined
       expect(pwd).toMatchObject({ exitCode: 0 })
-      // Windows sandboxes run MSYS `sh`, which prints its own mount paths instead of the C:\ path.
-      expect(pwd?.stdout.trim().replaceAll(sep, '/')).toContain(
-        `${basename(dirname(realSecondWorkspace))}/${basename(realSecondWorkspace)}`
-      )
+      expect(await realpath(pwd!.stdout.trim())).toBe(realSecondWorkspace)
       expect(mocks.loadMcp).toHaveBeenNthCalledWith(2, {
         backgroundConnect: true,
         cwd: secondWorkspace,
@@ -1134,15 +1365,9 @@ describe('interactive runtime lifecycle', () => {
         completedTurns: [{ prompt: 'keep the first workspace alive' }],
       })
 
-      const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as {
-        roots: Array<{ directory: string; workspace: string }>
-      }
-      expect(catalog.roots).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ directory: firstSessions, workspace: firstWorkspace }),
-          expect.objectContaining({ directory: secondSessions, workspace: secondWorkspace }),
-        ])
-      )
+      await expect(readFile(join(firstSessions, 'workspace.json'), 'utf8').then(JSON.parse)).resolves.toMatchObject({
+        workspace: firstWorkspace,
+      })
 
       await controller.dispose()
       disposed = true

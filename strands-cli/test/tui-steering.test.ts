@@ -1,5 +1,12 @@
-import type { AfterInvocationEvent, AfterModelCallEvent, LocalAgent, Message } from '@strands-agents/sdk'
-import { describe, expect, it } from 'vitest'
+import {
+  Agent,
+  Model,
+  type BeforeModelCallEvent,
+  type LocalAgent,
+  type Message,
+  type ModelStreamEvent,
+} from '@strands-agents/sdk'
+import { describe, expect, it, vi } from 'vitest'
 
 import { LiveSteering } from '../src/tui/steering.js'
 
@@ -9,26 +16,28 @@ describe('LiveSteering', () => {
     const messages: Message[] = []
     const agent = { messages } as unknown as LocalAgent
     const event = {
-      type: 'afterModelCallEvent',
+      type: 'beforeModelCallEvent',
       agent,
-    } as unknown as AfterModelCallEvent
+    } as unknown as BeforeModelCallEvent
     const child = { messages: [] } as unknown as LocalAgent
     const childEvent = {
-      type: 'afterModelCallEvent',
+      type: 'beforeModelCallEvent',
       agent: child,
-    } as unknown as AfterModelCallEvent
+    } as unknown as BeforeModelCallEvent
+    const consumed = vi.fn()
 
-    expect(steering.enqueue(agent, 'focus on the parser')).toBe(true)
+    expect(steering.enqueue(agent, 'focus on the parser', consumed)).toBe(true)
     expect(steering.enqueue(agent, 'and keep the API stable')).toBe(true)
-    expect(steering.afterModelCall(childEvent)).toMatchObject({ type: 'proceed' })
-    const action = steering.afterModelCall(event)
+    expect(steering.beforeModelCall(childEvent)).toMatchObject({ type: 'proceed' })
+    const action = steering.beforeModelCall(event)
 
     expect(action).toMatchObject({ type: 'transform', reason: 'Additional user message' })
     if (action.type !== 'transform') {
       throw new Error('Expected steering to transform the model event.')
     }
+    expect(consumed).not.toHaveBeenCalled()
     action.apply(event)
-    expect(event.retry).toBe(true)
+    expect(consumed).toHaveBeenCalledOnce()
     expect(child.messages).toEqual([])
     expect(messages).toMatchObject([
       {
@@ -38,24 +47,56 @@ describe('LiveSteering', () => {
     ])
   })
 
-  it('resumes the same agent when an update arrives at the final invocation boundary', () => {
+  it('preserves the completed response before continuing with steering', async () => {
     const steering = new LiveSteering()
-    type FinalEvent = Pick<AfterInvocationEvent, 'agent' | 'resume'>
-    let afterInvocation: ((event: FinalEvent) => void) | undefined
-    const agent = {
-      addHook(_event: unknown, callback: (event: FinalEvent) => void) {
-        afterInvocation = callback
-      },
-    } as unknown as LocalAgent
-    steering.observeAgent(agent)
-    steering.enqueue(agent, 'check the final result')
-    const event = {
-      agent,
-      resume: undefined,
+    const requests: string[][] = []
+    const consumed = vi.fn()
+    let agent!: Agent
+
+    class SteeringModel extends Model {
+      private callCount = 0
+
+      getConfig() {
+        return { modelId: 'steering-test', contextWindowLimit: 10_000 }
+      }
+
+      updateConfig(): void {}
+
+      async *stream(messages: readonly Message[]): AsyncIterable<ModelStreamEvent> {
+        requests.push(messages.map(messageText))
+        this.callCount += 1
+        if (this.callCount === 1) {
+          steering.enqueue(agent, 'steering message', consumed)
+        }
+        const response = this.callCount === 1 ? 'first response' : 'steered response'
+        yield { type: 'modelMessageStartEvent', role: 'assistant' }
+        yield { type: 'modelContentBlockStartEvent' }
+        yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: response } }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        yield {
+          type: 'modelMetadataEvent',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          metrics: { latencyMs: 1 },
+        }
+      }
     }
 
-    afterInvocation?.(event)
+    agent = new Agent({ model: new SteeringModel(), interventions: [steering], printer: false })
+    steering.observeAgent(agent)
+    await agent.invoke('message 1')
 
-    expect(event.resume).toBe('check the final result')
+    expect(consumed).toHaveBeenCalledOnce()
+    expect(requests).toEqual([['message 1'], ['message 1', 'first response', 'steering message']])
+    expect(agent.messages.map(messageText)).toEqual([
+      'message 1',
+      'first response',
+      'steering message',
+      'steered response',
+    ])
   })
 })
+
+function messageText(message: Message): string {
+  return message.content.flatMap((block) => (block.type === 'textBlock' ? [block.text] : [])).join('')
+}

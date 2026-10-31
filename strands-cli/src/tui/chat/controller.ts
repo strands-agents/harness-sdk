@@ -35,6 +35,7 @@ import {
 import { agentLaunchCommand } from '../project/import.js'
 import { type ChatSessionRuntime, type SessionTarget } from '../session/sessions.js'
 import { unquote } from '../session/conversation-helpers.js'
+import type { ResumeSession } from '../session/resume.js'
 import type { ChatSkillsRuntime, SkillInfo } from '../skills.js'
 import type { LoadedMcp } from '../mcp.js'
 import { type PeerMessage } from '../messaging.js'
@@ -75,7 +76,8 @@ import {
 
 export * from './types.js'
 
-const EXIT_WORDS = new Set(['exit', 'quit'])
+const EXIT_WORDS = new Set(['exit', 'quit', '/exit'])
+const LIVE_LOCAL_COMMAND_NAMES = new Set(['help', 'settings', 'context', 'model', 'permissions'])
 const MAX_PENDING_PEER_MESSAGES = 32
 const TOOL_OUTPUT_EMIT_INTERVAL_MS = 32
 
@@ -91,6 +93,10 @@ interface PendingUserSubmission {
   resolve: (turn: ChatTurn | undefined) => void
 }
 
+interface PendingSteering {
+  prompt: string
+}
+
 type PendingSubmission = PendingUserSubmission | { kind: 'peer'; id: string; message: PeerMessage }
 
 export class ChatController implements ChatControllerApi {
@@ -104,6 +110,8 @@ export class ChatController implements ChatControllerApi {
   private _sessionCache: SessionList | undefined
   private _sessionRefresh: Promise<SessionList> | undefined
   private _sessionGeneration = 0
+  private _sessionNaming: AbortController | undefined
+  private _sessionRename: Promise<unknown> = Promise.resolve()
   private readonly _skills: ChatSkillsRuntime | undefined
   private readonly _skillNames = new Set<string>()
   private readonly _mcp: LoadedMcp | undefined
@@ -123,6 +131,7 @@ export class ChatController implements ChatControllerApi {
   private _drainingProjector: TurnProjector | undefined
   private _presentationAbort: AbortController | undefined
   private readonly _pendingSubmissions: PendingSubmission[] = []
+  private readonly _pendingSteering: PendingSteering[] = []
   private _pendingSubmissionRun: Promise<void> | undefined
   private _stopWatchingTasks: (() => void) | undefined
   private _stopWatchingPermissions: (() => void) | undefined
@@ -232,10 +241,13 @@ export class ChatController implements ChatControllerApi {
     }
     const session = this._backend.sessionIdentity
     const sourceSelection = this._backend.sourceSelection?.()
+    const selection = this._backend.modelSelection?.() ?? sourceSelection?.selected
     return {
       snapshot: await this._backend.captureConversation(),
       completedTurns: [...this._completedTurns],
       model: this._runtime.model,
+      workspace: this._runtime.cwd,
+      ...(selection ? { selection } : {}),
       ...(session ? { session } : {}),
       ...(sourceSelection ? { sourceSelection } : {}),
     }
@@ -261,6 +273,17 @@ export class ChatController implements ChatControllerApi {
 
   get hardExitCode(): number | undefined {
     return this._hardExitCode
+  }
+
+  get resumeSession(): ResumeSession | undefined {
+    const session = this._sessions?.currentTarget ?? this._backend.sessionIdentity
+    if (!session?.sessionId) return undefined
+    return {
+      sessionId: session.sessionId,
+      sessionDirectory: session.sessionDirectory,
+      workspace: session.workspace,
+      ...(this._project ? { agentProject: this._project.entrypoint } : {}),
+    }
   }
 
   actionableCommandToken(input: string): string | undefined {
@@ -299,7 +322,7 @@ export class ChatController implements ChatControllerApi {
       this.close()
       return undefined
     }
-    if (/^\/help(?:\s|$)/iu.test(prompt) && !this._resourceChanging && this._panel?.kind !== 'permission') {
+    if (isLiveLocalCommand(prompt) && !this._resourceChanging && this._panel?.kind !== 'permission') {
       return this._executeSubmission(prompt)
     }
     if (
@@ -359,10 +382,8 @@ export class ChatController implements ChatControllerApi {
     if (!this.busy) {
       return this._executeSubmission(prompt)
     }
-    if (this._activeProjector && this._backend.queueSteering) {
-      if (this._backend.queueSteering(prompt)) {
-        return undefined
-      }
+    if (this._queueLiveSteering(prompt)) {
+      return undefined
     }
     const pending = this._enqueueSubmission(prompt, true)
     this.cancel()
@@ -381,8 +402,8 @@ export class ChatController implements ChatControllerApi {
     if (pending.kind !== 'user') {
       return false
     }
-    if (!pending.prompt.startsWith('!') && this._activeProjector && this._backend.queueSteering) {
-      if (this._backend.queueSteering(pending.prompt)) {
+    if (!pending.prompt.startsWith('!') && this._activeProjector) {
+      if (this._queueLiveSteering(pending.prompt)) {
         this._pendingSubmissions.splice(index, 1)
         pending.resolve(undefined)
         this._emit()
@@ -556,6 +577,7 @@ export class ChatController implements ChatControllerApi {
       projector.fail(error)
     } finally {
       clearTimeout(toolOutputEmitTimer)
+      this._queueUndeliveredSteering(this._backend.drainSteering?.() ?? [])
       const wasDetachedByCancellation = this._drainingProjector === projector
       if (!wasDetachedByCancellation) {
         this._completedTurns.push(projector.snapshot())
@@ -636,6 +658,7 @@ export class ChatController implements ChatControllerApi {
 
   cancel(): boolean {
     if (this._activeProjector) {
+      const undeliveredSteering = this._backend.drainSteering?.() ?? []
       const projector = this._activeProjector
       projector.markCancelled()
       this._completedTurns.push(projector.snapshot())
@@ -643,6 +666,7 @@ export class ChatController implements ChatControllerApi {
       this._drainingProjector = projector
       this._presentationAbort?.abort()
       this._backend.cancel()
+      this._queueUndeliveredSteering(undeliveredSteering)
       this._emit()
       return true
     }
@@ -659,6 +683,7 @@ export class ChatController implements ChatControllerApi {
       return
     }
     this._closed = true
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._activeProjector !== undefined || this._drainingProjector !== undefined
@@ -667,6 +692,8 @@ export class ChatController implements ChatControllerApi {
       this._hardExitCode = this._exitCode
       this._activeProjector?.markCancelled()
       this._presentationAbort?.abort()
+      this._backend.drainSteering?.()
+      this._pendingSteering.length = 0
       this._backend.cancel()
     }
     this._resolvePendingSubmissions()
@@ -674,9 +701,13 @@ export class ChatController implements ChatControllerApi {
   }
 
   async dispose(): Promise<void> {
+    this._closed = true
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     if (this._activeProjector || this._drainingProjector) {
       this._presentationAbort?.abort()
+      this._backend.drainSteering?.()
+      this._pendingSteering.length = 0
       this._backend.cancel()
     }
     this._resolvePendingSubmissions()
@@ -687,6 +718,16 @@ export class ChatController implements ChatControllerApi {
     this._stopTaskActivity()
     this._listeners.clear()
     await Promise.allSettled([Promise.resolve().then(() => this._backend.dispose?.()), this._mcp?.dispose()])
+  }
+
+  private _finishResourceChange(): void {
+    this._resourceChanging = false
+    if (this._deferredModelRestart) {
+      void this._applyDeferredModelRestart()
+    }
+    this._startBackgroundContinuation()
+    this._startPendingSubmissions()
+    this._emit()
   }
 
   private _enqueueSubmission(prompt: string, priority = false): Promise<ChatTurn | undefined> {
@@ -705,6 +746,51 @@ export class ChatController implements ChatControllerApi {
       this._emit()
       this._startPendingSubmissions()
     })
+  }
+
+  private _queueLiveSteering(prompt: string): boolean {
+    if (!this._activeProjector || !this._backend.queueSteering) {
+      return false
+    }
+    const projector = this._activeProjector
+    let receipt: PendingSteering | undefined
+    let consumed = false
+    const queued = this._backend.queueSteering(prompt, () => {
+      if (consumed) {
+        return
+      }
+      consumed = true
+      projector.appendUserMessage(prompt)
+      if (receipt) {
+        const index = this._pendingSteering.indexOf(receipt)
+        if (index >= 0) {
+          this._pendingSteering.splice(index, 1)
+        }
+      }
+      this._emit()
+    })
+    if (!queued) {
+      return false
+    }
+    if (consumed) {
+      return true
+    }
+    receipt = { prompt }
+    this._pendingSteering.push(receipt)
+    this._emit()
+    return true
+  }
+
+  private _queueUndeliveredSteering(prompts: readonly string[]): void {
+    for (const prompt of prompts) {
+      const index = this._pendingSteering.findIndex((pending) => pending.prompt === prompt)
+      if (index >= 0) {
+        this._pendingSteering.splice(index, 1)
+      }
+    }
+    for (const prompt of [...prompts].reverse()) {
+      void this._enqueueSubmission(prompt, true)
+    }
   }
 
   private _startPendingSubmissions(): void {
@@ -773,6 +859,10 @@ export class ChatController implements ChatControllerApi {
     this._panel = this._panelStack.pop()
     this._emit()
     return true
+  }
+
+  async setSettings(settings: Partial<ChatSettings>): Promise<boolean> {
+    return this._applySettings(settings, 'settings')
   }
 
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
@@ -880,7 +970,7 @@ export class ChatController implements ChatControllerApi {
       this._openError('model change failed', modelId, modelControlErrorMessage(error, 'model'))
       return false
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
   }
 
@@ -907,6 +997,7 @@ export class ChatController implements ChatControllerApi {
     return {
       completedTurns: [...this._completedTurns],
       ...(activeTurn ? { activeTurn } : {}),
+      pendingSteering: this._pendingSteering.map(({ prompt }) => sanitizeTerminalText(prompt)),
       queuedPrompts: this._pendingSubmissions.map((pending) => ({
         id: pending.id,
         prompt: sanitizeTerminalText(pending.kind === 'peer' ? pending.message.body : pending.prompt),
@@ -985,6 +1076,9 @@ export class ChatController implements ChatControllerApi {
           this._openEffortPanel()
         }
         break
+      case 'rename':
+        await this._handleSessionsCommand(`rename${argument ? ` ${argument}` : ''}`)
+        return undefined
       case 'sessions':
         await (argument ? this._handleSessionsCommand(argument) : this._openSessionsPanel())
         break
@@ -1150,7 +1244,7 @@ export class ChatController implements ChatControllerApi {
       this._openError('model switch failed', modelId, modelControlErrorMessage(error, 'model'))
       return false
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
   }
 
@@ -1190,7 +1284,7 @@ export class ChatController implements ChatControllerApi {
       this._openError('effort change failed', effort, modelControlErrorMessage(error, 'effort'))
       return false
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
   }
 
@@ -1266,22 +1360,24 @@ export class ChatController implements ChatControllerApi {
   private async _handleSessionsCommand(argument: string): Promise<void> {
     const rename = /^rename(?:\s+([\s\S]+))?$/i.exec(argument)
     if (!rename) {
-      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename <name>.')
+      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename [name].')
       return
     }
     const name = rename[1] ?? ''
-    if (!name) {
-      this._openError('session rename failed', '/sessions rename', 'Use /sessions rename <name>.')
-      return
-    }
     if (!this._sessions?.renameCurrent || this._backend.protocol !== 'strands') {
       this._openError('session rename unavailable', name, 'The current backend does not expose a file-backed session.')
       return
     }
+    this._sessionNaming?.abort()
+    if (!name) {
+      void this._generateSessionName()
+      return
+    }
     this._resourceChanging = true
     try {
-      const renamed = await this._sessions.renameCurrent(name)
+      const renamed = await this._renameSession(name, this._sessions.current)
       this._runtime.session = renamed.name
+      this._runtime.sessionName = renamed.name
       this._invalidateSessions()
       this._sessionCache = this._sessionCache?.map((session) =>
         session.active ? { ...session, name: renamed.name } : session
@@ -1290,8 +1386,66 @@ export class ChatController implements ChatControllerApi {
     } catch (error) {
       this._openError('session rename failed', name, errorMessage(error))
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
+  }
+
+  private async _generateSessionName(): Promise<void> {
+    if (!this._backend.generateSessionName || !this._sessions?.current) {
+      this._openError('session rename unavailable', '/sessions rename', 'Use /sessions rename <name> on this backend.')
+      return
+    }
+    const sessionId = this._sessions.current
+    const request = new AbortController()
+    this._sessionNaming = request
+    const notice = this._addNotice('running', 'Generating session name')
+    this._emit()
+    try {
+      const name = await this._backend.generateSessionName(request.signal)
+      request.signal.throwIfAborted()
+      const renamed = await this._renameSession(name, sessionId, request.signal)
+      request.signal.throwIfAborted()
+      this._runtime.session = renamed.name
+      this._runtime.sessionName = renamed.name
+      this._invalidateSessions()
+      this._sessionCache = undefined
+      notice.status = 'success'
+      notice.text = `Session renamed: ${renamed.name}`
+      if (this._panel?.kind === 'sessions') {
+        await this._openSessionsPanel()
+      }
+    } catch (error) {
+      notice.status = request.signal.aborted ? 'delivered' : 'error'
+      notice.text = request.signal.aborted
+        ? 'Session naming cancelled'
+        : `Session rename failed: ${errorMessage(error)}`
+    } finally {
+      if (this._sessionNaming === request) {
+        this._sessionNaming = undefined
+      }
+      this._emit()
+    }
+  }
+
+  private _renameSession(
+    name: string,
+    sessionId: string | undefined,
+    signal?: AbortSignal
+  ): Promise<{ sessionId: string; name: string }> {
+    const sessions = this._sessions
+    const renameCurrent = sessions?.renameCurrent?.bind(sessions)
+    if (!sessions || !renameCurrent) {
+      return Promise.reject(new Error('The current backend does not expose a file-backed session.'))
+    }
+    const renamed = this._sessionRename.then(() => {
+      signal?.throwIfAborted()
+      if (sessions.current !== sessionId) {
+        throw new Error('The active session changed before it could be renamed.')
+      }
+      return renameCurrent(name)
+    })
+    this._sessionRename = renamed.catch(() => undefined)
+    return renamed
   }
 
   private async _openSkillsPanel(): Promise<void> {
@@ -1328,21 +1482,20 @@ export class ChatController implements ChatControllerApi {
       return null
     }
     this._resourceChanging = true
-    let skill: SkillInfo | undefined
     try {
-      skill = await this._skills.activate(name)
+      const skill = await this._skills.activate(name)
+      if (!skill) return null
+      this._skillNames.add(skill.name.toLowerCase())
+      this._skillDetails.set(skill.name, skill)
+      // Start this submission before releasing queued work.
+      this._resourceChanging = false
+      return this._runPrompt(argument || `Use the ${skill.name} skill.`)
     } catch (error) {
       this._openError('skill activation failed', name, errorMessage(error))
       return undefined
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
-    if (!skill) {
-      return null
-    }
-    this._skillNames.add(skill.name.toLowerCase())
-    this._skillDetails.set(skill.name, skill)
-    return this._runPrompt(argument || `Use the ${skill.name} skill.`)
   }
 
   private async _compactConversation(): Promise<void> {
@@ -1374,9 +1527,8 @@ export class ChatController implements ChatControllerApi {
     } catch (error) {
       this._openError('compaction failed', 'compact', errorMessage(error))
     } finally {
-      this._resourceChanging = false
       this._composerStatus = undefined
-      this._emit()
+      this._finishResourceChange()
     }
   }
 
@@ -1393,6 +1545,7 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
+    this._sessionNaming?.abort()
     this._resourceChanging = true
     this._openPanel('progress', 'starting fresh conversation', [
       { label: this._backend.name, description: 'Rebuilding through createHarness() without restoring context.' },
@@ -1412,6 +1565,7 @@ export class ChatController implements ChatControllerApi {
       this._stopTaskActivity()
       this._skillDetails.clear()
       this._runtime.session = this._backend.info?.().sessionId ?? 'in-memory'
+      delete this._runtime.sessionName
       this._invalidateSessions()
       this._sessionCache = undefined
       this._refreshRuntime()
@@ -1421,7 +1575,7 @@ export class ChatController implements ChatControllerApi {
     } catch (error) {
       this._openError('clear failed', 'clear', errorMessage(error))
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
   }
 
@@ -1656,7 +1810,7 @@ export class ChatController implements ChatControllerApi {
       this._openError('export failed', language, errorMessage(error))
       return false
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
   }
 
@@ -1698,22 +1852,27 @@ export class ChatController implements ChatControllerApi {
     if (!update) {
       return false
     }
+    return this._applySettings(update, setting.split('=')[0]!)
+  }
+
+  private async _applySettings(update: Partial<ChatSettings>, setting: string): Promise<boolean> {
     this._resourceChanging = true
     try {
       await this._setSettings?.(update)
+      this._settings = globalThis.structuredClone({ ...this._settings, ...update })
+      if (this._panel?.kind === 'settings') {
+        this._panel = {
+          ...this._panel,
+          rows: sanitizeRows(settingsRows(this._settings, this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
+        }
+      }
+      return true
     } catch (error) {
-      this._openError('setting update failed', setting.split('=')[0]!, errorMessage(error))
+      this._openError('setting update failed', setting, errorMessage(error))
       return false
     } finally {
-      this._resourceChanging = false
+      this._finishResourceChange()
     }
-    this._settings = globalThis.structuredClone({ ...this._settings, ...update })
-    this._panel = {
-      ...this._panel,
-      rows: sanitizeRows(settingsRows(this._settings, this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
-    }
-    this._emit()
-    return true
   }
 
   private _openSettingsCategory(value: string, replace = false): boolean {
@@ -1969,7 +2128,14 @@ export class ChatController implements ChatControllerApi {
 
   private async _applyDeferredModelRestart(): Promise<void> {
     const modelId = this._deferredModelRestart
-    if (!modelId || this._closed || this._activeProjector || this._drainingProjector || !this._backend.restartModel) {
+    if (
+      !modelId ||
+      this._closed ||
+      this._activeProjector ||
+      this._drainingProjector ||
+      this._resourceChanging ||
+      !this._backend.restartModel
+    ) {
       return
     }
     this._deferredModelRestart = undefined
@@ -2003,8 +2169,7 @@ export class ChatController implements ChatControllerApi {
         notice.text = modelControlErrorMessage(error, 'model')
       }
     } finally {
-      this._resourceChanging = false
-      this._emit()
+      this._finishResourceChange()
     }
   }
 
@@ -2079,4 +2244,9 @@ export class ChatController implements ChatControllerApi {
   private _openError(title: string, label: string, description: string): void {
     this._openPanel('error', title, [{ label, description, tone: 'danger' }])
   }
+}
+
+function isLiveLocalCommand(prompt: string): boolean {
+  const invocation = parseCommandInvocation(prompt)
+  return invocation?.prefix === '/' && LIVE_LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase())
 }

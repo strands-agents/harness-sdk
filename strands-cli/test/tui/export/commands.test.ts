@@ -72,7 +72,7 @@ async function profileChat(agentProfile = profile): Promise<ChatControllerApi> {
     agentProfile,
     agentOptions: { ...(await harnessAgentOptionsFromConfig(agentProfile, workspace)), backgroundTasks: false },
     cwd: workspace,
-    sessionCatalogPath: join(root, 'catalog.json'),
+    sessionRoot: join(root, 'sessions'),
   })
   controllers.push(controller)
   return controller

@@ -211,7 +211,7 @@ async function applyCompleteProfileInChat(fixture: CompleteProfileFixture): Prom
     buildAgent: testAgent,
     requestSetup,
     cwd: fixture.workspace,
-    sessionCatalogPath: join(fixture.root, 'session-roots.json'),
+    sessionRoot: join(fixture.root, 'sessions'),
   })
   try {
     const agent = (controller.backend as StrandsChatBackend).agent
