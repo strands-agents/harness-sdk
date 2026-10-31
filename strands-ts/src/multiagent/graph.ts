@@ -283,7 +283,6 @@ export class Graph implements MultiAgent {
     // Reuse state from a prior INTERRUPTED run so `graph.invoke(responses)` can
     // resume on the same instance without a SessionManager.
     const state = this._pendingInterruptState ?? new MultiAgentState({ nodeIds: [...this.nodes.keys()] })
-    delete this._pendingInterruptState
     // Rebound on every run: a resumed run reuses the state but may belong to another request.
     state._bindInvocationContext(invocationContext)
 
@@ -329,6 +328,9 @@ export class Graph implements MultiAgent {
           return node
         })
       : ((await this._findResumeTargets(state)) ?? [...this._sources])
+
+    // Consume the paused run only after resume input and targets validate.
+    delete this._pendingInterruptState
 
     // Wall-clock timeout for the whole graph invocation. External cancellation is kept
     // on its own signal so the loop's abort checks below can distinguish the two causes
