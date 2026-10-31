@@ -315,7 +315,6 @@ async def test_stream(litellm_acompletion, api_key, model_id, model, agenerator,
             model=model_id,
             stream=True,
             stream_options={"include_usage": True},
-            tools=[],
         )
     ]
 
@@ -349,7 +348,6 @@ async def test_stream_empty(litellm_acompletion, api_key, model_id, model, agene
         "messages": [],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     litellm_acompletion.assert_called_once_with(**expected_request)
 
@@ -598,7 +596,6 @@ async def test_stream_non_streaming(litellm_acompletion, api_key, model_id, alis
         "messages": [{"role": "user", "content": [{"text": "What is 123981723 + 234982734?", "type": "text"}]}],
         "stream": False,  # Verify that stream=False was passed to litellm
         # stream_options is only sent for streaming requests
-        "tools": [],
     }
     litellm_acompletion.assert_called_once_with(**expected_request)
 
