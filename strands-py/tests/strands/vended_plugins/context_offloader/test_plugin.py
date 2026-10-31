@@ -185,19 +185,19 @@ class TestContextOffloader:
         assert "line 100" not in preview
 
     def test_slice_preview_returns_text_within_budget(self, plugin):
-        assert plugin._slice_preview("a" * 40) == "a" * 40
+        assert plugin._slice_preview("a" * 40, 10) == "a" * 40
 
     def test_slice_preview_splits_budget_60_40(self, plugin):
-        preview = plugin._slice_preview("h" * 100 + "t" * 100)
+        preview = plugin._slice_preview("h" * 100 + "t" * 100, 50)
         assert preview == "h" * 24 + "\n\n[... 160 chars elided ...]\n\n" + "t" * 16
 
     def test_slice_preview_never_longer_than_text(self, storage):
         plugin = ContextOffloader(storage=storage, max_result_tokens=10, preview_tokens=9)
-        assert plugin._slice_preview("a" * 50) == "a" * 50
+        assert plugin._slice_preview("a" * 50, 13) == "a" * 50
 
     def test_slice_preview_zero_budget_is_empty(self, storage):
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=0)
-        assert plugin._slice_preview("a" * 100) == ""
+        assert plugin._slice_preview("a" * 100, 25) == ""
 
     @pytest.mark.asyncio
     async def test_preserves_status_and_tool_use_id(self, plugin, mock_agent):
@@ -1568,3 +1568,59 @@ class TestShouldOffloadCallback:
         await plugin._handle_tool_result(event)
 
         assert "[Offloaded:" in event.result["content"][0]["text"]
+
+
+class TestSlicePreview:
+    def test_slice_preview_scales_with_result_token_ratio(self):
+        """The elision budget is sized by the result's own chars-per-token ratio, not a fixed constant."""
+        # https://github.com/strands-agents/harness-sdk/issues/4914
+        plugin = ContextOffloader(storage=InMemoryStorage(), max_result_tokens=1000, preview_tokens=900)
+        text = "h" * 1616 + "t" * 1616
+
+        preview = plugin._slice_preview(text, 1165)
+
+        # 900 preview tokens at this result's ratio (3,232 chars / 1,165 tokens) budgets 2,496 chars,
+        # split 60/40 head/tail around the elision marker; a fixed 4 chars/token estimate would have
+        # budgeted 3,600 chars and returned the text whole.
+        assert preview == "h" * 1497 + "\n\n[... 736 chars elided ...]\n\n" + "t" * 999
+
+    def test_slice_preview_is_always_strict_truncation(self):
+        """Offloading implies token_count > max_result_tokens > preview_tokens, so the preview elides."""
+        plugin = ContextOffloader(storage=InMemoryStorage(), max_result_tokens=1000, preview_tokens=900)
+        text = "x" * 3232
+
+        for token_count in (1001, 10_000):
+            preview = plugin._slice_preview(text, token_count)
+            assert "chars elided" in preview
+            assert len(preview) < len(text)
+
+    @pytest.mark.asyncio
+    async def test_preview_never_contains_full_offloaded_json(self, mock_agent):
+        """The replacement must not hold the entire offloaded text plus framing."""
+        # https://github.com/strands-agents/harness-sdk/issues/4914
+        storage = InMemoryStorage()
+        plugin = ContextOffloader(
+            storage=storage, max_result_tokens=1000, preview_tokens=900, include_retrieval_tool=False
+        )
+        rows = [{"id": n, "name": f"role-{n}", "active": True} for n in range(50)]
+        result = {"toolUseId": "t1", "status": "success", "content": [{"json": rows}]}
+        event = AfterToolCallEvent(
+            agent=mock_agent,
+            selected_tool=None,
+            tool_use={"toolUseId": "t1", "name": "list_roles", "input": {}},
+            invocation_state={},
+            result=result,
+        )
+        # The model counts this result as 1,165 tokens (over the 1,000 threshold), while the
+        # 3,232-char indented rendering fits a fixed 4 chars/token preview budget of 3,600 chars —
+        # a fixed-ratio preview would embed the whole offloaded text in the replacement.
+        mock_agent.model.count_tokens = AsyncMock(return_value=1165)
+        full_text = json.dumps(rows, indent=2)
+        assert len(full_text) < 900 * 4  # sanity: a fixed-ratio budget would fit the whole text
+
+        await plugin._handle_tool_result(event)
+
+        replacement = event.result["content"][0]["text"]
+        assert "[Offloaded:" in replacement
+        assert full_text not in replacement
+        assert len(replacement) < len(full_text)
