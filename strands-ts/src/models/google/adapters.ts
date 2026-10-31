@@ -24,6 +24,7 @@ import type { GoogleStreamState } from './types.js'
 import { encodeBase64, type ImageBlock, type DocumentBlock, type VideoBlock } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
 import { logger } from '../../logging/logger.js'
+import { countSkipped, logSkippedBlocks, type SkippedBlocks } from '../skipped-blocks.js'
 
 /**
  * Mapping of Gemini finish reasons to SDK stop reasons.
@@ -51,6 +52,7 @@ export const FINISH_REASON_MAP: Partial<Record<GeminiFinishReason, StopReason>> 
  */
 export function formatMessages(messages: Message[]): Content[] {
   const contents: Content[] = []
+  const skipped: SkippedBlocks = new Map()
 
   // Build toolUseId → name mapping for resolving tool result names
   const toolUseIdToName = new Map<string, string>()
@@ -66,7 +68,7 @@ export function formatMessages(messages: Message[]): Content[] {
     const parts: Part[] = []
 
     for (const block of message.content) {
-      parts.push(...formatContentBlock(block, toolUseIdToName))
+      parts.push(...formatContentBlock(block, toolUseIdToName, skipped))
     }
 
     if (parts.length > 0) {
@@ -77,6 +79,7 @@ export function formatMessages(messages: Message[]): Content[] {
     }
   }
 
+  logSkippedBlocks(logger, skipped)
   return contents
 }
 
@@ -88,35 +91,35 @@ export function formatMessages(messages: Message[]): Content[] {
  *
  * @internal
  */
-function formatContentBlock(block: ContentBlock, toolUseIdToName: Map<string, string>): Part[] {
+function formatContentBlock(block: ContentBlock, toolUseIdToName: Map<string, string>, skipped: SkippedBlocks): Part[] {
   switch (block.type) {
     case 'textBlock':
       return [{ text: block.text }]
 
     case 'imageBlock':
-      return formatImageBlock(block)
+      return formatImageBlock(block, skipped)
 
     case 'reasoningBlock':
       return formatReasoningBlock(block)
 
     case 'documentBlock':
-      return formatDocumentBlock(block)
+      return formatDocumentBlock(block, skipped)
 
     case 'videoBlock':
-      return formatVideoBlock(block)
+      return formatVideoBlock(block, skipped)
 
     case 'toolUseBlock':
       return formatToolUseBlock(block)
 
     case 'toolResultBlock':
-      return formatToolResultBlock(block, toolUseIdToName)
+      return formatToolResultBlock(block, toolUseIdToName, skipped)
 
     case 'cachePointBlock':
-      logger.warn('block_type=<cachePointBlock> | cache points not supported by gemini, skipping')
+      countSkipped(skipped, 'block_type=<cachePointBlock> | cache points not supported by gemini, skipping')
       return []
 
     case 'guardContentBlock':
-      logger.warn('block_type=<guardContentBlock> | guard content not supported by gemini, skipping')
+      countSkipped(skipped, 'block_type=<guardContentBlock> | guard content not supported by gemini, skipping')
       return []
 
     default:
@@ -132,7 +135,7 @@ function formatContentBlock(block: ContentBlock, toolUseIdToName: Map<string, st
  *
  * @internal
  */
-function formatImageBlock(block: ImageBlock): Part[] {
+function formatImageBlock(block: ImageBlock, skipped: SkippedBlocks): Part[] {
   const mimeType = toMimeType(block.format) ?? `image/${block.format}`
 
   switch (block.source.type) {
@@ -143,7 +146,7 @@ function formatImageBlock(block: ImageBlock): Part[] {
       return [{ fileData: { fileUri: block.source.url, mimeType } }]
 
     case 'imageSourceS3Location':
-      logger.warn('source_type=<imageSourceS3Location> | s3 sources not supported by gemini, skipping')
+      countSkipped(skipped, 'source_type=<imageSourceS3Location> | s3 sources not supported by gemini, skipping')
       return []
 
     default:
@@ -185,7 +188,7 @@ function formatReasoningBlock(block: ReasoningBlock): Part[] {
  *
  * @internal
  */
-function formatDocumentBlock(block: DocumentBlock): Part[] {
+function formatDocumentBlock(block: DocumentBlock, skipped: SkippedBlocks): Part[] {
   const mimeType = toMimeType(block.format) ?? `application/${block.format}`
 
   switch (block.source.type) {
@@ -200,7 +203,7 @@ function formatDocumentBlock(block: DocumentBlock): Part[] {
       return block.source.content.map((contentBlock) => ({ text: contentBlock.text }))
 
     case 'documentSourceS3Location':
-      logger.warn('source_type=<documentSourceS3Location> | s3 sources not supported by gemini, skipping')
+      countSkipped(skipped, 'source_type=<documentSourceS3Location> | s3 sources not supported by gemini, skipping')
       return []
 
     default:
@@ -216,7 +219,7 @@ function formatDocumentBlock(block: DocumentBlock): Part[] {
  *
  * @internal
  */
-function formatVideoBlock(block: VideoBlock): Part[] {
+function formatVideoBlock(block: VideoBlock, skipped: SkippedBlocks): Part[] {
   const mimeType = toMimeType(block.format) ?? `video/${block.format}`
 
   switch (block.source.type) {
@@ -224,7 +227,7 @@ function formatVideoBlock(block: VideoBlock): Part[] {
       return [{ inlineData: { data: encodeBase64(block.source.bytes), mimeType } }]
 
     case 'videoSourceS3Location':
-      logger.warn('source_type=<videoSourceS3Location> | s3 sources not supported by gemini, skipping')
+      countSkipped(skipped, 'source_type=<videoSourceS3Location> | s3 sources not supported by gemini, skipping')
       return []
 
     default:
@@ -262,7 +265,11 @@ function formatToolUseBlock(block: ToolUseBlock): Part[] {
  *
  * @internal
  */
-function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<string, string>): Part[] {
+function formatToolResultBlock(
+  block: ToolResultBlock,
+  toolUseIdToName: Map<string, string>,
+  skipped: SkippedBlocks
+): Part[] {
   const parts: Part[] = []
   const output: Array<{ text?: string; json?: unknown }> = []
 
@@ -304,7 +311,7 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
             },
           })
         } else {
-          logger.warn('source_type=<%s> | only bytes sources supported in gemini tool results', c.source.type)
+          countSkipped(skipped, `source_type=<${c.source.type}> | only bytes sources supported in gemini tool results`)
         }
         break
       }
@@ -327,12 +334,15 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
             },
           })
         } else {
-          logger.warn('source_type=<%s> | only bytes/text sources supported in gemini tool results', c.source.type)
+          countSkipped(
+            skipped,
+            `source_type=<${c.source.type}> | only bytes/text sources supported in gemini tool results`
+          )
         }
         break
       }
       case 'videoBlock':
-        logger.warn('block_type=<videoBlock> | videos not supported in gemini tool results, skipping')
+        countSkipped(skipped, 'block_type=<videoBlock> | videos not supported in gemini tool results, skipping')
         break
     }
   }

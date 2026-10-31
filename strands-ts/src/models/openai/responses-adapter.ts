@@ -30,6 +30,7 @@ import type { StateStore } from '../../state-store.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
+import { countSkipped, logSkippedBlocks, type SkippedBlocks } from '../skipped-blocks.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
@@ -59,7 +60,8 @@ export function formatResponsesRequest(
   options: StreamOptions | undefined,
   stateful: boolean
 ): ResponseCreateParamsStreaming {
-  const input = formatResponsesMessages(messages)
+  const skipped: SkippedBlocks = new Map()
+  const input = formatResponsesMessages(messages, skipped)
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -128,6 +130,7 @@ export function formatResponsesRequest(
 
   applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
 
+  logSkippedBlocks(logger, skipped)
   return request
 }
 
@@ -139,7 +142,7 @@ export function formatResponsesRequest(
  * - Tool calls → separate `{ type: 'function_call', ... }` items
  * - Tool results → separate `{ type: 'function_call_output', ... }` items
  */
-function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
+function formatResponsesMessages(messages: Message[], skipped: SkippedBlocks): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
@@ -166,7 +169,7 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
         }
 
         case 'documentBlock': {
-          const formatted = formatDocumentInput(block as DocumentBlock)
+          const formatted = formatDocumentInput(block as DocumentBlock, skipped)
           if (formatted) contentItems.push(formatted)
           break
         }
@@ -196,21 +199,23 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
           const result: ResponseInputItem.FunctionCallOutput = {
             type: 'function_call_output',
             call_id: resultBlock.toolUseId,
-            output: formatToolResultOutput(resultBlock),
+            output: formatToolResultOutput(resultBlock, skipped),
           }
           toolResultItems.push(result)
           break
         }
 
         case 'reasoningBlock': {
-          logger.warn(
+          countSkipped(
+            skipped,
             'block_type=<reasoningBlock> | reasoning content is not yet supported in multi-turn conversations with the responses api'
           )
           break
         }
 
         default: {
-          logger.warn(
+          countSkipped(
+            skipped,
             `block_type=<${block.type}> | unsupported content type in responses api message formatting | skipping`
           )
         }
@@ -259,7 +264,10 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
  * newlines) or the content-item array shape when the result carries image or
  * document data.
  */
-function formatToolResultOutput(resultBlock: ToolResultBlock): string | ResponseFunctionCallOutputItem[] {
+function formatToolResultOutput(
+  resultBlock: ToolResultBlock,
+  skipped: SkippedBlocks
+): string | ResponseFunctionCallOutputItem[] {
   const parts: ResponseFunctionCallOutputItem[] = []
   const texts: string[] = []
   let hasMedia = false
@@ -302,14 +310,15 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
             filename: docBlock.name,
           })
         } else {
-          logger.warn(
+          countSkipped(
+            skipped,
             `source_type=<${docBlock.source.type}> | only byte source documents supported in responses api tool results`
           )
         }
         break
       }
       default:
-        logger.warn(`block_type=<${c.type}> | unsupported tool result content type for responses api`)
+        countSkipped(skipped, `block_type=<${c.type}> | unsupported tool result content type for responses api`)
     }
   }
 
@@ -329,7 +338,7 @@ function formatImageInput(imageBlock: ImageBlock): Record<string, unknown> | und
   return { type: 'input_image', image_url: url }
 }
 
-function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> | undefined {
+function formatDocumentInput(docBlock: DocumentBlock, skipped: SkippedBlocks): Record<string, unknown> | undefined {
   if (docBlock.source.type === 'documentSourceBytes') {
     const base64 = encodeBase64(docBlock.source.bytes)
     const mimeType = toMimeType(docBlock.format) || `application/${docBlock.format}`
@@ -339,7 +348,7 @@ function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> |
       filename: docBlock.name,
     }
   }
-  logger.warn(`source_type=<${docBlock.source.type}> | only byte source documents supported in responses api`)
+  countSkipped(skipped, `source_type=<${docBlock.source.type}> | only byte source documents supported in responses api`)
   return undefined
 }
 

@@ -11,7 +11,15 @@ import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  ReasoningBlock,
+  JsonBlock,
+  GuardContentBlock,
+} from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import type { ToolSpec } from '../../tools/types.js'
 
@@ -636,6 +644,32 @@ describe('VercelModel', () => {
         const userMsg = callArgs().prompt[0] as any
         expect(userMsg.role).toBe('user')
         expect(userMsg.content[0]).toEqual({ type: 'text', text: 'Hello' })
+      })
+
+      it('logs one counted skip warning per request across history', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const { collect } = setupCaptureTest()
+        const messages = []
+        for (let turn = 0; turn < 3; turn++) {
+          messages.push(
+            new Message({
+              role: 'user',
+              content: [
+                new TextBlock('look'),
+                new GuardContentBlock({ text: { qualifiers: ['guard_content'], text: 'test' } }),
+              ],
+            })
+          )
+          messages.push(new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }))
+        }
+
+        await collect(messages)
+
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy).toHaveBeenCalledWith(
+          'count=<3> | block_type=<guardContentBlock> | unsupported content type in vercel user message, skipping'
+        )
+        warnSpy.mockRestore()
       })
 
       it('formats image blocks with bytes and URL sources', async () => {
