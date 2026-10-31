@@ -85,3 +85,24 @@ class ExecutionResult:
     stdout: str
     stderr: str
     output_files: list[OutputFile] = field(default_factory=list)
+
+
+@dataclass
+class HttpResult:
+    """Result of an HTTP request inside a sandbox.
+
+    Attributes:
+        status: HTTP status code of the final response.
+        status_text: HTTP reason phrase of the final response (may be empty when
+            the server omits it).
+        resolved_url: Final URL after redirects.
+        headers: Response headers with lowercased keys. Repeated headers (e.g.
+            ``Set-Cookie``) are preserved, joined with a newline.
+        body: Raw response body bytes.
+    """
+
+    status: int
+    status_text: str
+    resolved_url: str
+    headers: dict[str, str]
+    body: bytes
