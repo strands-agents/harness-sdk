@@ -269,6 +269,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       config,
       cwd: workspace,
       configurationPreview: (): ChatDiffPreview | undefined => configuration?.preview(),
+      configurationDenied: (revision): void => {
+        configuration?.discard(revision)
+      },
     })
     const liveSteering: LiveSteering = new LiveSteering((candidate) => {
       return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))

@@ -1688,6 +1688,7 @@ describe('ChatController', () => {
     target.permissionStatus = () => ({
       mode,
       allowedTools: [...allowedTools],
+      deniedTools: [],
       configPath: '/Users/test/.strands/cli/config.json',
     })
     target.setPermissionMode = vi.fn(async (nextMode) => {

@@ -105,6 +105,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
   tool: Tool
   profile(): HarnessAgentConfig
   preview(): ChatDiffPreview
+  discard(expectedRevision: number): boolean
   takePending(): SetupChange | undefined
 } {
   let draft: SetupConfiguration | undefined
@@ -363,6 +364,13 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         serialize(configurationFromStore(options.config)),
         serialize(current())
       )
+    },
+    discard(expectedRevision: number): boolean {
+      if (!draft || expectedRevision !== revision) return false
+      draft = undefined
+      pending = undefined
+      revision++
+      return true
     },
     takePending(): SetupChange | undefined {
       const change = pending

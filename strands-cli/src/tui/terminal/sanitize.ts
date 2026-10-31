@@ -62,11 +62,14 @@ export function sanitizeTerminalValue(value: JSONValue): JSONValue {
     return value.map(sanitizeTerminalValue)
   }
   if (value !== null && typeof value === 'object') {
-    const clone: Record<string, JSONValue> = {}
-    for (const [key, child] of Object.entries(value)) {
-      clone[sanitizeTerminalText(key)] = sanitizeTerminalValue(child)
-    }
-    return clone
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [sanitizeTerminalText(key), sanitizeTerminalValue(child)])
+    )
   }
   return typeof value === 'string' ? sanitizeTerminalText(value) : value
+}
+
+export function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0
+  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
 }

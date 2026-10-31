@@ -13,6 +13,7 @@ import {
   type StreamChunk,
 } from '@strands-agents/sdk'
 
+import { isMissingPathError } from '../paths.js'
 import { terminateProcessTree } from '../terminal/process-tree.js'
 
 const SIGNAL_CODES: Partial<Record<NodeJS.Signals, number>> = {
@@ -34,8 +35,15 @@ export class WorkspaceSandbox extends PosixShellSandbox {
     this.cwd = resolve(cwd)
   }
 
-  override readFile(path: string): Promise<Uint8Array> {
-    return readFile(resolve(this.cwd, path))
+  override async readFile(path: string): Promise<Uint8Array> {
+    try {
+      return await readFile(resolve(this.cwd, path))
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new SandboxPathNotFoundError(path)
+      }
+      throw error
+    }
   }
 
   override async writeFile(path: string, content: Uint8Array): Promise<void> {
@@ -54,12 +62,7 @@ export class WorkspaceSandbox extends PosixShellSandbox {
     try {
       entries = await readdir(fullPath, { withFileTypes: true })
     } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-      ) {
+      if (isMissingPathError(error)) {
         throw new SandboxPathNotFoundError(path)
       }
       throw error

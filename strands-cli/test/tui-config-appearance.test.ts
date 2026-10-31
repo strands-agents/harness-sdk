@@ -43,7 +43,7 @@ describe('appearance persistence', () => {
     })
     const reloaded = await CliConfigStore.load(path)
     expect(reloaded.snapshot().settings).toEqual(config.snapshot().settings)
-    expect(reloaded.snapshot().permissions).toEqual({ mode: 'default', allow: ['read'] })
+    expect(reloaded.snapshot().permissions).toEqual({ mode: 'default', allow: ['read'], deny: [] })
   })
 
   it.each([

@@ -34,7 +34,7 @@ describe('CliConfigStore', () => {
       onboarding: { version: 0 },
       providers: { enabled: ['bedrock'] },
       profile: DEFAULT_HARNESS_AGENT_CONFIG,
-      permissions: { mode: 'default', allow: [] },
+      permissions: { mode: 'default', allow: [], deny: [] },
       settings: {
         transcriptSpacing: 'comfortable',
         animations: true,
@@ -63,19 +63,23 @@ describe('CliConfigStore', () => {
     )
     const config = await CliConfigStore.load(path)
 
-    await Promise.all([config.allowTool('bash'), config.allowTool('edit')])
+    await Promise.all([config.allowTool('bash'), config.allowTool('edit'), config.allowTool('shell(git *)')])
+    await Promise.all([config.denyTool('shell(rm *)'), config.denyTool('web_fetch(*)')])
     await config.removeAllowedTool('write')
+    await config.removeDeniedTool('shell(rm *)')
     await config.setPermissionMode('bypassPermissions')
 
     expect(config.snapshot().permissions).toEqual({
       mode: 'bypassPermissions',
-      allow: ['bash', 'edit'],
+      allow: ['bash', 'edit', 'shell(git *)'],
+      deny: ['web_fetch'],
     })
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
       theme: 'custom',
       permissions: {
         mode: 'bypassPermissions',
-        allow: ['bash', 'edit'],
+        allow: ['bash', 'edit', 'shell(git *)'],
+        deny: ['web_fetch'],
         futureSetting: true,
       },
     })

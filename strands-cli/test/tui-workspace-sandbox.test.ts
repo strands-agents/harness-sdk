@@ -26,6 +26,8 @@ describe('WorkspaceSandbox', () => {
       ])
       await expect(sandbox.listFiles('skill.md')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
       await expect(sandbox.listFiles('missing')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+      await expect(sandbox.readText('missing')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+      await expect(sandbox.readText('skill.md/child')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
 
       // Writes and removes must not go through `sh` either: PowerShell has none, so the
       // PosixShellSandbox default fails with `spawn sh ENOENT` on Windows.

@@ -12,7 +12,8 @@ import {
 import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 
 import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
-import { errorMessage } from './terminal/sanitize.js'
+import { errorMessage, isControlCharacter } from './terminal/sanitize.js'
+import { canonicalPermissionRule } from './permissions/rules.js'
 import {
   applyProviderEnvironmentValues,
   detectEnvironment,
@@ -59,6 +60,7 @@ export const PROVIDER_IDS: readonly ProviderId[] = Object.keys(PROVIDER_LABELS) 
 interface PermissionConfig {
   mode: PermissionMode
   allow: readonly string[]
+  deny: readonly string[]
 }
 
 export interface CliConfigSnapshot {
@@ -149,6 +151,7 @@ export class CliConfigStore {
     const resolvedPermissions = {
       mode: permissions.mode ?? 'default',
       allow: uniqueSorted((permissions.allow ?? []).map(normalizeToolName)),
+      deny: uniqueSorted((permissions.deny ?? []).map(normalizeToolName)),
     }
     const resolvedSettings = { ...DEFAULT_CHAT_SETTINGS, ...settings }
     return new CliConfigStore(
@@ -182,6 +185,7 @@ export class CliConfigStore {
       permissions: {
         mode: this._permissions.mode,
         allow: [...this._permissions.allow],
+        deny: [...this._permissions.deny],
       },
       settings: globalThis.structuredClone(this._settings),
     }
@@ -299,7 +303,7 @@ export class CliConfigStore {
       this._providerEnvironment = providerEnvironment
       this._profile = profile
       this._profileBaseDir = document.profileBaseDir
-      this._permissions = { mode: configuration.permissionMode, allow: allowedTools }
+      this._permissions = { ...this._permissions, mode: configuration.permissionMode, allow: allowedTools }
       this._settings = settings
     })
   }
@@ -321,6 +325,22 @@ export class CliConfigStore {
     return this._updatePermissions((permissions) => ({
       ...permissions,
       allow: permissions.allow.filter((candidate) => candidate !== normalized),
+    }))
+  }
+
+  denyTool(rule: string): Promise<void> {
+    const normalized = normalizeToolName(rule)
+    return this._updatePermissions((permissions) => ({
+      ...permissions,
+      deny: uniqueSorted([...permissions.deny, normalized]),
+    }))
+  }
+
+  removeDeniedTool(rule: string): Promise<void> {
+    const normalized = normalizeToolName(rule)
+    return this._updatePermissions((permissions) => ({
+      ...permissions,
+      deny: permissions.deny.filter((candidate) => candidate !== normalized),
     }))
   }
 
@@ -376,6 +396,7 @@ export class CliConfigStore {
           ...priorPermissions,
           mode: next.mode,
           allow: [...next.allow],
+          deny: [...next.deny],
         },
       }
       if (this._persistent) {
@@ -463,7 +484,7 @@ function parseProfile(value: unknown, path: string): HarnessAgentConfig {
 
 function parsePermissions(value: unknown, path: string): PermissionConfig {
   if (value === undefined) {
-    return { mode: 'default', allow: [] }
+    return { mode: 'default', allow: [], deny: [] }
   }
   if (!isRecord(value)) {
     throw new Error(`Invalid CLI config at ${path}: permissions must be an object`)
@@ -474,12 +495,17 @@ function parsePermissions(value: unknown, path: string): PermissionConfig {
     throw new Error(`Invalid CLI config at ${path}: permissions.mode must be "default" or "bypassPermissions"`)
   }
 
-  const allow = value.allow ?? []
-  if (!Array.isArray(allow) || allow.some((toolName) => typeof toolName !== 'string')) {
-    throw new Error(`Invalid CLI config at ${path}: permissions.allow must be an array of tool names`)
+  const rules = (field: 'allow' | 'deny'): string[] => {
+    const entries = value[field] ?? []
+    if (!Array.isArray(entries) || entries.some((rule) => typeof rule !== 'string')) {
+      throw new Error(`Invalid CLI config at ${path}: permissions.${field} must be an array of permission rules`)
+    }
+    return entries as string[]
   }
+  const allow = rules('allow')
+  const deny = rules('deny')
   try {
-    return { mode, allow: uniqueSorted(allow.map(normalizeToolName)) }
+    return { mode, allow: uniqueSorted(allow.map(normalizeToolName)), deny: uniqueSorted(deny.map(normalizeToolName)) }
   } catch (error) {
     throw new Error(`Invalid CLI config at ${path}: ${errorMessage(error)}`, { cause: error })
   }
@@ -499,9 +525,9 @@ async function writeConfigDocument(path: string, document: ConfigDocument): Prom
 export function normalizeToolName(toolName: string): string {
   const normalized = toolName.trim()
   if (!normalized || normalized !== toolName || [...normalized].some(isControlCharacter)) {
-    throw new Error('permissions.allow entries must be non-empty tool names without surrounding whitespace')
+    throw new Error('permission rules must be non-empty tool names or tool(pattern) without surrounding whitespace')
   }
-  return normalized
+  return canonicalPermissionRule(normalized)
 }
 
 function uniqueProviders(values: readonly unknown[]): ProviderId[] {
@@ -560,11 +586,6 @@ function requiredText(value: unknown, field: string): string {
     throw new Error(`${field} must not be empty`)
   }
   return normalized
-}
-
-function isControlCharacter(character: string): boolean {
-  const codePoint = character.codePointAt(0) ?? 0
-  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
 }
 
 function uniqueSorted(values: readonly string[]): string[] {

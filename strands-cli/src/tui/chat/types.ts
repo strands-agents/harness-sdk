@@ -70,11 +70,18 @@ export interface ChatDiffPreview {
   truncated?: boolean
 }
 
+export interface ChatPermissionScope {
+  rule: string
+  label: string
+}
+
 export interface ChatPermissionRequest {
   id: string
   toolName: string
   input: JSONValue
   options: readonly ChatPermissionOption[]
+  action?: string
+  scopes?: readonly ChatPermissionScope[]
   diff?: ChatDiffPreview
 }
 
@@ -83,6 +90,7 @@ export type ChatPermissionMode = 'default' | 'bypassPermissions'
 export interface ChatPermissionStatus {
   mode: ChatPermissionMode
   allowedTools: readonly string[]
+  deniedTools: readonly string[]
   configPath: string
 }
 
@@ -270,6 +278,7 @@ export interface ChatBackend {
   setPermissionMode?(mode: ChatPermissionMode): Promise<void>
   allowPermission?(toolName: string): Promise<void>
   removeAllowedPermission?(toolName: string): Promise<void>
+  removeDeniedPermission?(rule: string): Promise<void>
   /** Summarizes older conversation context and returns the new context usage, or undefined when nothing changed. */
   compact?(): Promise<ChatContextUsage | undefined>
   clear?(): Promise<void>
@@ -277,7 +286,7 @@ export interface ChatBackend {
   streamBackgroundResults?(): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   getTaskActivity?(taskId: string): BackgroundAgentActivity | undefined
   watchTaskActivity?(taskId: string, listener: (activity: BackgroundAgentActivity | undefined) => void): () => void
-  respondPermission?(requestId: string, optionId?: string): boolean
+  respondPermission?(requestId: string, optionId?: string, rule?: string): boolean
   dispose?(): void | Promise<void>
 }
 

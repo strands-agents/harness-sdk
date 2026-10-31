@@ -208,7 +208,10 @@ describe('TurnProjector', () => {
       type: 'toolStart',
       toolUseId: 'tool-1',
       name: 'read',
-      input: { command: '\u001b]52;c;clipboard\u0007safe' },
+      input: {
+        command: '\u001b]52;c;clipboard\u0007safe',
+        ['__proto__']: { '\u001b[31mkey': ['safe\u0007'] },
+      },
     })
     projector.handle({
       type: 'media',
@@ -222,7 +225,7 @@ describe('TurnProjector', () => {
     })
 
     expect(projector.snapshot().entries).toMatchObject([
-      { type: 'tool', input: { command: 'safe' } },
+      { type: 'tool', input: { command: 'safe', ['__proto__']: { key: ['safe'] } } },
       {
         type: 'media',
         content: {

@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
 
-import type { ChatEvent, ChatRunResult } from '../src/tui/chat/types.js'
+import type { ChatEvent, ChatPermissionRequest, ChatRunResult } from '../src/tui/chat/types.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend, type PythonOptions } from '../src/tui/project/python.js'
 import { exportSourceProject } from '../src/tui/project/export.js'
@@ -201,6 +201,33 @@ agent.name = "Customized"
       const events = await turn(backend)
       expect(requests).toEqual(['status'])
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'toolResult', status: 'success' }))
+    } finally {
+      unwatch()
+    }
+  })
+
+  it('previews Python edits using literal replacement text', async () => {
+    const path = join(root, 'sample.txt')
+    await writeFile(path, 'alpha')
+    const backend = await open(baseSource.replace('"builtin_tools": []', '"builtin_tools": ["edit"]'), {
+      interactive: true,
+    })
+    const requests: ChatPermissionRequest[] = []
+    const unwatch = backend.watchPermissions((request) => {
+      if (!request) return
+      requests.push(request)
+      backend.respondPermission(request.id, 'allow-once')
+    })
+    try {
+      const replacement = "$& $$ $` $'"
+      for await (const event of backend.stream(
+        JSON.stringify({ tool: 'edit', input: { path, old_str: 'alpha', new_str: replacement } })
+      )) {
+        if (event.type === 'toolResult') expect(event.status).toBe('success')
+      }
+      expect(await readFile(path, 'utf8')).toBe(replacement)
+      expect(requests).toHaveLength(1)
+      expect(requests[0]!.diff?.lines).toContainEqual(expect.objectContaining({ kind: 'add', text: replacement }))
     } finally {
       unwatch()
     }

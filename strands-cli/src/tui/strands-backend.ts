@@ -265,8 +265,8 @@ export class StrandsChatBackend implements ChatBackend {
     return this._permissions?.subscribe(listener) ?? ((): void => {})
   }
 
-  respondPermission(requestId: string, optionId?: string): boolean {
-    return this._permissions?.respond(requestId, optionId) ?? false
+  respondPermission(requestId: string, optionId?: string, rule?: string): boolean {
+    return this._permissions?.respond(requestId, optionId, rule) ?? false
   }
 
   permissionStatus(): ChatPermissionStatus | undefined {
@@ -275,6 +275,7 @@ export class StrandsChatBackend implements ChatBackend {
       ? {
           mode: status.permissions.mode,
           allowedTools: [...status.permissions.allow],
+          deniedTools: [...status.permissions.deny],
           configPath: sanitizeTerminalText(status.path),
         }
       : undefined
@@ -299,6 +300,13 @@ export class StrandsChatBackend implements ChatBackend {
       return Promise.reject(new Error('This runtime cannot configure permissions.'))
     }
     return this._permissionPolicy.removeAllowedTool(toolName)
+  }
+
+  removeDeniedPermission(rule: string): Promise<void> {
+    if (!this._permissionPolicy) {
+      return Promise.reject(new Error('This runtime cannot configure permissions.'))
+    }
+    return this._permissionPolicy.removeDeniedTool(rule)
   }
 
   getTaskActivity(taskId: string): BackgroundAgentActivity | undefined {

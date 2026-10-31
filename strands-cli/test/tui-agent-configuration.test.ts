@@ -38,6 +38,25 @@ function configurationTool(config: CliConfigStore, source?: string) {
 }
 
 describe('strands_config tool', () => {
+  it('discards only the matching draft and pending apply', async () => {
+    const config = CliConfigStore.memory()
+    const control = configurationTool(config)
+    expect(control.discard(0)).toBe(false)
+    await control.invoke({ action: 'update', profile: { name: 'John' } })
+    await control.invoke({ action: 'update', profile: { name: 'Jimmy' } })
+    await control.invoke({ action: 'apply', revision: 2 })
+    expect(control.discard(1)).toBe(false)
+    expect(control.profile().name).toBe('Jimmy')
+    expect(control.takePending()?.configuration?.profile.name).toBe('Jimmy')
+    await control.invoke({ action: 'apply', revision: 2 })
+    expect(control.discard(2)).toBe(true)
+    expect(control.takePending()).toBeUndefined()
+    expect(control.profile()).toEqual(config.snapshot().profile)
+    expect(JSON.stringify(control.preview())).not.toContain('Jimmy')
+    expect(JSON.parse(await control.invoke({ action: 'inspect' })).revision).toBe(3)
+    expect(control.discard(3)).toBe(false)
+  })
+
   it('captures every setting for rollback without sharing mutable settings with the store', () => {
     const config = CliConfigStore.memory(
       {},
