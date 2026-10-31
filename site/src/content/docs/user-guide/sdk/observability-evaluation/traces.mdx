@@ -29,13 +29,6 @@ Each trace consists of multiple spans that represent different operations in you
 | - gen_ai.event.end_time: <timestamp>                                                |
 | - gen_ai.user.message: <user query>                                                 |
 | - gen_ai.choice: <agent response>                                                   |
-| - gen_ai.usage.prompt_tokens: <number>                                              |
-| - gen_ai.usage.input_tokens: <number>                                               |
-| - gen_ai.usage.completion_tokens: <number>                                          |
-| - gen_ai.usage.output_tokens: <number>                                              |
-| - gen_ai.usage.total_tokens: <number>                                               |
-| - gen_ai.usage.cache_read.input_tokens: <number>                                    |
-| - gen_ai.usage.cache_creation.input_tokens: <number>                                |
 |                                                                                     |
 |  +-------------------------------------------------------------------------------+  |
 |  | Cycle <cycle-id>                                                              |  |
@@ -200,7 +193,7 @@ response = agent("What can you help me with?")
 
 Strands creates a hierarchical trace structure that mirrors the execution of your agent:
 - **Agent Span**: The top-level span representing the entire agent invocation
-      - Contains overall metrics like total token usage and cycle count
+      - Contains overall metrics like cycle count (for agent-level token totals, sum the token usage across the chat spans)
       - Captures the user prompt and final response
 
 - **Cycle Spans**: Child spans for each event loop cycle
@@ -241,15 +234,12 @@ emits only the semantic-convention names.
 | `gen_ai.request.model` | Model ID used by the agent |
 | `gen_ai.event.start_time` | When agent processing began |
 | `gen_ai.event.end_time` | When agent processing completed |
-| `gen_ai.usage.prompt_tokens` | Total prompt tokens the model processed. For providers that report cache tokens separately (such as Amazon Bedrock and Anthropic), this count includes the cached tokens |
-| `gen_ai.usage.input_tokens` | Same value as `gen_ai.usage.prompt_tokens`, under the semantic-convention name |
-| `gen_ai.usage.completion_tokens` | Total tokens used for completions |
-| `gen_ai.usage.output_tokens` | Same value as `gen_ai.usage.completion_tokens`, under the semantic-convention name |
-| `gen_ai.usage.total_tokens` | Total token usage |
-| `gen_ai.usage.cache_read.input_tokens` | Number of input tokens read from cache (Note: Not all model providers support cache tokens. This defaults to 0 in that case) |
-| `gen_ai.usage.cache_creation.input_tokens` | Number of input tokens written to cache (Note: Not all model providers support cache tokens. This defaults to 0 in that case) |
-| `gen_ai.usage.cache_read_input_tokens` | Deprecated alias for `gen_ai.usage.cache_read.input_tokens`, omitted when `gen_ai_latest_experimental` is set |
-| `gen_ai.usage.cache_write_input_tokens` | Deprecated alias for `gen_ai.usage.cache_creation.input_tokens`, omitted when `gen_ai_latest_experimental` is set |
+
+:::note[Token usage moved to chat spans]
+Token-usage attributes (`gen_ai.usage.*`) are no longer emitted on the agent span. Each model call's
+usage is reported exactly once, on its `chat` (model invoke) span. For an agent-level total, sum the
+token usage across the chat spans in the trace.
+:::
 
 ### Cycle-Level Attributes
 

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 from datetime import date, datetime, timezone
 from unittest import mock
@@ -1061,57 +1060,8 @@ def test_end_agent_span(mock_span):
 
     tracer.end_agent_span(mock_span, mock_response)
 
-    mock_span.set_attributes.assert_called_once_with(
-        {
-            "gen_ai.usage.prompt_tokens": 50,
-            "gen_ai.usage.input_tokens": 50,
-            "gen_ai.usage.completion_tokens": 100,
-            "gen_ai.usage.output_tokens": 100,
-            "gen_ai.usage.total_tokens": 150,
-            "gen_ai.usage.cache_read.input_tokens": 0,
-            "gen_ai.usage.cache_creation.input_tokens": 0,
-            "gen_ai.usage.cache_read_input_tokens": 0,
-            "gen_ai.usage.cache_write_input_tokens": 0,
-        }
-    )
-    mock_span.add_event.assert_any_call(
-        "gen_ai.choice",
-        attributes={"message": "Agent response", "finish_reason": "end_turn"},
-    )
-    mock_span.set_status.assert_called_once_with(StatusCode.OK)
-    mock_span.end.assert_called_once()
-
-
-def test_end_agent_span_with_langfuse_observation_type(mock_span, monkeypatch):
-    """Test ending an agent span with Langfuse observation type to prevent double counting the tokens."""
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://us.cloud.langfuse.com")
-    tracer = Tracer()
-
-    # Mock AgentResult with metrics
-    mock_metrics = mock.MagicMock()
-    mock_metrics.accumulated_usage = {"inputTokens": 50, "outputTokens": 100, "totalTokens": 150}
-
-    mock_response = mock.MagicMock()
-    mock_response.metrics = mock_metrics
-    mock_response.stop_reason = "end_turn"
-    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
-
-    tracer.end_agent_span(mock_span, mock_response)
-
-    mock_span.set_attributes.assert_called_once_with(
-        {
-            "langfuse.observation.type": "span",
-            "gen_ai.usage.prompt_tokens": 50,
-            "gen_ai.usage.input_tokens": 50,
-            "gen_ai.usage.completion_tokens": 100,
-            "gen_ai.usage.output_tokens": 100,
-            "gen_ai.usage.total_tokens": 150,
-            "gen_ai.usage.cache_read.input_tokens": 0,
-            "gen_ai.usage.cache_creation.input_tokens": 0,
-            "gen_ai.usage.cache_read_input_tokens": 0,
-            "gen_ai.usage.cache_write_input_tokens": 0,
-        }
-    )
+    # Token usage is reported once per model call on the chat span, never on the agent span.
+    mock_span.set_attributes.assert_not_called()
     mock_span.add_event.assert_any_call(
         "gen_ai.choice",
         attributes={"message": "Agent response", "finish_reason": "end_turn"},
@@ -1136,18 +1086,8 @@ def test_end_agent_span_latest_conventions(mock_span, monkeypatch):
 
     tracer.end_agent_span(mock_span, mock_response)
 
-    # Opted into the latest conventions: semconv cache names only, deprecated aliases suppressed.
-    mock_span.set_attributes.assert_called_once_with(
-        {
-            "gen_ai.usage.prompt_tokens": 50,
-            "gen_ai.usage.input_tokens": 50,
-            "gen_ai.usage.completion_tokens": 100,
-            "gen_ai.usage.output_tokens": 100,
-            "gen_ai.usage.total_tokens": 150,
-            "gen_ai.usage.cache_read.input_tokens": 0,
-            "gen_ai.usage.cache_creation.input_tokens": 0,
-        }
-    )
+    # Token usage is reported only on the chat span, never on the agent span.
+    mock_span.set_attributes.assert_not_called()
     mock_span.add_event.assert_called_with(
         "gen_ai.client.inference.operation.details",
         attributes={
@@ -1164,57 +1104,6 @@ def test_end_agent_span_latest_conventions(mock_span, monkeypatch):
     )
     mock_span.set_status.assert_called_once_with(StatusCode.OK)
     mock_span.end.assert_called_once()
-
-
-def test_end_agent_span_uses_per_invocation_usage_when_opted_in(mock_span, monkeypatch):
-    """Test that agent span reports per-invocation usage when gen_ai_use_latest_invocation_tokens is set."""
-    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_use_latest_invocation_tokens")
-    tracer = Tracer()
-
-    mock_invocation = mock.MagicMock()
-    mock_invocation.usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150}
-
-    mock_metrics = mock.MagicMock()
-    mock_metrics.accumulated_usage = {"inputTokens": 1000, "outputTokens": 500, "totalTokens": 1500}
-    mock_metrics.latest_agent_invocation = mock_invocation
-
-    mock_response = mock.MagicMock()
-    mock_response.metrics = mock_metrics
-    mock_response.stop_reason = "end_turn"
-    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
-
-    tracer.end_agent_span(mock_span, mock_response)
-
-    call_args = mock_span.set_attributes.call_args[0][0]
-    assert call_args["gen_ai.usage.input_tokens"] == 100
-    assert call_args["gen_ai.usage.output_tokens"] == 50
-    assert call_args["gen_ai.usage.total_tokens"] == 150
-    assert call_args["gen_ai.usage.prompt_tokens"] == 100
-    assert call_args["gen_ai.usage.completion_tokens"] == 50
-
-
-def test_end_agent_span_warns_when_opted_in_but_no_invocations(mock_span, monkeypatch, caplog):
-    """Test warning and zero usage when opted in but no agent invocations exist."""
-    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_use_latest_invocation_tokens")
-    tracer = Tracer()
-
-    mock_metrics = mock.MagicMock()
-    mock_metrics.accumulated_usage = {"inputTokens": 200, "outputTokens": 100, "totalTokens": 300}
-    mock_metrics.latest_agent_invocation = None
-
-    mock_response = mock.MagicMock()
-    mock_response.metrics = mock_metrics
-    mock_response.stop_reason = "end_turn"
-    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
-
-    with caplog.at_level(logging.WARNING):
-        tracer.end_agent_span(mock_span, mock_response)
-
-    assert "latest_agent_invocation is None" in caplog.text
-    call_args = mock_span.set_attributes.call_args[0][0]
-    assert call_args["gen_ai.usage.input_tokens"] == 0
-    assert call_args["gen_ai.usage.output_tokens"] == 0
-    assert call_args["gen_ai.usage.total_tokens"] == 0
 
 
 def test_end_model_invoke_span_with_cache_metrics(mock_span):
@@ -1286,86 +1175,6 @@ def test_end_model_invoke_span_counts_disjoint_cache_tokens(mock_span):
             "gen_ai.usage.cache_write_input_tokens": 3,
             "gen_ai.server.request.duration": 10,
             "gen_ai.server.time_to_first_token": 5,
-        }
-    )
-    mock_span.set_status.assert_called_once_with(StatusCode.OK)
-    mock_span.end.assert_called_once()
-
-
-def test_end_agent_span_with_cache_metrics(mock_span):
-    """Test ending an agent span with cache metrics."""
-    tracer = Tracer()
-
-    # Mock AgentResult with metrics including cache tokens
-    mock_metrics = mock.MagicMock()
-    mock_metrics.accumulated_usage = {
-        "inputTokens": 50,
-        "outputTokens": 100,
-        "totalTokens": 150,
-        "cacheReadInputTokens": 25,
-        "cacheWriteInputTokens": 10,
-    }
-
-    mock_response = mock.MagicMock()
-    mock_response.metrics = mock_metrics
-    mock_response.stop_reason = "end_turn"
-    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
-
-    tracer.end_agent_span(mock_span, mock_response)
-
-    mock_span.set_attributes.assert_called_once_with(
-        {
-            "gen_ai.usage.prompt_tokens": 50,
-            "gen_ai.usage.input_tokens": 50,
-            "gen_ai.usage.completion_tokens": 100,
-            "gen_ai.usage.output_tokens": 100,
-            "gen_ai.usage.total_tokens": 150,
-            "gen_ai.usage.cache_read.input_tokens": 25,
-            "gen_ai.usage.cache_creation.input_tokens": 10,
-            "gen_ai.usage.cache_read_input_tokens": 25,
-            "gen_ai.usage.cache_write_input_tokens": 10,
-        }
-    )
-    mock_span.set_status.assert_called_once_with(StatusCode.OK)
-    mock_span.end.assert_called_once()
-
-
-def test_end_agent_span_counts_disjoint_cache_tokens(mock_span):
-    """Regression for #3546: input_tokens is the total prompt when cache is additional to inputTokens.
-
-    On disjoint providers (Bedrock/Anthropic) inputTokens + outputTokens != totalTokens, so the cache
-    reads/writes are additional and count toward the prompt the model processed. gen_ai.usage.input_tokens
-    (and its prompt_tokens alias) report 85, not the bare inputTokens of 50.
-    """
-    tracer = Tracer()
-
-    mock_metrics = mock.MagicMock()
-    mock_metrics.accumulated_usage = {
-        "inputTokens": 50,
-        "outputTokens": 100,
-        "totalTokens": 185,
-        "cacheReadInputTokens": 25,
-        "cacheWriteInputTokens": 10,
-    }
-
-    mock_response = mock.MagicMock()
-    mock_response.metrics = mock_metrics
-    mock_response.stop_reason = "end_turn"
-    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
-
-    tracer.end_agent_span(mock_span, mock_response)
-
-    mock_span.set_attributes.assert_called_once_with(
-        {
-            "gen_ai.usage.prompt_tokens": 85,
-            "gen_ai.usage.input_tokens": 85,
-            "gen_ai.usage.completion_tokens": 100,
-            "gen_ai.usage.output_tokens": 100,
-            "gen_ai.usage.total_tokens": 185,
-            "gen_ai.usage.cache_read.input_tokens": 25,
-            "gen_ai.usage.cache_creation.input_tokens": 10,
-            "gen_ai.usage.cache_read_input_tokens": 25,
-            "gen_ai.usage.cache_write_input_tokens": 10,
         }
     )
     mock_span.set_status.assert_called_once_with(StatusCode.OK)
