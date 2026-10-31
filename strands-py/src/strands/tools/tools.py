@@ -284,4 +284,7 @@ class PythonAgentTool(AgentTool):
             yield ToolResultEvent(result)
         else:
             result = await asyncio.to_thread(self._tool_func, tool_use, **invocation_state)
+            # A sync wrapper (e.g. a decorator) around an async function returns a coroutine.
+            if inspect.isawaitable(result):
+                result = await result
             yield ToolResultEvent(result)

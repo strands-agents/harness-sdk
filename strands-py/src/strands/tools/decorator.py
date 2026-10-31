@@ -652,6 +652,9 @@ class DecoratedFunctionTool(AgentTool, Generic[P, R]):
             # Other functions, yield only the result
             else:
                 result = await asyncio.to_thread(self._tool_func, **validated_input)  # type: ignore
+                # A sync wrapper (e.g. a decorator) around an async function returns a coroutine.
+                if inspect.isawaitable(result):
+                    result = await result
                 yield self._wrap_tool_result(tool_use_id, result)
 
         except InterruptException as e:
