@@ -824,3 +824,23 @@ def test_supports_media_requires_every_router_candidate_to_support_it():
         ]
     )
     assert _supports_media(mixed) is False
+
+
+# https://github.com/strands-agents/harness-sdk/issues/5556
+@pytest.mark.parametrize("prefix", ["", "global.", "us.", "eu.", "apac.", "au.", "jp."])
+@pytest.mark.parametrize("version", ["4.3", "4.6", "4.7"])
+def test_bedrock_grok_does_not_accept_media_tool_results(prefix, version):
+    model_id = f"{prefix}xai.grok-{version}"
+    model = BedrockModel(model_id=model_id)
+    assert _supports_media(model_id) is False
+    assert _supports_media(f"bedrock/{model_id}") is False
+    assert _supports_media(model) is False
+    assert _supports_media(ModelRouter([BedrockModel(model_id="amazon.nova-pro-v1:0"), model])) is False
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["bedrock-mantle/xai.grok-4.7", "bedrock/amazon.nova-pro-v1:0", "bedrock/xai.future", "bedrock/unknown.future"],
+)
+def test_grok_media_gate_preserves_other_providers_and_unknown_families(model_id):
+    assert _supports_media(model_id) is True

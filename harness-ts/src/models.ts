@@ -518,7 +518,7 @@ export async function resolveModel(
 /**
  * Whether `model` accepts image and document blocks in a tool result.
  *
- * OpenAI-family models on Bedrock Converse reject both outright ("This model doesn't support the
+ * OpenAI and Grok models on Bedrock Converse reject media tool results ("This model doesn't support the
  * image field for user messages"), which fails the whole turn rather than degrading, so `read`
  * describes those files in text instead.
  *
@@ -545,7 +545,7 @@ export async function supportsMedia(model: Model | ModelRouter | string | undefi
   }
   const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
   if (providerName === 'bedrock') {
-    return !bedrockFamily(name).startsWith('openai.')
+    return !/^(openai\.|xai\.grok-)/.test(bedrockFamily(name))
   }
   return true
 }

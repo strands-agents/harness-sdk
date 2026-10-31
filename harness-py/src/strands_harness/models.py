@@ -427,7 +427,7 @@ def supports_thinking(model: Model | str | None) -> bool:
 def _supports_media(model: Model | ModelRouter | str | None) -> bool:
     """Whether ``model`` accepts image and document blocks in a tool result.
 
-    OpenAI-family models on Bedrock Converse reject both outright ("This model doesn't support the
+    OpenAI and Grok models on Bedrock Converse reject media tool results ("This model doesn't support the
     image field for user messages"), which fails the whole turn rather than degrading, so ``read``
     describes those files in text instead.
 
@@ -447,7 +447,7 @@ def _supports_media(model: Model | ModelRouter | str | None) -> bool:
         return True
     provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
     if provider_name == "bedrock":
-        return not _bedrock_family(name).startswith("openai.")
+        return not _bedrock_family(name).startswith(("openai.", "xai.grok-"))
     return True
 
 
