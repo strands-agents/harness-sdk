@@ -252,6 +252,11 @@ def handle_content_block_delta(
         typed_event = CitationStreamEvent(delta=delta_content, citation=delta_content["citation"])
 
     elif "reasoningContent" in delta_content:
+        reasoning_delta = delta_content["reasoningContent"]
+        # A new reasoning payload after a signature starts a block, even under the same index.
+        if "signature" in state and ("text" in reasoning_delta or "redactedContent" in reasoning_delta):
+            _finalize_reasoning_text(state)
+
         if "text" in delta_content["reasoningContent"]:
             if "reasoningText" not in state:
                 state["reasoningText"] = ""
@@ -279,6 +284,25 @@ def handle_content_block_delta(
     return state, typed_event
 
 
+def _finalize_reasoning_text(state: dict[str, Any]) -> None:
+    """Append only the pending reasoning text and consume its signature."""
+    if state["reasoningText"] or "signature" in state:
+        content_block: ContentBlock = {
+            "reasoningContent": {
+                "reasoningText": {
+                    "text": state["reasoningText"],
+                }
+            }
+        }
+
+        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
+        if (signature := state.pop("signature", None)) is not None:
+            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
+
+        state["content"].append(content_block)
+        state["reasoningText"] = ""
+
+
 def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     """Handles the end of a content block by finalizing tool usage, text content, or reasoning content.
 
@@ -292,7 +316,6 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
     current_tool_use = state["current_tool_use"]
     text = state["text"]
-    reasoning_text = state["reasoningText"]
     citations_content = state["citationsContent"]
     redacted_content = state.get("redactedContent")
 
@@ -349,21 +372,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             content.append({"text": text})
         state["text"] = ""
 
-    if reasoning_text or "signature" in state:
-        content_block: ContentBlock = {
-            "reasoningContent": {
-                "reasoningText": {
-                    "text": state["reasoningText"],
-                }
-            }
-        }
-
-        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
-        if (signature := state.pop("signature", None)) is not None:
-            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
-
-        content.append(content_block)
-        state["reasoningText"] = ""
+    _finalize_reasoning_text(state)
     if redacted_content:
         content.append({"reasoningContent": {"redactedContent": redacted_content}})
         state["redactedContent"] = b""

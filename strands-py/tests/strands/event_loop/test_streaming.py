@@ -8,7 +8,15 @@ import pytest
 import strands
 import strands.event_loop
 from strands.agent.invocation_context import _create_invocation_context
-from strands.types._events import ModelStopReason, TypedEvent
+from strands.types._events import (
+    ModelStopReason,
+    ModelStreamChunkEvent,
+    ReasoningRedactedContentStreamEvent,
+    ReasoningSignatureStreamEvent,
+    ReasoningTextStreamEvent,
+    TextStreamEvent,
+    TypedEvent,
+)
 from strands.types.content import Message, Messages
 from strands.types.streaming import (
     ContentBlockDeltaEvent,
@@ -1399,14 +1407,10 @@ async def test_process_stream_with_signature(agenerator, alist):
     assert message["content"][1]["text"] == "Sure! Let’s do it"
 
 
+@pytest.mark.parametrize("same_index", [False, True])
 @pytest.mark.asyncio
-async def test_process_stream_with_multiple_signed_reasoning_blocks(agenerator, alist):
-    """Each signed reasoning block keeps only its own signature.
-
-    Guards against https://github.com/strands-agents/harness-sdk/issues/3425: the signature accumulator
-    was never cleared when a reasoning block finalized, so later blocks carried a cumulative concatenation
-    ("SIG1", "SIG1SIG2", ...) that providers reject as a modified thinking signature on the next request.
-    """
+async def test_process_stream_with_multiple_signed_reasoning_blocks(same_index, agenerator, alist):
+    """Keep reasoning blocks distinct across stops (#3425) and within one index (#5498)."""
     response = [
         {"messageStart": {"role": "assistant"}},
         {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "first"}}, "contentBlockIndex": 0}},
@@ -1417,6 +1421,12 @@ async def test_process_stream_with_multiple_signed_reasoning_blocks(agenerator, 
         {"contentBlockStop": {"contentBlockIndex": 1}},
         {"messageStop": {"stopReason": "end_turn"}},
     ]
+    if same_index:
+        response.pop(3)
+        for chunk in response:
+            for event in chunk.values():
+                if "contentBlockIndex" in event:
+                    event["contentBlockIndex"] = 0
 
     stream = strands.event_loop.streaming.process_stream(agenerator(response))
 
@@ -1424,9 +1434,116 @@ async def test_process_stream_with_multiple_signed_reasoning_blocks(agenerator, 
 
     message = _get_message_from_event(last_event)
 
-    tru_signatures = [block["reasoningContent"]["reasoningText"]["signature"] for block in message["content"]]
-    exp_signatures = ["SIG1", "SIG2"]
-    assert tru_signatures == exp_signatures
+    tru_content = message["content"]
+    exp_content = [
+        {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+        {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+    ]
+    assert tru_content == exp_content
+
+
+@pytest.mark.parametrize(
+    ("reasoning_deltas", "exp_content", "exp_event_types"),
+    [
+        (
+            [{"text": "first"}, {"signature": "SIG"}, {"signature": "1"}, {"text": "second"}, {"signature": "SIG2"}],
+            [
+                {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+                {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+            ],
+            [
+                ReasoningTextStreamEvent,
+                ReasoningSignatureStreamEvent,
+                ReasoningSignatureStreamEvent,
+                ReasoningTextStreamEvent,
+                ReasoningSignatureStreamEvent,
+            ],
+        ),
+        (
+            [{"text": "first"}, {"signature": "SIG1"}, {"redactedContent": b"redacted"}, {"redactedContent": b" data"}],
+            [
+                {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+                {"reasoningContent": {"redactedContent": b"redacted data"}},
+            ],
+            [
+                ReasoningTextStreamEvent,
+                ReasoningSignatureStreamEvent,
+                ReasoningRedactedContentStreamEvent,
+                ReasoningRedactedContentStreamEvent,
+            ],
+        ),
+        (
+            [{"signature": "SIG1"}, {"text": "second"}],
+            [
+                {"reasoningContent": {"reasoningText": {"text": "", "signature": "SIG1"}}},
+                {"reasoningContent": {"reasoningText": {"text": "second"}}},
+            ],
+            [ReasoningSignatureStreamEvent, ReasoningTextStreamEvent],
+        ),
+    ],
+    ids=["chunked-signature", "redacted-transition", "signature-only"],
+)
+@pytest.mark.asyncio
+async def test_process_stream_same_index_reasoning_boundaries(
+    reasoning_deltas, exp_content, exp_event_types, agenerator, alist
+):
+    """Preserve signed reasoning boundaries and delta event types under one index (#5498)."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        *[
+            {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": delta}}}
+            for delta in reasoning_deltas
+        ],
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "answer"}}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(response)))
+    tru_message = _get_message_from_event(events[-1])
+    exp_message = {"role": "assistant", "content": [exp_content[0], {"text": "answer"}, *exp_content[1:]]}
+    assert tru_message == exp_message
+    tru_chunks = [event["event"] for event in events if isinstance(event, ModelStreamChunkEvent)]
+    assert tru_chunks == response
+    delta_events = [event for event in events if not isinstance(event, (ModelStreamChunkEvent, ModelStopReason))]
+    tru_event_types = [type(event) for event in delta_events]
+    assert tru_event_types == [*exp_event_types, TextStreamEvent]
+    tru_deltas = [event["delta"]["reasoningContent"] for event in delta_events[:-1]]
+    assert tru_deltas == reasoning_deltas
+
+
+@pytest.mark.parametrize("with_citation", [False, True])
+@pytest.mark.asyncio
+async def test_process_stream_reasoning_boundary_preserves_pending_content(with_citation, agenerator, alist):
+    """A reasoning boundary must not finalize unrelated accumulators (#5498)."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "tool-1", "name": "test"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"value":'}}}},
+        {"contentBlockDelta": {"delta": {"text": "before"}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "first"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "SIG1"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "second"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "SIG2"}}}},
+        {"contentBlockDelta": {"delta": {"text": " after"}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "1}"}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    citation = {"location": {"documentChar": {"documentIndex": 0, "start": 10, "end": 20}}, "title": "Test Doc"}
+    if with_citation:
+        response.insert(4, {"contentBlockDelta": {"delta": {"citation": citation}}})
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(response)))
+    tru_content = _get_message_from_event(events[-1])["content"]
+    exp_content = [
+        {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+        {"toolUse": {"toolUseId": "tool-1", "name": "test", "input": {"value": 1}}},
+        {"text": "before after"},
+        {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+    ]
+    if with_citation:
+        exp_content[2] = {"citationsContent": {"citations": [citation], "content": [{"text": "before after"}]}}
+    assert tru_content == exp_content
 
 
 @pytest.mark.asyncio
