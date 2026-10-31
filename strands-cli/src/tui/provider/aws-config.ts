@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { expandHome } from '../paths.js'
 
 export interface AwsConfigurationDiscovery {
   profiles: readonly string[]
@@ -33,16 +34,24 @@ export function requireBedrockRegion(model: unknown): void {
 export function discoverAwsConfiguration(environment: NodeJS.ProcessEnv = process.env): AwsConfigurationDiscovery {
   const profiles = new Set<string>()
   const regions = new Set<string>()
-  const profileRegions: Record<string, string> = {}
+  const profileRegions: Record<string, string> = Object.create(null)
   const { filepath, configFilepath } = awsConfigurationFiles(environment)
-  for (const path of [filepath, configFilepath]) {
+  for (const [path, isConfigFile] of [
+    [filepath, false],
+    [configFilepath, true],
+  ] as const) {
     const text = readConfiguration(path)
     let currentProfile: string | undefined
     for (const rawLine of text?.split(/\r?\n/u) ?? []) {
       const line = rawLine.trim()
       const section = /^\[([^\]]+)\]$/u.exec(line)?.[1]?.trim()
       if (section) {
-        currentProfile = section.startsWith('profile ') ? section.slice('profile '.length).trim() : section
+        currentProfile =
+          !isConfigFile || section === 'default'
+            ? section
+            : section.startsWith('profile ')
+              ? section.slice('profile '.length).trim()
+              : undefined
         if (currentProfile) profiles.add(currentProfile)
         continue
       }
@@ -69,7 +78,7 @@ export function awsConfigurationFiles(environment: NodeJS.ProcessEnv): { filepat
 
 function readConfiguration(path: string): string | undefined {
   try {
-    path = path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
+    path = expandHome(path)
     const stats = statSync(path)
     if (!stats.isFile() || stats.size > 1_048_576) return undefined
     return readFileSync(path, 'utf8')

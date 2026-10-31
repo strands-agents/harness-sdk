@@ -2,11 +2,12 @@ import { realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { McpServerConfig } from '@strands-agents/sdk'
 import { parse as parseToml } from 'smol-toml'
 
 import { errorMessage } from '../terminal/sanitize.js'
+import { expandHome, isMissingPathError, strandsUserPath } from '../paths.js'
 import { isRecord } from '../values.js'
 
 export interface LoadMcpOptions {
@@ -19,6 +20,7 @@ export interface LoadMcpOptions {
 
 export async function readMcpDefinitions(options: LoadMcpOptions = {}): Promise<{
   definitions: Record<string, McpServerConfig>
+  sources: Record<string, string>
   paths: string[]
   warnings: string[]
 }> {
@@ -26,34 +28,40 @@ export async function readMcpDefinitions(options: LoadMcpOptions = {}): Promise<
   const requestedPaths = options.paths ?? defaultMcpPaths()
   const paths = [...new Set(requestedPaths.map((path) => expandPath(path, cwd)))]
   const strictPaths = new Set((options.strictPaths ?? []).map((path) => expandPath(path, cwd)))
-  const definitions: Record<string, McpServerConfig> = {}
+  const definitions: Record<string, McpServerConfig> = Object.create(null)
+  const sources: Record<string, string> = Object.create(null)
   const warnings: string[] = []
 
-  const merge = (config: Record<string, McpServerConfig> | undefined): void => {
+  const merge = (config: Record<string, McpServerConfig> | undefined, source: string): void => {
     for (const [name, server] of Object.entries(config ?? {})) {
       if (server.disabled) {
         delete definitions[name]
+        delete sources[name]
       } else {
         definitions[name] = server
+        sources[name] = source
       }
     }
   }
 
   for (const path of paths) {
-    merge(await readMcpConfig(path, cwd, options.expectedDigests?.[path], strictPaths.has(path), warnings))
+    merge(await readMcpConfig(path, cwd, options.expectedDigests?.[path], strictPaths.has(path), warnings), path)
   }
 
   if (options.servers) {
     if (typeof options.servers === 'string') {
       const path = expandPath(options.servers, cwd)
       paths.push(path)
-      merge(await readMcpConfig(path, cwd, undefined, true, warnings))
+      merge(await readMcpConfig(path, cwd, undefined, true, warnings), path)
     } else {
-      merge(parseMcpConfig(JSON.stringify({ mcpServers: options.servers }), 'harness configuration', cwd))
+      merge(
+        parseMcpConfig(JSON.stringify({ mcpServers: options.servers }), 'harness configuration', cwd),
+        'Agent configuration'
+      )
     }
   }
 
-  return { definitions, paths, warnings }
+  return { definitions, sources, paths, warnings }
 }
 
 export function defaultMcpPaths(): string[] {
@@ -63,7 +71,7 @@ export function defaultMcpPaths(): string[] {
     join(home, '.kiro', 'settings', 'mcp.json'),
     join(home, '.gemini', 'settings.json'),
     join(home, '.codex', 'config.toml'),
-    join(home, '.config', 'strands', 'mcp.json'),
+    strandsUserPath('mcp.json'),
   ]
 }
 
@@ -88,7 +96,7 @@ async function readMcpConfig(
   try {
     text = await readFile(path, 'utf8')
   } catch (error) {
-    if (isMissing(error)) {
+    if (isMissingPathError(error)) {
       return undefined
     }
     throw error
@@ -124,7 +132,7 @@ function parseMcpConfig(text: string, path: string, cwd: string, warnings?: stri
   }
   const servers = path.endsWith('.toml') ? codexMcpServers(value, path) : jsonMcpServers(value, path, cwd)
 
-  const result: Record<string, McpServerConfig> = {}
+  const result: Record<string, McpServerConfig> = Object.create(null)
   for (const [name, server] of Object.entries(servers)) {
     try {
       if (!isRecord(server)) {
@@ -211,7 +219,7 @@ function validateServer(path: string, name: string, value: Record<string, unknow
 }
 
 function jsonMcpServers(value: Record<string, unknown>, path: string, cwd: string): Record<string, unknown> {
-  const merged: Record<string, unknown> = {}
+  const merged: Record<string, unknown> = Object.create(null)
   let foundContainer = false
 
   if ('mcpServers' in value) {
@@ -367,10 +375,7 @@ function exactPattern(value: string): string {
 }
 
 function expandPath(path: string, cwd: string): string {
-  if (path.startsWith('~/')) {
-    return join(homedir(), path.slice(2))
-  }
-  return isAbsolute(path) ? path : resolve(cwd, path)
+  return resolve(cwd, expandHome(path))
 }
 
 function optionalString(value: unknown, path: string, name: string, field: string): string | undefined {
@@ -421,8 +426,4 @@ function positiveNumber(value: unknown, path: string, name: string, field: strin
 
 function configError(path: string, name: string, message: string): Error {
   return new Error(`Invalid MCP configuration at ${path}: server ${JSON.stringify(name)} ${message}`)
-}
-
-function isMissing(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }

@@ -966,6 +966,7 @@ describe('interactive runtime lifecycle', () => {
         `${basename(dirname(realSecondWorkspace))}/${basename(realSecondWorkspace)}`
       )
       expect(mocks.loadMcp).toHaveBeenNthCalledWith(2, {
+        backgroundConnect: true,
         cwd: secondWorkspace,
         paths: [explicitMcp],
         strictPaths: [explicitMcp],

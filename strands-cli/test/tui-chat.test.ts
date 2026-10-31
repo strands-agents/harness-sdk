@@ -1963,6 +1963,43 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().panel).toBeUndefined()
   })
 
+  it.each([
+    ['Environment variable "AIM_CREDS_AGENT_URL" is not set.', 'Missing environment variable: AIM_CREDS_AGENT_URL'],
+    ['Version negotiation failed: the server requires authorization (HTTP HTTP 401)', 'Authentication required'],
+    ['connect ECONNREFUSED 127.0.0.1:401', 'Server is not accepting connections'],
+    ['spawn /tools/403 ENOENT', 'Server command or working directory not found'],
+    [
+      'Version negotiation failed: the connection closed during the server/discover probe. ' + 'diagnostic '.repeat(30),
+      'Server closed the connection',
+    ],
+  ])('keeps an actionable MCP failure summary in the server list: %s', async (error, summary) => {
+    const controller = new ChatController(backend(), {
+      mcp: {
+        clients: [],
+        paths: ['/Users/test/.strands/mcp.json'],
+        warnings: [],
+        list: async () => [
+          {
+            name: 'failing/server',
+            transport: 'stdio',
+            target: 'node',
+            state: 'failed',
+            source: '/Users/test/.strands/mcp.json',
+            error,
+            canRetry: false,
+          },
+        ],
+        dispose: async () => undefined,
+      },
+    })
+    await controller.submit('/mcp')
+    expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
+      label: 'failing/server',
+      description: `failed | stdio | ${summary}`,
+      tone: 'danger',
+    })
+  })
+
   it('represents an empty MCP configuration as zero servers with its checked path', async () => {
     const list = vi.fn(async () => [])
     const controller = new ChatController(backend(), {

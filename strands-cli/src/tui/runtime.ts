@@ -257,6 +257,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         ? new WorkspaceSandbox(workspace)
         : configuredSandbox
     const mcp = await loadMcp({
+      backgroundConnect: true,
       ...(await workspaceMcpOptions(options, initialWorkspace, workspace, config.snapshot().settings.mcpDiscovery)),
       ...(configuredMcpServers ? { servers: configuredMcpServers } : {}),
     })
@@ -282,6 +283,8 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       sandbox,
       interventions: [liveSteering, cedarPermissions, ...configuredInterventions],
     }
+    // Exported source factories retain authored options unless the override contains the key.
+    if (configuredMcpServers) Reflect.set(controllerOptions, 'mcpServers', undefined)
 
     const configSnapshot = config.snapshot()
     let exportProfile = {

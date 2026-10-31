@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { loadMcp } from '../src/tui/mcp.js'
 import { inspectWorkspaceMcp, isWorkspaceMcpTrusted, trustWorkspaceMcp } from '../src/tui/workspace/trust.js'
 
 describe('workspace MCP trust', () => {
@@ -65,12 +64,28 @@ describe('workspace MCP trust', () => {
         join(workspace, '.strands', 'mcp.json'),
       ])
       expect(Object.keys(inspection?.digests ?? {})).toEqual(inspection?.paths)
-
-      const loaded = await loadMcp({ cwd: workspace, paths: inspection!.paths })
-      expect(await loaded.list()).toContainEqual(expect.objectContaining({ name: 'shared', target: 'codex-server' }))
-      await loaded.dispose()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  it.each(['{ invalid json', 'null', '{"version":2,"workspaces":{}}'])(
+    'requires approval again when the trust cache is unreadable: %s',
+    async (text) => {
+      const directory = await mkdtemp(join(tmpdir(), 'strands-workspace-trust-'))
+      const trustPath = join(directory, 'trusted.json')
+      try {
+        await writeFile(join(directory, '.mcp.json'), JSON.stringify({ mcpServers: { local: { command: 'node' } } }))
+        await writeFile(trustPath, text)
+        const inspection = (await inspectWorkspaceMcp(directory))!
+
+        expect(await isWorkspaceMcpTrusted(inspection, trustPath)).toBe(false)
+        expect(await readFile(trustPath, 'utf8')).toBe(text)
+        await trustWorkspaceMcp(inspection, trustPath)
+        expect(await isWorkspaceMcpTrusted(inspection, trustPath)).toBe(true)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 })

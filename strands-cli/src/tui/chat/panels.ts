@@ -1,6 +1,7 @@
 import type { BackgroundAgentActivity } from '../background/activity.js'
 import { PROVIDER_IDS, PROVIDER_LABELS } from '../config.js'
 import type { LoadedMcp } from '../mcp.js'
+import { mcpFailure } from '../mcp/diagnostics.js'
 import { modelDisplayName } from '../model/display.js'
 import { sanitizeDiffPreview } from '../permissions/file-change-preview.js'
 import { PERMISSION_CHOICES, permissionToolDescription, permissionToolNames } from '../permissions/settings.js'
@@ -425,7 +426,7 @@ export function mcpRows(servers: Awaited<ReturnType<LoadedMcp['list']>>): ChatPa
       server.state,
       server.transport,
       server.toolCount === undefined ? undefined : `${server.toolCount} tools`,
-      server.target,
+      server.state === 'failed' ? mcpFailure(server).summary : server.target,
     ]
       .filter(Boolean)
       .join(' | '),

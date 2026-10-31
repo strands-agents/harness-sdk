@@ -260,7 +260,7 @@ async function loadAcpMcpClients(servers: readonly acp.McpServer[]): Promise<Mcp
   if (servers.length === 0) {
     return []
   }
-  const definitions: Record<string, McpServerConfig> = {}
+  const definitions: Record<string, McpServerConfig> = Object.create(null)
   for (const server of servers) {
     if ('command' in server) {
       definitions[server.name] = {

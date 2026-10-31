@@ -151,12 +151,15 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       ...(mode === 'plain' ? { confirm: confirmWorkspaceMcp } : {}),
       discovery: settings.mcpDiscovery,
     })
-    if (mcp.paths.length > 0) {
+    if (options.mcpServers || mcp.paths.length > 0) {
       loadedMcp = await loadMcp({
+        ...(options.mcpServers ? { servers: options.mcpServers } : {}),
         paths: mcp.paths,
         strictPaths: mcp.strictPaths,
         ...(mcp.expectedDigests ? { expectedDigests: mcp.expectedDigests } : {}),
       })
+      // Exported source factories retain authored options unless the override contains the key.
+      Reflect.set(options, 'mcpServers', undefined)
       options.tools = [...(options.tools ?? []), ...loadedMcp.clients]
     }
     agent = await (invocation.buildAgent ?? createHarness)(options).catch(rethrowWithProviderHint)
@@ -172,8 +175,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
     // Extraction runs in the background on a turn interval, so a short run exits with recent turns
     // unsaved. Flush at the process boundary to persist them, best-effort: a flush failure must not
     // fail a completed turn or skip MCP teardown.
-    await Promise.allSettled([agent?.memoryManager?.flush()])
-    await loadedMcp?.dispose()
+    await Promise.allSettled([agent?.memoryManager?.flush(), loadedMcp?.dispose()])
   }
 }
 
