@@ -1,15 +1,9 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { isSourceCheckout, sourceBuildFingerprint, sourceBuildRequired } from '../bin/strands.js'
-
-const temporaryDirectories: string[] = []
-
-afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
-})
+import { temporaryDirectory } from './fixtures/tempdir.js'
 
 describe('source launcher', () => {
   it('distinguishes a repository checkout from a packaged CLI', async () => {
@@ -21,15 +15,28 @@ describe('source launcher', () => {
     expect(isSourceCheckout(packageRoot)).toBe(false)
   })
 
-  it('fingerprints source contents and build configuration', async () => {
+  it('fingerprints CLI source without unrelated Python changes', async () => {
     const repository = await temporaryRepository()
+    const pythonSource = join(repository, 'harness-py', 'src')
+    const cliProject = join(repository, 'strands-cli', 'src', 'tui', 'project')
+    await mkdir(pythonSource, { recursive: true })
+    await mkdir(cliProject, { recursive: true })
+    await writeFile(join(pythonSource, 'agent.py'), 'VERSION = 1\n')
+    await writeFile(join(repository, 'harness-py', 'README.md'), 'Python SDK\n')
+    await writeFile(join(cliProject, 'worker.py'), 'VERSION = 1\n')
     const first = sourceBuildFingerprint(repository)
+
+    await writeFile(join(pythonSource, 'agent.py'), 'VERSION = 2\n')
+    await writeFile(join(repository, 'harness-py', 'README.md'), 'Updated Python SDK\n')
+    expect(sourceBuildFingerprint(repository)).toBe(first)
 
     await writeFile(join(repository, 'strands-cli', 'src', 'main.ts'), 'export const version = 2\n')
     const second = sourceBuildFingerprint(repository)
 
     expect(second).not.toBe(first)
     expect(sourceBuildFingerprint(repository)).toBe(second)
+    await writeFile(join(cliProject, 'worker.py'), 'VERSION = 2\n')
+    expect(sourceBuildFingerprint(repository)).not.toBe(second)
   })
 
   it('rebuilds for missing output, missing state, or a changed fingerprint', async () => {
@@ -49,9 +56,8 @@ describe('source launcher', () => {
 })
 
 async function temporaryRepository(): Promise<string> {
-  const repository = await mkdtemp(join(tmpdir(), 'strands-source-launcher-'))
-  temporaryDirectories.push(repository)
-  await Promise.all([mkdir(join(repository, 'strands-cli', 'src'), { recursive: true })])
+  const repository = await temporaryDirectory('strands-source-launcher-')
+  await mkdir(join(repository, 'strands-cli', 'src'), { recursive: true })
   await Promise.all([
     writeFile(join(repository, 'package.json'), '{}\n'),
     writeFile(join(repository, 'package-lock.json'), '{}\n'),

@@ -608,25 +608,20 @@ describe('TUI startup', () => {
     'avoids React timing retention while preserving NODE_ENV=%s',
     async (environment) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-cli-production-'))
-      // `--experimental-loader` requires a file:// URL; a bare Windows path is rejected by the ESM loader.
-      const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
       const fixture = fileURLToPath(new URL('./fixtures/strands-cli-production-probe.mjs', import.meta.url))
       await mkdir(join(directory, '.strands'), { recursive: true })
       await writeFile(join(directory, '.strands', 'cli.toml'), stringify({ settings: { animations: false } }))
-      const child = spawn(
-        process.execPath,
-        ['--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
-        {
-          cwd: directory,
-          env: {
-            PATH: process.env.PATH,
-            HOME: directory,
-            NODE_ENV: environment,
-            FORCE_COLOR: '1',
-          },
-          timeout: 30_000,
-        }
-      )
+      const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx/esm'), fixture], {
+        cwd: directory,
+        env: {
+          PATH: process.env.PATH,
+          HOME: directory,
+          NODE_ENV: environment,
+          FORCE_COLOR: '1',
+          TSX_TSCONFIG_PATH: fileURLToPath(new URL('../tsconfig.json', import.meta.url)),
+        },
+        timeout: 30_000,
+      })
       let stderr = ''
       child.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString()
@@ -634,6 +629,7 @@ describe('TUI startup', () => {
       try {
         const [code] = await once(child, 'close')
         expect(code, stderr).toBe(0)
+        expect(stderr).toContain('Startup assertions passed')
       } finally {
         child.kill()
         await rm(directory, { recursive: true, force: true })
@@ -666,15 +662,12 @@ describe('ACP mode routing', () => {
   })
 
   it('answers initialize while the ACP stdin protocol stream remains open', async () => {
-    // `--experimental-loader` requires a file:// URL; a bare Windows path is rejected by the ESM loader.
-    const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
     const entrypoint = fileURLToPath(new URL('../src/main.ts', import.meta.url))
     const cwd = fileURLToPath(new URL('..', import.meta.url))
-    const child = spawn(
-      process.execPath,
-      ['--no-warnings=ExperimentalWarning', '--experimental-loader', loader, entrypoint, '--acp-server'],
-      { cwd, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
+    const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx/esm'), entrypoint, '--acp-server'], {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     const closed = once(child, 'close')

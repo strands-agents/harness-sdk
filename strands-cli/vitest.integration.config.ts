@@ -10,5 +10,6 @@ export default defineConfig({
     hookTimeout: 180_000,
     fileParallelism: false,
     retry: 2,
+    reporters: ['verbose'],
   },
 })

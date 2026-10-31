@@ -71,8 +71,14 @@ jobs:
           allowed-roles: 'maintain,triage,write,admin'
 
   integration-test:
-    name: Run integration tests
-    runs-on: strands-agents_ubuntu-latest_4-core
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Run integration tests }
+          - { os: strands-agents_windows-latest_4-core, name: Run integration tests (Windows) }
     needs: authorization-check
     if: always() && needs.authorization-check.result == 'success'
     environment:
@@ -106,12 +112,22 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install PortAudio
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build
         # The CLI e2e drives the built `strands` binary.
         run: npm run build
+
+      - name: Prepare and test voice runtime
+        run: npm run test:voice
 
       - name: Run integration tests
         env:
