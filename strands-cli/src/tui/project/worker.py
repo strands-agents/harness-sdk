@@ -796,7 +796,8 @@ def load_project(entrypoint, root):
 
     def capture_create_harness(*args, **options):
         agent = original_create_harness(*args, **options)
-        captured.append((agent, args, options))
+        if captured is not None:
+            captured.append((agent, args, options))
         return agent
 
     strands_harness.create_harness = capture_create_harness
@@ -816,6 +817,7 @@ def load_project(entrypoint, root):
     if not isinstance(agent, Agent):
         raise TypeError('Export a Strands Agent as "agent".')
     construction = next(((args, options) for candidate, args, options in captured if candidate is agent), None)
+    captured = None
     if construction is not None:
         module._strands_options = construction[1]
     if not callable(getattr(module, "create_agent", None)) and direct_harness_assignment(entrypoint):

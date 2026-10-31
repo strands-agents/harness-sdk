@@ -2,12 +2,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock'
-import type { Agent } from '@strands-agents/sdk'
+import { Agent } from '@strands-agents/sdk'
+import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { describe, expect, it, vi } from 'vitest'
 
 import { listBedrockModels, type BedrockCatalogClient } from '../src/tui/provider/bedrock-catalog.js'
 import { FileSessionRuntime } from '../src/tui/session/sessions.js'
-import { FileSkillsRuntime } from '../src/tui/skills.js'
+import { AgentSkillsRuntime } from '../src/tui/skills.js'
 
 describe('runtime metadata terminal safety', () => {
   it('sanitizes session and skill metadata while preserving newlines and tabs', async () => {
@@ -25,7 +26,9 @@ describe('runtime metadata terminal safety', () => {
         'line\u001b[2Jtwo\u0007',
       ].join('\n')
     )
-    const agent = { appState: { get: () => undefined } } as unknown as Agent
+    const plugin = new AgentSkills({ skills: [skillDirectory] })
+    const agent = new Agent({ plugins: [plugin] })
+    await agent.initialize()
     const sessions = new FileSessionRuntime(
       {
         sessionId: 'active\u0007',
@@ -34,7 +37,10 @@ describe('runtime metadata terminal safety', () => {
       '/tmp/sessions\u001b[2J',
       { workspace: '/tmp' }
     )
-    const skills = new FileSkillsRuntime([skillDirectory], () => agent)
+    const skills = new AgentSkillsRuntime(
+      () => agent,
+      () => plugin
+    )
 
     try {
       expect(sessions.current).toBe('active')

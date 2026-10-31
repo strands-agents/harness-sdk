@@ -141,6 +141,177 @@ console.log(JSON.stringify({
     })
   })
 
+  it.each(['skills', 'plugins'])('keeps %s paired with the active authored agent across rebuilds', async (field) => {
+    const source = (name: string, fail = false): string => `
+import { createHarness } from '@strands-agents/harness'
+import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
+const skills = new AgentSkills({ skills: [new Skill({name: '${name}', description: '${name}', instructions: 'Review.'})] })
+export const agent = await createHarness({ ...${JSON.stringify(defaults)}, ${field}: ${field === 'plugins' ? '[skills]' : 'skills'} })
+${fail ? "throw new Error('Rejected rebuilt source')" : ''}
+`
+    await writeFile(project().entrypoint, source('first'))
+    const script = `
+import { writeFile } from 'node:fs/promises'
+const { loadTypescriptProject } = await import(${JSON.stringify(loaderUrl)})
+const { createInteractiveChat } = await import(${JSON.stringify(new URL('../src/tui/runtime.ts', import.meta.url).href)})
+const { CliConfigStore } = await import(${JSON.stringify(new URL('../src/tui/config.ts', import.meta.url).href)})
+const project = ${JSON.stringify(project())}
+const loaded = await loadTypescriptProject(project)
+const chat = await createInteractiveChat({
+  cwd: project.root,
+  project,
+  agentOptions: loaded.options,
+  buildAgent: loaded.createAgent,
+  sessionRoot: project.root + '/catalog',
+  config: CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
+})
+const catalogs = []
+try {
+  await chat.submit('/skills')
+  catalogs.push(chat.getSnapshot().panel.rows.map(row => row.label))
+  await writeFile(project.entrypoint, ${JSON.stringify(source('second'))})
+  await chat.backend.restartModel('bedrock/anthropic.claude-haiku-4-5-20251001-v1:0')
+  await chat.submit('/skills')
+  catalogs.push(chat.getSnapshot().panel.rows.map(row => row.label))
+  await writeFile(project.entrypoint, ${JSON.stringify(source('failed', true))})
+  let error
+  try { await chat.backend.restartModel('bedrock/anthropic.claude-haiku-4-5-20251001-v1:0') }
+  catch (failure) { error = failure.message }
+  await chat.submit('/skills')
+  catalogs.push(chat.getSnapshot().panel.rows.map(row => row.label))
+  console.log(JSON.stringify({ catalogs, error }))
+} finally { await chat.dispose() }
+`
+    const { stdout } = await run(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+      { cwd: root }
+    )
+    expect(JSON.parse(stdout)).toEqual({
+      catalogs: [['first'], ['second'], ['second']],
+      error: 'Rejected rebuilt source',
+    })
+  })
+
+  it.each([
+    { phase: 'evaluation', cleanupFails: false },
+    { phase: 'initialization', cleanupFails: false },
+    { phase: 'initialization', cleanupFails: true },
+    { phase: 'replacement initialization', cleanupFails: false },
+  ])(
+    'flushes unpublished agents after $phase failure (cleanupFails=$cleanupFails)',
+    async ({ phase, cleanupFails }) => {
+      const source = `
+import { createHarness } from '@strands-agents/harness'
+import { Model, MemoryManager, IntervalTrigger } from '@strands-agents/sdk'
+class LocalModel extends Model {
+  getConfig() { return { modelId: 'fixture' } }
+  updateConfig() {}
+  async *stream() {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'startup reply' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+}
+const failure = new Error('Authored startup failed')
+const observed = globalThis.__sourceCleanup = { failure, records: [] }
+async function build() {
+  const record = { saved: [], cancels: 0, flushes: 0 }
+  const memory = new MemoryManager({ injection: false, searchToolConfig: false, stores: [{
+    name: 'buffered', writable: true, extraction: { trigger: new IntervalTrigger({ turns: 100 }) },
+    async search() { return [] },
+    async addMessages(messages) { record.saved.push(...messages) },
+  }] })
+  const candidate = await createHarness({
+    ...${JSON.stringify(defaults)}, model: new LocalModel(), memory, printer: false, backgroundTasks: false,
+  })
+  await candidate.invoke('startup request')
+  const cancel = candidate.cancel.bind(candidate)
+  const flush = memory.flush.bind(memory)
+  candidate.cancel = () => {
+    record.cancels++
+    if (${cleanupFails}) throw new Error('Cancel failed')
+    cancel()
+  }
+  memory.flush = async () => {
+    record.flushes++
+    await flush()
+    if (${cleanupFails}) throw new Error('Flush failed')
+  }
+  observed.records.push(record)
+  return candidate
+}
+export let agent = await build()
+${phase === 'replacement initialization' ? 'agent = await build()' : ''}
+${phase === 'evaluation' ? 'throw failure' : 'agent.initialize = async () => { throw failure }'}
+`
+      await writeFile(project().entrypoint, source)
+      const script = `
+const { loadTypescriptProject } = await import(${JSON.stringify(loaderUrl)})
+const loaded = await loadTypescriptProject(${JSON.stringify(project())})
+let failure
+try { await loaded.createAgent(loaded.options) } catch (error) { failure = error }
+const observed = globalThis.__sourceCleanup
+console.log(JSON.stringify({
+  originalError: failure === observed.failure,
+  records: observed.records.map(record => ({
+    cancels: record.cancels,
+    flushes: record.flushes,
+    messages: record.saved.map(message => ({ role: message.role, text: message.content[0].text })),
+  })),
+}))
+`
+      const { stdout } = await run(
+        process.execPath,
+        ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+        { cwd: root }
+      )
+      expect(JSON.parse(stdout)).toEqual({
+        originalError: true,
+        records: Array.from({ length: phase === 'replacement initialization' ? 2 : 1 }, () => ({
+          cancels: 1,
+          flushes: 1,
+          messages: [
+            { role: 'user', text: 'startup request' },
+            { role: 'assistant', text: 'startup reply' },
+          ],
+        })),
+      })
+    }
+  )
+
+  it('keeps entrypoints in the same project independently reloadable', async () => {
+    for (const name of ['first', 'second']) {
+      await writeFile(
+        join(root, `${name}.ts`),
+        `import { createHarness } from '@strands-agents/harness'
+export const agent = await createHarness({ ...${JSON.stringify(defaults)}, name: '${name}' })
+`
+      )
+    }
+    const script = `
+const { loadTypescriptProject } = await import(${JSON.stringify(loaderUrl)})
+const names = []
+for (const name of ['first', 'second', 'first']) {
+  const loaded = await loadTypescriptProject({
+    ...${JSON.stringify(project())},
+    entrypoint: ${JSON.stringify(root)} + '/' + name + '.ts',
+  })
+  names.push((await loaded.createAgent({})).name)
+}
+console.log(JSON.stringify(names))
+`
+    const { stdout } = await run(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
+      { cwd: root }
+    )
+
+    expect(JSON.parse(stdout)).toEqual(['first', 'second', 'first'])
+  })
+
   it('supports an imported factory while construction remains in the entrypoint', async () => {
     await mkdir(join(root, 'definition'))
     await writeFile(join(root, 'value.ts'), "export const value = 're-exported'\n")

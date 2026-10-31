@@ -1,4 +1,5 @@
 import { stringify } from 'smol-toml'
+import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -9,10 +10,11 @@ import { URL, fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_HARNESS_AGENT_CONFIG, defineHarnessAgentConfig } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
+import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { main, runPlainChat, selectRunMode } from '../src/cli/run.js'
 import { agentConfig, parseArgs, shouldPersistModelChanges } from '../src/cli/arguments.js'
-import { invocationAgentForRun } from '../src/cli/invocation.js'
+import { invocationAgentForRun, withDiscoveredSkills } from '../src/cli/invocation.js'
 import * as mcp from '../src/tui/mcp.js'
 import * as mcpConfig from '../src/tui/mcp/config.js'
 import { resolveMcpConfig } from '../src/tui/workspace/trust.js'
@@ -404,6 +406,33 @@ describe('project invocation', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+})
+
+describe('console and ACP skill discovery', () => {
+  it.each(['skills', 'plugins'] as const)('keeps a configured AgentSkills instance in %s', async (field) => {
+    const plugin = new AgentSkills({
+      skills: [new Skill({ name: 'review', description: 'Review', instructions: 'Review the code.' })],
+      stateKey: 'custom_skills',
+    })
+    const options = field === 'skills' ? { skills: plugin } : { skills: false as const, plugins: [plugin] }
+    for (const discovery of [false, true]) {
+      expect(await withDiscoveredSkills(options, discovery)).toBe(options)
+    }
+  })
+
+  it.each([false, true])(
+    'retains Skill objects and configured source precedence with discovery=%s',
+    async (discovery) => {
+      const skill = new Skill({ name: 'review', description: 'Review', instructions: 'Review the code.' })
+      const url = 'https://example.com/SKILL.md'
+      const options = await withDiscoveredSkills({ skills: [skill, './configured-skills', url] }, discovery)
+      const expected = [skill, join(process.cwd(), 'configured-skills'), url]
+      expect(options.skills).toEqual(discovery ? expect.arrayContaining(expected) : expected)
+      assert(Array.isArray(options.skills))
+      expect(options.skills.slice(-3)).toEqual(expected)
+      expect((await withDiscoveredSkills({ skills: false }, discovery)).skills).toBe(false)
+    }
+  )
 })
 
 describe('selectRunMode', () => {

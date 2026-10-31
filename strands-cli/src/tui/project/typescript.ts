@@ -2,8 +2,7 @@ import { register } from 'node:module'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pathToFileURL, URL } from 'node:url'
 import { register as registerTypescript } from 'tsx/esm/api'
 import type { Agent } from '@strands-agents/sdk'
@@ -12,8 +11,13 @@ import type { HarnessAgentOptions } from '@strands-agents/harness'
 import type { ImportedAgentProject } from './import.js'
 import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { prepareArchiveDependencies } from './archive.js'
+import { expandHome } from '../paths.js'
 
-export type AgentFactory = (options: HarnessAgentOptions) => Promise<Agent>
+/** @internal */
+export type AgentFactory = (
+  options: HarnessAgentOptions,
+  prepareOptions?: (options: HarnessAgentOptions) => HarnessAgentOptions
+) => Promise<Agent>
 
 const registeredProjects = new Set<string>()
 let typescriptRegistered = false
@@ -38,7 +42,7 @@ export async function loadTypescriptProject(
       import.meta.url.endsWith('.ts') ? './module-loader.ts' : './module-loader.js',
       import.meta.url
     )
-    loader.searchParams.set('project', root)
+    loader.searchParams.set('entrypoint', sourcePath)
     register(loader, {
       data: {
         runtimeParent: import.meta.url,
@@ -71,7 +75,7 @@ export async function loadTypescriptProject(
   let used = false
   return {
     options: initial.options,
-    createAgent: async (options): Promise<Agent> => {
+    createAgent: async (options, prepareOptions): Promise<Agent> => {
       const definition = used ? await loadDefinition() : initial
       used = true
       const overrides: Record<string, unknown> = {}
@@ -87,19 +91,32 @@ export async function loadTypescriptProject(
               })
             : value
       }
+      const candidates = new Set<Agent>()
       try {
-        const built = await definition.factory({ ...definition.options, ...overrides })
+        const configured = { ...definition.options, ...overrides }
+        const built = await definition.factory(prepareOptions ? prepareOptions(configured) : configured)
+        candidates.add(built)
         definition.resume(built)
         const namespace = await definition.evaluation
         const agent = (await namespace.__strandsAgent) as Agent
         if (!agent || typeof agent.initialize !== 'function') {
           throw new Error('createHarness() must return a Strands Agent.')
         }
+        candidates.add(agent)
         await initializeAgentDefinition(agent)
         return agent
       } catch (error) {
         definition.reject(error)
         await definition.evaluation.catch(() => undefined)
+        await Promise.allSettled(
+          [...candidates].map(async (agent) => {
+            try {
+              agent.cancel()
+            } finally {
+              await agent.memoryManager?.flush()
+            }
+          })
+        )
         throw error
       }
     },
@@ -108,8 +125,7 @@ export async function loadTypescriptProject(
 
 /** @internal */
 export function projectOptions(input: HarnessAgentOptions, root: string): HarnessAgentOptions {
-  const path = (value: string): string =>
-    value.startsWith('~/') ? join(homedir(), value.slice(2)) : resolve(root, value)
+  const path = (value: string): string => resolve(root, expandHome(value))
   const options = { ...input }
   if (typeof options.skills === 'string') {
     options.skills = options.skills.startsWith('https://') ? options.skills : path(options.skills)

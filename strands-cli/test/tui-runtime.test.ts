@@ -24,6 +24,7 @@ import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
 import { unzipSync } from 'fflate'
+import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
 const mocks = vi.hoisted(() => ({
   createHarness: vi.fn(),
@@ -57,6 +58,7 @@ import { StrandsChatBackend } from '../src/tui/strands-backend.js'
 import { LiveSteering } from '../src/tui/steering.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../src/tui/provider/discovery.js'
+import * as projectWatch from '../src/tui/project/watch.js'
 
 let testSessionRoot = ''
 
@@ -256,10 +258,10 @@ describe('interactive runtime lifecycle', () => {
     }
   })
 
-  it.each([true, false])('keeps custom memory private during export (writable=%s)', async (writable) => {
+  it.each([true, false])('keeps custom memory private during export and reload (writable=%s)', async (writable) => {
     const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
     mocks.createHarness.mockImplementation(createHarness)
-    const root = await mkdtemp(join(tmpdir(), 'strands-private-export-'))
+    const root = dirname(testSessionRoot)
     await mkdir(root, { recursive: true })
     const entrypoint = join(root, 'agent.ts')
     await writeFile(entrypoint, 'export const marker = "source"\n')
@@ -270,9 +272,12 @@ describe('interactive runtime lifecycle', () => {
       extraction: false,
     })
     await store.add('Private memory sentinel')
+    const requestSetup = vi.fn()
+    const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockReturnValue(() => {})
     const controller = await createInteractiveChat({
       cwd: root,
       project: { root, entrypoint, language: 'typescript' },
+      requestSetup,
       agentOptions: {
         model: new BedrockModel({ modelId: 'anthropic.claude-test' }),
         session: false,
@@ -288,6 +293,7 @@ describe('interactive runtime lifecycle', () => {
     })
     try {
       await store.add('Another private memory')
+      expect(watch.mock.calls[0]?.[3]).toContain(join(root, 'private-data', 'memory', 'personal'))
 
       const destination = join(root, 'agent.zip')
       await controller.submit(`/export typescript "${destination}"`)
@@ -296,7 +302,7 @@ describe('interactive runtime lifecycle', () => {
       expect(Buffer.from(entries['agent.ts']!).toString()).toContain('source')
     } finally {
       await controller.dispose()
-      await rm(root, { recursive: true, force: true })
+      watch.mockRestore()
     }
   })
 
@@ -308,14 +314,14 @@ describe('interactive runtime lifecycle', () => {
     'explicit stash',
     'inherited stash',
     'namespaced stash',
-  ])('keeps %s storage private during export', async (kind) => {
+  ])('keeps %s storage private during export and reload', async (kind) => {
     const { createHarness } = await vi.importActual<typeof import('@strands-agents/harness')>('@strands-agents/harness')
     let agent: Agent
     mocks.createHarness.mockImplementation(async (options) => {
       agent = await createHarness(options)
       return agent
     })
-    const root = await mkdtemp(join(tmpdir(), 'strands-private-export-'))
+    const root = dirname(testSessionRoot)
     await mkdir(root, { recursive: true })
     const entrypoint = join(root, 'agent.ts')
     await writeFile(entrypoint, 'export const marker = "source"\n')
@@ -328,9 +334,12 @@ describe('interactive runtime lifecycle', () => {
         : kind === 'namespaced session'
           ? storage.namespace('private-state')
           : storage
+    const requestSetup = vi.fn()
+    const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockReturnValue(() => {})
     const controller = await createInteractiveChat({
       cwd: root,
       project: { root, entrypoint, language: 'typescript' },
+      requestSetup,
       agentOptions: {
         model: new BedrockModel({ modelId: 'anthropic.claude-test' }),
         session: false,
@@ -377,6 +386,8 @@ describe('interactive runtime lifecycle', () => {
         : kind === 'legacy session' || kind === 'namespaced session'
           ? 'private-state'
           : 'session'
+      expect(watch.mock.calls[0]?.[3]).toContain(join(root, privateDirectory))
+      expect(watch.mock.calls[0]?.[3]).not.toContain(root)
 
       const destination = join(root, 'agent.zip')
       await controller.submit(`/export typescript "${destination}"`)
@@ -389,7 +400,7 @@ describe('interactive runtime lifecycle', () => {
       expect(Object.values(entries).some((bytes) => Buffer.from(bytes).includes('storage sentinel'))).toBe(false)
     } finally {
       await controller.dispose()
-      await rm(root, { recursive: true, force: true })
+      watch.mockRestore()
     }
   })
 
@@ -1125,7 +1136,7 @@ describe('interactive runtime lifecycle', () => {
         expect(requestSetup).toHaveBeenCalledOnce()
         expect(requestSetup).toHaveBeenCalledWith(
           expect.objectContaining({
-            configuration: expect.objectContaining({ profile: expect.objectContaining({ name: 'Changed' }) }),
+            profile: expect.objectContaining({ name: 'Changed' }),
           })
         )
       } finally {
@@ -1290,7 +1301,11 @@ describe('interactive runtime lifecycle', () => {
     const sessionRoot = join(directory, 'config', 'sessions')
     const firstSessions = workspaceSessionDirectory(firstWorkspace, sessionRoot)
     const secondSessions = workspaceSessionDirectory(secondWorkspace, sessionRoot)
-    await mkdir(secondWorkspace, { recursive: true })
+    await mkdir(join(secondWorkspace, '.agent', 'skills', 'remote'), { recursive: true })
+    await writeFile(
+      join(secondWorkspace, '.agent', 'skills', 'remote', 'SKILL.md'),
+      '---\nname: remote\ndescription: Remote workspace skill\n---\nRemote instructions.'
+    )
     await mkdir(join(secondSessions, 'saved-two'), { recursive: true })
     await writeFile(
       join(secondSessions, 'workspace.json'),
@@ -1335,7 +1350,7 @@ describe('interactive runtime lifecycle', () => {
         expect.objectContaining({
           model: 'bedrock/anthropic.claude-old',
           session: { dir: secondSessions, id: 'saved-two' },
-          skills: expect.arrayContaining([expect.stringContaining(secondWorkspace)]),
+          skills: expect.any(AgentSkills),
         })
       )
       const sandbox = secondOptions.sandbox
@@ -1347,6 +1362,13 @@ describe('interactive runtime lifecycle', () => {
           : undefined
       expect(pwd).toMatchObject({ exitCode: 0 })
       expect(await realpath(pwd!.stdout.trim())).toBe(realSecondWorkspace)
+      const skillsAgent = new Agent({ plugins: [secondOptions.skills], sandbox })
+      await skillsAgent.initialize()
+      await expect(secondOptions.skills.getAvailableSkills(skillsAgent)).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'remote', path: join(secondWorkspace, '.agent', 'skills', 'remote') }),
+        ])
+      )
       expect(mocks.loadMcp).toHaveBeenNthCalledWith(2, {
         backgroundConnect: true,
         cwd: secondWorkspace,

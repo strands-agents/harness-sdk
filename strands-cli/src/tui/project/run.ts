@@ -91,6 +91,10 @@ export async function createPythonChat(
         controller,
       })
     }
+    const privatePaths: string[] = []
+    for (const { controller } of entries) {
+      privatePaths.push(...(controller.backend as PythonBackend).privatePaths)
+    }
     return new ConversationManager(
       { activeId: conversations?.activeId ?? 'agent-1', entries },
       {
@@ -108,6 +112,9 @@ export async function createPythonChat(
             resume: true,
           }),
         voice: new PythonVoiceSession({ cwd: options.cwd ?? process.cwd() }),
+        project,
+        projectPrivatePaths: privatePaths,
+        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
       }
     )
   } catch (error) {

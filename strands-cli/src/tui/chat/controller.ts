@@ -888,7 +888,7 @@ export class ChatController implements ChatControllerApi {
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
       case 'skills':
-        await this.submit(`$${row.value}`)
+        await this.submit(`$${decodeURIComponent(row.value)}`)
         return true
       case 'tasks':
         return this._openTaskDetail(row.value)
@@ -1468,7 +1468,6 @@ export class ChatController implements ChatControllerApi {
       }
       this._openPanel('skills', `skills (${skills.length})`, skillRows(skills), {
         searchable: true,
-        ...(this._skills.paths?.length ? { body: `Checked: ${this._skills.paths.join(', ')}` } : {}),
       })
     } catch (error) {
       if (this._panel?.id === loading.id) {

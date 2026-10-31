@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -9,6 +12,7 @@ import {
 } from '../src/tui/chat/controller.js'
 import { ConversationManager } from '../src/tui/session/conversations.js'
 import { AgentMessaging } from '../src/tui/messaging.js'
+import * as projectWatch from '../src/tui/project/watch.js'
 import type { VoiceInput, VoiceSessionSnapshot, VoiceSupervisorRequest } from '../src/tui/voice/session.js'
 
 function backend(
@@ -27,6 +31,94 @@ function backend(
 }
 
 describe('ConversationManager', () => {
+  it('reloads changed project source after active work finishes', async () => {
+    let changed!: () => void
+    const stopWatching = vi.fn()
+    const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockImplementation((_project, onChange) => {
+      changed = onChange
+      return stopWatching
+    })
+    const root = await mkdtemp(join(tmpdir(), 'strands-live-reload-'))
+    const entrypoint = join(root, 'agent.ts')
+    const helper = join(root, 'helper.ts')
+    await writeFile(entrypoint, "createHarness({ name: 'Before' })\n")
+    await writeFile(helper, "export const name = 'Before'\n")
+    let finish!: () => void
+    const active = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const primary = new ChatController(
+      backend('primary', async function* () {
+        yield { type: 'textDelta', text: 'Working' }
+        await active
+        return { stopReason: 'endTurn' }
+      })
+    )
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      project: { root, entrypoint, language: 'typescript' },
+      reloadProject,
+    })
+    try {
+      const running = manager.submit('Keep working')
+      await vi.waitFor(() => expect(manager.busy).toBe(true))
+      await writeFile(entrypoint, "createHarness({ name: 'After' })\n")
+      changed()
+      expect(reloadProject).not.toHaveBeenCalled()
+
+      finish()
+      await running
+      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1'), { timeout: 5_000 })
+
+      reloadProject.mockClear()
+      await writeFile(helper, "export const name = 'After'\n")
+      changed()
+      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1'), { timeout: 5_000 })
+    } finally {
+      finish()
+      await manager.dispose()
+      watch.mockRestore()
+      await rm(root, { recursive: true, force: true })
+      expect(stopWatching).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('reloads a changed project after fork startup settles', async () => {
+    const root = process.cwd()
+    const entrypoint = join(root, 'agent.ts')
+    const primary = new ChatController(backend('primary', emptyRun))
+    const fork = new ChatController(backend('fork', emptyRun))
+    let notifyChange!: () => void
+    const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockImplementation((_project, onChange) => {
+      notifyChange = onChange
+      return () => {}
+    })
+    let finish!: (controller: ChatController) => void
+    const pendingFork = new Promise<ChatController>((resolve) => {
+      finish = resolve
+    })
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: () => pendingFork,
+      project: { root, entrypoint, language: 'typescript' },
+      reloadProject,
+    })
+    const forking = manager.submit('/fork')
+    try {
+      notifyChange()
+      expect(reloadProject).not.toHaveBeenCalled()
+      finish(fork)
+      await forking
+      expect(reloadProject).toHaveBeenCalledExactlyOnceWith('agent-2')
+    } finally {
+      finish(fork)
+      await forking
+      await manager.dispose()
+      watch.mockRestore()
+    }
+  })
+
   it('refuses a setup capture while another conversation is running', async () => {
     const snapshot = {
       scope: 'agent' as const,

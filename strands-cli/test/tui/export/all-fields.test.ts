@@ -123,7 +123,6 @@ async function createCompleteProfileFixture(root: string): Promise<CompleteProfi
   const extension = join(workspace, 'extensions.ts')
   const skillDirectory = join(workspace, 'skills', 'review')
   await mkdir(skillDirectory, { recursive: true })
-  await writeFile(join(workspace, 'package.json'), '{"type":"module"}')
   await writeFile(join(skillDirectory, 'SKILL.md'), '# Review')
   await writeFile(join(workspace, 'approval.cedar'), 'permit(principal, action, resource);')
   await writeFile(
@@ -228,8 +227,8 @@ async function applyCompleteProfileInChat(fixture: CompleteProfileFixture): Prom
 
     expect(requestSetup).toHaveBeenCalledOnce()
     const change = requestSetup.mock.calls[0]![0]
-    expect(change.configuration).toBeDefined()
-    return change.configuration!.profile
+    expect(change.configuration).toBeUndefined()
+    return change.profile as HarnessAgentConfig
   } finally {
     await controller.dispose()
   }

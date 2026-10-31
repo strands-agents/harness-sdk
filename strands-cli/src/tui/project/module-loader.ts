@@ -24,13 +24,9 @@ export function initialize(data: {
 
 export const load: LoadHook = async (url, context, nextLoad) => {
   const path = new URL(url)
-  path.searchParams.delete(VERSION_PARAMETER)
   path.search = ''
   if (path.href !== entrypoint) {
-    if (!isProjectModule(path.href) || !/\.[cm]?tsx?$/u.test(path.pathname)) {
-      return nextLoad(url, context)
-    }
-    return transpile(path, await readFile(path, 'utf8'))
+    return nextLoad(url, context)
   }
   const source = await readFile(path, 'utf8')
   const file = ts.createSourceFile(path.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)

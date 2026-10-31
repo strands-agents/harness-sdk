@@ -1,16 +1,15 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Agent } from '@strands-agents/sdk'
+import { Agent } from '@strands-agents/sdk'
+import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  configuredSkillPaths,
-  defaultSkillPaths,
-  discoverSkills,
-  FileSkillsRuntime,
-  resolveSkillPaths,
-} from '../src/tui/skills.js'
+import { CliConfigStore } from '../src/tui/config.js'
+import { createInteractiveChat } from '../src/tui/runtime.js'
+import { ChatController } from '../src/tui/chat/controller.js'
+
+import { configuredSkillSources, defaultSkillPaths, AgentSkillsRuntime, resolveSkillPaths } from '../src/tui/skills.js'
 
 describe('skill discovery', () => {
   it('includes conventional user paths and repository ancestors from root to cwd', async () => {
@@ -51,11 +50,8 @@ describe('skill discovery', () => {
       expect(resolved.length).toBeGreaterThan(2)
       expect(resolveSkillPaths(null, cwd)).toEqual([])
       expect(resolveSkillPaths([], cwd)).toEqual([])
-      expect(configuredSkillPaths(undefined, cwd)).toEqual([])
-      expect(configuredSkillPaths('./custom/skills', cwd)).toEqual([configured])
-      // HTTPS skill sources stay URLs through CLI discovery (#4574).
-      expect(configuredSkillPaths('https://example.com/SKILL.md', cwd)).toEqual(['https://example.com/SKILL.md'])
-      expect(configuredSkillPaths(['./custom/skills', 'https://example.com/SKILL.md'], cwd)).toEqual([
+      expect(configuredSkillSources(undefined, cwd)).toEqual([])
+      expect(configuredSkillSources(['./custom/skills', 'https://example.com/SKILL.md'], cwd)).toEqual([
         configured,
         'https://example.com/SKILL.md',
       ])
@@ -80,7 +76,14 @@ describe('skill discovery', () => {
     await writeSkill(project, 'Project review')
 
     try {
-      expect(discoverSkills([user, project])).toMatchObject([
+      const plugin = new AgentSkills({ skills: [user, project] })
+      const agent = new Agent({ plugins: [plugin] })
+      await agent.initialize()
+      const runtime = new AgentSkillsRuntime(
+        () => agent,
+        () => plugin
+      )
+      await expect(runtime.list()).resolves.toMatchObject([
         {
           name: 'review',
           description: 'Project review',
@@ -92,23 +95,146 @@ describe('skill discovery', () => {
     }
   })
 
-  it('activates a discovered skill through the SDK tool without adding synthetic tool messages', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'strands-skills-activation-'))
-    await writeSkill(directory, 'Project review')
-    const invoke = vi.fn(async () => ({ status: 'success' as const, content: [] }))
-    const agent = {
-      appState: { get: () => undefined },
-      tool: { skills: { invoke } },
-    } as unknown as Agent
-    const runtime = new FileSkillsRuntime([directory], () => agent)
-
-    try {
-      await expect(runtime.activate('REVIEW')).resolves.toMatchObject({ name: 'review', active: true })
-      expect(invoke).toHaveBeenCalledWith({ skill_name: 'review' }, { recordDirectToolCall: false })
-      await expect(runtime.activate('missing')).resolves.toBeUndefined()
-    } finally {
-      await rm(directory, { recursive: true, force: true })
+  it.each(['instance', 'plugin', 'url', 'plugins'] as const)(
+    'shows the active agent catalog for configured %s skills',
+    async (source) => {
+      const directory = await mkdtemp(join(tmpdir(), 'strands-skills-runtime-'))
+      const skill = new Skill({ name: 'review', description: 'Review', instructions: 'Review the code.' })
+      const plugin = new AgentSkills({ skills: [skill] })
+      if (source === 'url') {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => new globalThis.Response('---\nname: review\ndescription: Review\n---\nReview the code.'))
+        )
+      }
+      let chat: Awaited<ReturnType<typeof createInteractiveChat>> | undefined
+      try {
+        chat = await createInteractiveChat({
+          cwd: directory,
+          sessionRoot: join(directory, 'catalog'),
+          config: CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
+          agentOptions: {
+            model: 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0',
+            session: false,
+            memory: false,
+            builtinTools: [],
+            builtinPlugins: [],
+            contextManager: false,
+            backgroundTasks: false,
+            caching: false,
+            skills: { instance: skill, plugin, url: 'https://example.invalid/review/SKILL.md', plugins: false }[source],
+            ...(source === 'plugins' ? { plugins: [plugin] } : {}),
+          },
+        })
+        await chat.submit('/skills')
+        expect(chat.getSnapshot().panel).toMatchObject({
+          title: 'skills (1)',
+          rows: [{ label: 'review', description: 'Review' }],
+        })
+        expect(chat.backend.info?.().tools).toEqual(
+          expect.arrayContaining([expect.objectContaining({ name: 'skills' })])
+        )
+      } finally {
+        await chat?.dispose()
+        vi.unstubAllGlobals()
+        await rm(directory, { recursive: true, force: true })
+      }
     }
+  )
+
+  it('uses the plugin state key and activates without synthetic tool messages', async () => {
+    const skill = new Skill({ name: 'review', description: 'Review', instructions: 'Review the code.' })
+    const plugin = new AgentSkills({ skills: [skill], stateKey: 'custom_skills' })
+    const agent = new Agent({ plugins: [plugin] })
+    await agent.initialize()
+    const runtime = new AgentSkillsRuntime(
+      () => agent,
+      () => plugin
+    )
+
+    await expect(runtime.list()).resolves.toMatchObject([{ name: 'review', active: false }])
+    await expect(runtime.activate('REVIEW')).resolves.toMatchObject({
+      name: 'review',
+      active: true,
+    })
+    await expect(runtime.list()).resolves.toMatchObject([{ name: 'review', active: true }])
+    expect(agent.messages).toEqual([])
+    await expect(runtime.activate('missing')).resolves.toBeUndefined()
+  })
+
+  it('keeps exact skill identities when names share a displayed label or differ only in case', async () => {
+    const names = ['review', 'review\u001b[31m', 'REVIEW']
+    const plugin = new AgentSkills({
+      skills: names.map((name, index) => new Skill({ name, description: 'Review', instructions: `Review ${index}` })),
+    })
+    const agent = new Agent({ plugins: [plugin], printer: false })
+    await agent.initialize()
+    const runtime = new AgentSkillsRuntime(
+      () => agent,
+      () => plugin
+    )
+    const stream = vi.fn(async function* () {
+      yield* []
+      return { stopReason: 'endTurn' }
+    })
+    const controller = new ChatController(
+      { id: 'skills-test', name: 'Skills', protocol: 'strands', stream, cancel: vi.fn() },
+      { skills: runtime }
+    )
+
+    await controller.submit('/skills')
+    const rows = controller.getSnapshot().panel!.rows
+    expect(rows.filter((row) => row.label === 'review')).toHaveLength(2)
+    expect(new Set(rows.map((row) => row.value)).size).toBe(3)
+    for (const [index, name] of names.entries()) {
+      const row = rows.find((row) => row.value === encodeURIComponent(name))!
+      expect(controller.openSkillDetail(decodeURIComponent(row.value!))).toBe(true)
+      expect(controller.getSnapshot().panel?.body).toBe(`Review ${index}`)
+      await controller.submit('/skills')
+      await controller.activatePanelRow(row)
+      expect(stream).toHaveBeenCalledTimes(index + 1)
+      expect(plugin.getActivatedSkills(agent)).toEqual(names.slice(0, index + 1))
+    }
+    expect(plugin.getActivatedSkills(agent)).toEqual(names)
+    expect(agent.messages).toEqual([])
+    await controller.dispose()
+  })
+
+  it('finishes activation on the agent whose catalog was read', async () => {
+    const plugin = new AgentSkills({ skills: [new Skill({ name: 'review', description: 'Review' })] })
+    const first = new Agent({ plugins: [plugin], printer: false })
+    const second = new Agent({ plugins: [plugin], printer: false })
+    await Promise.all([first.initialize(), second.initialize()])
+    let selected = first
+    const runtime = new AgentSkillsRuntime(
+      () => selected,
+      () => plugin
+    )
+    const activation = runtime.activate('review')
+    selected = second
+
+    await expect(activation).resolves.toMatchObject({ active: true })
+    expect(plugin.getActivatedSkills(first)).toEqual(['review'])
+    expect(plugin.getActivatedSkills(second)).toEqual([])
+  })
+
+  it('does not report activation when a skill disappears after catalog loading', async () => {
+    const plugin = new AgentSkills({ skills: [new Skill({ name: 'review', description: 'Review' })] })
+    const agent = new Agent({ plugins: [plugin], printer: false })
+    await agent.initialize()
+    const list = plugin.getAvailableSkills.bind(plugin)
+    vi.spyOn(plugin, 'getAvailableSkills').mockImplementationOnce(async (current) => {
+      const skills = await list(current)
+      plugin.setAvailableSkills([])
+      return skills
+    })
+    const runtime = new AgentSkillsRuntime(
+      () => agent,
+      () => plugin
+    )
+
+    await expect(runtime.activate('review')).rejects.toThrow("Skill 'review' not found")
+    expect(plugin.getActivatedSkills(agent)).toEqual([])
   })
 })
 

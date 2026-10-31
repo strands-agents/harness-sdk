@@ -341,7 +341,7 @@ export function skillRows(skills: readonly SkillInfo[]): ChatPanelRow[] {
     ? skills.map((skill) => ({
         label: skill.active ? `active ${skill.name}` : skill.name,
         description: skill.description,
-        value: skill.name,
+        value: encodeURIComponent(skill.name),
         section: skill.active ? 'Active skills' : 'Available skills',
       }))
     : [{ label: 'none', description: 'No valid SKILL.md files were found.' }]

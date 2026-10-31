@@ -316,6 +316,23 @@ export class CliConfigStore {
     })
   }
 
+  async saveProfile(value: HarnessAgentConfig): Promise<void> {
+    const profile = normalizeHarnessAgentConfig(value)
+    return this._enqueueWrite(async () => {
+      const priorProfile = isRecord(this._document.profile) ? this._document.profile : {}
+      const document = {
+        ...this._document,
+        agentProject: undefined,
+        profile: { ...priorProfile, ...globalThis.structuredClone(profile) },
+      }
+      if (this._persistent) {
+        await writeConfigDocument(this._path, document)
+      }
+      this._document = document
+      this._profile = profile
+    })
+  }
+
   setPermissionMode(mode: PermissionMode): Promise<void> {
     return this._updatePermissions((permissions) => ({ ...permissions, mode }))
   }

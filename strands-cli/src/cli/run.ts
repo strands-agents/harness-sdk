@@ -213,8 +213,9 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           discovery: config.snapshot().settings.mcpDiscovery,
         })
         signal.throwIfAborted()
+        const profile = launch?.profile ?? launch?.configuration?.profile
         const projectPath =
-          launch?.agentProject ?? (launch?.configuration ? undefined : (args.agent ?? config.snapshot().agentProject))
+          launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject))
         const project = projectPath ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../tui/project/run.js')
@@ -232,15 +233,12 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         signal.throwIfAborted()
         if (launch?.configuration) config.applyProviderEnvironment()
         const invocation =
-          launch?.configuration && !launch.agentProject
+          profile && !launch?.agentProject
             ? {
-                profile: launch.configuration.profile,
+                profile,
                 options: withWorkspaceSessionDirectory(
-                  await harnessAgentOptionsFromConfig(
-                    launch.configuration.profile,
-                    launch.configuration.profileBaseDir ?? initialWorkspace
-                  ),
-                  launch.configuration.profile,
+                  await harnessAgentOptionsFromConfig(profile, config.snapshot().profileBaseDir ?? initialWorkspace),
+                  profile,
                   initialWorkspace
                 ),
               }
@@ -254,8 +252,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
             ...(invocation.project ? { project: invocation.project } : {}),
             cwd: initialWorkspace,
             // Flags describe one run; only a profile-driven session writes model changes back to it.
-            persistModelChanges:
-              !invocation.project && (launch?.configuration !== undefined || shouldPersistModelChanges(args)),
+            persistModelChanges: !invocation.project && (profile !== undefined || shouldPersistModelChanges(args)),
             config,
             mcpPaths: initialMcp.paths,
             mcpStrictPaths: initialMcp.strictPaths,

@@ -1,12 +1,11 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type { HarnessAgentOptions } from '@strands-agents/harness'
 import type { Agent, ToolResultContent } from '@strands-agents/sdk'
-import { Skill, type AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
+import type { AgentSkills, SkillSource } from '@strands-agents/sdk/vended-plugins/skills'
 
 import { sanitizeTerminalText } from './terminal/sanitize.js'
-import { isRecord } from './values.js'
 
 export interface SkillInfo {
   name: string
@@ -20,45 +19,49 @@ export interface SkillInfo {
 }
 
 export interface ChatSkillsRuntime {
-  readonly paths?: readonly string[]
   list(): Promise<readonly SkillInfo[]>
   activate(name: string): Promise<SkillInfo | undefined>
 }
 
-export class FileSkillsRuntime implements ChatSkillsRuntime {
-  readonly paths: readonly string[]
-
+export class AgentSkillsRuntime implements ChatSkillsRuntime {
   constructor(
-    private readonly _paths: readonly string[],
-    private readonly _getAgent: () => Agent
-  ) {
-    this.paths = _paths.map(sanitizeTerminalText)
+    private readonly _getAgent: () => Agent,
+    private readonly _getSkills: (agent: Agent) => AgentSkills | undefined
+  ) {}
+
+  list(): Promise<readonly SkillInfo[]> {
+    return this._list(this._getAgent())
   }
 
-  async list(): Promise<readonly SkillInfo[]> {
-    const active = activatedSkills(this._getAgent())
-    return discoverSkills(this._paths).map((skill) => ({
-      name: sanitizeTerminalText(skill.name),
-      description: sanitizeTerminalText(skill.description),
-      instructions: sanitizeTerminalText(skill.instructions),
-      active: active.has(skill.name),
-      ...(skill.path ? { path: sanitizeTerminalText(skill.path) } : {}),
-      ...(skill.allowedTools ? { allowedTools: skill.allowedTools.map(sanitizeTerminalText) } : {}),
-      ...(skill.license ? { license: sanitizeTerminalText(skill.license) } : {}),
-      ...(skill.compatibility ? { compatibility: sanitizeTerminalText(skill.compatibility) } : {}),
-    }))
+  private async _list(agent: Agent): Promise<readonly SkillInfo[]> {
+    const plugin = this._getSkills(agent)
+    if (!plugin) return []
+    const active = new Set(plugin.getActivatedSkills(agent))
+    return [...(await plugin.getAvailableSkills(agent))]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((skill) => ({
+        name: skill.name,
+        description: sanitizeTerminalText(skill.description),
+        instructions: sanitizeTerminalText(skill.instructions),
+        active: active.has(skill.name),
+        ...(skill.path ? { path: sanitizeTerminalText(skill.path) } : {}),
+        ...(skill.allowedTools ? { allowedTools: skill.allowedTools.map(sanitizeTerminalText) } : {}),
+        ...(skill.license ? { license: sanitizeTerminalText(skill.license) } : {}),
+        ...(skill.compatibility ? { compatibility: sanitizeTerminalText(skill.compatibility) } : {}),
+      }))
   }
 
   async activate(name: string): Promise<SkillInfo | undefined> {
-    const skill = (await this.list()).find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
+    const agent = this._getAgent()
+    const skills = await this._list(agent)
+    const skill =
+      skills.find((candidate) => candidate.name === name) ??
+      skills.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())
     if (!skill) {
       return undefined
     }
-    const result = await this._getAgent().tool.skills!.invoke(
-      { skill_name: skill.name },
-      { recordDirectToolCall: false }
-    )
-    if (result.status === 'error') {
+    const result = await agent.tool.skills!.invoke({ skill_name: skill.name }, { recordDirectToolCall: false })
+    if (result.status === 'error' || !this._getSkills(agent)?.getActivatedSkills(agent).includes(skill.name)) {
       throw result.error ?? new Error(toolResultText(result.content) || `Failed to activate skill ${skill.name}.`)
     }
     return { ...skill, active: true }
@@ -73,21 +76,21 @@ export function defaultSkillPaths(cwd = process.cwd(), home = homedir()): string
   return [...new Set([...userPaths, ...projectPaths])]
 }
 
-/** The CLI's view of the `skills` option: paths and URLs (an `AgentSkills` instance is passed through). */
+/** Sources for the default skills plugin; a configured plugin is handled directly by the runtime. */
 export type SkillPathsOption = Exclude<HarnessAgentOptions['skills'], AgentSkills>
 
 function skillsDisabled(value: SkillPathsOption): boolean {
   return value === false || value === null || (Array.isArray(value) && value.length === 0)
 }
 
-/** Absolute paths or HTTPS URLs for configured skills; off or the default (`true`) yields none. */
-export function configuredSkillPaths(value: SkillPathsOption, cwd = process.cwd()): string[] {
-  if (value === undefined || value === true || skillsDisabled(value)) {
+/** Resolve local sources while preserving SDK Skill instances and HTTPS URLs. */
+export function configuredSkillSources(value: SkillPathsOption, cwd = process.cwd()): SkillSource[] {
+  if (value == null || typeof value === 'boolean') {
     return []
   }
-  const sources = Array.isArray(value) ? value : [value as string | Skill]
-  return sources.flatMap((source) =>
-    typeof source === 'string' ? [source.startsWith('https://') ? source : resolve(cwd, source)] : []
+  const sources = Array.isArray(value) ? value : [value]
+  return sources.map((source) =>
+    typeof source === 'string' && !source.startsWith('https://') ? resolve(cwd, source) : source
   )
 }
 
@@ -98,11 +101,11 @@ export function configuredSkillPaths(value: SkillPathsOption, cwd = process.cwd(
  * (the setting, or `STRANDS_CLI_SKILL_DISCOVERY=off`) only the configured directories load, falling back to
  * the library's `./.agent/skills` default; `skills: false` or an empty list turns skills off entirely.
  */
-export function resolveSkillPaths(value: SkillPathsOption, cwd = process.cwd(), discovery = true): string[] {
+export function resolveSkillSources(value: SkillPathsOption, cwd = process.cwd(), discovery = true): SkillSource[] {
   if (skillsDisabled(value)) {
     return []
   }
-  const configured = [...new Set(configuredSkillPaths(value, cwd))]
+  const configured = [...new Set(configuredSkillSources(value, cwd))]
   if (!discovery || process.env.STRANDS_CLI_SKILL_DISCOVERY === 'off') {
     return value === undefined || value === true ? [join(cwd, '.agent', 'skills')] : configured
   }
@@ -110,27 +113,8 @@ export function resolveSkillPaths(value: SkillPathsOption, cwd = process.cwd(), 
   return [...discovered, ...configured]
 }
 
-export function discoverSkills(paths: readonly string[]): Skill[] {
-  const skills = new Map<string, Skill>()
-  for (const path of paths) {
-    let loaded: Skill[]
-    try {
-      const stat = statSync(path)
-      if (stat.isFile() || existsSync(join(path, 'SKILL.md')) || existsSync(join(path, 'skill.md'))) {
-        loaded = [Skill.fromFile(path)]
-      } else if (stat.isDirectory()) {
-        loaded = Skill.fromDirectory(path)
-      } else {
-        continue
-      }
-    } catch {
-      continue
-    }
-    for (const skill of loaded) {
-      skills.set(skill.name, skill)
-    }
-  }
-  return [...skills.values()].sort((left, right) => left.name.localeCompare(right.name))
+export function resolveSkillPaths(value: SkillPathsOption, cwd = process.cwd(), discovery = true): string[] {
+  return resolveSkillSources(value, cwd, discovery).filter((source): source is string => typeof source === 'string')
 }
 
 function workspaceAncestors(cwd: string): string[] {
@@ -147,15 +131,6 @@ function workspaceAncestors(cwd: string): string[] {
     }
     current = parent
   }
-}
-
-function activatedSkills(agent: Agent): Set<string> {
-  const state = agent.appState.get('agent_skills')
-  if (!isRecord(state)) {
-    return new Set()
-  }
-  const names = state.activatedSkills
-  return new Set(Array.isArray(names) ? names.filter((name) => typeof name === 'string') : [])
 }
 
 function toolResultText(content: readonly ToolResultContent[]): string {

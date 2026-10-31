@@ -350,14 +350,19 @@ describe('runInkChat', () => {
     }
   })
 
-  it.each([false, true])(
-    'preserves the applying conversation and rejects voice during reload (failure=%s)',
-    async (fails) => {
+  it.each([
+    { kind: 'setup', fails: false },
+    { kind: 'setup', fails: true },
+    { kind: 'profile', fails: false },
+    { kind: 'profile', fails: true },
+  ])(
+    'preserves the applying conversation and rejects voice during reload (kind=$kind, failure=$fails)',
+    async ({ kind, fails }) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-setup-'))
       const configPath = join(directory, 'cli.toml')
       const config = await CliConfigStore.load(configPath)
       await config.saveSetup(configurationFromStore(config))
-      const saved = await readFile(configPath, 'utf8')
+      let saved = await readFile(configPath, 'utf8')
       const configuration = {
         ...configurationFromStore(config),
         profile: { ...config.snapshot().profile, name: 'Replacement' },
@@ -445,11 +450,26 @@ describe('runInkChat', () => {
       })
       try {
         await vi.waitFor(() => expect(rendered).toContain('Fork history'))
-        requestSetup({ conversationId: 'agent-1', configuration, agentProject, onFailure })
+        requestSetup({
+          conversationId: 'agent-1',
+          ...(kind === 'profile' ? { profile: configuration.profile } : { configuration, agentProject }),
+          onFailure,
+        })
         await vi.waitFor(() => expect(captured).toBeDefined())
-        expect(config.snapshot().profile.name).toBe('Replacement')
-        expect(config.snapshot().agentProject).toBe(agentProject)
+        expect(config.snapshot().profile.name).toBe(kind === 'profile' ? 'Strands harness' : 'Replacement')
+        expect(config.snapshot().agentProject).toBe(kind === 'profile' ? undefined : agentProject)
         expect(await readFile(configPath, 'utf8')).toBe(saved)
+        if (kind === 'profile') {
+          await config.saveSetup({
+            ...configurationFromStore(config),
+            providers: ['ollama'],
+            providerEnvironment: { AWS_REGION: 'us-west-2' },
+            permissionMode: 'bypassPermissions',
+            allowedTools: ['write'],
+            settings: { frogTheme: 'green', skillDiscovery: true },
+          })
+          saved = await readFile(configPath, 'utf8')
+        }
         expect(captured!.activeId).toBe('agent-2')
         expect(captured!.entries.map((entry) => entry.conversation.completedTurns.map((turn) => turn.prompt))).toEqual([
           ['Primary history'],
@@ -481,7 +501,15 @@ describe('runInkChat', () => {
         const reloaded = (await CliConfigStore.load(configPath)).snapshot()
         expect(reloaded).toEqual(config.snapshot())
         expect(reloaded.profile.name).toBe(fails ? 'Strands harness' : 'Replacement')
-        expect(reloaded.agentProject).toBe(fails ? undefined : agentProject)
+        expect(reloaded.agentProject).toBe(fails || kind === 'profile' ? undefined : agentProject)
+        if (kind === 'profile') {
+          expect(reloaded).toMatchObject({
+            providers: { enabled: ['ollama'] },
+            permissions: { mode: 'bypassPermissions', allow: ['write'] },
+            settings: { frogTheme: 'green', skillDiscovery: true },
+          })
+          expect(config.configuredProviderEnvironment()).toEqual({ AWS_REGION: 'us-west-2' })
+        }
         if (fails) {
           expect(await readFile(configPath, 'utf8')).toBe(saved)
           expect(onFailure).toHaveBeenCalledExactlyOnceWith('Replacement failed')

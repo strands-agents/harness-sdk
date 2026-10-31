@@ -1030,7 +1030,7 @@ export function ChatApp({
         if (key.rightArrow && snapshot.panel.kind === 'skills') {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
           if (selected?.value) {
-            controller.openSkillDetail(selected.value)
+            controller.openSkillDetail(decodeURIComponent(selected.value))
           }
           return
         }

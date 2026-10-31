@@ -156,9 +156,10 @@ export async function withDiscoveredSkills(
   options: HarnessAgentOptions,
   discovery: boolean
 ): Promise<HarnessAgentOptions> {
-  const cwd = process.cwd()
-  const { resolveSkillPaths } = await import('../tui/skills.js')
-  const skills = options.skills instanceof AgentSkills ? undefined : options.skills
-  const skillPaths = resolveSkillPaths(skills, cwd, discovery)
-  return { ...options, skills: skillPaths.length > 0 ? skillPaths : false }
+  if (options.skills instanceof AgentSkills || options.plugins?.some((plugin) => plugin instanceof AgentSkills)) {
+    return options
+  }
+  const { resolveSkillSources } = await import('../tui/skills.js')
+  const sources = resolveSkillSources(options.skills, process.cwd(), discovery)
+  return { ...options, skills: sources.length > 0 ? sources : false }
 }

@@ -15,6 +15,8 @@ import { parseCommandInvocation } from '../chat/commands.js'
 import { isUnresolvedBackgroundTask } from '../chat/controller-helpers.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
 import type { AgentMessaging } from '../messaging.js'
+import type { ImportedAgentProject } from '../project/import.js'
+import { watchAgentProject } from '../project/watch.js'
 import { conversationStatus, conversationTitle, readConversationValue, unquote } from './conversation-helpers.js'
 import { sessionWorkspaceLabel, type SessionTarget } from './sessions.js'
 import type { VoiceInput } from '../voice/session.js'
@@ -41,6 +43,9 @@ interface ConversationManagerOptions {
   dispose?(): void | Promise<void>
   agentMessaging?: AgentMessaging
   voice?: VoiceInput
+  project?: ImportedAgentProject
+  projectPrivatePaths?: readonly string[]
+  reloadProject?(conversationId: string): void
 }
 
 export class ConversationManager implements ChatControllerApi {
@@ -53,6 +58,8 @@ export class ConversationManager implements ChatControllerApi {
   private readonly _agentMessaging: AgentMessaging | undefined
   private readonly _stopAgentMessaging: (() => void) | undefined
   private readonly _voice: ConversationVoice
+  private readonly _reloadProject: ConversationManagerOptions['reloadProject']
+  private readonly _stopProjectWatch: (() => void) | undefined
   private _activeId: string
   private _panel: ChatPanel | undefined
   private _snapshot: ChatSnapshot
@@ -60,6 +67,7 @@ export class ConversationManager implements ChatControllerApi {
   private _nextPanel = 1
   private _forking = false
   private _resuming = false
+  private _projectReloadPending = false
   private _closed = false
   private _disposed = false
 
@@ -81,6 +89,7 @@ export class ConversationManager implements ChatControllerApi {
     this._resume = options.resume
     this._disposeShared = options.dispose
     this._agentMessaging = options.agentMessaging
+    this._reloadProject = options.reloadProject
     this._voice = new ConversationVoice(options.voice, () => this._active, {
       panel: (rows): void => {
         this._panel = rows ? this._makePanel('voice', 'Voice', rows) : undefined
@@ -96,6 +105,19 @@ export class ConversationManager implements ChatControllerApi {
       this._addConversation(id, title, controller, description)
     }
     this._snapshot = this._buildSnapshot()
+    const project = options.project
+    this._stopProjectWatch =
+      project && options.reloadProject
+        ? watchAgentProject(
+            project,
+            () => {
+              this._projectReloadPending = true
+              this._reloadProjectIfReady()
+            },
+            (error) => this._openError('live reload unavailable', project.root, errorMessage(error)),
+            options.projectPrivatePaths
+          )
+        : undefined
     this._stopAgentMessaging = this._agentMessaging?.subscribe(() => {
       if (this._panel?.kind === 'agents' && this._panel.title === AGENTS_PANEL_TITLE) {
         this._openAgentsPanel(false)
@@ -264,6 +286,7 @@ export class ConversationManager implements ChatControllerApi {
     }
     this._voice.disconnect()
     this._stopAgentMessaging?.()
+    this._stopProjectWatch?.()
     await Promise.allSettled([
       ...[...this._conversations.values()].map((conversation) => conversation.controller.dispose()),
       this._voice.dispose(),
@@ -368,6 +391,7 @@ export class ConversationManager implements ChatControllerApi {
     } finally {
       this._resuming = false
       this._emit()
+      this._reloadProjectIfReady()
     }
   }
 
@@ -421,6 +445,7 @@ export class ConversationManager implements ChatControllerApi {
     } finally {
       this._forking = false
       this._emit()
+      this._reloadProjectIfReady()
     }
   }
 
@@ -439,10 +464,29 @@ export class ConversationManager implements ChatControllerApi {
           this._openAgentsPanel(false)
         }
         this._emit()
+        this._reloadProjectIfReady()
       }),
     }
     this._conversations.set(endpointId, record)
     this._agentMessaging?.rename(endpointId, record.title)
+  }
+
+  private _reloadProjectIfReady(): void {
+    if (
+      !this._projectReloadPending ||
+      !this._reloadProject ||
+      this._closed ||
+      this._disposed ||
+      this._forking ||
+      this._resuming ||
+      [...this._conversations.values()].some(
+        ({ controller }) => controller.busy || controller.getSnapshot().tasks.some(isUnresolvedBackgroundTask)
+      )
+    ) {
+      return
+    }
+    this._projectReloadPending = false
+    this._reloadProject(this._activeId)
   }
 
   private _switchConversation(id: string): boolean {

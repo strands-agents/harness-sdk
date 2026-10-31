@@ -17,6 +17,32 @@ afterEach(() => {
 })
 
 describe('CliConfigStore', () => {
+  it('saves an agent profile without changing CLI preferences, providers, permissions, or its module base', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'cli.toml')
+    await writeFile(
+      path,
+      stringify({
+        onboarding: { version: 0 },
+        agentProject: join(directory, 'agent.ts'),
+        profileBaseDir: directory,
+        providers: { enabled: ['bedrock'], environment: { AWS_REGION: 'us-west-2' } },
+        permissions: { mode: 'bypassPermissions', allow: ['write'], deny: ['shell'] },
+        settings: { frogTheme: 'green', skillDiscovery: true },
+      })
+    )
+    const config = await CliConfigStore.load(path)
+    const before = config.snapshot()
+    const profile = { ...before.profile, name: 'Updated', model: 'ollama/local' }
+
+    await config.saveProfile(profile)
+
+    expect(config.snapshot()).toEqual({ ...before, agentProject: undefined, profile })
+    const reloaded = await CliConfigStore.load(path)
+    expect(reloaded.snapshot()).toEqual(config.snapshot())
+    expect(reloaded.configuredProviderEnvironment()).toEqual({ AWS_REGION: 'us-west-2' })
+  })
+
   it.each(['aurora', 'moonlight', 'magma'])('loads the retired %s theme as Classic', async (frogTheme) => {
     const path = join(await temporaryDirectory(), 'cli.toml')
     await writeFile(path, stringify({ settings: { frogTheme, animations: false } }))

@@ -41,7 +41,7 @@ import {
   restoreSessionAgentDefinition,
 } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
-import { FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
+import { AgentSkillsRuntime, resolveSkillPaths, resolveSkillSources } from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
@@ -96,16 +96,12 @@ export async function createInteractiveChat(
     interventions: _interventions,
     session: _session,
     sessionManager: explicitSessionManager,
-    skills: configuredSkills,
     sandbox: configuredSandbox,
     mcpServers: configuredMcpServers,
     ...portableAgentOptions
   } = options.agentOptions ?? {}
   // A `SessionManager` instance on `session` is honored like the SDK's `sessionManager`.
   const configuredSessionManager = explicitSessionManager ?? configuredSessionSettings.manager
-  // TODO(skills): `FileSkillsRuntime` only honors string paths; an `AgentSkills` instance falls back to default discovery.
-  const configuredSkillSources: SkillPathsOption =
-    configuredSkills instanceof AgentSkills ? undefined : configuredSkills
   const sourceDefinition =
     options.project && typeof portableAgentOptions.model === 'string'
       ? {
@@ -120,6 +116,7 @@ export async function createInteractiveChat(
   const subagentToolsByAgent = new Map<Agent, Tool>()
   const stopObservingSubagents = new Map<Tool, () => void>()
   const agents = new Set<Agent>()
+  const skillsByAgent = new WeakMap<Agent, AgentSkills>()
   const controllerContexts = new WeakMap<ChatController, { workspace: string; sessionDirectory: string }>()
   let nextPeerEndpoint = 1
   for (const entry of conversations?.entries ?? []) {
@@ -150,14 +147,27 @@ export async function createInteractiveChat(
     configuredTools: NonNullable<HarnessAgentOptions['tools']>,
     peerEndpointId: string,
     backgroundActivity: BackgroundAgentActivityStore,
-    overrides: Partial<HarnessAgentOptions>
+    overrides: Partial<HarnessAgentOptions>,
+    workspace: string
   ): Promise<Agent> => {
     if (disposed) {
       throw new Error('Runtime is disposed.')
     }
     const agentOptions = { ...controllerOptions, ...overrides }
     requireBedrockRegion(agentOptions.model)
-    const agent = await (options.buildAgent ?? createHarness)({
+    let skills: AgentSkills | undefined
+    const prepareOptions = (configured: HarnessAgentOptions): HarnessAgentOptions => {
+      skills = configured.plugins?.find((plugin): plugin is AgentSkills => plugin instanceof AgentSkills)
+      if (skills) return configured
+      if (configured.skills instanceof AgentSkills) {
+        skills = configured.skills
+      } else {
+        const sources = resolveSkillSources(configured.skills, workspace, config.snapshot().settings.skillDiscovery)
+        skills = sources.length > 0 ? new AgentSkills({ skills: sources }) : undefined
+      }
+      return { ...configured, skills: skills ?? false }
+    }
+    const configured: HarnessAgentOptions = {
       ...agentOptions,
       tools: [...configuredTools],
       plugins: [
@@ -176,7 +186,10 @@ export async function createInteractiveChat(
       ],
       backgroundTasks: interactiveBackgroundTasks(agentOptions),
       printer: false,
-    }).catch(rethrowWithProviderHint)
+    }
+    const agent = await (
+      options.buildAgent ? options.buildAgent(configured, prepareOptions) : createHarness(prepareOptions(configured))
+    ).catch(rethrowWithProviderHint)
     try {
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       await initializeAgentDefinition(agent)
@@ -184,6 +197,7 @@ export async function createInteractiveChat(
       await persistSessionAgentDefinition(agentOptions)
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       agents.add(agent)
+      if (skills) skillsByAgent.set(agent, skills)
       const subagentTool = agent.toolRegistry.get('subagent')
       if (subagentTool) {
         subagentToolsByAgent.set(agent, subagentTool)
@@ -269,7 +283,6 @@ export async function createInteractiveChat(
     const restoredAgentOptions = options.project
       ? baseAgentOptions
       : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
-    const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)
@@ -300,7 +313,6 @@ export async function createInteractiveChat(
       ...withSession(restoredAgentOptions, { id: sessionId, dir: sessionDirectory }),
       ...(request.seed ? { model: request.seed.model, effort: profileEffort(request.seed.thinking) } : {}),
       ...(request.sessionManager !== undefined ? { sessionManager: request.sessionManager } : {}),
-      skills: skillPaths.length > 0 ? skillPaths : false,
       sandbox,
       interventions: [liveSteering, cedarPermissions, ...configuredInterventions],
     }
@@ -325,7 +337,7 @@ export async function createInteractiveChat(
     if (configuration) configuredTools.push(configuration.tool)
     let stopConfigurationWatch: (() => void) | undefined
     try {
-      agent = await buildAgent(controllerOptions, configuredTools, peerEndpointId, backgroundActivity, {})
+      agent = await buildAgent(controllerOptions, configuredTools, peerEndpointId, backgroundActivity, {}, workspace)
       if (request.seed && request.restoreSeedMessages !== false) {
         agent.messages = [...request.seed.messages]
         // The fork has its own session id, so the `[ref: …]` in the copied messages resolve only against a
@@ -389,7 +401,8 @@ export async function createInteractiveChat(
               configuredTools,
               peerEndpointId,
               backgroundActivity,
-              overrides
+              overrides,
+              workspace
             )
             if (restartRequest.preserveConversation) {
               nextAgent.messages = cloneConversation(previousAgent.messages, restartRequest.preserveReasoning !== false)
@@ -434,7 +447,10 @@ export async function createInteractiveChat(
         currentSessionResumable: sessionEnabled && request.sessionManager === undefined,
       })
       const sessionName = sessions.current ? (await sessions.resolve(sessions.current)).name : undefined
-      const skills = new FileSkillsRuntime(skillPaths, () => runtime.agent)
+      const skills = new AgentSkillsRuntime(
+        () => runtime.agent,
+        (agent) => skillsByAgent.get(agent)
+      )
       const skillNames = (await skills.list()).map((skill) => skill.name)
       const controller = new ChatController(backend, {
         runtime: {
@@ -481,7 +497,6 @@ export async function createInteractiveChat(
         ...(options.requestSetup && !options.project
           ? {
               builtinTools: createBuiltinToolsRuntime(
-                config,
                 (): HarnessAgentConfig => exportProfile,
                 options.requestSetup,
                 peerEndpointId
@@ -578,6 +593,7 @@ export async function createInteractiveChat(
         controller: primary,
       })
     }
+    const project = options.project
     return new ConversationManager(
       { activeId: conversations?.activeId ?? 'agent-1', entries },
       {
@@ -612,6 +628,19 @@ export async function createInteractiveChat(
         dispose: disposeShared,
         agentMessaging,
         voice: new PythonVoiceSession({ cwd: initialWorkspace }),
+        ...(project && options.requestSetup
+          ? {
+              project,
+              projectPrivatePaths: [
+                initialSessionDirectory,
+                ...[...agents].flatMap((agent) =>
+                  agentPrivatePaths(agent).map((path) => resolve(initialWorkspace, path))
+                ),
+              ],
+              reloadProject: (conversationId: string): void =>
+                options.requestSetup?.({ agentProject: project.entrypoint, conversationId }),
+            }
+          : {}),
       }
     )
   } catch (error) {

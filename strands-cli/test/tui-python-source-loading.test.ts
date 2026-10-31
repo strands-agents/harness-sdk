@@ -10,6 +10,7 @@ import type { ChatEvent, ChatPermissionRequest, ChatRunResult } from '../src/tui
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend, type PythonOptions } from '../src/tui/project/python.js'
 import { exportSourceProject } from '../src/tui/project/export.js'
+import { watchAgentProject } from '../src/tui/project/watch.js'
 import { createPythonChat } from '../src/tui/project/run.js'
 import type { ConversationManager } from '../src/tui/session/conversations.js'
 import { pythonExecutable as python } from './fixtures/python-runtime.js'
@@ -90,7 +91,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
   it.each([
     '{"dir": "custom-memory"}',
     'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',
-  ])('excludes actual memory storage from exports: %s', async (memory) => {
+  ])('excludes actual memory storage from exports and source watching: %s', async (memory) => {
     const privateDirectory = join(root, 'custom-memory')
     await mkdir(privateDirectory, { recursive: true })
     const privateFile = join(privateDirectory, 'personal-notes.md')
@@ -110,6 +111,20 @@ ${baseSource.replace('"memory": False', `"memory": ${memory}`)}`
     const files = unzipSync(await readFile(archive))
     expect(files).not.toHaveProperty('custom-memory/personal-notes.md')
     expect(files).toHaveProperty('custom-memory-public.md')
+
+    const changed = vi.fn()
+    const failed = vi.fn()
+    const stop = watchAgentProject(project, changed, failed, backend.privatePaths)
+    try {
+      await writeFile(privateFile, 'UPDATED PRIVATE MEMORY SENTINEL')
+      await new Promise((resolve) => setTimeout(resolve, 350))
+      expect(changed).not.toHaveBeenCalled()
+      await writeFile(join(root, 'custom-memory-public.md'), 'updated public source')
+      await vi.waitFor(() => expect(changed).toHaveBeenCalled())
+      expect(failed).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
   })
 
   it.each([false, true])(
@@ -493,6 +508,32 @@ agent = create_agent()`
     await backend.dispose()
     const saved = JSON.parse(await readFile(join(root, 'saved.json'), 'utf8')) as unknown[]
     expect(saved).toHaveLength(fail ? 4 : 2)
+  })
+
+  it('releases replaced agents from authored factories', async () => {
+    const authored = baseSource
+      .replace('from strands import tool', 'import gc\nimport weakref\nfrom strands import tool\ncreated = []')
+      .replace('return "authored tool"', 'gc.collect()\n    return str(sum(ref() is not None for ref in created))')
+      .replace(
+        'agent = build()',
+        `def create_agent(**overrides):
+    candidate = build(**overrides)
+    created.append(weakref.ref(candidate))
+    return candidate
+
+agent = create_agent()`
+      )
+    const backend = await open(authored)
+
+    for (let index = 0; index < 5; index++) await backend.clear()
+
+    expect(await turn(backend)).toContainEqual(
+      expect.objectContaining({
+        type: 'toolResult',
+        status: 'success',
+        content: [{ type: 'text', text: '2' }],
+      })
+    )
   })
 
   it('reconstructs generated direct create_harness source without requiring a redundant factory', async () => {
