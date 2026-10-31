@@ -114,7 +114,7 @@ describe('mounted custom theme editor', () => {
   it('navigates roles and swatches by keyboard and preserves Auto mode on apply', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-picker-'))
     directories.push(directory)
-    const path = join(directory, 'config.json')
+    const path = join(directory, 'cli.toml')
     const config = await CliConfigStore.load(path)
     await config.setSettings({
       animations: false,

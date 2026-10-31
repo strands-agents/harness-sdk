@@ -66,7 +66,7 @@ export class FileSkillsRuntime implements ChatSkillsRuntime {
 }
 
 export function defaultSkillPaths(cwd = process.cwd(), home = homedir()): string[] {
-  const userPaths = ['.agents', '.claude', '.codex', '.strands/cli'].map((directory) => join(home, directory, 'skills'))
+  const userPaths = ['.agents', '.claude', '.codex', '.strands'].map((directory) => join(home, directory, 'skills'))
   const projectPaths = workspaceAncestors(cwd).flatMap((directory) =>
     ['.agents', '.claude', '.codex', '.agent', '.strands'].map((name) => join(directory, name, 'skills'))
   )

@@ -1,23 +1,25 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { parse, stringify } from 'smol-toml'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 
 import { applyProviderEnvironmentValues, SETUP_VERSION, CliConfigStore } from '../src/tui/config.js'
+import { readProjectArchive } from '../src/tui/project/archive.js'
+import { exportSavedAgent } from '../src/tui/project/export.js'
+import { awsClientConfiguration } from '../src/tui/provider/aws-client.js'
 
-const temporaryDirectories: string[] = []
+import { temporaryDirectory } from './fixtures/tempdir.js'
 
-afterEach(async () => {
+afterEach(() => {
   applyProviderEnvironmentValues({})
   vi.unstubAllEnvs()
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
 describe('CliConfigStore', () => {
   it.each(['aurora', 'moonlight', 'magma'])('loads the retired %s theme as Classic', async (frogTheme) => {
-    const path = join(await temporaryDirectory(), 'config.json')
-    await writeFile(path, JSON.stringify({ settings: { frogTheme, animations: false } }))
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ settings: { frogTheme, animations: false } }))
 
     const config = await CliConfigStore.load(path)
 
@@ -25,7 +27,7 @@ describe('CliConfigStore', () => {
   })
 
   it('uses safe defaults when the user config does not exist', async () => {
-    const path = join(await temporaryDirectory(), 'config', 'config.json')
+    const path = join(await temporaryDirectory(), 'config', 'cli.toml')
 
     const config = await CliConfigStore.load(path)
 
@@ -53,10 +55,10 @@ describe('CliConfigStore', () => {
   })
 
   it('persists permission mode and tool grants while preserving unrelated settings', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
+    const path = join(await temporaryDirectory(), 'cli.toml')
     await writeFile(
       path,
-      JSON.stringify({
+      stringify({
         theme: 'custom',
         permissions: { mode: 'default', allow: ['write'], futureSetting: true },
       })
@@ -74,7 +76,7 @@ describe('CliConfigStore', () => {
       allow: ['bash', 'edit', 'shell(git *)'],
       deny: ['web_fetch'],
     })
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+    expect(parse(await readFile(path, 'utf8'))).toEqual({
       theme: 'custom',
       permissions: {
         mode: 'bypassPermissions',
@@ -86,8 +88,8 @@ describe('CliConfigStore', () => {
   })
 
   it('rejects malformed permission settings with the config path', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
-    await writeFile(path, JSON.stringify({ permissions: { mode: 'always', allow: 'bash' } }))
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ permissions: { mode: 'always', allow: 'bash' } }))
 
     await expect(CliConfigStore.load(path)).rejects.toThrow(
       `Invalid CLI config at ${path}: permissions.mode must be "default" or "bypassPermissions"`
@@ -95,21 +97,21 @@ describe('CliConfigStore', () => {
   })
 
   it('loads and preserves a models section it no longer reads', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
+    const path = join(await temporaryDirectory(), 'cli.toml')
     const models = { pinned: ['bedrock/model-b', ' not trimmed '], futureSetting: true }
-    await writeFile(path, JSON.stringify({ models }))
+    await writeFile(path, stringify({ models }))
     const config = await CliConfigStore.load(path)
 
     await config.setSettings({ animations: false })
 
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ models, settings: { animations: false } })
+    expect(parse(await readFile(path, 'utf8'))).toMatchObject({ models, settings: { animations: false } })
   })
 
   it('persists presentation settings while preserving unrelated settings', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
+    const path = join(await temporaryDirectory(), 'cli.toml')
     await writeFile(
       path,
-      JSON.stringify({
+      stringify({
         theme: 'custom',
         settings: { animations: false, futureSetting: true },
       })
@@ -124,39 +126,51 @@ describe('CliConfigStore', () => {
     await config.setSettings({ transcriptSpacing: 'compact', toolOutput: 'full' })
 
     expect(config.snapshot().settings).toEqual(settings)
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+    expect(parse(await readFile(path, 'utf8'))).toEqual({
       theme: 'custom',
       settings: { ...settings, futureSetting: true },
     })
   })
 
   it('persists the selected model and effort while preserving the rest of the profile', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    const modelModule = { kind: 'model', module: './model.mjs', export: 'model' }
     await writeFile(
       path,
-      JSON.stringify({
+      stringify({
         theme: 'custom',
-        profile: { name: 'Custom Strands harness', model: 'bedrock/anthropic.claude-old', effort: 'medium' },
+        profile: {
+          name: 'Custom Strands harness',
+          model: 'bedrock/anthropic.claude-old',
+          effort: 'medium',
+          modelModule,
+        },
       })
     )
     const config = await CliConfigStore.load(path)
+
+    await config.setProfileModel('bedrock/anthropic.claude-old', 'low')
+    expect((await CliConfigStore.load(path)).snapshot().profile).toMatchObject({ modelModule, effort: 'low' })
 
     await config.setProfileModel('anthropic/claude-opus-4-8', 'high')
 
     expect(config.snapshot().profile).toMatchObject({
       name: 'Custom Strands harness',
       model: 'anthropic/claude-opus-4-8',
+      modelModule: null,
       effort: 'high',
     })
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+    expect((await CliConfigStore.load(path)).snapshot().profile).toEqual(config.snapshot().profile)
+    expect(parse(await readFile(path, 'utf8'))).toEqual({
+      __strands_null_paths: [['profile', 'modelModule']],
       theme: 'custom',
       profile: { name: 'Custom Strands harness', model: 'anthropic/claude-opus-4-8', effort: 'high' },
     })
   })
 
   it('rejects non-boolean discovery settings', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
-    await writeFile(path, JSON.stringify({ settings: { mcpDiscovery: 'yes' } }))
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ settings: { mcpDiscovery: 'yes' } }))
 
     await expect(CliConfigStore.load(path)).rejects.toThrow(
       `Invalid CLI config at ${path}: settings.mcpDiscovery must be a boolean`
@@ -164,8 +178,8 @@ describe('CliConfigStore', () => {
   })
 
   it('persists setup atomically while preserving unrelated settings', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
-    await writeFile(path, JSON.stringify({ theme: 'custom', profile: { futureSetting: true } }))
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ theme: 'custom', profile: { futureSetting: true } }))
     const config = await CliConfigStore.load(path)
     const profile = {
       ...DEFAULT_HARNESS_AGENT_CONFIG,
@@ -204,7 +218,7 @@ describe('CliConfigStore', () => {
       permissions: { mode: 'bypassPermissions', allow: ['edit', 'shell'] },
       settings: { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false },
     })
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+    expect(parse(await readFile(path, 'utf8'))).toMatchObject({
       theme: 'custom',
       providers: { environment: { LITELLM_BASE_URL: 'http://localhost:4000' } },
       profile: { futureSetting: true, name: 'Reviewer', model: 'openai/gpt-5.6-sol' },
@@ -220,8 +234,8 @@ describe('CliConfigStore', () => {
   })
 
   it('rejects invalid setup input through the promise instead of throwing synchronously', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
-    await writeFile(path, '{}')
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, '')
     const config = await CliConfigStore.load(path)
 
     await expect(
@@ -234,34 +248,59 @@ describe('CliConfigStore', () => {
     ).rejects.toThrow('At least one provider must be enabled.')
   })
 
-  it('reloads the imported project root and preserves it through manual profile edits', async () => {
-    const directory = await temporaryDirectory()
-    const path = join(directory, 'config.json')
-    const config = await CliConfigStore.load(path)
-    const setup = {
-      providers: ['bedrock'] as const,
-      profile: DEFAULT_HARNESS_AGENT_CONFIG,
-      permissionMode: 'default' as const,
-      providerEnvironment: {},
+  it.each(['workspace', ...(process.platform === 'win32' ? [] : [' workspace \u0007 '])])(
+    'reloads the imported project root %j and preserves it through manual profile edits and export',
+    async (directoryName) => {
+      const directory = await temporaryDirectory()
+      const projectDirectory = join(directory, directoryName)
+      await mkdir(join(projectDirectory, 'skills', 'review'), { recursive: true })
+      const skill = '---\nname: review\ndescription: Review\n---\nReview carefully.\n'
+      await writeFile(join(projectDirectory, 'skills', 'review', 'SKILL.md'), skill)
+      const path = join(directory, 'cli.toml')
+      const config = await CliConfigStore.load(path)
+      const setup = {
+        providers: ['bedrock'] as const,
+        profile: { ...DEFAULT_HARNESS_AGENT_CONFIG, skills: ['./skills'] },
+        permissionMode: 'default' as const,
+        providerEnvironment: {},
+      }
+      await config.saveSetup({ ...setup, profileBaseDir: projectDirectory })
+
+      const reloaded = await CliConfigStore.load(path)
+      expect(reloaded.snapshot().profileBaseDir).toBe(projectDirectory)
+      await reloaded.saveSetup({ ...setup, profile: { ...setup.profile, instructions: 'Review carefully.' } })
+      await reloaded.setProfileModel('bedrock/updated-model', 'low')
+
+      const edited = await CliConfigStore.load(path)
+      expect(edited.snapshot()).toMatchObject({
+        profileBaseDir: projectDirectory,
+        profile: { instructions: 'Review carefully.', model: 'bedrock/updated-model', effort: 'low' },
+      })
+      expect(edited.snapshot().profile).not.toHaveProperty('profileBaseDir')
+      const exported = await exportSavedAgent(edited.snapshot(), 'typescript', join(directory, 'agent.zip'), directory)
+      const files = readProjectArchive(await readFile(exported))
+      expect(Buffer.from(files.get('agent/skills/review/SKILL.md')!).toString()).toBe(skill)
     }
-    await config.saveSetup({ ...setup, profileBaseDir: directory })
+  )
 
-    const reloaded = await CliConfigStore.load(path)
-    expect(reloaded.snapshot().profileBaseDir).toBe(directory)
-    await reloaded.saveSetup({ ...setup, profile: { ...setup.profile, instructions: 'Review carefully.' } })
-    await reloaded.setProfileModel('bedrock/updated-model', 'low')
-
-    const edited = await CliConfigStore.load(path)
-    expect(edited.snapshot()).toMatchObject({
-      profileBaseDir: directory,
-      profile: { instructions: 'Review carefully.', model: 'bedrock/updated-model', effort: 'low' },
-    })
-    expect(edited.snapshot().profile).not.toHaveProperty('profileBaseDir')
+  it.each([1, '', 'root\0path'])('rejects invalid profile base directory %j', async (profileBaseDir) => {
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ profileBaseDir }))
+    await expect(CliConfigStore.load(path)).rejects.toThrow('profileBaseDir')
+    await expect(
+      CliConfigStore.memory().saveSetup({
+        providers: ['bedrock'],
+        profile: DEFAULT_HARNESS_AGENT_CONFIG,
+        profileBaseDir: profileBaseDir as string,
+        permissionMode: 'default',
+        providerEnvironment: {},
+      })
+    ).rejects.toThrow('profileBaseDir')
   })
 
   it('detects project provider credentials after reload without persisting them', async () => {
     const directory = await temporaryDirectory()
-    const path = join(directory, 'config.json')
+    const path = join(directory, 'cli.toml')
     const config = await CliConfigStore.load(path)
     await config.saveSetup({
       providers: ['openai', 'anthropic'],
@@ -288,9 +327,115 @@ describe('CliConfigStore', () => {
     expect(await readFile(path, 'utf8')).not.toMatch(/project-key|local-key|process-key/u)
   })
 
+  it('imports cli/config.json into cli.toml while preserving the original', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'cli.toml')
+    const legacyPath = join(directory, 'cli', 'config.json')
+    await mkdir(join(directory, 'cli'))
+    const original = JSON.stringify({
+      permissions: { mode: 'default', allow: ['shell'] },
+      profile: { ...DEFAULT_HARNESS_AGENT_CONFIG, effort: 'high' },
+      settings: { toolOutput: 'hidden' },
+    })
+    await writeFile(legacyPath, original)
+
+    const config = await CliConfigStore.load(path)
+
+    expect(config.snapshot()).toMatchObject({
+      path,
+      permissions: { allow: ['shell'] },
+      profile: { effort: 'high', modelModule: null, sandbox: null },
+      settings: { toolOutput: 'hidden' },
+    })
+    expect(await readFile(legacyPath, 'utf8')).toBe(original)
+    expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
+  })
+
+  it('preserves explicit nulls in profile fields and nested JSON through migration and later saves', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'cli.toml')
+    const legacyPath = join(directory, 'cli', 'config.json')
+    await mkdir(join(directory, 'cli'))
+    const profile = {
+      builtinTools: { programmatic_tool_caller: { timeout: null } },
+      agentConfig: { state: { empty: null, values: [null, {}, { nested: [1, null] }] } },
+    }
+    await writeFile(legacyPath, JSON.stringify({ profile }))
+
+    const config = await CliConfigStore.load(path)
+    expect(config.snapshot().profile).toMatchObject(profile)
+    expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
+    await config.setSettings({ animations: false })
+    expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
+  })
+
+  it('lets direct TOML edits replace values previously saved as null', async () => {
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(
+      path,
+      stringify({
+        __strands_null_paths: [['profile', 'builtinTools', 'programmatic_tool_caller', 'timeout']],
+        profile: { builtinTools: { programmatic_tool_caller: { timeout: 60 } } },
+      })
+    )
+
+    const config = await CliConfigStore.load(path)
+    expect(config.snapshot().profile.builtinTools).toEqual({ programmatic_tool_caller: { timeout: 60 } })
+    await config.setSettings({ animations: false })
+    expect(parse(await readFile(path, 'utf8'))).not.toHaveProperty('__strands_null_paths')
+  })
+
+  it.each(
+    [
+      'not paths',
+      [[]],
+      [['profile', 'missing', 'child']],
+      [['profile', 'agentConfig', 'values', -1]],
+      [['profile', 'agentConfig', 'values', '0']],
+      [['__proto__', 'polluted']],
+    ].map((paths) => ({ paths }))
+  )('rejects invalid TOML null metadata $paths', async ({ paths }) => {
+    const path = join(await temporaryDirectory(), 'cli.toml')
+    await writeFile(path, stringify({ __strands_null_paths: paths, profile: { agentConfig: { values: [{}] } } }))
+    await expect(CliConfigStore.load(path)).rejects.toThrow(`Invalid CLI config at ${path}`)
+    expect({}).not.toHaveProperty('polluted')
+  })
+
+  it.each(['{ invalid json', 'null', '[]'])(
+    'starts setup without modifying an unreadable JSON config: %s',
+    async (text) => {
+      const directory = await temporaryDirectory()
+      const path = join(directory, 'cli.toml')
+      const legacyPath = join(directory, 'cli', 'config.json')
+      await mkdir(join(directory, 'cli'))
+      await writeFile(legacyPath, text)
+
+      const config = await CliConfigStore.load(path)
+
+      expect(config.needsSetup()).toBe(true)
+      expect(config.snapshot().permissions).toEqual({ mode: 'default', allow: [], deny: [] })
+      expect(await readFile(legacyPath, 'utf8')).toBe(text)
+      await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  it('ignores cli/config.json once cli.toml exists', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'cli.toml')
+    const legacyPath = join(directory, 'cli', 'config.json')
+    await mkdir(join(directory, 'cli'))
+    await writeFile(legacyPath, JSON.stringify({ settings: { animations: false } }))
+    await writeFile(path, stringify({ settings: { animations: true } }))
+
+    const config = await CliConfigStore.load(path)
+
+    expect(config.snapshot().settings.animations).toBe(true)
+    expect(await readFile(legacyPath, 'utf8')).toContain('animations')
+  })
+
   it('clears an imported project root when setup explicitly supplies null', async () => {
     const directory = await temporaryDirectory()
-    const path = join(directory, 'config.json')
+    const path = join(directory, 'cli.toml')
     const config = await CliConfigStore.load(path)
     const setup = {
       providers: ['bedrock'] as const,
@@ -302,7 +447,7 @@ describe('CliConfigStore', () => {
     await config.saveSetup({ ...setup, profileBaseDir: null })
 
     expect(config.snapshot()).not.toHaveProperty('profileBaseDir')
-    expect(JSON.parse(await readFile(path, 'utf8'))).not.toHaveProperty('profileBaseDir')
+    expect(parse(await readFile(path, 'utf8'))).not.toHaveProperty('profileBaseDir')
     const reloaded = await CliConfigStore.load(path)
     expect(reloaded.snapshot()).not.toHaveProperty('profileBaseDir')
     await reloaded.saveSetup(setup)
@@ -310,10 +455,10 @@ describe('CliConfigStore', () => {
   })
 
   it('removes credentials already stored in the CLI config', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
+    const path = join(await temporaryDirectory(), 'cli.toml')
     await writeFile(
       path,
-      JSON.stringify({
+      stringify({
         providers: {
           enabled: ['openai'],
           environment: {
@@ -328,7 +473,7 @@ describe('CliConfigStore', () => {
     const config = await CliConfigStore.load(path)
 
     expect(config.configuredProviderEnvironment()).toEqual({ AWS_PROFILE: 'development' })
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+    expect(parse(await readFile(path, 'utf8'))).toMatchObject({
       providers: {
         environment: { AWS_PROFILE: 'development' },
       },
@@ -340,11 +485,18 @@ describe('CliConfigStore', () => {
     const directory = await temporaryDirectory()
     await writeFile(
       join(directory, '.env'),
-      ['OLLAMA_HOST=http://dotenv:11434', 'OLLAMA_MODEL=${UNEXPANDED_MODEL}', 'UNRELATED_SECRET=ignored'].join('\n')
+      [
+        'OLLAMA_HOST=http://dotenv:11434',
+        'OLLAMA_MODEL="${UNEXPANDED_MODEL}" # literal',
+        'UNRELATED_SECRET=ignored',
+      ].join('\n')
     )
     await writeFile(
       join(directory, '.env.local'),
-      ['OLLAMA_HOST=http://local:11434', 'LITELLM_BASE_URL=http://local:4000'].join('\n')
+      [
+        'OLLAMA_HOST="http://local:11434" # local server',
+        "LITELLM_BASE_URL='http://local:4000/#route' # fragment",
+      ].join('\n')
     )
     vi.stubEnv('GEMINI_API_KEY', 'process-key')
     const config = CliConfigStore.memory({}, {}, { providerEnvironment: { LITELLM_MODEL: 'stored-model' } })
@@ -354,7 +506,7 @@ describe('CliConfigStore', () => {
       GEMINI_API_KEY: { value: 'process-key', source: 'process' },
       OLLAMA_HOST: { value: 'http://local:11434', source: '.env.local' },
       OLLAMA_MODEL: { value: '${UNEXPANDED_MODEL}', source: '.env' },
-      LITELLM_BASE_URL: { value: 'http://local:4000', source: '.env.local' },
+      LITELLM_BASE_URL: { value: 'http://local:4000/#route', source: '.env.local' },
       LITELLM_MODEL: { value: 'stored-model', source: 'config' },
     })
     expect(config.providerEnvironment()).not.toHaveProperty('UNRELATED_SECRET')
@@ -373,7 +525,7 @@ describe('CliConfigStore', () => {
   })
 
   it('applies a credential entered for this session without persisting it', async () => {
-    const path = join(await temporaryDirectory(), 'config.json')
+    const path = join(await temporaryDirectory(), 'cli.toml')
     vi.stubEnv('OPENAI_API_KEY', undefined)
     const config = await CliConfigStore.load(path)
 
@@ -410,55 +562,87 @@ describe('CliConfigStore', () => {
     expect(process.env.OPENAI_API_KEY).toBeUndefined()
   })
 
-  it('resolves selected AWS config files before application and refreshes both file selectors', async () => {
-    const directory = await temporaryDirectory()
-    const path = join(directory, 'provider.env')
-    const firstConfig = join(directory, 'first-config')
-    const secondConfig = join(directory, 'second-config')
-    const firstCredentials = join(directory, 'first-credentials')
-    const secondCredentials = join(directory, 'second-credentials')
-    await writeFile(firstConfig, '[profile review]\nregion=us-west-2\n')
-    await writeFile(secondConfig, '[profile review]\nregion=eu-west-1\n')
-    await writeFile(firstCredentials, '')
-    await writeFile(secondCredentials, '')
-    for (const key of [
-      'AWS_CONFIG_FILE',
-      'AWS_SHARED_CREDENTIALS_FILE',
-      'AWS_PROFILE',
-      'AWS_REGION',
-      'AWS_DEFAULT_REGION',
-    ]) {
-      vi.stubEnv(key, undefined)
+  it.each(['', ...(process.platform === 'win32' ? [] : [' '])])(
+    'resolves and persists AWS file selectors with suffix %j',
+    async (suffix) => {
+      const directory = await temporaryDirectory()
+      const path = join(directory, 'provider.env')
+      const firstConfig = join(directory, `first-config${suffix}`)
+      const secondConfig = join(directory, `second-config${suffix}`)
+      const firstCredentials = join(directory, `first-credentials${suffix}`)
+      const secondCredentials = join(directory, `second-credentials${suffix}`)
+      await writeFile(firstConfig, '[profile review]\nregion=us-west-2\n')
+      await writeFile(secondConfig, '[profile review]\nregion=eu-west-1\n')
+      await writeFile(firstCredentials, '')
+      await writeFile(secondCredentials, '')
+      const environmentKeys = [
+        'AWS_CONFIG_FILE',
+        'AWS_SHARED_CREDENTIALS_FILE',
+        'AWS_PROFILE',
+        'AWS_REGION',
+        'AWS_DEFAULT_REGION',
+      ]
+      for (const key of environmentKeys) {
+        vi.stubEnv(key, undefined)
+      }
+      const env = (config: string, credentials: string): string =>
+        `AWS_CONFIG_FILE='${config}'\nAWS_SHARED_CREDENTIALS_FILE='${credentials}'\nAWS_PROFILE=review\n`
+      await writeFile(path, env(firstConfig, firstCredentials))
+      const config = CliConfigStore.memory()
+      config.useEnvironmentFiles([path])
+      expect(config.providerEnvironment().AWS_REGION?.value).toBe('us-west-2')
+      expect(process.env.AWS_CONFIG_FILE).toBeUndefined()
+      config.applyProviderEnvironment()
+      await writeFile(path, env(secondConfig, secondCredentials))
+      expect(config.providerEnvironment()).toMatchObject({
+        AWS_CONFIG_FILE: { value: secondConfig, source: 'env-file' },
+        AWS_SHARED_CREDENTIALS_FILE: { value: secondCredentials, source: 'env-file' },
+        AWS_REGION: { value: 'eu-west-1', source: 'aws-profile' },
+      })
+      expect(process.env.AWS_CONFIG_FILE).toBe(firstConfig)
+      config.applyProviderEnvironment()
+      expect(process.env.AWS_CONFIG_FILE).toBe(secondConfig)
+      expect(process.env.AWS_SHARED_CREDENTIALS_FILE).toBe(secondCredentials)
+      expect(process.env.AWS_REGION).toBe('eu-west-1')
+      vi.stubEnv('AWS_CONFIG_FILE', firstConfig)
+      vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', firstCredentials)
+      expect(config.providerEnvironment()).toMatchObject({
+        AWS_CONFIG_FILE: { value: firstConfig, source: 'process' },
+        AWS_SHARED_CREDENTIALS_FILE: { value: firstCredentials, source: 'process' },
+        AWS_REGION: { value: 'us-west-2', source: 'aws-profile' },
+      })
+      vi.stubEnv('AWS_DEFAULT_REGION', 'ap-northeast-1')
+      expect(config.providerEnvironment().AWS_REGION).toBeUndefined()
+      applyProviderEnvironmentValues({})
+      for (const key of environmentKeys) {
+        vi.stubEnv(key, undefined)
+      }
+      const configPath = join(directory, 'cli.toml')
+      const stored = await CliConfigStore.load(configPath)
+      await stored.saveSetup({
+        providers: ['bedrock'],
+        profile: DEFAULT_HARNESS_AGENT_CONFIG,
+        permissionMode: 'default',
+        providerEnvironment: {
+          AWS_CONFIG_FILE: firstConfig,
+          AWS_SHARED_CREDENTIALS_FILE: firstCredentials,
+          AWS_PROFILE: ' review ',
+        },
+      })
+      const reloaded = await CliConfigStore.load(configPath)
+      expect(reloaded.configuredProviderEnvironment()).toEqual({
+        AWS_CONFIG_FILE: firstConfig,
+        AWS_SHARED_CREDENTIALS_FILE: firstCredentials,
+        AWS_PROFILE: 'review',
+      })
+      expect(awsClientConfiguration(reloaded.providerEnvironment())).toMatchObject({
+        configFilepath: firstConfig,
+        filepath: firstCredentials,
+        region: 'us-west-2',
+        profile: 'review',
+      })
     }
-    const env = (config: string, credentials: string): string =>
-      `AWS_CONFIG_FILE=${config}\nAWS_SHARED_CREDENTIALS_FILE=${credentials}\nAWS_PROFILE=review\n`
-    await writeFile(path, env(firstConfig, firstCredentials))
-    const config = CliConfigStore.memory()
-    config.useEnvironmentFiles([path])
-    expect(config.providerEnvironment().AWS_REGION?.value).toBe('us-west-2')
-    expect(process.env.AWS_CONFIG_FILE).toBeUndefined()
-    config.applyProviderEnvironment()
-    await writeFile(path, env(secondConfig, secondCredentials))
-    expect(config.providerEnvironment()).toMatchObject({
-      AWS_CONFIG_FILE: { value: secondConfig, source: 'env-file' },
-      AWS_SHARED_CREDENTIALS_FILE: { value: secondCredentials, source: 'env-file' },
-      AWS_REGION: { value: 'eu-west-1', source: 'aws-profile' },
-    })
-    expect(process.env.AWS_CONFIG_FILE).toBe(firstConfig)
-    config.applyProviderEnvironment()
-    expect(process.env.AWS_CONFIG_FILE).toBe(secondConfig)
-    expect(process.env.AWS_SHARED_CREDENTIALS_FILE).toBe(secondCredentials)
-    expect(process.env.AWS_REGION).toBe('eu-west-1')
-    vi.stubEnv('AWS_CONFIG_FILE', firstConfig)
-    vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', firstCredentials)
-    expect(config.providerEnvironment()).toMatchObject({
-      AWS_CONFIG_FILE: { value: firstConfig, source: 'process' },
-      AWS_SHARED_CREDENTIALS_FILE: { value: firstCredentials, source: 'process' },
-      AWS_REGION: { value: 'us-west-2', source: 'aws-profile' },
-    })
-    vi.stubEnv('AWS_DEFAULT_REGION', 'ap-northeast-1')
-    expect(config.providerEnvironment().AWS_REGION).toBeUndefined()
-  })
+  )
 
   it('loads arbitrary literal variable names without inheriting object properties', async () => {
     const directory = await temporaryDirectory()
@@ -477,9 +661,3 @@ describe('CliConfigStore', () => {
     expect(() => config.useEnvironmentFiles([join(directory, 'missing')])).toThrow('Cannot load environment file')
   })
 })
-
-async function temporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'strands-config-'))
-  temporaryDirectories.push(directory)
-  return directory
-}

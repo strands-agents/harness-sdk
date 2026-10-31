@@ -158,6 +158,12 @@ export function agentConfig(args: ParsedArgs, defaults: HarnessAgentConfig): Har
   if (args.model !== undefined) {
     config.model = modelSpecifier(args.model, '--model')
   }
+  if (
+    (args.model !== undefined || args.configSet.some((assignment) => assignment.startsWith('model='))) &&
+    !args.configSet.some((assignment) => /^modelModule[.=]/u.test(assignment))
+  ) {
+    config.modelModule = null
+  }
   if (args.builtinTools !== undefined) {
     config.builtinTools = commaSeparated(args.builtinTools)
   }

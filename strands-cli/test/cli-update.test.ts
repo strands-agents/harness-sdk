@@ -32,7 +32,9 @@ describe('updateCli', () => {
       1
     )
     expect(commands.capture).not.toHaveBeenCalled()
-    expect(errors.text()).toContain('development checkout')
+    expect(errors.text()).toBe(
+      'error: This is a development checkout, so npm cannot update it. Update it with Git; `npm run setup` only rebuilds the local CLI afterward.\n'
+    )
   })
 
   it('reports an already-current global installation', async () => {

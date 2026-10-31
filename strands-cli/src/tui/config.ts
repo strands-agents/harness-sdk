@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
@@ -10,6 +10,7 @@ import {
   type HarnessConfigContextManager,
 } from '@strands-agents/harness'
 import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
 import { errorMessage, isControlCharacter } from './terminal/sanitize.js'
@@ -23,7 +24,7 @@ import {
   type ProviderEnvironment,
   type ProviderEnvironmentKey,
 } from './provider/environment.js'
-import { strandsUserPath } from './paths.js'
+import { isMissingPathError, strandsUserPath } from './paths.js'
 import { isRecord } from './values.js'
 
 export {
@@ -85,10 +86,17 @@ export interface SetupConfiguration {
 }
 
 type ConfigDocument = Record<string, unknown>
+type ConfigNullPath = (string | number)[]
+const NULL_PATHS_KEY = '__strands_null_paths'
 
-/** Resolves a path under `~/.strands/cli`, the CLI's user-level config, state, and cache directory. */
+/** Resolves a path under `~/.strands/cli`, the CLI's internal state and cache directory. */
 export function userDirectory(...segments: string[]): string {
   return strandsUserPath('cli', ...segments)
+}
+
+/** The user-editable CLI config file, `~/.strands/cli.toml`. */
+export function userConfigPath(): string {
+  return strandsUserPath('cli.toml')
 }
 
 export class CliConfigStore {
@@ -111,11 +119,11 @@ export class CliConfigStore {
     this._profileBaseDir =
       _document.profileBaseDir === undefined
         ? undefined
-        : requiredText(_document.profileBaseDir, `Invalid CLI config at ${_path}: profileBaseDir`)
+        : requiredPath(_document.profileBaseDir, `Invalid CLI config at ${_path}: profileBaseDir`)
   }
 
-  static async load(path = userDirectory('config.json')): Promise<CliConfigStore> {
-    const loadedDocument = await readConfigDocument(path)
+  static async load(path = userConfigPath()): Promise<CliConfigStore> {
+    const { document: loadedDocument, legacyPath } = await readConfigDocument(path)
     const document = withoutProviderCredentials(loadedDocument)
     const store = new CliConfigStore(
       path,
@@ -127,7 +135,7 @@ export class CliConfigStore {
       parsePermissions(document.permissions, path),
       parseSettings(document.settings, path)
     )
-    if (document !== loadedDocument) {
+    if (document !== loadedDocument || legacyPath) {
       await writeConfigDocument(path, document)
     }
     return store
@@ -272,7 +280,7 @@ export class CliConfigStore {
     const profileBaseDir =
       configuration.profileBaseDir === undefined || configuration.profileBaseDir === null
         ? undefined
-        : requiredText(configuration.profileBaseDir, 'profileBaseDir')
+        : requiredPath(configuration.profileBaseDir, 'profileBaseDir')
     const providerEnvironment = normalizeStoredProviderEnvironment(configuration.providerEnvironment)
     const allowedTools =
       configuration.allowedTools === undefined
@@ -346,11 +354,17 @@ export class CliConfigStore {
 
   setProfileModel(model: string, effort: ProfileEffort): Promise<void> {
     return this._enqueueWrite(async () => {
-      const profile = normalizeHarnessAgentConfig({ ...this._profile, model, effort })
+      const modelModule = model === this._profile.model ? this._profile.modelModule : null
+      const profile = normalizeHarnessAgentConfig({ ...this._profile, model, effort, modelModule })
       const priorProfile = isRecord(this._document.profile) ? this._document.profile : {}
       const document = {
         ...this._document,
-        profile: { ...priorProfile, model: profile.model, effort: profile.effort },
+        profile: {
+          ...priorProfile,
+          model: profile.model,
+          effort: profile.effort,
+          ...(this._profile.modelModule ? { modelModule } : {}),
+        },
       }
       if (this._persistent) {
         await writeConfigDocument(this._path, document)
@@ -408,21 +422,43 @@ export class CliConfigStore {
   }
 }
 
-async function readConfigDocument(path: string): Promise<ConfigDocument> {
-  let text: string
+/** Imports a readable JSON config when TOML is absent, retaining the original file. */
+async function readConfigDocument(path: string): Promise<{ document: ConfigDocument; legacyPath?: string }> {
+  const text = await readOptionalFile(path)
+  if (text !== undefined) {
+    return { document: parseConfigText(path, () => restoreConfigNulls(parseToml(text))) }
+  }
+  if (basename(path) !== 'cli.toml') {
+    return { document: {} }
+  }
+  const legacyPath = join(dirname(path), 'cli', 'config.json')
+  const legacyText = await readOptionalFile(legacyPath)
+  if (legacyText === undefined) {
+    return { document: {} }
+  }
   try {
-    text = await readFile(path, 'utf8')
+    return { document: parseConfigText(legacyPath, () => JSON.parse(legacyText) as unknown), legacyPath }
+  } catch {
+    return { document: {} }
+  }
+}
+
+async function readOptionalFile(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, 'utf8')
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return {}
+    if (isMissingPathError(error)) {
+      return undefined
     }
     throw error
   }
+}
 
+function parseConfigText(path: string, parse: () => unknown): ConfigDocument {
   try {
-    const value = JSON.parse(text) as unknown
+    const value = parse()
     if (!isRecord(value)) {
-      throw new Error('expected a JSON object')
+      throw new Error('expected a table of settings')
     }
     return value
   } catch (error) {
@@ -515,11 +551,68 @@ async function writeConfigDocument(path: string, document: ConfigDocument): Prom
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
-    await writeFile(temporary, `${JSON.stringify(withoutProviderCredentials(document), null, 2)}\n`, { mode: 0o600 })
+    await writeFile(temporary, stringifyToml(encodeConfigNulls(withoutProviderCredentials(document))), { mode: 0o600 })
     await rename(temporary, path)
   } finally {
     await rm(temporary, { force: true })
   }
+}
+
+/** TOML nulls use explicit paths; array slots keep an empty table so their indices remain stable. */
+function encodeConfigNulls(document: ConfigDocument): ConfigDocument {
+  if (Object.hasOwn(document, NULL_PATHS_KEY)) {
+    throw new Error(`${NULL_PATHS_KEY} is reserved for CLI null-value metadata.`)
+  }
+  const paths: ConfigNullPath[] = []
+  const encode = (value: unknown, path: ConfigNullPath): unknown => {
+    if (value === null) {
+      paths.push(path)
+      return {}
+    }
+    if (Array.isArray(value)) return value.map((entry, index) => encode(entry, [...path, index]))
+    if (!isRecord(value)) return value
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, entry]) => {
+        const encoded = encode(entry, [...path, key])
+        return entry === null || entry === undefined ? [] : [[key, encoded]]
+      })
+    )
+  }
+  const encoded = encode(document, []) as ConfigDocument
+  return paths.length ? { [NULL_PATHS_KEY]: paths, ...encoded } : encoded
+}
+
+function restoreConfigNulls(document: ConfigDocument): ConfigDocument {
+  if (!Object.hasOwn(document, NULL_PATHS_KEY)) return document
+  const { [NULL_PATHS_KEY]: paths, ...restored } = document
+  if (!Array.isArray(paths)) throw new Error(`${NULL_PATHS_KEY} must be an array of null paths.`)
+  for (const path of paths) {
+    if (!Array.isArray(path) || path.length === 0 || path[0] === NULL_PATHS_KEY) {
+      throw new Error(`Invalid ${NULL_PATHS_KEY} path.`)
+    }
+    let parent: unknown = restored
+    for (const [index, key] of path.entries()) {
+      const array = Array.isArray(parent)
+      if (
+        !(Array.isArray(parent)
+          ? typeof key === 'number' && Number.isSafeInteger(key) && key >= 0 && key < parent.length
+          : isRecord(parent) && typeof key === 'string')
+      ) {
+        throw new Error(`Invalid ${NULL_PATHS_KEY} path: ${JSON.stringify(path)}.`)
+      }
+      const container = parent as object
+      const value: unknown = Object.hasOwn(container, key) ? Reflect.get(container, key) : undefined
+      if (index < path.length - 1) {
+        parent = value
+        continue
+      }
+      // A value edited directly in TOML takes precedence over its saved null metadata.
+      if (value === undefined || (array && isRecord(value) && Object.keys(value).length === 0)) {
+        Object.defineProperty(container, key, { value: null, enumerable: true, configurable: true, writable: true })
+      }
+    }
+  }
+  return restored
 }
 
 export function normalizeToolName(toolName: string): string {
@@ -543,7 +636,10 @@ function normalizeStoredProviderEnvironment(value: Readonly<Record<string, unkno
     if (!PROVIDER_ENVIRONMENT_KEYS.includes(key as ProviderEnvironmentKey)) {
       throw new Error(`providers.environment contains unsupported key ${JSON.stringify(key)}`)
     }
-    environment[key as ProviderEnvironmentKey] = requiredText(raw, `providers.environment.${key}`)
+    environment[key as ProviderEnvironmentKey] =
+      key === 'AWS_CONFIG_FILE' || key === 'AWS_SHARED_CREDENTIALS_FILE'
+        ? requiredPath(raw, `providers.environment.${key}`)
+        : requiredText(raw, `providers.environment.${key}`)
   }
   for (const key of PROVIDER_CREDENTIAL_KEYS) {
     delete environment[key]
@@ -572,6 +668,16 @@ function withoutProviderCredentials(document: ConfigDocument): ConfigDocument {
         },
       }
     : document
+}
+
+function requiredPath(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.includes('\0')) {
+    throw new Error(`${field} must be a path without NUL characters`)
+  }
+  if (!value) {
+    throw new Error(`${field} must not be empty`)
+  }
+  return value
 }
 
 function requiredText(value: unknown, field: string): string {

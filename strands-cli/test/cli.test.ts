@@ -1,3 +1,4 @@
+import { stringify } from 'smol-toml'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -209,6 +210,42 @@ describe('agentConfig', () => {
     })
   })
 
+  it.each([
+    { flags: ['--model', 'bedrock/new'], keepsModule: false },
+    { flags: ['--set', 'model="bedrock/new"'], keepsModule: false },
+    { flags: ['--model', 'bedrock/saved'], keepsModule: false },
+    { flags: ['--effort', 'low'], keepsModule: true },
+    {
+      flags: ['--model', 'bedrock/new', '--set', 'modelModule.export="replacement"'],
+      keepsModule: true,
+    },
+    {
+      flags: [
+        '--set',
+        'model="bedrock/new"',
+        '--set',
+        'modelModule={"kind":"model","module":"./model.mjs","export":"replacement"}',
+      ],
+      keepsModule: true,
+    },
+  ])('only retains an intentional model module for $flags', ({ flags, keepsModule }) => {
+    const config = agentConfig(parseArgs(flags), {
+      ...DEFAULT_HARNESS_AGENT_CONFIG,
+      model: 'bedrock/saved',
+      modelModule: { kind: 'model', module: './model.mjs', export: 'model' },
+    })
+
+    if (keepsModule) {
+      expect(config.modelModule).toEqual({
+        kind: 'model',
+        module: './model.mjs',
+        export: flags.includes('--set') ? 'replacement' : 'model',
+      })
+    } else {
+      expect(config.modelModule).toBeNull()
+    }
+  })
+
   it('rejects malformed and unknown arbitrary config fields', () => {
     expect(() => agentConfig(parseArgs(['--set', 'missing']), DEFAULT_HARNESS_AGENT_CONFIG)).toThrow(
       '--set expects field=value'
@@ -315,7 +352,7 @@ describe('project invocation', () => {
       vi.stubEnv('ANTHROPIC_API_KEY', undefined)
       vi.stubEnv('GEMINI_API_KEY', undefined)
       vi.stubEnv('STRANDS_CLI_PROJECT_TOKEN', undefined)
-      const path = join(directory, 'config.json')
+      const path = join(directory, 'cli.toml')
       const config = await CliConfigStore.load(path)
       await config.saveSetup({
         providers: ['bedrock'],
@@ -555,11 +592,8 @@ describe('TUI startup', () => {
       // `--experimental-loader` requires a file:// URL; a bare Windows path is rejected by the ESM loader.
       const loader = new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url).href
       const fixture = fileURLToPath(new URL('./fixtures/strands-cli-production-probe.mjs', import.meta.url))
-      await mkdir(join(directory, '.strands', 'cli'), { recursive: true })
-      await writeFile(
-        join(directory, '.strands', 'cli', 'config.json'),
-        JSON.stringify({ settings: { animations: false } })
-      )
+      await mkdir(join(directory, '.strands'), { recursive: true })
+      await writeFile(join(directory, '.strands', 'cli.toml'), stringify({ settings: { animations: false } }))
       const child = spawn(
         process.execPath,
         ['--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],

@@ -1,3 +1,4 @@
+import { parse, stringify } from 'smol-toml'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
@@ -312,8 +313,8 @@ describe('interactive runtime lifecycle', () => {
 
   it('loads and persists presentation settings', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-runtime-settings-'))
-    const configPath = join(directory, 'config.json')
-    await writeFile(configPath, JSON.stringify({ settings: { showReasoning: false } }))
+    const configPath = join(directory, 'cli.toml')
+    await writeFile(configPath, stringify({ settings: { showReasoning: false } }))
     mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
     const controller = await createInteractiveChat({ configPath })
 
@@ -327,7 +328,7 @@ describe('interactive runtime lifecycle', () => {
       expect(animations).toBeDefined()
       await controller.activatePanelRow(animations!)
 
-      expect(JSON.parse(await readFile(configPath, 'utf8')).settings).toMatchObject({
+      expect(parse(await readFile(configPath, 'utf8')).settings).toMatchObject({
         animations: false,
         showReasoning: false,
       })
@@ -339,8 +340,8 @@ describe('interactive runtime lifecycle', () => {
 
   it('loads persistent permission settings into the Strands backend', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-runtime-config-'))
-    const configPath = join(directory, 'config.json')
-    await writeFile(configPath, JSON.stringify({ permissions: { mode: 'bypassPermissions', allow: ['bash'] } }))
+    const configPath = join(directory, 'cli.toml')
+    await writeFile(configPath, stringify({ permissions: { mode: 'bypassPermissions', allow: ['bash'] } }))
     const agent = fakeAgent('old')
     Object.assign(agent, {
       tools: [
@@ -373,7 +374,7 @@ describe('interactive runtime lifecycle', () => {
       const configurableWritePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
       expect(configurableWritePermission?.value).toBeDefined()
       await controller.activatePanelRow(configurableWritePermission!)
-      expect(JSON.parse(await readFile(configPath, 'utf8')).permissions.allow).toEqual(['bash', 'write'])
+      expect(parse(await readFile(configPath, 'utf8')).permissions).toMatchObject({ allow: ['bash', 'write'] })
     } finally {
       await controller.dispose()
       await rm(directory, { recursive: true, force: true })

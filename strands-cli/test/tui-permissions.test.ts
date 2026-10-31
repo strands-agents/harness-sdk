@@ -58,7 +58,7 @@ describe('CedarPermissions', () => {
 
   it.each(['deny', 'deny-always'])('allows configuration drafting and reports an apply %s', async (denial) => {
     const broker = new ToolPermissionBroker()
-    const preview = createDiffPreview('config.json', 'default', 'bypassPermissions')
+    const preview = createDiffPreview('cli.toml', 'default', 'bypassPermissions')
     const configurationDenied = vi.fn()
     const permissions = new CedarPermissions({
       broker,
@@ -319,7 +319,7 @@ describe('CedarPermissions', () => {
 
   it('persists always-allowed tools across permission runtimes', async () => {
     const workspace = await temporaryWorkspace()
-    const configPath = join(workspace, 'config.json')
+    const configPath = join(workspace, 'cli.toml')
     const firstConfig = await CliConfigStore.load(configPath)
     const firstBroker = new ToolPermissionBroker()
     const firstPermissions = new CedarPermissions({ broker: firstBroker, config: firstConfig, cwd: workspace })

@@ -191,9 +191,10 @@ Run `strands` or `/setup` to configure:
 - skills directories, context management, caching, and long-term memory,
 - the default tool-approval mode.
 
-Configuration is stored in `~/.strands/cli/config.json`. Explicit CLI flags override the saved
+Configuration is stored in `~/.strands/cli.toml`. Explicit CLI flags override the saved
 profile. `/setup` saves changes for the next launch so the active conversation keeps a stable
-runtime.
+runtime. When TOML is absent, the CLI imports a readable `~/.strands/cli/config.json` and retains the
+original file.
 
 ### Web search and Exa
 
@@ -329,7 +330,7 @@ When MCP discovery is enabled, user configuration is discovered in this order:
 2. `~/.kiro/settings/mcp.json`
 3. `~/.gemini/settings.json` (comments allowed; `httpUrl` is streamable HTTP, `url` is SSE)
 4. `~/.codex/config.toml`
-5. `~/.strands/cli/mcp.json`
+5. `~/.strands/mcp.json`
 
 The CLI then applies trusted project configuration from `.mcp.json`, `.kiro/settings/mcp.json`,
 `.gemini/settings.json`, `.codex/config.toml`, and `.strands/mcp.json`. Repeated `--mcp-config`
@@ -350,7 +351,7 @@ supplied by the ACP client.
 ## Agent Skills
 
 When skill discovery is enabled, the CLI discovers Agent Skills in `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, and
-`~/.strands/cli/skills`. It also scans each directory from the repository root down to the current
+`~/.strands/skills`. It also scans each directory from the repository root down to the current
 working directory for `.agents/skills`, `.claude/skills`, `.codex/skills`, `.agent/skills`, and
 `.strands/skills`.
 
@@ -373,25 +374,22 @@ The Ink backend installs the Strands Harness SDK's Cedar intervention before con
 through `createHarness()`. Cedar automatically permits workspace-local `read` calls (after
 canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
 or MCP tool call opens a permission panel with **Allow once**, **Always allow tool**, and **Deny**.
-Always-allowed tools are written to `~/.strands/cli/config.json` and apply by exact tool name across
+Always-allowed tools are written to `~/.strands/cli.toml` and apply by exact tool name across
 launches. A denial is returned
 to the agent as a denied tool call.
 
-The CLI reads user-level permission settings from `~/.strands/cli/config.json`:
+The CLI reads user-level permission settings from `~/.strands/cli.toml`:
 
-```json
-{
-  "permissions": {
-    "mode": "default",
-    "allow": ["shell", "edit"]
-  }
-}
+```toml
+[permissions]
+mode = "default"
+allow = ["shell", "edit"]
 ```
 
 `permissions.mode` accepts `"default"` or `"bypassPermissions"`. Bypass mode allows every built-in
 and MCP tool call without opening the Cedar approval panel. It does not disable additional
 interventions supplied by the caller or an operating-system sandbox. Permission configuration is
-user-owned; the CLI does not load a project `config.json` that could silently enable bypass mode.
+user-owned; the CLI does not load a project `cli.toml` that could silently enable bypass mode.
 Use `/permissions` to inspect or change the mode and remove saved tool grants.
 Use `/settings` to persist presentation preferences in the same file. Disabling animations also
 skips the startup intro on later launches.
@@ -552,7 +550,7 @@ ping is fire-and-forget: startup never waits on it and failures are silent. Noth
 projects).
 
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
-(takes effect at the next launch), or `"settings": { "telemetry": false }` in `~/.strands/cli/config.json`.
+(takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
 
 ## Beyond the CLI
 

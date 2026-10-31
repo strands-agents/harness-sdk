@@ -147,7 +147,7 @@ describe('runInkChat', () => {
     'preserves the applying conversation and rejects voice during reload (failure=%s)',
     async (fails) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-setup-'))
-      const configPath = join(directory, 'config.json')
+      const configPath = join(directory, 'cli.toml')
       const config = await CliConfigStore.load(configPath)
       await config.saveSetup(configurationFromStore(config))
       const saved = await readFile(configPath, 'utf8')

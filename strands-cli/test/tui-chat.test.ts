@@ -1637,7 +1637,7 @@ describe('ChatController', () => {
         {
           id: 'allow-tool-always',
           label: 'Always allow tool',
-          description: 'Save this tool to config.json',
+          description: 'Save this tool to cli.toml',
           kind: 'allow_always',
         },
         { id: 'deny', label: 'Deny', kind: 'reject_once' },
@@ -1651,7 +1651,7 @@ describe('ChatController', () => {
         kind: 'permission',
         rows: [
           { label: 'Allow once' },
-          { label: 'Always allow tool', description: 'Save this tool to config.json' },
+          { label: 'Always allow tool', description: 'Save this tool to cli.toml' },
           { label: 'Deny', tone: 'danger' },
         ],
       },

@@ -27,7 +27,7 @@ describe('skill discovery', () => {
         join(home, '.agents', 'skills'),
         join(home, '.claude', 'skills'),
         join(home, '.codex', 'skills'),
-        join(home, '.strands', 'cli', 'skills'),
+        join(home, '.strands', 'skills'),
       ])
       expect(paths).toContain(join(repository, '.agents', 'skills'))
       expect(paths).toContain(join(repository, '.claude', 'skills'))

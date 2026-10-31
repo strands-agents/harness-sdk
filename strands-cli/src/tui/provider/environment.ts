@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
+import { parseEnv } from 'node:util'
 
 import { errorMessage } from '../terminal/sanitize.js'
 import { discoverAwsConfiguration, type AwsConfigurationDiscovery } from './aws-config.js'
@@ -103,7 +104,8 @@ export function detectEnvironment(
   for (const key of new Set([...PROVIDER_ENVIRONMENT_KEYS, ...files.keys()])) {
     const applied = appliedEnvironment.get(key)
     const current = processEnvironmentValue(key)
-    const processValue = (applied && current === applied.value ? applied.original : current)?.trim()
+    const raw = applied && current === applied.value ? applied.original : current
+    const processValue = key === 'AWS_CONFIG_FILE' || key === 'AWS_SHARED_CREDENTIALS_FILE' ? raw : raw?.trim()
     if (processValue) {
       detected[key] = { value: processValue, source: 'process' }
     }
@@ -144,7 +146,8 @@ function readEnvironmentFile(path: string): Map<string, string> {
       if (!match) {
         continue
       }
-      const value = dotenvValue(match[2] ?? '')
+      // Node's plain-object result drops literal keys such as __proto__; parse only the value.
+      const value = parseEnv(`VALUE=${match[2] ?? ''}`).VALUE
       if (value) {
         environment.set(match[1]!, value)
       }
@@ -153,15 +156,4 @@ function readEnvironmentFile(path: string): Map<string, string> {
   } catch (error) {
     throw new Error(`Cannot load environment file ${path}: ${errorMessage(error)}`, { cause: error })
   }
-}
-
-function dotenvValue(raw: string): string {
-  const value = raw.trim()
-  if (
-    value.length >= 2 &&
-    ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"')))
-  ) {
-    return value.slice(1, -1)
-  }
-  return value.replace(/\s+#.*$/u, '').trim()
 }

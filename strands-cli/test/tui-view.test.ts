@@ -904,7 +904,7 @@ describe('ChatView', () => {
             { label: 'Allow once', description: 'Run only this call', value: 'allow' },
             {
               label: 'Always allow tool',
-              description: 'Save this tool to config.json',
+              description: 'Save this tool to cli.toml',
               value: 'always',
             },
             { label: 'Deny', description: 'Block this call', value: 'deny', tone: 'danger' },

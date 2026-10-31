@@ -1,3 +1,4 @@
+import { parse, stringify } from 'smol-toml'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,14 +16,14 @@ afterEach(async () => {
 async function configPath(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'strands-config-appearance-'))
   directories.push(directory)
-  return join(directory, 'config.json')
+  return join(directory, 'cli.toml')
 }
 
 describe('appearance persistence', () => {
   it('round-trips custom colors and color mode without changing permission policy or unrelated settings', async () => {
     const path = await configPath()
     const permissions = { mode: 'default', allow: ['read'], futureSetting: true }
-    await writeFile(path, JSON.stringify({ permissions, settings: { animations: false, futureSetting: true } }))
+    await writeFile(path, stringify({ permissions, settings: { animations: false, futureSetting: true } }))
     const config = await CliConfigStore.load(path)
     await config.setSettings({
       frogTheme: 'custom',
@@ -37,7 +38,7 @@ describe('appearance persistence', () => {
       animations: false,
     }
     expect(config.snapshot().settings).toMatchObject(expected)
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+    expect(parse(await readFile(path, 'utf8'))).toMatchObject({
       permissions,
       settings: { ...expected, futureSetting: true },
     })
@@ -54,10 +55,10 @@ describe('appearance persistence', () => {
     { base: 'green', light: {}, dark: { frog: '#123456\u001b[2J' } },
   ])('rejects invalid persisted and updated custom themes: %j', async (customTheme) => {
     const path = await configPath()
-    await writeFile(path, JSON.stringify({ settings: { customTheme } }))
+    await writeFile(path, stringify({ settings: { customTheme } }))
     await expect(CliConfigStore.load(path)).rejects.toThrow(`Invalid CLI config at ${path}: customTheme.`)
 
-    const original = JSON.stringify({ permissions: { mode: 'default', allow: [] }, settings: { animations: false } })
+    const original = stringify({ permissions: { mode: 'default', allow: [] }, settings: { animations: false } })
     await writeFile(path, original)
     const config = await CliConfigStore.load(path)
     const before = config.snapshot()

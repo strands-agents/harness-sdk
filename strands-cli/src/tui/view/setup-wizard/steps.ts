@@ -6,7 +6,7 @@ import {
   type ProviderEnvironment,
   type ProviderId,
 } from '../../config.js'
-import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch, type HarnessAgentConfig } from '@strands-agents/harness'
 import type { AwsConfigurationDiscovery, LiteLlmDiscovery, OllamaDiscovery } from '../../provider/discovery.js'
 import { effortOptions, profileEffort, effortDisplayLabel, effortForModel } from '../../model/selection.js'
 import {
@@ -38,7 +38,6 @@ import {
   effectiveProviderEnvironment,
   providerAssessment,
   providerSelectOptions,
-  providerSupportsWebSearch,
   sourceLabel,
 } from './providers.js'
 import type { AppearanceSettings, EditableField, SetupDraft, SetupFlow, WizardRow } from './types.js'
@@ -273,7 +272,7 @@ export function rowsForStep(
         })
       }
       if (flow === 'quickstart') {
-        const nativeSearch = providerSupportsWebSearch(draft.profile.model)
+        const nativeSearch = supportsWebSearch(draft.profile.model)
         const enabled = profileToolEnabled(draft.profile.builtinTools, 'web_search')
         rows.push({
           id: 'quickstart-web-search',
@@ -501,7 +500,7 @@ function toolSelectionRows(
   updateProfile: (update: Partial<HarnessAgentConfig>) => void
 ): WizardRow[] {
   const tools = toolRows(draft, updateProfile)
-  const nativeSearch = providerSupportsWebSearch(draft.profile.model)
+  const nativeSearch = supportsWebSearch(draft.profile.model)
   const bulkTools = BUILTIN_TOOLS.map(([id]) => id).filter((id) => nativeSearch || id !== 'web_search')
   const allSelected = tools.every((row) => (row.id === 'web_search' && !nativeSearch) || row.disabled || row.active)
   return [

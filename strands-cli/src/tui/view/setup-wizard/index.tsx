@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { Box, useInput, useStdout, type DOMElement } from 'ink'
 import { useTerminalSize } from '../../terminal/size.js'
-import type { HarnessAgentConfig } from '@strands-agents/harness'
+import { supportsWebSearch, type HarnessAgentConfig } from '@strands-agents/harness'
 import stringWidth from 'string-width'
 
 import {
@@ -52,7 +52,6 @@ import {
   PROVIDERS,
   compatibleProfile,
   exaWebSearchActive,
-  providerSupportsWebSearch,
   providerAssessment,
   providerFromModel,
   quickstartDraft,
@@ -513,9 +512,7 @@ function SetupWizardContent({
   const warningLines = bannerWarning && !splitQuickstart ? bannerLines(bannerWarning) : []
   // Reserve the Exa banner's space whether or not web_search is on, so toggling it doesn't resize the panel.
   const warningHeight =
-    (isTools || (quickstartWebSearchOffered && !splitQuickstart)) &&
-    !warning &&
-    !providerSupportsWebSearch(draft.profile.model)
+    (isTools || (quickstartWebSearchOffered && !splitQuickstart)) && !warning && !supportsWebSearch(draft.profile.model)
       ? bannerLines(EXA_WEB_SEARCH_WARNING).length
       : warningLines.length
   const warningGap = (isCapabilities || flow === 'quickstart') && warningHeight > 0 ? 1 : 0

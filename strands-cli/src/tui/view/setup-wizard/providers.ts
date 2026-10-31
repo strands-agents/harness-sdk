@@ -100,14 +100,14 @@ export function quickstartDraft(provider: ProviderId, environment: DetectedProvi
 
 /** Whether this profile's `web_search` will actually go to Exa: opted in, on a model without native search. */
 export function exaWebSearchActive(profile: HarnessAgentConfig): boolean {
-  return !providerSupportsWebSearch(profile.model) && webSearchFallback(profile.builtinTools) === 'exa'
+  return !supportsWebSearch(profile.model) && webSearchFallback(profile.builtinTools) === 'exa'
 }
 
 /** Without native search, `web_search` is only kept as the explicit Exa opt-in; the plain default would refuse to start. */
 export function compatibleProfile(profile: HarnessAgentConfig): HarnessAgentConfig {
   const effort = compatibleEffort(profile)
   const withEffort = effort === profile.effort ? profile : { ...profile, effort }
-  return providerSupportsWebSearch(profile.model) || webSearchFallback(profile.builtinTools) === 'exa'
+  return supportsWebSearch(profile.model) || webSearchFallback(profile.builtinTools) === 'exa'
     ? withEffort
     : { ...withEffort, builtinTools: withoutProfileTool(profile.builtinTools, 'web_search') }
 }
@@ -120,10 +120,6 @@ function compatibleEffort({ model, effort }: HarnessAgentConfig): HarnessAgentCo
 export function providerFromModel(model: string): ProviderId | undefined {
   const prefix = model.includes('/') ? model.slice(0, model.indexOf('/')) : 'bedrock'
   return PROVIDER_IDS.find((provider) => provider === prefix)
-}
-
-export function providerSupportsWebSearch(model: string): boolean {
-  return supportsWebSearch(model)
 }
 
 export interface ProviderAssessment {
