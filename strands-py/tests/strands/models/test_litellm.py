@@ -629,6 +629,80 @@ async def test_stream_path_validation(litellm_acompletion, api_key, model_id, mo
     assert called_kwargs.get("stream") is True, f"Expected stream=True, got {called_kwargs.get('stream')}"
 
 
+def test_format_request_replays_reasoning_as_thinking_for_anthropic_models():
+    """Anthropic-family models receive the reasoning block as a thinking part."""
+    model = LiteLLMModel(client_args={"api_key": "a1"}, model_id="anthropic/claude-sonnet-4-5")
+
+    messages = [
+        {"role": "user", "content": [{"text": "Analyze this target"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"signature": "sig-abc", "text": "my reasoning"}}},
+                {"text": "Here is my analysis."},
+            ],
+        },
+        {"role": "user", "content": [{"text": "Continue"}]},
+    ]
+
+    request = model.format_request(messages)
+
+    assistant = next(message for message in request["messages"] if message["role"] == "assistant")
+    parts = assistant["content"]
+
+    assert parts[0] == {"signature": "sig-abc", "thinking": "my reasoning", "type": "thinking"}
+    assert parts[1] == {"text": "Here is my analysis.", "type": "text"}
+
+
+def test_format_request_replays_reasoning_as_text_for_openai_compatible_models():
+    """OpenAI-compatible providers reject a thinking part, so reasoning is replayed as text."""
+    model = LiteLLMModel(client_args={"api_key": "a1"}, model_id="moonshot/kimi-k2-thinking")
+
+    messages = [
+        {"role": "user", "content": [{"text": "Analyze this target"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"signature": "sig-abc", "text": "my reasoning"}}},
+                {"text": "Here is my analysis."},
+            ],
+        },
+        {"role": "user", "content": [{"text": "Continue"}]},
+    ]
+
+    request = model.format_request(messages)
+
+    assistant = next(message for message in request["messages"] if message["role"] == "assistant")
+    parts = assistant["content"]
+
+    assert parts[0] == {"text": "my reasoning", "type": "text"}
+    assert parts[1] == {"text": "Here is my analysis.", "type": "text"}
+    assert all(part["type"] != "thinking" for part in parts)
+
+
+def test_format_request_drops_redacted_reasoning_for_openai_compatible_models():
+    """Redacted reasoning carries no readable text, so it is not replayed as text."""
+    model = LiteLLMModel(client_args={"api_key": "a1"}, model_id="moonshot/kimi-k2-thinking")
+
+    messages = [
+        {"role": "user", "content": [{"text": "Analyze this target"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"redactedContent": "encrypted-reasoning"}},
+                {"text": "Here is my analysis."},
+            ],
+        },
+    ]
+
+    request = model.format_request(messages)
+
+    assistant = next(message for message in request["messages"] if message["role"] == "assistant")
+    parts = assistant["content"]
+
+    assert parts == [{"text": "Here is my analysis.", "type": "text"}]
+
+
 def test_format_request_message_content_reasoning():
     """Test formatting reasoning content."""
     content = {"reasoningContent": {"reasoningText": {"signature": "test_sig", "text": "test_thinking"}}}
