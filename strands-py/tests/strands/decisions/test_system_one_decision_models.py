@@ -42,7 +42,7 @@ _PROVIDERS = [
         model_cls=DecisionsAPIDecisionModel,
         endpoint="https://decisionapi.net/v1/systemone",
         default_model_id="~typesafe/jev-latest",
-        provider_name="decisionsApi",
+        provider_name="decisions_api",
         api_key_env="JEV_API_KEY",
     ),
 ]

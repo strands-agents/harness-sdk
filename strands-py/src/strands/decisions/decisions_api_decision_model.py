@@ -63,7 +63,7 @@ class DecisionsAPIDecisionModel(DecisionModel):
         super().__init__()
         self._provider_config = _resolve_system_one_provider_config(
             class_name="DecisionsAPIDecisionModel",
-            provider_name="decisionsApi",
+            provider_name="decisions_api",
             endpoint=_DECISIONS_API_ENDPOINT,
             api_key_environment_variable="JEV_API_KEY",
             max_body_bytes=_DECISIONS_API_MAX_BODY_BYTES,

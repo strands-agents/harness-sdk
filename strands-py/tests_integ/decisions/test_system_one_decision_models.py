@@ -17,7 +17,7 @@ _PROVIDERS = [
     ),
     pytest.param(
         DecisionsAPIDecisionModel,
-        "decisionsApi",
+        "decisions_api",
         "JEV_API_KEY",
         id="DecisionsAPIDecisionModel",
         marks=pytest.mark.skipif(not os.environ.get("JEV_API_KEY"), reason="JEV_API_KEY not set"),
