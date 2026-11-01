@@ -387,7 +387,27 @@ sidebar:
               - docs/user-guide/sdk/tools/mcp-transports
               - docs/user-guide/sdk/tools/executors
               - docs/user-guide/sdk/tools/community-tools-package
-              - docs/user-guide/sdk/tools/vended-tools
+              - label: Vended Tools
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/tools/vended-tools
+                  - docs/user-guide/sdk/tools/vended-tools/edit
+                  - docs/user-guide/sdk/tools/vended-tools/file-editor
+                  - docs/user-guide/sdk/tools/vended-tools/read
+                  - docs/user-guide/sdk/tools/vended-tools/write
+                  - docs/user-guide/sdk/tools/vended-tools/http-request
+                  - docs/user-guide/sdk/tools/vended-tools/notebook
+                  - docs/user-guide/sdk/tools/vended-tools/shell
+                  - docs/user-guide/sdk/tools/vended-tools/mcp-router
+                  - docs/user-guide/sdk/tools/vended-tools/sleep
+                  - docs/user-guide/sdk/tools/vended-tools/handoff-to-user
+                  - docs/user-guide/sdk/tools/vended-tools/stop
+                  - docs/user-guide/sdk/tools/vended-tools/web-fetch
+                  - docs/user-guide/sdk/tools/vended-tools/a2a-client
+                  - docs/user-guide/sdk/tools/vended-tools/python-repl
+                  - docs/user-guide/sdk/tools/vended-tools/subagent
+                  - docs/user-guide/sdk/tools/vended-tools/swarm
+                  - docs/user-guide/sdk/tools/vended-tools/graph
           - label: Memory
             addedDate: 2026-06-17
             items:

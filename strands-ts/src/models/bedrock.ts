@@ -59,6 +59,7 @@ import {
   type StreamOptions,
   resolveCacheSection,
   resolveConfigMetadata,
+  resolveMaxTokens,
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
@@ -81,7 +82,7 @@ import {
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { z } from 'zod'
-import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
+import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 
@@ -100,13 +101,6 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 const MODELS_INCLUDE_STATUS = ['anthropic.claude']
 
 /**
- * Models that support the Anthropic-style prompt caching strategy.
- * Used to auto-detect when `cacheConfig.strategy` is `'auto'`.
- * @see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
- */
-const MODELS_SUPPORTING_ANTHROPIC_CACHING = ['anthropic', 'claude']
-
-/**
  * Models that reject any reasoning text block replayed in history
  * ("User messages cannot contain reasoning content").
  */
@@ -122,6 +116,7 @@ const MODELS_REJECT_REASONING_TEXT = [
   'nvidia.nemotron-super',
   'openai.gpt-5',
   'openai.gpt-6',
+  'openai.gpt-daybreak',
   'qwen.qwen3-235b',
   'qwen.qwen3-coder',
   'writer.palmyra',
@@ -271,6 +266,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens to generate in the response.
    *
+   * @defaultValue the model's `maxOutputTokens` from the model info when known; otherwise `maxTokens` is not
+   * sent and Bedrock's per-model default applies.
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InferenceConfiguration.html
    */
   maxTokens?: number
@@ -494,6 +491,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.bedrock.modelId))
     }
 
+    // Warn only when the value comes from the shared model info, not when the user pinned it through `modelInfo`.
+    const maxTokens = this.getConfig().maxTokens
+    if (
+      modelConfig.maxTokens === undefined &&
+      modelConfig.modelInfo?.limits?.maxOutputTokens === undefined &&
+      maxTokens !== undefined
+    ) {
+      warnOnce(logger, defaultMaxTokensWarningMessage(maxTokens))
+    }
+
     // Build user agent string (extend if provided, otherwise use SDK identifier)
     const customUserAgent = clientConfig?.customUserAgent
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
@@ -523,9 +530,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Cache strategy name or null
    */
   private _getCacheStrategy(): 'anthropic' | null {
-    return MODELS_SUPPORTING_ANTHROPIC_CACHING.some((pattern) => this._config.modelId?.includes(pattern))
-      ? 'anthropic'
-      : null
+    const promptCaching = this.modelInfo.capabilities?.promptCaching
+    if (promptCaching === undefined) {
+      // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+      // keep the historical name test so caching does not turn off until the data catches up.
+      const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+      return modelId.includes('claude') || modelId.includes('anthropic') ? 'anthropic' : null
+    }
+    return promptCaching === 'cachePoints' ? 'anthropic' : null
   }
 
   /**
@@ -547,7 +559,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (strategy === 'auto') {
       const detectedStrategy = this._getCacheStrategy()
       if (!detectedStrategy) {
-        logger.warn(
+        warnOnce(
+          logger,
           `model_id=<${this._config.modelId}> | cache_config is enabled but this model does not support automatic caching`
         )
         return false
@@ -640,7 +653,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * ```
    */
   getConfig(): BedrockModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    const config = resolveConfigMetadata(this._config, modelId)
+    const maxTokens = resolveMaxTokens(this._config, modelId)
+    return maxTokens === undefined || config.maxTokens !== undefined ? config : { ...config, maxTokens }
   }
 
   /**
@@ -832,7 +848,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       return this._send(this._formatRequest(messages, options), send)
     }
 
-    const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema)
+    const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
     for (const mechanism of mechanisms.slice(0, -1)) {
       try {
         return await this._send(this._structuredOutputRequest(messages, options, mechanism, schema), send)
@@ -988,7 +1004,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
-    if (this._config.maxTokens !== undefined) inferenceConfig.maxTokens = this._config.maxTokens
+    const maxTokens = this.getConfig().maxTokens
+    if (maxTokens !== undefined) inferenceConfig.maxTokens = maxTokens
     if (this._config.temperature !== undefined) inferenceConfig.temperature = this._config.temperature
     if (this._config.topP !== undefined) inferenceConfig.topP = this._config.topP
     if (this._config.stopSequences !== undefined) inferenceConfig.stopSequences = this._config.stopSequences

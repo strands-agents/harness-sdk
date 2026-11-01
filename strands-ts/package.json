@@ -60,6 +60,10 @@
       "types": "./dist/src/vended-tools/notebook/index.d.ts",
       "default": "./dist/src/vended-tools/notebook/index.js"
     },
+    "./vended-tools/edit": {
+      "types": "./dist/src/vended-tools/edit/index.d.ts",
+      "default": "./dist/src/vended-tools/edit/index.js"
+    },
     "./vended-tools/file-editor": {
       "types": "./dist/src/vended-tools/file-editor/index.d.ts",
       "default": "./dist/src/vended-tools/file-editor/index.js"
@@ -84,6 +88,10 @@
       "types": "./dist/src/vended-tools/python-repl/index.d.ts",
       "default": "./dist/src/vended-tools/python-repl/index.js"
     },
+    "./vended-tools/read": {
+      "types": "./dist/src/vended-tools/read/index.d.ts",
+      "default": "./dist/src/vended-tools/read/index.js"
+    },
     "./vended-tools/sleep": {
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
       "default": "./dist/src/vended-tools/sleep/index.js"
@@ -95,6 +103,10 @@
     "./experimental/vended-tools/stop": {
       "types": "./dist/src/experimental/vended-tools/stop/index.d.ts",
       "default": "./dist/src/experimental/vended-tools/stop/index.js"
+    },
+    "./vended-tools/stop": {
+      "types": "./dist/src/vended-tools/stop/index.d.ts",
+      "default": "./dist/src/vended-tools/stop/index.js"
     },
     "./vended-tools/web-fetch": {
       "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
@@ -111,6 +123,14 @@
     "./vended-tools/swarm": {
       "types": "./dist/src/vended-tools/swarm/index.d.ts",
       "default": "./dist/src/vended-tools/swarm/index.js"
+    },
+    "./vended-tools/graph": {
+      "types": "./dist/src/vended-tools/graph/index.d.ts",
+      "default": "./dist/src/vended-tools/graph/index.js"
+    },
+    "./vended-tools/write": {
+      "types": "./dist/src/vended-tools/write/index.d.ts",
+      "default": "./dist/src/vended-tools/write/index.js"
     },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
@@ -214,6 +234,8 @@
     }
   },
   "scripts": {
+    "prepare": "node -e \"require('fs').copyFileSync('../shared/model-info.json','src/models/model-info.json')\"",
+    "prebuild": "node -e \"require('fs').copyFileSync('../shared/model-info.json','src/models/model-info.json')\"",
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",
@@ -254,49 +276,49 @@
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/provider": "^3.0.0",
     "@anthropic-ai/sdk": "^0.109.1",
-    "@aws-sdk/client-bedrock": "^3.1078.0",
-    "@aws-sdk/client-bedrock-agent": "^3.1078.0",
-    "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
-    "@aws-sdk/client-s3": "^3.1078.0",
+    "@aws-sdk/client-bedrock": "^3.1153.0",
+    "@aws-sdk/client-bedrock-agent": "^3.1153.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.1153.0",
+    "@aws-sdk/client-s3": "^3.1153.0",
     "@aws-sdk/client-s3vectors": "^3.1125.0",
-    "@aws-sdk/client-secrets-manager": "^3.1078.0",
-    "@aws-sdk/client-ssm": "^3.1078.0",
-    "@aws-sdk/client-sts": "^3.1078.0",
-    "@aws-sdk/credential-providers": "^3.1078.0",
+    "@aws-sdk/client-secrets-manager": "^3.1153.0",
+    "@aws-sdk/client-ssm": "^3.1153.0",
+    "@aws-sdk/client-sts": "^3.1153.0",
+    "@aws-sdk/credential-providers": "^3.1153.0",
     "@aws/bedrock-token-generator": "^1.1.0",
-    "@cedar-policy/cedar-wasm": "^4.11.2",
-    "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
+    "@cedar-policy/cedar-wasm": "^4.14.0",
+    "@cedar-policy/mcp-schema-generator-wasm": "^0.6.1",
     "@eslint/js": "^10.0.1",
-    "@google/genai": "^2.6.0",
-    "@modelcontextprotocol/node": "^2.1.1",
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@google/genai": "^2.30.0",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/baggage-span-processor": "^0.5.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
-    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/resources": "^2.12.0",
     "@opentelemetry/sdk-metrics": "^2.6.1",
-    "@opentelemetry/sdk-trace-base": "^2.6.1",
-    "@opentelemetry/sdk-trace-node": "^2.6.1",
+    "@opentelemetry/sdk-trace-base": "^2.12.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
-    "@types/node": "^25.9.4",
+    "@types/node": "^26.6.3",
     "@types/turndown": "^5.0.6",
-    "@typescript-eslint/eslint-plugin": "^8.62.1",
+    "@typescript-eslint/eslint-plugin": "^8.72.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "@vitest/browser": "^4.1.10",
-    "@vitest/browser-playwright": "^4.1.10",
-    "@vitest/coverage-v8": "^4.1.10",
-    "eslint": "^10.6.0",
-    "eslint-plugin-tsdoc": "^0.5.0",
-    "express": "^5.2.1",
+    "@vitest/browser": "^5.0.2",
+    "@vitest/browser-playwright": "^5.0.2",
+    "@vitest/coverage-v8": "^5.0.2",
+    "eslint": "^10.13.0",
+    "eslint-plugin-tsdoc": "^0.5.4",
+    "express": "^5.3.0",
     "openai": "^6.45.0",
-    "playwright": "^1.61.0",
-    "tsx": "^4.22.5",
+    "playwright": "^1.64.1",
+    "tsx": "^4.23.15",
     "turndown": "^7.2.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.2"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -310,7 +332,7 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1152.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
     "@modelcontextprotocol/ext-tasks": "^0.2.2",
     "@smithy/fetch-http-handler": "^5.8.0",
     "@types/json-schema": "^7.0.15",

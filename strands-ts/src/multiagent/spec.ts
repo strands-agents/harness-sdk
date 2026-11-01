@@ -375,35 +375,37 @@ export interface ResolveSpecAxes {
  *
  * @param modelInputs - The model-supplied arguments, one object per agent.
  * @param axes - Axis policies, presets, and the default preset name.
+ * @param label - Model-facing noun for one input in error messages, matching the tool's parameter name.
  * @returns The resolved {@link AgentSpec} for each input, in order.
  * @throws Error if `modelInputs` is not an array, an input is not an object, a name is missing, empty, or
  * duplicated, or an `agent_type` is not found in `axes.presets`.
  * @internal Not part of the public API.
  */
-export function _resolveSpecs(modelInputs: unknown, axes: ResolveSpecAxes): AgentSpec[] {
+export function _resolveSpecs(modelInputs: unknown, axes: ResolveSpecAxes, label = 'agent'): AgentSpec[] {
   const { presets, defaultPreset, instructions } = axes
   const tools = axes.tools ?? new Inherit()
   const model = axes.model ?? new Inherit()
 
   if (!Array.isArray(modelInputs)) {
-    throw new Error('agents must be an array')
+    throw new Error(`${label}s must be an array`)
   }
+  const capitalized = label.charAt(0).toUpperCase() + label.slice(1)
 
   const seenNames = new Set<string>()
   const specs: AgentSpec[] = []
   for (const [index, input] of (modelInputs as unknown[]).entries()) {
     if (input === null || typeof input !== 'object' || Array.isArray(input)) {
-      throw new Error(`Agent at index ${index} must be an object`)
+      throw new Error(`${capitalized} at index ${index} must be an object`)
     }
     const modelInput = input as Record<string, unknown>
 
     const rawName = modelInput['name']
     if (typeof rawName !== 'string' || !rawName.trim()) {
-      throw new Error(`Agent at index ${index} must have a non-empty 'name' string`)
+      throw new Error(`${capitalized} at index ${index} must have a non-empty 'name' string`)
     }
     const name = rawName.trim()
     if (seenNames.has(name)) {
-      throw new Error(`Duplicate agent name ${JSON.stringify(name)} at index ${index}`)
+      throw new Error(`Duplicate ${label} name ${JSON.stringify(name)} at index ${index}`)
     }
     seenNames.add(name)
 
