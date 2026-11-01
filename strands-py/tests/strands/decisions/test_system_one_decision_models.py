@@ -627,6 +627,15 @@ class TestAsk:
         assert isinstance(caught.value.__cause__, ValueError)
 
     @pytest.mark.asyncio
+    async def test_rejects_an_overflowing_float_probability(self, provider: _ProviderCase):
+        # 1e999 parses to float("inf"); parse_constant only rejects the Infinity/NaN literals.
+        client = _fake_text_client('{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1e999}}}')
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        with pytest.raises(StructuredOutputException, match="must be a non-negative finite number"):
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    @pytest.mark.asyncio
     async def test_propagates_a_closed_client_error(self, provider: _ProviderCase):
         client = _fake_client(_response_body({"q": {"type": "noul", "noul": 1}}))
         await client.aclose()
