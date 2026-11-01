@@ -4,8 +4,7 @@ import os
 
 import pytest
 
-from strands import DecisionsAPIDecisionModel, TypeSafeDecisionModel
-from strands.decisions import DecisionModel
+from strands.decisions import DecisionModel, DecisionsAPIDecisionModel, TypeSafeDecisionModel
 
 _PROVIDERS = [
     pytest.param(
