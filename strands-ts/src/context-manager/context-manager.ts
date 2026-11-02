@@ -140,8 +140,9 @@ export class ContextManager implements Plugin {
 
     if (this._stash) {
       const stash = this._stash
+      const storedKeys = new Set(await stash.list())
       for (const [index, message] of agent.messages.entries()) {
-        await stash.storeMessage(message, retrievalCallsBefore(agent.messages, index))
+        await stash.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
       }
       agent.addHook(MessageAddedEvent, async (event) => {
         const messages = event.agent.messages

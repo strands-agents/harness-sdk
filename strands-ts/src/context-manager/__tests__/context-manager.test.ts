@@ -148,6 +148,33 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('seeded messages from a session without placeholder metadata', () => {
+    it('does not overwrite a stashed original with a text-only preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      await view.write('msg-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original user text' })))
+      const restored = new Message({
+        role: 'user',
+        content: [
+          new TextBlock('[Truncated: ~2,000 tokens] original [ref: msg-1_0]'),
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1_0]')],
+          }),
+        ],
+        trackingId: 'msg-1',
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [restored] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.stash!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
+    })
+  })
+
   describe('overflow path', () => {
     it('runs strategies on ContextWindowOverflowError and sets retry', async () => {
       let strategyCalled = false

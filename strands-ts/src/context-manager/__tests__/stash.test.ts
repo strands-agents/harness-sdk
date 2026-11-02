@@ -151,6 +151,19 @@ describe('Stash', () => {
       expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text: 'original' } })
     })
 
+    it('stashes text that only looks like a placeholder', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('[Dropped] [ref: tu-1]')],
+        trackingId: 'track-1',
+      })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_0': { text: '[Dropped] [ref: tu-1]' } })
+    })
+
     it('skips a placeholder and a tool result that holds one, keeping other blocks', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const message = new Message({

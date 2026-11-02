@@ -169,29 +169,44 @@ export class Stash {
    *
    * @param message - The message whose content should be persisted
    * @param skipToolUseIds - Tool results to leave out, such as the retrieval tool's own
+   * @param storedKeys - Keys already in the stash; a block stored under one keeps its entry, since a
+   *   restored history can hold a placeholder where the stored original was
    */
-  async storeMessage(message: Message, skipToolUseIds?: ReadonlySet<string>): Promise<void> {
+  async storeMessage(
+    message: Message,
+    skipToolUseIds?: ReadonlySet<string>,
+    storedKeys?: ReadonlySet<string>
+  ): Promise<void> {
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
+      if (this._isSkipped(block, message, blockIndex, skipToolUseIds, storedKeys)) continue
       if (block instanceof ToolResultBlock) {
-        if (skipToolUseIds?.has(block.toolUseId)) continue
-        if (block.content.some(isOffloaded)) continue
         await this._storeToolResult(block)
-      } else if (
-        block instanceof ToolUseBlock ||
-        block instanceof CachePointBlock ||
-        block instanceof ReasoningBlock ||
-        isOffloaded(block)
-      ) {
         continue
-      } else {
-        try {
-          await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
-        } catch (error) {
-          logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
-        }
+      }
+      try {
+        await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+      } catch (error) {
+        logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
       }
     }
+  }
+
+  private _isSkipped(
+    block: ContentBlock,
+    message: Message,
+    blockIndex: number,
+    skipToolUseIds?: ReadonlySet<string>,
+    storedKeys?: ReadonlySet<string>
+  ): boolean {
+    if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock)
+      return true
+    if (block instanceof ToolResultBlock) {
+      if (skipToolUseIds?.has(block.toolUseId) || block.content.some(isOffloaded)) return true
+      return storedKeys !== undefined && [...storedKeys].some((key) => parseStashKey(key)?.id === block.toolUseId)
+    }
+    if (isOffloaded(block)) return true
+    return storedKeys?.has(formatStashKey({ id: message.trackingId, index: blockIndex })) ?? false
   }
 
   /**

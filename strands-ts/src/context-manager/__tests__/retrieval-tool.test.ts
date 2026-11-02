@@ -78,6 +78,15 @@ describe('retrieval tool', () => {
     expect(await invoke(createRetrievalTool(stash), { reference: ' tool-1 ' })).toEqual(new TextBlock('original'))
   })
 
+  it('returns stored text that only looks like a placeholder', async () => {
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    await stash.store('tool-1', 0, encodeJSON({ text: '[Dropped] [ref: tool-2]' }))
+
+    expect(await invoke(createRetrievalTool(stash), { reference: 'tool-1' })).toEqual(
+      new TextBlock('[Dropped] [ref: tool-2]')
+    )
+  })
+
   describe('a tool result referenced by its toolUseId', () => {
     async function makeStashWithItems(): Promise<Stash> {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')

@@ -5,11 +5,11 @@ import {
   type CountTokensOptions,
   type StreamOptions,
   resolveConfigMetadata,
+  resolveMaxTokens,
   resolveCacheSection,
   type CacheConfig,
   type ResolvedCacheSection,
 } from '../models/model.js'
-import { lookupModelInfo } from '../models/model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import {
   handleRejectedMechanism,
@@ -224,7 +224,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.anthropic.modelId))
     }
 
-    if (modelConfig.maxTokens === undefined) {
+    if (modelConfig.maxTokens === undefined && modelConfig.modelInfo?.limits?.maxOutputTokens === undefined) {
       warnOnce(logger, defaultMaxTokensWarningMessage(this._resolvedMaxTokens()))
     }
 
@@ -260,18 +260,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * The `maxTokens` to send: the user's value, else the model's output ceiling from the `modelInfo`
-   * override or the shared model info, else the fixed default. Resolved on each read so it follows
-   * `updateConfig({ modelId })`. Reads the layers directly because `modelInfo` itself reads `getConfig()`.
+   * The `maxTokens` to send: the user's value, else the model's output ceiling (see
+   * `resolveMaxTokens`), else the fixed default. Resolved on each read so it follows `updateConfig({ modelId })`.
    */
   private _resolvedMaxTokens(): number {
     const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
-    return (
-      this._config.maxTokens ??
-      this._config.modelInfo?.limits?.maxOutputTokens ??
-      lookupModelInfo(modelId).limits?.maxOutputTokens ??
-      MODEL_DEFAULTS.anthropic.maxTokens
-    )
+    return resolveMaxTokens(this._config, modelId) ?? MODEL_DEFAULTS.anthropic.maxTokens
   }
 
   /**

@@ -19,7 +19,7 @@ from botocore.exceptions import ClientError, EventStreamError
 
 import strands
 from strands import _exception_notes
-from strands.models import BedrockModel, CacheConfig, CacheToolsConfig
+from strands.models import BedrockModel, CacheConfig, CacheToolsConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
     DEFAULT_BEDROCK_REGION,
@@ -389,6 +389,17 @@ def test__init__auto_populates_context_window_limit_default_model(bedrock_client
     assert model.get_config().get("context_window_limit") == 1_000_000
 
 
+def test__init__auto_populates_context_window_limit_from_the_model_info_override(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="anthropic.claude-sonnet-4-6", model_info=ModelInfo(limits=ModelLimits(context_window=500_000))
+    )
+
+    assert model.get_config().get("context_window_limit") == 500_000
+    assert model.model_info.limits.context_window == 500_000
+
+
 def test__init__explicit_context_window_limit_not_overridden(bedrock_client):
     _ = bedrock_client
 
@@ -542,6 +553,113 @@ def test_format_request_inference_config(model, messages, model_id, inference_co
     }
 
     assert tru_request == exp_request
+
+
+def test_format_request_defaults_max_tokens_to_the_model_info_output_limit(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_for_the_default_model(bedrock_client, messages):
+    _ = bedrock_client
+
+    assert BedrockModel().format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_from_the_model_info_override(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="m1", model_info=ModelInfo(limits=ModelLimits(max_output_tokens=2_000)))
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 2_000}
+
+
+def test_format_request_leaves_max_tokens_unset_for_an_unknown_model(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="unknown.model-v1:0")
+
+    assert model.model_info.limits.max_output_tokens is None
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+def test_format_request_explicit_max_tokens_wins_over_the_model_info_output_limit(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=1)
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 1}
+
+
+def test_format_request_explicit_none_max_tokens_opts_out_of_the_default(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=None)
+
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        {"model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0", "context_window_limit": 100_000},
+    ],
+    ids=["200k-window model", "user-set context_window_limit"],
+)
+def test_format_request_does_not_cap_the_default_max_tokens_by_the_context_window(bedrock_client, messages, config):
+    _ = bedrock_client
+    model = BedrockModel(**config)
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 64_000}
+
+
+@pytest.mark.parametrize(
+    ("config", "exp_config"),
+    [
+        (
+            {"model_id": "anthropic.claude-sonnet-4-6"},
+            {
+                "model_id": "anthropic.claude-sonnet-4-6",
+                "include_tool_result_status": "auto",
+                "context_window_limit": 1_000_000,
+                "max_tokens": 128_000,
+            },
+        ),
+        (
+            {"model_id": "anthropic.claude-sonnet-4-6", "max_tokens": None},
+            {
+                "model_id": "anthropic.claude-sonnet-4-6",
+                "include_tool_result_status": "auto",
+                "context_window_limit": 1_000_000,
+                "max_tokens": None,
+            },
+        ),
+        (
+            {"model_id": "unknown.model-v1:0"},
+            {"model_id": "unknown.model-v1:0", "include_tool_result_status": "auto"},
+        ),
+    ],
+    ids=["listed model", "explicit None", "unknown model"],
+)
+def test_get_config_surfaces_the_default_max_tokens(bedrock_client, config, exp_config):
+    _ = bedrock_client
+
+    assert BedrockModel(**config).get_config() == exp_config
+
+
+def test_format_request_re_resolves_the_default_max_tokens_when_model_id_changes(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
+
+    model.update_config(model_id="anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 64_000}
 
 
 def test_format_request_system_prompt(model, messages, model_id, system_prompt):
@@ -2351,6 +2469,51 @@ def stream_structured_output(model, test_output_model_cls, alist):
     return stream_structured_output
 
 
+@pytest.mark.asyncio
+async def test_stream_structured_output_starts_at_native_when_the_model_info_forbids_forcing(
+    native_output_client, test_output_model_cls, messages, alist
+):
+    """A model the shared model info says cannot be forced skips the forced request entirely."""
+    native_output_client.converse_stream.return_value = {"stream": []}
+    model = BedrockModel(model_id="us.anthropic.claude-opus-5-5")
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+
+    await alist(
+        model.stream(
+            messages,
+            [tool_spec],
+            tool_choice={"tool": {"name": tool_spec["name"]}},
+            structured_output_model=test_output_model_cls,
+        )
+    )
+
+    native_output_client.converse_stream.assert_called_once()
+    assert _mechanism(native_output_client.converse_stream.call_args.kwargs) == "native"
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_skips_native_when_the_model_info_override_lacks_it(
+    native_output_client, test_output_model_cls, messages, alist
+):
+    native_output_client.converse_stream.side_effect = [_validation_error(FORCED_TOOL_CHOICE_REJECTION), {"stream": []}]
+    model = BedrockModel(
+        model_id="m1", model_info=ModelInfo(capabilities=ModelCapabilities(native_structured_output=False))
+    )
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+
+    await alist(
+        model.stream(
+            messages,
+            [tool_spec],
+            tool_choice={"tool": {"name": tool_spec["name"]}},
+            structured_output_model=test_output_model_cls,
+        )
+    )
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in native_output_client.converse_stream.call_args_list]
+    assert tru_mechanisms == ["forced", "auto"]
+
+
 @pytest.mark.parametrize(
     ("rejections", "exp_mechanisms"),
     [
@@ -4113,6 +4276,88 @@ def test_cache_strategy_auto_maps_claude_to_anthropic(bedrock_client):
 def test_cache_strategy_auto_is_none_for_non_claude(bedrock_client):
     """Under strategy="auto", a model without automatic caching support resolves to None."""
     model = BedrockModel(model_id="amazon.nova-pro-v1:0", cache_config=CacheConfig(strategy="auto"))
+    assert model._cache_strategy is None
+
+
+def test_model_info_reads_cache_points_for_claude_from_the_shared_model_info(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
+
+
+def test_model_info_leaves_caching_unknown_for_other_model_ids(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id="amazon.nova-pro-v1:0")
+
+    assert model.model_info.capabilities.prompt_caching is None
+
+
+def test_model_info_treats_a_non_string_model_id_as_unknown(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=None)
+
+    assert "context_window_limit" not in model.get_config()
+    assert model.model_info == ModelInfo()
+    assert model.stateful is False
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "anthropic.claude-future-9",
+        "arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1",
+        "arn:aws:bedrock:us-east-1:123456789012:custom-model/anthropic.claude-sonnet-4-6/abc",
+        "US.ANTHROPIC.CLAUDE-SONNET-4-6",
+    ],
+)
+def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_model_info_does_not_list(
+    bedrock_client, model_id
+):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    assert model.model_info.capabilities == ModelCapabilities()
+    assert model._cache_strategy == "anthropic"
+
+
+def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc",
+        cache_config=CacheConfig(strategy="auto"),
+    )
+
+    assert model.model_info.capabilities == ModelCapabilities()
+    assert model._cache_strategy is None
+
+
+def test_cache_strategy_auto_maps_to_anthropic_when_the_model_info_override_says_cache_points(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="amazon.nova-pro-v1:0",
+        cache_config=CacheConfig(strategy="auto"),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+    )
+
+    assert model._cache_strategy == "anthropic"
+
+
+def test_cache_strategy_auto_is_none_when_the_model_info_override_marks_caching_unsupported(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-6",
+        cache_config=CacheConfig(strategy="auto"),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="unsupported")),
+    )
+
     assert model._cache_strategy is None
 
 
