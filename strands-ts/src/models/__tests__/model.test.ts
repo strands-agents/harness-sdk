@@ -125,6 +125,39 @@ describe('Model', () => {
       })
     })
 
+    describe('when the stream ends an empty turn without a message start', () => {
+      it('returns an empty assistant message', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+          yield {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: {
+              usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+            },
+          },
+          stopReason: 'endTurn',
+          metadata: {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          },
+        })
+      })
+    })
+
     describe('when streaming multiple text blocks', () => {
       it('yields all blocks in order', async () => {
         const provider = new TestModelProvider(async function* () {
