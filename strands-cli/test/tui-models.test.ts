@@ -16,6 +16,15 @@ import {
   type EffortInput,
 } from '../src/tui/model/selection.js'
 
+// Emulates the unpublished harness fix for #5191. Remove once the minimum harness version includes it.
+vi.mock('@strands-agents/harness', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@strands-agents/harness')>()
+  return {
+    ...actual,
+    supportsThinking: (spec: string) => actual.supportsThinking(spec) || /openai\.gpt-(5\.\d|6\.|daybreak-)/.test(spec),
+  }
+})
+
 afterEach(() => {
   vi.restoreAllMocks()
 })
@@ -225,7 +234,20 @@ describe('AgentModelRuntime thinking controls', () => {
   it('offers Astra effort levels with High selected by default', () => {
     const runtime = runtimeFor('global.openai.gpt-6-astra', 'auto')
 
-    expect(runtime.listEfforts().map((option) => option.id)).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
+    expect(runtime.listEfforts().map((option) => option.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5191
+  it.each([
+    ['openai.gpt-5.4', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['us.openai.gpt-5.5', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['us.openai.gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['openai.gpt-daybreak-blue-5.6-sol', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
+  ])('offers GPT-5 line effort levels for %s', (modelId, levels) => {
+    const runtime = runtimeFor(modelId, 'auto')
+
+    expect(runtime.listEfforts().map((option) => option.id)).toEqual(levels)
     expect(runtime.listEfforts()).toContainEqual({ id: 'high', label: 'High', active: true })
   })
 

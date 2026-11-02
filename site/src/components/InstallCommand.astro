@@ -23,7 +23,10 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
 <div class="install" data-install>
   <code class="install__cmd">
     <span class="install__prompt" aria-hidden="true">$</span>
-    <span class="install__text" data-install-text data-py={PIP} data-ts={NPM}>{NPM}</span>
+    <span class="install__text">
+      <span class="install__variant" data-install-variant="Python" aria-hidden="true">{PIP}</span>
+      <span class="install__variant" data-install-variant="TypeScript">{NPM}</span>
+    </span>
   </code>
   <button type="button" class="install__copy" data-install-copy aria-label="Copy install command">
     <span class="install__copy-label" data-install-copy-label>copy</span>
@@ -65,6 +68,21 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
     flex: none;
   }
 
+  /* Both commands share one grid cell so the pill is always as wide as the
+     longer one and the surrounding layout doesn't reflow on a language switch. */
+  .install__text {
+    display: grid;
+    text-align: start;
+  }
+
+  .install__variant {
+    grid-area: 1 / 1;
+  }
+
+  .install__variant[aria-hidden='true'] {
+    visibility: hidden;
+  }
+
   .install__copy {
     flex: none;
     padding: 6px 14px;
@@ -103,10 +121,11 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
     }
 
     function render(lang) {
+      var active = lang === 'Python' ? 'Python' : 'TypeScript';
       blocks.forEach(function (block) {
-        var text = block.querySelector('[data-install-text]');
-        if (!text) return;
-        text.textContent = lang === 'Python' ? text.dataset.py : text.dataset.ts;
+        block.querySelectorAll('[data-install-variant]').forEach(function (variant) {
+          variant.setAttribute('aria-hidden', String(variant.dataset.installVariant !== active));
+        });
       });
     }
 
@@ -126,13 +145,14 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
 
   document.querySelectorAll<HTMLElement>('[data-install]').forEach((block) => {
     const btn = block.querySelector<HTMLButtonElement>('[data-install-copy]')
-    const text = block.querySelector<HTMLElement>('[data-install-text]')
-    if (!btn || !text) return
+    if (!btn) return
+    const activeText = () =>
+      block.querySelector<HTMLElement>('[data-install-variant]:not([aria-hidden="true"])')?.textContent ?? ''
     attachCopyButton(btn, {
       label: block.querySelector<HTMLElement>('[data-install-copy-label]'),
-      getText: () => text.textContent ?? '',
+      getText: activeText,
       // pip = Python, npm = TypeScript — distinguish which command was copied.
-      track: { surface: 'install', detail: () => ((text.textContent ?? '').startsWith('pip') ? 'pip' : 'npm') },
+      track: { surface: 'install', detail: () => (activeText().startsWith('pip') ? 'pip' : 'npm') },
     })
   })
 </script>

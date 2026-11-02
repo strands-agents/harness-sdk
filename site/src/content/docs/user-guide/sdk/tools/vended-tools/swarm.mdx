@@ -1,0 +1,85 @@
+---
+title: Swarm
+description: "Let a Strands agent spin up a team of specialized sub-agents that collaborate through handoffs, with axis policies, presets, and limits you configure."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/swarm/swarm.ts
+  - path: strands-py/src/strands/vended_tools/swarm/swarm.py
+---
+
+Lets your agent spin up a team of specialised sub-agents that collaborate autonomously via handoffs to solve a complex task. This is a meta-agent tool where the model defines each agent's name and role; the tool resolves those specs through an authority-mode system, builds the agents, runs the swarm, and returns a consolidated result.
+
+Use the factory to control safety limits, lock down instructions or tools with [axis policies](index.mdx#multi-agent-tools), or supply named presets the model can select from.
+
+_Supported in: Python, TypeScript (Node.js, browsers)._
+
+**Example:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/swarm_imports.ts:swarm_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/swarm.ts:swarm_example"
+```
+
+Custom configuration with `makeSwarm`. `maxAgents` caps agents per call; the other limits pass through to `Swarm`: `maxSteps` caps total agent executions, and `timeout` and `nodeTimeout` are in milliseconds.
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/swarm_imports.ts:swarm_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/swarm.ts:swarm_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import swarm
+
+agent = Agent(tools=[swarm])
+agent("Research the pros and cons of microservices vs monoliths and write a summary")
+```
+
+Custom configuration with `make_swarm`. `max_agents` caps agents per call; the other limits pass through to `Swarm`: `max_handoffs` and `max_iterations` cap handoffs and agent executions separately, and `execution_timeout` and `node_timeout` are in seconds.
+
+```python
+from strands import Agent
+from strands.multiagent.spec import Choice, Fixed, Inherit, Preset
+from strands.vended_tools import make_swarm
+from strands.vended_tools import http_request, web_fetch
+
+swarm = make_swarm(
+    presets={
+        "researcher": Preset(
+            instructions="You search for and synthesise information.",
+            tools=["http_request", "web_fetch"],
+            description="Gathers raw information from the web.",
+        ),
+        "writer": Preset(
+            instructions="You write clear, engaging prose.",
+            description="Turns research into polished text.",
+        ),
+    },
+    default_preset="researcher",
+    instructions=Choice(["You are a researcher.", "You are a writer.", "You are an editor."]),
+    tools=Inherit(),
+    model=Fixed("us.amazon.nova-pro-v1:0"),
+    max_agents=5,
+    max_handoffs=10,
+    max_iterations=15,
+    execution_timeout=300.0,
+    node_timeout=120.0,
+    repetitive_handoff_detection_window=6,
+    repetitive_handoff_min_unique_agents=3,
+)
+agent = Agent(tools=[swarm, http_request, web_fetch])
+agent("Write a blog post about AI agents")
+```
+
+</Tab>
+</Tabs>
+
+Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/swarm/README.md)

@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import { getCollection } from 'astro:content'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
-import { getBase, getSiteOrigin } from '@util/links'
+import { siteLink } from '@util/links'
 import { sortSampleGuides } from '@util/sample-guides'
 import { languageLabel } from '@util/source-links'
 
@@ -9,7 +9,6 @@ export const GET: APIRoute = async () => {
   const allDocs = await getCollection('docs', ({ data }) => !data.draft)
   // Exclude API documentation from full content
   const docs = allDocs.filter((doc) => !doc.id.startsWith('docs/api/'))
-  const base = getSiteOrigin() + getBase()
   const lines: string[] = []
 
   lines.push('# Strands Agents')
@@ -29,7 +28,7 @@ export const GET: APIRoute = async () => {
     lines.push(markdown.trim())
 
     lines.push('')
-    lines.push(`Source: ${base}/${doc.id}/index.md`)
+    lines.push(`Source: ${siteLink(`/${doc.id}/index.md`)}`)
     lines.push('')
     lines.push('---')
     lines.push('')
@@ -44,7 +43,7 @@ export const GET: APIRoute = async () => {
     lines.push(markdown.trim())
 
     lines.push('')
-    lines.push(`Markdown: ${base}/examples/${guide.data.slug}/index.md`)
+    lines.push(`Markdown: ${siteLink(`/examples/${guide.data.slug}/index.md`)}`)
     lines.push('')
     lines.push('---')
     lines.push('')
@@ -65,7 +64,7 @@ export const GET: APIRoute = async () => {
     lines.push(markdown.trim())
 
     lines.push('')
-    lines.push(`Source: ${base}/blog/${post.id}/index.md`)
+    lines.push(`Source: ${siteLink(`/blog/${post.id}/index.md`)}`)
     lines.push('')
     lines.push('---')
     lines.push('')

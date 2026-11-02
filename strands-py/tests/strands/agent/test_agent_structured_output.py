@@ -6,11 +6,16 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import BaseModel
 
-from strands import Agent
+from strands import Agent, tool
+from strands.hooks import AfterInvocationEvent, AfterToolsEvent, BeforeToolCallEvent, BeforeToolsEvent
 from strands.telemetry.metrics import EventLoopMetrics
-from strands.tools.structured_output._structured_output_context import StructuredOutputContext
+from strands.tools.structured_output._structured_output_context import (
+    DEFAULT_STRUCTURED_OUTPUT_PROMPT,
+    StructuredOutputContext,
+)
 from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
 from strands.types._events import EventLoopStopEvent
+from strands.types.exceptions import StructuredOutputException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -568,3 +573,342 @@ class TestAgentStructuredOutputPrompt:
             pass
 
         mock_event_loop.assert_called_once()
+
+
+VALID_USER = {"name": "Alice", "age": 30, "email": "alice@example.com"}
+TEXT_RESPONSE = {"role": "assistant", "content": [{"text": "Plain text instead of structured output"}]}
+
+
+def _structured_output_response(tool_input, tool_use_id):
+    return {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": tool_use_id, "name": UserModel.__name__, "input": tool_input}}],
+    }
+
+
+class TestAgentStructuredOutputAttemptLimit:
+    """Tests for the structured_output_attempts limit."""
+
+    @pytest.mark.parametrize(
+        ("responses", "exp_stop_reason"),
+        [
+            pytest.param(
+                ["text", "text", "text", "text"], "limit_structured_output_attempts", id="no-output-tool-calls"
+            ),
+            pytest.param(
+                ["invalid", "text", "text", "text"],
+                "limit_structured_output_attempts",
+                id="invalid-input-before-forcing",
+            ),
+            pytest.param(
+                ["text", "other", "invalid", "text"],
+                "limit_structured_output_attempts",
+                id="different-tool-called-when-forced",
+            ),
+            pytest.param(["text", "text", "invalid", "valid"], "tool_use", id="valid-output-on-final-attempt"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invoke_async_retries_failed_attempts_until_the_limit(self, responses, exp_stop_reason):
+        messages = {
+            "text": TEXT_RESPONSE,
+            "invalid": _structured_output_response({}, "invalid"),
+            "valid": _structured_output_response(VALID_USER, "valid"),
+            "other": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "other", "name": "unknown_tool", "input": {}}}],
+            },
+        }
+        model = MockedModelProvider([messages[response] for response in responses] + [messages["valid"]])
+        agent = Agent(model=model, callback_handler=None)
+
+        result = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 3}
+        )
+
+        assert result.stop_reason == exp_stop_reason
+        assert result.structured_output == (UserModel(**VALID_USER) if exp_stop_reason == "tool_use" else None)
+        assert result.message["content"] == messages[responses[-1]]["content"]
+        assert model.index == 4
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_returns_model_reply_when_limit_is_reached_on_forced_retry(self):
+        model = MockedModelProvider([TEXT_RESPONSE, TEXT_RESPONSE])
+        agent = Agent(model=model, callback_handler=None)
+
+        result = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 1}
+        )
+
+        assert result.stop_reason == "limit_structured_output_attempts"
+        assert result.message == agent.messages[-1]
+        assert agent.messages[-1]["content"] == TEXT_RESPONSE["content"]
+        assert [message["content"] for message in agent.messages].count(
+            [{"text": DEFAULT_STRUCTURED_OUTPUT_PROMPT}]
+        ) == 1
+        assert model.index == 2
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_returns_model_reply_when_turn_limit_is_reached_before_forcing(self):
+        model = MockedModelProvider([TEXT_RESPONSE])
+        agent = Agent(model=model, callback_handler=None)
+
+        result = await agent.invoke_async("Extract the data", structured_output_model=UserModel, limits={"turns": 1})
+
+        assert result.stop_reason == "limit_turns"
+        assert result.message == agent.messages[-1]
+        assert agent.messages[-1]["content"] == TEXT_RESPONSE["content"]
+        assert model.index == 1
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_raises_without_attempt_limit_when_forced_retry_fails(self):
+        model = MockedModelProvider([TEXT_RESPONSE, TEXT_RESPONSE])
+        agent = Agent(model=model, callback_handler=None)
+
+        with pytest.raises(StructuredOutputException, match="did not produce structured output"):
+            await agent.invoke_async("Extract the data", structured_output_model=UserModel, limits={"turns": 5})
+
+        assert model.index == 2
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_starts_each_root_call_with_a_fresh_attempt_budget(self):
+        model = MockedModelProvider([_structured_output_response({}, f"output-{attempt}") for attempt in range(6)])
+        agent = Agent(model=model, callback_handler=None)
+
+        for exp_calls in (3, 6):
+            result = await agent.invoke_async(
+                "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 3}
+            )
+
+            assert result.stop_reason == "limit_structured_output_attempts"
+            assert result.structured_output is None
+            assert model.index == exp_calls
+            assert agent.messages[-1]["content"][0]["toolResult"]["status"] == "error"
+            assert UserModel.__name__ not in agent.tool_registry.dynamic_tools
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_continues_attempt_budget_when_passed_previous_invocation_context(self):
+        model = MockedModelProvider([_structured_output_response({}, f"output-{attempt}") for attempt in range(3)])
+        agent = Agent(model=model, callback_handler=None)
+        first = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 2}
+        )
+
+        second = await agent.invoke_async(
+            "Try again", structured_output_model=UserModel, invocation_context=first.invocation_context
+        )
+
+        assert (first.stop_reason, second.stop_reason) == (
+            "limit_structured_output_attempts",
+            "limit_structured_output_attempts",
+        )
+        assert model.index == 2
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_preserves_attempt_budget_across_hook_resume(self):
+        model = MockedModelProvider([_structured_output_response({}, f"output-{attempt}") for attempt in range(6)])
+        agent = Agent(model=model, callback_handler=None)
+
+        def interrupt_third_attempt(event: BeforeToolsEvent):
+            if model.index == 3:
+                event.interrupt("approve")
+
+        def resume_interrupt(event: AfterInvocationEvent):
+            if event.result and event.result.stop_reason == "interrupt":
+                event.resume = [
+                    {"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}
+                    for interrupt in event.result.interrupts
+                ]
+
+        agent.hooks.add_callback(BeforeToolsEvent, interrupt_third_attempt)
+        agent.hooks.add_callback(AfterInvocationEvent, resume_interrupt)
+
+        result = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 3}
+        )
+
+        assert result.stop_reason == "limit_structured_output_attempts"
+        assert result.structured_output is None
+        assert model.index == 3
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_counts_failed_attempt_on_cycle_that_pauses_at_checkpoint(self):
+        model = MockedModelProvider([_structured_output_response({}, "invalid")])
+        agent = Agent(model=model, checkpointing=True, callback_handler=None)
+        after_model = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 1}
+        )
+        after_tools = await agent.invoke_async(
+            {"checkpointResume": {"checkpoint": after_model.checkpoint.to_dict()}},
+            structured_output_model=UserModel,
+            invocation_context=after_model.invocation_context,
+        )
+
+        result = await agent.invoke_async(
+            {"checkpointResume": {"checkpoint": after_tools.checkpoint.to_dict()}},
+            structured_output_model=UserModel,
+            invocation_context=after_tools.invocation_context,
+        )
+
+        assert (after_model.stop_reason, after_tools.stop_reason) == ("checkpoint", "checkpoint")
+        assert result.stop_reason == "limit_structured_output_attempts"
+        assert model.index == 1
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_counts_forced_response_calling_another_tool_before_an_interrupt(self):
+        @tool
+        def lookup() -> str:
+            """Look up a record."""
+            return "found"
+
+        model = MockedModelProvider(
+            [
+                TEXT_RESPONSE,
+                {"role": "assistant", "content": [{"toolUse": {"toolUseId": "lookup", "name": "lookup", "input": {}}}]},
+                _structured_output_response(VALID_USER, "valid"),
+            ]
+        )
+        agent = Agent(model=model, tools=[lookup], callback_handler=None)
+        agent.hooks.add_callback(BeforeToolsEvent, lambda event: event.interrupt("approve"))
+        paused = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 1}
+        )
+
+        result = await agent.invoke_async(
+            [
+                {"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}
+                for interrupt in paused.interrupts
+            ],
+            structured_output_model=UserModel,
+            invocation_context=paused.invocation_context,
+        )
+
+        assert (paused.stop_reason, result.stop_reason) == ("interrupt", "limit_structured_output_attempts")
+        assert model.index == 2
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_does_not_count_valid_output_completed_before_an_interrupt(self):
+        @tool
+        def send_email() -> str:
+            """Send an email."""
+            return "sent"
+
+        def approve_email(event: BeforeToolCallEvent):
+            if event.tool_use["name"] == send_email.tool_name:
+                event.interrupt("approve")
+
+        model = MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"toolUse": {"toolUseId": "email", "name": send_email.tool_name, "input": {}}},
+                        *_structured_output_response(VALID_USER, "valid")["content"],
+                    ],
+                },
+                TEXT_RESPONSE,
+                _structured_output_response(VALID_USER, "again"),
+            ]
+        )
+        agent = Agent(model=model, tools=[send_email], callback_handler=None)
+        agent.hooks.add_callback(BeforeToolCallEvent, approve_email)
+        paused = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 1}
+        )
+
+        result = await agent.invoke_async(
+            [
+                {"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}
+                for interrupt in paused.interrupts
+            ],
+            structured_output_model=UserModel,
+            invocation_context=paused.invocation_context,
+        )
+
+        assert result.stop_reason == "tool_use"
+        assert result.structured_output == UserModel(**VALID_USER)
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_counts_failed_attempt_when_hook_ends_the_turn(self):
+        model = MockedModelProvider(
+            [_structured_output_response({}, "invalid"), _structured_output_response({}, "again")]
+        )
+        agent = Agent(model=model, callback_handler=None)
+        agent.hooks.add_callback(AfterToolsEvent, lambda event: setattr(event, "end_turn", "Paused for review"))
+        ended = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 1}
+        )
+
+        result = await agent.invoke_async(
+            "Continue", structured_output_model=UserModel, invocation_context=ended.invocation_context
+        )
+
+        assert (ended.stop_reason, result.stop_reason) == ("end_turn", "limit_structured_output_attempts")
+        assert model.index == 1
+
+    @pytest.mark.parametrize(
+        ("limits", "exp_stop_reason"),
+        [
+            ({"turns": 1}, "limit_turns"),
+            ({"output_tokens": 1}, "limit_output_tokens"),
+            ({"total_tokens": 2}, "limit_total_tokens"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invoke_async_reports_other_limits_before_attempt_limit(self, limits, exp_stop_reason):
+        model = MockedModelProvider(
+            [_structured_output_response({}, "output")],
+            [{"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}],
+        )
+        agent = Agent(model=model, callback_handler=None)
+
+        result = await agent.invoke_async(
+            "Extract the data",
+            structured_output_model=UserModel,
+            limits={**limits, "structured_output_attempts": 1},
+        )
+
+        assert result.stop_reason == exp_stop_reason
+        assert result.structured_output is None
+        assert model.index == 1
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_counts_one_attempt_per_response(self):
+        failed = _structured_output_response({}, "invalid-1")
+        failed["content"].extend(_structured_output_response({}, "invalid-2")["content"])
+        model = MockedModelProvider([failed, _structured_output_response(VALID_USER, "valid")])
+        agent = Agent(model=model, callback_handler=None)
+
+        result = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 2}
+        )
+
+        assert result.structured_output == UserModel(**VALID_USER)
+        assert model.index == 2
+
+    @pytest.mark.asyncio
+    async def test_invoke_async_does_not_count_other_tool_failures(self):
+        @tool
+        def unavailable_service() -> str:
+            """Call a service that is temporarily unavailable."""
+            raise RuntimeError("service unavailable")
+
+        model = MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"toolUse": {"toolUseId": "service", "name": unavailable_service.tool_name, "input": {}}}
+                    ],
+                },
+                _structured_output_response(VALID_USER, "output"),
+            ]
+        )
+        agent = Agent(model=model, tools=[unavailable_service], callback_handler=None)
+
+        result = await agent.invoke_async(
+            "Extract the data", structured_output_model=UserModel, limits={"structured_output_attempts": 1}
+        )
+
+        assert result.structured_output == UserModel(**VALID_USER)
+        assert model.index == 2

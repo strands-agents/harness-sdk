@@ -228,9 +228,10 @@ jobs:
 
       # The junit classnames carry the vitest project (strands-ts/vitest.config.ts),
       # so the two projects' identically named tests are separate TestName values.
-      # --max-test-names 1500: the two integ projects publish about 850 names
-      # each, so the publisher's default ceiling of 1000 is below a normal run;
-      # 1500 still catches a cardinality explosion before SEARCH widgets overflow.
+      # --max-test-names 2000: a full-suite run publishes about 1500 names
+      # (integ-node ~850, integ-browser ~650), above the publisher's default of
+      # 1000; 2000 still catches a cardinality explosion. Per-partition headroom
+      # is checked by test-infra/dashboards/check_series.py (#5644).
       #
       # Do not re-run this job after a partial failure: put_metric_data has no
       # idempotency key, so batches that succeeded before the failure are already
@@ -246,4 +247,4 @@ jobs:
             exit 0
           fi
           pip install --no-cache-dir boto3
-          python .github/scripts/upload-integ-test-metrics.py "$REPORT" "$REPO_NAME" typescript --max-test-names 1500
+          python .github/scripts/upload-integ-test-metrics.py "$REPORT" "$REPO_NAME" typescript --max-test-names 2000
