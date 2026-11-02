@@ -218,18 +218,16 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       return false
     }
     if (isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === '')) return false
-    if (block instanceof ToolResultBlock && this._isReduced(block)) return false
-    if (block instanceof ToolResultBlock && this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) {
-      return false
-    }
+    if (block instanceof ToolResultBlock && this._isProtectedResult(block, toolNameMap)) return false
     return this._matcher.matchesBlock(block, message, toolNameMap)
   }
 
   /**
-   * Whether a tool result already holds a placeholder this strategy shouldn't replace. Only drop goes further, since
-   * truncate and summarize would read the placeholder as the content.
+   * Whether a tool result is the retrieval tool's output, or already holds a placeholder this strategy shouldn't
+   * replace. Only drop goes further, since truncate and summarize would read the placeholder as the content.
    */
-  private _isReduced(block: ToolResultBlock): boolean {
+  private _isProtectedResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
+    if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
     const placeholder = block.content.find(isOffloaded)
     return placeholder !== undefined && (this._method !== 'drop' || placeholder.metadata.offloaded.method === 'drop')
   }
