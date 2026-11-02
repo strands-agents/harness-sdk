@@ -549,8 +549,8 @@ describe('buildSampleGuides', () => {
     )
   })
 
-  it('counts non-BMP characters correctly when validating descriptions', async () => {
-    const authored = `${'a'.repeat(158)}😀 trailing text`
+  it('counts non-BMP characters as one code point when validating descriptions', async () => {
+    const authored = `${'a'.repeat(159)}😀`
     updateManifest((manifest) => {
       manifest.samples[0]!.description = authored
     })
@@ -561,9 +561,6 @@ describe('buildSampleGuides', () => {
     const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
     const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
     expect(description).toBe(authored)
-    expect(warning).toHaveBeenCalledTimes(1)
-    expect(warning).toHaveBeenCalledWith(
-      'Sample description lengths outside 140-160 characters: 1/2 (0 short, 1 long); preserving samples.json values; update metadata in strands-agents/samples'
-    )
+    expect(warning).not.toHaveBeenCalled()
   })
 })
