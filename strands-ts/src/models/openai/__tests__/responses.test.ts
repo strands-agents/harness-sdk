@@ -740,6 +740,41 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
+    it('maps response.incomplete with content_filter to stopReason=contentFiltered', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'partial' }
+        yield { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const stop = events.find((e: any) => e.type === 'modelMessageStopEvent') as any
+      expect(stop?.stopReason).toBe('contentFiltered')
+    })
+
+    it.each([
+      ['max_output_tokens', 'maxTokens'],
+      ['content_filter', 'contentFiltered'],
+    ])('keeps the %s cut-off reason over toolUse when a function call is in flight', async (reason, expected) => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.output_item.added',
+          item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'write_file' },
+        }
+        yield {
+          type: 'response.function_call_arguments.delta',
+          item_id: 'item_1',
+          delta: '{"path": "notes.md", "content": "Lorem',
+        }
+        yield { type: 'response.incomplete', response: { incomplete_details: { reason } } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const stop = events.find((e: any) => e.type === 'modelMessageStopEvent') as any
+      expect(stop?.stopReason).toBe(expected)
+    })
+
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {
       const client = createMockClient(async function* () {
         yield { type: 'response.created', response: { id: 'r' } }
