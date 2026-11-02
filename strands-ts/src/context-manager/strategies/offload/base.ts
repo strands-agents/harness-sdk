@@ -6,21 +6,12 @@
 import { logger } from '../../../logging/logger.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
-import {
-  isOffloaded,
-  Message,
-  TextBlock,
-  type OffloadMethod,
-  ToolResultBlock,
-  ToolUseBlock,
-  CachePointBlock,
-  ReasoningBlock,
-} from '../../../types/messages.js'
+import { isOffloaded, Message, TextBlock, type OffloadMethod, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import type { Stash } from '../../stash.js'
+import { isProtocolBlock, type Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
@@ -214,10 +205,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 
   /** Whether a block in `message` is content this strategy may replace. */
   private _isOffloadable(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
-    if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
+    if (isProtocolBlock(block) || isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === ''))
       return false
-    }
-    if (isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === '')) return false
     if (block instanceof ToolResultBlock && this._isProtectedResult(block, toolNameMap)) return false
     return this._matcher.matchesBlock(block, message, toolNameMap)
   }

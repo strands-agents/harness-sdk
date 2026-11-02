@@ -33,6 +33,15 @@ function decode(bytes: Uint8Array): unknown {
 }
 
 /**
+ * Whether a block is protocol rather than content: tool uses, cache points, and reasoning are never stored or offloaded.
+ *
+ * @internal
+ */
+export function isProtocolBlock(block: ContentBlock): boolean {
+  return block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock
+}
+
+/**
  * A stash key, `<id>_<index>`. The id is a tool result's `toolUseId`, a message's `trackingId`,
  * or `removed-<trackingId>` for messages removed together.
  *
@@ -137,10 +146,7 @@ export class Stash {
     if (block instanceof ToolResultBlock) {
       // A result that already holds a placeholder is not the original; its items were stored before it was offloaded.
       if (block.content.some(isOffloaded)) return block.toolUseId
-      const stored = (await this.list(`${block.toolUseId}_`)).filter(
-        (key) => parseStashKey(key)?.id === block.toolUseId
-      )
-      if (stored.length < block.content.length) await this._storeToolResult(block)
+      if ((await this.keysOf(block.toolUseId)).length < block.content.length) await this._storeToolResult(block)
       return block.toolUseId
     }
     const key = formatStashKey({ id: message.trackingId, index: blockIndex })
@@ -199,8 +205,7 @@ export class Stash {
     skipToolUseIds?: ReadonlySet<string>,
     storedKeys?: ReadonlySet<string>
   ): boolean {
-    if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock)
-      return true
+    if (isProtocolBlock(block)) return true
     if (block instanceof ToolResultBlock) {
       if (skipToolUseIds?.has(block.toolUseId) || block.content.some(isOffloaded)) return true
       return storedKeys !== undefined && [...storedKeys].some((key) => parseStashKey(key)?.id === block.toolUseId)
@@ -226,6 +231,17 @@ export class Stash {
    */
   async list(prefix = ''): Promise<string[]> {
     return this._storage.list(prefix)
+  }
+
+  /**
+   * The keys stored under `id`, in index order. A prefix list alone also returns ids that extend this one.
+   */
+  async keysOf(id: string): Promise<string[]> {
+    return (await this.list(`${id}_`))
+      .map((key) => ({ key, parsed: parseStashKey(key) }))
+      .filter(({ parsed }) => parsed?.id === id)
+      .sort((left, right) => left.parsed!.index - right.parsed!.index)
+      .map(({ key }) => key)
   }
 
   /**

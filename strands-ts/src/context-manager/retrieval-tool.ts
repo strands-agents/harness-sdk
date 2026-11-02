@@ -29,7 +29,7 @@ import type {
 } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
-import { parseStashKey, type Stash } from './stash.js'
+import type { Stash } from './stash.js'
 
 /** What a stash entry holds: one stored block, or the messages removed together. */
 type StashEntry = ToolResultContent | ContentBlock | Message[]
@@ -163,11 +163,7 @@ function searchEntries(
  * references a tool result by id, and an id may itself end like a key (`tool_1`).
  */
 async function resolveReference(stash: Stash, reference: string): Promise<StashEntry[]> {
-  const keys = (await stash.list(`${reference}_`))
-    .map((key) => ({ key, parsed: parseStashKey(key) }))
-    .filter(({ parsed }) => parsed?.id === reference)
-    .sort((left, right) => left.parsed!.index - right.parsed!.index)
-    .map(({ key }) => key)
+  const keys = await stash.keysOf(reference)
   if (keys.length > 0) return entriesFrom(await Promise.all(keys.map((key) => stash.retrieve(key))))
 
   const exact = await stash.retrieve(reference)
