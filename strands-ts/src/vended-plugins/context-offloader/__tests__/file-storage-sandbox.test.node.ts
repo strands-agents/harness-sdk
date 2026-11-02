@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { FileStorage } from '../storage.js'
 import { TestSandbox } from '../../../__fixtures__/test-sandbox.node.js'
 
-const TEST_DIR = '/tmp/strands-test-file-storage-sandbox'
+const TEST_DIR = join(tmpdir(), 'strands-test-file-storage-sandbox')
 
 describe.skipIf(process.platform === 'win32')('FileStorage with sandbox', () => {
   let sandbox: TestSandbox

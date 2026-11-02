@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { TestSandbox } from '../../__fixtures__/test-sandbox.node.js'
 import { buildShellEnvPrefix } from '../posix-shell.js'
 import { SandboxPathNotFoundError, SandboxTimeoutError } from '../errors.js'
 import { streamProcess } from '../stream-process.js'
 import type { ExecutionResult, StreamChunk } from '../types.js'
 
-const TEST_DIR = '/tmp/strands-test-shell-sandbox'
+const TEST_DIR = join(tmpdir(), 'strands-test-shell-sandbox')
 
 describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
   let sandbox: TestSandbox
