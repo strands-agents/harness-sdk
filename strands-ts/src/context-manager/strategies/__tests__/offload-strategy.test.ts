@@ -1028,6 +1028,43 @@ describe('tool results that already hold a placeholder', () => {
   })
 })
 
+describe('placeholders left by another method', () => {
+  const large = 'x'.repeat(2500 * 4 + 100)
+
+  it('drop replaces a tool result holding a truncate placeholder', async () => {
+    const messages = [
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tool-123',
+            status: 'success',
+            content: [offloadPlaceholder('truncate', large, undefined)],
+          }),
+        ],
+      }),
+    ]
+
+    expect(await Offload.drop('toolResults').apply(makeContext(messages))).toBe(true)
+    expect(resultMethods(messages)).toEqual(['drop'])
+  })
+
+  it.each([
+    ['drop', () => Offload.drop('assistantText').when({ blockThreshold: 100 })],
+    ['truncate', () => Offload.truncate('*', { previewTokens: 50 }).when({ blockThreshold: 100 })],
+  ] as const)('%s leaves a text block that is a placeholder alone', async (_method, builder) => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q')] }),
+      new Message({ role: 'assistant', content: [offloadPlaceholder('summarize', large, undefined)] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+    const before = messages.map((m) => m.toJSON())
+
+    expect(await builder().apply(makeContext(messages))).toBe(false)
+    expect(messages.map((m) => m.toJSON())).toEqual(before)
+  })
+})
+
 describe('granularity', () => {
   const BIG = 'x'.repeat(4000)
   const BUILDERS = {
