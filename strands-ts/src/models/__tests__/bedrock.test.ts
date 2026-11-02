@@ -4968,12 +4968,12 @@ describe('BedrockModel', () => {
           modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
         })
       })
-    })
 
-    describe('when includeToolResultStatus is undefined (default)', () => {
-      it('follows auto logic for non-Claude models', async () => {
+      // https://github.com/strands-agents/harness-sdk/issues/5741
+      it('includes status field for Amazon Nova models', async () => {
         const provider = new BedrockModel({
-          modelId: 'amazon.nova-lite-v1:0',
+          modelId: 'us.amazon.nova-lite-v1:0',
+          includeToolResultStatus: 'auto',
         })
         const messages = [
           new Message({
@@ -4981,7 +4981,7 @@ describe('BedrockModel', () => {
             content: [
               new ToolResultBlock({
                 toolUseId: 'tool-123',
-                status: 'success',
+                status: 'error',
                 content: [new TextBlock('Result')],
               }),
             ],
@@ -4997,6 +4997,7 @@ describe('BedrockModel', () => {
                 {
                   toolResult: {
                     content: [{ text: 'Result' }],
+                    status: 'error',
                     toolUseId: 'tool-123',
                   },
                 },
@@ -5005,9 +5006,50 @@ describe('BedrockModel', () => {
             },
           ],
           toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
-          modelId: 'amazon.nova-lite-v1:0',
+          modelId: 'us.amazon.nova-lite-v1:0',
         })
       })
+    })
+
+    describe('when includeToolResultStatus is undefined (default)', () => {
+      it.each(['us.writer.palmyra-x5-v1:0', 'us.meta.llama4-scout-17b-instruct-v1:0'])(
+        'omits status field for models Bedrock does not document as supporting it (%s)',
+        async (modelId) => {
+          const provider = new BedrockModel({ modelId })
+          const messages = [
+            new Message({
+              role: 'user',
+              content: [
+                new ToolResultBlock({
+                  toolUseId: 'tool-123',
+                  status: 'success',
+                  content: [new TextBlock('Result')],
+                }),
+              ],
+            }),
+          ]
+
+          collectIterator(provider.stream(messages))
+
+          expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+            messages: [
+              {
+                content: [
+                  {
+                    toolResult: {
+                      content: [{ text: 'Result' }],
+                      toolUseId: 'tool-123',
+                    },
+                  },
+                ],
+                role: 'user',
+              },
+            ],
+            toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
+            modelId,
+          })
+        }
+      )
     })
   })
 

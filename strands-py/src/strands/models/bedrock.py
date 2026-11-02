@@ -71,8 +71,11 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
 
-# Models that should include tool result status (include_tool_result_status = True)
+# Models Bedrock documents as supporting the toolResult status field. Deliberately an allow-list: undocumented
+# models may accept it (Llama 4) or reject it with a ValidationException (Writer).
+# https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
 _MODELS_INCLUDE_STATUS = [
+    "amazon.nova",
     "anthropic.claude",
 ]
 
