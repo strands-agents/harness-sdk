@@ -610,6 +610,42 @@ describe('BedrockModel', () => {
           expect.stringContaining('using default maxTokens')
         )
       })
+
+      const appProfileArn = 'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123xyz'
+
+      // https://github.com/strands-agents/harness-sdk/issues/5754
+      it('warns once when an application inference profile has no maxTokens', () => {
+        const provider = new BedrockModel({ modelId: appProfileArn })
+
+        collectIterator(provider.stream(messages))
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining(
+            `model_id=<${appProfileArn}> | application inference profile is not in the model info`
+          )
+        )
+        expect(sentInferenceConfig()).toBeUndefined()
+      })
+
+      it.each([
+        ['maxTokens is explicit', { modelId: appProfileArn, maxTokens: 1 }],
+        [
+          'it is pinned through modelInfo',
+          { modelId: appProfileArn, modelInfo: { limits: { maxOutputTokens: 2_000 } } },
+        ],
+        [
+          'the id is a system inference profile',
+          { modelId: 'arn:aws:bedrock:us-west-2:123456789012:inference-profile/global.anthropic.claude-sonnet-4-6' },
+        ],
+        ['the model is unknown', { modelId: 'unknown.model-v1:0' }],
+      ])('does not warn about application inference profiles when %s', (_, config) => {
+        new BedrockModel(config)
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('application inference profile')
+        )
+      })
     })
   })
 
