@@ -7,6 +7,7 @@ import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...types.exceptions import StorageError
 from ..storage import StorageSearchResult
 
 if TYPE_CHECKING:
@@ -29,7 +30,7 @@ class S3VectorSearchStrategy:
     Vectors are keyed by the full object key, so storages sharing a bucket under different prefixes can
     share one index.
     Empty and non-UTF-8 values are stored but not indexed, and clear any earlier vector for that key.
-    Attach each instance to a single storage.
+    Attach each instance to a single storage. Requires botocore 1.39.5 or later.
 
     Example:
         ```python
@@ -172,6 +173,7 @@ class S3VectorSearchStrategy:
 
         import boto3
         from botocore.config import Config
+        from botocore.exceptions import UnknownServiceError
 
         config = self._boto_client_config
         if config is None:
@@ -180,7 +182,10 @@ class S3VectorSearchStrategy:
             config = config.merge(Config(user_agent_extra="strands-agents"))
 
         session = self._boto_session or storage.boto_session or boto3.Session(region_name=storage.region_name)
-        self._client = session.client("s3vectors", config=config)
+        try:
+            self._client = session.client("s3vectors", config=config)
+        except UnknownServiceError as error:
+            raise StorageError("S3VectorSearchStrategy requires botocore>=1.39.5") from error
         return self._client
 
 

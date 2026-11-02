@@ -5,9 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.config import Config
+from botocore.exceptions import UnknownServiceError
 
 from strands.storage import S3Storage
 from strands.storage.search import Embedder, S3VectorSearchStrategy
+from strands.types.exceptions import StorageError
 
 
 class FakeEmbedder(Embedder):
@@ -302,3 +304,10 @@ class TestDefaults:
         await strategy.search(storage, "a")
 
         assert session.client.call_args.kwargs["config"].user_agent_extra == "my-app"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_botocore_has_no_s3vectors_service(self, strategy, storage, session):
+        session.client.side_effect = UnknownServiceError(service_name="s3vectors", known_service_names="s3")
+
+        with pytest.raises(StorageError, match=r"requires botocore>=1\.39\.5"):
+            await strategy.search(storage, "a")
