@@ -17,6 +17,7 @@ import {
   type TruncateConfig,
 } from '../../methods/truncate.js'
 import type { Stash } from '../../stash.js'
+import { withPairs } from '../../message-trimming.js'
 import { formatElided, formatOffloaded } from '../../placeholder.js'
 import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
@@ -71,13 +72,12 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
   /** Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    // Skipping messages that are only earlier markers lets a pass with nothing new to elide return false.
-    const eligible = (await this._getEligibleMessages(context)).filter(
-      (message) => !message.content.every(isElisionMarker)
-    )
-    const middle = await this._selectMiddle(eligible, context.agent)
+    const { messages, agent } = context
+    const middle = withPairs(messages, await this._selectMiddle(await this._getEligibleMessages(context), agent))
+    // A middle of only earlier markers has nothing new to elide.
+    if (middle.every((message) => message.content.every(isElisionMarker))) return false
     const text = async (_removed: Message[], count: number): Promise<string> => formatElided(count)
-    return removeMessages(context.messages, middle, text, 'truncate', this._stash)
+    return removeMessages(messages, middle, text, 'truncate', this._stash)
   }
 
   protected async _replaceBlock(

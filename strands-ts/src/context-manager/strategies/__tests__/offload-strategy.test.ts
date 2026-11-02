@@ -478,6 +478,30 @@ describe('Offload with * target and threshold (acts on messages larger than thre
     expect(texts).toContain('next')
   })
 
+  it('leaves one marker for each run of removed messages', async () => {
+    const messages = [
+      text('user', 'task'),
+      text('assistant', LARGE),
+      text('user', 'small question'),
+      text('assistant', LARGE),
+      text('user', 'next'),
+    ]
+
+    expect(await Offload.drop('*').when({ blockThreshold: 2500 }).apply(makeContext(messages))).toBe(true)
+
+    expect(textsOf(messages)).toEqual([
+      ['task'],
+      [formatDroppedMessages(1)],
+      ['small question'],
+      [formatDroppedMessages(1)],
+      ['next'],
+    ])
+    expect(placeholdersIn(messages)).toEqual([
+      { method: 'drop', removedMessages: 1 },
+      { method: 'drop', removedMessages: 1 },
+    ])
+  })
+
   it.each([2500, '5%'] as (number | Percent)[])('Offload.truncate("*") rejects blockThreshold %j', (blockThreshold) => {
     expect(() => Offload.truncate('*').when({ blockThreshold })).toThrow(
       "Offload.truncate('*') doesn't take a blockThreshold; use Offload.drop('*') to remove large messages, or Offload.truncate('toolResults') to preview large blocks"

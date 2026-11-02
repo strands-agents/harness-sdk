@@ -51,8 +51,9 @@ function messagesRepresented(message: Message): number {
 }
 
 /**
- * Removes messages with their tool pairs, stashes them under one reference, and leaves a placeholder at the gap. A
- * failed stash write leaves the placeholder without a reference. Callers restore alternation once they are done.
+ * Removes messages with their tool pairs and leaves one placeholder for each contiguous run of them, each stashed
+ * under its own reference. A run whose text is null is kept, and a failed stash write leaves the placeholder without
+ * a reference. Callers restore alternation once they are done.
  *
  * @returns Whether anything was removed
  * @internal
@@ -64,22 +65,49 @@ export async function removeMessages(
   method: OffloadMethod,
   stash: Stash | undefined
 ): Promise<boolean> {
-  const removed = withPairs(messages, toRemove)
-  if (removed.length === 0) return false
-  const count = removed.reduce((total, message) => total + messagesRepresented(message), 0)
-  const text = await textFor(removed, count)
+  let acted = false
+  // Last run first, so removing a run leaves the earlier runs' positions unchanged.
+  for (const run of splitIntoRuns(messages, withPairs(messages, toRemove)).reverse()) {
+    if (await removeRun(messages, run, textFor, method, stash)) acted = true
+  }
+  return acted
+}
+
+/** Replaces a contiguous run of messages with one placeholder. */
+async function removeRun(
+  messages: Message[],
+  run: Message[],
+  textFor: PlaceholderText,
+  method: OffloadMethod,
+  stash: Stash | undefined
+): Promise<boolean> {
+  const count = run.reduce((total, message) => total + messagesRepresented(message), 0)
+  const text = await textFor(run, count)
   if (text === null) return false
 
-  const lowestIndex = messages.indexOf(removed[0]!)
-  for (const message of removed) messages.splice(messages.indexOf(message), 1)
+  const start = messages.indexOf(run[0]!)
+  messages.splice(start, run.length)
   let stashRef: string | undefined
   try {
-    stashRef = await stash?.storeRemoved(removed)
+    stashRef = await stash?.storeRemoved(run)
   } catch (error) {
     logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
   }
-  insertMarker(messages, lowestIndex, offloadPlaceholder(method, text, stashRef, count))
+  insertMarker(messages, start, offloadPlaceholder(method, text, stashRef, count))
   return true
+}
+
+/** Splits `selected`, in conversation order, into runs of messages adjacent in `messages`. */
+function splitIntoRuns(messages: Message[], selected: Message[]): Message[][] {
+  const runs: Message[][] = []
+  let previousIndex = -2
+  for (const message of selected) {
+    const index = messages.indexOf(message)
+    if (index === previousIndex + 1) runs.at(-1)!.push(message)
+    else runs.push([message])
+    previousIndex = index
+  }
+  return runs
 }
 
 /** Shared offload logic: conditions, firing, granularity, eager hooks, preserveRecent. */

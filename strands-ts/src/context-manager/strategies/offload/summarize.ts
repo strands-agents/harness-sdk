@@ -19,7 +19,6 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { withPairs } from '../../message-trimming.js'
 import { formatOffloaded, formatSummarized } from '../../placeholder.js'
 import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
@@ -45,19 +44,14 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return super.apply(context)
   }
 
-  /** Summarizes each contiguous run of eligible messages into its own summary, last run first. */
+  /** Summarizes each contiguous run of eligible messages into its own summary. */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     // apply returns early without a model.
     const model = this._resolveModel(context.agent)!
     const { messages, invocationContext } = context
-    const runs = splitIntoRuns(messages, withPairs(messages, await this._getEligibleMessages(context)))
-    let acted = false
-    for (const run of runs.reverse()) {
-      const summarize = (removed: Message[], count: number): Promise<string | null> =>
-        this._summarizeRun(removed, count, model, invocationContext)
-      if (await removeMessages(messages, run, summarize, 'summarize', this._stash)) acted = true
-    }
-    return acted
+    const summarize = (run: Message[], count: number): Promise<string | null> =>
+      this._summarizeRun(run, count, model, invocationContext)
+    return removeMessages(messages, await this._getEligibleMessages(context), summarize, 'summarize', this._stash)
   }
 
   /** The summary marker text for a run standing for `count` messages; a failure is logged and keeps the run. */
@@ -131,17 +125,4 @@ function summaryInput(block: ContentBlock): { content: ContentBlock[]; descripti
   if (block instanceof ImageBlock || block instanceof DocumentBlock)
     return { content: [block], description: 'media block' }
   return undefined
-}
-
-/** Splits `selected`, in conversation order, into runs of messages adjacent in `messages`. */
-function splitIntoRuns(messages: Message[], selected: Message[]): Message[][] {
-  const runs: Message[][] = []
-  let previousIndex = -2
-  for (const message of selected) {
-    const index = messages.indexOf(message)
-    if (index === previousIndex + 1) runs.at(-1)!.push(message)
-    else runs.push([message])
-    previousIndex = index
-  }
-  return runs
 }
