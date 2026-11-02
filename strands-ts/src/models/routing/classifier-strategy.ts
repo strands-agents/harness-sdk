@@ -82,10 +82,11 @@ interface CandidateProfile {
 /** Options for constructing a {@link ClassifierStrategy}. */
 export interface ClassifierStrategyOptions {
   /**
-   * Routing policy, sent verbatim and never truncated as part of the routing question every model or
-   * decision model receives, after the SDK's fixed routing rules. Despite its name, it is not sent as a
-   * system prompt. An empty policy sends the fixed rules alone. Defaults to the SDK input-complexity policy.
+   * Routing policy, sent verbatim and never truncated. The SDK adds mandatory isolation, candidate-key,
+   * and structured-output rules that the policy cannot override. Defaults to the SDK input-complexity policy.
    */
+  readonly routingPolicy?: string
+  /** @deprecated Use `routingPolicy`. */
   readonly systemPrompt?: string
   /**
    * Maximum milliseconds to wait for the decision. Defaults to 30000. On timeout the in-flight call is
@@ -107,23 +108,20 @@ export interface ClassifierStrategyOptions {
 }
 
 /**
- * Choose a candidate by asking a model or {@link DecisionModel} one closed question over the candidates.
+ * Choose a candidate by applying a configurable routing policy with a classifier model.
  *
- * A {@link Model} is wrapped in an {@link LLMDecisionModel}, so `new ClassifierStrategy(model)` and
- * `new ClassifierStrategy(new LLMDecisionModel({ model }))` route the same way. Any other `DecisionModel`,
- * such as a System One provider, answers the same routing question. That question carries the SDK's fixed
- * routing rules followed by the routing policy from `systemPrompt`.
+ * The classifier is asked one closed question that carries the SDK's fixed routing rules followed by the
+ * routing policy. A {@link DecisionModel}, such as a System One provider, can be passed in place of a model.
  *
  * Each candidate is offered under a positional key (`c0`, `c1`, …); names, descriptions, and metadata
  * travel only as evidence in the routing context, so optional or arbitrary names never become answer
  * values. The routing context is a bounded projection of the latest request, the parent agent's textual
- * instructions, and candidate evidence; it crosses the decision provider's boundary and must not contain
+ * instructions, and candidate evidence; it crosses the classifier provider boundary and must not contain
  * secrets.
  *
  * Selection runs only before the first model call. A single candidate is returned without asking.
- * The routing question sets `uncertainty: false`, so the decision model must commit to a key. Decision
- * failures, unknown keys, `Uncertain` answers from implementations that ignore that setting, and timeouts
- * warn and decline selection, so {@link ModelRouter} serves candidate zero. After an attempt this
+ * The classifier must commit to a key. Classification failures, unknown keys, and timeouts warn and
+ * decline selection, so {@link ModelRouter} serves candidate zero. After an attempt this
  * strategy declines, so a failure of the selected candidate surfaces without switching. Nested routers
  * are treated as opaque candidates using only their wrapper evidence.
  *
@@ -150,14 +148,14 @@ export class ClassifierStrategy implements RoutingStrategy {
   /**
    * Create a classifier strategy.
    *
-   * @param model - Model or decision model that chooses among candidate keys. A `Model` must honor forced tool selection (`toolChoice`), since a provider that ignores it fails classification and every selection falls back to candidate zero
+   * @param model - Model or DecisionModel used for classification; a Model must honor forced tool selection (`toolChoice`), since a provider that ignores it fails classification and every selection falls back to candidate zero
    * @param options - Routing policy, timeout, and character budgets
    * @throws TypeError if `model` is not a Model or DecisionModel
-   * @throws Error if `timeoutMs` is not finite, greater than zero, and at most 2147483647, or a character limit is not a positive integer
+   * @throws Error if both `routingPolicy` and `systemPrompt` are set, `timeoutMs` is not finite, greater than zero, and at most 2147483647, or a character limit is not a positive integer
    */
   constructor(model: Model | DecisionModel, options: ClassifierStrategyOptions = {}) {
     this._decisionModel = toDecisionModel(model)
-    this._question = routingQuestion(options.systemPrompt ?? DEFAULT_ROUTING_POLICY)
+    this._question = routingQuestion(resolveRoutingPolicy(options))
     this._timeoutMs = validatedTimeoutMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     this._maxMessageChars = validatedCharacterLimit(
       'maxMessageChars',
@@ -185,23 +183,19 @@ export class ClassifierStrategy implements RoutingStrategy {
     if (context.candidates.length === 1) return context.candidates[0]
 
     const profiles = buildCandidateProfiles(context.candidates, this._maxCandidateChars)
-    let answer: string | boolean | Uncertain
+    let answer: string | Uncertain
     try {
       answer = await this._decideWithTimeout(context, profiles)
     } catch (error) {
-      const reason = error instanceof DecisionTimeoutError ? 'decision_timeout' : 'decision_error'
+      const reason = error instanceof ClassificationTimeoutError ? 'classifier_timeout' : 'classifier_error'
       // Logs only the error name: decision failures may carry request or candidate evidence.
       this._warnDeclined(reason, normalizeError(error).name)
       return undefined
     }
 
-    if (answer instanceof Uncertain) {
-      this._warnDeclined('decision_uncertain')
-      return undefined
-    }
-    const index = profiles.findIndex((profile) => profile.key === answer)
+    const index = answer instanceof Uncertain ? -1 : profiles.findIndex((profile) => profile.key === answer)
     if (index === -1) {
-      this._warnDeclined('unknown_candidate_key')
+      this._warnDeclined('classifier_error')
       return undefined
     }
     return context.candidates[index]
@@ -210,21 +204,21 @@ export class ClassifierStrategy implements RoutingStrategy {
   /** Log a decline using only the reason and, for failures, the error type. */
   private _warnDeclined(reason: string, errorType?: string): void {
     const errorField = errorType !== undefined ? `, error_type=<${errorType}>` : ''
-    logger.warn(`strategy=<${this.constructor.name}>, reason=<${reason}>${errorField} | selection declined`)
+    logger.warn(`strategy=<${this.constructor.name}>, reason=<${reason}>${errorField} | classification declined`)
   }
 
   /** Race the decision against the timeout, aborting the decision call when time runs out. */
   private async _decideWithTimeout(
     context: RoutingContext,
     profiles: readonly CandidateProfile[]
-  ): Promise<string | boolean | Uncertain> {
+  ): Promise<string | Uncertain> {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const decision = this._decide(context, profiles, controller.signal)
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
         controller.abort()
-        reject(new DecisionTimeoutError())
+        reject(new ClassificationTimeoutError())
       }, this._timeoutMs)
     })
     try {
@@ -239,13 +233,13 @@ export class ClassifierStrategy implements RoutingStrategy {
     context: RoutingContext,
     profiles: readonly CandidateProfile[],
     cancelSignal: AbortSignal
-  ): Promise<string | boolean | Uncertain> {
+  ): Promise<string | Uncertain> {
     const state = JSON.stringify({
       latestRequest: latestRequestText(context.messages, this._maxMessageChars),
       agentInstructions: extractBoundedAgentInstructions(context.systemPrompt, this._maxAgentInstructionsChars),
       candidates: profiles,
     })
-    const question: Question = {
+    const question: Question<readonly string[]> = {
       question: this._question,
       choices: profiles.map((profile) => profile.key),
       uncertainty: false,
@@ -263,6 +257,14 @@ export class ClassifierStrategy implements RoutingStrategy {
   }
 }
 
+/** Return the routing policy from `routingPolicy`, the deprecated `systemPrompt`, or the default. */
+function resolveRoutingPolicy(options: ClassifierStrategyOptions): string {
+  if (options.routingPolicy !== undefined && options.systemPrompt !== undefined) {
+    throw new Error('routingPolicy and systemPrompt cannot both be set; use routingPolicy')
+  }
+  return options.routingPolicy ?? options.systemPrompt ?? DEFAULT_ROUTING_POLICY
+}
+
 /** Wrap a plain model in an LLM decision model; pass a decision model through. */
 function toDecisionModel(model: Model | DecisionModel): DecisionModel {
   if (model instanceof DecisionModel) return model
@@ -270,10 +272,10 @@ function toDecisionModel(model: Model | DecisionModel): DecisionModel {
   throw new TypeError('model must be a Model or DecisionModel')
 }
 
-/** Signals that the decision exceeded its configured budget rather than failing outright. */
-class DecisionTimeoutError extends Error {
+/** Signals that classification exceeded its configured budget rather than failing outright. */
+class ClassificationTimeoutError extends Error {
   constructor() {
-    super('decision timed out')
+    super('classification timed out')
     this.name = 'TimeoutError'
   }
 }
@@ -315,42 +317,42 @@ function latestRequestText(messages: readonly Message[], characterLimit: number)
   return truncateText(NO_REQUEST_TEXT, characterLimit)
 }
 
-/** Projects one content block to safe routing text, or `undefined` when it carries no user request. */
-type BlockProjection<T extends ContentBlock['type']> = (block: Extract<ContentBlock, { type: T }>) => string | undefined
-
-const notRequestBearing = (): undefined => undefined
-
-/**
- * Safe routing projection for every content block type. The mapped type makes a new block type a
- * compile error here, so request-bearing content cannot silently fall back to stale history.
- */
-const REQUEST_BLOCK_PROJECTIONS: { readonly [T in ContentBlock['type']]: BlockProjection<T> } = {
-  textBlock: (block) => (block.text.trim().length > 0 ? block.text : undefined),
-  guardContentBlock: (block) =>
-    block.image !== undefined || (block.text !== undefined && block.text.text.trim().length > 0)
-      ? '[Guarded content]'
-      : undefined,
-  audioBlock: () => '[Audio]',
-  imageBlock: () => '[Image]',
-  documentBlock: () => '[Document]',
-  videoBlock: () => '[Video]',
-  toolUseBlock: notRequestBearing,
-  toolResultBlock: notRequestBearing,
-  reasoningBlock: notRequestBearing,
-  cachePointBlock: notRequestBearing,
-  citationsBlock: notRequestBearing,
-}
-
-function projectRequestBlock(block: ContentBlock): string | undefined {
-  const project = REQUEST_BLOCK_PROJECTIONS[block.type] as (block: ContentBlock) => string | undefined
-  return project(block)
-}
-
 /** Render only safe request-bearing fields from one user message. */
 function requestText(message: Message, characterLimit: number): string | undefined {
-  const parts = message.content.map(projectRequestBlock).filter((part): part is string => part !== undefined)
+  const parts = message.content.map(requestPart).filter((part): part is string => part !== undefined)
   if (parts.length === 0) return undefined
   return truncateText(parts.join('\n'), characterLimit)
+}
+
+/** Return the safe routing text for one content block, or `undefined` when it carries no request. */
+function requestPart(block: ContentBlock): string | undefined {
+  switch (block.type) {
+    case 'textBlock':
+      return block.text.trim().length > 0 ? block.text : undefined
+    case 'guardContentBlock':
+      return block.image !== undefined || (block.text !== undefined && block.text.text.trim().length > 0)
+        ? '[Guarded content]'
+        : undefined
+    case 'audioBlock':
+      return '[Audio]'
+    case 'imageBlock':
+      return '[Image]'
+    case 'documentBlock':
+      return '[Document]'
+    case 'videoBlock':
+      return '[Video]'
+    case 'toolUseBlock':
+    case 'toolResultBlock':
+    case 'reasoningBlock':
+    case 'cachePointBlock':
+    case 'citationsBlock':
+      return undefined
+    default: {
+      // Exhaustive check: a new block type must be classified here before it can be routed.
+      const _exhaustive: never = block
+      throw new Error(`Unknown content block type: ${(_exhaustive as ContentBlock).type}`)
+    }
+  }
 }
 
 /** Extract bounded text from the parent agent system prompt, omitting non-text blocks. */

@@ -131,7 +131,7 @@ describe('ClassifierStrategy with a DecisionModel', () => {
 
     it.each(['', '   '])('asks the fixed routing rules alone for an empty policy %j', async (policy) => {
       const decisionModel = new FakeDecisionModel(candidateKey(0))
-      const strategy = new ClassifierStrategy(decisionModel, { systemPrompt: policy })
+      const strategy = new ClassifierStrategy(decisionModel, { routingPolicy: policy })
       const router = new ModelRouter([candidate('a'), candidate('b')], { strategy })
 
       await strategy.select(routingContext(router))
@@ -142,12 +142,29 @@ describe('ClassifierStrategy with a DecisionModel', () => {
     it('asks the custom routing policy after the fixed routing rules', async () => {
       const policy = 'Prefer the advanced candidate for anything involving money.'
       const decisionModel = new FakeDecisionModel(candidateKey(0))
-      const strategy = new ClassifierStrategy(decisionModel, { systemPrompt: policy })
+      const strategy = new ClassifierStrategy(decisionModel, { routingPolicy: policy })
       const router = new ModelRouter([candidate('a'), candidate('b')], { strategy })
 
       await strategy.select(routingContext(router))
 
       expect(decisionModel.questions[0]?.[QUESTION_ID]?.question).toBe(`${ROUTING_RULES}\n\nRouting policy: ${policy}`)
+    })
+
+    it('accepts the deprecated systemPrompt as the routing policy', async () => {
+      const policy = 'Prefer the advanced candidate for anything involving money.'
+      const decisionModel = new FakeDecisionModel(candidateKey(0))
+      const strategy = new ClassifierStrategy(decisionModel, { systemPrompt: policy })
+      const router = new ModelRouter([candidate('a'), candidate('b')], { strategy })
+
+      await strategy.select(routingContext(router))
+
+      expect(decisionModel.questions[0]?.[QUESTION_ID]?.question).toBe(routingQuestion(policy))
+    })
+
+    it('rejects routingPolicy and systemPrompt together', () => {
+      expect(
+        () => new ClassifierStrategy(new FakeDecisionModel(candidateKey(0)), { routingPolicy: 'a', systemPrompt: 'b' })
+      ).toThrow('routingPolicy and systemPrompt cannot both be set; use routingPolicy')
     })
 
     it('states the routing rules in the question for decision models without a system prompt', () => {
@@ -293,11 +310,11 @@ describe('ClassifierStrategy with a DecisionModel', () => {
 
   describe('failure handling', () => {
     it.each([
-      { name: 'unknown key', answer: candidateKey(9) as Answer, reason: 'unknown_candidate_key' },
-      { name: 'candidate name instead of key', answer: 'b' as Answer, reason: 'unknown_candidate_key' },
-      { name: 'boolean answer', answer: true as Answer, reason: 'unknown_candidate_key' },
-      { name: 'Uncertain answer', answer: new Uncertain('ambiguous') as Answer, reason: 'decision_uncertain' },
-      { name: 'decision error', answer: new Error('provider-secret') as Answer, reason: 'decision_error' },
+      { name: 'unknown key', answer: candidateKey(9) as Answer, reason: 'classifier_error' },
+      { name: 'candidate name instead of key', answer: 'b' as Answer, reason: 'classifier_error' },
+      { name: 'boolean answer', answer: true as Answer, reason: 'classifier_error' },
+      { name: 'Uncertain answer', answer: new Uncertain('ambiguous') as Answer, reason: 'classifier_error' },
+      { name: 'decision error', answer: new Error('provider-secret') as Answer, reason: 'classifier_error' },
     ])('warns safely and declines on a $name', async ({ answer, reason }) => {
       const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const strategy = new ClassifierStrategy(new FakeDecisionModel(answer))
@@ -308,7 +325,7 @@ describe('ClassifierStrategy with a DecisionModel', () => {
       const logged = warn.mock.calls.map((call) => String(call[0])).join('\n')
       expect(selected).toBeUndefined()
       expect(logged).toContain(`strategy=<ClassifierStrategy>, reason=<${reason}>`)
-      expect(logged).toContain('selection declined')
+      expect(logged).toContain('classification declined')
       expect(logged).not.toContain('provider-secret')
     })
 
@@ -328,7 +345,7 @@ describe('ClassifierStrategy with a DecisionModel', () => {
       }).toEqual({
         selected: undefined,
         aborted: true,
-        logged: expect.stringContaining('reason=<decision_timeout>, error_type=<TimeoutError>'),
+        logged: expect.stringContaining('reason=<classifier_timeout>, error_type=<TimeoutError>'),
       })
     })
   })
