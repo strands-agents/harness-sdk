@@ -605,6 +605,7 @@ def test_format_request_explicit_none_max_tokens_opts_out_of_the_default(bedrock
 
 
 def test_format_request_merges_additional_args_inference_config_over_the_default_max_tokens(bedrock_client, messages):
+    """https://github.com/strands-agents/harness-sdk/issues/5753"""
     _ = bedrock_client
     model = BedrockModel(
         model_id="anthropic.claude-sonnet-4-6", additional_args={"inferenceConfig": {"stopSequences": ["ZZQXJ"]}}

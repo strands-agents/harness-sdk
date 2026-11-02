@@ -224,8 +224,8 @@ class BedrockModel(Model):
 
         Attributes:
             additional_args: Any additional arguments to include in the request. Spread over the built request;
-                an ``inferenceConfig`` here is merged per key over the one built from the typed options, so it
-                extends the default ``maxTokens`` rather than replacing it.
+                an ``inferenceConfig`` here is merged per key over the one built from the typed options, so the
+                caller's keys win.
             additional_request_fields: Additional fields to include in the Bedrock request
             additional_response_field_paths: Additional response field paths to extract
             cache_prompt: Cache point type for the system prompt (deprecated, use cache_config)
@@ -485,7 +485,7 @@ class BedrockModel(Model):
             if value is not None
         }
 
-        return {
+        request: dict[str, Any] = {
             "modelId": self.config["model_id"],
             "messages": formatted_messages,
             "system": self._apply_system_cache_ttl(system_blocks, tools_cache_point),
@@ -539,9 +539,11 @@ class BedrockModel(Model):
                 if self.config.get("guardrail_id") and self.config.get("guardrail_version")
                 else {}
             ),
-            "inferenceConfig": {**inference_config, **(additional_args.get("inferenceConfig") or {})},
-            **{key: value for key, value in additional_args.items() if key != "inferenceConfig"},
+            "inferenceConfig": inference_config,
         }
+        request.update(additional_args)
+        request["inferenceConfig"] = {**inference_config, **(additional_args.get("inferenceConfig") or {})}
+        return request
 
     def _get_additional_request_fields(self, tool_choice: ToolChoice | None) -> dict[str, Any]:
         """Get additional request fields, removing thinking if tool_choice forces tool use.
