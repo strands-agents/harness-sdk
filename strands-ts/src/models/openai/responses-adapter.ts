@@ -593,9 +593,9 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
     events.push({ type: 'modelContentBlockStopEvent' })
   }
 
-  // A function call in flight when the response is cut off has truncated arguments, so the cut-off reason wins.
+  // A function call in flight at max_output_tokens has truncated arguments, so maxTokens wins.
   let stopReason = state.stopReason
-  if (state.toolCalls.size > 0 && stopReason !== 'maxTokens' && stopReason !== 'contentFiltered') {
+  if (state.toolCalls.size > 0 && stopReason !== 'maxTokens') {
     stopReason = 'toolUse'
   }
 
