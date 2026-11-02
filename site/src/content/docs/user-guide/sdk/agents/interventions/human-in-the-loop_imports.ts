@@ -43,7 +43,7 @@ import { z } from 'zod'
 // --8<-- [end:classifier_imports]
 
 // --8<-- [start:classifier_decision_model_imports]
-import { Agent, BedrockModel, LLMDecisionModel, tool } from '@strands-agents/sdk'
+import { Agent, tool, TypeSafeDecisionModel } from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 // --8<-- [end:classifier_decision_model_imports]

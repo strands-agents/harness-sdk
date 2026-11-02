@@ -2,9 +2,9 @@
 import {
   Agent,
   BedrockModel,
-  LLMDecisionModel,
   tool,
   InterruptResponseContent,
+  TypeSafeDecisionModel,
 } from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
@@ -207,17 +207,13 @@ async function classifierExample() {
 
 async function classifierDecisionModelExample() {
   // --8<-- [start:classifier_decision_model]
-  // Classify on a smaller model than the one the agent runs on
-  const classifierModel = new BedrockModel({
-    modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  })
-
   const agent = new Agent({
     tools: [readFile, deleteFiles],
     interventions: [
       new HumanInTheLoop({
         allowedTools: ['read_file'],
-        classifier: new LLMDecisionModel({ model: classifierModel }),
+        // Reads the API key from TYPESAFE_API_KEY
+        classifier: new TypeSafeDecisionModel(),
       }),
     ],
   })

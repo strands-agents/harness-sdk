@@ -1,4 +1,4 @@
-from strands import Agent, LLMDecisionModel, tool
+from strands import Agent, tool
 from strands.models import BedrockModel
 from strands.vended_interventions.hitl import (
     HumanInTheLoop,
@@ -191,15 +191,47 @@ def classifier_example():
 
 def classifier_decision_model_example():
     # --8<-- [start:classifier_decision_model]
-    # Classify on a smaller model than the one the agent runs on
-    classifier_model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    import asyncio
+    import json
+    import urllib.request
+
+    from strands.decisions import DecisionMetadata, DecisionModel, DecisionResult
+
+    class StrandsDecider(DecisionModel):
+        """Asks yes/no questions of a `strands-decider serve` server."""
+
+        def __init__(self, url="http://localhost:8000/v1/systemone"):
+            self.url = url
+
+        def _post(self, body):
+            request = urllib.request.Request(
+                self.url,
+                data=json.dumps(body).encode(),
+                headers={"content-type": "application/json"},
+            )
+            with urllib.request.urlopen(request) as response:
+                return json.loads(response.read())
+
+        async def _ask(self, state, questions, **kwargs):
+            wire = {
+                qid: {"type": "noul", "instructions": q["question"]}
+                for qid, q in questions.items()
+            }
+            reply = await asyncio.to_thread(
+                self._post, {"state": state, "questions": wire}
+            )
+            return DecisionResult(
+                # "noul" is the model's probability that the answer is yes
+                answers={qid: a["noul"] >= 0.5 for qid, a in reply["answers"].items()},
+                metadata=DecisionMetadata(latency_ms=int(reply["latency_ms"])),
+            )
 
     agent = Agent(
         tools=[read_file, delete_files],
         interventions=[
             HumanInTheLoop(
                 allowed_tools=["read_file"],
-                classifier=LLMDecisionModel(model=classifier_model),
+                classifier=StrandsDecider(),
             ),
         ],
     )
@@ -218,7 +250,9 @@ def classifier_custom_example():
             HumanInTheLoop(
                 classifier=LLMClassifierConfig(
                     system_prompt="Only flag destructive operations.",
-                    model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+                    model=BedrockModel(
+                        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    ),
                 ),
             ),
         ],
