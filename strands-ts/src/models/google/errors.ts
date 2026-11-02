@@ -4,6 +4,7 @@
  * @internal This module is not part of the public API.
  */
 
+import { ApiError } from '@google/genai'
 import { isFetchNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 
@@ -56,20 +57,31 @@ export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
     return 'network'
   }
 
+  // A non-JSON 429 body gets the HTTP reason phrase as its status, so the code is the reliable signal.
+  if (error instanceof ApiError && error.status === 429) {
+    return 'throttling'
+  }
+
   if (!error.message) {
     return undefined
   }
 
+  let code: unknown
   let status: string
   let message: string
 
   try {
     const parsed = JSON.parse(error.message)
+    code = parsed?.error?.code
     status = parsed?.error?.status || ''
     message = parsed?.error?.message || ''
   } catch {
     logger.debug(`error_message=<${error.message}> | google genai api returned non-json error`)
     return undefined
+  }
+
+  if (code === 429) {
+    return 'throttling'
   }
 
   const config = ERROR_STATUS_MAP[status.toUpperCase()]
