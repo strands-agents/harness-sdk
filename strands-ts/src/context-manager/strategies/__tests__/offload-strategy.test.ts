@@ -1049,6 +1049,39 @@ describe('tool results that already hold a placeholder', () => {
     expect(resultMethods(messages)).toEqual(['drop', 'drop'])
     expect(summarizeContent).not.toHaveBeenCalled()
   })
+
+  function withUnknownPlaceholder(): Message[] {
+    const messages = [...toolHistory([1000]), text('user', 'next')]
+    const placeholder = new TextBlock('x'.repeat(4000), { metadata: { offloaded: { ref: 'x' } } })
+    messages[2] = new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: 'tu-0', status: 'success', content: [placeholder] })],
+    })
+    return messages
+  }
+
+  it('drop replaces a placeholder that names no method once', async () => {
+    const messages = withUnknownPlaceholder()
+    const strategy = Offload.drop('toolResults').when({ contextUtilization: '50%' })
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+    expect(resultMethods(messages)).toEqual(['drop'])
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(false)
+  })
+
+  it.each([
+    ['truncate', () => Offload.truncate('toolResults', { previewTokens: 100 })],
+    ['summarize', () => Offload.summarize('toolResults')],
+  ] as const)('%s leaves a placeholder that names no method alone', async (_method, builder) => {
+    const messages = withUnknownPlaceholder()
+    const before = messages.map((message) => message.toJSON())
+    vi.mocked(summarizeContent).mockClear()
+
+    expect(await builder().when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))).toBe(false)
+
+    expect(messages.map((message) => message.toJSON())).toEqual(before)
+    expect(summarizeContent).not.toHaveBeenCalled()
+  })
 })
 
 describe('placeholders left by another method', () => {

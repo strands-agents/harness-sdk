@@ -240,7 +240,7 @@ export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
  */
 export interface OffloadedBlockData {
   /**
-   * Offload method that left the placeholder, when known.
+   * Offload method that left the placeholder; absent when whatever left it didn't record one.
    */
   method?: OffloadMethod
 
