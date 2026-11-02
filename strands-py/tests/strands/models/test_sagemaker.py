@@ -1239,8 +1239,12 @@ def _model_with_container_error(endpoint_config, stream: bool, operation: str, o
 async def test_stream_container_throttling_raises_model_throttled(endpoint_config, messages, alist, stream, operation):
     model = _model_with_container_error(endpoint_config, stream, operation, 429)
 
-    with pytest.raises(ModelThrottledException):
+    with pytest.raises(ModelThrottledException) as exc_info:
         await alist(model.stream(messages))
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, model.client.exceptions.ModelError)
+    assert cause.response["OriginalStatusCode"] == 429
 
 
 @pytest.mark.asyncio
@@ -1258,8 +1262,12 @@ async def test_structured_output_container_throttling_raises_model_throttled(end
 
     model = _model_with_container_error(endpoint_config, False, "invoke_endpoint", 429)
 
-    with pytest.raises(ModelThrottledException):
+    with pytest.raises(ModelThrottledException) as exc_info:
         await alist(model.structured_output(TestOutputModel, messages))
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, model.client.exceptions.ModelError)
+    assert cause.response["OriginalStatusCode"] == 429
 
 
 @pytest.mark.asyncio
