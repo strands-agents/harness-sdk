@@ -23,7 +23,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided, offloadPlaceholder } from '../../placeholder.js'
-import { insertMarker, repairAlternation, spliceWithPairs, withPairs } from '../../message-trimming.js'
+import { insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -46,36 +46,32 @@ export interface OffloadStrategy extends ContextStrategy {
  */
 type PlaceholderText = (removed: Message[]) => Promise<string | null>
 
-/** The strategy calling {@link removeMessages}, a function so {@link EmergencyTruncateStrategy} can share it. */
-interface Remover {
-  name: string
-  method: OffloadMethod
-  stash: Stash | undefined
-}
-
 /**
  * Removes messages with their tool pairs, stashes them under one reference, and leaves a placeholder at the gap. A
  * failed stash write leaves the placeholder without a reference. Callers restore alternation once they are done.
  *
  * @returns Whether anything was removed
+ * @internal
  */
-async function removeMessages(
+export async function removeMessages(
   messages: Message[],
   toRemove: Message[],
   textFor: PlaceholderText,
-  { name, method, stash }: Remover
+  method: OffloadMethod,
+  stash: Stash | undefined
 ): Promise<boolean> {
   const removed = withPairs(messages, toRemove)
   if (removed.length === 0) return false
   const text = await textFor(removed)
   if (text === null) return false
 
-  const { lowestIndex } = spliceWithPairs(messages, removed)
+  const lowestIndex = messages.indexOf(removed[0]!)
+  for (const message of removed) messages.splice(messages.indexOf(message), 1)
   let stashRef: string | undefined
   try {
     stashRef = await stash?.storeRemoved(removed)
   } catch (error) {
-    logger.warn(`strategy=<${name}>, error=<${error}> | failed to stash removed messages`)
+    logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
   }
   insertMarker(messages, lowestIndex, offloadPlaceholder(method, text, stashRef, removed.length))
   return true
@@ -111,18 +107,13 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /**
-   * Returns a copy of this strategy with these conditions in place of its current ones.
+   * Returns a copy of this strategy, with the same target and config, under these conditions.
    *
    * @param conditions - When and how the strategy fires
    * @returns The strategy with these conditions. A strategy keeps per-agent state, so give each agent its own.
    * @throws Error when a condition value is invalid, or the conditions leave the strategy unable to run
    */
-  when(conditions: OffloadConditions = {}): BaseOffloadStrategy {
-    return this._withConditions(conditions)
-  }
-
-  /** Builds the same strategy, with the same target and config, under new conditions. */
-  protected abstract _withConditions(conditions: OffloadConditions): BaseOffloadStrategy
+  abstract when(conditions?: OffloadConditions): BaseOffloadStrategy
 
   /** Throws if the conditions leave the strategy acting on every message, or removing media unseen. */
   private _checkRunnable(): void {
@@ -216,11 +207,6 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     return eligible.filter((_message, index) => sizes[index]! > threshold)
   }
 
-  /** Removes messages with their tool pairs and leaves a placeholder at the gap; `apply` restores alternation. */
-  protected _removeMessages(messages: Message[], toRemove: Message[], textFor: PlaceholderText): Promise<boolean> {
-    return removeMessages(messages, toRemove, textFor, { name: this.name, method: this._method, stash: this._stash })
-  }
-
   /** The placeholder this strategy leaves for a block it replaced. */
   protected _placeholder(preview: string, stashRef: string | undefined): TextBlock {
     return offloadPlaceholder(this._method, preview, stashRef)
@@ -307,16 +293,9 @@ const EMERGENCY_REMOVAL_RATIO = 0.2
 export class EmergencyTruncateStrategy implements ContextStrategy {
   readonly name = 'offload:emergency-truncate'
 
-  private _stash: Stash | undefined
-
-  init(_agent: LocalAgent, stash?: Stash): void {
-    this._stash = stash
-  }
-
   async apply(context: ContextState): Promise<boolean> {
     const { messages, agent } = context
     if (messages.length <= 3) return false
-    if (context.stash) this._stash = context.stash
     if (!context.overflow && agent.model.estimateUtilization(await agent.model.countTokens(messages)) < 1.0) {
       return false
     }
@@ -325,9 +304,10 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
-    const remover = { name: this.name, method: 'truncate' as const, stash: this._stash }
     const textFor = async ({ length }: Message[]): Promise<string> => formatElided(length)
-    if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, remover))) return false
+    if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, 'truncate', context.stash))) {
+      return false
+    }
     repairAlternation(messages)
     return true
   }

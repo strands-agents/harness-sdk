@@ -18,7 +18,7 @@ import {
 } from '../../methods/truncate.js'
 import type { Stash } from '../../stash.js'
 import { formatElided, formatOffloaded } from '../../placeholder.js'
-import { BaseOffloadStrategy } from './base.js'
+import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { buildToolNameMap, mediaKind, type OffloadTarget } from './target.js'
 
@@ -36,7 +36,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     if (threshold && !threshold.isShare) this._checkThresholdExceedsPreview(threshold.value, String(threshold.value))
   }
 
-  protected _withConditions(conditions: OffloadConditions): TruncateStrategy {
+  when(conditions: OffloadConditions = {}): TruncateStrategy {
     return new TruncateStrategy(this._target, this._truncateConfig, conditions)
   }
 
@@ -72,11 +72,8 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
     // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
     const eligible = (await this._getEligibleMessages(context)).filter((message) => !carriesElisionMarker(message))
-    return this._removeMessages(
-      context.messages,
-      await this._selectMiddle(eligible, context.agent),
-      async ({ length }) => formatElided(length)
-    )
+    const middle = await this._selectMiddle(eligible, context.agent)
+    return removeMessages(context.messages, middle, async ({ length }) => formatElided(length), 'truncate', this._stash)
   }
 
   /** Previews each block over `previewTokens` in the eligible messages, leaving the newest message alone. */

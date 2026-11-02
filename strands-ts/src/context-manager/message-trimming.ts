@@ -56,19 +56,6 @@ export function withPairs(messages: Message[], toRemove: Message[]): Message[] {
 }
 
 /**
- * Collects removable messages (with their tool pairs), then splices them from the array.
- * Returns the removed messages in conversation order and the lowest index that was removed.
- */
-export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: Message[]; lowestIndex: number } {
-  const removed = withPairs(messages, toRemove)
-  const lowestIndex = removed.length > 0 ? messages.indexOf(removed[0]!) : messages.length
-  for (const message of removed) {
-    messages.splice(messages.indexOf(message), 1)
-  }
-  return { removed, lowestIndex }
-}
-
-/**
  * Adds a marker as assistant content at the gap left by removed messages.
  *
  * The marker is appended to an assistant message beside the gap, which keeps that message's

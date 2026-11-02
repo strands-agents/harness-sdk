@@ -21,7 +21,7 @@ import {
 } from '../../methods/summarize.js'
 import { withPairs } from '../../message-trimming.js'
 import { formatOffloaded, formatSummarized } from '../../placeholder.js'
-import { BaseOffloadStrategy } from './base.js'
+import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
 
@@ -33,7 +33,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     this._config = config ?? {}
   }
 
-  protected _withConditions(conditions: OffloadConditions): SummarizeStrategy {
+  when(conditions: OffloadConditions = {}): SummarizeStrategy {
     return new SummarizeStrategy(this._target, this._config, conditions)
   }
 
@@ -55,7 +55,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     for (const run of runs.reverse()) {
       const summarize = (removed: Message[]): Promise<string | null> =>
         this._summarizeRun(removed, model, invocationContext)
-      if (await this._removeMessages(messages, run, summarize)) acted = true
+      if (await removeMessages(messages, run, summarize, 'summarize', this._stash)) acted = true
     }
     return acted
   }
@@ -66,13 +66,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     model: Model,
     invocationContext?: InvocationContext
   ): Promise<string | null> {
-    let summary: string | null
-    try {
-      summary = await summarizeContent(flattenMessagesToContent(run), model, this._config, invocationContext)
-    } catch (error) {
-      logger.warn(`runLength=<${run.length}>, error=<${normalizeError(error).message}> | run summarization failed`)
-      return null
-    }
+    const content = flattenMessagesToContent(run)
+    const summary = await this._trySummarize(content, model, `runLength=<${run.length}>`, invocationContext)
     if (!summary) return null
 
     const totalTokens = await model.countTokens(run)
@@ -92,7 +87,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     if (!model) return null
 
     const input = summaryInput(block)
-    const summary = input ? await this._trySummarize(input.content, model, message, invocationContext) : null
+    const logFields = `trackingId=<${message.trackingId}>`
+    const summary = input ? await this._trySummarize(input.content, model, logFields, invocationContext) : null
     if (input && summary) {
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized ${input.description}`)
       const placeholder = this._placeholder(formatSummarized(input.description, tokens, summary), stashRef)
@@ -105,19 +101,17 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef)
   }
 
-  /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */
+  /** Summarizes `content`, or logs a failure and returns null so the pass continues and keeps the content. */
   private async _trySummarize(
     content: ContentBlock[],
     model: Model,
-    message: Message,
+    logFields: string,
     invocationContext?: InvocationContext
   ): Promise<string | null> {
     try {
       return await summarizeContent(content, model, this._config, invocationContext)
     } catch (error) {
-      logger.warn(
-        `trackingId=<${message.trackingId}>, error=<${normalizeError(error).message}> | block summarization failed`
-      )
+      logger.warn(`${logFields}, error=<${normalizeError(error).message}> | summarization failed`)
       return null
     }
   }
