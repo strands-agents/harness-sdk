@@ -21,6 +21,7 @@ const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140
 const MAX_DESCRIPTION_LENGTH = 160
 const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
+const WORKSHOP_SAMPLE_PREFIXES = ['python/01-learn/', 'typescript/01-learn/']
 
 const htmlConverter = new TurndownService({
   headingStyle: 'atx',
@@ -146,7 +147,9 @@ function parseManifest(value: unknown) {
     if (categoryLabel === undefined) throw new Error(`${sample.path} references unknown category ${category}`)
     return { ...sample, categoryLabel }
   })
-  return { samples }
+  return {
+    samples: samples.filter((sample) => !WORKSHOP_SAMPLE_PREFIXES.some((prefix) => sample.path.startsWith(prefix))),
+  }
 }
 
 type SampleManifest = ReturnType<typeof parseManifest>

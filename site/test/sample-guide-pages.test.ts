@@ -178,7 +178,7 @@ describe('generated sample guide pages', () => {
   })
 
   it('renders fenced code with Expressive Code', () => {
-    const guide = guides.find((entry) => entry.data.slug === 'typescript/first-agent')
+    const guide = guides.find((entry) => entry.data.slug === 'typescript/nextjs-vercel-adapter')
 
     if (!guide) {
       expect(guides).toHaveLength(0)
