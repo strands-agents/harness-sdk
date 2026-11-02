@@ -3,8 +3,11 @@ title: Migrate from the community tools package
 description: "Migrate off the deprecated strands-agents-tools package: the replacement for each tool and the behavior changes to expect before you ship the swap."
 tags: [tool-authoring]
 sidebar:
-  label: "Community Tools Package"
+  label: "Community Tools Migration"
 languages: [python]
+redirectFrom:
+  - docs/user-guide/concepts/tools/community-tools-package
+  - docs/user-guide/sdk/tools/community-tools-package
 sourceLinks:
   - path: strands-py/src/strands/vended_tools/__init__.py
 ---
@@ -21,54 +24,54 @@ behavior differences to check before you ship the change.
 
 | Tool | Replacement | Type |
 |---|---|---|
-| [`a2a_client`](#a2a_client) | [`strands.vended_tools.make_a2a_client`](vended-tools/a2a-client.md) | Vended tool |
-| [`agent_core_memory`](#agent_core_memory) (`AgentCoreMemoryToolProvider`) | `MemoryManager` with [`AgentCoreMemoryStore`](../../../integrations/memory-stores/agentcore-memory-store.md) from `bedrock-agentcore` | Memory store |
-| [`agent_graph`](#agent_graph) | [`strands.vended_tools.graph`](vended-tools/graph.md) | Vended tool |
-| [`batch`](#batch) | None needed: the SDK runs tool calls [concurrently](executors.md) by default | SDK feature |
+| [`a2a_client`](#a2a_client) | [`strands.vended_tools.make_a2a_client`](../sdk/tools/vended-tools/a2a-client.md) | Vended tool |
+| [`agent_core_memory`](#agent_core_memory) (`AgentCoreMemoryToolProvider`) | `MemoryManager` with [`AgentCoreMemoryStore`](../../integrations/memory-stores/agentcore-memory-store.md) from `bedrock-agentcore` | Memory store |
+| [`agent_graph`](#agent_graph) | [`strands.vended_tools.graph`](../sdk/tools/vended-tools/graph.md) | Vended tool |
+| [`batch`](#batch) | None needed: the SDK runs tool calls [concurrently](../sdk/tools/executors.md) by default | SDK feature |
 | [`bright_data`](#bright_data) | [Bright Data MCP server](https://docs.brightdata.com/products/mcp-server/overview) | MCP server |
 | [`browser`](#browser) (`LocalChromiumBrowser`, `AgentCoreBrowser`) | None: drive Playwright directly, with `bedrock-agentcore`'s `BrowserClient` for AgentCore sessions | No replacement |
-| [`calculator`](#calculator) | [`strands.vended_tools.shell`](vended-tools/shell.md), running `python3 -c` with sympy | Vended tool |
+| [`calculator`](#calculator) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md), running `python3 -c` with sympy | Vended tool |
 | [`chat_video`](#chat_video-and-search_video) | [TwelveLabs MCP servers](https://docs.twelvelabs.io/docs/advanced/model-context-protocol) | MCP server |
-| [`code_interpreter`](#code_interpreter) (`AgentCoreCodeInterpreter`) | [`strands.vended_tools.python_repl`](vended-tools/python-repl.md) for Python, [`shell`](vended-tools/shell.md) for other languages | Vended tool |
-| [`cron`](#cron) | [`strands.vended_tools.shell`](vended-tools/shell.md) managing `crontab`, or Amazon EventBridge Scheduler | Vended tool |
-| [`current_time`](#current_time) | [`ContextInjector`](../plugins/context-injector.md) | SDK feature |
+| [`code_interpreter`](#code_interpreter) (`AgentCoreCodeInterpreter`) | [`strands.vended_tools.python_repl`](../sdk/tools/vended-tools/python-repl.md) for Python, [`shell`](../sdk/tools/vended-tools/shell.md) for other languages | Vended tool |
+| [`cron`](#cron) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md) managing `crontab`, or Amazon EventBridge Scheduler | Vended tool |
+| [`current_time`](#current_time) | [`ContextInjector`](../sdk/plugins/context-injector.md) | SDK feature |
 | [`diagram`](#diagram) | None: have the model write graphviz, mermaid, or `diagrams` code | No replacement |
-| [`editor`](#editor) | [`strands.vended_tools.read`](vended-tools/read.md), [`write`](vended-tools/write.md), and [`edit`](vended-tools/edit.md) | Vended tool |
-| [`elasticsearch_memory`](#elasticsearch_memory) (`elasticsearch_memory`, `ElasticsearchMemoryTool`) | `MemoryManager` with a [custom `MemoryStore`](../memory/managing-memory.md#custom-stores) over [`elasticsearch-py`](https://www.elastic.co/docs/reference/elasticsearch/clients/python) | Memory store |
-| [`environment`](#environment) | [`strands.vended_tools.shell`](vended-tools/shell.md), for reading only | Vended tool |
+| [`editor`](#editor) | [`strands.vended_tools.read`](../sdk/tools/vended-tools/read.md), [`write`](../sdk/tools/vended-tools/write.md), and [`edit`](../sdk/tools/vended-tools/edit.md) | Vended tool |
+| [`elasticsearch_memory`](#elasticsearch_memory) (`elasticsearch_memory`, `ElasticsearchMemoryTool`) | `MemoryManager` with a [custom `MemoryStore`](../sdk/memory/managing-memory.md#custom-stores) over [`elasticsearch-py`](https://www.elastic.co/docs/reference/elasticsearch/clients/python) | Memory store |
+| [`environment`](#environment) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md), for reading only | Vended tool |
 | [`exa`](#exa) (`exa_search`, `exa_get_contents`) | [Exa MCP server](https://exa.ai/docs/reference/exa-mcp) | MCP server |
-| [`file_read`](#file_read) | [`strands.vended_tools.read`](vended-tools/read.md) | Vended tool |
-| [`file_write`](#file_write) | [`strands.vended_tools.write`](vended-tools/write.md) | Vended tool |
+| [`file_read`](#file_read) | [`strands.vended_tools.read`](../sdk/tools/vended-tools/read.md) | Vended tool |
+| [`file_write`](#file_write) | [`strands.vended_tools.write`](../sdk/tools/vended-tools/write.md) | Vended tool |
 | [`generate_image`](#generate_image) | None: call Amazon Bedrock's `invoke_model` with a [Stability AI model](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-stability-diffusion.html) | No replacement |
 | [`generate_image_stability`](#generate_image_stability) | None: call the [Stability AI REST API](https://docs.stability.ai/api-reference) directly | No replacement |
-| [`graph`](#graph) | [`strands.vended_tools.graph`](vended-tools/graph.md) | Vended tool |
-| [`handoff_to_user`](#handoff_to_user) | [`strands.vended_tools.handoff_to_user`](vended-tools/handoff-to-user.md) | Vended tool |
-| [`http_request`](#http_request) | [`strands.vended_tools.http_request`](vended-tools/http-request.md) for APIs, [`web_fetch`](vended-tools/web-fetch.md) for web pages | Vended tool |
-| [`image_reader`](#image_reader) | Image content blocks in the [prompt](../agents/prompts.md#multi-modal-prompting) | SDK feature |
-| [`journal`](#journal) | [`strands.vended_tools.notebook`](vended-tools/notebook.md) | Vended tool |
+| [`graph`](#graph) | [`strands.vended_tools.graph`](../sdk/tools/vended-tools/graph.md) | Vended tool |
+| [`handoff_to_user`](#handoff_to_user) | [`strands.vended_tools.handoff_to_user`](../sdk/tools/vended-tools/handoff-to-user.md) | Vended tool |
+| [`http_request`](#http_request) | [`strands.vended_tools.http_request`](../sdk/tools/vended-tools/http-request.md) for APIs, [`web_fetch`](../sdk/tools/vended-tools/web-fetch.md) for web pages | Vended tool |
+| [`image_reader`](#image_reader) | Image content blocks in the [prompt](../sdk/agents/prompts.md#multi-modal-prompting) | SDK feature |
+| [`journal`](#journal) | [`strands.vended_tools.notebook`](../sdk/tools/vended-tools/notebook.md) | Vended tool |
 | [`load_tool`](#load_tool) | None: pass tools to the agent, or use `Agent(load_tools_from_directory=True)` | No replacement |
-| [`mcp_client`](#mcp_client) | [`strands.vended_tools.make_mcp_router`](vended-tools/mcp-router.md) | Vended tool |
+| [`mcp_client`](#mcp_client) | [`strands.vended_tools.make_mcp_router`](../sdk/tools/vended-tools/mcp-router.md) | Vended tool |
 | [`mem0_memory`](#mem0_memory) (`mem0_memory`, `Mem0MemoryTool`) | `MemoryManager` with `Mem0MemoryStore` from [`mem0-strands`](https://docs.mem0.ai/integrations/strands) | Memory store |
-| [`memory`](#memory-and-retrieve) | `MemoryManager` with a writable [`BedrockKnowledgeBaseStore`](../memory/bedrock-knowledge-base.md) | Memory store |
-| [`mongodb_memory`](#mongodb_memory) (`mongodb_memory`, `MongoDBMemoryTool`) | `MemoryManager` with a [custom `MemoryStore`](../memory/managing-memory.md#custom-stores) over [`pymongo`](https://pymongo.readthedocs.io/) | Memory store |
+| [`memory`](#memory-and-retrieve) | `MemoryManager` with a writable [`BedrockKnowledgeBaseStore`](../sdk/memory/bedrock-knowledge-base.md) | Memory store |
+| [`mongodb_memory`](#mongodb_memory) (`mongodb_memory`, `MongoDBMemoryTool`) | `MemoryManager` with a [custom `MemoryStore`](../sdk/memory/managing-memory.md#custom-stores) over [`pymongo`](https://pymongo.readthedocs.io/) | Memory store |
 | [`nova_reels`](#nova_reels) | None: Amazon Nova Reel reached [end of life](https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle-legacy.html) on Amazon Bedrock | No replacement |
-| [`python_repl`](#python_repl) | [`strands.vended_tools.python_repl`](vended-tools/python-repl.md) | Vended tool |
-| [`retrieve`](#memory-and-retrieve) | `MemoryManager` with a read-only [`BedrockKnowledgeBaseStore`](../memory/bedrock-knowledge-base.md) | Memory store |
+| [`python_repl`](#python_repl) | [`strands.vended_tools.python_repl`](../sdk/tools/vended-tools/python-repl.md) | Vended tool |
+| [`retrieve`](#memory-and-retrieve) | `MemoryManager` with a read-only [`BedrockKnowledgeBaseStore`](../sdk/memory/bedrock-knowledge-base.md) | Memory store |
 | [`rss`](#rss) | None: parse feeds with `feedparser` | No replacement |
 | [`search_video`](#chat_video-and-search_video) | [TwelveLabs MCP servers](https://docs.twelvelabs.io/docs/advanced/model-context-protocol) | MCP server |
-| [`shell`](#shell) | [`strands.vended_tools.shell`](vended-tools/shell.md) | Vended tool |
+| [`shell`](#shell) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md) | Vended tool |
 | [`slack`](#slack) | [Slack MCP server](https://docs.slack.dev/ai/mcp-server/); `slack_bolt` for Socket Mode | MCP server |
-| [`sleep`](#sleep) | [`strands.vended_tools.sleep`](vended-tools/sleep.md) | Vended tool |
+| [`sleep`](#sleep) | [`strands.vended_tools.sleep`](../sdk/tools/vended-tools/sleep.md) | Vended tool |
 | [`speak`](#speak) | None: call Amazon Polly's `synthesize_speech` directly | No replacement |
-| [`stop`](#stop) | [`strands.vended_tools.stop`](vended-tools/stop.md) | Vended tool |
-| [`swarm`](#swarm) | [`strands.vended_tools.swarm`](vended-tools/swarm.md) | Vended tool |
+| [`stop`](#stop) | [`strands.vended_tools.stop`](../sdk/tools/vended-tools/stop.md) | Vended tool |
+| [`swarm`](#swarm) | [`strands.vended_tools.swarm`](../sdk/tools/vended-tools/swarm.md) | Vended tool |
 | [`tavily`](#tavily) (`tavily_search`, `tavily_extract`, `tavily_crawl`, `tavily_map`) | [Tavily MCP server](https://docs.tavily.com/documentation/mcp) | MCP server |
-| [`think`](#think) | Model [reasoning](../model-providers/amazon-bedrock.md#reasoning-support) configuration | SDK feature |
-| [`use_agent`](#use_agent-and-use_llm) | [`strands.vended_tools.subagent`](vended-tools/subagent.md) | Vended tool |
+| [`think`](#think) | Model [reasoning](../sdk/model-providers/amazon-bedrock.md#reasoning-support) configuration | SDK feature |
+| [`use_agent`](#use_agent-and-use_llm) | [`strands.vended_tools.subagent`](../sdk/tools/vended-tools/subagent.md) | Vended tool |
 | [`use_aws`](#use_aws) | [AWS MCP Server](https://docs.aws.amazon.com/agent-toolkit/latest/userguide/mcp-server.html) | MCP server |
 | [`use_computer`](#use_computer) | None: drive `pyautogui` and `pytesseract` directly | No replacement |
-| [`use_llm`](#use_agent-and-use_llm) | [`strands.vended_tools.subagent`](vended-tools/subagent.md) | Vended tool |
-| [`workflow`](#workflow) | [`strands.vended_tools.graph`](vended-tools/graph.md) | Vended tool |
+| [`use_llm`](#use_agent-and-use_llm) | [`strands.vended_tools.subagent`](../sdk/tools/vended-tools/subagent.md) | Vended tool |
+| [`workflow`](#workflow) | [`strands.vended_tools.graph`](../sdk/tools/vended-tools/graph.md) | Vended tool |
 
 ## Vended Tools
 
@@ -144,7 +147,7 @@ agent = Agent(tools=[exa])
 ```
 
 Tool names, parameters, and auth differ from the old wrappers, so follow each
-vendor's setup guide. See [MCP tools](mcp-tools.md) for transports and tool
+vendor's setup guide. See [MCP tools](../sdk/tools/mcp-tools.md) for transports and tool
 filtering.
 
 ## Memory Stores
@@ -174,8 +177,8 @@ store = BedrockKnowledgeBaseStore(
 agent = Agent(memory_manager=MemoryManager(stores=[store]))
 ```
 
-You can also [write your own store](../memory/managing-memory.md#custom-stores). See
-[Long-term memory](../memory/overview.md) for search and add tools, injection, and
+You can also [write your own store](../sdk/memory/managing-memory.md#custom-stores). See
+[Long-term memory](../sdk/memory/overview.md) for search and add tools, injection, and
 extraction.
 
 ## Behavior differences
@@ -194,7 +197,7 @@ from `httpx_client_args` and the webhook arguments into a per-endpoint
 **`strands_tools.agent_core_memory.AgentCoreMemoryToolProvider` → `MemoryManager`
 with `AgentCoreMemoryStore` from `bedrock-agentcore`**: run
 `pip install "bedrock-agentcore[strands-agents]>=1.21.0"`, then see the
-[AgentCore memory store](../../../integrations/memory-stores/agentcore-memory-store.md).
+[AgentCore memory store](../../integrations/memory-stores/agentcore-memory-store.md).
 `retrieve` becomes `search_memory`. There is no `record` tool: set
 `writable=True, extraction=True` and AgentCore extracts memories from the
 conversation. For `list`, `get`, and `delete`, use `bedrock-agentcore`'s
@@ -212,7 +215,7 @@ topologies fit the `swarm` tool better.
 ### `batch`
 
 **`strands_tools.batch` → none needed**: drop it. The
-[concurrent tool executor](executors.md) runs tool calls concurrently by default
+[concurrent tool executor](../sdk/tools/executors.md) runs tool calls concurrently by default
 and keeps tracing, metrics, and hooks intact.
 
 ### `bright_data`
@@ -265,7 +268,7 @@ that outlive the host, use Amazon EventBridge Scheduler.
 ### `current_time`
 
 **`strands_tools.current_time` → `ContextInjector`**: with
-[context injection](../plugins/context-injector.md) the date is always fresh and
+[context injection](../sdk/plugins/context-injector.md) the date is always fresh and
 the model cannot forget to ask. Your code now picks the timezone. If the model
 must choose one per call, use the official
 [MCP `time` server](https://github.com/modelcontextprotocol/servers/tree/main/src/time).
@@ -285,14 +288,14 @@ old string to be unique in the file, whereas `str_replace` replaced every occurr
 `pattern_replace`, `find_line`, and `undo_edit` commands have no equivalent. Directory
 views move to `shell`. There is no confirmation prompt, so `BYPASS_TOOL_CONSENT` no
 longer applies: to approve calls, raise an interrupt from a `BeforeToolCallEvent` hook
-([Interrupts](../interrupts.md#hooks)). Without a configured sandbox, they run on the
+([Interrupts](../sdk/interrupts.md#hooks)). Without a configured sandbox, they run on the
 host; pass `DockerSandbox` for isolation.
 
 ### `elasticsearch_memory`
 
 **`strands_tools.elasticsearch_memory` (and `ElasticsearchMemoryTool`) →
 `MemoryManager` with a custom `MemoryStore`**: no store ships for Elasticsearch,
-but a [custom store](../memory/managing-memory.md#custom-stores) needs only
+but a [custom store](../sdk/memory/managing-memory.md#custom-stores) needs only
 `search` (a k-NN query) and `add` (index a document) over
 [`elasticsearch-py`](https://www.elastic.co/docs/reference/elasticsearch/clients/python).
 `retrieve` becomes `search_memory` and `record` becomes `add_memory`, with
@@ -330,7 +333,7 @@ as numbered text. The `find`, `search`, `stats`, `preview`, `chunk`, `diff`, and
 **`strands_tools.file_write` → `strands.vended_tools.write`**: writes through the
 agent's sandbox and takes absolute paths only, with no preview. There is no confirmation
 prompt, so `BYPASS_TOOL_CONSENT` no longer applies: to approve calls, raise an interrupt
-from a `BeforeToolCallEvent` hook ([Interrupts](../interrupts.md#hooks)). Without a
+from a `BeforeToolCallEvent` hook ([Interrupts](../sdk/interrupts.md#hooks)). Without a
 configured sandbox, it runs on the host; pass `DockerSandbox` for isolation.
 
 ### `generate_image`
@@ -364,7 +367,7 @@ sets node, edge, and timeout limits.
 raises an interrupt instead of prompting on the console. The agent stops with
 `stop_reason == "interrupt"`, and your code resumes it with the user's reply.
 There is no `breakout_of_loop`: every call pauses the agent. See
-[Interrupts](../agents/interventions/human-in-the-loop.md).
+[Interrupts](../sdk/agents/interventions/human-in-the-loop.md).
 
 ### `http_request`
 
@@ -381,10 +384,10 @@ as markdown (the old `convert_to_markdown=True`), build it with
 ### `image_reader`
 
 **`strands_tools.image_reader` → image content blocks**: pass the image in the
-[prompt](../agents/prompts.md#multi-modal-prompting), e.g.
+[prompt](../sdk/agents/prompts.md#multi-modal-prompting), e.g.
 `agent([{"text": "..."}, {"image": {"format": "png", "source": {"bytes": data}}}])`.
 The model can no longer load images by path mid-run. If it needs to, return the
-same image block from a [custom tool](custom-tools.md).
+same image block from a [custom tool](../sdk/tools/custom-tools.md).
 
 ### `journal`
 
@@ -422,7 +425,7 @@ See the
 ### `memory` and `retrieve`
 
 **`strands_tools.memory` and `strands_tools.retrieve` → `MemoryManager` with
-`BedrockKnowledgeBaseStore`**: [memory stores](../memory/bedrock-knowledge-base.md)
+`BedrockKnowledgeBaseStore`**: [memory stores](../sdk/memory/bedrock-knowledge-base.md)
 inject context automatically. `retrieve` becomes `search_memory` and `store`
 becomes `add_memory`, with `writable=True` (plus the data source) on the store and
 `add_tool_config=True` on the memory manager. The store is read-only by default,
@@ -430,13 +433,13 @@ which matches `retrieve`. `list`, `get`, and `delete` are not part of the store
 protocol: write them as custom tools over the Amazon Bedrock Knowledge Bases API,
 or return them from `get_tools()` on a store subclass. To keep `retrieve`'s
 default `score >= 0.4` floor, set `min_score=0.4` on the store (see
-[Filtering by score](../memory/bedrock-knowledge-base.md#filtering-by-score)).
+[Filtering by score](../sdk/memory/bedrock-knowledge-base.md#filtering-by-score)).
 
 ### `mongodb_memory`
 
 **`strands_tools.mongodb_memory` (and `MongoDBMemoryTool`) → `MemoryManager` with a
 custom `MemoryStore`**: no store ships for MongoDB, but a
-[custom store](../memory/managing-memory.md#custom-stores) needs only `search` (a
+[custom store](../sdk/memory/managing-memory.md#custom-stores) needs only `search` (a
 `$vectorSearch` aggregation) and `add` (insert a document) over
 [`pymongo`](https://pymongo.readthedocs.io/).
 `retrieve` becomes `search_memory` and `record` becomes `add_memory`, with
@@ -455,7 +458,7 @@ Amazon Bedrock on September 30, 2026, so `nova_reels` no longer works.
 a fresh interpreter, so save intermediate results to files instead of variables. There
 is no confirmation prompt, so `BYPASS_TOOL_CONSENT` no longer applies: to approve calls,
 raise an interrupt from a `BeforeToolCallEvent` hook
-([Interrupts](../interrupts.md#hooks)). Without a configured sandbox, it runs on the
+([Interrupts](../sdk/interrupts.md#hooks)). Without a configured sandbox, it runs on the
 host; pass `DockerSandbox` for isolation. There is no PTY, stdin, or `reset_state`, and
 the `PYTHON_REPL_*` environment variables no longer apply.
 
@@ -471,7 +474,7 @@ sandbox, and every call starts a fresh shell. Variables and the working director
 carry over between calls. There is no PTY support and no batched parallel or sequential
 command execution. There is no confirmation prompt, so `BYPASS_TOOL_CONSENT` no longer
 applies: to approve calls, raise an interrupt from a `BeforeToolCallEvent` hook
-([Interrupts](../interrupts.md#hooks)). Without a configured sandbox, it runs on the
+([Interrupts](../sdk/interrupts.md#hooks)). Without a configured sandbox, it runs on the
 host; pass `DockerSandbox` for isolation.
 
 ### `slack`
@@ -493,7 +496,7 @@ applies.
 **`strands_tools.speak` → none**: call Amazon Polly's `synthesize_speech` (or
 macOS `say`) from a custom tool. If you want the agent itself to talk rather than
 read text aloud, `BidiAgent` from `strands.bidi` runs a live
-[voice](../bidi/index.md) session with a speech model. It does not read text
+[voice](../sdk/bidi/index.md) session with a speech model. It does not read text
 verbatim or save audio files.
 
 ### `stop`
@@ -529,7 +532,7 @@ from a custom tool.
 ### `think`
 
 **`strands_tools.think` → model reasoning**: configure
-[reasoning](../model-providers/amazon-bedrock.md#reasoning-support) once on the
+[reasoning](../sdk/model-providers/amazon-bedrock.md#reasoning-support) once on the
 model instead of prompting for it. It is single-pass: if you relied on
 `cycle_count` refinement or tool calls inside the reasoning loop, move that into
 your own orchestration. Configuration differs per model provider.
