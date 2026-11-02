@@ -33,9 +33,7 @@ import { Message, TextBlock, type ToolResultContent } from '../types/messages.js
 import { encodeBase64, ImageBlock, DocumentBlock, VideoBlock } from '../types/media.js'
 import {
   Model,
-  isFetchNetworkError,
   resolveCacheSection,
-  withRequestRetry,
   type BaseModelConfig,
   type CacheConfig,
   type CacheTTL,
@@ -51,7 +49,13 @@ import {
   ModelMessageStopEvent,
   ModelMetadataEvent,
 } from './streaming.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelThrottledError,
+  ModelNetworkError,
+  isFetchNetworkError,
+} from '../errors.js'
 import { toMimeType } from '../mime.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
@@ -96,15 +100,6 @@ export interface VercelModelConfig extends BaseModelConfig, LanguageModelCallSet
    * `ttl`; every other provider ignores it with a one-time warning.
    */
   cacheConfig?: CacheConfig
-
-  /**
-   * How many times to retry a model request that fails before any response arrives: a network error,
-   * or a response the provider marks retryable (408, 409, 5xx). Throttling (429) is left to the agent's
-   * `retryStrategy`. Set to `0` to disable.
-   *
-   * @defaultValue 2
-   */
-  maxRetries?: number
 }
 
 /**
@@ -182,7 +177,7 @@ export class VercelModel extends Model<VercelModelConfig> {
     const tools = options?.toolSpecs ? formatTools(options.toolSpecs) : undefined
     const toolChoice = options?.toolChoice ? formatToolChoice(options.toolChoice) : undefined
 
-    const { modelId: _, maxTokens, cacheConfig, modelInfo: _modelInfo, maxRetries, ...callSettings } = this._config
+    const { modelId: _, maxTokens, cacheConfig, modelInfo: _modelInfo, ...callSettings } = this._config
 
     const callOptions: LanguageModelV3CallOptions = {
       prompt,
@@ -196,11 +191,7 @@ export class VercelModel extends Model<VercelModelConfig> {
 
     let result
     try {
-      result = await withRequestRetry(() => this._provider.doStream(callOptions), {
-        maxRetries,
-        isRetryable: isTransientVercelError,
-        signal: options?.cancelSignal,
-      })
+      result = await this._provider.doStream(callOptions)
     } catch (error) {
       throw classifyError(error)
     }
@@ -560,20 +551,10 @@ function applyOpenAICache(callOptions: LanguageModelV3CallOptions, cacheConfig: 
 }
 
 /**
- * Whether a failed `doStream` call is worth retrying. In Node, ai-sdk wraps fetch failures as retryable
- * `APICallError`s; in browsers they surface as a raw `TypeError`. 429 is excluded so throttling reaches
- * the agent's retry strategy as a {@link ModelThrottledError} instead of being retried twice.
- */
-function isTransientVercelError(error: unknown): boolean {
-  if (isFetchNetworkError(error)) return true
-  return APICallError.isInstance(error) && error.isRetryable && error.statusCode !== 429
-}
-
-/**
  * Classifies an error from doStream into the appropriate Strands error type.
  *
  * @param error - The error thrown by the Vercel provider
- * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, or ModelError)
+ * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, ModelNetworkError, or ModelError)
  */
 function classifyError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error)
@@ -594,7 +575,20 @@ function classifyError(error: unknown): Error {
     return new ContextWindowOverflowError(message)
   }
 
+  if (isNetworkError(error)) {
+    return new ModelNetworkError(`Language model stream error: ${message}`, { cause: error })
+  }
+
   return new ModelError(`Language model stream error: ${message}`, { cause: error })
+}
+
+/**
+ * Whether a Vercel provider error is a network failure. In Node, ai-sdk wraps fetch failures as a
+ * retryable `APICallError` with no status code; in browsers they surface as a raw `TypeError`.
+ */
+function isNetworkError(error: unknown): boolean {
+  if (isFetchNetworkError(error)) return true
+  return APICallError.isInstance(error) && error.isRetryable && error.statusCode === undefined
 }
 
 /**

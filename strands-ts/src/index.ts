@@ -37,6 +37,7 @@ export {
   JsonValidationError,
   ConcurrentInvocationError,
   ModelThrottledError,
+  ModelNetworkError,
   ToolValidationError,
   StructuredOutputError,
   ToolNotFoundError,

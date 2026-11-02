@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import {
   Message,
   CachePointBlock,
@@ -551,6 +551,34 @@ describe('GoogleModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
     })
 
+    it('throws ModelNetworkError for a fetch network error', async () => {
+      const networkError = new TypeError('Failed to fetch')
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw networkError
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const error = await collectIterator(provider.stream(messages)).catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(ModelNetworkError)
+      expect(error).toMatchObject({ message: 'Failed to fetch', cause: networkError })
+    })
+
+    it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield { candidates: [{ content: { parts: [{ text: 'Hel' }] } }] }
+        throw new TypeError('network error')
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelNetworkError)
+    })
+
     it('rethrows unrecognized errors', async () => {
       const mockClient = {
         models: {
@@ -564,68 +592,6 @@ describe('GoogleModel', () => {
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Network error')
-    })
-
-    describe('transient request retry', () => {
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-      const stopStream = async function* (): AsyncGenerator<Record<string, unknown>> {
-        yield { candidates: [{ finishReason: 'STOP' }] }
-      }
-
-      beforeEach(() => {
-        vi.useFakeTimers()
-      })
-      afterEach(() => {
-        vi.useRealTimers()
-      })
-
-      it('retries generateContentStream after a fetch network failure and streams the response', async () => {
-        const expected = await collectIterator(
-          new GoogleModel({ client: createMockClient(stopStream) }).stream(messages)
-        )
-        const client = createMockClient(stopStream)
-        vi.mocked(client.models.generateContentStream).mockRejectedValueOnce(new TypeError('Failed to fetch'))
-        const provider = new GoogleModel({ client })
-
-        const pending = collectIterator(provider.stream(messages))
-        await vi.runAllTimersAsync()
-
-        expect(await pending).toEqual(expected)
-        expect(client.models.generateContentStream).toHaveBeenCalledTimes(2)
-      })
-
-      it.each([
-        ['RESOURCE_EXHAUSTED', 'Quota exceeded for the model', ModelThrottledError],
-        ['INVALID_ARGUMENT', 'Request exceeds the maximum number of tokens allowed', ContextWindowOverflowError],
-      ])('does not retry a %s API error and still classifies it', async (status, message, expectedError) => {
-        const client = createMockClient(stopStream)
-        vi.mocked(client.models.generateContentStream).mockRejectedValue(
-          new Error(JSON.stringify({ error: { status, message } }))
-        )
-        const provider = new GoogleModel({ client })
-
-        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(expectedError)
-        expect(client.models.generateContentStream).toHaveBeenCalledTimes(1)
-      })
-
-      it('makes a single attempt when maxRetries is 0', async () => {
-        const networkError = new TypeError('Failed to fetch')
-        const client = createMockClient(stopStream)
-        vi.mocked(client.models.generateContentStream).mockRejectedValue(networkError)
-        const provider = new GoogleModel({ client, maxRetries: 0 })
-
-        await expect(collectIterator(provider.stream(messages))).rejects.toBe(networkError)
-        expect(client.models.generateContentStream).toHaveBeenCalledTimes(1)
-      })
-
-      it('does not send maxRetries in the request', async () => {
-        const { client, captured } = createMockClientWithCapture()
-        const provider = new GoogleModel({ client, maxRetries: 1 })
-
-        await collectIterator(provider.stream(messages))
-
-        expect(captured.config).not.toHaveProperty('maxRetries')
-      })
     })
   })
 

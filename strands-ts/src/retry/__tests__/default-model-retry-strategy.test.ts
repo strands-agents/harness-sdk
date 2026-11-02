@@ -7,7 +7,7 @@ import { ModelRetryStrategy } from '../model-retry-strategy.js'
 import type { RetryDecision } from '../retry-strategy.js'
 import { ConstantBackoff, type BackoffStrategy } from '../backoff-strategy.js'
 import { AfterModelCallEvent } from '../../hooks/events.js'
-import { ModelThrottledError } from '../../errors.js'
+import { ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import { createMockAgent, invokeTrackedHook, type MockAgent } from '../../__fixtures__/agent-helpers.js'
 
 function makeErrorEvent(agent: MockAgent, error: Error, attemptCount: number): AfterModelCallEvent {
@@ -59,6 +59,22 @@ describe('DefaultModelRetryStrategy', () => {
 
     await vi.advanceTimersByTimeAsync(1)
     await pending
+    expect(event.retry).toBe(true)
+  })
+
+  it('sets retry=true on ModelNetworkError', async () => {
+    const strategy = new DefaultModelRetryStrategy({
+      maxAttempts: 3,
+      backoff: new ConstantBackoff({ delayMs: 500 }),
+    })
+    const agent = createMockAgent()
+    strategy.initAgent(agent)
+
+    const event = makeErrorEvent(agent, new ModelNetworkError('connection dropped'), 1)
+    const pending = invokeTrackedHook(agent, event)
+    await vi.advanceTimersByTimeAsync(500)
+    await pending
+
     expect(event.retry).toBe(true)
   })
 
