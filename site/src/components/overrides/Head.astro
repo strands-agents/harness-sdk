@@ -7,7 +7,7 @@
 import { getCollection } from 'astro:content'
 import SiteScripts from '../SiteScripts.astro'
 import Analytics from '../Analytics.astro'
-import { baseSchemas, buildBreadcrumbItems } from '../../util/structured-data'
+import { baseSchemas, buildBreadcrumbItems, serializeJsonLd } from '../../util/structured-data'
 import { getDocsIds, getSampleGuideRouteIds } from '../../util/docs-ids'
 import { relatedUserGuideFor } from '../../util/related-docs'
 import { resolveLanguage, sourceLinkUrl } from '../../util/source-links'
@@ -103,7 +103,7 @@ const structuredData = {
 <Analytics />
 
 <!-- Structured Data -->
-<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+<script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
 
 <!-- Embed mode: with `?embed` in the URL the page renders chromeless (no site
      header/sidebar/TOC/footers) for the /integrations docs drawer iframe. The
