@@ -223,7 +223,9 @@ class BedrockModel(Model):
         """Configuration options for Bedrock models.
 
         Attributes:
-            additional_args: Any additional arguments to include in the request
+            additional_args: Any additional arguments to include in the request. Spread over the built request;
+                an ``inferenceConfig`` here is merged per key over the one built from the typed options, so it
+                extends the default ``maxTokens`` rather than replacing it.
             additional_request_fields: Additional fields to include in the Bedrock request
             additional_response_field_paths: Additional response field paths to extract
             cache_prompt: Cache point type for the system prompt (deprecated, use cache_config)
@@ -471,6 +473,18 @@ class BedrockModel(Model):
         if self._tool_result_turn_separation_model_id == self.config["model_id"]:
             formatted_messages = self._separate_tool_result_turns(formatted_messages)
 
+        additional_args = self.config.get("additional_args") or {}
+        inference_config = {
+            key: value
+            for key, value in [
+                ("maxTokens", self.get_config().get("max_tokens")),
+                ("temperature", self.config.get("temperature")),
+                ("topP", self.config.get("top_p")),
+                ("stopSequences", self.config.get("stop_sequences")),
+            ]
+            if value is not None
+        }
+
         return {
             "modelId": self.config["model_id"],
             "messages": formatted_messages,
@@ -525,21 +539,8 @@ class BedrockModel(Model):
                 if self.config.get("guardrail_id") and self.config.get("guardrail_version")
                 else {}
             ),
-            "inferenceConfig": {
-                key: value
-                for key, value in [
-                    ("maxTokens", self.get_config().get("max_tokens")),
-                    ("temperature", self.config.get("temperature")),
-                    ("topP", self.config.get("top_p")),
-                    ("stopSequences", self.config.get("stop_sequences")),
-                ]
-                if value is not None
-            },
-            **(
-                self.config["additional_args"]
-                if "additional_args" in self.config and self.config["additional_args"] is not None
-                else {}
-            ),
+            "inferenceConfig": {**inference_config, **(additional_args.get("inferenceConfig") or {})},
+            **{key: value for key, value in additional_args.items() if key != "inferenceConfig"},
         }
 
     def _get_additional_request_fields(self, tool_choice: ToolChoice | None) -> dict[str, Any]:
