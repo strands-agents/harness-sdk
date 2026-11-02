@@ -67,10 +67,10 @@ Example Usage:
     ```python
     from strands import Agent
     from strands.vended_tools import (
-        edit, graph, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch
+        edit, graph, handoff_to_user, http_request, notebook, read, shell, sleep, stop, web_fetch
     )
 
-    agent = Agent(tools=[edit, graph, handoff_to_user, http_request, notebook, shell, sleep, stop, web_fetch])
+    agent = Agent(tools=[edit, graph, handoff_to_user, http_request, notebook, read, shell, sleep, stop, web_fetch])
     ```
 """
 
@@ -86,6 +86,7 @@ from .http_request import http_request, make_http_request
 from .mcp_router import make_mcp_router
 from .notebook import make_notebook, notebook
 from .python_repl import make_python_repl, python_repl
+from .read import make_read, read
 from .shell import make_shell, shell
 from .sleep import make_sleep, sleep
 from .stop import make_stop, stop
@@ -138,6 +139,7 @@ __all__ = [
     "make_mcp_router",
     "make_notebook",
     "make_python_repl",
+    "make_read",
     "make_shell",
     "make_sleep",
     "make_stop",
@@ -146,6 +148,7 @@ __all__ = [
     "make_write",
     "notebook",
     "python_repl",
+    "read",
     "shell",
     "sleep",
     "stop",

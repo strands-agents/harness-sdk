@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING, Any, cast
 from opentelemetry import trace as trace_api
 
 from ..agent import _continuation
-from ..agent.invocation_context import InvocationContext, _create_invocation_context, _invocation_context_kwargs
+from ..agent.invocation_context import (
+    InvocationContext,
+    _create_invocation_context,
+    _invocation_context_kwargs,
+    _reached_limit,
+)
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
@@ -286,6 +291,7 @@ async def event_loop_cycle(
                         yield model_event
 
                 stop_reason, message = stop_event.stop_reason, stop_event.message
+                _record_forced_tool_use_failure(structured_output_context, stop_reason, message, invocation_context)
                 yield ModelMessageEvent(message=message)
         except Exception as e:
             tracer.end_span_with_error(cycle_span, str(e), e)
@@ -347,38 +353,17 @@ async def event_loop_cycle(
             # End the cycle and return results
             agent.event_loop_metrics.end_cycle(cycle_start_time, cycle_trace, attributes)
 
-            # The forced retry may end in JSON text when the provider could not force the tool
-            if structured_output_context.force_attempted and stop_reason == "end_turn":
-                structured_output = structured_output_context.result_from_text(message)
-                yield StructuredOutputEvent(structured_output=structured_output)
-                tracer.end_event_loop_cycle_span(cycle_span, message)
-                yield EventLoopStopEvent(
-                    stop_reason,
-                    message,
-                    agent.event_loop_metrics,
-                    invocation_state["request_state"],
-                    structured_output=structured_output,
-                )
-                return
-
-            # Force structured output tool call if LLM didn't use it automatically
             if structured_output_context.is_enabled and stop_reason == "end_turn":
-                tool_spec = structured_output_context.get_tool_spec()
-                structured_output_context.set_forced_mode({"tool": {"name": tool_spec["name"]}} if tool_spec else None)
-                logger.debug("Forcing structured output tool")
-                await agent._append_messages(
-                    {"role": "user", "content": [{"text": structured_output_context.structured_output_prompt}]},
-                    invocation_context=invocation_context,
+                structured_output_events = _end_structured_output_turn(
+                    agent,
+                    message,
+                    cycle_span,
+                    tracer,
+                    invocation_state,
+                    structured_output_context,
+                    invocation_context,
                 )
-
-                tracer.end_event_loop_cycle_span(cycle_span, message)
-                events = recurse_event_loop(
-                    agent=agent,
-                    invocation_state=invocation_state,
-                    structured_output_context=structured_output_context,
-                    invocation_context=invocation_context,
-                )
-                async for typed_event in events:
+                async for typed_event in structured_output_events:
                     yield typed_event
                 return
 
@@ -401,6 +386,129 @@ async def event_loop_cycle(
             logger.error("exception=<%s> | event loop cycle failed", type(e).__name__)
             logger.debug("event loop cycle failed", exc_info=True)
             raise EventLoopException(e, invocation_state["request_state"]) from e
+
+
+async def _end_structured_output_turn(
+    agent: "Agent",
+    message: Message,
+    cycle_span: Any,
+    tracer: Tracer,
+    invocation_state: dict[str, Any],
+    structured_output_context: StructuredOutputContext,
+    invocation_context: InvocationContext,
+) -> AsyncGenerator[TypedEvent, None]:
+    """End a turn that finished without a tool call while structured output is requested.
+
+    Returns the forced retry's text as the structured output when it validates. Otherwise forces the
+    structured output tool and runs another cycle, unless a limit is reached: the call then stops
+    with the model's reply before the structured output prompt is added.
+    """
+    # The forced retry may end in JSON text when the provider could not force the tool
+    structured_output = _structured_output_from_forced_text(structured_output_context, message, invocation_context)
+    if structured_output is not None:
+        yield StructuredOutputEvent(structured_output=structured_output)
+        tracer.end_event_loop_cycle_span(cycle_span, message)
+        yield EventLoopStopEvent(
+            "end_turn",
+            message,
+            agent.event_loop_metrics,
+            invocation_state["request_state"],
+            structured_output=structured_output,
+        )
+        return
+
+    tracer.end_event_loop_cycle_span(cycle_span, message)
+    limit_stop_reason = _reached_limit(invocation_context)
+    if limit_stop_reason is not None:
+        yield EventLoopStopEvent(
+            limit_stop_reason, message, agent.event_loop_metrics, invocation_state["request_state"]
+        )
+        return
+
+    tool_spec = structured_output_context.get_tool_spec()
+    structured_output_context.set_forced_mode({"tool": {"name": tool_spec["name"]}} if tool_spec else None)
+    logger.debug("Forcing structured output tool")
+    await agent._append_messages(
+        {"role": "user", "content": [{"text": structured_output_context.structured_output_prompt}]},
+        invocation_context=invocation_context,
+    )
+    events = recurse_event_loop(
+        agent=agent,
+        invocation_state=invocation_state,
+        structured_output_context=structured_output_context,
+        invocation_context=invocation_context,
+    )
+    async for typed_event in events:
+        yield typed_event
+
+
+def _structured_output_from_forced_text(
+    structured_output_context: StructuredOutputContext,
+    message: Message,
+    invocation_context: InvocationContext,
+) -> "BaseModel | None":
+    """Validate the text that ended the forced retry as structured output.
+
+    Returns ``None`` when the turn was not the forced retry, or when the retry failed under a
+    ``structured_output_attempts`` limit; the failure is then counted toward that limit.
+
+    Raises:
+        StructuredOutputException: If the forced retry failed and no ``structured_output_attempts``
+            limit applies.
+    """
+    if not structured_output_context.force_attempted:
+        return None
+    try:
+        return structured_output_context.result_from_text(message)
+    except StructuredOutputException:
+        if not invocation_context._has_limit("structured_output_attempts"):
+            raise
+        invocation_context._record_structured_output_failure()
+        logger.debug("structured output retry failed | counted toward the structured output attempt limit")
+        return None
+
+
+def _record_forced_tool_use_failure(
+    structured_output_context: StructuredOutputContext,
+    stop_reason: StopReason,
+    message: Message,
+    invocation_context: InvocationContext,
+) -> None:
+    """Count a failed structured output attempt for a forced model response that calls only other tools.
+
+    Counted when the response arrives, so an interrupt or checkpoint before its tools run can't
+    lose the count.
+    """
+    tool_uses = [content["toolUse"] for content in message["content"] if "toolUse" in content]
+    if (
+        structured_output_context.forced_mode
+        and stop_reason == "tool_use"
+        and not structured_output_context.has_structured_output_tool(tool_uses)
+    ):
+        invocation_context._record_structured_output_failure()
+
+
+def _record_structured_output_tool_failure(
+    structured_output_context: StructuredOutputContext,
+    message: Message,
+    tool_results: list[ToolResult],
+    invocation_context: InvocationContext,
+) -> None:
+    """Count a failed structured output attempt for a tool cycle whose structured output tool calls all failed.
+
+    Reads every result of the cycle, including results completed before an interrupt, so a call
+    that already produced structured output doesn't count.
+    """
+    output_tool_use_ids = {
+        content["toolUse"]["toolUseId"]
+        for content in message["content"]
+        if "toolUse" in content and structured_output_context.has_structured_output_tool([content["toolUse"]])
+    }
+    if output_tool_use_ids and not any(
+        tool_result["toolUseId"] in output_tool_use_ids and tool_result["status"] == "success"
+        for tool_result in tool_results
+    ):
+        invocation_context._record_structured_output_failure()
 
 
 def _resolve_cycle_invocation_context(
@@ -1019,6 +1127,7 @@ async def _handle_tool_execution(
     # Reset interrupt state if tools ran so the next cycle starts clean.
     if not agent._observe_cancellation():
         agent._interrupt_state.end_tool_cycle()
+        _record_structured_output_tool_failure(structured_output_context, message, tool_results, invocation_context)
     # Update stored results so replay filter skips already-executed tools on next resume.
     elif cancel_message is None:
         agent._interrupt_state.set_pending_tool_results(tool_results)

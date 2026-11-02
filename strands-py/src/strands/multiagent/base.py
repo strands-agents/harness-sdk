@@ -245,6 +245,12 @@ class MultiAgentBase(ABC):
         """Initialize base multi-agent state."""
         self._invocation_start_time = None
 
+    def _clear_interrupts(self) -> None:
+        """Drop pending interrupts so the next invocation starts fresh instead of expecting responses."""
+        interrupt_state = getattr(self, "_interrupt_state", None)
+        if interrupt_state is not None:
+            interrupt_state.deactivate()
+
     def _execution_time_with_active_interval(self, committed_time: int) -> int:
         """Committed execution time (ms) plus the active invocation's in-flight interval.
 

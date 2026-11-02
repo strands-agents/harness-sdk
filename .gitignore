@@ -80,3 +80,7 @@ bin/
 .superpowers/
 site/docs/superpowers/
 .agent
+
+# Copied from shared/model-info.json by each SDK's build (strands-ts prepare/prebuild, strands-py hatch_build.py)
+strands-ts/src/models/model-info.json
+strands-py/src/strands/models/model_info.json

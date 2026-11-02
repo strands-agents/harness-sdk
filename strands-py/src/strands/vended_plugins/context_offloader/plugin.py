@@ -150,6 +150,9 @@ _DEFAULT_PREVIEW_TOKENS = 1_000
 _CHARS_PER_TOKEN = 4
 """Approximate characters per token, fallback for preview slicing without tiktoken."""
 
+_PREVIEW_HEAD_SHARE = 0.6
+"""Fraction of the preview budget kept as head; mirrors the ContextManager truncate method."""
+
 
 class ShouldOffload(Protocol):
     """Callback protocol for deciding whether a tool result should be offloaded."""
@@ -331,6 +334,8 @@ class ContextOffloader(Plugin):
         if not self._include_retrieval_tool:
             # Remove the auto-discovered retrieval tool
             self._tools = [t for t in self._tools if t.tool_name != "retrieve_offloaded_content"]
+        # Between DEFAULT and SDK_LAST: hooks passed via ``hooks=`` (audit, DLP) see the full result first.
+        agent.add_hook(self._handle_tool_result, AfterToolCallEvent, order=70)
 
     @hook
     async def _on_before_model_call(self, event: BeforeModelCallEvent) -> None:
@@ -465,9 +470,11 @@ class ContextOffloader(Plugin):
 
         return content_bytes.decode("utf-8", errors="replace")
 
-    @hook
     async def _handle_tool_result(self, event: AfterToolCallEvent) -> None:
-        """Intercept oversized tool results, offload per-block, and replace with preview."""
+        """Intercept oversized tool results, offload per-block, and replace with preview.
+
+        Registered in ``init_agent`` with an order after ``HookOrder.DEFAULT``.
+        """
         if event.cancel_message is not None:
             return
 
@@ -662,12 +669,24 @@ class ContextOffloader(Plugin):
         logger.debug("reference=<%s>, cycle=<%d> | retrieve refreshed eviction cycle", reference, cycle)
 
     def _slice_preview(self, text: str) -> str:
-        """Slice text to approximately preview_tokens using character-based estimation.
+        """Build a head+tail preview of approximately preview_tokens using character-based estimation.
 
         Args:
             text: The full text to slice.
 
         Returns:
-            The preview text.
+            The preview text: the full text when it fits, otherwise the leading 60% and trailing 40% of the
+            budget around an elision marker so trailing notices (e.g. pagination hints) stay visible.
         """
-        return text[: self._preview_tokens * _CHARS_PER_TOKEN]
+        preview_chars = self._preview_tokens * _CHARS_PER_TOKEN
+        if len(text) <= preview_chars:
+            return text
+        if preview_chars == 0:
+            return ""
+        head_chars = int(preview_chars * _PREVIEW_HEAD_SHARE)
+        tail_chars = preview_chars - head_chars
+        head = text[:head_chars]
+        tail = text[-tail_chars:] if tail_chars > 0 else ""
+        marker = f"[... {len(text) - head_chars - tail_chars:,} chars elided ...]"
+        preview = "\n\n".join(part for part in (head, marker, tail) if part)
+        return preview if len(preview) < len(text) else text

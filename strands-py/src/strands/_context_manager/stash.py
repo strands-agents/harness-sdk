@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from ..storage.storage import _NAMESPACED, _NamespacedStorage
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STASH_PREFIX = "context"
+
+_STASH_REFS_SUFFIX = re.compile(r" \[refs?: [^\]]+\]$")
 
 
 class _BytesEncoder(json.JSONEncoder):
@@ -52,6 +55,12 @@ def _format_stash_refs(refs: list[str]) -> str:
     if len(refs) == 1:
         return f" [ref: {refs[0]}]"
     return f" [refs: {', '.join(refs)}]"
+
+
+def _is_offload_placeholder(block: object) -> bool:
+    """Whether a block's text ends with a ``_format_stash_refs`` token, marking it as an offload replacement."""
+    text = block.get("text") if isinstance(block, dict) else None
+    return isinstance(text, str) and _STASH_REFS_SUFFIX.search(text) is not None
 
 
 def _resolve_stash_namespace(
@@ -107,6 +116,7 @@ class Stash:
     ) -> None:
         """Eagerly persist all stashable blocks from a message.
 
+        Offload placeholders are never stored: their keys belong to the originals they replaced.
         With ``keep_existing``, entries already stored under a block's key are left untouched.
         """
         for block_index, block in enumerate(message["content"]):
@@ -114,8 +124,12 @@ class Stash:
                 tool_result = block["toolResult"]
                 if skip_tool_use_ids and tool_result["toolUseId"] in skip_tool_use_ids:
                     continue
+                if any(_is_offload_placeholder(item) for item in tool_result["content"]):
+                    continue
                 await self._store_tool_result(block, keep_existing=keep_existing)
             elif "toolUse" in block or "reasoningContent" in block or "cachePoint" in block:
+                continue
+            elif _is_offload_placeholder(block):
                 continue
             else:
                 try:

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveLanguage, languageLabel, sourceLinkUrl } from '../src/util/source-links'
+import { languageCodeForLabel, resolveLanguage, languageLabel, sourceLinkUrl } from '../src/util/source-links'
 
 describe('resolveLanguage', () => {
   it('infers python from a .py extension', () => {
@@ -36,6 +36,17 @@ describe('languageLabel', () => {
 
   it('capitalizes unknown codes as a fallback', () => {
     expect(languageLabel('rust')).toBe('Rust')
+  })
+})
+
+describe('languageCodeForLabel', () => {
+  it('maps known display labels back to their canonical code', () => {
+    expect(languageCodeForLabel('Python')).toBe('python')
+    expect(languageCodeForLabel('TypeScript')).toBe('typescript')
+  })
+
+  it('returns undefined for unknown labels', () => {
+    expect(languageCodeForLabel('Rust')).toBeUndefined()
   })
 })
 
