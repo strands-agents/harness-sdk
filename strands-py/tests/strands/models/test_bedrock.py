@@ -2785,6 +2785,8 @@ async def test_add_note_on_validation_exception_throughput(bedrock_client, model
         "too many total text bytes",
         "prompt is too long: 903884 tokens > 200000 maximum",
         "This model's maximum context length is 202752 tokens.",
+        # Nova wording (#5739)
+        "Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.",
     ],
 )
 @pytest.mark.asyncio
