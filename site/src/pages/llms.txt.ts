@@ -2,6 +2,8 @@ import type { APIRoute } from 'astro'
 import type { CollectionEntry } from 'astro:content'
 import { getCollection } from 'astro:content'
 import { getBase, getSiteOrigin } from '@util/links'
+import { sortSampleGuides } from '@util/sample-guides'
+import { languageLabel } from '@util/source-links'
 import { getReleases, releaseSlug, type ChangelogRelease } from '@util/changelog'
 import { streamLabel } from '../config/changelog'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
@@ -55,6 +57,7 @@ function extractLinks(
 function buildLlmsTxt(
   docs: CollectionEntry<'docs'>[],
   sidebar: StarlightSidebarItem[],
+  sampleGuides: CollectionEntry<'sampleGuides'>[],
   blogPosts: CollectionEntry<'blog'>[],
   releases: ChangelogRelease[]
 ): string {
@@ -114,6 +117,16 @@ function buildLlmsTxt(
     lines.push('')
   }
 
+  if (sampleGuides.length > 0) {
+    lines.push(`## Examples`)
+    lines.push('')
+    for (const guide of sortSampleGuides(sampleGuides)) {
+      const url = `${base}/examples/${guide.data.slug}/index.md`
+      lines.push(linkLine(`${guide.data.title} (${languageLabel(guide.data.language)})`, url, guide.data.description))
+    }
+    lines.push('')
+  }
+
   // Blog posts - sorted by date descending
   if (blogPosts.length > 0) {
     const sorted = [...blogPosts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
@@ -156,9 +169,10 @@ export const GET: APIRoute = async () => {
   const docs = await getCollection('docs', ({ data }) => !data.draft)
   const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
+  const sampleGuides = await getCollection('sampleGuides')
   const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
   const releases = await getReleases()
-  const content = buildLlmsTxt(docs, sidebar, blogPosts, releases)
+  const content = buildLlmsTxt(docs, sidebar, sampleGuides, blogPosts, releases)
 
   return new Response(content, {
     headers: {

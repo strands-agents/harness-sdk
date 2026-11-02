@@ -9,7 +9,7 @@ interface Props {
 }
 
 const { guide, guides } = Astro.props
-const sidebar = buildSampleGuideSidebar(guides)
+const sidebar = buildSampleGuideSidebar(guides, guide.data.language)
 const { Content, headings } = await render(guide)
 ---
 
@@ -22,7 +22,6 @@ const { Content, headings } = await render(guide)
   headings={headings}
   sidebar={sidebar}
 >
-  <p>{guide.data.description}</p>
   <p class="sample-guide__source">
     <a href={guide.data.sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
   </p>

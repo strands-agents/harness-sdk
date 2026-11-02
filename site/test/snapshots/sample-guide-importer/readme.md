@@ -1,6 +1,6 @@
 ---
 title: "README guide"
-description: "README fixture"
+description: "Build a TypeScript sample guide from README content while preserving links, images, code blocks, task lists, and repository source references."
 slug: "typescript/readme"
 language: "typescript"
 category: "learn"

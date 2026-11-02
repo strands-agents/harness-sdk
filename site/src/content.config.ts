@@ -266,13 +266,22 @@ const sampleGuideSchema = z
     title: z.string(),
     description: z.string(),
     slug: z.string(),
-    language: z.string(),
+    language: z.enum(ALL_SDK_LANGUAGES),
     category: z.string(),
     categoryLabel: z.string(),
     sourceUrl: z.string().url(),
     order: z.number().int().nonnegative(),
   })
   .strict()
+  .superRefine((guide, context) => {
+    if (!guide.slug.startsWith(`${guide.language}/`)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['slug'],
+        message: `slug must begin with the guide language "${guide.language}/"`,
+      })
+    }
+  })
 
 export const collections = {
   authors: defineCollection({
