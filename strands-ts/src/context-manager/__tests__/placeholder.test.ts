@@ -15,7 +15,7 @@ describe('offloadPlaceholder', () => {
     expect(offloadPlaceholder('drop', '[Dropped: 2 messages]', 'removed-abc', 2)).toStrictEqual(
       new TextBlock('[Dropped: 2 messages] [ref: removed-abc]', {
         metadata: {
-          offloaded: { method: 'drop', preview: '[Dropped: 2 messages]', ref: 'removed-abc', removedMessages: 2 },
+          offloaded: { method: 'drop', ref: 'removed-abc', removedMessages: 2 },
         },
       })
     )
@@ -23,7 +23,7 @@ describe('offloadPlaceholder', () => {
 
   it('leaves out the ref when the original was not stashed', () => {
     expect(offloadPlaceholder('drop', '[Dropped]', undefined)).toStrictEqual(
-      new TextBlock('[Dropped]', { metadata: { offloaded: { method: 'drop', preview: '[Dropped]' } } })
+      new TextBlock('[Dropped]', { metadata: { offloaded: { method: 'drop' } } })
     )
   })
 })

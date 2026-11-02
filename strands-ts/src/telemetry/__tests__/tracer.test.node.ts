@@ -203,7 +203,7 @@ describe('Tracer', () => {
             role: 'user',
             content: [
               new TextBlock('[Dropped] [ref: tu-1]', {
-                metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+                metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
               }),
             ],
           }),

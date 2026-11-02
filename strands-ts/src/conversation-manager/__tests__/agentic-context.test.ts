@@ -324,7 +324,7 @@ describe('pinContextTool', () => {
           role: 'user',
           content: [
             new TextBlock('[Dropped] [ref: m_0]', {
-              metadata: { offloaded: { method: 'drop', ref: 'm_0', preview: '[Dropped]' } },
+              metadata: { offloaded: { method: 'drop', ref: 'm_0' } },
             }),
           ],
         }),

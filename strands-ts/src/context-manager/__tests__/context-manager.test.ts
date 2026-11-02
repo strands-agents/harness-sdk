@@ -133,7 +133,6 @@ describe('ContextManager', () => {
                   offloaded: {
                     method: 'truncate',
                     ref: 'tu-1',
-                    preview: '[Truncated: 1 block, ~7,500 tokens] preview',
                   },
                 },
               }),

@@ -25,7 +25,6 @@ export function offloadPlaceholder(
 ): TextBlock {
   const offloaded = {
     method,
-    preview,
     ...(stashRef !== undefined && { ref: stashRef }),
     ...(removedMessages !== undefined && { removedMessages }),
   }

@@ -1926,7 +1926,7 @@ describe('Agent', () => {
           content: [
             new TextBlock(expect.any(String), {
               metadata: {
-                offloaded: { method: 'truncate', preview: expect.any(String), ref: 'tool-1' },
+                offloaded: { method: 'truncate', ref: 'tool-1' },
               },
             }),
           ],

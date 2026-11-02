@@ -157,7 +157,7 @@ describe('Stash', () => {
         role: 'user',
         content: [
           new TextBlock('[Dropped] [ref: track-0_0]', {
-            metadata: { offloaded: { method: 'drop', ref: 'track-0_0', preview: '[Dropped]' } },
+            metadata: { offloaded: { method: 'drop', ref: 'track-0_0' } },
           }),
           new ToolResultBlock({
             toolUseId: 'tu-1',
@@ -168,7 +168,6 @@ describe('Stash', () => {
                   offloaded: {
                     method: 'truncate',
                     ref: 'tu-1',
-                    preview: '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1',
                   },
                 },
               }),

@@ -641,7 +641,7 @@ describe('VercelModel', () => {
       it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
         const { collect, callArgs } = setupCaptureTest()
         const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
-          metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+          metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
         })
         await collect([
           new Message({ role: 'user', content: [placeholder] }),

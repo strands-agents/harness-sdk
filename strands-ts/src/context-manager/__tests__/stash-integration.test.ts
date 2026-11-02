@@ -115,8 +115,8 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       const placeholder = block.content[0] as TextBlock
-      const { preview } = placeholder.metadata!.offloaded!
-      expect(placeholder).toEqual(offloadPlaceholder('truncate', preview, 'tool-123'))
+      expect(placeholder.metadata).toEqual({ offloaded: { method: 'truncate', ref: 'tool-123' } })
+      expect(placeholder.text).toMatch(/ \[ref: tool-123\]$/)
     })
 
     it('never stores a seeded placeholder under the original key when a strategy acts on it', async () => {
@@ -158,7 +158,7 @@ describe('Offload strategies with stash', () => {
       expect(actedAgain).toBe(true)
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
         new TextBlock('[Dropped: ~32 tokens] [ref: tool-123]', {
-          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped: ~32 tokens]' } },
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123' } },
         }),
       ])
       expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
@@ -175,9 +175,8 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const placeholder = (messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock
-      expect((placeholder as TextBlock).metadata?.offloaded).toBeDefined()
-      expect(placeholder.metadata!.offloaded!.ref).toBeUndefined()
-      expect(placeholder.text).toBe(placeholder.metadata!.offloaded!.preview)
+      expect(placeholder.metadata).toEqual({ offloaded: { method: 'truncate' } })
+      expect(placeholder.text).not.toContain('[ref:')
     })
   })
 
@@ -214,7 +213,7 @@ describe('Offload strategies with stash', () => {
       const block = messages[0]!.content[0] as ToolResultBlock
       expect(block.content).toEqual([
         new TextBlock('[Dropped: ~5,000 tokens] [ref: tool-123]', {
-          metadata: { offloaded: { method: 'drop', ref: 'tool-123', preview: '[Dropped: ~5,000 tokens]' } },
+          metadata: { offloaded: { method: 'drop', ref: 'tool-123' } },
         }),
       ])
       expect((block.content[0] as TextBlock).text).toBe('[Dropped: ~5,000 tokens] [ref: tool-123]')
@@ -235,7 +234,7 @@ describe('Offload strategies with stash', () => {
       expect(acted).toBe(true)
       const marker = new TextBlock('[Dropped: 2 messages] [ref: removed-m1]', {
         metadata: {
-          offloaded: { method: 'drop', ref: 'removed-m1', preview: '[Dropped: 2 messages]', removedMessages: 2 },
+          offloaded: { method: 'drop', ref: 'removed-m1', removedMessages: 2 },
         },
       })
       expect(messages.map((message) => message.content)).toEqual([
@@ -267,7 +266,7 @@ describe('Offload strategies with stash', () => {
       expect(messages.at(-1)!.content).toEqual([
         new TextBlock('final'),
         new TextBlock('[Dropped: 2 messages]', {
-          metadata: { offloaded: { method: 'drop', preview: '[Dropped: 2 messages]', removedMessages: 2 } },
+          metadata: { offloaded: { method: 'drop', removedMessages: 2 } },
         }),
       ])
     })

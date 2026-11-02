@@ -164,7 +164,7 @@ describe('retrieval tool', () => {
         0,
         encodeJSON({
           text: '[Dropped] [ref: tool-1]',
-          metadata: { offloaded: { preview: '[Dropped]', ref: 'tool-1' } },
+          metadata: { offloaded: { ref: 'tool-1' } },
         })
       )
       const retrievalTool = createRetrievalTool(stash)

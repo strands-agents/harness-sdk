@@ -245,11 +245,6 @@ export interface OffloadedBlockData {
   method: OffloadMethod
 
   /**
-   * Text that stands in for the original in the context window.
-   */
-  preview: string
-
-  /**
    * Stash reference under which the original is retrievable; absent when it was not stashed.
    */
   ref?: string
@@ -267,8 +262,7 @@ export interface OffloadedBlockData {
  */
 export interface TextBlockMetadata {
   /**
-   * Present when the block stands in for content the context manager offloaded; `text` is then the
-   * preview followed by the reference token.
+   * Present when the block stands in for content the context manager offloaded.
    */
   offloaded?: OffloadedBlockData
 }

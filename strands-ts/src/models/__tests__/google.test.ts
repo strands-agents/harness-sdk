@@ -90,7 +90,7 @@ function formatBlock(block: ContentBlock, role: 'user' | 'assistant' = 'user'): 
 describe('offloaded blocks', () => {
   it('sends an offloaded block as the text the model receives, at top level and inside a tool result', () => {
     const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1', preview: '[Dropped]' } },
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
     })
 
     expect(formatBlock(placeholder)[0]!.parts).toEqual([{ text: '[Dropped] [ref: tu-1]' }])

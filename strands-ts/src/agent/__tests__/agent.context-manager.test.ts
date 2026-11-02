@@ -7,7 +7,6 @@ import { NullConversationManager } from '../../conversation-manager/null-convers
 import { ContextManager } from '../../context-manager/context-manager.js'
 import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
-import { offloadPlaceholder } from '../../context-manager/placeholder.js'
 import { tool } from '../../tools/tool-factory.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
@@ -170,7 +169,8 @@ describe('Agent contextManager', () => {
       await agent.invoke('list the rows')
 
       const stored = (agent.messages[2]!.content[0] as ToolResultBlock).content[0] as TextBlock
-      expect(stored).toEqual(offloadPlaceholder('truncate', stored.metadata!.offloaded!.preview, 'tu-1'))
+      expect(stored.metadata).toEqual({ offloaded: { method: 'truncate', ref: 'tu-1' } })
+      expect(stored.text).toMatch(/ \[ref: tu-1\]$/)
       const received = (sent.mock.calls[1]![0][2]!.content[0] as ToolResultBlock).content[0]
       expect(received).toBeInstanceOf(TextBlock)
       expect((received as TextBlock).text).toBe(stored.text)
