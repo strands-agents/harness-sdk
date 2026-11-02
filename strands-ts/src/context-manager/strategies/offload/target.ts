@@ -2,7 +2,14 @@
  * Offload targets: which blocks and messages a strategy acts on.
  */
 
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import {
+  CachePointBlock,
+  Message,
+  ReasoningBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 
@@ -41,6 +48,15 @@ const TOOL_PREFIX = 'tool::'
  */
 export function isMediaBlock(block: ContentBlock): block is MediaBlock {
   return mediaKind(block) !== undefined
+}
+
+/**
+ * Whether a block is protocol rather than content: tool uses, cache points, and reasoning are never stored or offloaded.
+ *
+ * @internal
+ */
+export function isProtocolBlock(block: ContentBlock): boolean {
+  return block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock
 }
 
 /**

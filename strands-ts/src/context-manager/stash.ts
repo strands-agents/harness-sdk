@@ -9,17 +9,11 @@
  */
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
-import {
-  isOffloaded,
-  Message,
-  ToolResultBlock,
-  ToolUseBlock,
-  CachePointBlock,
-  ReasoningBlock,
-} from '../types/messages.js'
+import { isOffloaded, Message, ToolResultBlock } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
+import { isProtocolBlock } from './strategies/offload/target.js'
 
 /** @internal */
 export const STASH_PREFIX = 'context'
@@ -30,15 +24,6 @@ function encode(value: unknown): Uint8Array {
 
 function decode(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(bytes))
-}
-
-/**
- * Whether a block is protocol rather than content: tool uses, cache points, and reasoning are never stored or offloaded.
- *
- * @internal
- */
-export function isProtocolBlock(block: ContentBlock): boolean {
-  return block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock
 }
 
 /**

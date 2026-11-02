@@ -11,13 +11,13 @@ import type { ContentBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import { isProtocolBlock, type Stash } from '../../stash.js'
+import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
-import { buildToolNameMap, isMediaBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
+import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
 
 /**
  * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
