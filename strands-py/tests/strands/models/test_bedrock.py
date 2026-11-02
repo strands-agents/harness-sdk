@@ -3053,6 +3053,30 @@ def test_explicit_boolean_values_preserved(bedrock_client):
     assert "status" in tool_result
 
 
+@pytest.mark.parametrize(
+    ("model_id", "exp_status_sent"),
+    [
+        ("us.anthropic.claude-sonnet-4-6", True),
+        ("us.amazon.nova-lite-v1:0", True),
+        ("us.meta.llama4-scout-17b-instruct-v1:0", False),
+        ("us.writer.palmyra-x5-v1:0", False),
+    ],
+)
+def test_format_request_auto_sends_status_only_to_models_that_support_it(bedrock_client, model_id, exp_status_sent):
+    """Guards https://github.com/strands-agents/harness-sdk/issues/5741: Nova supports the status field."""
+    model = BedrockModel(model_id=model_id)
+    messages = [
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "tool123", "status": "error", "content": [{"text": "boom"}]}}],
+        }
+    ]
+
+    tool_result = model.format_request(messages)["messages"][0]["content"][0]["toolResult"]
+
+    assert ("status" in tool_result) is exp_status_sent
+
+
 def test_format_request_filters_sdk_unknown_member_content_blocks(model, model_id, caplog):
     """Test that format_request filters out SDK_UNKNOWN_MEMBER content blocks."""
     messages = [
