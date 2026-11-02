@@ -1260,3 +1260,14 @@ async def test_structured_output_container_throttling_raises_model_throttled(end
 
     with pytest.raises(ModelThrottledException):
         await alist(model.structured_output(TestOutputModel, messages))
+
+
+@pytest.mark.asyncio
+async def test_structured_output_container_non_throttling_error_raises_value_error(endpoint_config, messages, alist):
+    class TestOutputModel(pydantic.BaseModel):
+        name: str
+
+    model = _model_with_container_error(endpoint_config, False, "invoke_endpoint", 400)
+
+    with pytest.raises(ValueError, match="SageMaker structured output error"):
+        await alist(model.structured_output(TestOutputModel, messages))
