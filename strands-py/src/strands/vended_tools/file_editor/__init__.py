@@ -1,11 +1,16 @@
 """Sandbox-routed file editor tool for viewing, creating, and editing files.
 
+.. deprecated::
+    ``file_editor`` is deprecated in favor of the focused ``read``, ``write``,
+    and ``edit`` vended tools. It will be removed in a future release.
+    Calling :func:`make_file_editor` emits a :class:`DeprecationWarning`.
+
 Supports view (with line ranges), create, str_replace, and insert operations.
 
 Example Usage:
     ```python
     from strands import Agent
-    from strands.vended_tools import file_editor
+    from strands.vended_tools import file_editor  # deprecated
 
     agent = Agent(tools=[file_editor])
     ```

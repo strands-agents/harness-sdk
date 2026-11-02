@@ -308,7 +308,7 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5/GPT-6 models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
             ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
@@ -360,7 +360,7 @@ def create_harness(
             used verbatim; ``False``/``None`` disables skills. Filesystem sources are read through the
             agent's sandbox when there is one. An ``AgentSkills`` in ``plugins`` wins.
         memory: File-backed long-term memory, on by default. When enabled, the agent distills durable
-            facts into markdown files, searches them before each turn, and folds the top matches into
+            facts into markdown files, searches them before each user turn, and folds the top matches into
             context; persistence is independent of any session, so memory survives across sessions.
             ``True`` (or ``{}``) uses a file store under ``./.agent/memory``; ``{"dir": ...}`` moves it;
             ``{"stores": [...]}`` swaps in your own store(s) under the harness's memory policy (injection on,

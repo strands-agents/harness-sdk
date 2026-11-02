@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 328" width="720" height="328">
+  <!-- Type: loop (two-station) feeding a judge. Story: an attack strategy trades turns with your agent until it decides to stop, then an LLM judge scores the whole conversation and tool trace for a breach. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="192" y="16" width="512" height="168" rx="8"/>
+  <text class="dg-eyebrow" x="208" y="40">ATTACK LOOP · EACH CASE × STRATEGY</text>
+  <text class="dg-note" x="688" y="168" text-anchor="end">The strategy decides when to stop</text>
+
+  <!-- Edges (drawn before nodes) -->
+  <path class="dg-edge" d="M168,96 H214" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M384,80 H502" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M504,112 H386" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M300,128 V230" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M392,272 H502" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="404" y="60" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="444" y="69" text-anchor="middle">ATTACK TURN</text>
+  <rect class="dg-mask is-on-zone" x="420" y="92" width="48" height="12" rx="2"/>
+  <text class="dg-label" x="444" y="101" text-anchor="middle">REPLY</text>
+  <text class="dg-label" x="308" y="204">CONVERSATION</text>
+  <text class="dg-label" x="308" y="218">+ TOOL TRACE</text>
+  <rect class="dg-mask" x="404" y="252" width="88" height="12" rx="2"/>
+  <text class="dg-label" x="448" y="261" text-anchor="middle">SCORE 0.0–1.0</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="64" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="92" y="93" text-anchor="middle">Adversarial case</text>
+  <text class="dg-code" x="92" y="111" text-anchor="middle">RedTeamCase</text>
+
+  <rect class="dg-node" x="216" y="64" width="168" height="64" rx="6"/>
+  <text class="dg-name" x="300" y="93" text-anchor="middle">Attack strategy</text>
+  <text class="dg-code" x="300" y="111" text-anchor="middle">AttackStrategy</text>
+
+  <rect class="dg-node" x="504" y="64" width="184" height="64" rx="6"/>
+  <text class="dg-name" x="596" y="93" text-anchor="middle">Your agent</text>
+  <text class="dg-code" x="596" y="111" text-anchor="middle">Agent | MultiAgentBase</text>
+
+  <rect class="dg-node is-focal" x="208" y="232" width="184" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="300" y="269" text-anchor="middle">LLM judge</text>
+  <text class="dg-code" x="300" y="287" text-anchor="middle">AttackSuccessEvaluator</text>
+
+  <rect class="dg-node" x="504" y="240" width="176" height="64" rx="6"/>
+  <text class="dg-name" x="592" y="269" text-anchor="middle">Breach report</text>
+  <text class="dg-code" x="592" y="287" text-anchor="middle">RedTeamReport</text>
+</svg>

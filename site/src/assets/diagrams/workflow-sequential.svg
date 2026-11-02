@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 152" width="720" height="152">
+  <!-- Type: pipeline (left to right). Story: your code calls each agent in turn and passes its output into the next agent's prompt. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="136" y="8" width="568" height="136" rx="8"/>
+  <text class="dg-eyebrow" x="152" y="30">YOUR CODE CALLS EACH AGENT IN TURN</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M120,88 H150" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M264,88 H350" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M464,88 H550" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="280" y="68" width="56" height="12" rx="2"/>
+  <text class="dg-label" x="308" y="77" text-anchor="middle">FINDINGS</text>
+  <rect class="dg-mask is-on-zone" x="480" y="68" width="56" height="12" rx="2"/>
+  <text class="dg-label" x="508" y="77" text-anchor="middle">INSIGHTS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="56" width="104" height="64" rx="6"/>
+  <text class="dg-name" x="68" y="93" text-anchor="middle">Topic</text>
+
+  <rect class="dg-node" x="152" y="56" width="112" height="64" rx="6"/>
+  <text class="dg-name" x="208" y="85" text-anchor="middle">Research</text>
+  <text class="dg-code" x="208" y="103" text-anchor="middle">researcher</text>
+
+  <rect class="dg-node" x="352" y="56" width="112" height="64" rx="6"/>
+  <text class="dg-name" x="408" y="85" text-anchor="middle">Analysis</text>
+  <text class="dg-code" x="408" y="103" text-anchor="middle">analyst</text>
+
+  <rect class="dg-node" x="552" y="56" width="136" height="64" rx="6"/>
+  <text class="dg-name" x="620" y="85" text-anchor="middle">Report writing</text>
+  <text class="dg-code" x="620" y="103" text-anchor="middle">writer</text>
+</svg>

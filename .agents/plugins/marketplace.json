@@ -1,0 +1,20 @@
+{
+  "name": "strands-agents",
+  "interface": {
+    "displayName": "Strands Agents"
+  },
+  "plugins": [
+    {
+      "name": "strands",
+      "source": {
+        "source": "local",
+        "path": "./.agents/skills/strands"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

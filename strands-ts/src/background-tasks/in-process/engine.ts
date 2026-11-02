@@ -258,6 +258,11 @@ export class InProcessTaskEngine {
 
     this._updateTask(taskId, (record) => {
       if (record.status !== 'working') return false
+      if (outcome.status === 'cancelled') {
+        record.status = 'cancelled'
+        delete record.state
+        return true
+      }
       if (outcome.status === 'failed') {
         record.status = 'failed'
         delete record.state

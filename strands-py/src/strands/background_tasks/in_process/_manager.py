@@ -10,10 +10,9 @@ import threading
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from strands._async import is_run_async_bridge
-from strands._middleware import MiddlewareInterruptResult
 from strands.background_tasks._errors import (
     BackgroundTaskNotFoundError,
     BackgroundTaskTimeoutError,
@@ -21,9 +20,13 @@ from strands.background_tasks._errors import (
 from strands.background_tasks._runtime import get_background_task_runtime
 from strands.background_tasks._types import BackgroundTask, BackgroundTaskInterrupt, is_task_status_terminal
 from strands.interrupt import Interrupt, InterruptException, _InterruptState
+from strands.middleware import MiddlewareInterruptResult
 from strands.types.agent import LocalAgent
 from strands.types.interrupt import InterruptResponse, InterruptResponseContent
 from strands.types.tools import AgentTool, ToolContext, ToolResult, ToolUse
+
+if TYPE_CHECKING:
+    from strands.agent.invocation_context import InvocationContext
 
 from ._engine import InProcessTaskEngine
 from ._types import (
@@ -53,6 +56,7 @@ class _LiveToolExecution:
     invocation_state: dict[str, Any]
     tool: AgentTool
     origin_loop: asyncio.AbstractEventLoop | None
+    invocation_context: InvocationContext | None = None
 
 
 class _BackgroundToolContext(ToolContext[LocalAgent]):
@@ -65,8 +69,9 @@ class _BackgroundToolContext(ToolContext[LocalAgent]):
         invocation_state: dict[str, Any],
         cancel_signal: threading.Event,
         interrupt_state: _InterruptState,
+        invocation_context: InvocationContext | None = None,
     ) -> None:
-        ToolContext.__init__(self, tool_use, agent, invocation_state)
+        ToolContext.__init__(self, tool_use, agent, invocation_state, invocation_context=invocation_context)
         self._task_id = task_id
         self.cancel_signal = cancel_signal
         self._task_interrupt_state = interrupt_state
@@ -119,8 +124,9 @@ class InProcessTaskManager:
         invocation_state: dict[str, Any],
         pass_id: str,
         tool: AgentTool,
+        invocation_context: InvocationContext | None = None,
     ) -> BackgroundTask:
-        """Submit one approved tool call."""
+        """Submit one approved tool call, capturing the request it belongs to."""
         origin_loop = None if is_run_async_bridge() else asyncio.get_running_loop()
 
         def submit() -> BackgroundTask:
@@ -137,6 +143,7 @@ class InProcessTaskManager:
                 invocation_state=invocation_state,
                 tool=tool,
                 origin_loop=origin_loop,
+                invocation_context=invocation_context,
             )
             record = self._engine.submit(
                 tool_use_id=tool_use["toolUseId"],
@@ -276,6 +283,7 @@ class InProcessTaskManager:
             invocation_state=execution.invocation_state,
             cancel_signal=context.cancel_signal,
             interrupt_state=interrupt_state,
+            invocation_context=execution.invocation_context,
         )
 
         def middleware_interrupt(

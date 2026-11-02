@@ -1,0 +1,22 @@
+{
+  "name": "decisions-example",
+  "private": true,
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "prepare": "npm ci --prefix ../../..",
+    "clean": "rm -rf dist node_modules package-lock.json",
+    "build": "tsc",
+    "start": "tsc && node dist/index.js"
+  },
+  "workspaces": [
+    "../../"
+  ],
+  "dependencies": {
+    "@strands-agents/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import copy
 from typing import TYPE_CHECKING, Any
 
 from ..types.exceptions import StorageError
-from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+from .storage import _NAMESPACED, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
     from .search.types import SearchStrategy
@@ -51,7 +52,9 @@ class S3Storage:
             boto_client_config: Botocore Config object for the S3 client.
             search_strategy: Optional search strategy. When set, ``write()``
                 automatically indexes entries and ``search()`` delegates to the
-                strategy instead of the default keyword scan.
+                strategy instead of the default keyword scan. Use
+                ``S3VectorSearchStrategy`` for natural-language search via S3
+                Vectors; ``delete()`` then removes the matching vector.
 
         Raises:
             StorageError: If both region_name and boto_session are provided.
@@ -60,13 +63,38 @@ class S3Storage:
             raise StorageError("Cannot specify both region_name and boto_session")
 
         self._bucket = bucket
-        normalized = _normalize_prefix(prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
         self._prefix = f"{normalized}/" if normalized else ""
         self._region_name = region_name
         self._boto_session = boto_session
         self._boto_client_config = boto_client_config
         self._search_strategy = search_strategy
         self._client: Any = None
+        # Set on instances returned by namespace(), so they share the root instance's client.
+        self._root: S3Storage | None = None
+
+    @property
+    def region_name(self) -> str | None:
+        """The configured region: ``region_name``, else the ``boto_session``'s region.
+
+        ``None`` when neither sets one and boto3's standard region resolution applies.
+        """
+        if self._region_name is not None:
+            return self._region_name
+        if self._boto_session is not None:
+            region: str | None = self._boto_session.region_name
+            return region
+        return None
+
+    @property
+    def boto_session(self) -> Any:
+        """The configured ``boto_session``, or ``None`` when none was given."""
+        return self._boto_session
+
+    @property
+    def prefix(self) -> str:
+        """The normalized key prefix (ending in ``/``), or ``""`` when none was configured."""
+        return self._prefix
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data as an S3 object.
@@ -76,7 +104,8 @@ class S3Storage:
             data: Raw bytes to persist.
 
         Raises:
-            StorageError: If the write fails.
+            StorageError: If the write fails, or the search strategy fails to index the value (the
+                object is stored in that case).
         """
         normalized = _normalize_key(key)
         client = self._get_client()
@@ -127,7 +156,8 @@ class S3Storage:
             key: The key to delete.
 
         Raises:
-            StorageError: If the delete fails.
+            StorageError: If the delete fails, or removing the vector fails (the object is deleted
+                in that case).
         """
         normalized = _normalize_key(key)
         client = self._get_client()
@@ -137,6 +167,15 @@ class S3Storage:
             await asyncio.to_thread(client.delete_object, Bucket=self._bucket, Key=object_key)
         except Exception as error:
             raise StorageError(f"Failed to delete '{key}' from S3") from error
+
+        if self._search_strategy is not None:
+            from .search.s3_vector import S3VectorSearchStrategy
+
+            if isinstance(self._search_strategy, S3VectorSearchStrategy):
+                try:
+                    await self._search_strategy.remove(self, normalized)
+                except Exception as error:
+                    raise StorageError(f"Deleted '{key}' but removing its search index entry failed") from error
 
     async def list(self, query: str = "") -> builtins.list[str]:
         """List S3 objects matching the given prefix.
@@ -200,27 +239,52 @@ class S3Storage:
 
         Returns:
             All matches with relevance scores, ranked best-first.
+
+        Raises:
+            StorageError: If the search strategy fails.
         """
         if self._search_strategy is not None:
-            return await self._search_strategy.search(self, query)
+            try:
+                return await self._search_strategy.search(self, query)
+            except Exception as error:
+                raise StorageError(f"Failed to search S3 bucket '{self._bucket}'") from error
 
         from .search.keyword import KeywordSearchStrategy
 
         return await KeywordSearchStrategy().search(self, query)
 
-    def namespace(self, prefix: str) -> _NamespacedStorage:
-        """Return a view of this storage with all keys prefixed.
+    def namespace(self, prefix: str) -> S3Storage:
+        """Return an ``S3Storage`` scoped to ``prefix`` within this storage's bucket and prefix.
+
+        The scoped instance shares this instance's S3 client and search strategy.
+        Unlike a generic ``_NamespacedStorage`` wrapper, its ``search()`` only
+        lists and reads objects under the prefix and scores keys without it,
+        rather than scanning the whole bucket.
+
+        The shared search strategy receives the scoped instance and keys relative
+        to the prefix. A strategy that keeps its own index must not key it by those
+        relative keys alone; see ``SearchStrategy.index``.
 
         Args:
             prefix: Prefix to prepend to all keys.
 
         Returns:
-            A namespaced storage view.
+            An ``S3Storage`` scoped to the prefix.
         """
-        return _NamespacedStorage(self, prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
+        # Copy this instance rather than constructing a new one, so a subclass's overrides and
+        # attributes carry over to the scoped instance. The shallow copy keeps the bucket, client
+        # settings and search strategy; its client always comes from _root.
+        scoped = copy.copy(self)
+        scoped._prefix = f"{self._prefix}{normalized}/" if normalized else self._prefix
+        scoped._root = self._root or self
+        scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return scoped
 
     def _get_client(self) -> Any:
         """Lazily create and cache the S3 client."""
+        if self._root is not None:
+            return self._root._get_client()
         if self._client is not None:
             return self._client
 

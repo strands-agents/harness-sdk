@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Protocol, TypeVar, cast
@@ -26,7 +27,7 @@ from ._defaults import resolve_config_metadata
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
-from ._validation import _has_location_source, validate_config_keys
+from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -403,26 +404,26 @@ class OpenAIModel(Model):
             List of formatted messages.
         """
         formatted_messages = []
+        skipped: Counter[str] = Counter()
 
         for message in messages:
             contents = message["content"]
 
-            # Check for reasoningContent and warn user
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
-                )
-
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
             for content in contents:
-                if any(block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent"]):
+                if "reasoningContent" in content:
+                    skipped[
+                        "reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
+                    ] += 1
+                    continue
+                if "toolResult" in content or "toolUse" in content:
                     continue
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by OpenAI | skipping content block")
+                    skipped["Location sources are not supported by OpenAI | skipping content block"] += 1
                     continue
                 if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by OpenAI | skipping")
+                    skipped["cachePoint content block is not supported by OpenAI | skipping"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -436,13 +437,6 @@ class OpenAIModel(Model):
                 if "toolResult" in content
             ]
 
-            formatted_message = {
-                "role": message["role"],
-                **({"content": formatted_contents} if formatted_contents else {}),
-                **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
-            }
-            formatted_messages.append(formatted_message)
-
             # Process tool messages to extract images into separate user messages
             # OpenAI API requires images to be in user role messages only
             # All tool messages must be grouped together before any user messages with images
@@ -454,6 +448,15 @@ class OpenAIModel(Model):
                     user_messages_with_images.append(user_msg_with_images)
             formatted_messages.extend(user_messages_with_images)
 
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_message = {
+                "role": message["role"],
+                **({"content": formatted_contents} if formatted_contents else {}),
+                **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
+            }
+            formatted_messages.append(formatted_message)
+
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     @classmethod
@@ -595,6 +598,8 @@ class OpenAIModel(Model):
                         return {"messageStop": {"stopReason": "tool_use"}}
                     case "length":
                         return {"messageStop": {"stopReason": "max_tokens"}}
+                    case "content_filter":
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 

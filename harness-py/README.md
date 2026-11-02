@@ -305,16 +305,15 @@ create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5
 ```
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
-model provider has its own search (OpenAI, Google, GPT-5/GPT-6 models on `bedrock-mantle` via
-Bedrock Web Search, and Anthropic in Python; TypeScript Anthropic support follows in a coming
-`@strands-agents/sdk` release) the harness turns that on and there is no extra service involved. Elsewhere (Amazon Bedrock
-Converse, other Mantle models, a `Model` instance) `web_search` is off by default with a logged
-warning, and naming it explicitly raises. To search there anyway, opt into Exa with
-`{"web_search": "exa"}`: the model gets a `web_search` tool backed by Exa's hosted search. It is
-keyless to start; `EXA_API_KEY` in the environment lifts the rate limit. `"exa"` is honoured on
-every model, so it also replaces the provider's own search where there is one. Bedrock Web Search
-also needs the `bedrock-websearch` IAM actions (in `AmazonBedrockFullAccess`); without them the
-request succeeds but each search fails.
+model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
+native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
+off by default. To enable web search for these providers, you can opt into Exa with
+`{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
+works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
+override a provider's native web search by adding `"exa"` explicitly to any model. If you are
+using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
+`AmazonBedrockFullAccess`) to avoid failing search.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -445,7 +444,11 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318  # where your collector
 
 Set headers, protocol, and the rest through the other `OTEL_EXPORTER_OTLP_*` variables. With
 `OTEL_TRACES_EXPORTER` unset, the harness touches telemetry not at all: no exporter, no cost. If your
-process already configures a tracer, the harness uses it. Disable with `OTEL_SDK_DISABLED=true`.
+process already installed a tracer provider (for example ADOT auto-instrumentation on AgentCore Runtime),
+or you named one in `OTEL_PYTHON_TRACER_PROVIDER`, the harness leaves it alone — `OTEL_TRACES_EXPORTER` is then
+that owner's to honor. The harness never changes propagators either way; pick them with the standard
+`OTEL_PROPAGATORS`.
+Disable with `OTEL_SDK_DISABLED=true`.
 
 ## Requiring approval for tool calls
 

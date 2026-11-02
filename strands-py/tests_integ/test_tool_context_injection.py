@@ -42,9 +42,9 @@ def _validate_tool_result_content(agent: Agent):
 def test_strands_context_integration_context_true():
     """Test ToolContext functionality with real agent interactions."""
 
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6")
     agent = Agent(model=model, tools=[good_story])
-    agent("using a tool, write a good story")
+    agent("using a tool, write a good story about a dragon")
 
     _validate_tool_result_content(agent)
 
@@ -53,7 +53,7 @@ def test_strands_context_integration_context_custom():
     """Test ToolContext functionality with real agent interactions."""
 
     agent = Agent(tools=[bad_story])
-    agent("using a tool, write a bad story")
+    agent("using a tool, write a bad story about a dragon")
 
     _validate_tool_result_content(agent)
 

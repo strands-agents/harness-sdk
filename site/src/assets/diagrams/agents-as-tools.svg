@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 308" width="720" height="308">
+  <!-- Type: architecture (hub fan-out). Story: the orchestrator calls specialist agents the same way it calls any tool, and answers the user. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="392" y="8" width="312" height="292" rx="8"/>
+  <text class="dg-eyebrow" x="408" y="30">TOOLS · EACH ONE WRAPS AN AGENT</text>
+
+  <!-- Edges: fanned from the orchestrator's right edge, r=8 elbows -->
+  <path class="dg-edge" d="M120,152 H166" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M168,176 H122" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M344,144 H372 Q380,144 380,136 V88 Q380,80 388,80 H414" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M344,164 H414" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M344,184 H372 Q380,184 380,192 V240 Q380,248 388,248 H414" marker-end="url(#arrow)"/>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="132" width="104" height="64" rx="6"/>
+  <text class="dg-name" x="68" y="169" text-anchor="middle">User</text>
+
+  <rect class="dg-node is-focal" x="168" y="124" width="176" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="256" y="153" text-anchor="middle">Orchestrator agent</text>
+  <text class="dg-sub" x="256" y="171" text-anchor="middle">calls specialists,</text>
+  <text class="dg-sub" x="256" y="187" text-anchor="middle">combines answers</text>
+
+  <rect class="dg-node" x="416" y="48" width="264" height="64" rx="6"/>
+  <text class="dg-name" x="548" y="77" text-anchor="middle">Research assistant</text>
+  <text class="dg-code" x="548" y="95" text-anchor="middle">research_assistant</text>
+
+  <rect class="dg-node" x="416" y="132" width="264" height="64" rx="6"/>
+  <text class="dg-name" x="548" y="161" text-anchor="middle">Product recommendations</text>
+  <text class="dg-code" x="548" y="179" text-anchor="middle">product_recommendation_assistant</text>
+
+  <rect class="dg-node" x="416" y="216" width="264" height="64" rx="6"/>
+  <text class="dg-name" x="548" y="245" text-anchor="middle">Trip planning</text>
+  <text class="dg-code" x="548" y="263" text-anchor="middle">trip_planning_assistant</text>
+</svg>

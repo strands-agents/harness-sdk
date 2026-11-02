@@ -27,6 +27,12 @@ export interface StreamProcessOptions {
   signal?: AbortSignal | undefined
   /** Custom error message when the spawned binary is not found (ENOENT). */
   enoentMessage?: string | undefined
+  /** Working directory for the child. */
+  cwd?: string | undefined
+  /** Environment for the child (replaces, not merges). */
+  env?: Record<string, string | undefined> | undefined
+  /** Written to the child's stdin, which is then closed. */
+  input?: string | undefined
 }
 
 /**
@@ -49,7 +55,15 @@ export async function* streamProcess(
   args: string[],
   options?: StreamProcessOptions
 ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
-  const proc = spawn(command, args)
+  const proc = spawn(command, args, {
+    ...(options?.cwd !== undefined && { cwd: options.cwd }),
+    ...(options?.env !== undefined && { env: options.env }),
+  })
+  if (options?.input !== undefined) {
+    // A missing binary surfaces through the 'error' event below; EPIPE here would only duplicate it.
+    proc.stdin?.on('error', () => {})
+    proc.stdin?.end(options.input)
+  }
   // Decode with a StringDecoder that holds partial multibyte bytes across chunk
   // boundaries, so a UTF-8 sequence split across two pipe reads is not decoded
   // as two invalid halves.

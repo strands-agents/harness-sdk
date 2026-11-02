@@ -157,9 +157,9 @@ def _validate_audio_config(config: AudioConfig) -> None:
     validate_config_keys(config["output"], AudioStreamConfig)
 
 
-def _merge_config(config: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+def _merge_config(config: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
     """Recursively merge configs without modifying either input."""
-    merged = copy.deepcopy(config)
+    merged = copy.deepcopy(dict(config))
     for key, value in overrides.items():
         if isinstance(value, dict):
             existing = merged.get(key)

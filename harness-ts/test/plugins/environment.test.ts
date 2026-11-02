@@ -1,4 +1,7 @@
 import type { ExecutionResult, FileInfo, LocalAgent, Plugin, Sandbox } from '@strands-agents/sdk'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { createHarness } from '../../src/agent.js'
@@ -76,7 +79,7 @@ describe('EnvironmentContext', () => {
     const sandbox = new FakeSandbox({ 'AGENTS.md': 'root agents doc' }, repoTree())
     const out = await renderEnvironment(fakeAgent(sandbox), {})
     expect(out).toContain('<environment>')
-    // Platform and cwd come from the sandbox probe (uname/pwd), not the host process.
+    // Platform and cwd come from the sandbox probe (uname/$PWD), not the host process.
     expect(out).toContain('Platform: Linux')
     expect(out).toContain('Date:')
     expect(out).toContain('Working directory: /work')
@@ -85,6 +88,24 @@ describe('EnvironmentContext', () => {
     expect(out).toContain('harness-py/README.md')
     expect(out).not.toContain('node_modules')
     expect(out).not.toContain('.git')
+  })
+
+  it('reports the real working directory from the local sandbox shell', async () => {
+    // PowerShell's `pwd` prints a Path/---- table; the probe must yield the directory itself in every
+    // shell the local sandbox may run (sh, Git Bash, PowerShell), whose path spellings differ.
+    const cwd = process.cwd()
+    const dir = mkdtempSync(join(tmpdir(), 'harness-env-cwd-'))
+    process.chdir(dir)
+    try {
+      const out = await renderEnvironment(await createHarness({ builtinPlugins: [] }), {})
+      const line = out.split(/\r?\n/).find((l) => l.startsWith('Working directory: '))
+      expect(line, out).toBeDefined()
+      const name = basename(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      expect(line, out).toMatch(new RegExp(`[\\\\/]${name}$`))
+    } finally {
+      process.chdir(cwd)
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('reaches nested AGENTS.md within the depth limit', async () => {

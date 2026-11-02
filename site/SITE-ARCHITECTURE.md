@@ -38,7 +38,16 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 **Pagination pruning for regular pages:** Starlight pre-computes prev/next links from the full sidebar before middleware runs. The middleware now prunes any links that fall outside the current nav section and overrides labels with actual page titles.
 
-### 3. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
+### 3. Generated Sample Guides (`scripts/samples/`, `src/pages/examples/`)
+
+The build imports the samples repository's `samples.json` catalog and guide content into `.build/samples/pages`.
+
+- Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
+- Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
+
+The importer warns when a guide links to a missing file and fails when a guide references a missing image.
+
+### 4. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
 
 **What it does:** Processes MkDocs-style code snippet references in markdown files.
 
@@ -58,7 +67,7 @@ const example = "This code will be included"
 // --8<-- [end:section_name]
 ```
 
-### 4. Relative Link Resolution (`src/util/links.ts`, `src/components/PageLink.astro`)
+### 5. Relative Link Resolution (`src/util/links.ts`, `src/components/PageLink.astro`)
 
 **What it does:** Converts MkDocs-style relative file links to Astro slug-based URLs at render time.
 
@@ -83,7 +92,7 @@ From page `user-guide/concepts/agents/state.mdx`:
 
 The collection base is `src/content` (not `src/content/docs`), so all doc slugs include a `docs/` prefix (e.g., `docs/user-guide/concepts/agents/state`). The `generateId` function strips this prefix from path-based slugs so that URLs remain clean (e.g., `/docs/user-guide/...`). Files with an explicit `slug` frontmatter field (such as generated API docs) use that value directly and must include the `docs/` prefix themselves.
 
-### 5. API Reference Links (`@api` shorthand)
+### 6. API Reference Links (`@api` shorthand)
 
 **What it does:** Provides a shorthand format for linking to API reference pages that's cleaner than relative paths.
 
@@ -692,16 +701,17 @@ These scripts assist with documentation maintenance:
 
 ## URL Redirects (Old MkDocs URLs → New CMS URLs)
 
-The old MkDocs site used versioned URLs like `/latest/documentation/docs/<path>/` and `/1.x/documentation/docs/<path>/`. The new CMS uses clean paths like `/docs/<path>/`. Some pages also moved or were renamed. The redirect system handles both cases client-side via the 404 page.
+The old MkDocs site used versioned URLs like `/latest/documentation/docs/<path>/` and `/1.x/documentation/docs/<path>/`. The new CMS uses clean paths like `/docs/<path>/`. Some pages also moved or were renamed. The redirect system serves registered legacy URLs statically and keeps a client-side 404 fallback for unregistered paths.
 
 ### How It Works
 
-1. **404 page** (`src/content/404.mdx`) renders `Redirect404.astro`, which runs a client-side script on every 404.
-2. **`Redirect404.astro`** (`src/components/Redirect404.astro`) builds a `redirectFromMap` at build time (via `src/util/redirect.build.ts`) and passes it to the client-side script, which calls `resolveRedirectFromUrl()` with the current URL and map. If a target is found, `window.location.replace()` fires without adding a history entry.
-3. **`src/util/redirect.ts`** contains the redirect logic:
-   - `resolveRedirectFromUrl(url, redirectFromMap?)` — strips the version prefix (`/latest/`, `/1.x/`, `/1.5.x/`, etc.) and the `/documentation/` segment, then delegates to `resolveRedirect()`.
-   - `resolveRedirect(slug, redirectFromMap?)` — checks `SLUG_RULES` first (highest priority), then falls back to `redirectFromMap` for frontmatter-based redirects.
-4. **`src/util/redirect.build.ts`** — shared helper that calls `getCollection('docs')` and builds the `redirectFromMap` from all `redirectFrom` frontmatter arrays. Used by both `Redirect404.astro` and the sitemap coverage test.
+1. **Published route registry** (`src/config/legacy-routes.json`) records the documentation paths preserved by the redirect compatibility layer. `scripts/update-known-routes.ts` appends routes from the live sitemap.
+2. **Static route builder** (`src/util/redirect.static.ts`) combines the registry with exact rename rules and page-level `redirectFrom` metadata. It resolves versioned paths at build time and supplies the result to Astro's `redirects` configuration.
+3. **Readable redirect pages** (`src/plugins/legacy-redirect-pages.ts`) replace Astro's internal redirect stubs with a copy of the destination page's rendered HTML. The copy adds an early base element, redirect tag, and script, so relative links stay anchored to the destination and browsers move to the canonical URL while `curl`, agent fetch tools, and browsers without JavaScript can read the guide at the old URL. External redirects keep Astro's normal link stub.
+4. **404 fallback** (`src/content/404.mdx` and `src/components/Redirect404.astro`) handles recognizable paths that are not in the published registry. It builds a `redirectFromMap` via `src/util/redirect.build.ts` and redirects in the browser.
+5. **`src/util/redirect.ts`** contains the shared redirect logic:
+   - `resolveRedirectFromUrl(url, redirectFromMap?)` strips the version prefix (`/latest/`, `/1.x/`, `/1.5.x/`, etc.) and the `/documentation/` segment, then delegates to `resolveRedirect()`.
+   - `resolveRedirect(slug, redirectFromMap?)` checks `SLUG_RULES` first (highest priority), then falls back to `redirectFromMap` for frontmatter-based redirects.
 
 ### Page-Level Redirects (`redirectFrom` frontmatter)
 
@@ -715,7 +725,7 @@ redirectFrom:
 ---
 ```
 
-This is useful when a page moves to a new URL. The `redirectFrom` slugs are collected at build time into a map and passed to the client-side redirect script. They must also be registered in `test/known-routes.json` — the sitemap coverage test enforces this.
+This is useful when a page moves to a new URL. The `redirectFrom` slugs are collected at build time into a map and passed to the client-side redirect script. They must also be registered in `src/config/legacy-routes.json`; the sitemap coverage test enforces this.
 
 ### Adding New Redirect Rules
 
@@ -735,9 +745,11 @@ Helper builders from `src/util/regex.ts`:
 
 ### Testing
 
-- **`test/redirect.test.ts`** — unit tests for `resolveRedirect` and `resolveRedirectFromUrl` covering slug transforms, URL normalisation, trailing-slash preservation, and `redirectFromMap` priority rules.
-- **`test/sitemap-coverage.test.ts`** — integration tests including:
-  - Every `redirectFrom` slug declared in frontmatter has a corresponding entry in `test/known-routes.json` (fails with copy-paste-ready JSON if missing).
+- **`test/redirect.test.ts`**: unit tests for `resolveRedirect` and `resolveRedirectFromUrl` covering slug transforms, URL normalisation, trailing-slash preservation, and `redirectFromMap` priority rules.
+- **`test/redirect-static.test.ts`**: build-time route generation tests, including published versioned paths.
+- **`test/legacy-redirect-pages.test.ts`**: verifies that internal legacy routes contain the destination HTML and retain browser redirect behavior.
+- **`test/sitemap-coverage.test.ts`**: integration tests including:
+  - Every `redirectFrom` slug declared in frontmatter has a corresponding entry in `src/config/legacy-routes.json` (fails with copy-paste-ready JSON if missing).
   - Every known route resolves to a valid CMS entry (uses `buildRedirectFromMap()` so frontmatter-based redirects are honoured).
   - Live sitemap coverage (controlled by `VERIFY_LIVE_SITEMAP=true`, skipped locally).
 
@@ -763,9 +775,10 @@ Our implementation renders documentation through Astro's container API, applies 
 
 ### Endpoints
 
-- `/llms.txt` - Index with links to all docs organized by sidebar structure
-- `/llms-full.txt` - Complete documentation content (excludes API reference)
+- `/llms.txt` - Index with links to docs, generated sample guides, blog posts, and changelog entries
+- `/llms-full.txt` - Complete docs, generated sample guide, and blog content (excludes API reference)
 - `/{slug}/index.md` - Any doc page in raw markdown format
+- `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
 
 ### Implementation Files
 
@@ -774,6 +787,7 @@ Our implementation renders documentation through Astro's container API, applies 
 | `src/pages/llms.txt.ts` | Generates index from sidebar structure |
 | `src/pages/llms-full.txt.ts` | Renders all docs inline |
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
+| `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
 | `src/util/render-to-markdown.ts` | Renders MDX entries via AstroContainer |
 | `src/util/html-to-markdown.ts` | HTML→Markdown conversion with custom rules |
 

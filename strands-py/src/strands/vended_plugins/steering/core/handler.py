@@ -37,6 +37,7 @@ SteeringAction handling for steer_after_model:
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ....agent.invocation_context import _invocation_context_kwargs
 from ....hooks.events import AfterModelCallEvent, BeforeToolCallEvent
 from ....plugins import Plugin, hook
 from ....types.content import Message
@@ -95,7 +96,11 @@ class SteeringHandler(Plugin):
         logger.debug("tool_name=<%s> | providing tool steering guidance", tool_name)
 
         try:
-            action = await self.steer_before_tool(agent=event.agent, tool_use=event.tool_use)
+            action = await self.steer_before_tool(
+                agent=event.agent,
+                tool_use=event.tool_use,
+                **_invocation_context_kwargs(self.steer_before_tool, event.invocation_context),
+            )
         except Exception as e:
             logger.debug("tool_name=<%s>, error=<%s> | tool steering handler guidance failed", tool_name, e)
             return

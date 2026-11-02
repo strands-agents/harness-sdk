@@ -239,7 +239,7 @@ def test_guardrail_input_intervention(boto_session, bedrock_guardrail, guardrail
 @pytest.mark.parametrize("processing_mode", ["sync", "async"])
 def test_guardrail_output_intervention(boto_session, bedrock_guardrail, processing_mode):
     bedrock_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         guardrail_id=bedrock_guardrail,
         guardrail_version="DRAFT",
         guardrail_redact_output=False,
@@ -249,7 +249,7 @@ def test_guardrail_output_intervention(boto_session, bedrock_guardrail, processi
 
     agent = Agent(
         model=bedrock_model,
-        system_prompt="When asked to say the word, say CACTUS.",
+        system_prompt="When the user asks you to say the word, reply with only CACTUS. Otherwise, do not mention it.",
         callback_handler=None,
         load_tools_from_directory=False,
     )
@@ -432,18 +432,17 @@ def test_guardrail_latest_message(boto_session, bedrock_guardrail, yellow_img):
         messages=[
             {"role": "user", "content": [{"text": "First message"}]},
             {"role": "assistant", "content": [{"text": "Hello!"}]},
-            {
-                "role": "user",
-                "content": [
-                    {"text": "CACTUS"},
-                    {"image": {"format": "png", "source": {"bytes": yellow_img}}},
-                ],
-            },
         ],
     )
 
-    response = agent2("What do you see?")
+    response = agent2(
+        [
+            {"text": "CACTUS"},
+            {"image": {"format": "png", "source": {"bytes": yellow_img}}},
+        ]
+    )
     assert response.stop_reason == "guardrail_intervened"
+    assert str(response).strip() == BLOCKED_INPUT
 
 
 def test_guardrail_input_intervention_properly_redacts_in_session(boto_session, bedrock_guardrail, temp_dir):

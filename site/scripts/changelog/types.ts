@@ -1,7 +1,7 @@
 // Shared interfaces for the changelog generator. Mirrors the injected-dependency
 // shapes the pure modules consumed as JSDoc typedefs in the devtools .cjs source.
 
-export type Sdk = 'sdk' | 'evals'
+export type Sdk = 'sdk' | 'harness' | 'cli' | 'evals' | 'box'
 export type Language = 'python' | 'typescript'
 
 export interface TagMeta {
@@ -51,7 +51,7 @@ export interface Enrichment {
   breaking: boolean
   commit: string | null
   author: string | null
-  languages: string[] | null
+  streams: string[] | null
   docsOnly: boolean
 }
 

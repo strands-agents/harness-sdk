@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.10'
           cache: 'pip'
@@ -104,7 +104,7 @@ jobs:
       # Upload for release-python.yml's inspect/publish path to consume.
       # PR-triggered runs also upload (short retention) — harmless.
       - name: Upload wheel + sdist for downstream inspect/publish
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: pypi-build-output
           path: strands-py/dist/*

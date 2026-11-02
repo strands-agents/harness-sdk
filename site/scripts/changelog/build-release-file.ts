@@ -1,7 +1,7 @@
 // Orchestrate one GitHub release into a rendered changelog file. Pure given
 // injected deps (enrich + readExisting), so it's unit-testable without network.
 
-import { tagToMeta, getPackageUrl } from './tag-meta'
+import { tagToMeta, getPackageUrl, isMonorepoTag, streamKey } from './tag-meta'
 import { parseNewContributors } from './parse-release-body'
 import { renderMarkdown, mergePreserving } from './render-markdown'
 import type { Release, Enrichment, ParsedEntry, RenderedEntry, ReleaseFile } from './types'
@@ -14,8 +14,13 @@ export interface BuildDeps {
 }
 
 function fileNameFor(sdk: string, language: string | undefined, version: string): string {
-  if (sdk === 'evals') return `evals/v${version}.md`
-  return `sdk/${language}-v${version}.md`
+  return language ? `${sdk}/${language}-v${version}.md` : `${sdk}/v${version}.md`
+}
+
+/** Repo-relative path of a release's changelog file, or null if the tag is out of scope. */
+export function releaseFilePath(repo: string, tag: string): string | null {
+  const meta = tagToMeta(repo, tag)
+  return meta ? `site/src/content/changelog/${fileNameFor(meta.sdk, meta.language, meta.version)}` : null
 }
 
 export async function buildReleaseFile(
@@ -24,9 +29,9 @@ export async function buildReleaseFile(
   deps: BuildDeps
 ): Promise<{ path: string; contents: string; warning?: string } | null> {
   const meta = tagToMeta(repo, release.tag_name)
-  if (!meta) return null
+  const path = releaseFilePath(repo, release.tag_name)
+  if (!meta || !path) return null
 
-  const path = `site/src/content/changelog/${fileNameFor(meta.sdk, meta.language, meta.version)}`
   const existing = await deps.readExisting(path)
 
   // Checked BEFORE enrichment so a skipped release costs zero PR API calls
@@ -38,26 +43,23 @@ export async function buildReleaseFile(
   const { entries: parsed, warning } = await deps.deriveEntries(repo, release)
 
   // Entry gates: docs-only PRs drop on every stream; monorepo streams also drop
-  // a PR whose paths point ONLY at the other language (see languagesFromFiles).
-  // Only a POSITIVE language signal gates -- empty/unknown languages are kept
-  // (pre-monorepo PRs have no strands-py/strands-ts dirs; gating on empty would
-  // wrongly empty those releases).
-  const isMonorepoStream =
-    meta.sdk === 'sdk' && (release.tag_name.startsWith('python/') || release.tag_name.startsWith('typescript/'))
+  // a PR whose paths point ONLY at other streams (see streamsFromFiles).
+  // Only a POSITIVE stream signal gates -- empty/unknown streams are kept
+  // (pre-monorepo PRs have no package dirs; gating on empty would wrongly
+  // empty those releases).
+  const isMonorepoStream = repo.endsWith('/harness-sdk') && isMonorepoTag(release.tag_name)
+  const stream = streamKey(meta.sdk, meta.language)
 
   const dropFromStream = (enr: Enrichment) =>
     enr.docsOnly ||
-    (isMonorepoStream &&
-      Array.isArray(enr.languages) &&
-      enr.languages.length > 0 &&
-      !enr.languages.includes(meta.language!))
+    (isMonorepoStream && Array.isArray(enr.streams) && enr.streams.length > 0 && !enr.streams.includes(stream))
 
   const entries: RenderedEntry[] = []
   for (const p of parsed) {
     const prRepo = p.prRepo || repo
     const enr = p.pr
       ? await deps.enrich(prRepo, p.pr)
-      : { areas: [], breaking: false, commit: null, author: null, languages: null, docsOnly: false }
+      : { areas: [], breaking: false, commit: null, author: null, streams: null, docsOnly: false }
     if (dropFromStream(enr)) continue
     const breaking = p.breaking || enr.breaking
     entries.push({

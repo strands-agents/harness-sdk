@@ -115,7 +115,7 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 ### Summarize
 
-Replaces content with an LLM-generated summary. Uses the agent's model by default.
+Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
 
 <Tabs>
 <Tab label="Python">
@@ -146,7 +146,7 @@ Offload.summarize("*").when(
 
 | Parameter | Key | Default |
 |-----------|-----|---------|
-| Model | `model` | Agent's model |
+| Model | `model` | `agent.aux_model` |
 | System prompt | `system_prompt` | Built-in |
 
 </Tab>
@@ -154,7 +154,7 @@ Offload.summarize("*").when(
 
 | Parameter | Key | Default |
 |-----------|-----|---------|
-| Model | `model` | Agent's model |
+| Model | `model` | `agent.auxModel` |
 | System prompt | `systemPrompt` | Built-in |
 
 </Tab>

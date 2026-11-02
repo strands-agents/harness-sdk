@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 424" width="720" height="424">
+  <!-- Type: architecture (layered boundary). Story: your code drives the shell engine, and every effect the engine has on the outside world goes through the Kernel. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="208" y="16" width="496" height="368" rx="8"/>
+  <text class="dg-eyebrow" x="224" y="38">STRANDS SHELL</text>
+  <rect class="dg-zone is-boundary" x="456" y="56" width="232" height="312" rx="8"/>
+  <text class="dg-eyebrow" x="472" y="78">KERNEL · MEDIATION BOUNDARY</text>
+  <text class="dg-note" x="704" y="408" text-anchor="end">Runs in your process: no container, no VM</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M176,224 H222" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-accent" d="M392,224 H454" marker-end="url(#arrow-accent)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="400" y="204" width="48" height="12" rx="2"/>
+  <text class="dg-label is-accent" x="424" y="213" text-anchor="middle">EFFECTS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="192" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="96" y="221" text-anchor="middle">Your agent code</text>
+  <text class="dg-sub" x="96" y="239" text-anchor="middle">MCP, Python, Node.js</text>
+
+  <rect class="dg-node" x="224" y="184" width="168" height="80" rx="6"/>
+  <text class="dg-name" x="308" y="213" text-anchor="middle">Shell engine</text>
+  <text class="dg-sub" x="308" y="231" text-anchor="middle">parser, builtins,</text>
+  <text class="dg-sub" x="308" y="247" text-anchor="middle">commands, Lua</text>
+
+  <rect class="dg-node" x="472" y="92" width="200" height="56" rx="6"/>
+  <text class="dg-name" x="572" y="117" text-anchor="middle">VFS</text>
+  <text class="dg-sub" x="572" y="135" text-anchor="middle">isolated filesystem</text>
+
+  <rect class="dg-node" x="472" y="160" width="200" height="56" rx="6"/>
+  <text class="dg-name" x="572" y="185" text-anchor="middle">Network</text>
+  <text class="dg-sub" x="572" y="203" text-anchor="middle">SSRF guard + allowlist</text>
+
+  <rect class="dg-node" x="472" y="228" width="200" height="56" rx="6"/>
+  <text class="dg-name" x="572" y="253" text-anchor="middle">Credentials</text>
+  <text class="dg-sub" x="572" y="271" text-anchor="middle">injected per URL</text>
+
+  <rect class="dg-node" x="472" y="296" width="200" height="56" rx="6"/>
+  <text class="dg-name" x="572" y="321" text-anchor="middle">Limits</text>
+  <text class="dg-sub" x="572" y="339" text-anchor="middle">timeout, output, fds</text>
+</svg>

@@ -7,8 +7,24 @@ import { providerModelExists, type ProviderModelDiscovery } from '../provider/di
 
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
-const GOOGLE_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
+const GOOGLE_EFFORTS = ['low', 'medium', 'high'] as const
+const GOOGLE_MINIMAL_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
+// Per-model levels by provider; mirrors MODEL_LEVELS in harness-ts src/models.ts.
+const MODEL_EFFORTS: Record<string, [string, readonly string[]][]> = {
+  google: [
+    ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
+    ['gemini-3.6-flash', GOOGLE_MINIMAL_EFFORTS],
+    ['gemini-3.5-flash', GOOGLE_MINIMAL_EFFORTS],
+    ['gemini-3-flash-preview', GOOGLE_MINIMAL_EFFORTS],
+    ['gemini-robotics-er-2-preview', GOOGLE_MINIMAL_EFFORTS],
+  ],
+  'bedrock-mantle': [['google.gemma-4-', ['none', 'high']]],
+}
 const BEDROCK_GPT_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+// Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
+const BEDROCK_GPT_NO_MAX_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+const BEDROCK_GPT_NO_NONE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.gpt-6-', 'openai.gpt-6.'] as const
 const BEDROCK_GPT_OSS_EFFORTS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_XAI_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
@@ -124,6 +140,10 @@ function effortLevels(modelId: string): readonly string[] {
   if (!supportsThinking(target.specifier)) {
     return []
   }
+  const modelEfforts = MODEL_EFFORTS[target.provider]?.find(([prefix]) => target.modelId.startsWith(prefix))?.[1]
+  if (modelEfforts) {
+    return modelEfforts
+  }
   if (target.provider === 'anthropic') {
     return CLAUDE_EFFORTS
   }
@@ -137,7 +157,13 @@ function effortLevels(modelId: string): readonly string[] {
   if (family.startsWith('anthropic.')) {
     return CLAUDE_EFFORTS
   }
-  if (family.startsWith('openai.gpt-5.6-') || family === 'openai.gpt-6-astra') {
+  if (family.startsWith('openai.gpt-5.4') || family.startsWith('openai.gpt-5.5')) {
+    return BEDROCK_GPT_NO_MAX_EFFORTS
+  }
+  if (family.startsWith('openai.gpt-6-astra') || family.startsWith('openai.gpt-6.1-sol')) {
+    return BEDROCK_GPT_NO_NONE_EFFORTS
+  }
+  if (BEDROCK_GPT_PREFIXES.some((prefix) => family.startsWith(prefix))) {
     return BEDROCK_GPT_EFFORTS
   }
   if (family.startsWith('openai.gpt-oss-')) {

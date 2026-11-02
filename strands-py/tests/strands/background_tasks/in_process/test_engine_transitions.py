@@ -104,7 +104,8 @@ async def test_resume_restarts_execution_while_previous_execution_settles() -> N
 
 
 @pytest.mark.asyncio
-async def test_cancel_running_work_and_remove_before_execution_settles() -> None:
+@pytest.mark.parametrize("cancel_execution", [False, True])
+async def test_cancel_running_work_and_remove_before_execution_settles(cancel_execution: bool) -> None:
     finish, resolve = deferred()
     execution_signal: CancelSignal | None = None
 
@@ -130,7 +131,10 @@ async def test_cancel_running_work_and_remove_before_execution_settles() -> None
     with pytest.raises(BackgroundTaskNotFoundError, match="was not found"):
         engine.cancel(task["task_id"], reason="Again")
 
-    resolve({"status": "completed", "result": create_result("late")})
+    if cancel_execution:
+        finish.cancel()
+    else:
+        resolve({"status": "completed", "result": create_result("late")})
     await engine.wait_for_idle()
 
 

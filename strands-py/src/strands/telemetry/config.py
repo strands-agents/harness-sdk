@@ -6,6 +6,7 @@ for OpenTelemetry components and other telemetry infrastructure shared across St
 
 import logging
 import os
+from collections.abc import Callable, Sequence
 from importlib.metadata import version
 from typing import Any
 
@@ -20,6 +21,9 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+BaggageKeyPredicate = Callable[[str], bool]
+BaggageKeyPredicates = BaggageKeyPredicate | Sequence[BaggageKeyPredicate]
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +172,29 @@ class StrandsTelemetry:
             logger.info("OTLP exporter configured")
         except Exception as e:
             logger.exception("error=<%s> | Failed to configure OTLP exporter", e)
+        return self
+
+    def setup_baggage_processor(self, baggage_key_predicate: BaggageKeyPredicates | None = None) -> "StrandsTelemetry":
+        """Set up a baggage span processor for the tracer provider.
+
+        Args:
+            baggage_key_predicate: A predicate, or sequence of predicates, that receives a baggage key and
+                returns True if the entry should be stamped onto spans. If None, every baggage key is recorded.
+
+        Returns:
+            self: Enables method chaining.
+
+        This method registers a BaggageSpanProcessor that stamps OTel baggage
+        entries onto spans as attributes when they start.
+        """
+        from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
+
+        try:
+            logger.info("Enabling baggage span processor")
+            predicate = ALLOW_ALL_BAGGAGE_KEYS if baggage_key_predicate is None else baggage_key_predicate
+            self.tracer_provider.add_span_processor(BaggageSpanProcessor(predicate))
+        except Exception as e:
+            logger.exception("error=<%s> | Failed to configure baggage span processor", e)
         return self
 
     def setup_meter(

@@ -51,7 +51,9 @@ describe('Link Utilities', () => {
     })
 
     it('should preserve anchors', () => {
-      expect(resolveApiShorthand('@api/python/strands.agent.agent#Agent')).toBe('/docs/api/python/strands.agent.agent/#Agent')
+      expect(resolveApiShorthand('@api/python/strands.agent.agent#Agent')).toBe(
+        '/docs/api/python/strands.agent.agent/#Agent'
+      )
       expect(resolveApiShorthand('@api/python/strands.agent.agent_result#AgentResult')).toBe(
         '/docs/api/python/strands.agent.agent_result/#AgentResult'
       )
@@ -61,14 +63,12 @@ describe('Link Utilities', () => {
     })
 
     it('should handle nested module paths', () => {
-      expect(resolveApiShorthand('@api/python/strands.agent.conversation_manager.sliding_window_conversation_manager')).toBe(
-        '/docs/api/python/strands.agent.conversation_manager.sliding_window_conversation_manager/'
-      )
       expect(
-        resolveApiShorthand(
-          '@api/python/strands.experimental.bidi.models#GoogleGeminiLiveModel'
-        )
-      ).toBe('/docs/api/python/strands.experimental.bidi.models/#GoogleGeminiLiveModel')
+        resolveApiShorthand('@api/python/strands.agent.conversation_manager.sliding_window_conversation_manager')
+      ).toBe('/docs/api/python/strands.agent.conversation_manager.sliding_window_conversation_manager/')
+      expect(resolveApiShorthand('@api/python/strands.experimental.bidi.models#GoogleGeminiLiveModel')).toBe(
+        '/docs/api/python/strands.experimental.bidi.models/#GoogleGeminiLiveModel'
+      )
     })
   })
 
@@ -122,15 +122,15 @@ describe('Link Utilities', () => {
 
   describe('resolveRelativeLink', () => {
     it('should resolve sibling links', () => {
-      expect(
-        resolveRelativeLink({ href: 'sibling.md', currentPath: '/user-guide/concepts/agents/state/' })
-      ).toBe('user-guide/concepts/agents/sibling')
+      expect(resolveRelativeLink({ href: 'sibling.md', currentPath: '/user-guide/concepts/agents/state/' })).toBe(
+        'user-guide/concepts/agents/sibling'
+      )
     })
 
     it('should resolve sibling links with ./ prefix', () => {
-      expect(
-        resolveRelativeLink({ href: './sibling.md', currentPath: '/user-guide/concepts/agents/state/' })
-      ).toBe('user-guide/concepts/agents/sibling')
+      expect(resolveRelativeLink({ href: './sibling.md', currentPath: '/user-guide/concepts/agents/state/' })).toBe(
+        'user-guide/concepts/agents/sibling'
+      )
     })
 
     it('should resolve parent directory links', () => {
@@ -175,9 +175,9 @@ describe('Link Utilities', () => {
     })
 
     it('should handle paths without leading slash', () => {
-      expect(
-        resolveRelativeLink({ href: 'sibling.md', currentPath: 'user-guide/concepts/agents/state' })
-      ).toBe('user-guide/concepts/agents/sibling')
+      expect(resolveRelativeLink({ href: 'sibling.md', currentPath: 'user-guide/concepts/agents/state' })).toBe(
+        'user-guide/concepts/agents/sibling'
+      )
     })
 
     it('should resolve sibling links from index pages', () => {

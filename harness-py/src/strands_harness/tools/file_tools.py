@@ -7,6 +7,8 @@ candidates to port into the core SDK later; keep them minimal and SDK-idiomatic.
 
 from __future__ import annotations
 
+import ntpath
+import posixpath
 import re
 
 from strands.tools.decorator import tool
@@ -14,17 +16,26 @@ from strands.types.tools import ToolContext, ToolResult
 
 _READ_DEFAULT_LIMIT = 2000
 
-# Media formats the SDK accepts in tool results, keyed by file extension. Detection is by
-# extension because the sandbox seam exposes no MIME metadata. Text-representable document
-# formats (csv, html, txt, md) stay on the numbered-lines path, which supports citing and
-# paging. Video is omitted: the SDK's tool results do not accept video content.
-_IMAGE_FORMATS = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "gif": "gif", "webp": "webp"}
+# Media formats the SDK accepts in tool results, selected by file extension because the sandbox seam
+# exposes no MIME metadata. Text-representable document formats (csv, html, txt, md) stay on the
+# numbered-lines path, which supports citing and paging. Video is omitted: the SDK's tool results do
+# not accept video content.
+_IMAGE_EXTENSIONS = ("png", "jpg", "jpeg", "gif", "webp")
 _DOCUMENT_FORMATS = ("pdf", "doc", "docx", "xls", "xlsx")
+
+# For images the extension only selects the media path; the signature decides the format. A non-image or
+# mislabeled file sent as a success image block poisons history (every later request fails on it).
+_IMAGE_SIGNATURES = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpeg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
 
 
 def _validate_path(path: str) -> None:
-    if not path.startswith("/"):
-        raise ValueError(f"The path {path} is not absolute; it should start with '/'.")
+    # The path belongs to the sandbox, not the host, so accept either platform's notion of absolute. The two
+    # libraries disagree only on backslash-rooted-without-drive (``\foo``: Node yes, Python 3.13 no); that
+    # divergence is intentional and stdlib-driven, so do not hand-roll the check to make the SDKs agree.
+    if not (posixpath.isabs(path) or ntpath.isabs(path)):
+        raise ValueError(
+            f"The path {path} is not absolute; it should start with '/' (or a drive letter or UNC share on Windows)."
+        )
     if ".." in re.split(r"[/\\]", path):
         raise ValueError("Invalid path: path traversal is not allowed.")
 
@@ -48,6 +59,12 @@ def _document_name(path: str) -> str:
     name = re.sub(r"[^a-zA-Z0-9\s\-()\[\]]", " ", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name or "document"
+
+
+def _sniff_image_format(data: bytes) -> str | None:
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return next((fmt for signature, fmt in _IMAGE_SIGNATURES if data.startswith(signature)), None)
 
 
 def _media_placeholder(path: str, kind: str, media_format: str, size: int) -> str:
@@ -83,8 +100,14 @@ def make_read(media: bool = True):
         _validate_path(path)
         extension = _extension(path)
 
-        if image_format := _IMAGE_FORMATS.get(extension):
+        if extension in _IMAGE_EXTENSIONS:
             data = await tool_context.agent.sandbox.read_file(path)
+            image_format = _sniff_image_format(data)
+            if image_format is None:
+                raise ValueError(
+                    f"{path} has a .{extension} extension but its {len(data)} bytes are not a png, jpeg, gif, or webp "
+                    f"image. Identify it with `file`; if it is text, read it with `cat`."
+                )
             if not media:
                 return _media_placeholder(path, "Image", image_format, len(data))
             return {

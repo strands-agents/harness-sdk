@@ -4,11 +4,20 @@ These verify the ephemerality contract: the injected text reaches the model for 
 never enters the agent's durable conversation history.
 """
 
+import json
+from unittest.mock import AsyncMock
+
+import httpx
+import openai
 import pytest
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from strands import Agent
+from strands.models.litellm import LiteLLMModel
+from strands.models.openai import OpenAIModel
 from strands.vended_plugins.context_injector import ContextInjector
 from tests.fixtures.mocked_model_provider import MockedModelProvider
+from tests.fixtures.say_tool import say
 
 
 def _texts(messages):
@@ -88,3 +97,97 @@ def test_no_dynamic_trailing_blocks_reaches_the_model_without_injection(model, t
     agent("what is the weather?")
 
     assert trailing_blocks_seen == [0]
+
+
+@pytest.mark.parametrize("model_class", [OpenAIModel, LiteLLMModel])
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.asyncio
+async def test_every_turn_injection_preserves_tool_result_adjacency(model_class, stream, monkeypatch, agenerator):
+    """Exercise real adapters against a strict Chat Completions boundary, without credentials."""
+    requests = []
+
+    async def completion(**request):
+        messages = request["messages"]
+        requests.append(messages)
+        pending = set()
+        for message in messages:
+            if pending:
+                if message["role"] != "tool" or message.get("tool_call_id") not in pending:
+                    raise openai.BadRequestError(
+                        "An assistant message with 'tool_calls' must be followed by tool messages "
+                        "responding to each 'tool_call_id'.",
+                        response=httpx.Response(400, request=httpx.Request("POST", "https://example.test")),
+                        body=None,
+                    )
+                pending.remove(message["tool_call_id"])
+            pending.update(tool_call["id"] for tool_call in message.get("tool_calls", []))
+        assert not pending
+
+        is_tool_call = len(requests) % 2 == 1
+        content = (
+            {
+                "tool_calls": [
+                    {
+                        "id": f"call_{len(requests)}",
+                        "type": "function",
+                        "function": {"name": "say", "arguments": '{"input": "world"}'},
+                        **({"index": 0} if stream else {}),
+                    }
+                ]
+            }
+            if is_tool_call
+            else {"content": "DONE"}
+        )
+        finish_reason = "tool_calls" if is_tool_call else "stop"
+        metadata = {"id": "completion", "created": 0, "model": "test-model"}
+        if stream:
+            return agenerator(
+                [
+                    ChatCompletionChunk(
+                        **metadata,
+                        object="chat.completion.chunk",
+                        choices=[{"index": 0, "delta": content, "finish_reason": None}],
+                    ),
+                    ChatCompletionChunk(
+                        **metadata,
+                        object="chat.completion.chunk",
+                        choices=[{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                    ),
+                ]
+            )
+        return ChatCompletion(
+            **metadata,
+            object="chat.completion",
+            choices=[{"index": 0, "message": {"role": "assistant", **content}, "finish_reason": finish_reason}],
+            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        )
+
+    if model_class is LiteLLMModel:
+        monkeypatch.setattr("strands.models.litellm.litellm.acompletion", completion)
+        model = model_class(model_id="test-model", stream=stream)
+    else:
+        client = AsyncMock()
+        client.chat.completions.create.side_effect = completion
+        model = model_class(model_id="test-model", stream=stream, client=client)
+
+    agent = Agent(
+        model=model,
+        tools=[say],
+        callback_handler=None,
+        plugins=[ContextInjector(lambda context: "<ctx>EPHEMERAL</ctx>", trigger="everyTurn")],
+    )
+
+    for prompt in ["Say hello", "Say hello again"]:
+        result = await agent.invoke_async(prompt)
+        assert result.message["content"] == [{"text": "DONE"}]
+        assert "EPHEMERAL" not in json.dumps(agent.messages)
+
+    tru_roles = [[message["role"] for message in request] for request in requests]
+    exp_roles = [
+        ["user"],
+        ["user", "assistant", "tool", "user"],
+        ["user", "assistant", "tool", "assistant", "user"],
+        ["user", "assistant", "tool", "assistant", "user", "assistant", "tool", "user"],
+    ]
+    assert tru_roles == exp_roles
+    assert all("EPHEMERAL" in json.dumps(request[-1]["content"]) for request in requests)

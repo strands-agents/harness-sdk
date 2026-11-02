@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from ...agent.invocation_context import InvocationContext
     from ...types.content import Messages, SystemPrompt
     from ...types.tools import ToolSpec
     from .router import RoutingCandidate
@@ -52,6 +53,9 @@ class RoutingContext:
     A strategy is asked on every invocation, since the right model usually depends on the request. One
     that is expensive to evaluate should narrow what it looks at -- typically the latest turn rather
     than the whole transcript -- instead of caching a verdict across invocations.
+
+    ``invocation_context`` is the request this routing decision runs for, if any; a nested call that
+    joins it adds to the request's usage, but the request's limits don't apply.
     """
 
     messages: Messages
@@ -60,6 +64,7 @@ class RoutingContext:
     candidates: Sequence[RoutingCandidate]
     invocation_state: Mapping[str, Any]
     attempts: Sequence[RoutingAttempt] = field(default_factory=tuple)
+    invocation_context: InvocationContext | None = None
 
 
 @runtime_checkable

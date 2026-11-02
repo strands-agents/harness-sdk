@@ -385,7 +385,8 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
 
   private async _deleteStashData(): Promise<void> {
     if (this._agentStash) {
-      await this._agentStash.clear()
+      // clearSession() covers every key clear() would delete, and calling clear() on a
+      // caller-scoped stash would wipe the shared view.
       await this._agentStash.clearSession()
     }
   }

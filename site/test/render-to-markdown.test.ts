@@ -22,7 +22,7 @@ describe('renderImplementation', () => {
       docWithSourceLinks([
         { path: 'strands-py/src/strands/agent/agent.py', repo: 'harness-sdk' },
         { path: 'strands-ts/src/agent/agent.ts', repo: 'harness-sdk' },
-      ]),
+      ])
     )
 
     expect(md).toContain('## Implementation')
@@ -30,11 +30,11 @@ describe('renderImplementation', () => {
     expect(md).toContain('### TypeScript')
     expect(md).toContain(
       '- [harness-sdk/strands-py/src/strands/agent/agent.py]' +
-        '(https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py)',
+        '(https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/agent.py)'
     )
     expect(md).toContain(
       '- [harness-sdk/strands-ts/src/agent/agent.ts]' +
-        '(https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts)',
+        '(https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts)'
     )
   })
 
@@ -43,7 +43,7 @@ describe('renderImplementation', () => {
       docWithSourceLinks([
         { path: 'strands-py/src/strands/models/bedrock.py', repo: 'harness-sdk' },
         { path: 'strands-py/src/strands/models/model.py', repo: 'harness-sdk' },
-      ]),
+      ])
     )
 
     expect(md.match(/### Python/g)).toHaveLength(1)
@@ -56,7 +56,7 @@ describe('renderImplementation', () => {
       docWithSourceLinks([
         { path: 'strands-ts/src/agent/agent.ts', repo: 'harness-sdk' },
         { path: 'strands-py/src/strands/agent/agent.py', repo: 'harness-sdk' },
-      ]),
+      ])
     )
 
     expect(md.indexOf('### TypeScript')).toBeLessThan(md.indexOf('### Python'))
@@ -64,7 +64,7 @@ describe('renderImplementation', () => {
 
   it('respects an explicit language override over the extension', () => {
     const md = renderImplementation(
-      docWithSourceLinks([{ path: 'configs/agent.toml', language: 'python', repo: 'harness-sdk' }]),
+      docWithSourceLinks([{ path: 'configs/agent.toml', language: 'python', repo: 'harness-sdk' }])
     )
 
     expect(md).toContain('### Python')
@@ -72,9 +72,7 @@ describe('renderImplementation', () => {
   })
 
   it('honors a custom repo override in the generated URL', () => {
-    const md = renderImplementation(
-      docWithSourceLinks([{ path: 'src/tool.py', repo: 'tools' }]),
-    )
+    const md = renderImplementation(docWithSourceLinks([{ path: 'src/tool.py', repo: 'tools' }]))
 
     expect(md).toContain('https://github.com/strands-agents/tools/blob/main/src/tool.py')
   })

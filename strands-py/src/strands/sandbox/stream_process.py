@@ -45,6 +45,9 @@ async def _stream_process(
     *,
     timeout: float | None = None,
     enoent_message: str | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    input: str | None = None,
 ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
     """Spawn a command and stream its stdout/stderr, yielding the final result.
 
@@ -60,6 +63,9 @@ async def _stream_process(
         enoent_message: Message to surface as ``stderr`` (with exit code 127)
             when ``program`` is not on PATH. If ``None``, the underlying
             :class:`FileNotFoundError` propagates instead.
+        cwd: Working directory for the child.
+        env: Environment for the child (replaces, not merges).
+        input: Written to the child's stdin, which is then closed.
 
     Yields:
         :class:`StreamChunk` objects for output, then a final
@@ -73,15 +79,23 @@ async def _stream_process(
         proc = await asyncio.create_subprocess_exec(
             program,
             *args,
+            stdin=asyncio.subprocess.PIPE if input is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=_USE_PROCESS_GROUP,
+            cwd=cwd,
+            env=env,
         )
     except FileNotFoundError:
         if enoent_message is None:
             raise
         yield ExecutionResult(exit_code=127, stdout="", stderr=enoent_message)
         return
+    if input is not None and proc.stdin is not None:
+        # No drain(): it could block before the timeout below is armed if the child never reads stdin.
+        # The transport flushes what it can on close; a child that exits early just drops the rest.
+        proc.stdin.write(input.encode())
+        proc.stdin.close()
 
     queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue()
     out_buf: list[str] = []

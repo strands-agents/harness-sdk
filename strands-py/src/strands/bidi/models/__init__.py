@@ -14,11 +14,13 @@ from .configs import (
     ModelUpdateConfig,
 )
 from .model import AudioCapable, BidiModel, ConnectionTimeoutError, Restartable
+from .openai.configs import OpenAILiveAudioConfig, OpenAILiveResponsesDelegationConfig
 
 if TYPE_CHECKING:
     from .bedrock import BedrockNovaSonicModel as BedrockNovaSonicModel
     from .google import GoogleGeminiLiveModel as GoogleGeminiLiveModel
-    from .openai import OpenAIRealtimeModel as OpenAIRealtimeModel
+    from .openai.live import OpenAILiveModel as OpenAILiveModel
+    from .openai.realtime import OpenAIRealtimeModel as OpenAIRealtimeModel
 
 __all__ = [
     "AudioCapable",
@@ -33,6 +35,8 @@ __all__ = [
     "GoogleGeminiLiveAudioStreamConfig",
     "ModelConfig",
     "ModelUpdateConfig",
+    "OpenAILiveAudioConfig",
+    "OpenAILiveResponsesDelegationConfig",
     "Restartable",
 ]
 
@@ -51,7 +55,11 @@ def __getattr__(name: str) -> Any:
 
         return GoogleGeminiLiveModel
     if name == "OpenAIRealtimeModel":
-        from .openai import OpenAIRealtimeModel
+        from .openai.realtime import OpenAIRealtimeModel
 
         return OpenAIRealtimeModel
+    if name == "OpenAILiveModel":
+        from .openai.live import OpenAILiveModel
+
+        return OpenAILiveModel
     raise AttributeError(f"cannot import name '{name}' from '{__name__}' ({__file__})")

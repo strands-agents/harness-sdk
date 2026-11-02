@@ -4,10 +4,148 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import logging
 import re
 from typing import Any, Literal
 
+from ...types.exceptions import StorageError
 from ..storage import Storage, StorageSearchResult
+
+logger = logging.getLogger(__name__)
+
+
+#: Common English words dropped from queries before matching.
+STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "about",
+        "above",
+        "after",
+        "again",
+        "all",
+        "although",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "because",
+        "been",
+        "before",
+        "being",
+        "below",
+        "between",
+        "both",
+        "but",
+        "by",
+        "can",
+        "could",
+        "dare",
+        "did",
+        "do",
+        "does",
+        "during",
+        "each",
+        "either",
+        "every",
+        "few",
+        "for",
+        "from",
+        "further",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "just",
+        "may",
+        "me",
+        "might",
+        "more",
+        "most",
+        "my",
+        "need",
+        "neither",
+        "no",
+        "nor",
+        "not",
+        "of",
+        "off",
+        "on",
+        "once",
+        "only",
+        "or",
+        "other",
+        "ought",
+        "our",
+        "out",
+        "over",
+        "own",
+        "same",
+        "shall",
+        "she",
+        "should",
+        "since",
+        "so",
+        "some",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "these",
+        "they",
+        "this",
+        "those",
+        "though",
+        "through",
+        "to",
+        "too",
+        "under",
+        "unless",
+        "until",
+        "up",
+        "us",
+        "used",
+        "very",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "yet",
+        "you",
+        "your",
+    }
+)
+
+#: Entries read concurrently per batch during a keyword scan, to avoid throttling remote backends such as S3.
+_READ_BATCH_SIZE = 8
+
+_EXTENSION = re.compile(r"(?<=[^/])\.[^./]*$")
 
 
 def tokenize(text: str) -> set[str]:
@@ -44,9 +182,12 @@ def token_overlap_score(query_tokens: set[str], content: str) -> int:
 class KeywordSearchStrategy:
     """Keyword search strategy using token-overlap scoring.
 
-    Tokenizes the query and each stored entry (key + content), then scores by the
-    number of distinct query tokens that appear. Works on any storage backend with
-    ``list()`` and ``read()`` -- no index or embedding model required.
+    Tokenizes the query and each stored entry (key without its file extension + content),
+    then scores by the number of distinct query tokens that appear. Stop words in the
+    query (``the``, ``is``, ``what``, ...) are ignored. Works on any storage backend with
+    ``list()`` and ``read()`` -- no index or embedding model required. Entries are read
+    in small concurrent batches, and each result carries the bytes read during the scan.
+    Entries whose ``read()`` raises ``StorageError`` are skipped.
 
     This is the default search strategy for all shipped storage backends.
 
@@ -75,21 +216,32 @@ class KeywordSearchStrategy:
         Returns:
             Matched keys with relevance scores, ranked best-first.
         """
-        query_tokens = tokenize(query)
+        query_tokens = tokenize(query) - STOP_WORDS
         if not query_tokens:
             return []
 
         all_keys = await storage.list("")
-        all_data = await asyncio.gather(*(storage.read(key) for key in all_keys))
-
         scored: builtins.list[StorageSearchResult] = []
-        for key, data in zip(all_keys, all_data, strict=True):
-            if data is None:
-                continue
-            content = data.decode("utf-8", errors="replace")
-            score = token_overlap_score(query_tokens, f"{key} {content}")
-            if score > 0:
-                scored.append(StorageSearchResult(key=key, score=score, data=data))
+        for offset in range(0, len(all_keys), _READ_BATCH_SIZE):
+            keys = all_keys[offset : offset + _READ_BATCH_SIZE]
+            batch = await asyncio.gather(*(_read_or_skip(storage, key) for key in keys))
+            for key, data in zip(keys, batch, strict=True):
+                if data is None:
+                    continue
+                content = data.decode("utf-8", errors="replace")
+                # Score the key without its extension so e.g. ``md`` does not match every ``.md`` entry.
+                score = token_overlap_score(query_tokens, f"{_EXTENSION.sub('', key)} {content}")
+                if score > 0:
+                    scored.append(StorageSearchResult(key=key, score=score, data=data))
 
         scored.sort(key=lambda result: result.score, reverse=True)
         return scored
+
+
+async def _read_or_skip(storage: Storage, key: str) -> bytes | None:
+    """Read ``key``, returning ``None`` when the read fails so one bad entry cannot fail a search."""
+    try:
+        return await storage.read(key)
+    except StorageError as error:
+        logger.debug("key=<%s>, error=<%s> | skipped unreadable entry", key, error)
+        return None

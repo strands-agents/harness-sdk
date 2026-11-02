@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 196" width="720" height="196">
+  <!-- Type: architecture (linear). Story: context providers turn the agent's hook events into structured steering context that the handler reads when it decides. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="220" y="16" width="464" height="164" rx="8"/>
+  <text class="dg-eyebrow" x="236" y="38">STEERING HANDLER</text>
+  <text class="dg-note" x="668" y="160" text-anchor="end">The handler reads it when deciding whether to intervene</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M180,96 H242" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M428,96 H490" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <text class="dg-label" x="460" y="85" text-anchor="middle">RECORDS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="36" y="64" width="144" height="64" rx="6"/>
+  <text class="dg-name" x="108" y="93" text-anchor="middle">Agent</text>
+  <text class="dg-sub" x="108" y="111" text-anchor="middle">fires hook events</text>
+
+  <rect class="dg-node is-focal" x="244" y="64" width="184" height="64" rx="6"/>
+  <text class="dg-name is-focal-text" x="336" y="93" text-anchor="middle">Context providers</text>
+  <text class="dg-sub" x="336" y="111" text-anchor="middle">such as the tool ledger</text>
+
+  <rect class="dg-node" x="492" y="64" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="572" y="93" text-anchor="middle">Steering context</text>
+  <text class="dg-sub" x="572" y="111" text-anchor="middle">structured data</text>
+</svg>

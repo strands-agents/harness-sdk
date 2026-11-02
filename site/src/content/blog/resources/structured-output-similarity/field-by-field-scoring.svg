@@ -1,0 +1,139 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  class="fig"
+  width="720"
+  height="428"
+  viewBox="0 0 720 428"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">One shipment record scored two ways</title>
+  <desc id="description">
+    A predicted shipment record compared with its ground truth. The shipment ID matches exactly, the carrier name is
+    wrong, the ship date matches, the total weight of 1247.4999 is within numeric tolerance of 1247.50, and the two
+    line items match despite being in the opposite order. Whole-object equality scores the record 0.0 and names
+    nothing. StructuredOutputSimilarity scores it 0.80, passes it, and names carrier_name as the weakest field.
+  </desc>
+  <style>
+    .fig {
+      --paper: #ffffff;
+      --ink: #000000;
+      --ink-2: #3d3c3c;
+      --muted: #666464;
+      --line: #d9d9d9;
+      --accent: #007a3d;
+      --accent-tint: #e6f6e7;
+      --miss: #c4161c;
+      --miss-tint: #fdecec;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .fig {
+        --paper: #000000;
+        --ink: #ffffff;
+        --ink-2: #d9d9d9;
+        --muted: #999696;
+        --line: #3d3c3c;
+        --accent: #00cc60;
+        --accent-tint: #0d3010;
+        --miss: #ff7a80;
+        --miss-tint: #3a1214;
+      }
+    }
+
+    .fig text {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      fill: var(--ink-2);
+      font-size: 13px;
+    }
+    .fig .bg { fill: var(--paper); }
+    .fig .rule { stroke: var(--line); stroke-width: 1; }
+    .fig .miss-row { fill: var(--miss-tint); }
+    .fig .head {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      fill: var(--muted);
+    }
+    .fig .field {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      fill: var(--ink);
+    }
+    .fig .how { font-size: 12px; fill: var(--muted); }
+    .fig .score {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      fill: var(--ink);
+    }
+    .fig .miss { fill: var(--miss); font-weight: 600; }
+    .fig .box { fill: var(--paper); stroke: var(--line); stroke-width: 1; }
+    .fig .box.focal { fill: var(--accent-tint); stroke: var(--accent); }
+    .fig .name { font-size: 14px; font-weight: 600; fill: var(--ink); }
+    .fig .name.focal { fill: var(--accent); }
+    .fig .big { font-size: 28px; font-weight: 600; fill: var(--ink); }
+    .fig .big.focal { fill: var(--accent); }
+    .fig .verdict {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      fill: var(--muted);
+    }
+    .fig .verdict.focal { fill: var(--accent); }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="720" height="428" />
+
+  <!-- Column headers -->
+  <text class="head" x="24" y="32">FIELD</text>
+  <text class="head" x="176" y="32">GROUND TRUTH</text>
+  <text class="head" x="344" y="32">PREDICTION</text>
+  <text class="head" x="512" y="32">COMPARED BY</text>
+  <text class="head" x="704" y="32" text-anchor="end">SCORE</text>
+  <line class="rule" x1="16" y1="44" x2="704" y2="44" />
+
+  <!-- Rows: 48px each from y=44 -->
+  <rect class="miss-row" x="16" y="92" width="688" height="48" />
+
+  <text class="field" x="24" y="73">shipment_id</text>
+  <text x="176" y="73">SHP-20419</text>
+  <text x="344" y="73">SHP-20419</text>
+  <text class="how" x="512" y="73">exact match</text>
+  <text class="score" x="696" y="73" text-anchor="end">1.00</text>
+
+  <text class="field" x="24" y="121">carrier_name</text>
+  <text x="176" y="121">Northwind Freight</text>
+  <text class="miss" x="344" y="121">Contoso Logistics</text>
+  <text class="how" x="512" y="121">edit distance</text>
+  <text class="score miss" x="696" y="121" text-anchor="end">0.00</text>
+
+  <text class="field" x="24" y="169">ship_date</text>
+  <text x="176" y="169">2026-03-14</text>
+  <text x="344" y="169">2026-03-14</text>
+  <text class="how" x="512" y="169">date-aware</text>
+  <text class="score" x="696" y="169" text-anchor="end">1.00</text>
+
+  <text class="field" x="24" y="217">total_weight</text>
+  <text x="176" y="217">1247.50</text>
+  <text x="344" y="217">1247.4999</text>
+  <text class="how" x="512" y="217">numeric tolerance</text>
+  <text class="score" x="696" y="217" text-anchor="end">1.00</text>
+
+  <text class="field" x="24" y="265">line_items</text>
+  <text x="176" y="265">A-100, B-220</text>
+  <text x="344" y="265">B-220, A-100</text>
+  <text class="how" x="512" y="265">matched by content</text>
+  <text class="score" x="696" y="265" text-anchor="end">1.00</text>
+
+  <line class="rule" x1="16" y1="284" x2="704" y2="284" />
+
+  <!-- Verdicts -->
+  <rect class="box" x="16" y="308" width="272" height="104" rx="6" />
+  <text class="name" x="32" y="336">Whole-object equality</text>
+  <text class="big" x="32" y="374">0.0</text>
+  <text class="verdict" x="32" y="398">FAIL · NAMES NOTHING</text>
+
+  <rect class="box focal" x="312" y="308" width="392" height="104" rx="6" />
+  <text class="name focal" x="328" y="336">StructuredOutputSimilarity</text>
+  <text class="big focal" x="328" y="374">0.80</text>
+  <text class="verdict focal" x="328" y="398">PASS · weakest fields: carrier_name=0.00</text>
+</svg>

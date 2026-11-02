@@ -13,8 +13,6 @@ import logging
 from dataclasses import replace
 from typing import Literal
 
-from ...._middleware.stages import InvokeModelContext
-from ...._middleware.types import MiddlewareInputHandler
 from ....agent.conversation_manager.compression.context_compression import (
     MessageType,
     adjust_split_point_for_tool_pairs,
@@ -23,6 +21,9 @@ from ....agent.conversation_manager.compression.context_compression import (
     matches_message_type,
 )
 from ....agent.conversation_manager.compression.pin_message import is_pinned, pin_message, unpin_message
+from ....agent.invocation_context import _create_auxiliary_invocation_context
+from ....middleware.stages import InvokeModelContext
+from ....middleware.types import MiddlewareInputHandler
 from ....models._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ....tools.decorator import tool
 from ....types.content import Message, _ensure_tracking_id
@@ -135,7 +136,12 @@ async def summarize_context(
         )
 
     try:
-        summary_message = await generate_summary(eligible, agent.aux_model)
+        summary_message = await generate_summary(
+            eligible,
+            agent.aux_model,
+            None,
+            _create_auxiliary_invocation_context(tool_context.invocation_context),
+        )
     except Exception as err:
         return f"Summarization failed: {err}"
 

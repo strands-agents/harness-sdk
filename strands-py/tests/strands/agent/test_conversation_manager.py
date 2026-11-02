@@ -7,6 +7,7 @@ from strands.agent.agent import Agent
 from strands.agent.conversation_manager.conversation_manager import ConversationManager
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks.events import BeforeModelCallEvent
 from strands.hooks.registry import HookProvider, HookRegistry
 from strands.models.model import Model
@@ -539,9 +540,9 @@ def test_per_turn_reduces_message_count():
     message_counts = []
     original_apply = manager.apply_management
 
-    def track_apply(agent_instance):
+    def track_apply(agent_instance, **kwargs):
         message_counts.append(len(agent_instance.messages))
-        return original_apply(agent_instance)
+        return original_apply(agent_instance, **kwargs)
 
     with patch.object(manager, "apply_management", side_effect=track_apply):
         agent("Test")
@@ -826,7 +827,6 @@ def _make_mock_agent(messages=None, context_window_limit=1000):
     agent.messages = messages if messages is not None else []
     agent.model = MagicMock()
     agent.model.context_window_limit = context_window_limit
-    agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     return agent
 
@@ -942,26 +942,10 @@ def test_proactive_compression_uses_default_when_context_window_limit_not_set():
 
     # projected_input_tokens=150_000 is 75% of the 200k default, exceeding 0.7 threshold
     event = _make_threshold_event(agent, projected_input_tokens=150_000)
-    with patch("strands.models.model.logger") as mock_logger:
+    with pytest.warns(UserWarning, match="using default"):
         registry.invoke_callbacks(event)
-        mock_logger.warning.assert_called_once()
-        assert "using default" in mock_logger.warning.call_args[0][0]
 
     assert manager.reduce_context_call_count == 1
-
-
-def test_proactive_compression_warns_only_once_per_instance():
-    """Second invocation on the same manager instance suppresses the context_window_limit warning."""
-    manager = _MinimalManager(proactive_compression={"compression_threshold": 0.7})
-    agent = _make_mock_agent(context_window_limit=None)
-    registry = HookRegistry()
-    manager.register_hooks(registry)
-
-    event = _make_threshold_event(agent, projected_input_tokens=150_000)
-    with patch("strands.models.model.logger") as mock_logger:
-        registry.invoke_callbacks(event)
-        registry.invoke_callbacks(event)
-        assert mock_logger.warning.call_count == 1
 
 
 def test_proactive_compression_exception_swallowed():
@@ -1139,3 +1123,62 @@ def test_pinned_message_in_middle_survives_trimming():
     texts = [m["content"][0]["text"] for m in agent.messages]
     assert "pinned-middle" in texts
     assert "first" not in texts
+
+
+def test_proactive_compression_hands_reduce_context_a_handle_that_joins_the_request_usage():
+    captured = []
+
+    class CapturingManager(ConversationManager):
+        def apply_management(self, agent, **kwargs):
+            pass
+
+        def reduce_context(self, agent, e=None, **kwargs):
+            captured.append(kwargs.get("invocation_context"))
+
+    manager = CapturingManager(proactive_compression=True)
+    registry = HookRegistry()
+    manager.register_hooks(registry)
+
+    mock_agent = MagicMock()
+    mock_agent.messages = []
+    mock_agent.model.estimate_utilization = MagicMock(return_value=0.9)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    registry.invoke_callbacks(
+        BeforeModelCallEvent(
+            agent=mock_agent,
+            invocation_state={},
+            projected_input_tokens=800,
+            invocation_context=request,
+        )
+    )
+
+    handed = captured[0]
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+def test_agent_hands_the_conversation_manager_a_handle_that_joins_the_request_usage():
+    captured = {}
+
+    class CapturingManager(ConversationManager):
+        def apply_management(self, agent, **kwargs):
+            captured["apply_management"] = kwargs.get("invocation_context")
+
+        def reduce_context(self, agent, e=None, **kwargs):
+            captured["reduce_context"] = kwargs.get("invocation_context")
+            raise ContextWindowOverflowException("cannot reduce")
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "Summary"}]}])
+    model.stream = MagicMock(side_effect=ContextWindowOverflowException("Input is too long"))
+    agent = Agent(model=model, conversation_manager=CapturingManager())
+
+    with pytest.raises(ContextWindowOverflowException):
+        agent("Test!")
+
+    for handle in captured.values():
+        handle._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+        assert _reached_limit(handle) is None
+    assert set(captured) == {"apply_management", "reduce_context"}

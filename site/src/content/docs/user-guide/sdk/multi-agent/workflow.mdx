@@ -6,6 +6,8 @@ sidebar:
 tags: [multi-agent]
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 ## Understanding Workflows
 
 ### What is an Agent Workflow?
@@ -56,10 +58,10 @@ Strands Agents SDK allows you to create workflows using existing Agent objects, 
 
 #### Sequential Workflow Architecture
 
-```mermaid
-graph LR
-    Agent1[Research Agent] --> Agent2[Analysis Agent] --> Agent3[Report Agent]
-```
+<Diagram
+  name="workflow-sequential"
+  alt="A sequential workflow. Your code takes a topic and calls three agents in turn: the research agent (researcher) finds key information, its findings go into the prompt for the analysis agent (analyst), which extracts insights, and those insights go into the prompt for the report writing agent (writer), which produces the final report."
+/>
 
 In a sequential workflow, agents process tasks in a defined order, with each agent's output becoming the input for the next:
 

@@ -1,0 +1,46 @@
+---
+/**
+ * Renders a hand-authored, theme-aware SVG diagram from src/assets/diagrams/<name>.svg.
+ *
+ * The SVG is inlined (not loaded through <img>) so its classes pick up the site's
+ * light/dark tokens from src/styles/diagrams.css. Authoring rules live in
+ * .agents/references/diagrams.md.
+ *
+ * @example
+ * import Diagram from '@components/Diagram.astro'
+ *
+ * <Diagram
+ *   name="agent-loop"
+ *   alt="The agent loop: the model reasons, calls tools, and loops until it responds."
+ * />
+ */
+import { prepareDiagramSvg } from '../util/diagram-svg'
+
+interface Props {
+  /** File name in src/assets/diagrams/, without the .svg extension. */
+  name: string
+  /** Full text description of what the diagram shows. Used as the accessible name and in the .md twin. */
+  alt: string
+  /** Optional visible caption rendered under the diagram. */
+  caption?: string
+}
+
+const svgs = import.meta.glob<string>('../assets/diagrams/*.svg', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+
+const { name, alt, caption } = Astro.props
+const raw = svgs[`../assets/diagrams/${name}.svg`]
+if (!raw) {
+  throw new Error(`<Diagram name="${name}">: no file at src/assets/diagrams/${name}.svg`)
+}
+
+const svg = prepareDiagramSvg(raw, name, alt)
+---
+
+<figure class="dg-figure" data-diagram={name}>
+  <Fragment set:html={svg} />
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>

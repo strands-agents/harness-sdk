@@ -1,12 +1,18 @@
 """Tests for StructuredOutputContext class."""
 
+import pytest
 from pydantic import BaseModel, Field
 
+from strands.tools.registry import ToolRegistry
 from strands.tools.structured_output._structured_output_context import (
+    _NO_STRUCTURED_OUTPUT_MESSAGE,
     DEFAULT_STRUCTURED_OUTPUT_PROMPT,
     StructuredOutputContext,
+    json_object_from_message,
 )
 from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
+from strands.types.exceptions import StructuredOutputException
+from tests.fixtures.mock_agent_tool import MockAgentTool
 
 
 class SampleModel(BaseModel):
@@ -270,3 +276,86 @@ class TestStructuredOutputContext:
         extracted2 = context.extract_result(tool_uses)
         assert extracted2 == result2
         assert "tool_use_2" not in context.results
+
+
+@pytest.mark.parametrize("registration", ["regular", "dynamic", "temporary", "missing"])
+def test_cleanup_removes_only_structured_output_tool(registration):
+    context = StructuredOutputContext(structured_output_model=SampleModel)
+    registry = ToolRegistry()
+    retained_tool = MockAgentTool("retained")
+    retained_tool.mark_dynamic()
+    registry.register_tool(retained_tool)
+    output_tool = context.structured_output_tool
+    if registration == "dynamic":
+        output_tool.mark_dynamic()
+    if registration == "temporary":
+        context.register_tool(registry)
+    elif registration != "missing":
+        registry.register_tool(output_tool)
+
+    context.cleanup(registry)
+    context.cleanup(registry)
+
+    tru_registries = (registry.registry, registry.dynamic_tools)
+    exp_registries = ({retained_tool.tool_name: retained_tool}, {retained_tool.tool_name: retained_tool})
+    assert tru_registries == exp_registries
+
+
+def test_cleanup_when_disabled():
+    context = StructuredOutputContext(structured_output_model=None)
+    registry = ToolRegistry()
+    retained_tool = MockAgentTool("retained")
+    registry.register_tool(retained_tool)
+
+    context.cleanup(registry)
+
+    tru_registries = (registry.registry, registry.dynamic_tools)
+    exp_registries = ({retained_tool.tool_name: retained_tool}, {})
+    assert tru_registries == exp_registries
+
+
+def _text_message(*texts):
+    return {"role": "assistant", "content": [{"text": text} for text in texts]}
+
+
+@pytest.mark.parametrize(
+    ("message", "exp_data"),
+    [
+        (_text_message('{"name": "Alice", "age": 25}'), {"name": "Alice", "age": 25}),
+        (_text_message('{"name": "Alice",', ' "age": 25}'), {"name": "Alice", "age": 25}),
+        (_text_message("[1, 2]"), None),
+        (_text_message('Here it is: {"name": "Alice"}'), None),
+        (
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "SampleModel", "input": {}}}]},
+            None,
+        ),
+    ],
+)
+def test_json_object_from_message(message, exp_data):
+    tru_data = json_object_from_message(message)
+
+    assert tru_data == exp_data
+
+
+def test_result_from_text():
+    context = StructuredOutputContext(structured_output_model=SampleModel)
+
+    tru_result = context.result_from_text(_text_message('{"name": "Alice", "age": 25}'))
+    exp_result = SampleModel(name="Alice", age=25)
+
+    assert tru_result == exp_result
+
+
+@pytest.mark.parametrize(
+    ("structured_output_model", "text", "exp_message"),
+    [
+        (SampleModel, "Alice is 25", _NO_STRUCTURED_OUTPUT_MESSAGE),
+        (None, '{"name": "Alice", "age": 25}', _NO_STRUCTURED_OUTPUT_MESSAGE),
+        (SampleModel, '{"name": "Alice", "age": -1}', "Structured output failed validation for SampleModel"),
+    ],
+)
+def test_result_from_text_without_valid_json_object(structured_output_model, text, exp_message):
+    context = StructuredOutputContext(structured_output_model=structured_output_model)
+
+    with pytest.raises(StructuredOutputException, match=exp_message):
+        context.result_from_text(_text_message(text))

@@ -9,7 +9,7 @@ sidebar:
 other program. In this guide its own file tools reach none of the project's files, so
 every read, write, and delete goes through its Bash tool, where the box's shell asks
 the policy about every command and every file. By the end you have Claude Code working
-on the project from [Getting started](../getting-started.md), and you have watched the
+on the project from [the quickstart](../quickstart.md), and you have watched the
 policy permit three tasks and refuse two, with the refusal text the agent read.
 
 The files are in
@@ -23,7 +23,7 @@ build you install (`./box-core/box --version`).
 
 ## Before you start
 
-- The box from [Getting started](../getting-started.md) under `~/box-tutorial`: Box in
+- The box from [the quickstart](../quickstart.md) under `~/box-tutorial`: Box in
   `box-core`, the project in `my-project`, and your Amazon Bedrock API key in
   `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command in this guide from
   `~/box-tutorial`.
@@ -50,7 +50,7 @@ build you install (`./box-core/box --version`).
 
 ## Step 1: Copy the example
 
-Clone the Box repository, unless `box-src` is already there from Getting started, and
+Clone the Box repository, unless `box-src` is already there from the quickstart, and
 copy the example directory to `~/box-tutorial/claude-code`:
 
 ```bash
@@ -142,7 +142,7 @@ each one in its place.
 
 ## Step 3: Read the policy
 
-`claude-code/policy.dw` keeps the rules from Getting started, adds a write permit for
+`claude-code/policy.dw` keeps the rules from the quickstart, adds a write permit for
 the project and a permit for Claude Code's two state directories, and adds four
 `forbid` rules. The tasks below exercise two of them, `no_env` and `no_deletes`, and
 each carries an `@id` and a `@description` that the denial text quotes:

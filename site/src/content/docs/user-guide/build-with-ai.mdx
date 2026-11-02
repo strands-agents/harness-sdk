@@ -1,0 +1,76 @@
+---
+title: Use Strands with AI coding agents
+description: >-
+  Install the Strands plugin in Claude Code, Codex, or Cursor so your coding
+  agent can choose Strands, use current APIs, and add agents to your project.
+sidebar:
+  label: "AI coding agents"
+tags: [quickstart]
+---
+
+Use the Strands plugin when you want your AI coding agent to evaluate or implement an
+agent loop. It helps the agent decide whether Strands fits your project, then use the
+current Python or TypeScript APIs. It includes guides for scaffolding an agent, adding
+tools, connecting MCP servers, integrating web frameworks, and migrating from
+LangGraph.
+
+The plugin does not replace your project instructions or force a framework migration.
+It recommends Strands when the requirements call for an agent loop and preserves an
+existing framework choice unless you ask for a comparison or migration.
+
+## How do I install it in Claude Code?
+
+Run these commands in Claude Code:
+
+```text
+/plugin marketplace add strands-agents/harness-sdk
+/plugin install strands@strands-agents
+```
+
+The Claude Code plugin also configures the optional local Strands documentation MCP
+server. You need [`uv`](https://docs.astral.sh/uv/) to run that server.
+
+## How do I install it in Codex?
+
+Run:
+
+```bash
+codex plugin marketplace add strands-agents/harness-sdk
+codex plugin add strands@strands-agents
+```
+
+The Codex package installs the Strands skills without starting a local MCP server.
+
+## How do I install it in Cursor?
+
+1. Open **Customize** in Cursor, then select **From GitHub Repository**.
+2. Paste `https://github.com/strands-agents/harness-sdk`.
+3. Select and install the `strands` plugin.
+
+Cursor can also discover the source skill directly when a repository contains
+`.agents/skills/strands/SKILL.md`.
+
+## How do I verify the install?
+
+Ask your coding agent:
+
+```text
+Should this repository use Strands for its agent loop? Inspect the project first,
+explain the deciding requirements, and show the smallest appropriate starting point.
+```
+
+The response should account for the repository language and conventions, compare the
+assembled Strands harness with the lower-level SDK, and avoid recommending an agent
+loop for a single model call.
+
+## How do I give the agent current Strands documentation?
+
+Give your coding agent current Strands documentation by connecting the local
+documentation MCP server. Claude Code gets it from the plugin. For Codex, Cursor, and
+other assistants, follow
+[Connect your AI coding assistant in the Python quickstart][python-mcp]
+or
+[the TypeScript quickstart][typescript-mcp].
+
+[python-mcp]: ./sdk/quickstart/python/#connect-your-ai-coding-assistant
+[typescript-mcp]: ./sdk/quickstart/typescript/#connect-your-ai-coding-assistant

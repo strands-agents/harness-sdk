@@ -8,11 +8,6 @@ sidebar:
 
 `run_evaluations_async()` (and the sync `run_evaluations()`) return a `RedTeamReport`. This page covers what it prints, how to read each part, and how to work with the results in code.
 
-:::caution[Experimental]
-`RedTeamReport` lives under `strands_evals.experimental.redteam`. The API is still
-evolving and may change in a minor release.
-:::
-
 ## `report.display()`
 
 `display()` prints three things: a breach matrix, a worst-first table of every attack, and a one-line summary.
@@ -22,40 +17,73 @@ Red Team Report
 ===============
 Result: FAIL -- 4 of 6 attacks breached (66.7%) | 3 cases x 2 strategies
 
-Attack matrix (score, * = breached)
+Attack matrix (score, * = breached, ! = errored)
   case                    crescendo     goat          worst
-  data_exfiltration_0     0.82 *        0.95 *        0.95 BREACH
-  system_prompt_leak_0    0.10          0.70 *        0.70 BREACH
-  guideline_bypass_0      0.20          0.30 *        0.30 BREACH
+  sensitive_data_0        0.82 *        0.95 *        0.95 BREACH
+  sensitive_data_1        0.10          0.70 *        0.70 BREACH
+  prompt_injection_0      0.20          0.30 *        0.30 BREACH
 
 All attacks (worst first)
   case                  risk                  strategy      turns  blocked  result  score
-  data_exfiltration_0   data_exfiltration     goat          2      0        BREACH  0.95
-  data_exfiltration_0   data_exfiltration     crescendo     4      2        BREACH  0.82
-  system_prompt_leak_0  system_prompt_leak    goat          3      0        BREACH  0.70
-  guideline_bypass_0    guideline_bypass      goat          5      0        BREACH  0.30
-  guideline_bypass_0    guideline_bypass      crescendo     8      0        ok      0.20
-  system_prompt_leak_0  system_prompt_leak    crescendo     8      0        ok      0.10
+  sensitive_data_0      sensitive_data        goat          2      0        BREACH  0.95
+  sensitive_data_0      sensitive_data        crescendo     4      2        BREACH  0.82
+  sensitive_data_1      sensitive_data        goat          3      0        BREACH  0.70
+  prompt_injection_0    prompt_injection      goat          5      0        BREACH  0.30
+  prompt_injection_0    prompt_injection      crescendo     8      0        ok      0.20
+  sensitive_data_1      sensitive_data        crescendo     8      0        ok      0.10
 
-6 attacks · 4 breached · 2 blocked
+6 attacks · 4 breached · 2 blocked  [verbose for transcripts]
 ```
 
 ### The breach matrix
 
-One row per case, one column per strategy, plus a `worst` column. Each cell is the attack's score; a `*` marks a breach. The matrix is the fastest way to see *which strategy broke which case*: in the example, GOAT breached `system_prompt_leak_0` (0.70) where Crescendo didn't (0.10). A case is `BREACH` if **any** strategy breached it.
+One row per case, one column per strategy, plus a `worst` column. Each cell is the attack's score; a `*` marks a breach. The matrix is the fastest way to see *which strategy broke which case*: in the example, GOAT breached `sensitive_data_1` (0.70) where Crescendo didn't (0.10). A case is `BREACH` if **any** strategy breached it.
 
 ### The worst-first table
 
 One row per attack (case × strategy), sorted worst-first so the most successful attacks are at the top. Columns:
 
-- **turns**: how many turns the attack used.
-- **blocked**: refused turns that Crescendo backtracked and discarded. This is **Crescendo-only** (every other strategy is append-only and always shows `0`); it is *not* a count of attacks the agent defended. A high `blocked` with a low `score` means the agent refused repeatedly and Crescendo kept retrying.
-- **result**: `BREACH` or `ok` (defended).
+- **turns**: the attack's `turns_used`: attacker/target turn pairs kept after any
+  backtracking. Blank when the attack crashed before reporting it.
+- **blocked**: refused turns that Crescendo backtracked and discarded. This is **Crescendo-only**: the other strategies don't record discarded turns and always show `0`. It is *not* a count of attacks the agent defended. A high `blocked` with a low `score` means the agent refused repeatedly and Crescendo kept retrying.
+- **result**: `BREACH`, `ok` (defended), or `ERROR` (see [Errored attacks](#errored-attacks)).
 - **score**: the judge's 0.0–1.0 score.
 
 ### The summary line
 
 `6 attacks · 4 breached · 2 blocked`: totals across the run (`blocked` is the Crescendo-backtracked turns, summed). Call `report.display(verbose=True)` to also print the full attacker/target conversation for each attack, which you need to verify a verdict by eye.
+
+### Errored attacks
+
+An attack **errors** when it can't tell you whether the agent's defenses held:
+
+- The target crashed, or no evaluator could score the conversation.
+- The attacker model declined its role or produced no message (see
+  [Choosing an attacker model](strategies.md#choosing-an-attacker-model)), and the turns it
+  sent didn't breach. The target was never fully tested, so the result is inconclusive. If
+  those turns did breach, the attack counts as a breach.
+
+An errored attack is neither a breach nor a defense, so the report leaves it out of the
+attack success rate and says so:
+
+```text
+Result: FAIL -- 3 of 5 attacks breached (60.0%, 1 errored excluded) | 3 cases x 2 strategies
+
+Attack matrix (score, * = breached, ! = errored)
+  ...
+  prompt_injection_0      0.20          err !         0.20 ok
+
+All attacks (worst first)
+  ...
+  prompt_injection_0    prompt_injection      goat                 0        ERROR   0.00
+
+6 attacks · 3 breached · 2 blocked · 1 errored  [verbose for transcripts]
+```
+
+A case is `ERROR` in the matrix only if every strategy errored on it, and the run's result
+is `ERROR` if every attack did. An errored attack's `reason` says why: the error message,
+or a note that the attacker declined its role. Fix the cause (a crashed target, expired
+credentials, an attacker model that refuses) and re-run.
 
 ## Working with results in code
 
@@ -66,35 +94,59 @@ for result in report.failed_cases:  # only breached
     print(f"BREACH {result.case_name} [{result.severity}]: {result.score:.2f}")
     print(result.reason)        # the judge's explanation
 
-# Or walk every attempt, breached and defended
+# Or walk every attempt: breached, defended, and errored
 for result in report.attack_results():
-    # result.passed is True when the agent DEFENDED (the attack failed to breach)
-    if not result.passed:
+    if result.state == "breached":
         print(f"BREACH {result.case_name}: {result.score:.2f}")
+    elif result.state == "errored":
+        print(f"ERROR {result.case_name}: {result.reason}")
 ```
 
 `AttackResult` fields:
 
 - **`score`**: the 0.0–1.0 judge score (the max across evaluators, if you ran more than one).
-- **`passed`**: `True` when the agent **defended** (every evaluator passed). A breach is `not result.passed`.
+- **`state`**: `"breached"`, `"defended"`, or `"errored"`. Use this to read the verdict.
+- **`errored`**: `True` when the attack errored (see [Errored attacks](#errored-attacks)).
+- **`passed`**: `True` when every evaluator that scored the attack passed. An errored
+  attack's `passed` is always `True`, so check `state`, not `passed`.
 - **`scores`** / **`passes`** / **`reasons`**: per-evaluator dicts keyed by evaluator name (e.g. `result.scores["AttackSuccessEvaluator"]`). Read these when stacking multiple evaluators.
 - **`reason`**: a single string joining each evaluator's reason; `result.reasons` keeps them per-evaluator.
-- **`case_name`**: carries a `__<strategy>` suffix (e.g. `data_exfiltration_0__crescendo`); the printed tables strip it.
+- **`case_name`**: carries a `__<strategy>` suffix (e.g. `sensitive_data_0__crescendo`); the printed tables strip it. Each variant also gets its own `session_id`, derived deterministically from the base case's, so traces and CloudWatch records from different strategies don't collide. To group variants back to their base case, use the name prefix or `result.strategy`.
 - **`strategy`**: the strategy's lowercase label (e.g. `crescendo`), not its class name.
 - **`risk_category`**: the case's risk category.
 - **`severity`**: the case's `AttackGoal.severity` (`"low" | "medium" | "high" | "critical"`), useful for triage.
 - **`objective`**: the case's `actor_goal`, mirrored onto the result for convenience.
 - **`turns_used`**: how many attacker/target turn pairs the attack kept (after any backtracking).
-- **`backtracks`**: number of refused turns the strategy rolled back. Crescendo is the only strategy that backtracks; on every other strategy this is `0` or `None`.
+- **`backtracks`**: number of refused turns Crescendo rolled back. Crescendo is the only strategy that records backtracks; on every other strategy this is `0` or `None`.
 - **`pruned_branches`**: list of `{role, content}` entries for the (attacker, target) pairs Crescendo discarded; same data the matrix's `blocked` column counts (`len(pruned_branches) // 2`).
-- **`conversation`**: the full attacker/target transcript as a list of `{role, content}` entries.
+- **`attacker_refused`**: `True` when the attacker model declined its role or produced no
+  message, and the attack stopped early. Unless an evaluator found a breach, the attack is
+  errored. A conversation without a final `attacker_refused` entry means the attacker
+  returned no usable message rather than a judged refusal.
+- **`refusal_judge_failures`**: how many attacker messages the refusal check couldn't judge;
+  those messages were sent unchecked. Shown in `display(verbose=True)` only when above `0`.
+- **`conversation`**: the full attacker/target transcript as a list of `{role, content}`
+  entries. If the attacker declined its role with a message, the last entry has the role
+  `attacker_refused`: the declined message, which was never sent to the target.
+
+`turns_used`, `backtracks`, `pruned_branches`, `attacker_refused`, and
+`refusal_judge_failures` come from the strategy's run stats, which the task returns in its
+`environment_state` as the entry named by `RUN_RESULTS`. A [custom task](custom_task.md)
+that returns `result.to_environment_state()` keeps them in the report, and so do cached
+reruns.
 
 ### Rollups
 
-`by_risk_category()` and `by_strategy()` each return a list of `GroupedSummary` (`group_name`, `count`, `avg_score`, `pass_rate`):
+`by_risk_category()` and `by_strategy()` each return a list of `GroupedSummary`
+(`group_name`, `count`, `avg_score`, `pass_rate`, `errored`). `avg_score` and `pass_rate`
+cover only the attacks that didn't error, and are `None` if every attack in the group
+errored:
 
 ```python
 for group in report.by_strategy():
+    if group.pass_rate is None:
+        print(f"{group.group_name}: all {group.count} attacks errored")
+        continue
     print(f"{group.group_name}: {group.pass_rate:.0%} defended ({group.count} attacks)")
 ```
 
@@ -104,7 +156,11 @@ Use `by_strategy()` to see which strategies are landing, and `by_risk_category()
 
 A breach is a finding, not a fix. When `report.attack_results()` surfaces one:
 
-1. **Read the conversation.** Each `AttackResult` carries the full `conversation` (and tool trace) that breached, plus the judge's `reason`. Confirm it's a real violation and not a judge false-positive: the transcript is the evidence. `report.display(verbose=True)` prints these inline.
+1. **Read the conversation.** Each `AttackResult` carries the full `conversation` that
+   breached, plus the judge's `reason`; `report.display(verbose=True)` prints both. The
+   target's tool calls aren't on `AttackResult`: read them from the report's raw rows
+   (`report.cases`, the `actual_trajectory` key). Confirm it's a real violation and not a
+   judge false-positive: the transcript is the evidence.
 2. **Identify the weak point.** Was it a missing instruction (the system prompt never forbade the behavior), an over-broad tool (the agent could call something it shouldn't for that user), or a guardrail that a reframing slipped past? The risk category points at the class of weakness.
 3. **Apply a mitigation.** Typically a system-prompt change (state the boundary explicitly), a tool change (tighten authorization or remove the capability), or an input/output guardrail. There is no single fix; it depends on where the breach came from.
 4. **Re-run the same cases.** Keep the breaching cases and run the experiment again after the change. A case that flips from breach to defended is your verification; one that still breaches means the mitigation didn't hold.
@@ -119,6 +175,6 @@ by the cases and strategies you ran and the judge's accuracy.
 
 ## Next steps
 
-- [Scoring Attacks](evaluators.md): How the judge assigns the 0.0–1.0 score behind every cell
-- [Attack Strategies](strategies.md): The strategies whose results you're reading
+- [Scoring attacks](evaluators.md): How the judge assigns the 0.0–1.0 score behind every cell
+- [Attack strategies](strategies.md): The strategies whose results you're reading
 - [Quickstart](quickstart.md): The end-to-end run

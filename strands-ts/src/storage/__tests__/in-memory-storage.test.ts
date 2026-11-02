@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { InMemoryStorage } from '../in-memory-storage.js'
 import { StorageError } from '../../errors.js'
+import type { SearchStrategy } from '../search/types.js'
+import { NAMESPACED } from '../storage.js'
+import type { StorageSearchResult } from '../storage.js'
 
 describe('InMemoryStorage', () => {
   let storage: InMemoryStorage
@@ -122,6 +125,109 @@ describe('InMemoryStorage', () => {
 
     it('rejects prefixes with .. segments', async () => {
       await expect(storage.list('../')).rejects.toThrow(StorageError)
+    })
+  })
+
+  describe('constructor', () => {
+    const fakeStrategy = (): SearchStrategy<InMemoryStorage> & { index: Mock; search: Mock } => ({
+      index: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockResolvedValue([{ key: 'hit', score: 1 }]),
+    })
+
+    it('indexes writes and delegates search to a searchStrategy from config', async () => {
+      const strategy = fakeStrategy()
+      const configured = new InMemoryStorage({ searchStrategy: strategy })
+
+      await configured.write('a', new Uint8Array([1]))
+      expect(strategy.index).toHaveBeenCalledWith(configured, 'a', new Uint8Array([1]))
+      expect(await configured.search('query')).toEqual([{ key: 'hit', score: 1 }])
+    })
+
+    it('accepts a positional search strategy', async () => {
+      const strategy = fakeStrategy()
+      const positional = new InMemoryStorage(strategy)
+
+      await positional.write('a', new Uint8Array([1]))
+      expect(strategy.index).toHaveBeenCalledTimes(1)
+      await positional.search('query')
+      expect(strategy.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses the default keyword scan with an empty config', async () => {
+      const configured = new InMemoryStorage({})
+      await configured.write('notes', new TextEncoder().encode('dark mode'))
+      expect((await configured.search('dark')).map((result) => result.key)).toEqual(['notes'])
+    })
+  })
+
+  describe('namespace', () => {
+    const encode = (text: string): Uint8Array => new TextEncoder().encode(text)
+
+    it('returns a scoped InMemoryStorage that shares entries with the parent', async () => {
+      const scoped = storage.namespace('memory/agent')
+      await scoped.write('notes.md', encode('hello'))
+
+      expect(scoped).toBeInstanceOf(InMemoryStorage)
+      expect(NAMESPACED in scoped).toBe(true)
+      expect(await storage.list('')).toEqual(['memory/agent/notes.md'])
+      expect(await scoped.list('')).toEqual(['notes.md'])
+      expect(new TextDecoder().decode((await scoped.read('notes.md'))!)).toBe('hello')
+      await scoped.delete('notes.md')
+      expect(await storage.list('')).toEqual([])
+    })
+
+    it('composes nested namespaces', async () => {
+      await storage.namespace('a').namespace('b/').write('k', encode('v'))
+      expect(await storage.list('')).toEqual(['a/b/k'])
+    })
+
+    it('searches only entries under the prefix and scores keys without it', async () => {
+      await storage.write('other/memory-agent-notes.md', encode('unrelated'))
+      const scoped = storage.namespace('memory/agent')
+      await scoped.write('deploy.md', encode('blue green deploys'))
+      await scoped.write('theme.md', encode('dark mode'))
+
+      const results = await scoped.search('memory agent deploy')
+
+      expect(results.map((result) => result.key)).toEqual(['deploy.md'])
+    })
+
+    it('passes the scoped instance and relative keys to the search strategy', async () => {
+      const strategy = { index: vi.fn(), search: vi.fn().mockResolvedValue([]) }
+      const scoped = new InMemoryStorage({ searchStrategy: strategy }).namespace('memory/agent')
+
+      await scoped.write('deploy.md', encode('x'))
+      await scoped.search('query')
+
+      expect(strategy.index).toHaveBeenCalledWith(scoped, 'deploy.md', expect.any(Uint8Array))
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'query')
+    })
+
+    it("keeps a subclass's overrides and fields on the scoped instance", async () => {
+      class TaggedStorage extends InMemoryStorage {
+        readonly tag = 'custom'
+        override async search(query: string): Promise<StorageSearchResult[]> {
+          return [{ key: `${this.tag}:${query}`, score: 1 }]
+        }
+      }
+      const parent = new TaggedStorage()
+      const scoped = parent.namespace('memory').namespace('agent')
+      await scoped.write('notes.md', encode('hello'))
+
+      expect(scoped).toBeInstanceOf(TaggedStorage)
+      expect(await scoped.search('q')).toEqual([{ key: 'custom:q', score: 1 }])
+      expect(await parent.list('')).toEqual(['memory/agent/notes.md'])
+      expect(NAMESPACED in parent).toBe(false)
+    })
+
+    it('clears only entries under the prefix', async () => {
+      await storage.write('keep.md', encode('x'))
+      const scoped = storage.namespace('memory')
+      await scoped.write('drop.md', encode('y'))
+
+      scoped.clear()
+
+      expect(await storage.list('')).toEqual(['keep.md'])
     })
   })
 })

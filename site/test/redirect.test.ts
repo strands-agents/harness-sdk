@@ -187,6 +187,12 @@ const urlCases: Array<{ description: string; path: string; expected: string | nu
     path: '/latest/documentation/docs/user-guide/concepts/tools/python-tools',
     expected: 'docs/user-guide/sdk/tools/custom-tools',
   },
+  {
+    description: 'external redirect does not inherit the source trailing slash',
+    path: '/latest/documentation/docs/examples/cdk/deploy_to_apprunner/',
+    expected:
+      'https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/cdk/deploy_to_apprunner/README.md',
+  },
   // we don't rewrite these because they're subject to change quite a bit
   {
     description: 'api-reference path passes through unrewritten',

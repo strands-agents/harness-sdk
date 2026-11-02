@@ -126,8 +126,8 @@ function getStreamNeighbors(
   const stream = all.filter((r) => streamKey(r) === key) // `all` is newest-first
   const i = stream.findIndex((r) => r.id === release.id)
   return {
-    newer: i > 0 ? stream[i - 1] ?? null : null,
-    older: i >= 0 && i < stream.length - 1 ? stream[i + 1] ?? null : null,
+    newer: i > 0 ? (stream[i - 1] ?? null) : null,
+    older: i >= 0 && i < stream.length - 1 ? (stream[i + 1] ?? null) : null,
   }
 }
 

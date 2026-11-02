@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.memory.extraction.coordinator import (
     BACKOFF_PROBE_INTERVAL,
     SAVE_FAILURES_BEFORE_BACKOFF,
@@ -733,3 +734,33 @@ async def test_extractor_route_does_not_receive_add_messages_context():
     # Extractor route writes via add; add_messages is never called, so no context is built for it.
     store.add_messages.assert_not_called()
     extractor.extract.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_extractor_gets_a_handle_that_joins_the_request_usage_without_its_limits():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _make_store("s", ExtractionConfig(trigger=_trigger(), extractor=extractor), sink="add")
+    coordinator = _coordinator(store)
+    coordinator.record(_user_msg("I prefer dark mode"))
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    task = coordinator.process(store, None, request)
+    await task
+
+    handed = extractor.extract.call_args.args[1].invocation_context
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_extractor_gets_no_handle_outside_a_request():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _make_store("s", ExtractionConfig(trigger=_trigger(), extractor=extractor), sink="add")
+    coordinator = _coordinator(store)
+    coordinator.record(_user_msg("I prefer dark mode"))
+
+    await _drive(coordinator, store)
+
+    assert extractor.extract.call_args.args[1].invocation_context is None

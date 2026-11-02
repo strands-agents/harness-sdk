@@ -4,11 +4,12 @@
 // running this locally) commits the resulting diff. Runnable locally:
 //   tsx scripts/changelog/sync.ts --mode backfill
 //   tsx scripts/changelog/sync.ts --tag python/v1.42.0
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+//   tsx scripts/changelog/sync.ts --check   (exit 1: a release has no file; 2: could not verify)
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { run } from './run'
+import { run, findMissing } from './run'
 import { makeClient } from './github-client'
 
 function arg(name: string): string | undefined {
@@ -39,15 +40,28 @@ async function main() {
   const tag = arg('tag') || process.env.TAG || undefined
   const skipExisting = flag('skip-existing') || process.env.SKIP_EXISTING === 'true'
 
+  const here = dirname(fileURLToPath(import.meta.url))
+  const repoRoot = resolve(here, '../../..') // scripts/changelog -> site -> repo root
+
+  if (flag('check')) {
+    const missing = await findMissing({
+      repo: sourceRepo,
+      client: makeClient(resolveToken(), (m) => console.warn(`warning: ${m}`)),
+      exists: async (p) => existsSync(join(repoRoot, p)),
+    }).catch((e) => {
+      console.error(`changelog: could not verify ${sourceRepo}: ${e instanceof Error ? e.message : e}`)
+      process.exit(2)
+    })
+    for (const m of missing) console.error(`changelog: ${sourceRepo} ${m.tag} has no ${m.path}`)
+    if (missing.length) process.exit(1)
+    console.log(`changelog: every ${sourceRepo} release has a changelog file`)
+    return
+  }
+
   if (mode === 'single' && !tag) {
     console.error('changelog: single mode requires --tag <release-tag> (or use --mode backfill).')
     process.exit(1)
   }
-
-  // The site dir is the repo-relative root for content paths (build-release-file
-  // returns paths like "site/src/content/changelog/...").
-  const here = dirname(fileURLToPath(import.meta.url))
-  const repoRoot = resolve(here, '../../..') // scripts/changelog -> site -> repo root
 
   const warnings: string[] = []
   const client = makeClient(resolveToken(), (m) => warnings.push(m))

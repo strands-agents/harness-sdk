@@ -7,7 +7,7 @@ description: Assess a published or in-progress documentation page for quality, a
 
 Assess an existing documentation page. Produces a structured assessment with specific improvement recommendations.
 
-**How this differs from docs-reviewer:** The docs-reviewer is a voice/style gate for drafts in progress (runs at the end of docs-writer). The docs-audit is an assessment tool for published pages: it checks accuracy against SDK source, identifies content gaps, and optionally compares against competitor docs. Use docs-audit to decide *what needs work*; use docs-reviewer to verify *that a draft is ready to ship*.
+**How this differs from docs-reviewer:** The docs-reviewer is a voice/style gate for drafts in progress (runs at the end of docs-writer). The docs-audit is an assessment tool for published pages: it checks accuracy against SDK source, identifies content gaps, and optionally compares against competitor docs. Use docs-audit to decide *what needs work*; use docs-reviewer to verify *that a draft is ready to ship*. For a line-by-line check that every code example and prose claim is true against the source, use docs-verifier.
 
 ## When to Use
 

@@ -774,3 +774,41 @@ async def test_cancelled_child_becomes_an_error_result():
     assert result["status"] == "error"
     assert "cancel" in result["content"][0]["text"].lower()
     assert tool._pending == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["content_filtered", "refusal"])
+async def test_a_blocked_child_becomes_an_error_result_naming_the_stop_reason(stop_reason):
+    # A content filter or refusal ends the child's run without a real answer; the parent must see
+    # a failure that names the stop reason, never a success wrapping the partial text.
+    child = _FakeChild(_FakeResult("I'll retrieve that now.\n", stop_reason=stop_reason))
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    result = _final_result(await _events(tool, {"task": "x"}))
+    message = (
+        f"Subagent stopped before finishing (stop_reason={stop_reason}).\n\nPartial output:\nI'll retrieve that now."
+    )
+    assert result == {"toolUseId": "t1", "status": "error", "content": [{"text": message}]}
+    assert tool._pending == {}
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_child_with_no_output_reports_only_the_stop_reason():
+    child = _FakeChild(_FakeResult("", stop_reason="content_filtered"))
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    result = _final_result(await _events(tool, {"task": "x"}))
+    assert result == {
+        "toolUseId": "t1",
+        "status": "error",
+        "content": [{"text": "Subagent stopped before finishing (stop_reason=content_filtered)."}],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["guardrail_intervened", "limit_turns", "stop_sequence"])
+async def test_any_other_stop_reason_returns_the_childs_text_as_a_success(stop_reason):
+    # A guardrail substitutes its own message and a budget limit is graceful exhaustion; both keep
+    # the child's text so the parent can judge it, so neither is turned into an error.
+    child = _FakeChild(_FakeResult("the text\n", stop_reason=stop_reason))
+    tool = make_subagent(builder=lambda spec: child, presets={"generalist": GENERALIST})
+    result = _final_result(await _events(tool, {"task": "x"}))
+    assert result == {"toolUseId": "t1", "status": "success", "content": [{"text": "the text\n"}]}

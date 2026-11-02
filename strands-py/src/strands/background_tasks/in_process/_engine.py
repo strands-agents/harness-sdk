@@ -245,7 +245,9 @@ class InProcessTaskEngine:
             active_execution.timeout_handle.cancel()
         self._active_executions.pop(task_id, None)
         current = self._tasks.get(task_id)
-        if current is not None and current["status"] == "queued":
+        if current is not None and completed.cancelled() and current["status"] in {"queued", "working"}:
+            self._update_task(task_id, _cancel_task)
+        elif current is not None and current["status"] == "queued":
             self._queue[task_id] = None
         self._wake_idle_waiters()
         self._start_queued_tasks()

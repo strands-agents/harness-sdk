@@ -26,6 +26,7 @@ import { InvokeModelStage } from '../../middleware/stages.js'
 import { Model } from '../model.js'
 import { cloneSystemPrompt, type Message, type SystemPrompt } from '../../types/messages.js'
 import { deepCopy, deepCopyWithValidation, type JSONValue } from '../../types/json.js'
+import { createAuxiliaryInvocationContext, type InvocationContext } from '../../agent/invocation-context.js'
 import type { InvokeModelContext } from '../../middleware/stages.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { ToolSpec } from '../../tools/types.js'
@@ -225,7 +226,8 @@ export class ModelRouter implements Plugin {
         [...context.messages],
         context.systemPrompt,
         [...context.toolSpecs],
-        context.invocationState
+        context.invocationState,
+        context.invocationContext
       )
       state = await this._openAndCache(context.agent, context.invocationState, routingContext)
     }
@@ -299,6 +301,7 @@ export class ModelRouter implements Plugin {
         context.systemPrompt,
         context.toolSpecs,
         context.invocationState,
+        context.invocationContext,
         []
       )
     )
@@ -355,6 +358,7 @@ export class ModelRouter implements Plugin {
         event.agent.systemPrompt,
         event.agent.toolRegistry.list().map((tool) => tool.toolSpec),
         event.invocationState,
+        event.invocationContext,
         state.attempts
       )
 
@@ -415,8 +419,10 @@ export class ModelRouter implements Plugin {
     systemPrompt: SystemPrompt | undefined,
     toolSpecs: readonly ToolSpec[],
     invocationState: InvocationState,
+    invocationContext: InvocationContext | undefined,
     attempts: readonly RoutingAttempt[] = []
   ): RoutingContext {
+    const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
     const context: RoutingContext = {
       messages: messages.map((message) => message.clone()),
       ...(systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(systemPrompt) }),
@@ -424,6 +430,7 @@ export class ModelRouter implements Plugin {
       candidates: this._candidates,
       invocationState,
       attempts: Object.freeze([...attempts]),
+      ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
     }
     return Object.freeze(context)
   }

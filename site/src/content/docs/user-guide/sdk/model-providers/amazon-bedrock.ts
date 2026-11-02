@@ -239,7 +239,9 @@ async function guardrailsExample() {
 
   const guardrailAgent = new Agent({ model: bedrockModel })
 
-  const response = await guardrailAgent.invoke('Can you tell me about the Strands Harness SDK?')
+  const response = await guardrailAgent.invoke(
+    'Can you tell me about the Strands Harness SDK?'
+  )
   // --8<-- [end:guardrails]
 }
 

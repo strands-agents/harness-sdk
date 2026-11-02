@@ -11,20 +11,20 @@ sidebar:
 
 Long-term memory lets the agent recall durable facts across conversations without you
 re-supplying them. Strands harness keeps it on by default: it distills facts into markdown files,
-searches them before each turn, and folds the top matches into context. Persistence is
+searches them before each user turn, and folds the top matches into context. Persistence is
 plain files, independent of any session, so memory survives across sessions and works with
 sessions off.
 
 ## What memory does by default
 
 With memory on, Strands harness runs a memory manager over a file-backed store under
-`./.agent/memory`. Before each turn it searches that store and injects the most relevant
+`./.agent/memory`. Before each user turn it searches that store and injects the most relevant
 entries, and the agent also gets a `search_memory` tool for on-demand recall. Extraction,
 distilling durable facts from the conversation, runs in the background every few turns on a
 small, credential-aligned model, so keeping memory costs little.
 
-Memory injection runs on every turn, not only when the user speaks, so an autonomous step
-or a delegate consults memory at each turn of a multi-step task.
+Memory injection runs when the user speaks, not on every tool-result step of a multi-step
+task; mid-task, the agent recalls on demand through `search_memory`.
 
 ## Move the memory files
 

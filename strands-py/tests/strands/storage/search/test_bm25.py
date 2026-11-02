@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sqlite3
 import tempfile
 
 import pytest
@@ -127,8 +128,7 @@ class TestBm25SearchStrategy:
         await strategy.search(storage, "testing")
         await strategy.close()
 
-        assert strategy._conn is None
-        assert strategy._storage_path is None
+        assert strategy._conns == {}
 
     @pytest.mark.asyncio
     async def test_custom_db_path(self, temp_dir, storage):
@@ -182,20 +182,78 @@ class TestBm25SearchStrategy:
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_reconnects_when_storage_changes(self, temp_dir):
+    async def test_keeps_one_index_per_directory_when_storages_alternate(self, temp_dir):
         strategy = Bm25SearchStrategy()
         storage_a = LocalFileStorage(os.path.join(temp_dir, "a"))
         storage_b = LocalFileStorage(os.path.join(temp_dir, "b"))
 
         await strategy.index(storage_a, "doc.md", b"Content about authentication.")
-        results = await strategy.search(storage_a, "authentication")
-        assert len(results) > 0
-
+        conn_a = strategy._ensure_connection(storage_a)
         await strategy.index(storage_b, "doc.md", b"Content about deployment.")
-        results = await strategy.search(storage_b, "deployment")
+
+        results_a = await strategy.search(storage_a, "authentication")
+        results_b = await strategy.search(storage_b, "deployment")
+        cross = await strategy.search(storage_a, "deployment")
+
+        assert strategy._ensure_connection(storage_a) is conn_a
+        assert len(strategy._conns) == 2
         await strategy.close()
 
-        assert len(results) > 0
+        assert [r.key for r in results_a] == ["doc.md"]
+        assert [r.key for r in results_b] == ["doc.md"]
+        assert cross == []
+        assert os.path.exists(os.path.join(temp_dir, ".__strands_a-fts5.sqlite"))
+        assert os.path.exists(os.path.join(temp_dir, ".__strands_b-fts5.sqlite"))
+
+    @pytest.mark.asyncio
+    async def test_namespaced_storages_share_strategy_without_reopening(self, temp_dir):
+        strategy = Bm25SearchStrategy()
+        root = LocalFileStorage(temp_dir, search_strategy=strategy)
+        memory_a = root.namespace("memory/a")
+        memory_b = root.namespace("memory/b")
+
+        await memory_a.write("notes.md", b"OAuth2 authentication flow")
+        await memory_b.write("notes.md", b"ECS deployment pipeline")
+        for _ in range(3):
+            assert [r.key for r in await memory_a.search("authentication")] == ["notes.md"]
+            assert [r.key for r in await memory_b.search("deployment")] == ["notes.md"]
+            assert await memory_a.search("deployment") == []
+
+        assert len(strategy._conns) == 2
+        await strategy.close()
+
+    @pytest.mark.asyncio
+    async def test_close_closes_every_connection(self, temp_dir):
+        strategy = Bm25SearchStrategy()
+        storage_a = LocalFileStorage(os.path.join(temp_dir, "a"))
+        storage_b = LocalFileStorage(os.path.join(temp_dir, "b"))
+        await strategy.index(storage_a, "doc.md", b"authentication")
+        await strategy.index(storage_b, "doc.md", b"deployment")
+        conns = list(strategy._conns.values())
+
+        await strategy.close()
+
+        assert strategy._conns == {}
+        for conn in conns:
+            with pytest.raises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+
+    @pytest.mark.asyncio
+    async def test_explicit_db_path_rejects_a_second_directory(self, temp_dir):
+        db_path = os.path.join(temp_dir, "shared.sqlite")
+        strategy = Bm25SearchStrategy(Bm25SearchStrategyConfig(db_path=db_path))
+        storage_a = LocalFileStorage(os.path.join(temp_dir, "a"))
+        storage_b = LocalFileStorage(os.path.join(temp_dir, "b"))
+        await strategy.index(storage_a, "doc.md", b"Content about authentication.")
+
+        with pytest.raises(ValueError, match="already indexes .* and cannot also index"):
+            await strategy.index(storage_b, "doc.md", b"Content about deployment.")
+        with pytest.raises(ValueError, match="already indexes"):
+            await strategy.search(storage_b, "deployment")
+
+        results = await strategy.search(storage_a, "authentication")
+        await strategy.close()
+        assert [r.key for r in results] == ["doc.md"]
 
     @pytest.mark.asyncio
     async def test_concurrent_index_same_key(self, storage, strategy):

@@ -236,7 +236,7 @@ class LiteLLMModel(OpenAIModel):
                         cache_control["ttl"] = ttl
                     system_content[-1]["cache_control"] = cache_control
 
-        # Create single system message with content array rather than mulitple system messages
+        # Create single system message with content array rather than multiple system messages
         return [{"role": "system", "content": system_content}] if system_content else []
 
     @override

@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 368" width="720" height="368">
+  <!-- Type: architecture (before half of a pair; layout matches migrate-langgraph-strands-state). Story: every LangGraph node reads one shared state object and returns updates to it (a read and an update edge per node), and the checkpointer snapshots that object. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="16" y="16" width="688" height="240" rx="8"/>
+  <text class="dg-eyebrow" x="32" y="36">LANGGRAPH · ONE SHARED STATE OBJECT</text>
+
+  <!-- Edges: control flow -->
+  <path class="dg-edge" d="M208,88 H278" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M440,88 H510" marker-end="url(#arrow)"/>
+  <!-- Edges: updates merged into the shared state -->
+  <path class="dg-edge is-dashed" d="M120,176 V122" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M136,120 V174" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M352,176 V122" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M368,120 V174" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M584,176 V122" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M600,120 V174" marker-end="url(#arrow)"/>
+  <!-- Edge: persistence -->
+  <path class="dg-edge is-dashed" d="M360,240 V286" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="374" y="142" width="108" height="12" rx="2"/>
+  <text class="dg-label" x="378" y="151">READS / UPDATES</text>
+  <rect class="dg-mask" x="366" y="266" width="68" height="12" rx="2"/>
+  <text class="dg-label" x="370" y="275">SNAPSHOTS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="48" y="56" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="128" y="85" text-anchor="middle">Research</text>
+  <text class="dg-code" x="128" y="103" text-anchor="middle">research(state)</text>
+
+  <rect class="dg-node" x="280" y="56" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="360" y="85" text-anchor="middle">Analysis</text>
+  <text class="dg-code" x="360" y="103" text-anchor="middle">analysis(state)</text>
+
+  <rect class="dg-node" x="512" y="56" width="160" height="64" rx="6"/>
+  <text class="dg-name" x="592" y="85" text-anchor="middle">Review</text>
+  <text class="dg-code" x="592" y="103" text-anchor="middle">review(state)</text>
+
+  <rect class="dg-node is-focal" x="48" y="176" width="624" height="64" rx="6"/>
+  <text class="dg-name is-focal-text" x="360" y="205" text-anchor="middle">Shared state</text>
+  <text class="dg-code" x="360" y="223" text-anchor="middle">CaseState</text>
+
+  <rect class="dg-node" x="248" y="288" width="224" height="64" rx="6"/>
+  <text class="dg-name" x="360" y="317" text-anchor="middle">Checkpointer</text>
+  <text class="dg-code" x="360" y="335" text-anchor="middle">SqliteSaver</text>
+</svg>

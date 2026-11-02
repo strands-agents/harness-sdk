@@ -40,8 +40,6 @@ export interface SubagentInput {
   instructions?: string
   /** Subset of tools to grant the child; present when the tools axis is a `Choice`. */
   tools?: string[]
-  /** Subset of MCP servers to grant the child; present when the mcpServers axis is a `Choice`. */
-  mcp_servers?: string[]
   /** Model option name; present when the model axis is a `Choice`. */
   model?: string
   /** Context option name; present when the context axis is a `Choice`. */

@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+import Diagram from '@components/Diagram.astro'
 
 :::caution[Pre-release]
 Strands Box is pre-release software (0.1.x). Configuration keys, policy actions, and
@@ -68,39 +69,15 @@ Policy sees what goes through Box. An agent's own file tools, such as a harness'
 Read and Write tools, open files from the agent's process: the sandbox grants bound
 what they reach, but no policy rule sees those reads and writes. To have the policy
 decide every file change, give the agent a shell as its only file tool. The
-[getting started guide](getting-started.md) does this with the Strands CLI, the
+[quickstart](quickstart.md) does this with the Strands CLI, the
 [Strands harness guide](guides/run-strands-harness.md) with an agent you build, and the
 [Claude Code](guides/run-claude-code.md) and [Codex CLI](guides/run-codex-cli.md) guides
 do it for those harnesses.
 
-```mermaid
-flowchart LR
-    subgraph agentbox ["Agent's sandbox (operating system enforcement)"]
-        agent["Agent harness<br/>Strands CLI"]
-    end
-
-    subgraph trusted ["The box's trusted process"]
-        policy{{"Dogwood policy engine"}}
-        shell["Strands Shell and Monty"]
-        broker["MCP broker"]
-        gateway["Egress gateway<br/>TLS, credentials"]
-        records[("Decision records")]
-    end
-
-    subgraph leaves ["Separate sandboxes"]
-        tool["Tools: git, aws, cargo"]
-        mcp["Local MCP servers"]
-    end
-
-    agent -->|"bash, python"| shell
-    agent -->|"MCP"| broker
-    agent -->|"HTTP(S)"| gateway
-    shell -->|"shell:spawn"| tool
-    broker --> mcp
-    shell & broker & gateway -.->|"ask"| policy
-    policy -.-> records
-    gateway --> internet(("Allowed<br/>destinations"))
-```
+<Diagram
+  name="box-architecture"
+  alt="What a box contains. The agent harness, such as the Strands CLI, runs in the agent's sandbox. It acts through three parts of the box's trusted process: Strands Shell and Monty for bash and python, the egress gateway for HTTP and HTTPS traffic, and the MCP broker for MCP requests such as tools/list and tools/call. Each of the three asks the Dogwood policy engine, which decides each action and records each decision. The egress gateway handles TLS and credentials and forwards permitted HTTP and HTTPS requests to allowed destinations outside the box. When policy permits, the shell starts tools such as git or aws, and the broker starts local MCP servers. Each tool and each local MCP server runs in its own sandbox."
+/>
 
 ## Shared actions and history
 
@@ -138,8 +115,8 @@ The [action reference](reference/policy-actions.md) lists every action and its f
 
 <CardGrid>
   <LinkCard
-    title="Getting started"
-    href="getting-started/"
+    title="Quickstart"
+    href="quickstart/"
     description="Download Box, put the Strands CLI in a box, and watch the policy decide."
   />
   <LinkCard

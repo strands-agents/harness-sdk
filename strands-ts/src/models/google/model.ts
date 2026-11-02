@@ -147,6 +147,11 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId)
   }
 
+  /** The configured model ID, else the default one that gets sent. */
+  override get modelId(): string {
+    return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
+  }
+
   /**
    * Count tokens using Gemini's native countTokens API.
    *
@@ -346,6 +351,21 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     // Spread params object for forward compatibility
     if (this._config.params) {
       Object.assign(config, this._config.params)
+    }
+
+    // Gemini Developer API requires this flag when mixing function declarations with built-in tools.
+    // Runs after params spread so a caller-supplied toolConfig is merged into, not overwritten.
+    const needsServerSideFlag =
+      this._config.builtInTools &&
+      this._config.builtInTools.length > 0 &&
+      options?.toolSpecs &&
+      options.toolSpecs.length > 0 &&
+      !this._client.vertexai
+    if (needsServerSideFlag) {
+      config.toolConfig = {
+        ...config.toolConfig,
+        includeServerSideToolInvocations: config.toolConfig?.includeServerSideToolInvocations ?? true,
+      }
     }
 
     return {

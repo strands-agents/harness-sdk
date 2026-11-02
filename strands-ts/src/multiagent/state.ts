@@ -1,6 +1,7 @@
 import { StateStore } from '../state-store.js'
 import { type ContentBlock, contentBlockFromData } from '../types/messages.js'
 import type { Usage } from '../models/streaming.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
 import type { z } from 'zod'
 import type { JSONValue } from '../types/json.js'
@@ -204,6 +205,8 @@ export class MultiAgentResult {
   readonly error?: Error
   /** Aggregated token usage across all node results. */
   readonly usage: Usage
+  /** The invocation context this run took part in; see {@link AgentResult.invocationContext}. */
+  readonly invocationContext?: InvocationContext
   /** Interrupts aggregated across all node results. Present when any node ended INTERRUPTED. */
   readonly interrupts?: Interrupt[]
 
@@ -214,6 +217,7 @@ export class MultiAgentResult {
     duration: number
     error?: Error
     interrupts?: Interrupt[]
+    invocationContext?: InvocationContext
   }) {
     this.status = data.status ?? this._resolveStatus(data.results)
     this.results = data.results
@@ -221,11 +225,12 @@ export class MultiAgentResult {
     this.duration = data.duration
     if ('error' in data) this.error = data.error
     this.usage = this._aggregateNodeUsage(data.results)
+    if (data.invocationContext !== undefined) this.invocationContext = data.invocationContext
     const interrupts = data.interrupts ?? data.results.flatMap((r) => r.interrupts ?? [])
     if (interrupts.length > 0) this.interrupts = interrupts
   }
 
-  /** Serializes this result to a JSON-compatible value. */
+  /** Serializes this result to a JSON-compatible value, leaving out the live `invocationContext`. */
   toJSON(): JSONValue {
     return {
       type: this.type,
@@ -316,6 +321,11 @@ export class MultiAgentState implements StateSerializable {
    * @internal — not part of the public state shape; orchestrator-owned.
    */
   _pendingInput?: MultiAgentInput
+  /**
+   * The request the current run belongs to (`undefined` before a run starts), so
+   * edge handlers and custom nodes can read its usage. Not serialized.
+   */
+  declare readonly invocationContext?: InvocationContext
   private readonly _nodes: Map<string, NodeState>
 
   constructor(data?: { nodeIds?: string[] }) {
@@ -344,6 +354,21 @@ export class MultiAgentState implements StateSerializable {
    */
   get nodes(): ReadonlyMap<string, NodeState> {
     return this._nodes
+  }
+
+  /**
+   * Binds this state to the request a run executes in.
+   *
+   * @param invocationContext - The run's request
+   * @internal
+   */
+  _bindInvocationContext(invocationContext: InvocationContext): void {
+    // Non-enumerable, so it stays out of equality checks, spreads, and enumeration of the state.
+    Object.defineProperty(this, 'invocationContext', {
+      value: invocationContext,
+      enumerable: false,
+      configurable: true,
+    })
   }
 
   /** Returns the serialized state as a JSON value. */

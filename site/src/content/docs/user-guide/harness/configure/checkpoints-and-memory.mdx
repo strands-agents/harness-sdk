@@ -70,7 +70,7 @@ time-travel checkpoints and manual save/restore.
 ## Long-term memory: carry facts across conversations
 
 Memory is on by default. Strands harness distills durable facts into files under
-`./.agent/memory`, searches them before each turn, and folds the top matches into
+`./.agent/memory`, searches them before each user turn, and folds the top matches into
 context — so knowledge survives across sessions and works with sessions off. The agent
 also gets a `search_memory` tool for on-demand recall, and extraction runs in the
 background every few turns on a small model, so keeping memory costs little.

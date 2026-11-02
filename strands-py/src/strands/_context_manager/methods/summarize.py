@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from typing_extensions import TypedDict
 
 from ...event_loop.streaming import process_stream
 from ...types.content import ContentBlock, Message, Messages
-from ...types.tools import ToolResultContent
-from ..types import is_text_block
+from ...types.tools import ToolResult, ToolResultContent
 
 if TYPE_CHECKING:
+    from ...agent.invocation_context import InvocationContext
     from ...models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -62,54 +62,9 @@ async def _summarize_content(
     content: list[ContentBlock],
     model: Model,
     config: SummarizeConfig | None = None,
+    invocation_context: InvocationContext | None = None,
 ) -> str | None:
-    """Summarize content blocks via an LLM call, falling back to text-only on failure."""
-    result, succeeded = await _call_summarizer(content, model, config)
-    if result is not None:
-        return result
-    if succeeded:
-        return None
-
-    text_only = [block for block in content if is_text_block(block)]
-    if not text_only or len(text_only) == len(content):
-        return None
-
-    fallback_result, _ = await _call_summarizer(text_only, model, config)
-    return fallback_result
-
-
-def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[ContentBlock]:
-    """Convert ToolResultContent list to ContentBlocks, serializing JSON to text."""
-    blocks: list[ContentBlock] = []
-    for item in content:
-        if "json" in item:
-            blocks.append(ContentBlock(text=json.dumps(item["json"], indent=2)))
-        elif "text" in item:
-            blocks.append(ContentBlock(text=item["text"]))
-        else:
-            blocks.append(item)  # type: ignore[arg-type]
-    return blocks
-
-
-def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
-    """Flatten messages into a single ContentBlock list with role markers."""
-    blocks: list[ContentBlock] = []
-    for message in messages:
-        blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
-        for block in message["content"]:
-            if "toolResult" in block:
-                blocks.extend(_tool_result_to_content_blocks(block["toolResult"]["content"]))
-            else:
-                blocks.append(block)
-    return blocks
-
-
-async def _call_summarizer(
-    content: list[ContentBlock],
-    model: Model,
-    config: SummarizeConfig | None = None,
-) -> tuple[str | None, bool]:
-    """Call the model to generate a summary. Returns (text, succeeded)."""
+    """Summarize content blocks via an LLM call. Model errors propagate to the caller."""
     system_prompt = (config or {}).get("system_prompt", DEFAULT_SYSTEM_PROMPT)
 
     messages: Messages = [
@@ -119,25 +74,98 @@ async def _call_summarizer(
         )
     ]
 
-    try:
-        chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
+    chunks = model.stream(messages, tool_specs=None, system_prompt=system_prompt)
 
-        result_message: Message | None = None
-        async for event in process_stream(chunks):
-            if "stop" in event:
-                _, result_message, _, _ = event["stop"]
+    result_message: Message | None = None
+    async for event in process_stream(chunks, invocation_context=invocation_context):
+        if "stop" in event:
+            _, result_message, _, _ = event["stop"]
 
-        if result_message is None:
-            logger.warning("result=<empty> | summarization produced no response")
-            return None, True
+    if result_message is None:
+        logger.warning("result=<empty> | summarization produced no response")
+        return None
 
-        parts: list[str] = []
-        for block in result_message.get("content", []):
-            if "text" in block:
-                parts.append(block["text"])
+    parts: list[str] = []
+    for block in result_message.get("content", []):
+        if "text" in block:
+            parts.append(block["text"])
 
-        return "\n".join(parts).strip() or None, True
+    return "\n".join(parts).strip() or None
 
-    except Exception as error:
-        logger.debug("error=<%s> | summarization failed", error)
-        return None, False
+
+def _to_summarizer_blocks(block: ContentBlock) -> list[ContentBlock]:
+    """Convert a block to what the summarizer accepts in a user turn.
+
+    Text, images, and documents pass through; other content is rendered as text or a placeholder, and the rest
+    is left out.
+    """
+    if "text" in block or "image" in block or "document" in block:
+        return [block]
+    if "citationsContent" in block:
+        return [ContentBlock(text=content["text"]) for content in block["citationsContent"].get("content", [])]
+    if "guardContent" in block:
+        return [ContentBlock(text=block["guardContent"]["text"]["text"])]
+    if "video" in block:
+        return [ContentBlock(text="[video omitted]")]
+    if "audio" in block:
+        return [ContentBlock(text="[audio omitted]")]
+    return []
+
+
+def _tool_result_to_content_blocks(content: list[ToolResultContent]) -> list[ContentBlock]:
+    """Convert ToolResultContent list to ContentBlocks the summarizer accepts."""
+    blocks: list[ContentBlock] = []
+    for item in content:
+        if "json" in item:
+            blocks.append(ContentBlock(text=json.dumps(item["json"], indent=2)))
+        else:
+            blocks.extend(_to_summarizer_blocks(cast(ContentBlock, item)))
+    return blocks
+
+
+def _format_tool_result_label(tool_result: ToolResult, tool_names: dict[str, str]) -> str:
+    """Render the label that introduces a tool result in the summarizer input."""
+    name = tool_names.get(tool_result["toolUseId"])
+    status = " (error)" if tool_result["status"] == "error" else ""
+    return f"[tool result: {name}{status}]" if name else f"[tool result{status}]"
+
+
+def _message_to_content_blocks(message: Message, tool_names: dict[str, str]) -> list[ContentBlock]:
+    """Convert a message's content to ContentBlocks for the summarizer.
+
+    Tool calls and tool result labels are rendered as text.
+    """
+    blocks: list[ContentBlock] = []
+    for block in message["content"]:
+        if "toolResult" in block:
+            tool_result = block["toolResult"]
+            blocks.append(ContentBlock(text=_format_tool_result_label(tool_result, tool_names)))
+            blocks.extend(_tool_result_to_content_blocks(tool_result["content"]))
+        elif "toolUse" in block:
+            tool_use = block["toolUse"]
+            tool_input = json.dumps(tool_use["input"], separators=(",", ":"), ensure_ascii=False)
+            blocks.append(ContentBlock(text=f"[tool call: {tool_use['name']}] {tool_input}"))
+        else:
+            blocks.extend(_to_summarizer_blocks(block))
+    return blocks
+
+
+def _flatten_messages_to_content(messages: Messages) -> list[ContentBlock]:
+    """Flatten messages into a single ContentBlock list with role markers.
+
+    Reasoning blocks are left out: they are assistant-only content, and their signatures are bound to the
+    conversation that produced them. Messages with nothing left get no role marker.
+    """
+    tool_names = {
+        block["toolUse"]["toolUseId"]: block["toolUse"]["name"]
+        for message in messages
+        for block in message["content"]
+        if "toolUse" in block
+    }
+    blocks: list[ContentBlock] = []
+    for message in messages:
+        content = _message_to_content_blocks(message, tool_names)
+        if content:
+            blocks.append(ContentBlock(text=f"\n---\n[{message['role']}]"))
+            blocks.extend(content)
+    return blocks

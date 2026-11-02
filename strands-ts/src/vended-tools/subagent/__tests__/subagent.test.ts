@@ -1,21 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { GENERALIST, makeSubagent, subagent } from '../index.js'
+import { DEFAULT_SUBAGENT_DESCRIPTION, GENERALIST, makeSubagent, subagent } from '../index.js'
 import { Agent } from '../../../agent/agent.js'
+import { InvocationContextImpl, type InvocationContext } from '../../../agent/invocation-context.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { MockSnapshotStorage } from '../../../__fixtures__/mock-storage-provider.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { textMessage } from '../../../__fixtures__/agent-helpers.js'
 import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
 import { Interrupt, InterruptError, InterruptState } from '../../../interrupt.js'
 import { logger } from '../../../logging/logger.js'
-import { Choice, Fixed, Inherit, Option, Preset } from '../../../multiagent/spec.js'
+import { AXIS_DESCRIPTIONS, Choice, Fixed, Inherit, Option, Preset, UNSET } from '../../../multiagent/spec.js'
 import type { AgentSpec } from '../../../multiagent/spec.js'
+import { SessionManager } from '../../../session/session-manager.js'
 import { StateStore } from '../../../state-store.js'
 import type { Tool, ToolContext } from '../../../tools/tool.js'
 import { AgentResult } from '../../../types/agent.js'
 import type { InvocationState, InvokeArgs } from '../../../types/agent.js'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
 import type { JSONValue } from '../../../types/json.js'
-import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import {
+  limitStopMessage,
+  Message,
+  ReasoningBlock,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+} from '../../../types/messages.js'
 import type { StopReason } from '../../../types/messages.js'
 
 const DEPTH_STATE_KEY = 'strands.subagent_depth'
@@ -43,7 +53,13 @@ class FakeChild {
   readonly appState = new StateStore()
   readonly _interruptState = { activated: false }
   readonly prompts: InvokeArgs[] = []
-  readonly calls: { invocationState: InvocationState; cancelSignal: AbortSignal }[] = []
+  readonly calls: {
+    invocationState: InvocationState
+    cancelSignal: AbortSignal
+    invocationContext?: InvocationContext
+  }[] = []
+  /** Mirrors Agent.cancelSignal: aborted only by an immediate cancel. */
+  cancelSignal: AbortSignal = new AbortController().signal
   private readonly _results: (AgentResult | undefined)[]
 
   constructor(...results: (AgentResult | undefined)[]) {
@@ -52,12 +68,15 @@ class FakeChild {
 
   async *stream(
     prompt: InvokeArgs,
-    options: { invocationState: InvocationState; cancelSignal: AbortSignal }
-  ): AsyncGenerator<{ type: string }, AgentResult | undefined, undefined> {
+    options: { invocationState: InvocationState; cancelSignal: AbortSignal; invocationContext?: InvocationContext }
+  ): AsyncGenerator<{ type: string; result?: AgentResult }, AgentResult | undefined, undefined> {
     this.prompts.push(prompt)
     this.calls.push(options)
+    const result = this._results.shift()
     yield { type: 'modelStreamUpdateEvent' }
-    return this._results.shift()
+    yield result !== undefined ? { type: 'agentResultEvent', result } : { type: 'agentResultEvent' }
+    this.cancelSignal = new AbortController().signal // mirrors stream()'s finally
+    return result
   }
 
   asAgent(): Agent {
@@ -87,13 +106,20 @@ function parentAgent(messages: Message[] = []): Agent {
 
 function createContext(
   input: JSONValue,
-  options: { agent?: Agent; toolUseId?: string; invocationState?: InvocationState; cancelSignal?: AbortSignal } = {}
+  options: {
+    agent?: Agent
+    toolUseId?: string
+    invocationState?: InvocationState
+    cancelSignal?: AbortSignal
+    invocationContext?: InvocationContext
+  } = {}
 ): ToolContext {
   return {
     toolUse: { name: 'subagent', toolUseId: options.toolUseId ?? 't1', input },
     agent: options.agent ?? parentAgent(),
     invocationState: options.invocationState ?? {},
     cancelSignal: options.cancelSignal ?? new AbortController().signal,
+    ...(options.invocationContext && { invocationContext: options.invocationContext }),
     interrupt: (): never => {
       throw new Error('interrupt not available in test context')
     },
@@ -117,6 +143,42 @@ function properties(tool: Tool): Record<string, Record<string, unknown>> {
   return tool.toolSpec.inputSchema!.properties as Record<string, Record<string, unknown>>
 }
 
+function storedTurns(agent: Agent): Record<string, JSONValue> {
+  return (agent._interruptState.context['subAgentInterruptedTurns'] ?? {}) as Record<string, JSONValue>
+}
+
+/**
+ * A parent that delegates a confirm-guarded action to a subagent. With `storage`, it persists to a session; a
+ * `rebuilt` parent starts from the turns that follow the interrupted tool call.
+ */
+function confirmingParent(storage?: MockSnapshotStorage, options: { rebuilt?: boolean } = {}) {
+  const executions: string[] = []
+  const dangerousAction = createMockTool('dangerousAction', (context) => {
+    if (context.interrupt({ name: 'confirm', reason: 'confirm?' }) !== 'APPROVE') return 'not approved'
+    const target = (context.toolUse.input as { target: string }).target
+    executions.push(target)
+    return `done: ${target}`
+  })
+  const childModel = new MockMessageModel()
+  if (!options.rebuilt) {
+    childModel.addTurn({ type: 'toolUseBlock', name: 'dangerousAction', toolUseId: 'c1', input: { target: 'prod' } })
+  }
+  childModel.addTurn({ type: 'textBlock', text: 'child done' })
+  const builder = vi.fn((): Agent => new Agent({ model: childModel, tools: [dangerousAction], printer: false }))
+  const parentModel = new MockMessageModel()
+  if (!options.rebuilt) {
+    parentModel.addTurn({ type: 'toolUseBlock', name: 'subagent', toolUseId: 't1', input: { task: 'do it' } })
+  }
+  parentModel.addTurn({ type: 'textBlock', text: 'parent done' })
+  const parent = new Agent({
+    model: parentModel,
+    tools: [makeSubagent({ builder })],
+    printer: false,
+    ...(storage && { sessionManager: new SessionManager({ sessionId: 's1', storage: { snapshot: storage } }) }),
+  })
+  return { parent, builder, executions }
+}
+
 describe('subagent tool', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -127,12 +189,16 @@ describe('subagent tool', () => {
 
     it('exposes the default name, description, and schema', () => {
       expect(subagent.name).toBe('subagent')
-      expect(subagent.toolSpec.description).toContain('Available subagents (agent_type):\n- generalist:')
+      expect(subagent.toolSpec.description).toBe(DEFAULT_SUBAGENT_DESCRIPTION)
       expect(subagent.toolSpec.inputSchema).toEqual({
         type: 'object',
         properties: {
           task,
-          agent_type: { type: 'string', enum: ['generalist'], description: expect.stringContaining("'generalist'") },
+          agent_type: {
+            type: 'string',
+            enum: ['generalist'],
+            description: `${AXIS_DESCRIPTIONS.agent_type} Omit to use the default ('generalist').\nOptions:\n- generalist: ${GENERALIST.description} (sets instructions)`,
+          },
           instructions: { type: 'string', description: expect.any(String) },
         },
         required: ['task'],
@@ -143,13 +209,8 @@ describe('subagent tool', () => {
       expect(makeSubagent({ name: 'delegate' }).toolSpec.name).toBe('delegate')
     })
 
-    it('uses a custom description with the presets appended', () => {
-      expect(makeSubagent({ description: 'Hand off research.' }).toolSpec.description).toBe(
-        `Hand off research.\n\nAvailable subagents (agent_type):\n- generalist: ${GENERALIST.description}`
-      )
-      expect(makeSubagent({ description: 'Hand off research.', presets: {} }).toolSpec.description).toBe(
-        'Hand off research.'
-      )
+    it('uses a custom description', () => {
+      expect(makeSubagent({ description: 'Hand off research.' }).toolSpec.description).toBe('Hand off research.')
     })
 
     it('derives parameters from Choice axes', () => {
@@ -157,9 +218,8 @@ describe('subagent tool', () => {
         presets: {},
         instructions: new Choice(['concise', 'verbose']),
         model: new Choice(['fast', 'deep']),
-        context: new Choice(['none', 'all']),
+        context: new Choice([new Option('none', UNSET, 'fresh'), 'all']),
         tools: new Choice(['read', 'shell'], true),
-        mcpServers: new Choice(['fs', 'api'], true),
       })
       const list = (values: string[]): unknown => ({
         type: 'array',
@@ -172,9 +232,12 @@ describe('subagent tool', () => {
           task,
           instructions: { type: 'string', enum: ['concise', 'verbose'], description: expect.any(String) },
           tools: list(['read', 'shell']),
-          mcp_servers: list(['fs', 'api']),
           model: { type: 'string', enum: ['fast', 'deep'], description: expect.any(String) },
-          context: { type: 'string', enum: ['none', 'all'], description: expect.any(String) },
+          context: {
+            type: 'string',
+            enum: ['none', 'all'],
+            description: expect.stringMatching(/more tokens\.\nOptions:\n- none: fresh$/),
+          },
           last_messages: { type: 'integer', description: expect.any(String) },
         },
         required: ['task'],
@@ -213,7 +276,9 @@ describe('subagent tool', () => {
           description: expect.stringContaining("'generalist'"),
         },
       })
-      expect(tool.toolSpec.description).toContain('- reviewer: reviews diffs')
+      expect(properties(tool)['agent_type']).toMatchObject({
+        description: expect.stringContaining('- reviewer: reviews diffs'),
+      })
     })
   })
 
@@ -224,10 +289,6 @@ describe('subagent tool', () => {
       [{ maxDepth: 0 }, 'maxDepth must be a positive integer (>= 1).'],
       [{ maxDepth: -1 }, 'maxDepth must be a positive integer (>= 1).'],
       [{ maxDepth: 1.5 }, 'maxDepth must be a positive integer (>= 1).'],
-      [{ tools: new Choice([], true) }, /^tools: new Choice\(\[\]\) offers no options/],
-      [{ tools: new Choice(['read', 'shell']) }, /^tools: new Choice\(\.\.\.\) must set multiple to true/],
-      [{ mcpServers: new Choice([], true) }, /^mcpServers: new Choice\(\[\]\) offers no options/],
-      [{ mcpServers: new Choice(['fs']) }, /^mcpServers: new Choice\(\.\.\.\) must set multiple to true/],
       [{ defaultPreset: 'reseacher' }, "defaultPreset 'reseacher' is not one of the presets: generalist."],
       [{ context: new Fixed('al') }, 'context mode "al" must be one of: none, all, no_tools.'],
       [
@@ -249,8 +310,12 @@ describe('subagent tool', () => {
       expect(result).toEqual(
         new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('the answer')] })
       )
+      expect(specs[0]!.name).toBe('subagent')
       expect(specs[0]!.instructions).toBe(GENERALIST.instructions)
-      expect(items.map((item) => item.data)).toEqual([{ type: 'modelStreamUpdateEvent' }])
+      expect(items.map((item) => item.data)).toEqual([
+        { type: 'modelStreamUpdateEvent' },
+        { type: 'agentResultEvent', result: expect.anything() },
+      ])
     })
 
     it('passes a copy of the invocation state and the tool cancel signal to the child', async () => {
@@ -263,6 +328,33 @@ describe('subagent tool', () => {
       expect(child.calls[0]!.invocationState).not.toBe(invocationState)
       expect(child.calls[0]!.invocationState).toEqual({ scratch: 1 })
       expect(child.calls[0]!.cancelSignal).toBe(cancelSignal)
+    })
+
+    it('runs the child in the request of the tool call', async () => {
+      const { builder, child } = capturingBuilder()
+      const invocationContext = new InvocationContextImpl()
+
+      await run(makeSubagent({ builder }), { task: 'x' }, { invocationContext })
+
+      expect(child.calls[0]!.invocationContext).toBe(invocationContext)
+    })
+
+    it("adds the child's model usage to the request's usage", async () => {
+      const child = new Agent({
+        model: new MockMessageModel().addTurn(
+          { type: 'textBlock', text: 'child done' },
+          { usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } }
+        ),
+        printer: false,
+      })
+      const invocationContext = new InvocationContextImpl({ turns: 5 })
+
+      const { result } = await run(makeSubagent({ builder: () => child }), { task: 'x' }, { invocationContext })
+
+      expect({ text: resultText(result), usage: invocationContext.usage }).toEqual({
+        text: 'child done',
+        usage: { turnsTaken: 1, inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      })
     })
 
     it.each([
@@ -472,8 +564,8 @@ describe('subagent tool', () => {
     })
 
     it.each([
-      ['a cancelled child', fakeResult('', 'cancelled'), 'Subagent was cancelled.'],
-      ['a missing child result', undefined, 'Subagent produced no result.'],
+      ['a missing child result', undefined, 'Subagent did not produce a result.'],
+      ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
     ])('turns %s into an error result', async (_, childResult, message) => {
       const { builder } = capturingBuilder(new FakeChild(childResult))
 
@@ -481,6 +573,28 @@ describe('subagent tool', () => {
 
       expect(result).toEqual(
         new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock(message)] })
+      )
+    })
+
+    it('turns an immediately cancelled child into an error result', async () => {
+      const child = new FakeChild(fakeResult('', 'cancelled'))
+      child.cancelSignal = AbortSignal.abort()
+      const { builder } = capturingBuilder(child)
+
+      const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('Subagent cancelled')] })
+      )
+    })
+
+    it('treats a child that ended via a deferred cancel (stop tool) as a success', async () => {
+      const { builder } = capturingBuilder(new FakeChild(fakeResult('summary', 'cancelled')))
+
+      const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('summary')] })
       )
     })
   })
@@ -518,31 +632,44 @@ describe('subagent tool', () => {
   })
 
   describe('interrupts', () => {
-    it('namespaces child interrupts on the parent and resumes the same child', async () => {
-      const childInterrupt = new Interrupt({ id: 'i1', name: 'confirm', reason: 'ok?' })
-      const child = new FakeChild(fakeResult('', 'interrupt', [childInterrupt]), fakeResult('resumed'))
-      const { builder, specs } = capturingBuilder(child)
-      const tool = makeSubagent({ builder })
-      const parent = parentAgent()
+    it('resumes the stored child turn after the parent is rebuilt', async () => {
+      const storage = new MockSnapshotStorage()
+      const first = confirmingParent(storage)
+      const interrupted = await first.parent.invoke('go')
+      const interruptId = interrupted.interrupts![0]!.id
+      expect(interruptId).toBe('subagent:t1:tool:c1:confirm')
+      expect(Object.keys(storedTurns(first.parent))).toEqual(['t1'])
 
-      const error = await run(tool, { task: 'x' }, { agent: parent }).catch((caught: unknown) => caught)
+      // Process boundary: every agent is rebuilt and only the session survives.
+      const second = confirmingParent(storage, { rebuilt: true })
+      const result = await second.parent.invoke([new InterruptResponseContent({ interruptId, response: 'APPROVE' })])
 
-      expect(error).toBeInstanceOf(InterruptError)
-      expect((error as InterruptError).interrupts).toMatchObject([
-        { id: 'subagent:t1:i1', name: 'confirm', reason: 'ok?', source: 'tool' },
+      expect(result.toString()).toBe('parent done')
+      expect(second.executions).toEqual(['prod'])
+      expect(second.parent.messages.at(-2)!.content).toEqual([
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('child done')] }),
       ])
-      expect(Object.keys(parent._interruptState.interrupts)).toEqual(['subagent:t1:i1'])
+    })
 
-      // The parent resumes with an answer; the same child receives it under its own id.
-      parent._interruptState.activate()
-      parent._interruptState.resume([new InterruptResponseContent({ interruptId: 'subagent:t1:i1', response: 'yes' })])
-      child._interruptState.activated = true
+    it('raises the interrupt again and keeps the turn when the child cannot be rebuilt on resume', async () => {
+      vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { parent, builder } = confirmingParent()
+      const interrupted = await parent.invoke('go')
+      const interruptId = interrupted.interrupts![0]!.id
+      builder.mockImplementationOnce(() => {
+        throw new Error('mcp down')
+      })
 
-      const { result } = await run(tool, { task: 'x' }, { agent: parent })
+      const failed = await parent.invoke([new InterruptResponseContent({ interruptId, response: 'APPROVE' })])
 
-      expect(resultText(result)).toBe('resumed')
-      expect(child.prompts[1]).toEqual([new InterruptResponseContent({ interruptId: 'i1', response: 'yes' })])
-      expect(specs).toHaveLength(1)
+      expect(failed.interrupts?.map((interrupt) => [interrupt.id, interrupt.response])).toEqual([
+        [interruptId, undefined],
+      ])
+      expect(Object.keys(storedTurns(parent))).toEqual(['t1'])
+
+      const result = await parent.invoke([new InterruptResponseContent({ interruptId, response: 'APPROVE' })])
+
+      expect(result.toString()).toBe('parent done')
     })
 
     it('raises the interrupts again when none were answered', async () => {
@@ -562,19 +689,18 @@ describe('subagent tool', () => {
       expect((error as InterruptError).interrupts.map((interrupt) => interrupt.id)).toEqual(['subagent:t1:i1'])
     })
 
-    it('returns an error when the interrupted child is no longer available', async () => {
-      vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    it('returns an error when the interrupted child turn is not available', async () => {
+      vi.spyOn(logger, 'error').mockImplementation(() => {})
       const parent = parentAgent()
       parent._interruptState.registerInterrupt(new Interrupt({ id: 'subagent:t1:i1', name: 'confirm' }))
       parent._interruptState.activate()
       parent._interruptState.resume([new InterruptResponseContent({ interruptId: 'subagent:t1:i1', response: 'yes' })])
-      const { builder, specs } = capturingBuilder()
+      const builder = (): Agent => new Agent({ model: new MockMessageModel(), printer: false })
 
       const { result } = await run(makeSubagent({ builder }), { task: 'x' }, { agent: parent })
 
       expect(result.status).toBe('error')
       expect(resultText(result)).toMatch(/did NOT run/)
-      expect(specs).toHaveLength(0)
     })
 
     it('rethrows child interrupts as-is when the parent has no interrupt state', async () => {

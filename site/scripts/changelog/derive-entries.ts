@@ -13,9 +13,9 @@ import type { Client, ParsedEntry } from './types'
 
 /**
  * The previous tag in the same stream (same sdk + language) as `tag`, or null
- * if `tag` is the first release in its stream. Streams: python/v*, typescript/v*
- * (harness), and bare v* (evals / pre-monorepo). Uses tagToMeta to classify and
- * compareVersionDesc to order.
+ * if `tag` is the first release in its stream. Streams: the per-package monorepo
+ * prefixes (python/v*, harness-cli/v*, ...) and bare v* (evals / box /
+ * pre-monorepo). Uses tagToMeta to classify and compareVersionDesc to order.
  */
 export async function previousTagInStream(
   repo: string,

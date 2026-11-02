@@ -39,7 +39,9 @@ describe('updateCli', () => {
     const commands = runner()
     const output = memoryOutput()
 
-    expect(await updateCli({ currentVersion: '1.2.0', runner: commands, output: output.stream })).toBe(0)
+    expect(
+      await updateCli({ currentVersion: '1.2.0', runner: commands, output: output.stream, platform: 'linux' })
+    ).toBe(0)
     expect(commands.capture).toHaveBeenCalledWith('npm', ['view', '@strands-agents/cli@latest', 'version', '--json'])
     expect(commands.inherit).not.toHaveBeenCalled()
     expect(output.text()).toBe('Strands CLI 1.2.0 is already up to date.\n')
@@ -49,7 +51,9 @@ describe('updateCli', () => {
     const commands = runner()
     const output = memoryOutput()
 
-    expect(await updateCli({ currentVersion: '1.1.0', runner: commands, output: output.stream })).toBe(0)
+    expect(
+      await updateCli({ currentVersion: '1.1.0', runner: commands, output: output.stream, platform: 'linux' })
+    ).toBe(0)
     expect(commands.inherit).toHaveBeenCalledWith('npm', ['install', '--global', '@strands-agents/cli@1.2.0'])
     expect(output.text()).toContain('Updating Strands CLI from 1.1.0 to 1.2.0')
     expect(output.text()).toContain('Updated Strands CLI to 1.2.0')
@@ -67,6 +71,7 @@ describe('updateCli', () => {
         output: output.stream,
         errorOutput: errors.stream,
         platform: 'win32',
+        commandShell: 'cmd.exe',
       })
     ).toBe(7)
     expect(commands.capture).toHaveBeenCalledWith('cmd.exe', [

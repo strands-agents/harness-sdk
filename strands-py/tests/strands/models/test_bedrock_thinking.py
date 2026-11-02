@@ -9,7 +9,7 @@ from strands.models.bedrock import BedrockModel
 def model_with_thinking():
     """Create a BedrockModel with thinking enabled."""
     return BedrockModel(
-        model_id="anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="anthropic.claude-sonnet-4-6",
         additional_request_fields={"thinking": {"type": "enabled", "budget_tokens": 5000}},
     )
 
@@ -17,14 +17,14 @@ def model_with_thinking():
 @pytest.fixture
 def model_without_thinking():
     """Create a BedrockModel without thinking."""
-    return BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0")
+    return BedrockModel(model_id="anthropic.claude-sonnet-4-6")
 
 
 @pytest.fixture
 def model_with_thinking_and_other_fields():
     """Create a BedrockModel with thinking and other additional fields."""
     return BedrockModel(
-        model_id="anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {"type": "enabled", "budget_tokens": 5000},
             "some_other_field": "value",
@@ -76,7 +76,7 @@ def test_no_fields_when_model_has_no_additional_fields(model_without_thinking):
 def test_fields_preserved_when_no_thinking_and_forcing_tool():
     """Additional fields without thinking should be preserved when forcing tool."""
     model = BedrockModel(
-        model_id="anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="anthropic.claude-sonnet-4-6",
         additional_request_fields={"some_field": "value"},
     )
     tool_choice = {"any": {}}

@@ -109,7 +109,7 @@ jobs:
       # Upload for release-typescript.yml's inspect/publish path to consume.
       # PR-triggered runs also upload (short retention) — harmless.
       - name: Upload tarball for downstream inspect/publish
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: npm-build-output
           path: strands-ts/*.tgz

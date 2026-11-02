@@ -22,9 +22,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..._middleware.stages import InvokeModelStage
 from ...injection._message_injection import RenderContent, _create_injection_middleware
 from ...injection.types import InjectionTriggerPredicate
+from ...middleware.stages import InvokeModelStage
 from ...plugins import Plugin
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ class ContextInjector(Plugin):
 
     def init_agent(self, agent: Agent) -> None:
         """Register the injection middleware on the agent's ``InvokeModelStage`` input phase."""
-        agent._middleware_registry.add_middleware(
+        agent.add_middleware(
             InvokeModelStage.Input,
             _create_injection_middleware(self._render_content, trigger=self._trigger),
         )

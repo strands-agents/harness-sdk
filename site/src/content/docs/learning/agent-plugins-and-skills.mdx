@@ -1,16 +1,22 @@
 ---
-title: "Lesson 6: Agent Plugins & Skills"
+title: "Lesson 6: Agent plugins & skills"
 description: "Individual tools solve individual problems. But some capabilities require multiple tools working together with specific hooks and prompt instructions to function correctly. That's what a plugin is: a packaged bundle of tools + hooks + system prompt additions that you attach to an agent as a unit."
 redirectFrom:
   - docs/community/learning/lesson6-agent-plugins-and-skills
 ---
 
-<YouTube id="dnChw1mfc5M" title="Lesson 6: Agent Plugins &amp; Skills" />
-*[Watch on YouTube](https://www.youtube.com/watch?v=dnChw1mfc5M&list=PLDzwjhH-4yhU&index=6)*
+import CourseNotice from '../../../components/CourseNotice.astro'
 
-:::note[About this lesson]
-The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
-:::
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="dnChw1mfc5M" title="Lesson 6: Agent plugins &amp; skills" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=dnChw1mfc5M&list=PLDzwjhH-4yhU&index=6)*
 
 *Code for this lesson: [`samples/06-plugins-skills`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills)*
 
@@ -26,24 +32,12 @@ As agents grow, system prompts bloat with irrelevant instructions. If your agent
 
 Skills solve this through **progressive disclosure**: the agent only sees skill names at startup and loads full instructions on demand. Each skill is a markdown file in a subfolder containing guidance for a specific task. If a skill isn't relevant to the current request, its instructions never enter the context window. This is one example of context engineering.
 
+Run the following from `samples/06-plugins-skills`:
+
 ```python
-from strands import Agent, AgentSkills, tool
+from strands import Agent, AgentSkills
 
-# Tools for customer service operations
-@tool
-def lookup_customer(customer_id: str) -> str:
-    """Look up a customer by their ID."""
-    # ... database/API call ...
-
-@tool
-def get_order_history(customer_id: str) -> str:
-    """Get order history for a customer."""
-    # ...
-
-@tool
-def process_refund(order_id: str, amount: float) -> str:
-    """Process a refund for an order."""
-    # ...
+from customer_service import lookup_customer, get_order_history, process_refund
 
 # Skills plugin discovers and registers all skills in the directory
 skills_plugin = AgentSkills(skills=["./skills"])
@@ -60,7 +54,7 @@ agent = Agent(
 
 The `skills/` directory in the sample has four skills: `account-troubleshooting`, `order-tracking`, `pdf-processing`, and `refund-processing`. Each is a folder with a `SKILL.md` describing when to use it and the steps to follow. This customer service agent is the running example for the rest of the course.
 
-## Goal Loop
+## Goal loop
 
 Lesson 1 said a good harness verifies whether the agent's actions actually worked. `GoalLoop` is the plugin that does that. You define what "done" means, attach it to the agent, and it handles the retry loop:
 

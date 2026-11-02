@@ -1,5 +1,6 @@
 import asyncio
 import time
+import warnings
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
@@ -706,6 +707,36 @@ async def test_graph_node_timeout(mock_strands_tracer, mock_use_span):
 
     mock_strands_tracer.start_multiagent_span.assert_called()
     mock_use_span.assert_called()
+
+
+def test_build_warns_when_execution_is_unbounded():
+    """A graph built with no execution limits warns, attributed to the caller's ``build()`` line."""
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("agent_a", "Response A"), "a")
+
+    with pytest.warns(UserWarning, match="execution is unbounded") as record:
+        builder.build()
+
+    assert record[0].filename == __file__
+
+
+@pytest.mark.parametrize(
+    "configure_limit",
+    [
+        lambda builder: builder.set_max_node_executions(10),
+        lambda builder: builder.set_execution_timeout(30.0),
+    ],
+    ids=["max_node_executions", "execution_timeout"],
+)
+def test_build_does_not_warn_when_execution_limits_are_set(configure_limit):
+    """Setting either execution limit silences the unbounded-execution nudge."""
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("agent_a", "Response A"), "a")
+    configure_limit(builder)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        builder.build()
 
 
 @pytest.mark.asyncio
@@ -2013,6 +2044,133 @@ async def test_graph_nested_multiagent_failed_status_routed_to_failed_nodes(mock
 
 
 @pytest.mark.asyncio
+async def test_graph_cancelled_agent_result_fails_closed(mock_strands_tracer, mock_use_span):
+    """A cancelled child fails the Graph without routing downstream (#3798)."""
+    cancelled_agent = create_mock_agent("cancelled_agent", "Cancelled")
+    cancelled_agent.return_value.stop_reason = "cancelled"
+    downstream_agent = create_mock_agent("downstream_agent", "Should not execute")
+
+    builder = GraphBuilder()
+    builder.add_node(cancelled_agent, "cancelled")
+    builder.add_node(downstream_agent, "downstream")
+    builder.add_edge("cancelled", "downstream")
+    builder.set_entry_point("cancelled")
+    graph = builder.build()
+
+    tru_result = await graph.invoke_async("Test cancelled child result")
+    tru_downstream_calls = downstream_agent.stream_async.call_count
+    exp_result_status = Status.FAILED
+    exp_node_status = Status.FAILED
+    exp_downstream_calls = 0
+
+    assert tru_result.status == exp_result_status
+    assert tru_result.results["cancelled"].status == exp_node_status
+    assert tru_downstream_calls == exp_downstream_calls
+
+
+@pytest.mark.asyncio
+async def test_graph_cancelled_node_does_not_poison_parallel_batch(mock_strands_tracer, mock_use_span):
+    """In a parallel batch, a cancelled node must not block an unrelated node's downstream."""
+    cancelled_agent = create_mock_agent("cancelled_agent", "Cancelled")
+    cancelled_agent.return_value.stop_reason = "cancelled"
+    healthy_agent = create_mock_agent("healthy_agent", "OK")
+    after_cancelled = create_mock_agent("after_cancelled", "Should not execute")
+    after_healthy = create_mock_agent("after_healthy", "Should execute")
+
+    builder = GraphBuilder()
+    builder.add_node(cancelled_agent, "cancelled")
+    builder.add_node(healthy_agent, "healthy")
+    builder.add_node(after_cancelled, "after_cancelled")
+    builder.add_node(after_healthy, "after_healthy")
+    builder.add_edge("cancelled", "after_cancelled")
+    builder.add_edge("healthy", "after_healthy")
+    builder.set_entry_point("cancelled")
+    builder.set_entry_point("healthy")
+    graph = builder.build()
+
+    result = await graph.invoke_async("parallel batch test")
+
+    assert result.results["cancelled"].status == Status.FAILED
+    assert result.results["healthy"].status == Status.COMPLETED
+    assert after_cancelled.stream_async.call_count == 0
+    assert after_healthy.stream_async.call_count == 1
+    assert result.results["after_healthy"].status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_graph_cancelled_node_does_not_overwrite_interrupted_status(
+    mock_strands_tracer, mock_use_span, agenerator
+):
+    """In a parallel batch, a cancelled node must not overwrite INTERRUPTED with FAILED."""
+    cancelled_agent = create_mock_agent("cancelled_agent", "Cancelled")
+    cancelled_agent.return_value.stop_reason = "cancelled"
+
+    exp_interrupts = [Interrupt(id="i1", name="test", reason="needs input")]
+    interrupting_agent = create_mock_agent("interrupting_agent", "Interrupted")
+    interrupting_agent.stream_async = Mock()
+    interrupting_agent.stream_async.return_value = agenerator(
+        [
+            {
+                "result": AgentResult(
+                    message={},
+                    stop_reason="interrupt",
+                    state={},
+                    metrics=None,
+                    interrupts=exp_interrupts,
+                ),
+            },
+        ],
+    )
+
+    builder = GraphBuilder()
+    builder.add_node(cancelled_agent, "cancelled")
+    builder.add_node(interrupting_agent, "interrupting")
+    builder.add_edge("cancelled", "interrupting")
+    builder.set_entry_point("cancelled")
+    builder.set_entry_point("interrupting")
+    graph = builder.build()
+
+    # First invocation: INTERRUPTED must win over FAILED
+    result = graph("Test cancelled+interrupted batch")
+
+    assert result.status == Status.INTERRUPTED
+    assert result.interrupts == exp_interrupts
+
+    # Resume: cancellation is deferred, not dropped — graph finalises to FAILED
+    interrupt = result.interrupts[0]
+    interrupting_agent.stream_async = Mock()
+    interrupting_agent.stream_async.return_value = agenerator(
+        [
+            {
+                "result": AgentResult(
+                    message={"role": "assistant", "content": [{"text": "Resumed"}]},
+                    stop_reason="end_turn",
+                    state={},
+                    metrics=None,
+                ),
+            },
+        ],
+    )
+    graph._interrupt_state.context["interrupting"] = {
+        "from_hook": False,
+        "interrupt_ids": [interrupt.id],
+        "interrupt_state": {
+            "activated": True,
+            "context": {},
+            "interrupts": {interrupt.id: interrupt.to_dict()},
+        },
+        "messages": [],
+        "state": {},
+        "model_state": {},
+    }
+
+    responses = [{"interruptResponse": {"interruptId": interrupt.id, "response": "go"}}]
+    result = graph(responses)
+
+    assert result.status == Status.FAILED
+
+
+@pytest.mark.asyncio
 async def test_graph_persisted(mock_strands_tracer, mock_use_span):
     """Test graph persistence functionality with multimodal input containing binary bytes."""
     import base64
@@ -2377,6 +2535,99 @@ def test_graph_interrupt_on_before_node_call_event(interrupt_hook):
     assert multiagent_result.execution_time >= first_execution_time
 
 
+def _build_review_loop_graph(revise_target):
+    """Build write -> review -> (revise_target | publish), interrupting before every review for a decision."""
+
+    class ApprovalHook(HookProvider):
+        def __init__(self):
+            self.decision = None
+
+        def register_hooks(self, registry):
+            registry.add_callback(BeforeNodeCallEvent, self.approve)
+
+        def approve(self, event):
+            if event.node_id == "review":
+                self.decision = event.interrupt("approval", reason="approve or revise")
+
+    hook = ApprovalHook()
+    builder = GraphBuilder()
+    for name in ("write", "review", "publish"):
+        builder.add_node(create_mock_agent(name, name), name)
+    builder.add_edge("write", "review")
+    builder.add_edge("review", revise_target, condition=lambda _: hook.decision == "revise")
+    builder.add_edge("review", "publish", condition=lambda _: hook.decision == "approve")
+    builder.set_entry_point("write")
+    builder.set_hook_providers([hook])
+    builder.set_max_node_executions(10)
+    return builder.build()
+
+
+def _resume_review_loop_from_state(state, revise_target, interrupts, response):
+    """Restore a fresh review-loop graph from serialized state and answer its pending interrupts."""
+    graph = _build_review_loop_graph(revise_target)
+    graph.deserialize_state(state)
+    responses = [{"interruptResponse": {"interruptId": interrupt.id, "response": response}} for interrupt in interrupts]
+    return graph, graph(responses)
+
+
+@pytest.mark.parametrize(
+    ("revise_target", "exp_node_ids"),
+    [
+        ("write", ["write", "review", "write", "review", "publish"]),
+        ("review", ["write", "review", "review", "publish"]),
+    ],
+)
+def test_graph_interrupt_on_revisited_node_resumes_after_restore(revise_target, exp_node_ids):
+    """A node interrupted again on a revisit still runs when the graph is restored from serialized state (#5253)."""
+    graph = _build_review_loop_graph(revise_target)
+    result = graph("draft a post")
+
+    tru_status = result.status
+    exp_status = Status.INTERRUPTED
+    assert tru_status == exp_status
+
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), revise_target, result.interrupts, "revise")
+
+    tru_status = result.status
+    exp_status = Status.INTERRUPTED
+    assert tru_status == exp_status
+
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), revise_target, result.interrupts, "approve")
+
+    tru_status = result.status
+    exp_status = Status.COMPLETED
+    assert tru_status == exp_status
+
+    tru_node_ids = [node.node_id for node in result.execution_order]
+    assert tru_node_ids == exp_node_ids
+
+
+@pytest.mark.parametrize("next_nodes_to_execute", [[], ["write"]])
+def test_graph_resumes_interrupted_node_also_listed_as_completed(next_nodes_to_execute):
+    """A payload listing an interrupted node as completed still resumes that node (#5253).
+
+    The empty next_nodes_to_execute case is the payload such a graph produces; the non-empty case covers restoring
+    the node's interrupted status when the payload does schedule other work.
+    """
+    graph = _build_review_loop_graph("write")
+    result = graph("draft a post")
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), "write", result.interrupts, "revise")
+
+    state = graph.serialize_state()
+    state["completed_nodes"] = [*state["completed_nodes"], "review"]
+    state["next_nodes_to_execute"] = next_nodes_to_execute
+
+    graph, result = _resume_review_loop_from_state(state, "write", result.interrupts, "approve")
+
+    tru_status = result.status
+    exp_status = Status.COMPLETED
+    assert tru_status == exp_status
+
+    tru_node_ids = [node.node_id for node in result.execution_order]
+    exp_node_ids = ["write", "review", "write", "review", "publish"]
+    assert tru_node_ids == exp_node_ids
+
+
 def test_graph_interrupt_on_agent(agenerator):
     exp_interrupts = [
         Interrupt(
@@ -2471,7 +2722,7 @@ def test_graph_interrupt_on_agent(agenerator):
 
     assert len(multiagent_result.results) == 1
 
-    agent.stream_async.assert_called_once_with(responses, invocation_state={})
+    agent.stream_async.assert_called_once_with(responses, invocation_state={}, invocation_context=ANY)
 
 
 def test_graph_interrupt_on_multiagent(agenerator):
@@ -2565,7 +2816,7 @@ def test_graph_interrupt_on_multiagent(agenerator):
 
     assert len(multiagent_result.results) == 1
 
-    multiagent.stream_async.assert_called_once_with(responses, {})
+    multiagent.stream_async.assert_called_once_with(responses, {}, invocation_context=ANY)
 
 
 @pytest.mark.asyncio
@@ -2620,6 +2871,79 @@ async def test_graph_with_agentbase_implementation(mock_strands_tracer, mock_use
     assert result.completed_nodes == 2
     assert "custom_node" in result.results
     assert "regular_node" in result.results
+
+
+@pytest.mark.asyncio
+async def test_graph_cancelled_node_signal_set_is_failure(mock_strands_tracer, mock_use_span):
+    """A sub-agent that cancels via its signal (immediate cancel) marks the node FAILED."""
+    import threading
+
+    cancelled_signal = threading.Event()
+    cancelled_signal.set()
+    agent = create_mock_agent("c")
+    agent.cancel_signal = cancelled_signal
+    agent.stream_async = Mock(
+        return_value=_as_async_gen(
+            [
+                {
+                    "result": AgentResult(
+                        message={"role": "assistant", "content": [{"text": "x"}]},
+                        stop_reason="cancelled",
+                        state={},
+                        metrics=Mock(
+                            accumulated_usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+                            accumulated_metrics={"latencyMs": 0},
+                        ),
+                    )
+                }
+            ]
+        )
+    )
+
+    builder = GraphBuilder()
+    builder.add_node(agent, "n")
+    builder.set_entry_point("n")
+    result = await builder.build().invoke_async("go")
+
+    assert result.results["n"].status == Status.FAILED
+
+
+@pytest.mark.asyncio
+async def test_graph_cancelled_node_signal_unset_is_completion(mock_strands_tracer, mock_use_span):
+    """A sub-agent that stopped via deferred cancel (signal never set) marks the node COMPLETED."""
+    import threading
+
+    agent = create_mock_agent("c")
+    agent.cancel_signal = threading.Event()  # unset
+    agent.stream_async = Mock(
+        return_value=_as_async_gen(
+            [
+                {
+                    "result": AgentResult(
+                        message={"role": "assistant", "content": [{"text": "done"}]},
+                        stop_reason="cancelled",
+                        state={},
+                        metrics=Mock(
+                            accumulated_usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+                            accumulated_metrics={"latencyMs": 0},
+                        ),
+                    )
+                }
+            ]
+        )
+    )
+
+    builder = GraphBuilder()
+    builder.add_node(agent, "n")
+    builder.set_entry_point("n")
+    result = await builder.build().invoke_async("go")
+
+    assert result.results["n"].status == Status.COMPLETED
+
+
+async def _as_async_gen(items):
+    for item in items:
+        yield item
 
 
 def test_find_newly_ready_nodes_only_evaluates_outbound_edges():
@@ -3544,3 +3868,271 @@ class TestResumeInFlightSibling:
         join_input_text = " ".join(str(block) for block in join_input)
         assert "From left:" in join_input_text
         assert "From right:" in join_input_text
+
+
+class TestResumeDispatchedSibling:
+    """Verify a fan-in node is not marked ready while a dispatched sibling has not yet started."""
+
+    def test_dispatched_sibling_excluded_from_resume_frontier(self):
+        """join is excluded and right included when right is dispatched but not yet executing."""
+        builder = GraphBuilder()
+        builder.add_node(create_mock_agent("left"), "left")
+        builder.add_node(create_mock_agent("right"), "right")
+        builder.add_node(create_mock_agent("join"), "join")
+        builder.set_entry_point("left")
+        builder.set_entry_point("right")
+        builder.add_edge("left", "join")
+        builder.add_edge("right", "join")
+        graph = builder.build()
+
+        node_left = graph.nodes["left"]
+        node_right = graph.nodes["right"]
+
+        # left completed; right dispatched but not yet executing (crashed before EXECUTING), in
+        # none of the terminal sets and with no completed ancestor to reach it from forward
+        # reachability alone.
+        node_left.execution_status = Status.COMPLETED
+        node_right.execution_status = Status.DISPATCHED
+
+        graph.state.status = Status.EXECUTING
+        graph.state.completed_nodes = {node_left}
+
+        payload = graph.serialize_state()
+
+        assert "join" not in payload["next_nodes_to_execute"], (
+            f"join must not be ready while dispatched sibling right is outstanding, "
+            f"got {payload['next_nodes_to_execute']}"
+        )
+        assert "right" in payload["next_nodes_to_execute"]
+
+        ready_ids = {node.node_id for node in graph._compute_ready_nodes_for_resume()}
+        assert ready_ids == {"right"}
+
+    @pytest.mark.asyncio
+    async def test_resume_runs_fan_in_once_for_dispatched_sibling(self):
+        """A restore from a dispatched-but-not-started snapshot runs the fan-in exactly once."""
+        release_right = asyncio.Event()
+
+        agent_left = create_mock_agent("left", "left done")
+        agent_right = create_mock_agent("right", "right done")
+
+        builder = GraphBuilder()
+        builder.add_node(agent_left, "left")
+        builder.add_node(agent_right, "right")
+        builder.add_node(create_mock_agent("join", "join done"), "join")
+        builder.set_entry_point("left")
+        builder.set_entry_point("right")
+        builder.add_edge("left", "join")
+        builder.add_edge("right", "join")
+        graph = builder.build()
+
+        # Capture the real implementation before patching so the wrapper can delegate to it.
+        real_stream_node_to_queue = graph._stream_node_to_queue
+
+        async def blocking_right_dispatch(node, event_queue, invocation_state):
+            # Hold right in the DISPATCHED window until left's AfterNodeCallEvent has captured the state.
+            if node.node_id == "right":
+                await release_right.wait()
+            await real_stream_node_to_queue(node, event_queue, invocation_state)
+
+        graph._stream_node_to_queue = blocking_right_dispatch  # type: ignore[method-assign]
+
+        captured: dict = {}
+
+        def capture_on_left(event):
+            # left completes while right is still DISPATCHED — snapshot the live-sibling state,
+            # then release right so the first graph can finish.
+            if event.node_id == "left" and "payload" not in captured:
+                captured["payload"] = event.source.serialize_state()
+                release_right.set()
+
+        graph.add_hook(capture_on_left, AfterNodeCallEvent)
+
+        await graph.invoke_async("two entry points")
+
+        assert "payload" in captured, "left's AfterNodeCallEvent should fire while right is DISPATCHED"
+        assert "right" in captured["payload"]["next_nodes_to_execute"]
+        assert "join" not in captured["payload"]["next_nodes_to_execute"]
+
+        # Resume into a fresh graph with independent executor mocks, since the call-count and
+        # input assertions target the resumed graph's nodes.
+        builder2 = GraphBuilder()
+        builder2.add_node(create_mock_agent("left", "left done"), "left")
+        builder2.add_node(create_mock_agent("right", "right done"), "right")
+        agent_join2 = create_mock_agent("join", "join done")
+        builder2.add_node(agent_join2, "join")
+        builder2.set_entry_point("left")
+        builder2.set_entry_point("right")
+        builder2.add_edge("left", "join")
+        builder2.add_edge("right", "join")
+        graph2 = builder2.build()
+
+        graph2.deserialize_state(captured["payload"])
+        result = await graph2.invoke_async("two entry points")
+
+        # join runs exactly once — a stale frontier including join would double-run it.
+        assert agent_join2.stream_async.call_count == 1
+        assert result.status == Status.COMPLETED
+        assert "join" in result.results
+
+        # join's single run sees both parents' outputs (left restored from the snapshot, right
+        # re-run on resume).
+        join_input = agent_join2.stream_async.call_args.args[0]
+        join_input_text = " ".join(str(block) for block in join_input)
+        assert "From left:" in join_input_text
+        assert "From right:" in join_input_text
+
+
+def _failing_after_sibling_interrupts(name, sibling_interrupted):
+    """Mock agent whose stream raises once the sibling node in the batch has interrupted."""
+    agent = create_mock_agent(name)
+
+    async def fail_stream(*args, **kwargs):
+        yield {"agent_start": True}
+        await sibling_interrupted.wait()
+        raise RuntimeError(f"{name} boom")
+
+    agent.stream_async = Mock(side_effect=fail_stream)
+    return agent
+
+
+class _InterruptOnlyNode(HookProvider):
+    """Interrupt a single node on BeforeNodeCallEvent until disarmed."""
+
+    def __init__(self, node_id):
+        self.node_id = node_id
+        self.armed = True
+        self.interrupted = asyncio.Event()
+
+    def register_hooks(self, registry):
+        registry.add_callback(BeforeNodeCallEvent, self.interrupt)
+
+    def interrupt(self, event):
+        if self.armed and event.node_id == self.node_id:
+            self.interrupted.set()
+            event.interrupt("test_name", reason="test_reason")
+
+
+@pytest.mark.asyncio
+async def test_graph_node_failure_in_interrupted_batch_clears_interrupt_state(mock_strands_tracer, mock_use_span):
+    """A node failing alongside an interrupted sibling must not leave the graph expecting responses (#5340)."""
+    hook = _InterruptOnlyNode("review")
+    side_agent = _failing_after_sibling_interrupts("side", hook.interrupted)
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("write"), "write")
+    builder.add_node(create_mock_agent("review"), "review")
+    builder.add_node(side_agent, "side")
+    builder.add_edge("write", "review")
+    builder.add_edge("write", "side")
+    builder.set_entry_point("write")
+    builder.set_hook_providers([hook])
+    graph = builder.build()
+
+    with pytest.raises(RuntimeError, match="side boom"):
+        await graph.invoke_async("task")
+
+    assert graph.state.status == Status.FAILED
+    assert [node.node_id for node in graph.state.interrupted_nodes] == ["review"]
+    assert graph._interrupt_state.activated is False
+    assert graph._interrupt_state.interrupts == {}
+
+    hook.armed = False
+    side_agent.stream_async = create_mock_agent("side").stream_async
+    result = await graph.invoke_async("new task")
+
+    assert result.status == Status.COMPLETED
+    assert set(result.results) == {"write", "review", "side"}
+
+
+@pytest.mark.asyncio
+async def test_graph_node_failure_clears_interrupted_agent_state(mock_strands_tracer, mock_use_span, agenerator):
+    """An agent interrupted from inside its own loop is reset along with the graph (#5340)."""
+    review_agent = create_mock_agent("review")
+    review_interrupted = asyncio.Event()
+
+    async def interrupt_stream(*args, **kwargs):
+        review_agent._interrupt_state.activate()
+        review_interrupted.set()
+        yield {
+            "result": AgentResult(
+                message={},
+                stop_reason="interrupt",
+                state={},
+                metrics=None,
+                interrupts=[Interrupt(id="test_id", name="test_name", reason="test_reason")],
+            )
+        }
+
+    review_agent.stream_async = Mock(side_effect=interrupt_stream)
+    builder = GraphBuilder()
+    builder.add_node(review_agent, "review")
+    builder.add_node(_failing_after_sibling_interrupts("side", review_interrupted), "side")
+    builder.set_entry_point("review")
+    builder.set_entry_point("side")
+    graph = builder.build()
+
+    with pytest.raises(RuntimeError, match="side boom"):
+        await graph.invoke_async("task")
+
+    assert [node.node_id for node in graph.state.interrupted_nodes] == ["review"]
+    assert graph._interrupt_state.activated is False
+    assert review_agent._interrupt_state.activated is False
+
+
+def test_graph_clear_interrupts_recurses_into_nested_multiagent():
+    """Clearing interrupts reaches nested orchestrators and agents, not just the graph itself (#5340)."""
+    nested = create_mock_multi_agent("nested")
+    agent = create_mock_agent("agent")
+    agent._interrupt_state.activate()
+    nodes = {"nested": GraphNode("nested", nested), "agent": GraphNode("agent", agent)}
+    interrupt_state = _InterruptState()
+    interrupt_state.activate()
+    graph = _make_graph(nodes, state=GraphState(interrupted_nodes=set(nodes.values())), interrupt_state=interrupt_state)
+
+    graph._clear_interrupts()
+
+    nested._clear_interrupts.assert_called_once_with()
+    assert agent._interrupt_state.activated is False
+    assert graph._interrupt_state.activated is False
+
+
+@pytest.mark.asyncio
+async def test_graph_node_failure_on_resume_clears_interrupted_agent_state(mock_strands_tracer, mock_use_span):
+    """An agent that fails while resuming its interrupt is reset so a new task can run (#5340)."""
+    agent = create_mock_agent("test_agent")
+
+    async def interrupt_stream(*args, **kwargs):
+        agent._interrupt_state.activate()
+        yield {
+            "result": AgentResult(
+                message={},
+                stop_reason="interrupt",
+                state={},
+                metrics=None,
+                interrupts=[Interrupt(id="test_id", name="test_name", reason="test_reason")],
+            )
+        }
+
+    async def fail_stream(*args, **kwargs):
+        yield {"agent_start": True}
+        raise RuntimeError("boom on resume")
+
+    agent.stream_async = Mock(side_effect=interrupt_stream)
+    builder = GraphBuilder()
+    builder.add_node(agent, "test_agent")
+    graph = builder.build()
+
+    interrupted = await graph.invoke_async("task")
+    assert interrupted.status == Status.INTERRUPTED
+
+    agent.stream_async = Mock(side_effect=fail_stream)
+    responses = [{"interruptResponse": {"interruptId": "test_id", "response": "ok"}}]
+    with pytest.raises(RuntimeError, match="boom on resume"):
+        await graph.invoke_async(responses)
+
+    assert graph._interrupt_state.activated is False
+    assert agent._interrupt_state.activated is False
+
+    agent.stream_async = create_mock_agent("test_agent").stream_async
+    result = await graph.invoke_async("new task")
+    assert result.status == Status.COMPLETED

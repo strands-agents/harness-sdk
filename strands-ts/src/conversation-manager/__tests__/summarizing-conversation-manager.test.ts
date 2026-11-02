@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
+import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { SummarizingConversationManager } from '../summarizing-conversation-manager.js'
 import { ContextWindowOverflowError, Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import { Model as ModelBase } from '../../models/model.js'
-import type { Model, BaseModelConfig } from '../../models/model.js'
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
+import type { Model } from '../../models/model.js'
 
 function textMsg(role: 'user' | 'assistant', text: string): Message {
   return new Message({ role, content: [new TextBlock(text)] })
@@ -238,6 +239,30 @@ describe('SummarizingConversationManager', () => {
     })
   })
 
+  describe('request limits', () => {
+    it('adds the summarization usage to the request total even when the request limit is used up', async () => {
+      const model = new MockMessageModel().addTurn(
+        { type: 'textBlock', text: 'Summary of conversation' },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      )
+      const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
+      const mockAgent = createMockAgent({ messages: makeMessages(20), extra: { auxModel: model as unknown as Model } })
+      const invocationContext = new InvocationContextImpl({ turns: 1 })
+      invocationContext.usage.turnsTaken = 5
+
+      const result = await manager.reduce({
+        agent: mockAgent,
+        model: model as unknown as Model,
+        error: new ContextWindowOverflowError('overflow'),
+        invocationContext,
+      })
+
+      expect(result).toBe(true)
+      expect(mockAgent.messages[0]!.content).toEqual([{ type: 'textBlock', text: 'Summary of conversation' }])
+      expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
+    })
+  })
+
   describe('tool pair adjustment', () => {
     it('advances split point past orphaned toolResult and toolUse boundaries', async () => {
       const model = new MockMessageModel()
@@ -349,10 +374,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = {
-        getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-        estimateUtilization: ModelBase.prototype.estimateUtilization,
-      } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -383,10 +406,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = {
-        getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-        estimateUtilization: ModelBase.prototype.estimateUtilization,
-      } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 
@@ -413,10 +434,8 @@ describe('SummarizingConversationManager', () => {
       })
       const messages = makeMessages(20)
       const mockAgent = createMockAgent({ messages })
-      const mockModel = {
-        getConfig: () => ({ contextWindowLimit: 1000 }) as BaseModelConfig,
-        estimateUtilization: ModelBase.prototype.estimateUtilization,
-      } as any
+      const mockModel = new TestModelProvider() as any
+      mockModel.updateConfig({ contextWindowLimit: 1000 })
 
       manager.initAgent(mockAgent)
 

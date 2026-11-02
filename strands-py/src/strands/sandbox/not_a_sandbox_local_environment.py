@@ -15,6 +15,7 @@ local ``sh``.
 import base64
 import os
 import shlex
+import sys
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -23,9 +24,42 @@ from typing import Any
 from .base import Sandbox
 from .constants import LANGUAGE_PATTERN
 from .errors import SandboxPathNotFoundError
-from .posix_shell import build_shell_env_prefix
+from .posix_shell import build_shell_env_prefix, validate_env_keys
 from .stream_process import _stream_process
 from .types import ExecutionResult, FileInfo, StreamChunk
+
+
+def _host_env_with(extra: dict[str, str] | None) -> dict[str, str]:
+    """The host environment with ``extra`` applied, matching names case-insensitively as Windows does."""
+    env = dict(os.environ)
+    for key, value in (extra or {}).items():
+        for existing in [name for name in env if name.lower() == key.lower()]:
+            del env[existing]
+        env[key] = value
+    return env
+
+
+def _powershell_args(command: str) -> list[str]:
+    """The argv that runs ``command`` in PowerShell.
+
+    ``-EncodedCommand`` (base64 of UTF-16LE) carries the script without any command-line quoting; it
+    inflates the text 2.67x against Windows' 32,767-character limit, so commands over ~12 KB fail to
+    spawn. The wrapper makes output UTF-8 (5.1 defaults to the OEM code page) and mirrors ``sh -c``'s
+    exit code: the last statement's success, or the failing native command's own code.
+    ``$ErrorActionPreference`` is left alone because ``Stop`` turns native stderr output into a
+    terminating error.
+    """
+    script = "\n".join(
+        [
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+            command,
+            "$ok = $?",
+            "if (-not $ok) { if ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 } }",
+        ]
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
 
 
 class NotASandboxLocalEnvironment(Sandbox):
@@ -55,14 +89,14 @@ class NotASandboxLocalEnvironment(Sandbox):
         env: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
-        """Execute a command on the host via ``sh -c``, streaming output.
+        """Execute a command on the host in its shell (``sh -c``; PowerShell on Windows), streaming output.
 
         Args:
             command: The shell command to execute.
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for this command. Defaults to the process's
                 current working directory.
-            env: Environment variables to set, applied via a shell ``export`` prefix.
+            env: Environment variables to set on top of the host environment.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -74,10 +108,25 @@ class NotASandboxLocalEnvironment(Sandbox):
             SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
         """
         target_cwd = cwd if cwd is not None else os.getcwd()
-        env_prefix = build_shell_env_prefix(env)
-        full_command = f"cd {shlex.quote(target_cwd)} && {env_prefix}{command}"
-        async for chunk in _stream_process("sh", ["-c", full_command], timeout=timeout):
-            yield chunk
+        if sys.platform == "win32":
+            # No ``sh`` on Windows: run the command in PowerShell; cwd and env go through the process, not a
+            # shell prefix.
+            if env:
+                validate_env_keys(env)
+            async for chunk in _stream_process(
+                "powershell.exe",
+                _powershell_args(command),
+                timeout=timeout,
+                cwd=target_cwd,
+                env=_host_env_with(env),
+                enoent_message="PowerShell not found: powershell.exe is required to run commands on Windows",
+            ):
+                yield chunk
+        else:
+            env_prefix = build_shell_env_prefix(env)
+            full_command = f"cd {shlex.quote(target_cwd)} && {env_prefix}{command}"
+            async for chunk in _stream_process("sh", ["-c", full_command], timeout=timeout):
+                yield chunk
 
     async def execute_code_streaming(
         self,
@@ -89,13 +138,13 @@ class NotASandboxLocalEnvironment(Sandbox):
         env: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
-        """Execute code on the host by piping it to a language interpreter via ``sh``.
+        """Execute code on the host by feeding it to a language interpreter on stdin.
 
-        The code is base64-encoded and decoded inside a quoted heredoc, then piped to
-        the interpreter (``base64 -d << 'EOF' | <lang>``), so arbitrary source —
-        including shell metacharacters, quotes, and newlines — reaches the interpreter
-        without injection risk. ``language`` is validated against
-        :data:`~strands.sandbox.constants.LANGUAGE_PATTERN` first.
+        On POSIX the code is base64-encoded and decoded inside a quoted heredoc, then piped
+        to the interpreter (``base64 -d << 'EOF' | <lang>``), so arbitrary source — including
+        shell metacharacters, quotes, and newlines — reaches the interpreter without injection
+        risk. On Windows the interpreter is spawned directly with the code on stdin. ``language``
+        is validated against :data:`~strands.sandbox.constants.LANGUAGE_PATTERN` first.
 
         Args:
             code: The source code to execute.
@@ -103,7 +152,7 @@ class NotASandboxLocalEnvironment(Sandbox):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for execution. Defaults to the process's current
                 working directory.
-            env: Environment variables to set, applied via a shell ``export`` prefix.
+            env: Environment variables to set on top of the host environment.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -117,11 +166,26 @@ class NotASandboxLocalEnvironment(Sandbox):
         """
         if not LANGUAGE_PATTERN.fullmatch(language):
             raise ValueError(f"language parameter contains invalid characters: {language}")
-        encoded = base64.b64encode(code.encode()).decode("ascii")
-        eof = f"STRANDS_EOF_{uuid.uuid4().hex[:16]}"
-        command = f"base64 -d << '{eof}' | {language}\n{encoded}\n{eof}"
-        async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
-            yield chunk
+        if sys.platform == "win32":
+            # No shell involved: the interpreter is spawned directly and reads the code from stdin.
+            if env:
+                validate_env_keys(env)
+            async for chunk in _stream_process(
+                language,
+                [],
+                timeout=timeout,
+                cwd=cwd if cwd is not None else os.getcwd(),
+                env=_host_env_with(env),
+                input=code,
+                enoent_message=f"Language interpreter not found: {language}",
+            ):
+                yield chunk
+        else:
+            encoded = base64.b64encode(code.encode()).decode("ascii")
+            eof = f"STRANDS_EOF_{uuid.uuid4().hex[:16]}"
+            command = f"base64 -d << '{eof}' | {language}\n{encoded}\n{eof}"
+            async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
+                yield chunk
 
     async def read_file(self, path: str, **kwargs: Any) -> bytes:
         """Read a file from the host filesystem as raw bytes.

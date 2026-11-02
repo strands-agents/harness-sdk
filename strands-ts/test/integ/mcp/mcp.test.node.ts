@@ -229,4 +229,40 @@ describe('MCP Integration Tests', () => {
       await client.disconnect()
     }, 60000)
   })
+
+  // The prompts and resources methods behave the same over every transport, so one transport is enough.
+  describe('prompts and resources', () => {
+    it('lists and renders prompts, reads static and templated resources', async () => {
+      const client = new McpClient({
+        applicationName: 'test-mcp-prompts-resources',
+        transport: new StdioClientTransport({
+          command: 'npx',
+          args: ['tsx', serverPath],
+        }),
+      })
+
+      const prompts = await client.listPrompts()
+      expect(prompts.prompts.map((prompt) => prompt.name)).toEqual(['summarize'])
+
+      const prompt = await client.getPrompt('summarize', { topic: 'AI' })
+      expect(prompt.messages[0]).toMatchObject({
+        role: 'user',
+        content: { type: 'text', text: 'Summarize the topic: AI' },
+      })
+
+      const resources = await client.listResources()
+      expect(resources.resources.map((resource) => resource.uri)).toEqual(['test://greeting.txt'])
+
+      const readStatic = await client.readResource('test://greeting.txt')
+      expect(readStatic.contents[0]).toMatchObject({ text: 'Hello from the test resource' })
+
+      const templates = await client.listResourceTemplates()
+      expect(templates.resourceTemplates.map((template) => template.uriTemplate)).toEqual(['test://users/{userId}'])
+
+      const readTemplated = await client.readResource(new URL('test://users/42'))
+      expect(readTemplated.contents[0]).toMatchObject({ text: 'Data for user 42' })
+
+      await client.disconnect()
+    }, 30000)
+  })
 })

@@ -9,11 +9,13 @@
 
 import type { Agent } from '../../agent/agent.js'
 import { findValidTrimPoint } from '../../conversation-manager/compression/context-compression.js'
-import { Interrupt, InterruptError, type InterruptState } from '../../interrupt.js'
+import { InterruptError, type InterruptState } from '../../interrupt.js'
 import { logger } from '../../logging/logger.js'
+import { AgentToolStreamer, ChildAgentAdapter } from '../../multiagent/agent-tool-streamer.js'
 import {
   _defaultBuilder,
-  _resolveSpec,
+  _resolveSpecs,
+  _toSchemaProperties,
   Choice,
   Fixed,
   Inherit,
@@ -26,7 +28,6 @@ import { Tool, ToolStreamEvent } from '../../tools/tool.js'
 import type { ToolContext, ToolStreamGenerator } from '../../tools/tool.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { AgentResult, InvokeArgs } from '../../types/agent.js'
-import { InterruptResponseContent } from '../../types/interrupt.js'
 import type { JSONSchema } from '../../types/json.js'
 import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
@@ -51,9 +52,16 @@ const FRAMING_END = `</parent_context>\n\n${CONTEXT_PREAMBLE}\n\n`
 
 const SENTINEL = /<(\/?)parent_context>/g
 
+const UNAVAILABLE_MESSAGE =
+  'Subagent did NOT run and the response was NOT applied: its interrupted turn is not available. ' +
+  'Do not report the delegated task as completed; if it is still needed, delegate it again.'
+
 /** Options for {@link makeSubagent}. */
 export interface MakeSubagentOptions {
-  /** Turns a resolved spec into a child agent. Defaults to a builder that inherits from the parent. */
+  /**
+   * Turns a resolved spec into a child agent. Defaults to a builder that inherits from the parent. Called again
+   * with the same spec when an interrupted child resumes.
+   */
   builder?: AgentBuilder
   /** Named roles the model selects via `agent_type`. @defaultValue `{ generalist: GENERALIST }` */
   presets?: Record<string, Preset>
@@ -63,8 +71,6 @@ export interface MakeSubagentOptions {
   instructions?: Open | Choice | Fixed
   /** Policy for the child's tools. A `Choice` must be `multiple`. @defaultValue `new Inherit()` */
   tools?: Choice | Fixed | Inherit
-  /** Policy for the child's MCP servers. A `Choice` must be `multiple`. @defaultValue `new Inherit()` */
-  mcpServers?: Choice | Fixed | Inherit
   /** Policy for the child's model. @defaultValue `new Inherit()` */
   model?: Inherit | Choice | Fixed
   /** Policy for how much parent conversation the child sees. @defaultValue `new Fixed('none')` */
@@ -73,10 +79,7 @@ export interface MakeSubagentOptions {
   maxDepth?: number
   /** Tool name exposed to the model. @defaultValue `'subagent'` */
   name?: string
-  /**
-   * Tool description shown to the model. The available presets are appended to it.
-   * @defaultValue {@link DEFAULT_SUBAGENT_DESCRIPTION}
-   */
+  /** Tool description shown to the model. @defaultValue {@link DEFAULT_SUBAGENT_DESCRIPTION} */
   description?: string
 }
 
@@ -89,7 +92,7 @@ export interface MakeSubagentOptions {
  * @param options - Configuration options.
  * @returns A tool that delegates a task to a freshly built child agent.
  * @throws Error if `maxDepth` is not a positive integer, `name` or `description` is empty, or a `Choice` axis
- * violates its constraints (no options, or not `multiple` for tools / MCP servers).
+ * violates its constraints (no options, or not `multiple` for tools).
  *
  * @example
  * ```typescript
@@ -124,30 +127,7 @@ export function makeSubagent(options: MakeSubagentOptions = {}): Tool {
     throw new Error(`defaultPreset '${defaultPreset}' is not one of the presets: ${Object.keys(presets).join(', ')}.`)
   }
 
-  // A tools Choice must be multiple.
   const tools = options.tools ?? new Inherit()
-  if (tools instanceof Choice) {
-    if (tools.options.length === 0) {
-      throw new Error(
-        'tools: new Choice([]) offers no options; use new Fixed([]) for a toolless child, or new Inherit().'
-      )
-    }
-    if (!tools.multiple) {
-      throw new Error('tools: new Choice(...) must set multiple to true; a subagent selects a subset of tools.')
-    }
-  }
-
-  const mcpServers = options.mcpServers ?? new Inherit()
-  if (mcpServers instanceof Choice) {
-    if (mcpServers.options.length === 0) {
-      throw new Error(
-        'mcpServers: new Choice([]) offers no options; use new Fixed([]) for no servers, or new Inherit().'
-      )
-    }
-    if (!mcpServers.multiple) {
-      throw new Error('mcpServers: new Choice(...) must set multiple to true; a subagent selects a subset of servers.')
-    }
-  }
 
   const contextModes =
     context instanceof Choice ? context.normalized().map((o) => context.valueFor(o.name)) : [context.value]
@@ -159,30 +139,15 @@ export function makeSubagent(options: MakeSubagentOptions = {}): Tool {
 
   const toolSpec: ToolSpec = {
     name,
-    description: buildDescription(description, presets),
-    inputSchema: buildSchema({ presets, defaultPreset, instructions, tools, mcpServers, model, context }),
+    description,
+    inputSchema: buildSchema({ presets, defaultPreset, instructions, tools, model, context }),
   }
 
+  // The schema has no name field; the child takes the tool's name.
   const resolve = (raw: Record<string, unknown>): AgentSpec =>
-    _resolveSpec(raw, { presets, defaultPreset, instructions, tools, mcpServers, model })
+    _resolveSpecs([{ ...raw, name }], { presets, defaultPreset, instructions, tools, model })[0]!
 
   return new SubagentTool({ name, toolSpec, resolve, context, builder: options.builder, maxDepth })
-}
-
-/**
- * Appends the available presets to the base description.
- *
- * @param base - The base tool description.
- * @param presets - Presets the model can select.
- * @returns The description shown to the model.
- */
-function buildDescription(base: string, presets: Record<string, Preset>): string {
-  const entries = Object.entries(presets)
-  if (entries.length === 0) {
-    return base
-  }
-  const roles = entries.map(([presetName, preset]) => `- ${presetName}: ${preset.description || presetName}`)
-  return `${base}\n\nAvailable subagents (agent_type):\n${roles.join('\n')}`
 }
 
 /**
@@ -196,61 +161,34 @@ function buildSchema(axes: {
   defaultPreset: string | undefined
   instructions: Open | Choice | Fixed
   tools: Choice | Fixed | Inherit
-  mcpServers: Choice | Fixed | Inherit
   model: Inherit | Choice | Fixed
   context: Fixed | Choice
 }): JSONSchema {
-  const { presets, defaultPreset, instructions, tools, mcpServers, model, context } = axes
+  const { context, ...schemaAxes } = axes
   const properties: Record<string, unknown> = {
     task: {
       type: 'string',
       description:
         'The self-contained task, including all context the subagent needs. It cannot ask follow-up questions.',
     },
-  }
-
-  if (Object.keys(presets).length > 0) {
-    properties['agent_type'] = {
-      type: 'string',
-      enum: Object.keys(presets),
-      description: `Which subagent role to use. Omit to use the default ('${defaultPreset}').`,
-    }
-  }
-
-  const instructionsDescription = "A system prompt defining the subagent's role."
-  if (instructions instanceof Open) {
-    properties['instructions'] = { type: 'string', description: instructionsDescription }
-  } else if (instructions instanceof Choice) {
-    properties['instructions'] = instructions.toSchemaProperty(instructionsDescription)
-  }
-
-  if (tools instanceof Choice) {
-    properties['tools'] = tools.toSchemaProperty(
-      'Subset of tools to grant the subagent. Fewer is safer; it cannot exceed your own. ' +
-        'Omit to grant all inherited tools.'
-    )
-  }
-
-  if (mcpServers instanceof Choice) {
-    properties['mcp_servers'] = mcpServers.toSchemaProperty(
-      'Subset of MCP servers whose tools to grant the subagent. Fewer is safer; it cannot ' +
-        'exceed your own. Omit to grant all of them.'
-    )
-  }
-
-  if (model instanceof Choice) {
-    properties['model'] = model.toSchemaProperty(
-      "Which model the subagent runs on. Omit to inherit the parent's model."
-    )
+    ..._toSchemaProperties(schemaAxes),
   }
 
   if (context instanceof Choice) {
-    properties['context'] = context.toSchemaProperty(
-      "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full " +
+    const options = context.normalized()
+    const lines = options
+      .filter((option) => option.description)
+      .map((option) => `- ${option.name}: ${option.description}`)
+    properties['context'] = {
+      type: 'string',
+      enum: options.map((option) => option.name),
+      description:
+        "How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full " +
         "history including tool calls and their results — can be large), 'no_tools' (text turns " +
-        'only — tool calls and their results removed). More context costs more tokens.'
-    )
-    if (context.normalized().some((option) => String(option.value) !== 'none')) {
+        'only — tool calls and their results removed). More context costs more tokens.' +
+        (lines.length > 0 ? `\nOptions:\n${lines.join('\n')}` : ''),
+    }
+    if (options.some((option) => String(option.value) !== 'none')) {
       properties['last_messages'] = {
         type: 'integer',
         description:
@@ -281,8 +219,7 @@ interface SubagentToolConfig {
 /**
  * Streams a fresh per-call child and propagates its interrupts to the parent for resume.
  *
- * If the parent never answers the interrupt, the child agent remains referenced here for the
- * lifetime of this tool instance.
+ * An interrupted child's turn is stored on the parent, so it resumes after the parent is restored.
  *
  * @internal
  */
@@ -295,8 +232,7 @@ class SubagentTool extends Tool {
   private readonly _context: Fixed | Choice
   private readonly _builder: AgentBuilder | undefined
   private readonly _maxDepth: number
-  /** Children awaiting a resume, keyed by the tool-use id that interrupted. */
-  private readonly _pending = new Map<string, Agent>()
+  private readonly _adapter: ChildAgentAdapter
 
   constructor(config: SubagentToolConfig) {
     super()
@@ -307,10 +243,11 @@ class SubagentTool extends Tool {
     this._context = config.context
     this._builder = config.builder
     this._maxDepth = config.maxDepth
+    this._adapter = new ChildAgentAdapter({ label: 'Subagent', name: config.name })
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
     const toolUseId = toolUse.toolUseId
     const input = toolUse.input
     const raw = (input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}) as Record<
@@ -318,35 +255,40 @@ class SubagentTool extends Tool {
       unknown
     >
     const parent = toolContext.agent as unknown as Agent | undefined
-    // Child interrupt ids are namespaced per tool call, since two children can raise the same id.
-    const prefix = `subagent:${encodeURIComponent(toolUseId)}:`
-    const parentState = (parent as unknown as { _interruptState?: InterruptState } | undefined)?._interruptState
+    const streamer = new AgentToolStreamer<AgentResult>({
+      interruptState: (parent as unknown as { _interruptState?: InterruptState } | undefined)?._interruptState,
+      toolUseId,
+      namespace: 'subagent',
+    })
 
     try {
-      const prepared = this._prepareChild(toolUseId, raw, parent, parentState, prefix)
+      const prepared = await this._prepareChild(toolUseId, raw, parent, streamer)
       if (typeof prepared === 'string') {
         return this._errorResult(toolUseId, prepared)
       }
+      if (prepared instanceof ToolResultBlock) {
+        return prepared
+      }
       const { child, prompt } = prepared
 
-      const gen = child.stream(prompt, { invocationState: { ...invocationState }, cancelSignal })
-      let next = await gen.next()
-      while (!next.done) {
-        const event = next.value
+      const gen = child.stream(prompt, {
+        invocationState: { ...invocationState },
+        cancelSignal,
+        ...(invocationContext && { invocationContext }),
+      })
+      for await (const event of streamer.stream(this._adapter, child, gen)) {
         if (event.type === 'toolStreamUpdateEvent') {
           yield event.event
         } else {
           yield new ToolStreamEvent({ data: event })
         }
-        next = await gen.next()
       }
 
-      return this._finalizeResult(toolUseId, child, next.value as AgentResult | undefined, parentState, prefix)
+      return streamer.terminalResult((result) => [new TextBlock(result.toString())])
     } catch (error) {
       if (error instanceof InterruptError) {
         throw error
       }
-      this._pending.delete(toolUseId)
       const message = error instanceof Error ? error.message : String(error)
       logger.warn(`tool_name=<${this.name}>, tool_use_id=<${toolUseId}>, error=<${message}> | subagent failed`)
       return this._errorResult(toolUseId, `Subagent error: ${message}`)
@@ -356,20 +298,19 @@ class SubagentTool extends Tool {
   /**
    * Resolves or resumes the child agent and its prompt.
    *
-   * @returns The child and its prompt on success, or an error message on validation failure.
-   * @throws InterruptError if the parent is resuming but none of this child's interrupts were answered.
+   * @returns The child and its prompt on success, an error message on validation failure, or the tool result
+   * if the child's stored turn could not be resumed.
+   * @throws InterruptError if the parent is resuming but none of this child's interrupts were answered, or the
+   * child could not be restored and its interrupts are raised again.
    */
-  private _prepareChild(
+  private async _prepareChild(
     toolUseId: string,
     raw: Record<string, unknown>,
     parent: Agent | undefined,
-    parentState: InterruptState | undefined,
-    prefix: string
-  ): { child: Agent; prompt: InvokeArgs } | string {
-    const resuming =
-      parentState?.activated === true && Object.keys(parentState.interrupts).some((id) => id.startsWith(prefix))
-    if (resuming) {
-      return this._prepareResume(toolUseId, parentState, prefix)
+    streamer: AgentToolStreamer<AgentResult>
+  ): Promise<{ child: Agent; prompt: InvokeArgs } | string | ToolResultBlock> {
+    if (streamer.isResuming()) {
+      return this._prepareResume(toolUseId, raw, parent, streamer)
     }
 
     const storedDepth = parent?.appState.get(DEPTH_STATE_KEY)
@@ -416,89 +357,35 @@ class SubagentTool extends Tool {
   }
 
   /**
-   * Prepares the interrupted child to resume with the parent's answers to its interrupts.
+   * Rebuilds the interrupted child from the same tool input and restores its stored turn.
    *
-   * @returns The child and its interrupt responses, or an error message if the child is gone.
-   * @throws InterruptError if none of this child's interrupts were answered.
+   * @returns The child and its interrupt responses, or the tool result if the turn cannot be resumed.
+   * @throws InterruptError if none of this child's interrupts were answered, or the child could not be
+   * restored and its interrupts are raised again.
    */
-  private _prepareResume(
+  private async _prepareResume(
     toolUseId: string,
-    parentState: InterruptState,
-    prefix: string
-  ): { child: Agent; prompt: InvokeArgs } | string {
-    // Only the responses supplied on this resume; earlier rounds' answers were already applied.
-    const answered = (parentState.resumeResponses ?? []).filter((r) =>
-      r.interruptResponse.interruptId.startsWith(prefix)
-    )
-    if (answered.length === 0) {
-      throw new InterruptError(Object.values(parentState.interrupts).filter((i) => i.id.startsWith(prefix)))
-    }
-
-    const child = this._pending.get(toolUseId)
-    if (!child?._interruptState.activated) {
-      this._pending.delete(toolUseId)
-      logger.warn(`tool_name=<${this.name}>, tool_use_id=<${toolUseId}> | interrupted subagent is not available`)
-      return (
-        'Subagent did NOT run and the response was NOT applied: its interrupted turn is not available. ' +
-        'Do not report the delegated task as completed.'
+    raw: Record<string, unknown>,
+    parent: Agent | undefined,
+    streamer: AgentToolStreamer<AgentResult>
+  ): Promise<{ child: Agent; prompt: InvokeArgs } | ToolResultBlock> {
+    const spec = this._resolve(raw)
+    const build = this._builder ?? _defaultBuilder(parent as Agent)
+    let child: Agent | undefined
+    try {
+      child = build(spec)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn(
+        `tool_name=<${this.name}>, tool_use_id=<${toolUseId}>, error=<${message}> | failed to rebuild interrupted subagent`
       )
     }
-
-    const prompt = answered.map(
-      (r) =>
-        new InterruptResponseContent({
-          interruptId: r.interruptResponse.interruptId.slice(prefix.length),
-          response: r.interruptResponse.response,
-        })
-    )
-    return { child, prompt }
-  }
-
-  /**
-   * Maps the child's result to the tool result for the parent.
-   *
-   * @returns The tool result.
-   * @throws InterruptError if the child stopped on interrupts; they are registered on the parent.
-   */
-  private _finalizeResult(
-    toolUseId: string,
-    child: Agent,
-    result: AgentResult | undefined,
-    parentState: InterruptState | undefined,
-    prefix: string
-  ): ToolResultBlock {
-    if (result === undefined) {
-      this._pending.delete(toolUseId)
-      return this._errorResult(toolUseId, 'Subagent produced no result.')
+    const resumed = await streamer.resume(this._adapter, child, UNAVAILABLE_MESSAGE)
+    if (resumed === undefined) {
+      return streamer.terminalResult()
     }
-    if (result.stopReason === 'interrupt' && result.interrupts?.length) {
-      this._pending.set(toolUseId, child)
-      if (!parentState) {
-        throw new InterruptError(result.interrupts)
-      }
-      // Registered here, not only when the orchestrator catches the error: the concurrent executor keeps
-      // one InterruptError per batch, so a second interrupting subagent would otherwise be dropped.
-      const raised = result.interrupts.map((interrupt) =>
-        parentState.registerInterrupt(
-          new Interrupt({
-            id: `${prefix}${interrupt.id}`,
-            name: interrupt.name,
-            ...(interrupt.reason !== undefined && { reason: interrupt.reason }),
-            source: 'tool',
-          })
-        )
-      )
-      throw new InterruptError(raised)
-    }
-    this._pending.delete(toolUseId)
-    if (result.stopReason === 'cancelled') {
-      return this._errorResult(toolUseId, 'Subagent was cancelled.')
-    }
-    return new ToolResultBlock({
-      toolUseId,
-      status: 'success',
-      content: [new TextBlock(result.toString())],
-    })
+    // resume() returns responses only for a child it restored.
+    return { child: child!, prompt: resumed }
   }
 
   /**

@@ -35,7 +35,7 @@ export async function checkLinksInHtml(
   const imgLinks = imgElements.map((el) => el.getAttribute('src'));
   links.push(...imgLinks);
 
-  const limit = pLimit(50); // Limit to 10 concurrent link checks
+  const limit = pLimit(50);
 
   const checkLinkPromises = links.map((link) =>
     limit(async () => {

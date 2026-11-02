@@ -972,7 +972,7 @@ describe('GoogleModel', () => {
         })
       )
 
-      const config = captured.config as { tools?: unknown[] }
+      const config = captured.config as { tools?: unknown[]; toolConfig?: Record<string, unknown> }
       expect(config.tools).toHaveLength(2)
       expect(config.tools![0]).toEqual({
         functionDeclarations: [
@@ -984,6 +984,82 @@ describe('GoogleModel', () => {
         ],
       })
       expect(config.tools![1]).toEqual({ googleSearch: {} })
+      expect(config.toolConfig?.includeServerSideToolInvocations).toBe(true)
+    })
+
+    it('sets includeServerSideToolInvocations and preserves functionCallingConfig when toolChoice is set', async () => {
+      const { client, captured } = createMockClientWithCapture()
+      const provider = new GoogleModel({ client, builtInTools: [{ googleSearch: {} }] })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(
+        provider.stream(messages, {
+          toolSpecs: [{ name: 'read', description: 'read' }],
+          toolChoice: { auto: {} },
+        })
+      )
+
+      const config = captured.config as { toolConfig?: unknown }
+      expect(config.toolConfig).toEqual({
+        functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
+        includeServerSideToolInvocations: true,
+      })
+    })
+
+    it('does not set includeServerSideToolInvocations on Vertex AI', async () => {
+      const captured: Record<string, unknown> = {}
+      const client = {
+        vertexai: true,
+        models: {
+          generateContentStream: vi.fn(async (params: Record<string, unknown>) => {
+            Object.assign(captured, params)
+            return (async function* () {
+              yield { candidates: [{ finishReason: 'STOP' }] }
+            })()
+          }),
+        },
+      } as unknown as GoogleGenAI
+      const provider = new GoogleModel({ client, builtInTools: [{ googleSearch: {} }] })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(
+        provider.stream(messages, {
+          toolSpecs: [{ name: 'read', description: 'read' }],
+        })
+      )
+
+      const config = captured.config as { toolConfig?: unknown }
+      expect(config.toolConfig).toBeUndefined()
+    })
+
+    it.each([
+      {
+        name: 'merges flag into params-supplied toolConfig',
+        paramsToolConfig: { functionCallingConfig: { mode: 'NONE' } },
+        expectedToolConfig: { functionCallingConfig: { mode: 'NONE' }, includeServerSideToolInvocations: true },
+      },
+      {
+        name: 'preserves explicit includeServerSideToolInvocations=false',
+        paramsToolConfig: { includeServerSideToolInvocations: false },
+        expectedToolConfig: { includeServerSideToolInvocations: false },
+      },
+    ])('$name', async ({ paramsToolConfig, expectedToolConfig }) => {
+      const { client, captured } = createMockClientWithCapture()
+      const provider = new GoogleModel({
+        client,
+        builtInTools: [{ googleSearch: {} }],
+        params: { toolConfig: paramsToolConfig },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(
+        provider.stream(messages, {
+          toolSpecs: [{ name: 'read', description: 'read' }],
+        })
+      )
+
+      const config = captured.config as { toolConfig?: unknown }
+      expect(config.toolConfig).toEqual(expectedToolConfig)
     })
 
     it('passes builtInTools when no toolSpecs provided', async () => {

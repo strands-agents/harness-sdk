@@ -35,7 +35,7 @@ export class BeforeMultiAgentInvocationEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   constructor(data: { orchestrator: MultiAgent; state: MultiAgentState; invocationState: InvocationState }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.orchestrator = data.orchestrator
     this.state = data.state
     this.invocationState = data.invocationState
@@ -56,7 +56,7 @@ export class AfterMultiAgentInvocationEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   constructor(data: { orchestrator: MultiAgent; state: MultiAgentState; invocationState: InvocationState }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.orchestrator = data.orchestrator
     this.state = data.state
     this.invocationState = data.invocationState
@@ -95,7 +95,7 @@ export class BeforeNodeCallEvent extends HookableEvent implements Interruptible 
     nodeId: string
     invocationState: InvocationState
   }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.orchestrator = data.orchestrator
     this.state = data.state
     this.nodeId = data.nodeId
@@ -148,7 +148,7 @@ export class AfterNodeCallEvent extends HookableEvent {
     invocationState: InvocationState
     error?: Error
   }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.orchestrator = data.orchestrator
     this.state = data.state
     this.nodeId = data.nodeId
@@ -212,7 +212,7 @@ export class NodeStreamUpdateEvent extends HookableEvent {
     inner: NodeStreamUpdateInnerEvent
     invocationState: InvocationState
   }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.nodeId = data.nodeId
     this.nodeType = data.nodeType
     this.state = data.state
@@ -244,7 +244,7 @@ export class NodeResultEvent extends HookableEvent {
     result: NodeResult
     invocationState: InvocationState
   }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.nodeId = data.nodeId
     this.nodeType = data.nodeType
     this.state = data.state
@@ -268,7 +268,7 @@ export class MultiAgentHandoffEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   constructor(data: { source: string; targets: string[]; state: MultiAgentState; invocationState: InvocationState }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.source = data.source
     this.targets = data.targets
     this.state = data.state
@@ -291,7 +291,7 @@ export class NodeCancelEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   constructor(data: { nodeId: string; state: MultiAgentState; message: string; invocationState: InvocationState }) {
-    super()
+    super({ invocationContext: data.state.invocationContext })
     this.nodeId = data.nodeId
     this.state = data.state
     this.message = data.message
@@ -313,7 +313,7 @@ export class MultiAgentResultEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   constructor(data: { result: MultiAgentResult; invocationState: InvocationState }) {
-    super()
+    super({ invocationContext: data.result.invocationContext })
     this.result = data.result
     this.invocationState = data.invocationState
   }

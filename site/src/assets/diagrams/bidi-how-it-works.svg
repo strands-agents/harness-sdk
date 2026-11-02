@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 248" width="720" height="248">
+  <!-- Type: architecture (hub). Story: BidiAgent sits between an input stream and an output stream, passing input to a realtime model and its reply back out, while tools run in the background and return results. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges: input across the top, output back along the bottom -->
+  <path class="dg-edge" d="M56,96 V64 Q56,56 64,56 H126" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M296,56 H334" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M464,40 H534" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M536,72 H466" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M464,184 H534" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M536,216 H466" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M336,200 H298" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M128,200 H64 Q56,200 56,192 V162" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="482" y="22" width="36" height="12" rx="2"/>
+  <text class="dg-label" x="500" y="31" text-anchor="middle">INPUT</text>
+  <rect class="dg-mask" x="482" y="54" width="36" height="12" rx="2"/>
+  <text class="dg-label" x="500" y="63" text-anchor="middle">REPLY</text>
+  <rect class="dg-mask" x="482" y="166" width="36" height="12" rx="2"/>
+  <text class="dg-label" x="500" y="175" text-anchor="middle">CALLS</text>
+  <rect class="dg-mask" x="474" y="198" width="52" height="12" rx="2"/>
+  <text class="dg-label" x="500" y="207" text-anchor="middle">RESULTS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="96" width="80" height="64" rx="6"/>
+  <text class="dg-name" x="56" y="133" text-anchor="middle">User</text>
+
+  <rect class="dg-node" x="128" y="24" width="168" height="64" rx="6"/>
+  <text class="dg-name" x="212" y="53" text-anchor="middle">Input stream</text>
+  <text class="dg-sub" x="212" y="71" text-anchor="middle">mic, keyboard, app</text>
+
+  <rect class="dg-node" x="128" y="168" width="168" height="64" rx="6"/>
+  <text class="dg-name" x="212" y="197" text-anchor="middle">Output stream</text>
+  <text class="dg-sub" x="212" y="215" text-anchor="middle">speakers, screen, app</text>
+
+  <rect class="dg-node is-focal" x="336" y="24" width="128" height="208" rx="6"/>
+  <text class="dg-name is-focal-text" x="400" y="125" text-anchor="middle">BidiAgent</text>
+  <text class="dg-sub" x="400" y="143" text-anchor="middle">records history</text>
+
+  <rect class="dg-node" x="536" y="24" width="168" height="64" rx="6"/>
+  <text class="dg-name" x="620" y="53" text-anchor="middle">Realtime model</text>
+  <text class="dg-sub" x="620" y="71" text-anchor="middle">streams its reply</text>
+
+  <rect class="dg-node" x="536" y="168" width="168" height="64" rx="6"/>
+  <text class="dg-name" x="620" y="197" text-anchor="middle">Your tools</text>
+  <text class="dg-sub" x="620" y="215" text-anchor="middle">run in the background</text>
+</svg>

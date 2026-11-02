@@ -4,10 +4,7 @@ import { Graph, Swarm } from '@strands-agents/sdk/multiagent'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod'
 import type { Plugin, LocalAgent } from '@strands-agents/sdk'
-import {
-  BeforeToolCallEvent,
-  AfterToolCallEvent,
-} from '@strands-agents/sdk'
+import { BeforeToolCallEvent, AfterToolCallEvent } from '@strands-agents/sdk'
 
 async function helloWorldExample() {
   // --8<-- [start:hello_world]
@@ -15,9 +12,7 @@ async function helloWorldExample() {
     systemPrompt: 'You are a helpful assistant.',
   })
 
-  const result = await agent.invoke(
-    'What makes TypeScript great for building agents?'
-  )
+  const result = await agent.invoke('What makes TypeScript great for building agents?')
   console.log(result)
   // --8<-- [end:hello_world]
 }
@@ -38,9 +33,7 @@ async function toolDefinitionExample() {
     name: 'calculate',
     description: 'Evaluate a math expression.',
     inputSchema: z.object({
-      expression: z
-        .string()
-        .describe('The math expression to evaluate'),
+      expression: z.string().describe('The math expression to evaluate'),
     }),
     callback: (input) => String(eval(input.expression)),
   })
@@ -101,19 +94,15 @@ async function agentAsToolExample() {
   const researcher = new Agent({
     name: 'researcher',
     description: 'Finds information on a topic',
-    systemPrompt:
-      'You are a research assistant. Find accurate information.',
+    systemPrompt: 'You are a research assistant. Find accurate information.',
   })
 
   const writer = new Agent({
     tools: [researcher],
-    systemPrompt:
-      'You are a writer. Use the researcher to gather facts, then write a polished draft.',
+    systemPrompt: 'You are a writer. Use the researcher to gather facts, then write a polished draft.',
   })
 
-  const result = await writer.invoke(
-    'Write a short article about AI agents'
-  )
+  const result = await writer.invoke('Write a short article about AI agents')
   // --8<-- [end:agent_as_tool]
 }
 
@@ -140,9 +129,7 @@ async function graphExample() {
     ],
   })
 
-  const result = await graph.invoke(
-    'Write a blog post about AI agents'
-  )
+  const result = await graph.invoke('Write a blog post about AI agents')
   // --8<-- [end:graph]
 }
 
@@ -152,8 +139,7 @@ async function swarmExample() {
     nodes: [
       new Agent({
         id: 'triage',
-        systemPrompt:
-          'Route the request to the right specialist.',
+        systemPrompt: 'Route the request to the right specialist.',
       }),
       new Agent({
         id: 'billing',
@@ -167,8 +153,6 @@ async function swarmExample() {
     start: 'triage',
   })
 
-  const result = await swarm.invoke(
-    'I need help with my invoice'
-  )
+  const result = await swarm.invoke('I need help with my invoice')
   // --8<-- [end:swarm]
 }

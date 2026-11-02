@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" width="720" height="480">
+  <!-- Type: sequence with phase bands. Story: the LLM steering handler cancels the first email tool call with guidance, and the agent's cheerier retry goes through. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Phase bands -->
+  <rect class="dg-zone" x="8" y="80" width="704" height="196" rx="8"/>
+  <rect class="dg-zone" x="8" y="284" width="704" height="180" rx="8"/>
+
+  <!-- Lifelines -->
+  <line class="dg-lifeline" x1="80" y1="64" x2="80" y2="468"/>
+  <line class="dg-lifeline" x1="264" y1="64" x2="264" y2="468"/>
+  <line class="dg-lifeline" x1="452" y1="64" x2="452" y2="468"/>
+  <line class="dg-lifeline" x1="640" y1="64" x2="640" y2="468"/>
+
+  <!-- Phase labels (masked over the first lifeline) -->
+  <rect class="dg-mask is-on-zone" x="20" y="88" width="136" height="14" rx="2"/>
+  <text class="dg-eyebrow" x="24" y="99">1 · FIRST ATTEMPT</text>
+  <rect class="dg-mask is-on-zone" x="20" y="292" width="80" height="14" rx="2"/>
+  <text class="dg-eyebrow" x="24" y="303">2 · RETRY</text>
+
+  <!-- Messages: time flows down, every arrow is horizontal -->
+  <path class="dg-edge" d="M80,132 H262" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="172" y="121" text-anchor="middle">send a frustrated email</text>
+
+  <path class="dg-edge" d="M264,168 H450" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="358" y="157" text-anchor="middle">email call, intercepted</text>
+
+  <path class="dg-edge" d="M452,200 H476 Q484,200 484,208 V212 Q484,220 476,220 H454" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="496" y="214">evaluates tone</text>
+
+  <path class="dg-edge is-dashed is-accent" d="M452,256 H266" marker-end="url(#arrow-accent)"/>
+  <text class="dg-msg is-accent" x="358" y="245" text-anchor="middle">cancelled: be cheerful</text>
+
+  <path class="dg-edge" d="M264,336 H450" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="358" y="325" text-anchor="middle">retried call, cheerier</text>
+
+  <path class="dg-edge is-dashed" d="M452,372 H266" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="358" y="361" text-anchor="middle">proceed</text>
+
+  <path class="dg-edge" d="M264,408 H638" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="358" y="397" text-anchor="middle">send the email</text>
+
+  <path class="dg-edge is-dashed" d="M264,444 H82" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="172" y="433" text-anchor="middle">final response</text>
+
+  <!-- Actors -->
+  <rect class="dg-node is-input" x="16" y="16" width="128" height="48" rx="6"/>
+  <text class="dg-name" x="80" y="45" text-anchor="middle">User</text>
+
+  <rect class="dg-node" x="200" y="16" width="128" height="48" rx="6"/>
+  <text class="dg-name" x="264" y="45" text-anchor="middle">Agent</text>
+
+  <rect class="dg-node is-focal" x="360" y="16" width="184" height="48" rx="6"/>
+  <text class="dg-name is-focal-text" x="452" y="45" text-anchor="middle">LLM steering handler</text>
+
+  <rect class="dg-node" x="576" y="16" width="128" height="48" rx="6"/>
+  <text class="dg-name" x="640" y="45" text-anchor="middle">Email tool</text>
+</svg>

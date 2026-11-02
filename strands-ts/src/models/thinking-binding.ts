@@ -1,0 +1,40 @@
+/**
+ * Recovery for replayed thinking blocks that a history edit invalidated.
+ *
+ * Preserved-thinking Claude models bind each thinking block to the content before it. When that content
+ * changes, enforcing accounts reject the request unless it asks the API to drop the stale blocks.
+ */
+
+/**
+ * Beta that lets a request drop thinking blocks invalidated by an edit to the history before them.
+ *
+ * @internal
+ */
+export const THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+
+const THINKING_BINDING_ERROR = 'bound to a different conversation'
+
+/**
+ * Whether the provider rejected a replayed thinking block because history before it changed.
+ *
+ * @internal
+ */
+export function isThinkingBindingError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(THINKING_BINDING_ERROR)
+}
+
+/**
+ * Return the thinking config with stale blocks dropped, or undefined if it cannot or should not change.
+ *
+ * A caller-set `block_binding` is left as written.
+ *
+ * @internal
+ */
+export function thinkingWithDropBlock<T>(
+  thinking: T
+): (T & { block_binding: { prefix_mismatch_behavior: 'drop_block' } }) | undefined {
+  if (typeof thinking !== 'object' || thinking === null || Array.isArray(thinking) || 'block_binding' in thinking) {
+    return undefined
+  }
+  return { ...thinking, block_binding: { prefix_mismatch_behavior: 'drop_block' } }
+}

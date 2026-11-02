@@ -699,6 +699,7 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  * - `interrupt` - Agent execution was interrupted for human input
  * - `maxTokens` - The model provider's per-call token cap was reached
  * - `limitOutputTokens` - Agent loop stopped because `InvokeOptions.limits.outputTokens` was reached
+ * - `limitStructuredOutputAttempts` - Agent loop stopped because `InvokeOptions.limits.structuredOutputAttempts` was reached
  * - `limitTotalTokens` - Agent loop stopped because `InvokeOptions.limits.totalTokens` was reached
  * - `limitTurns` - Agent loop stopped because `InvokeOptions.limits.turns` was reached
  * - `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue
@@ -716,6 +717,7 @@ export type StopReason =
   | 'interrupt'
   | 'maxTokens'
   | 'limitOutputTokens'
+  | 'limitStructuredOutputAttempts'
   | 'limitTotalTokens'
   | 'limitTurns'
   | 'pauseTurn'
@@ -724,6 +726,30 @@ export type StopReason =
   | 'toolUse'
   | 'modelContextWindowExceeded'
   | (string & {}) // Allow any string while preserving autocomplete for known values
+
+/**
+ * Stop reasons for a call that stopped because a limit ({@link InvokeOptions.limits}) was reached.
+ *
+ * @internal
+ */
+export const LIMIT_STOP_REASONS = new Set<StopReason>([
+  'limitTurns',
+  'limitTotalTokens',
+  'limitOutputTokens',
+  'limitStructuredOutputAttempts',
+])
+
+/**
+ * Explains that a nested call stopped because a limit (its own or the request's) was reached, so its answer is incomplete.
+ *
+ * @param agentName - Name of the agent that stopped
+ * @param stopReason - The limit stop reason it returned
+ * @returns The message to surface in place of the agent's answer
+ * @internal
+ */
+export function limitStopMessage(agentName: string, stopReason: StopReason): string {
+  return `Agent '${agentName}' stopped early (${stopReason}): a limit on this call was reached, so its answer is incomplete`
+}
 
 /**
  * System prompt for guiding model behavior.

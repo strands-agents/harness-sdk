@@ -23,6 +23,14 @@ import { setupTracer } from '@strands-agents/sdk/telemetry'
 import { Agent } from '@strands-agents/sdk'
 // --8<-- [end:custom_attributes_imports]
 
+// --8<-- [start:baggage_propagation_imports]
+import { Agent } from '@strands-agents/sdk'
+// --8<-- [end:baggage_propagation_imports]
+
+// --8<-- [start:baggage_span_processor_imports]
+import { setupTracer } from '@strands-agents/sdk/telemetry'
+// --8<-- [end:baggage_span_processor_imports]
+
 // --8<-- [start:configuring_exporters_imports]
 import { setupTracer } from '@strands-agents/sdk/telemetry'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'

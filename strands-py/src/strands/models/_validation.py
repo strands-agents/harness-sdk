@@ -1,8 +1,10 @@
 """Configuration validation utilities for model providers."""
 
 import dataclasses
+import logging
 import re
 import warnings
+from collections import Counter
 from collections.abc import Collection, Mapping
 from typing import Any
 
@@ -125,6 +127,21 @@ def _warn_on_deprecated_cache_tools(config_dict: Mapping[str, Any], *, stackleve
             DeprecationWarning,
             stacklevel=stacklevel,
         )
+
+
+def _log_skipped_blocks(logger: logging.Logger, skipped: Counter[str]) -> None:
+    """Log each skip notice once with the number of blocks it covers.
+
+    Formatters re-format the full history on every request, so a notice logged per skipped block repeats
+    for every earlier message on every request. Formatters count notices while they format and call this
+    once at the end instead.
+
+    Args:
+        logger: The provider module's logger, so records keep the provider's logger name.
+        skipped: Count of skipped blocks per notice message.
+    """
+    for message, count in skipped.items():
+        logger.warning("count=<%d> | %s", count, message)
 
 
 def _has_location_source(content: ContentBlock) -> bool:

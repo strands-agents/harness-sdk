@@ -8,7 +8,7 @@ export interface InProcessTaskEngineOptions {
   readonly maxConcurrency: number
   /** Per-execution timeout in milliseconds, or `Infinity` to disable timeouts. */
   readonly timeout: number
-  /** Runs one task execution and returns whether it completed, requires input, or failed. */
+  /** Runs one task execution and returns its lifecycle outcome. */
   readonly execute: (context: InProcessTaskExecutionContext) => Promise<InProcessTaskExecutionOutcome>
   /** Receives committed task updates without blocking or failing the engine. */
   readonly onTaskUpdated: (task: InProcessTaskRecord) => void
@@ -32,6 +32,9 @@ export interface InProcessTaskExecutionContext {
 
 /** Outcome returned by one in-process task execution. @internal */
 export type InProcessTaskExecutionOutcome =
+  | {
+      readonly status: 'cancelled'
+    }
   | {
       readonly status: 'completed'
       readonly result: ToolResultBlockData

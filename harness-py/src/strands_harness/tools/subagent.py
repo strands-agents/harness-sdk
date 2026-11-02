@@ -29,7 +29,7 @@ from strands.tools.mcp import MCPClient
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
 from strands.types.content import ContentBlock, Message
-from strands.types.tools import ToolGenerator, ToolUse
+from strands.types.tools import ToolGenerator, ToolResult, ToolUse
 
 from strands_harness import defaults
 from strands_harness.memory import resolve_memory
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from strands import Agent
+    from strands.agent import AgentResult
 
 
 @dataclass(frozen=True)
@@ -461,6 +462,21 @@ def _with_context(task: str, block: str) -> str:
 # Depth travels on each child's own state, not a build-time parameter.
 _DEPTH_STATE_KEY = "subagent_depth"
 
+# Stop reasons that mean the child never produced an answer; the parent must see a failure, not its partial text.
+# "refusal" comes from the Anthropic providers and is absent from the Python SDK's StopReason literal.
+_FAILED_STOP_REASONS = frozenset({"cancelled", "content_filtered", "refusal"})
+
+
+def _final_tool_result(tool_use_id: str, result: AgentResult) -> ToolResult:
+    """Map the child's stop reason onto the parent's tool result."""
+    if result.stop_reason not in _FAILED_STOP_REASONS:
+        return {"toolUseId": tool_use_id, "status": "success", "content": [{"text": str(result)}]}
+    message = f"Subagent stopped before finishing (stop_reason={result.stop_reason})."
+    partial = str(result).rstrip("\n")
+    if partial:
+        message += f"\n\nPartial output:\n{partial}"
+    return {"toolUseId": tool_use_id, "status": "error", "content": [{"text": message}]}
+
 
 class _SubagentTool(AgentTool):
     """Streams a fresh per-call child and propagates its interrupts to the parent for resume."""
@@ -557,15 +573,8 @@ class _SubagentTool(AgentTool):
                 self._pending[tool_use_id] = child
                 yield ToolInterruptEvent(tool_use, list(result.interrupts))
                 return
-            if result.stop_reason == "cancelled":
-                # Cancellation is data, not an exception: surface it as an error result, not a success.
-                self._pending.pop(tool_use_id, None)
-                yield ToolResultEvent(
-                    {"toolUseId": tool_use_id, "status": "error", "content": [{"text": "Subagent was cancelled."}]}
-                )
-                return
             self._pending.pop(tool_use_id, None)
-            yield ToolResultEvent({"toolUseId": tool_use_id, "status": "success", "content": [{"text": str(result)}]})
+            yield ToolResultEvent(_final_tool_result(tool_use_id, result))
         except Exception as exc:
             self._pending.pop(tool_use_id, None)
             yield ToolResultEvent(
