@@ -180,6 +180,76 @@ describe('TextBlock', () => {
   })
 })
 
+describe('TextBlock standing in for offloaded content', () => {
+  test('carries what it stands in for and serializes it beside the text', () => {
+    const block = new TextBlock('[Dropped] [ref: tu-1]', {
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+    })
+
+    expect(block).toEqual({
+      type: 'textBlock',
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+    })
+    expect(block.toJSON()).toEqual({
+      text: '[Dropped] [ref: tu-1]',
+      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+    })
+    expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
+  })
+
+  test('a plain text block carries and serializes no offloaded field', () => {
+    const block = new TextBlock('hello')
+
+    expect(block).toEqual({ type: 'textBlock', text: 'hello' })
+    expect(block.toJSON()).toEqual({ text: 'hello' })
+  })
+
+  test('round-trips through message data at top level and inside a tool result', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new TextBlock('[Dropped] [ref: msg-1_0]', {
+          metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
+        }),
+        new ToolResultBlock({
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [
+            new TextBlock('row-1 [ref: tu-1]', {
+              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
+            }),
+          ],
+        }),
+      ],
+      trackingId: 'msg-1',
+    })
+
+    const data = JSON.parse(JSON.stringify(message)) as MessageData
+
+    expect(data.content).toEqual([
+      {
+        text: '[Dropped] [ref: msg-1_0]',
+        metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
+      },
+      {
+        toolResult: {
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [
+            {
+              text: 'row-1 [ref: tu-1]',
+              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
+            },
+          ],
+        },
+      },
+    ])
+    const restored = Message.fromMessageData(data)
+    expect(restored).toEqual(message)
+  })
+})
+
 describe('ToolUseBlock', () => {
   test('creates tool use block', () => {
     const block = new ToolUseBlock({
