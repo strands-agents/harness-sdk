@@ -6,8 +6,10 @@ import type { Definition, Image, Link, Root } from 'mdast'
 
 interface MarkdownContext {
   sourcePath: string
+  currentRoute: string
   repository: string
   revision: string
+  editRef: string | null
   publishedRoutes: ReadonlyMap<string, string>
 }
 
@@ -29,14 +31,14 @@ export function transformExternalMarkdown(markdown: string, context: MarkdownCon
     throw new Error(`${context.sourcePath}: upstream frontmatter is not allowed`)
   }
 
-  const preparedMarkdown = normalizeFenceLanguages(pinSameRepositoryUrls(markdown, context))
+  const preparedMarkdown = normalizeFenceLanguages(rewriteSameRepositoryUrls(markdown, context))
   const tree = unified().use(remarkParse).parse(preparedMarkdown) as Root
   const heading = tree.children[0]
   if (heading?.type !== 'heading' || heading.depth !== 1 || heading.position?.start.offset !== 0) {
     throw new Error(`${context.sourcePath}: the first line must be an H1 heading`)
   }
 
-  validateMarkdown(tree, preparedMarkdown, context.sourcePath)
+  validateMarkdown(tree, context.sourcePath)
 
   const headingEnd = consumeHeadingBreak(
     preparedMarkdown,
@@ -58,12 +60,12 @@ export function transformExternalMarkdown(markdown: string, context: MarkdownCon
   return applyEdits(preparedMarkdown, edits)
 }
 
-function pinSameRepositoryUrls(markdown: string, context: MarkdownContext): string {
+function rewriteSameRepositoryUrls(markdown: string, context: MarkdownContext): string {
   const repository = escapeRegExp(context.repository)
   const repositoryPath = escapeRegExp(new URL(context.repository).pathname.replace(/^\/|\/$/g, ''))
-  return markdown
+  const pinned = markdown
     .replace(
-      new RegExp(`(${repository}/(?:blob|edit|tree|raw)/)(?:main|master)(?=/|[?#]|\\s|\\)|>|\\]|\\}|$)`, 'g'),
+      new RegExp(`(${repository}/(?:blob|tree|raw)/)(?:main|master)(?=/|[?#]|\\s|\\)|>|\\]|\\}|$)`, 'g'),
       `$1${context.revision}`
     )
     .replace(
@@ -73,27 +75,19 @@ function pinSameRepositoryUrls(markdown: string, context: MarkdownContext): stri
       ),
       `$1${context.revision}`
     )
+
+  if (context.editRef === null) return pinned
+  return pinned.replace(
+    new RegExp(`(${repository}/edit/)(?:main|master)(?=/|[?#]|\\s|\\)|>|\\]|\\}|$)`, 'g'),
+    `$1${context.editRef}`
+  )
 }
 
 function normalizeFenceLanguages(markdown: string): string {
   return markdown.replace(/^([ \t]{0,3})(`{3,}|~{3,})(?:dw|cedar)(?=[ \t]*$)/gim, '$1$2text')
 }
 
-function validateMarkdown(tree: Root, markdown: string, sourcePath: string): void {
-  for (const child of tree.children) {
-    if (child.type !== 'paragraph' || !child.position) continue
-    const paragraph = markdown.slice(child.position.start.offset, child.position.end.offset).trimStart()
-    if (/^(?:import|export)\s/.test(paragraph)) {
-      throw new Error(`${sourcePath}:${child.position.start.line}: MDX import/export syntax is not allowed`)
-    }
-  }
-
-  visit(tree, 'text', (node) => {
-    if (/[{}]/.test(node.value)) {
-      throw new Error(`${sourcePath}:${node.position?.start.line ?? 1}: MDX expression braces must be in code`)
-    }
-  })
-
+function validateMarkdown(tree: Root, sourcePath: string): void {
   visit(tree, 'html', (node) => {
     if (!SAFE_RAW_HTML.test(node.value)) {
       throw new Error(`${sourcePath}:${node.position?.start.line ?? 1}: unsafe HTML or MDX markup is not allowed`)
@@ -131,7 +125,10 @@ function rewriteUrl(url: string, image: boolean, context: MarkdownContext): stri
   }
 
   const publishedRoute = context.publishedRoutes.get(resolved)
-  if (publishedRoute && !image) return `/${publishedRoute}/${suffix}`
+  if (publishedRoute && !image) {
+    const relativeRoute = path.posix.relative(`/${context.currentRoute}`, `/${publishedRoute}`)
+    return `${relativeRoute || '.'}/${suffix}`
+  }
 
   const encodedPath = resolved.split('/').map(encodeURIComponent).join('/')
   if (image) {

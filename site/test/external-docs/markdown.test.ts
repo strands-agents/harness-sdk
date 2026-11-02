@@ -4,8 +4,10 @@ import { transformExternalMarkdown } from '../../scripts/external-docs/markdown'
 const revision = '1234567890abcdef1234567890abcdef12345678'
 const context = {
   sourcePath: 'docs/user/guide.md',
+  currentRoute: 'docs/user-guide/box/source/guide',
   repository: 'https://github.com/strands-agents/box',
   revision,
+  editRef: 'main',
   publishedRoutes: new Map([['docs/user/other.md', 'docs/user-guide/box/source/other']]),
 }
 
@@ -22,15 +24,14 @@ See [published](./other.md#part), [design](../design/architecture.md), and
 `
     const transformed = transformExternalMarkdown(source, context)
 
-    expect(transformed).not.toContain('# Source title')
-    expect(transformed).toContain('[published](/docs/user-guide/box/source/other/#part)')
-    expect(transformed).toContain(
-      `[design](https://github.com/strands-agents/box/blob/${revision}/docs/design/architecture.md)`
-    )
-    expect(transformed).toContain(
-      `![diagram](https://raw.githubusercontent.com/strands-agents/box/${revision}/docs/design/images/diagram.svg)`
-    )
-    expect(transformed).toContain('[sample](./other.md)')
+    expect(transformed)
+      .toBe(`See [published](../other/#part), [design](https://github.com/strands-agents/box/blob/${revision}/docs/design/architecture.md), and
+![diagram](https://raw.githubusercontent.com/strands-agents/box/${revision}/docs/design/images/diagram.svg).
+
+\`\`\`markdown
+[sample](./other.md)
+\`\`\`
+`)
   })
 
   it('pins same-repository absolute URLs, including URLs in code blocks', () => {
@@ -46,15 +47,26 @@ curl https://raw.githubusercontent.com/another/project/main/download.sh
 `
     const transformed = transformExternalMarkdown(source, context)
 
-    expect(transformed).toContain(`https://github.com/strands-agents/box/tree/${revision}/docs`)
-    expect(transformed).toContain(`https://github.com/strands-agents/box/edit/${revision}`)
-    expect(transformed).toContain(`https://raw.githubusercontent.com/strands-agents/box/${revision}/download.sh`)
-    expect(transformed).toContain('https://raw.githubusercontent.com/another/project/main/download.sh')
+    expect(transformed).toBe(`[Source](https://github.com/strands-agents/box/tree/${revision}/docs)
+[Edit](https://github.com/strands-agents/box/edit/main)
+
+\`\`\`sh
+curl https://raw.githubusercontent.com/strands-agents/box/${revision}/download.sh
+curl https://raw.githubusercontent.com/another/project/main/download.sh
+\`\`\`
+`)
+  })
+
+  it('keeps same-repository edit URLs on the configured editable ref', () => {
+    const source = '# Source title\n\n[Edit](https://github.com/strands-agents/box/edit/main/docs/user/guide.md)\n'
+    const transformed = transformExternalMarkdown(source, { ...context, editRef: 'docs-source' })
+
+    expect(transformed).toBe('[Edit](https://github.com/strands-agents/box/edit/docs-source/docs/user/guide.md)\n')
   })
 
   it('rewrites the destination when a link title repeats the URL', () => {
     const transformed = transformExternalMarkdown('# Source title\n\n[Other](./other.md "./other.md")\n', context)
-    expect(transformed).toContain('[Other](/docs/user-guide/box/source/other/ "./other.md")')
+    expect(transformed).toBe('[Other](../other/ "./other.md")\n')
   })
 
   it('rewrites a link definition whose label contains a colon', () => {
@@ -62,7 +74,7 @@ curl https://raw.githubusercontent.com/another/project/main/download.sh
       '# Source title\n\nSee [the other page][foo:bar].\n\n[foo:bar]: ./other.md\n',
       context
     )
-    expect(transformed).toContain('[foo:bar]: /docs/user-guide/box/source/other/')
+    expect(transformed).toBe('See [the other page][foo:bar].\n\n[foo:bar]: ../other/\n')
   })
 
   it.each(['dw', 'cedar'])('normalizes unsupported %s code fences to text', (language) => {
@@ -99,10 +111,19 @@ Text.
     expect(transformExternalMarkdown(source, context)).toContain('<a id="stable-anchor"></a>')
   })
 
+  it('preserves braces and import-like paragraphs as plain Markdown prose', () => {
+    const source = `# Source title
+
+Replace {name} with your box.
+
+import and export are ordinary words in a Markdown paragraph.
+`
+    expect(transformExternalMarkdown(source, context)).toBe(
+      'Replace {name} with your box.\n\nimport and export are ordinary words in a Markdown paragraph.\n'
+    )
+  })
+
   it.each([
-    ['MDX imports', 'import Example from "./Example.astro"'],
-    ['MDX exports', 'export const value = 1'],
-    ['MDX expressions', '{dangerousExpression}'],
     ['MDX components', '<DangerousComponent />'],
     ['unsafe HTML', '<script>alert("x")</script>'],
   ])('rejects %s', (_label, construct) => {

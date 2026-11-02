@@ -32,8 +32,9 @@ export function buildExternalDocsProduct(options: {
   lock: ExternalDocsProductLock
   manifest: ExternalDocsManifest
   revision: string
+  editRef: string | null
 }): BuiltExternalDocsProduct {
-  const { sourceRoot, config, lock, manifest, revision } = options
+  const { sourceRoot, config, lock, manifest, revision, editRef } = options
   if (config.id !== lock.id || config.id !== manifest.product.id) {
     throw new Error('external docs product ids must match across config, lock, and manifest')
   }
@@ -44,13 +45,16 @@ export function buildExternalDocsProduct(options: {
   for (const page of manifest.pages) {
     const sourcePath = readSourcePath(sourceRoot, page.source)
     const markdown = fs.readFileSync(sourcePath, 'utf-8')
+    const currentRoute = `${config.routePrefix}/${page.slug}`
     const content = transformExternalMarkdown(markdown, {
       sourcePath: page.source,
+      currentRoute,
       repository: config.repository,
       revision,
+      editRef,
       publishedRoutes,
     })
-    files.set(`${page.slug}.md`, renderPage(page, manifest, config, lock, revision, content))
+    files.set(`${page.slug}.md`, renderPage(page, manifest, config, lock, revision, editRef, content))
   }
 
   return {
@@ -85,10 +89,11 @@ function renderPage(
   config: ExternalDocsProductConfig,
   lock: ExternalDocsProductLock,
   revision: string,
+  editRef: string | null,
   content: string
 ): string {
   const route = `${config.routePrefix}/${page.slug}`
-  const editUrl = `${config.repository}/edit/${revision}/${page.source}`
+  const editUrl = editRef === null ? false : `${config.repository}/edit/${editRef}/${page.source}`
   const previewFrontmatter =
     manifest.product.status === 'preview'
       ? [

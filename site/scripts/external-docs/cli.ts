@@ -34,6 +34,7 @@ for (const product of config.products) {
     lock: productLock,
     manifest,
     revision: source.revision,
+    editRef: source.local ? null : product.ref,
   })
   writeExternalDocsProduct(outputRoot, built)
   console.log(`product=${product.id}, pages=${built.files.size}, revision=${source.revision} | generated external docs`)

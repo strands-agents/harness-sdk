@@ -31,17 +31,59 @@ describe('external docs generation', () => {
     const second = buildExternalDocsProduct(fixture)
 
     expect([...first.files]).toEqual([...second.files])
-    expect(first.navigation).toEqual(second.navigation)
-    expect(first.navigation.groups.map((group) => group.label)).toEqual(['Guides', 'Overview'])
-    expect(first.navigation.groups[0]?.items.map((item) => item.label)).toEqual(['First guide', 'Second guide'])
+    expect(first.navigation).toEqual({
+      schemaVersion: 1,
+      product: { id: 'example', name: 'Example', status: 'preview' },
+      revision,
+      routePrefix: 'docs/user-guide/example/source',
+      label: 'Upstream docs preview',
+      groups: [
+        {
+          label: 'Guides',
+          items: [
+            { label: 'First guide', slug: 'docs/user-guide/example/source/guides/first' },
+            { label: 'Second guide', slug: 'docs/user-guide/example/source/guides/second' },
+          ],
+        },
+        {
+          label: 'Overview',
+          items: [{ label: 'Overview', slug: 'docs/user-guide/example/source/overview' }],
+        },
+      ],
+    })
+    expect(second.navigation).toEqual(first.navigation)
 
     const firstGuide = first.files.get('guides/first.md')
-    expect(firstGuide).toContain(`slug: "docs/user-guide/example/source/guides/first"`)
-    expect(firstGuide).toContain(`revision: "${revision}"`)
-    expect(firstGuide).toContain('pagefind: false')
-    expect(firstGuide).toContain('content: "noindex, nofollow"')
-    expect(firstGuide).not.toContain('# First source heading')
-    expect(firstGuide).toContain('[Second](/docs/user-guide/example/source/guides/second/)')
+    expect(firstGuide).toBe(`---
+title: "First guide"
+description: "First guide description."
+slug: "docs/user-guide/example/source/guides/first"
+editUrl: "https://github.com/example/docs/edit/main/docs/user/first.md"
+pagefind: false
+head:
+  - tag: meta
+    attrs:
+      name: robots
+      content: "noindex, nofollow"
+externalDocs:
+  product: "Example"
+  productId: "example"
+  status: "preview"
+  repository: "https://github.com/example/docs"
+  ref: "main"
+  revision: "${revision}"
+  source: "docs/user/first.md"
+---
+Read [Second](../second/).
+`)
+  })
+
+  it('disables the edit link for a local source override', () => {
+    const fixture = createFixture()
+    const built = buildExternalDocsProduct({ ...fixture, editRef: null })
+
+    expect(built.files.get('guides/first.md')).toContain('editUrl: false')
+    expect(built.files.get('guides/first.md')).not.toContain('/edit/')
   })
 
   it('writes generated navigation that expands from one sidebar placeholder', () => {
@@ -160,7 +202,7 @@ function createFixture() {
     ],
   }).products[0]!
 
-  return { sourceRoot, config, lock, manifest, revision }
+  return { sourceRoot, config, lock, manifest, revision, editRef: 'main' }
 }
 
 function page(id: string, source: string, slug: string, title: string, group: string, order: number) {

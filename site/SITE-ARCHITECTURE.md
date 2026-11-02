@@ -144,7 +144,8 @@ revision.
 Each product publishes `docs/site-manifest.json` with `schemaVersion`, product metadata, and
 an ordered page list. A page declares a stable ID, repository-relative Markdown source, route
 slug, title, description, and navigation position. Schema version 1 accepts plain Markdown
-under `docs/user/`; it does not accept MDX.
+under `docs/user/`. The files are not evaluated as MDX, so braces and import/export-like
+prose remain literal text.
 
 The product status is `preview` or `stable`. Preview pages render an
 `Upstream documentation preview` caution so comparison content cannot be mistaken for the
@@ -178,12 +179,34 @@ Astro. The one `externalDocs: strands-box` entry in `navigation.yml` expands
 The generator:
 
 - strips the upstream H1 because Starlight renders the manifest title;
-- adds Starlight frontmatter, an upstream edit link, and source provenance;
-- rewrites links to other published manifest pages as site routes;
-- rewrites other relative links and same-repository `main` URLs to the pinned commit;
+- adds Starlight frontmatter, an upstream edit link to the configured ref, and source
+  provenance;
+- rewrites links to other published manifest pages as page-relative site routes so they work
+  under production and preview base paths;
+- rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
+  pinned commit while keeping GitHub edit URLs on the configured editable ref;
 - treats unsupported `dw` and `cedar` code fences as plain text;
-- rejects unsafe paths, source symlinks, frontmatter, MDX expressions, MDX imports, MDX
-  components, executable snippet includes, and unsafe raw HTML.
+- rejects unsafe paths, source symlinks, frontmatter, MDX-style components, executable
+  snippet includes, and unsafe raw HTML.
+
+#### Adding a product
+
+The importer core is reusable, but each product still requires explicit site wiring:
+
+1. Add the repository, tracked ref, manifest, route prefix, and navigation label to
+   `external-docs.config.json`, plus its initial immutable revision to
+   `external-docs.lock.json`.
+2. Keep source files under `docs/user/` for schema version 1. A different source root requires
+   a contract and schema change.
+3. Add a content symlink for the generated product directory and include its Markdown path in
+   the `docs` collection glob in `src/content.config.ts`.
+4. Add one `externalDocs: <product-id>` placeholder at the intended location in
+   `src/config/navigation.yml`.
+5. Preview comparison links currently assume the imported route contains `/source/` and that
+   removing it produces the canonical route. Extend the product configuration before using a
+   different route relationship.
+6. Run the full CMS build and content-collection tests; the sidebar-slug validation catches a
+   generated route that the content collection failed to load.
 
 Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and
 machine-readable documentation endpoints also omit them until the upstream product marks the
