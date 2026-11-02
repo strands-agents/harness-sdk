@@ -459,7 +459,6 @@ describe('Offload with * target and threshold (acts on messages larger than thre
 
   it.each([
     ['drop', Offload.drop('*')],
-    ['truncate', Offload.truncate('*')],
     ['summarize', Offload.summarize('*')],
   ])('Offload.%s("*") acts on large messages and keeps small ones', async (_, builder) => {
     const messages = [
@@ -479,34 +478,9 @@ describe('Offload with * target and threshold (acts on messages larger than thre
     expect(texts).toContain('next')
   })
 
-  it('Offload.truncate("*") with threshold shortens large messages in place and leaves the newest alone', async () => {
-    const messages = [
-      text('user', 'task'),
-      text('assistant', LARGE),
-      text('user', 'small question'),
-      text('assistant', LARGE),
-    ]
-
-    expect(await Offload.truncate('*').when({ blockThreshold: 2500 }).apply(makeContext(messages))).toBe(true)
-
-    expect(messages).toHaveLength(4)
-    expect(offloadedBy(messages[1]!.content[0])).toBe('truncate')
-    expect((messages[2]!.content[0] as TextBlock).text).toBe('small question')
-    expect((messages[3]!.content[0] as TextBlock).text).toBe(LARGE)
-  })
-
-  it('Offload.truncate("*") with threshold skips small content', async () => {
-    const messages = [text('user', 'task'), text('assistant', 'short'), text('user', 'next')]
-    const strategy = Offload.truncate('*').when({ blockThreshold: 2500 })
-
-    const result = await strategy.apply(makeContext(messages))
-
-    expect(result).toBe(false)
-  })
-
-  it('Offload.truncate("*") rejects a threshold at or below previewTokens', () => {
-    expect(() => Offload.truncate('*', { previewTokens: 1000 }).when({ blockThreshold: 500 })).toThrow(
-      'blockThreshold (500) must be greater than previewTokens (1000) to ensure truncation converges'
+  it.each([2500, '5%'] as (number | Percent)[])('Offload.truncate("*") rejects blockThreshold %j', (blockThreshold) => {
+    expect(() => Offload.truncate('*').when({ blockThreshold })).toThrow(
+      "Offload.truncate('*') doesn't take a blockThreshold; use Offload.drop('*') to remove large messages, or Offload.truncate('toolResults') to preview large blocks"
     )
   })
 })
@@ -1065,7 +1039,7 @@ describe('placeholders left by another method', () => {
 
   it.each([
     ['drop', () => Offload.drop('assistantText').when({ blockThreshold: 100 })],
-    ['truncate', () => Offload.truncate('*', { previewTokens: 50 }).when({ blockThreshold: 100 })],
+    ['truncate', () => Offload.truncate('assistantText', { previewTokens: 50 }).when({ blockThreshold: 100 })],
   ] as const)('%s leaves a text block that is a placeholder alone', async (_method, builder) => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('q')] }),
@@ -1100,42 +1074,44 @@ describe('granularity', () => {
   }
 
   describe.each(['drop', 'truncate', 'summarize'] as const)('%s', (method) => {
-    it.each([
-      ['*', { contextUtilization: '50%' }, 0.9, 'messages'],
-      ['*', { preserveRecent: 1 }, 0, 'messages'],
-      ['*', { blockThreshold: 200, contextUtilization: '50%' }, 0.9, 'large messages'],
-      ['assistantText', { contextUtilization: '50%' }, 0.9, [1, 3]],
-      ['assistantText', { contextUtilization: '50%' }, 0.1, 'nothing'],
-    ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'large messages' | 'nothing' | number[]][])(
-      'target=%j with %j at utilization %s acts on %j',
-      async (target, conditions, utilization, expected) => {
-        // Truncate shortens large messages in place rather than removing them.
-        const outcome = expected === 'large messages' && method === 'truncate' ? [1, 2, 3, 4] : expected
-        const messages = history()
-        const acted = await BUILDERS[method](target).when(conditions).apply(makeContext(messages, utilization))
+    it.each(
+      (
+        [
+          ['*', { contextUtilization: '50%' }, 0.9, 'messages'],
+          ['*', { preserveRecent: 1 }, 0, 'messages'],
+          ['*', { blockThreshold: 200, contextUtilization: '50%' }, 0.9, 'large messages'],
+          ['assistantText', { contextUtilization: '50%' }, 0.9, [1, 3]],
+          ['assistantText', { contextUtilization: '50%' }, 0.1, 'nothing'],
+        ] as [OffloadTarget, OffloadConditions, number, 'messages' | 'large messages' | 'nothing' | number[]][]
+      ).filter(
+        ([, conditions, , outcome]) =>
+          method !== 'truncate' || !conditions.blockThreshold || outcome !== 'large messages'
+      )
+    )('target=%j with %j at utilization %s acts on %j', async (target, conditions, utilization, outcome) => {
+      const messages = history()
+      const acted = await BUILDERS[method](target).when(conditions).apply(makeContext(messages, utilization))
 
-        if (outcome === 'nothing') {
-          expect(acted).toBe(false)
-          expect(textsOf(messages)).toEqual(textsOf(history()))
-          return
-        }
-        expect(acted).toBe(true)
-        if (outcome === 'messages' || outcome === 'large messages') {
-          expect(messages.length).toBeLessThan(history().length)
-          expect(placeholdersIn(messages)).toContainEqual(
-            expect.objectContaining({ method, removedMessages: expect.any(Number) })
-          )
-          if (outcome === 'large messages') expect(textsOf(messages).flat()).toContain('end')
-          return
-        }
-        expect(messages).toHaveLength(history().length)
-        for (const index of [1, 2, 3, 4]) {
-          const block = messages[index]!.content[0]
-          if (outcome.includes(index)) expect(offloadedBy(block)).toBe(method)
-          else expect((block as TextBlock).text).toBe(BIG)
-        }
+      if (outcome === 'nothing') {
+        expect(acted).toBe(false)
+        expect(textsOf(messages)).toEqual(textsOf(history()))
+        return
       }
-    )
+      expect(acted).toBe(true)
+      if (outcome === 'messages' || outcome === 'large messages') {
+        expect(messages.length).toBeLessThan(history().length)
+        expect(placeholdersIn(messages)).toContainEqual(
+          expect.objectContaining({ method, removedMessages: expect.any(Number) })
+        )
+        if (outcome === 'large messages') expect(textsOf(messages).flat()).toContain('end')
+        return
+      }
+      expect(messages).toHaveLength(history().length)
+      for (const index of [1, 2, 3, 4]) {
+        const block = messages[index]!.content[0]
+        if (outcome.includes(index)) expect(offloadedBy(block)).toBe(method)
+        else expect((block as TextBlock).text).toBe(BIG)
+      }
+    })
 
     it('leaves the newest message alone when gated by utilization', async () => {
       const messages = [...history().slice(0, -1), text('user', BIG)]
@@ -1202,12 +1178,13 @@ describe('whole-message conditions', () => {
       }
     )
 
-    it.each([{ contextUtilization: '50%' }, { preserveRecent: 1 }, { blockThreshold: 2500 }] as OffloadConditions[])(
-      'accepts %j',
-      (conditions) => {
-        expect(() => builder().when(conditions)).not.toThrow()
-      }
-    )
+    it.each([
+      { contextUtilization: '50%' },
+      { preserveRecent: 1 },
+      ...(method === 'truncate' ? [] : [{ blockThreshold: 2500 }]),
+    ] as OffloadConditions[])('accepts %j', (conditions) => {
+      expect(() => builder().when(conditions)).not.toThrow()
+    })
   })
 })
 

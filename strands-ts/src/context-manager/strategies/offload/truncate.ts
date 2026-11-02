@@ -20,7 +20,7 @@ import type { Stash } from '../../stash.js'
 import { formatElided, formatOffloaded } from '../../placeholder.js'
 import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
-import { buildToolNameMap, mediaKind, type OffloadTarget } from './target.js'
+import { mediaKind, type OffloadTarget } from './target.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   private readonly _truncateConfig: TruncateConfig
@@ -31,6 +31,12 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     this._truncateConfig = config ?? {}
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
+    // Every message over a threshold is larger than previewTokens, so middle-out would elide them all, as drop does.
+    if (target === '*' && this._conditions.blockThreshold) {
+      throw new Error(
+        "Offload.truncate('*') doesn't take a blockThreshold; use Offload.drop('*') to remove large messages, or Offload.truncate('toolResults') to preview large blocks"
+      )
+    }
     // A percent needs the context window, so init checks it.
     const threshold = this._conditions.blockThreshold
     if (threshold && !threshold.isShare) this._checkThresholdExceedsPreview(threshold.value, String(threshold.value))
@@ -63,13 +69,8 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     )
   }
 
-  /**
-   * Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. With a
-   * `blockThreshold`, previews the blocks larger than `previewTokens` in each eligible message instead.
-   */
+  /** Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    if (this._conditions.blockThreshold) return this._shortenEach(context)
-
     // Skipping messages that are only earlier markers lets a pass with nothing new to elide return false.
     const eligible = (await this._getEligibleMessages(context)).filter(
       (message) => !message.content.every(isElisionMarker)
@@ -77,18 +78,6 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const middle = await this._selectMiddle(eligible, context.agent)
     const text = async (_removed: Message[], count: number): Promise<string> => formatElided(count)
     return removeMessages(context.messages, middle, text, 'truncate', this._stash)
-  }
-
-  /** Previews each block over `previewTokens` in the eligible messages, leaving the newest message alone. */
-  private async _shortenEach(context: ContextState): Promise<boolean> {
-    const { messages, agent } = context
-    const toolNameMap = buildToolNameMap(messages)
-    let acted = false
-    for (const message of await this._getEligibleMessages(context)) {
-      if (message === messages.at(-1)) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, this._previewTokens, agent)) acted = true
-    }
-    return acted
   }
 
   protected async _replaceBlock(
