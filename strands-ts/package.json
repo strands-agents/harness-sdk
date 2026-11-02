@@ -253,7 +253,7 @@
     "test:browser:install": "npx playwright install --with-deps chromium",
     "test:all": "vitest run --project unit-node --project unit-browser",
     "test:all:coverage": "vitest run --coverage --project unit-node --project unit-browser",
-    "test:package": "npm run build && cd test/packages/esm-module && npm install && node esm.js && cd ../cjs-module && npm install && node cjs.js && cd ../../.. && npm pack --dry-run --ignore-scripts --json | node test/packages/assert-package-contents.js",
+    "test:package": "npm run build && cd test/packages/esm-module && npm install && node esm.js && cd ../cjs-module && npm install && node cjs.js && npx tsx cjs-static.ts && cd ../../.. && npm pack --dry-run --ignore-scripts --json | node test/packages/assert-package-contents.js",
     "lint": "eslint src test/integ",
     "lint:fix": "eslint src test/integ --fix",
     "format": "prettier --write src test/integ",
