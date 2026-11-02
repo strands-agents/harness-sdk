@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
@@ -140,7 +140,7 @@ describe('Offload strategies with stash', () => {
 
       const block = messages[0]!.content[0] as ToolResultBlock
       const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Stashed] [ref:')
+      expect(text).toMatch(/\[Stashed\] \[ref: tool-123\]$/)
     })
 
     it('does not stash when no stash is configured', async () => {
@@ -188,8 +188,98 @@ describe('Offload strategies with stash', () => {
       await strategy.apply(context)
 
       const block = messages[0]!.content[0] as ToolResultBlock
-      const text = (block.content[0] as TextBlock).text
-      expect(text).toContain('[Dropped] [ref:')
+      expect(block.content).toEqual([
+        new TextBlock('[Dropped] [ref: tool-123]', { metadata: { offloaded: { method: 'drop', ref: 'tool-123' } } }),
+      ])
+    })
+  })
+
+  describe('one reference per placeholder', () => {
+    function conversation(): Message[] {
+      return ['q1', 'a1', 'q2', 'a2', 'q3', 'a3', 'q4', 'a4'].map(
+        (text, i) =>
+          new Message({
+            role: i % 2 === 0 ? 'user' : 'assistant',
+            content: [new TextBlock(text)],
+            trackingId: `m${i}`,
+          })
+      )
+    }
+
+    function markerOf(messages: Message[]): TextBlock {
+      return messages
+        .flatMap((m) => m.content)
+        .find((b) => b instanceof TextBlock && b.metadata?.offloaded) as TextBlock
+    }
+
+    it('references a multi-item tool result by its toolUseId and retrieves every item', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tool-1',
+              status: 'success',
+              content: [new TextBlock('first '.repeat(2000)), new TextBlock('second')],
+            }),
+          ],
+        }),
+      ]
+      await stashAll(stash, messages)
+
+      await Offload.drop('toolResults').apply(makeContext(messages, stash))
+
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
+        new TextBlock('[Dropped] [ref: tool-1]', { metadata: { offloaded: { method: 'drop', ref: 'tool-1' } } }),
+      ])
+      expect(await invokeRetrievalTool(createRetrievalTool(stash, 1_000_000), { reference: 'tool-1' })).toEqual([
+        new TextBlock('first '.repeat(2000)),
+        new TextBlock('second'),
+      ])
+    })
+
+    it('stashes a block not yet stored under its current key before replacing it', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const messages = [makeToolResultMessage('x'.repeat(20000), 'tool-1')]
+
+      await Offload.drop('toolResults').apply(makeContext(messages, stash))
+
+      expect(await stash.takeSnapshot()).toStrictEqual({ 'tool-1_0': { text: 'x'.repeat(20000) } })
+    })
+
+    it.each([
+      ['drop', Offload.drop('*')],
+      ['truncate', Offload.truncate('*')],
+    ] as const)('%s message-level marker references the removed messages', async (method, strategy) => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const messages = conversation()
+      const original = messages.map((message) => message.toJSON())
+
+      await strategy.when({ utilization: 0.5 }).apply(makeContext(messages, stash, 0.9))
+
+      const marker = markerOf(messages)
+      const { ref, removedMessages } = marker.metadata!.offloaded!
+      expect(marker.metadata).toEqual({ offloaded: { method, ref: 'removed-m1', removedMessages } })
+      expect(marker.text).toMatch(/ \[ref: removed-m1\]$/)
+      expect(await stash.retrieve(ref!)).toBeNull()
+      expect(await invokeRetrievalTool(createRetrievalTool(stash, 1_000_000), { reference: ref! })).toEqual(
+        original.slice(1, 1 + removedMessages!)
+      )
+    })
+
+    it('leaves a message-level marker without a reference when the stash write fails', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      vi.spyOn(stash, 'storeRemoved').mockRejectedValue(new Error('storage unavailable'))
+      const messages = conversation()
+
+      await Offload.drop('*')
+        .when({ utilization: 0.5 })
+        .apply(makeContext(messages, stash, 0.9))
+
+      const marker = markerOf(messages)
+      expect(marker.text).toMatch(/^\[Dropped: \d+ messages?\]$/)
+      expect(marker.metadata!.offloaded!.ref).toBeUndefined()
     })
   })
 
@@ -333,7 +423,7 @@ describe('Offload strategies with stash', () => {
       const keys = await stash.list()
       const result = await invokeRetrievalTool(retrievalTool, { reference: keys[0]! })
 
-      expect(result).toEqual({ text: 'hello world' })
+      expect(result).toEqual(new TextBlock('hello world'))
     })
 
     it('restores document blocks as DocumentBlock instances', async () => {

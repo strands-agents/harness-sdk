@@ -220,6 +220,11 @@ export interface OffloadedBlockData {
   method?: OffloadMethod
 
   /**
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   */
+  ref?: string
+
+  /**
    * Number of whole messages the placeholder stands for; absent when it replaced a single block.
    */
   removedMessages?: number

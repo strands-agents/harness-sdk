@@ -20,7 +20,6 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { formatStashRefs } from '../../stash.js'
 import { offloadPlaceholder } from '../../placeholder.js'
 import {
   BaseOffloadStrategy,
@@ -81,11 +80,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     if (!summary) return false
 
     const totalTokens = await model.countTokens(safe)
-    const { lowestIndex } = spliceWithPairs(messages, safe)
+    const { removed, lowestIndex } = spliceWithPairs(messages, safe)
+    const text = formatSummarized(`${removed.length} messages`, totalTokens, summary)
     insertMarker(
       messages,
       lowestIndex,
-      offloadPlaceholder('summarize', formatSummarized(`${safe.length} messages`, totalTokens, summary), safe.length)
+      offloadPlaceholder('summarize', text, await this._stashRemoved(removed), removed.length)
     )
 
     repairAlternation(messages)
@@ -98,7 +98,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
@@ -117,12 +117,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [
-          offloadPlaceholder(
-            'summarize',
-            `${formatSummarized('tool result', tokens, summary)}${formatStashRefs(stashRefs)}`
-          ),
-        ],
+        content: [offloadPlaceholder('summarize', formatSummarized('tool result', tokens, summary), stashRef)],
       })
     }
 
@@ -131,25 +126,19 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
-      return offloadPlaceholder(
-        'summarize',
-        `${formatSummarized('text block', tokens, summary)}${formatStashRefs(stashRefs)}`
-      )
+      return offloadPlaceholder('summarize', formatSummarized('text block', tokens, summary), stashRef)
     }
 
     if (block instanceof ImageBlock || block instanceof DocumentBlock) {
       const summary = await this._trySummarize([block], model, message, invocationContext)
       if (summary) {
         logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
-        return offloadPlaceholder(
-          'summarize',
-          `${formatSummarized('media block', tokens, summary)}${formatStashRefs(stashRefs)}`
-        )
+        return offloadPlaceholder('summarize', formatSummarized('media block', tokens, summary), stashRef)
       }
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return offloadPlaceholder('summarize', `[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
+    return offloadPlaceholder('summarize', `[Offloaded: ~${tokens} tokens]`, stashRef)
   }
 
   /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */

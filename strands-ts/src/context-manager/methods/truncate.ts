@@ -97,7 +97,7 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
   return new ToolResultBlock({
     toolUseId: block.toolUseId,
     status: block.status,
-    content: [offloadPlaceholder('truncate', preview), ...opaque],
+    content: [offloadPlaceholder('truncate', preview, undefined), ...opaque],
   })
 }
 
@@ -110,5 +110,5 @@ export function truncateTextBlock(block: TextBlock, config?: TruncateConfig): Te
   if (preview === block.text) {
     return block
   }
-  return offloadPlaceholder('truncate', preview)
+  return offloadPlaceholder('truncate', preview, undefined)
 }

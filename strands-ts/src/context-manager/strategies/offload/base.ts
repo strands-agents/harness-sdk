@@ -204,9 +204,9 @@ export function collectRemovableWithPair(messages: Message[], index: number): Me
 
 /**
  * Collects removable messages (with their tool pairs), then splices them from the array.
- * Returns the number of messages removed and the lowest index that was removed.
+ * Returns the removed messages, in conversation order, and the lowest index that was removed.
  */
-export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: number; lowestIndex: number } {
+export function spliceWithPairs(messages: Message[], toRemove: Message[]): { removed: Message[]; lowestIndex: number } {
   const toSplice = new Set<Message>()
   for (const message of toRemove) {
     const index = messages.indexOf(message)
@@ -216,14 +216,10 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
     }
   }
 
-  let removed = 0
-  let lowestIndex = messages.length
-  for (const message of toSplice) {
-    const index = messages.indexOf(message)
-    if (index === -1) continue
-    if (index < lowestIndex) lowestIndex = index
-    messages.splice(index, 1)
-    removed++
+  const removed = messages.filter((message) => toSplice.has(message))
+  const lowestIndex = removed.length > 0 ? messages.indexOf(removed[0]!) : messages.length
+  for (const message of removed) {
+    messages.splice(messages.indexOf(message), 1)
   }
   return { removed, lowestIndex }
 }
@@ -409,9 +405,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (eligible.length === 0) return false
 
     const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
-    if (removed === 0) return false
+    if (removed.length === 0) return false
 
-    const marker = this._makeRemovalMarker(removed)
+    const marker = this._makeRemovalMarker(removed.length, await this._stashRemoved(removed))
     if (marker) {
       insertMarker(messages, lowestIndex, marker)
     }
@@ -421,8 +417,22 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   /** Override to insert a marker when messages are removed. Return null for no marker. */
-  protected _makeRemovalMarker(_count: number): TextBlock | null {
+  protected _makeRemovalMarker(_count: number, _stashRef: string | undefined): TextBlock | null {
     return null
+  }
+
+  /**
+   * Stashes removed messages under one reference for their marker to carry.
+   *
+   * @returns The reference, or undefined when there is no stash or the write failed
+   */
+  protected async _stashRemoved(removed: Message[]): Promise<string | undefined> {
+    try {
+      return await this._stash?.storeRemoved(removed)
+    } catch (error) {
+      logger.warn(`strategy=<${this.name}>, error=<${error}> | failed to stash removed messages`)
+      return undefined
+    }
   }
 
   /** Whether a block is eligible for offload given the current target and filters. */
@@ -459,8 +469,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
 
-      const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs, invocationContext)
+      const stashRef = await this._stash?.ensureStashed(block, message, blockIndex)
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, invocationContext)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -521,7 +531,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null>
 }
@@ -572,15 +582,16 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     const toRemove = removable.slice(0, removeCount)
 
     const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
-    if (removed === 0) return false
+    if (removed.length === 0) return false
 
-    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed))
+    insertMarker(messages, lowestIndex, this._makeRemovalMarker(removed.length, await this._stashRemoved(removed)))
     repairAlternation(messages)
     return true
   }
 
-  protected override _makeRemovalMarker(count: number): TextBlock {
-    return offloadPlaceholder('truncate', `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`, count)
+  protected override _makeRemovalMarker(count: number, stashRef: string | undefined): TextBlock {
+    const text = `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+    return offloadPlaceholder('truncate', text, stashRef, count)
   }
 
   protected async _replaceBlock(): Promise<ContentBlock | null> {

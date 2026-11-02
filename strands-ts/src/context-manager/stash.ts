@@ -32,11 +32,36 @@ function decode(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
-/** Format stash refs for display in placeholders. Returns '' when refs is empty. */
-export function formatStashRefs(refs: string[]): string {
-  if (refs.length === 0) return ''
-  if (refs.length === 1) return ` [ref: ${refs[0]!}]`
-  return ` [refs: ${refs.join(', ')}]`
+/**
+ * A stash key, `<id>_<index>`. The id is a tool result's `toolUseId`, a message's `trackingId`,
+ * or `removed-<trackingId>` for messages removed together.
+ *
+ * @internal
+ */
+export interface StashKey {
+  /** Owner of the entry. */
+  id: string
+  /** Position of the entry among the owner's items. */
+  index: number
+}
+
+/** @internal */
+export function formatStashKey(key: StashKey): string {
+  return `${key.id}_${key.index}`
+}
+
+/**
+ * Parses a stash key. The id may itself contain `_`, so the index is whatever follows the last one.
+ *
+ * @returns The key, or `null` when the text after the last `_` is not an index
+ * @internal
+ */
+export function parseStashKey(key: string): StashKey | null {
+  const separator = key.lastIndexOf('_')
+  if (separator <= 0) return null
+  const index = key.slice(separator + 1)
+  if (!/^\d+$/.test(index)) return null
+  return { id: key.slice(0, separator), index: Number(index) }
 }
 
 /**
@@ -80,7 +105,7 @@ export class Stash {
    * Store a serialized block and return a deterministic reference key.
    *
    * Keys are deterministic (`<id>_<blockIndex>`) so they can be recomputed
-   * via {@link refsFor} after a process restart or snapshot restore.
+   * from a block's position after a process restart or snapshot restore.
    *
    * @param id - Identifier component for the key (e.g. toolUseId)
    * @param blockIndex - Index of the block within the tool result
@@ -88,28 +113,53 @@ export class Stash {
    * @returns Reference key for retrieval
    */
   async store(id: string, blockIndex: number, data: Uint8Array): Promise<string> {
-    const key = `${id}_${blockIndex}`
+    const key = formatStashKey({ id, index: blockIndex })
     await this._storage.write(key, data)
     return key
   }
 
   /**
-   * Compute the deterministic reference keys for a content block.
+   * The reference an offload placeholder carries for the block it replaces, with the block stored
+   * under that reference if it is not already.
    *
-   * For a {@link ToolResultBlock}, returns one key per inner content item
-   * (`<toolUseId>_<i>`). For any other block, returns a single key
-   * (`<trackingId>_<blockIndex>`).
+   * A {@link ToolResultBlock} is referenced by its `toolUseId`; the retrieval tool resolves it to
+   * every stored item (`<toolUseId>_<i>`). Any other block is referenced by its position
+   * (`<trackingId>_<blockIndex>`). History edits move blocks between messages and positions, so the
+   * key a block was stored under on arrival can differ from its key now; storing here keeps every
+   * emitted reference resolvable.
    *
-   * @param block - The content block
+   * @param block - The block about to be replaced
    * @param message - The message containing the block
    * @param blockIndex - Index of the block within the message
-   * @returns Array of reference keys
+   * @returns The reference
    */
-  refsFor(block: ContentBlock, message: Message, blockIndex: number): string[] {
+  async ensureStashed(block: ContentBlock, message: Message, blockIndex: number): Promise<string> {
     if (block instanceof ToolResultBlock) {
-      return Array.from({ length: block.content.length }, (_, index) => `${block.toolUseId}_${index}`)
+      // A result that already holds a placeholder is not the original; its items were stored before it was offloaded.
+      if (block.content.some(isOffloaded)) return block.toolUseId
+      const stored = (await this.list(`${block.toolUseId}_`)).filter(
+        (key) => parseStashKey(key)?.id === block.toolUseId
+      )
+      if (stored.length < block.content.length) await this._storeToolResult(block)
+      return block.toolUseId
     }
-    return [`${message.trackingId}_${blockIndex}`]
+    const key = formatStashKey({ id: message.trackingId, index: blockIndex })
+    if (!(await this.list(key)).includes(key)) {
+      await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+    }
+    return key
+  }
+
+  /**
+   * Store messages removed from the context window as one entry.
+   *
+   * @param removed - The removed messages, in conversation order
+   * @returns The reference the placeholder left in their place carries
+   */
+  async storeRemoved(removed: Message[]): Promise<string> {
+    const id = `removed-${removed[0]!.trackingId}`
+    await this.store(id, 0, encode(removed.map((message) => message.toJSON())))
+    return id
   }
 
   /**
@@ -118,7 +168,7 @@ export class Stash {
    * Offload placeholders are never stored: their keys belong to the originals they replaced.
    *
    * @param message - The message whose content should be persisted
-   * @param skipToolUseIds - ToolUseIds to skip (e.g. retrieval tool results)
+   * @param skipToolUseIds - Tool results to leave out, such as the retrieval tool's own
    * @param storedKeys - Keys already in the stash; a block stored under one keeps its entry, since a
    *   restored history can hold a placeholder where the stored original was
    */
@@ -153,10 +203,10 @@ export class Stash {
       return true
     if (block instanceof ToolResultBlock) {
       if (skipToolUseIds?.has(block.toolUseId) || block.content.some(isOffloaded)) return true
-    } else if (isOffloaded(block)) {
-      return true
+      return storedKeys !== undefined && [...storedKeys].some((key) => parseStashKey(key)?.id === block.toolUseId)
     }
-    return storedKeys !== undefined && this.refsFor(block, message, blockIndex).some((key) => storedKeys.has(key))
+    if (isOffloaded(block)) return true
+    return storedKeys?.has(formatStashKey({ id: message.trackingId, index: blockIndex })) ?? false
   }
 
   /**
@@ -172,10 +222,10 @@ export class Stash {
   }
 
   /**
-   * List all stashed references.
+   * List stashed references, optionally only those starting with `prefix`.
    */
-  async list(): Promise<string[]> {
-    return this._storage.list('')
+  async list(prefix = ''): Promise<string[]> {
+    return this._storage.list(prefix)
   }
 
   /**

@@ -9,7 +9,6 @@ import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy } from '../../types.js'
-import { formatStashRefs } from '../../stash.js'
 import { offloadPlaceholder } from '../../placeholder.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './base.js'
@@ -23,8 +22,8 @@ export class DropStrategy extends BaseOffloadStrategy {
     return new DropStrategy(this._target, conditions)
   }
 
-  protected override _makeRemovalMarker(count: number): TextBlock {
-    return offloadPlaceholder('drop', `[Dropped: ${count} ${count === 1 ? 'message' : 'messages'}]`, count)
+  protected override _makeRemovalMarker(count: number, stashRef: string | undefined): TextBlock {
+    return offloadPlaceholder('drop', `[Dropped: ${count} ${count === 1 ? 'message' : 'messages'}]`, stashRef, count)
   }
 
   protected async _replaceBlock(
@@ -32,9 +31,9 @@ export class DropStrategy extends BaseOffloadStrategy {
     _tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRefs: string[]
+    stashRef: string | undefined
   ): Promise<ContentBlock | null> {
-    const marker = offloadPlaceholder('drop', `${DROPPED_MARKER}${formatStashRefs(stashRefs)}`)
+    const marker = offloadPlaceholder('drop', DROPPED_MARKER, stashRef)
 
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}> | dropped tool result from context window`)
