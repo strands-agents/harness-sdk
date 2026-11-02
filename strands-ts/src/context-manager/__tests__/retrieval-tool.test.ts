@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Stash } from '../stash.js'
+import { offloadPlaceholder } from '../placeholder.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { ImageBlock } from '../../types/media.js'
 
@@ -69,14 +70,24 @@ describe('retrieval tool', () => {
   })
 
   it.each([{}, { pattern: 'row-4321' }])('returns error for an offload placeholder with input %j', async (extra) => {
-    const { stash, refPromise } = makeStashWithTextBlock(
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    const placeholder = offloadPlaceholder(
+      'truncate',
       '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tool-1_0]'
     )
-    const ref = await refPromise
+    const ref = await stash.store('tool-1', 0, encodeJSON(placeholder.toJSON()))
     const retrievalTool = createRetrievalTool(stash)
 
     const result = await invoke(retrievalTool, { reference: ref, ...extra })
     expect(result).toBe(`Error: original content for reference ${ref} is no longer available`)
+  })
+
+  it('returns stored text that only looks like a placeholder', async () => {
+    const { stash, refPromise } = makeStashWithTextBlock('[Dropped] [ref: tool-1_0]')
+    const ref = await refPromise
+    const retrievalTool = createRetrievalTool(stash)
+
+    expect(await invoke(retrievalTool, { reference: ref })).toEqual({ text: '[Dropped] [ref: tool-1_0]' })
   })
 
   it('restores image content as an ImageBlock instead of raw JSON', async () => {

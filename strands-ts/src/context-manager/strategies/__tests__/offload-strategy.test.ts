@@ -7,7 +7,7 @@ import {
   insertMarker,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { isOffloaded, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { Role } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -626,6 +626,53 @@ describe('Message-level drop vs truncate markers', () => {
   })
 })
 
+describe('placeholders carry offloaded metadata', () => {
+  function conversation(): Message[] {
+    return ['q1', 'a1', 'q2', 'a2', 'q3', 'a3', 'q4', 'a4'].map(
+      (text, i) => new Message({ role: i % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(text)] })
+    )
+  }
+
+  function offloadedBlocks(messages: Message[]): TextBlock[] {
+    return messages.flatMap((m) =>
+      m.content.flatMap((b): unknown[] => (b instanceof ToolResultBlock ? b.content : [b])).filter(isOffloaded)
+    )
+  }
+
+  it.each([
+    ['drop', Offload.drop('*'), /^\[Dropped: (\d+) messages?\]$/],
+    ['truncate', Offload.truncate('*'), /^\[\.\.\. (\d+) messages? elided \.\.\.\]$/],
+  ] as const)('%s message-level marker records the method and message count', async (method, strategy, pattern) => {
+    const messages = conversation()
+
+    await strategy.when({ utilization: 0.5 }).apply(makeContext(messages, 0.9))
+
+    const [marker] = offloadedBlocks(messages)
+    const removedMessages = Number(marker!.text.match(pattern)![1])
+    expect(marker).toEqual(new TextBlock(marker!.text, { metadata: { offloaded: { method, removedMessages } } }))
+  })
+
+  it.each([
+    ['drop', Offload.drop('toolResults')],
+    ['truncate', Offload.truncate('toolResults')],
+  ] as const)('%s tool-result placeholder records the method', async (method, strategy) => {
+    const messages = [makeToolResultMessage('x'.repeat(2500 * 4 + 100))]
+
+    await strategy.apply(makeContext(messages))
+
+    const [placeholder] = offloadedBlocks(messages)
+    expect(placeholder!.metadata).toEqual({ offloaded: { method } })
+  })
+
+  it('leaves untouched blocks without metadata', async () => {
+    const messages = [makeToolResultMessage('small')]
+
+    await Offload.truncate('toolResults').apply(makeContext(messages))
+
+    expect(offloadedBlocks(messages)).toEqual([])
+  })
+})
+
 describe('pinned message protection', () => {
   it('message-level drop skips pinned messages', async () => {
     const messages = [
@@ -819,7 +866,7 @@ describe('collectRemovableWithPair', () => {
 describe('insertMarker', () => {
   it('inserts an assistant message between user messages', () => {
     const messages = [text('user', 'task'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker')
+    insertMarker(messages, 1, new TextBlock('marker'))
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(messages[1]!.content).toEqual([new TextBlock('marker')])
   })
@@ -832,7 +879,7 @@ describe('insertMarker', () => {
       metadata: { custom: { k: 'v' } },
     })
     const messages = [text('user', 'task'), original, text('user', 'u1')]
-    insertMarker(messages, 2, 'marker')
+    insertMarker(messages, 2, new TextBlock('marker'))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
     expect(messages[1]!.trackingId).toBe('msg-1')
@@ -842,7 +889,7 @@ describe('insertMarker', () => {
 
   it('appends to the assistant message after the gap', () => {
     const messages = [text('user', 'task'), text('assistant', 'a1'), text('user', 'u1')]
-    insertMarker(messages, 1, 'marker')
+    insertMarker(messages, 1, new TextBlock('marker'))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
   })
@@ -852,7 +899,7 @@ describe('insertMarker', () => {
     [5, ['task', 'u1', 'marker']],
   ])('clamps index %i into the history after message 0', (index, expected) => {
     const messages = [text('user', 'task'), text('user', 'u1')]
-    insertMarker(messages, index, 'marker')
+    insertMarker(messages, index, new TextBlock('marker'))
     expect(messages.map((message) => (message.content[0] as TextBlock).text)).toEqual(expected)
   })
 })

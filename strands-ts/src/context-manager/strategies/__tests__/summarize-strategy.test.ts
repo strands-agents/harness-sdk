@@ -222,7 +222,11 @@ describe('Offload.summarize', () => {
         new ToolResultBlock({
           toolUseId: 'tool-123',
           status: 'success',
-          content: [new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output')],
+          content: [
+            new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output', {
+              metadata: { offloaded: { method: 'summarize' } },
+            }),
+          ],
         }),
       ])
       expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })

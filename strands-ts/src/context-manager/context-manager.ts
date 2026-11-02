@@ -137,10 +137,11 @@ export class ContextManager implements Plugin {
     if (this._stash) {
       const stash = this._stash
       const skipSet = this._retrievalToolUseIds
+      const storedKeys = new Set(await stash.list())
 
       for (const message of agent.messages) {
         trackRetrievalToolUseIds(message, skipSet)
-        await stash.storeMessage(message, skipSet)
+        await stash.storeMessage(message, skipSet, storedKeys)
       }
 
       agent.addHook(MessageAddedEvent, async (event) => {

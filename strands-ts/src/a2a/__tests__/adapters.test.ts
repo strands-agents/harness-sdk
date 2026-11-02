@@ -105,7 +105,7 @@ describe('adapters', () => {
     it('converts an offloaded block to the text the model receives', () => {
       const blocks: ContentBlock[] = [
         new TextBlock('[Dropped] [ref: tu-1]', {
-          metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+          metadata: { offloaded: { method: 'drop' } },
         }),
       ]
 

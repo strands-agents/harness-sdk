@@ -18,6 +18,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
+import { offloadPlaceholder } from '../../placeholder.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 
 /**
@@ -234,9 +235,8 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
  * tracking id and block indices for stash refs, or becomes its own assistant message. It never
  * joins message 0, and the last message is never removed, so a new marker never ends the history.
  */
-export function insertMarker(messages: Message[], index: number, text: string): void {
+export function insertMarker(messages: Message[], index: number, block: TextBlock): void {
   index = Math.max(1, Math.min(index, messages.length))
-  const block = new TextBlock(text)
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]
     if (neighbor > 0 && carrier?.role === 'assistant') {
@@ -421,7 +421,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   /** Override to insert a marker when messages are removed. Return null for no marker. */
-  protected _makeRemovalMarker(_count: number): string | null {
+  protected _makeRemovalMarker(_count: number): TextBlock | null {
     return null
   }
 
@@ -579,8 +579,8 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     return true
   }
 
-  protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+  protected override _makeRemovalMarker(count: number): TextBlock {
+    return offloadPlaceholder('truncate', `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`, count)
   }
 
   protected async _replaceBlock(): Promise<ContentBlock | null> {

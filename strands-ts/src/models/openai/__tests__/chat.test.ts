@@ -393,7 +393,7 @@ describe('OpenAIModel', () => {
       const captured: { request: any } = { request: null }
       const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
       const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
-        metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+        metadata: { offloaded: { method: 'drop' } },
       })
       await collectIterator(
         provider.stream([

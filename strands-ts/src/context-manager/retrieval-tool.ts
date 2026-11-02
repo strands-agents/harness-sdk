@@ -12,8 +12,8 @@ import { isSearchableContent, searchContent } from '../vended-plugins/context-of
 import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
-import { Message, ToolUseBlock } from '../types/messages.js'
-import { isOffloadPlaceholder, type Stash } from './stash.js'
+import { isOffloaded, Message, TextBlock, ToolUseBlock, type TextBlockData } from '../types/messages.js'
+import type { Stash } from './stash.js'
 
 export const RETRIEVAL_TOOL_NAME = 'retrieve_context'
 
@@ -66,7 +66,7 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       if (!result) {
         return `Error: reference not found: ${input.reference}`
       }
-      if (isOffloadPlaceholder(result.data)) {
+      if (isStoredPlaceholder(result.data)) {
         return `Error: original content for reference ${input.reference} is no longer available`
       }
 
@@ -129,4 +129,14 @@ function extractText(data: unknown): string | null {
     }
   }
   return null
+}
+
+/** Whether stored block data is a placeholder rather than the original it replaced. */
+function isStoredPlaceholder(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'text' in data &&
+    isOffloaded(TextBlock.fromJSON(data as TextBlockData))
+  )
 }

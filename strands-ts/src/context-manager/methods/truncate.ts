@@ -6,6 +6,7 @@
 
 import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
+import { offloadPlaceholder } from '../placeholder.js'
 
 export const TRUNCATED_PREFIX = '[Truncated:'
 
@@ -96,7 +97,7 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
   return new ToolResultBlock({
     toolUseId: block.toolUseId,
     status: block.status,
-    content: [new TextBlock(preview), ...opaque],
+    content: [offloadPlaceholder('truncate', preview), ...opaque],
   })
 }
 
@@ -109,5 +110,5 @@ export function truncateTextBlock(block: TextBlock, config?: TruncateConfig): Te
   if (preview === block.text) {
     return block
   }
-  return new TextBlock(preview)
+  return offloadPlaceholder('truncate', preview)
 }

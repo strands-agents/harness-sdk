@@ -912,7 +912,7 @@ describe('AnthropicModel', () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
       const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
-        metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+        metadata: { offloaded: { method: 'drop' } },
       })
       const messages = [
         new Message({

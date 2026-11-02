@@ -9,7 +9,14 @@
  */
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
-import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock } from '../types/messages.js'
+import {
+  isOffloaded,
+  Message,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+  ReasoningBlock,
+} from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
@@ -23,19 +30,6 @@ function encode(value: unknown): Uint8Array {
 
 function decode(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(bytes))
-}
-
-const STASH_REFS_SUFFIX = / \[refs?: [^\]]+\]$/
-
-/**
- * Whether a block's text ends with a {@link formatStashRefs} token, marking it as an offload replacement.
- * Accepts live blocks and their serialized JSON form.
- *
- * @internal
- */
-export function isOffloadPlaceholder(block: unknown): boolean {
-  if (typeof block !== 'object' || block === null || !('text' in block)) return false
-  return typeof block.text === 'string' && STASH_REFS_SUFFIX.test(block.text)
 }
 
 /** Format stash refs for display in placeholders. Returns '' when refs is empty. */
@@ -125,26 +119,44 @@ export class Stash {
    *
    * @param message - The message whose content should be persisted
    * @param skipToolUseIds - ToolUseIds to skip (e.g. retrieval tool results)
+   * @param storedKeys - Keys already in the stash; a block stored under one keeps its entry, since a
+   *   restored history can hold a placeholder where the stored original was
    */
-  async storeMessage(message: Message, skipToolUseIds?: ReadonlySet<string>): Promise<void> {
+  async storeMessage(
+    message: Message,
+    skipToolUseIds?: ReadonlySet<string>,
+    storedKeys?: ReadonlySet<string>
+  ): Promise<void> {
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
+      if (this._isSkipped(block, message, blockIndex, skipToolUseIds, storedKeys)) continue
       if (block instanceof ToolResultBlock) {
-        if (skipToolUseIds?.has(block.toolUseId)) continue
-        if (block.content.some(isOffloadPlaceholder)) continue
         await this._storeToolResult(block)
-      } else if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
         continue
-      } else if (isOffloadPlaceholder(block)) {
-        continue
-      } else {
-        try {
-          await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
-        } catch (error) {
-          logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
-        }
+      }
+      try {
+        await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+      } catch (error) {
+        logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
       }
     }
+  }
+
+  private _isSkipped(
+    block: ContentBlock,
+    message: Message,
+    blockIndex: number,
+    skipToolUseIds?: ReadonlySet<string>,
+    storedKeys?: ReadonlySet<string>
+  ): boolean {
+    if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock)
+      return true
+    if (block instanceof ToolResultBlock) {
+      if (skipToolUseIds?.has(block.toolUseId) || block.content.some(isOffloaded)) return true
+    } else if (isOffloaded(block)) {
+      return true
+    }
+    return storedKeys !== undefined && this.refsFor(block, message, blockIndex).some((key) => storedKeys.has(key))
   }
 
   /**

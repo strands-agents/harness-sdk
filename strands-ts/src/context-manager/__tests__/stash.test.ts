@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { Stash, formatStashRefs, isOffloadPlaceholder } from '../stash.js'
+import { Stash } from '../stash.js'
+import { offloadPlaceholder } from '../placeholder.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
@@ -138,22 +139,20 @@ describe('Stash', () => {
   })
 
   describe('offload placeholders', () => {
-    it.each([[['tu-1_0']], [['tu-1_0', 'tu-1_1']]])('detects formatted refs %j', (refs) => {
-      expect(isOffloadPlaceholder({ text: `[Dropped]${formatStashRefs(refs)}` })).toBe(true)
-      expect(isOffloadPlaceholder(new TextBlock(`[Dropped]${formatStashRefs(refs)}`))).toBe(true)
+    it('stashes text that only looks like a placeholder', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('[Dropped] [ref: tu-1_0]')],
+        trackingId: 'track-1',
+      })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_0': { text: '[Dropped] [ref: tu-1_0]' } })
     })
 
-    it.each([
-      { text: 'plain text' },
-      { text: 'see [ref: x] for details' },
-      { json: { text: '[Dropped] [ref: tu-1_0]' } },
-      '[Dropped] [ref: tu-1_0]',
-      null,
-    ])('ignores non-placeholder %j', (block) => {
-      expect(isOffloadPlaceholder(block)).toBe(false)
-    })
-
-    it('skips a tool result carrying stash refs, including its other items', async () => {
+    it('skips a tool result holding a placeholder, including its other items', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const message = new Message({
         role: 'user',
@@ -162,7 +161,10 @@ describe('Stash', () => {
             toolUseId: 'tu-1',
             status: 'success',
             content: [
-              new TextBlock('[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tu-1_0]'),
+              offloadPlaceholder(
+                'truncate',
+                '[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tu-1_0]'
+              ),
               new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
             ],
           }),
@@ -178,7 +180,10 @@ describe('Stash', () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const message = new Message({
         role: 'user',
-        content: [new TextBlock('[Dropped] [refs: track-1_0, track-1_1]'), new TextBlock('see [ref: x] for details')],
+        content: [
+          offloadPlaceholder('drop', '[Dropped] [refs: track-1_0, track-1_1]'),
+          new TextBlock('see [ref: x] for details'),
+        ],
         trackingId: 'track-1',
       })
 

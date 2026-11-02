@@ -11,6 +11,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy } from '../../types.js'
 import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from '../../methods/truncate.js'
 import { formatStashRefs } from '../../stash.js'
+import { offloadPlaceholder } from '../../placeholder.js'
 import { BaseOffloadStrategy, type OffloadConditions, type OffloadTarget } from './base.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
@@ -41,8 +42,8 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     return new TruncateStrategy(this._target, this._truncateConfig, conditions)
   }
 
-  protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+  protected override _makeRemovalMarker(count: number): TextBlock {
+    return offloadPlaceholder('truncate', `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`, count)
   }
 
   protected async _replaceBlock(
@@ -64,10 +65,10 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
       const truncated = truncateTextBlock(block, this._truncateConfig)
       const refs = formatStashRefs(stashRefs)
-      return refs ? new TextBlock(`${truncated.text}\n\n[Stashed]${refs}`) : truncated
+      return refs ? offloadPlaceholder('truncate', `${truncated.text}\n\n[Stashed]${refs}`) : truncated
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
+    return offloadPlaceholder('truncate', `[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
   }
 }
 
@@ -79,7 +80,7 @@ function appendStashRefs(block: ToolResultBlock, stashRefs: string[]): ToolResul
   for (let index = 0; index < content.length; index++) {
     const item = content[index]!
     if (item instanceof TextBlock) {
-      content[index] = new TextBlock(`${item.text}\n\n[Stashed]${refs}`)
+      content[index] = offloadPlaceholder('truncate', `${item.text}\n\n[Stashed]${refs}`)
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,

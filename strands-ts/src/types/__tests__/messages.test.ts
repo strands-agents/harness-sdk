@@ -183,17 +183,17 @@ describe('TextBlock', () => {
 describe('TextBlock standing in for offloaded content', () => {
   test('carries what it stands in for and serializes it beside the text', () => {
     const block = new TextBlock('[Dropped] [ref: tu-1]', {
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+      metadata: { offloaded: { method: 'drop' } },
     })
 
     expect(block).toEqual({
       type: 'textBlock',
       text: '[Dropped] [ref: tu-1]',
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+      metadata: { offloaded: { method: 'drop' } },
     })
     expect(block.toJSON()).toEqual({
       text: '[Dropped] [ref: tu-1]',
-      metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+      metadata: { offloaded: { method: 'drop' } },
     })
     expect(TextBlock.fromJSON(block.toJSON())).toEqual(block)
   })
@@ -210,14 +210,14 @@ describe('TextBlock standing in for offloaded content', () => {
       role: 'user',
       content: [
         new TextBlock('[Dropped] [ref: msg-1_0]', {
-          metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
+          metadata: { offloaded: { method: 'drop' } },
         }),
         new ToolResultBlock({
           toolUseId: 'tu-1',
           status: 'success',
           content: [
             new TextBlock('row-1 [ref: tu-1]', {
-              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
+              metadata: { offloaded: { method: 'truncate' } },
             }),
           ],
         }),
@@ -230,7 +230,7 @@ describe('TextBlock standing in for offloaded content', () => {
     expect(data.content).toEqual([
       {
         text: '[Dropped] [ref: msg-1_0]',
-        metadata: { offloaded: { method: 'drop', ref: 'msg-1_0' } },
+        metadata: { offloaded: { method: 'drop' } },
       },
       {
         toolResult: {
@@ -239,7 +239,7 @@ describe('TextBlock standing in for offloaded content', () => {
           content: [
             {
               text: 'row-1 [ref: tu-1]',
-              metadata: { offloaded: { method: 'truncate', ref: 'tu-1' } },
+              metadata: { offloaded: { method: 'truncate' } },
             },
           ],
         },
