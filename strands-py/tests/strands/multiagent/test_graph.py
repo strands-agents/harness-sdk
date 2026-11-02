@@ -2535,6 +2535,99 @@ def test_graph_interrupt_on_before_node_call_event(interrupt_hook):
     assert multiagent_result.execution_time >= first_execution_time
 
 
+def _build_review_loop_graph(revise_target):
+    """Build write -> review -> (revise_target | publish), interrupting before every review for a decision."""
+
+    class ApprovalHook(HookProvider):
+        def __init__(self):
+            self.decision = None
+
+        def register_hooks(self, registry):
+            registry.add_callback(BeforeNodeCallEvent, self.approve)
+
+        def approve(self, event):
+            if event.node_id == "review":
+                self.decision = event.interrupt("approval", reason="approve or revise")
+
+    hook = ApprovalHook()
+    builder = GraphBuilder()
+    for name in ("write", "review", "publish"):
+        builder.add_node(create_mock_agent(name, name), name)
+    builder.add_edge("write", "review")
+    builder.add_edge("review", revise_target, condition=lambda _: hook.decision == "revise")
+    builder.add_edge("review", "publish", condition=lambda _: hook.decision == "approve")
+    builder.set_entry_point("write")
+    builder.set_hook_providers([hook])
+    builder.set_max_node_executions(10)
+    return builder.build()
+
+
+def _resume_review_loop_from_state(state, revise_target, interrupts, response):
+    """Restore a fresh review-loop graph from serialized state and answer its pending interrupts."""
+    graph = _build_review_loop_graph(revise_target)
+    graph.deserialize_state(state)
+    responses = [{"interruptResponse": {"interruptId": interrupt.id, "response": response}} for interrupt in interrupts]
+    return graph, graph(responses)
+
+
+@pytest.mark.parametrize(
+    ("revise_target", "exp_node_ids"),
+    [
+        ("write", ["write", "review", "write", "review", "publish"]),
+        ("review", ["write", "review", "review", "publish"]),
+    ],
+)
+def test_graph_interrupt_on_revisited_node_resumes_after_restore(revise_target, exp_node_ids):
+    """A node interrupted again on a revisit still runs when the graph is restored from serialized state (#5253)."""
+    graph = _build_review_loop_graph(revise_target)
+    result = graph("draft a post")
+
+    tru_status = result.status
+    exp_status = Status.INTERRUPTED
+    assert tru_status == exp_status
+
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), revise_target, result.interrupts, "revise")
+
+    tru_status = result.status
+    exp_status = Status.INTERRUPTED
+    assert tru_status == exp_status
+
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), revise_target, result.interrupts, "approve")
+
+    tru_status = result.status
+    exp_status = Status.COMPLETED
+    assert tru_status == exp_status
+
+    tru_node_ids = [node.node_id for node in result.execution_order]
+    assert tru_node_ids == exp_node_ids
+
+
+@pytest.mark.parametrize("next_nodes_to_execute", [[], ["write"]])
+def test_graph_resumes_interrupted_node_also_listed_as_completed(next_nodes_to_execute):
+    """A payload listing an interrupted node as completed still resumes that node (#5253).
+
+    The empty next_nodes_to_execute case is the payload such a graph produces; the non-empty case covers restoring
+    the node's interrupted status when the payload does schedule other work.
+    """
+    graph = _build_review_loop_graph("write")
+    result = graph("draft a post")
+    graph, result = _resume_review_loop_from_state(graph.serialize_state(), "write", result.interrupts, "revise")
+
+    state = graph.serialize_state()
+    state["completed_nodes"] = [*state["completed_nodes"], "review"]
+    state["next_nodes_to_execute"] = next_nodes_to_execute
+
+    graph, result = _resume_review_loop_from_state(state, "write", result.interrupts, "approve")
+
+    tru_status = result.status
+    exp_status = Status.COMPLETED
+    assert tru_status == exp_status
+
+    tru_node_ids = [node.node_id for node in result.execution_order]
+    exp_node_ids = ["write", "review", "write", "review", "publish"]
+    assert tru_node_ids == exp_node_ids
+
+
 def test_graph_interrupt_on_agent(agenerator):
     exp_interrupts = [
         Interrupt(
@@ -3888,3 +3981,158 @@ class TestResumeDispatchedSibling:
         join_input_text = " ".join(str(block) for block in join_input)
         assert "From left:" in join_input_text
         assert "From right:" in join_input_text
+
+
+def _failing_after_sibling_interrupts(name, sibling_interrupted):
+    """Mock agent whose stream raises once the sibling node in the batch has interrupted."""
+    agent = create_mock_agent(name)
+
+    async def fail_stream(*args, **kwargs):
+        yield {"agent_start": True}
+        await sibling_interrupted.wait()
+        raise RuntimeError(f"{name} boom")
+
+    agent.stream_async = Mock(side_effect=fail_stream)
+    return agent
+
+
+class _InterruptOnlyNode(HookProvider):
+    """Interrupt a single node on BeforeNodeCallEvent until disarmed."""
+
+    def __init__(self, node_id):
+        self.node_id = node_id
+        self.armed = True
+        self.interrupted = asyncio.Event()
+
+    def register_hooks(self, registry):
+        registry.add_callback(BeforeNodeCallEvent, self.interrupt)
+
+    def interrupt(self, event):
+        if self.armed and event.node_id == self.node_id:
+            self.interrupted.set()
+            event.interrupt("test_name", reason="test_reason")
+
+
+@pytest.mark.asyncio
+async def test_graph_node_failure_in_interrupted_batch_clears_interrupt_state(mock_strands_tracer, mock_use_span):
+    """A node failing alongside an interrupted sibling must not leave the graph expecting responses (#5340)."""
+    hook = _InterruptOnlyNode("review")
+    side_agent = _failing_after_sibling_interrupts("side", hook.interrupted)
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("write"), "write")
+    builder.add_node(create_mock_agent("review"), "review")
+    builder.add_node(side_agent, "side")
+    builder.add_edge("write", "review")
+    builder.add_edge("write", "side")
+    builder.set_entry_point("write")
+    builder.set_hook_providers([hook])
+    graph = builder.build()
+
+    with pytest.raises(RuntimeError, match="side boom"):
+        await graph.invoke_async("task")
+
+    assert graph.state.status == Status.FAILED
+    assert [node.node_id for node in graph.state.interrupted_nodes] == ["review"]
+    assert graph._interrupt_state.activated is False
+    assert graph._interrupt_state.interrupts == {}
+
+    hook.armed = False
+    side_agent.stream_async = create_mock_agent("side").stream_async
+    result = await graph.invoke_async("new task")
+
+    assert result.status == Status.COMPLETED
+    assert set(result.results) == {"write", "review", "side"}
+
+
+@pytest.mark.asyncio
+async def test_graph_node_failure_clears_interrupted_agent_state(mock_strands_tracer, mock_use_span, agenerator):
+    """An agent interrupted from inside its own loop is reset along with the graph (#5340)."""
+    review_agent = create_mock_agent("review")
+    review_interrupted = asyncio.Event()
+
+    async def interrupt_stream(*args, **kwargs):
+        review_agent._interrupt_state.activate()
+        review_interrupted.set()
+        yield {
+            "result": AgentResult(
+                message={},
+                stop_reason="interrupt",
+                state={},
+                metrics=None,
+                interrupts=[Interrupt(id="test_id", name="test_name", reason="test_reason")],
+            )
+        }
+
+    review_agent.stream_async = Mock(side_effect=interrupt_stream)
+    builder = GraphBuilder()
+    builder.add_node(review_agent, "review")
+    builder.add_node(_failing_after_sibling_interrupts("side", review_interrupted), "side")
+    builder.set_entry_point("review")
+    builder.set_entry_point("side")
+    graph = builder.build()
+
+    with pytest.raises(RuntimeError, match="side boom"):
+        await graph.invoke_async("task")
+
+    assert [node.node_id for node in graph.state.interrupted_nodes] == ["review"]
+    assert graph._interrupt_state.activated is False
+    assert review_agent._interrupt_state.activated is False
+
+
+def test_graph_clear_interrupts_recurses_into_nested_multiagent():
+    """Clearing interrupts reaches nested orchestrators and agents, not just the graph itself (#5340)."""
+    nested = create_mock_multi_agent("nested")
+    agent = create_mock_agent("agent")
+    agent._interrupt_state.activate()
+    nodes = {"nested": GraphNode("nested", nested), "agent": GraphNode("agent", agent)}
+    interrupt_state = _InterruptState()
+    interrupt_state.activate()
+    graph = _make_graph(nodes, state=GraphState(interrupted_nodes=set(nodes.values())), interrupt_state=interrupt_state)
+
+    graph._clear_interrupts()
+
+    nested._clear_interrupts.assert_called_once_with()
+    assert agent._interrupt_state.activated is False
+    assert graph._interrupt_state.activated is False
+
+
+@pytest.mark.asyncio
+async def test_graph_node_failure_on_resume_clears_interrupted_agent_state(mock_strands_tracer, mock_use_span):
+    """An agent that fails while resuming its interrupt is reset so a new task can run (#5340)."""
+    agent = create_mock_agent("test_agent")
+
+    async def interrupt_stream(*args, **kwargs):
+        agent._interrupt_state.activate()
+        yield {
+            "result": AgentResult(
+                message={},
+                stop_reason="interrupt",
+                state={},
+                metrics=None,
+                interrupts=[Interrupt(id="test_id", name="test_name", reason="test_reason")],
+            )
+        }
+
+    async def fail_stream(*args, **kwargs):
+        yield {"agent_start": True}
+        raise RuntimeError("boom on resume")
+
+    agent.stream_async = Mock(side_effect=interrupt_stream)
+    builder = GraphBuilder()
+    builder.add_node(agent, "test_agent")
+    graph = builder.build()
+
+    interrupted = await graph.invoke_async("task")
+    assert interrupted.status == Status.INTERRUPTED
+
+    agent.stream_async = Mock(side_effect=fail_stream)
+    responses = [{"interruptResponse": {"interruptId": "test_id", "response": "ok"}}]
+    with pytest.raises(RuntimeError, match="boom on resume"):
+        await graph.invoke_async(responses)
+
+    assert graph._interrupt_state.activated is False
+    assert agent._interrupt_state.activated is False
+
+    agent.stream_async = create_mock_agent("test_agent").stream_async
+    result = await graph.invoke_async("new task")
+    assert result.status == Status.COMPLETED

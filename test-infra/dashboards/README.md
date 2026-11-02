@@ -20,7 +20,8 @@ Top to bottom:
 2. **Suite health**: failed executions and share passing per day over the last 14 days (Metrics Insights), and the
    30-day pass rate and failed-test count from the suite-level `TestsPassed` / `TestsFailed` counters.
 3. **Flaky tests, 30 days**: per group of tests, the 15 tests whose failure rate is strictly between 0.05 and 0.95,
-   sorted by rate, plus the tests that ran fewer than 5 times (whose rate is not trustworthy).
+   sorted by rate, plus the tests that ran fewer than 5 times (whose rate is not trustworthy). The rate is
+   failed / (passed + failed): a skipped execution publishes only `TestSkipped` and is not in the denominator.
 4. **Broken and recently flaky, by week**: the same thresholds applied per week as a 0/1 flag, with one column per
    week and the number of flagged weeks as the summary, so a reader can tell a new problem from an ongoing or fixed
    one.
@@ -30,18 +31,22 @@ Top to bottom:
    publish the per-test `Event` / `Branch` / `Leg` schema, one series per test and leg. Python needs a table per leg
    because the `all` leg (Python 3.10) skips every bidi test and does not collect the mcp 1.x-only modules.
 
-## Publishing (one-time, Admin)
+## Publishing (manual, maintainers)
 
 The dashboards are not part of the CDK stack: `put-dashboard` is idempotent, overwrites the existing dashboards of
 the same name in place (so the embedding iframes keep working) and needs no stack deploy. From the repo root, with
 credentials that allow `cloudwatch:PutDashboard` in the test account:
 
 ```sh
-bash test-infra/scripts/put-dashboards.sh --dry-run   # validate the JSON only
-bash test-infra/scripts/put-dashboards.sh             # publish both dashboards
+bash test-infra/scripts/put-dashboards.sh --dry-run                   # validate the JSON only
+INTEG_TEST_ACCOUNT_ID=<id> bash test-infra/scripts/put-dashboards.sh  # publish both dashboards
 ```
 
-The script prints CloudWatch's `DashboardValidationMessages` for each dashboard; an empty list means accepted.
+The script pins `us-east-1`, refuses to run unless `aws sts get-caller-identity` reports the account given in
+`INTEG_TEST_ACCOUNT_ID` (the integ test account id is not committed), and exits 1 if CloudWatch returns any
+`DashboardValidationMessages` for a dashboard (printed to stderr); exit 0 means both dashboards were accepted
+without messages. Re-run it after every change to the generated JSON, including partition changes: a widget whose
+`SEARCH` exceeds 500 series silently drops the surplus.
 
 ## Regenerating
 
@@ -52,17 +57,37 @@ python3 test-infra/dashboards/generate.py --check  # exit 1 if a JSON file is st
 
 `generate.py` uses only the standard library.
 
+## Series headroom check (manual, read-only credentials)
+
+A widget shows at most 500 series and drops the rest silently (limit 1 below), and the publisher's
+`--max-test-names` ceiling guards against a cardinality explosion, not against one partition drifting past the cap.
+The `integ-metrics` CI job has no AWS credentials and the integ test role only has `cloudwatch:PutMetricData`, so the
+per-partition check is manual. After adding many tests or changing the partitions in `generate.py`, run it with
+read-only credentials for the test account:
+
+```sh
+python3 test-infra/dashboards/check_series.py                  # one GetMetricData call per partition (9 today)
+python3 test-infra/dashboards/check_series.py --sdk typescript # one dashboard only
+```
+
+It prints `<sdk> <partition>: <n> series` per partition and exits 1 when any partition is above 400 (`--threshold`)
+or CloudWatch reports `MaxMetricsExceeded`; split that partition in `generate.py` before it reaches 500.
+
 ## CloudWatch limits that shape the layout
 
 These were measured against the account with read-only `GetMetricData` calls and drive every design choice in
 `generate.py`:
 
 1. **One widget returns at most 500 time series across all of its `SEARCH` expressions.** Over that, CloudWatch
-   returns `MaxMetricsExceeded` and silently truncates every aggregate built on the search. Python has about 490
-   tests and TypeScript about 750, so each dashboard has exactly one per-test `SEARCH` per widget and the tests
-   are partitioned by a name token (`models` / `NOT models`; `agent` / `interventions NOT agent` /
-   `NOT agent NOT interventions`). Partitions of the form `X`, `Y NOT X`, `NOT X NOT Y` are disjoint and
-   complete by construction.
+   returns `MaxMetricsExceeded` and silently truncates every aggregate built on the search. Each dashboard
+   therefore has exactly one per-test `SEARCH` per widget and the tests are partitioned by name token so every
+   partition stays under 450 series even while a renamed test's old name is still visible (14 days). Python has
+   about 620 names, partitioned `models` / `NOT models`. TypeScript has about 1,500 names, one per vitest project
+   and test (`TestName` is `<project>/<file>.<title>`), partitioned by project token then name token:
+   `browser agent` / `browser interventions NOT agent` / `browser NOT agent NOT interventions` /
+   `node agent` / `node interventions NOT agent` / `node models NOT agent NOT interventions` /
+   `node NOT agent NOT interventions NOT models`. Partitions of the form `X`, `Y NOT X`, `NOT X NOT Y` are
+   disjoint and complete by construction; a name carrying both project tokens appears in both project groups.
 2. **Metric math cannot combine two arrays of time series** (`failed / runs` with both from `SEARCH` is rejected)
    **and cannot compare an array with a scalar** (`IF(n >= 5, ...)` is rejected). The failure rate therefore
    comes from a single `SEARCH(..., 'Average', ...)` of `TestFailed`, and a "minimum runs" filter cannot be

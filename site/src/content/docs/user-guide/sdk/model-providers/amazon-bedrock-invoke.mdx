@@ -171,9 +171,11 @@ result = agent(
 print(result.structured_output)
 ```
 
-The provider's structured-output method forces a tool call and validates the
-returned arguments against the Pydantic schema. It requires tool-calling support
-from the target model. On the Anthropic path, the provider removes `thinking`
+The provider's structured-output method requests a tool call and validates the
+returned arguments against the Pydantic schema. When model capabilities declare
+forced tool choice unsupported, the provider uses automatic tool choice instead;
+the model may answer without calling the output tool. It requires tool-calling
+support from the target model. On the Anthropic path, the provider removes `thinking`
 when the effective tool choice forces tool use, including structured output.
 See [structured output](../agents/structured-output.mdx) for the agent workflow.
 
@@ -206,7 +208,11 @@ To reuse a stable prompt prefix with a compatible Claude model, configure
 dialect rejects `cache_config`, `cache_prompt`, `cache_tools`, and explicit
 `cachePoint` blocks; these options do not enable OpenAI prompt caching.
 Automatic cache selection follows the effective dialect, including a
-`model_family` override. The target still needs to support prompt caching.
+`model_family` override. With `strategy="auto"`, model capabilities that declare
+caching unsupported or automatic without cache points disable checkpoint
+insertion. Unknown capabilities retain the Anthropic dialect fallback.
+An explicit `strategy="anthropic"` overrides this selection. The target still
+needs to support prompt caching.
 
 ```python
 from strands import Agent, tool

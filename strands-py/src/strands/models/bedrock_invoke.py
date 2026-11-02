@@ -333,7 +333,10 @@ class BedrockInvokeModel(BedrockModel):
         if cache_config is None:
             return None
         if cache_config.strategy == "auto":
-            return "anthropic" if self._get_model_family() == "anthropic" else None
+            if self._get_model_family() != "anthropic":
+                return None
+            prompt_caching = self.model_info.capabilities.prompt_caching
+            return "anthropic" if prompt_caching in (None, "cache_points") else None
         return cache_config.strategy
 
     # ----- request formatting
@@ -640,6 +643,12 @@ class BedrockInvokeModel(BedrockModel):
         tool_choice: ToolChoice | None,
         dynamic_trailing_blocks: int = 0,
     ) -> dict[str, Any]:
+        if (
+            tool_choice
+            and ("any" in tool_choice or "tool" in tool_choice)
+            and self.model_info.capabilities.forced_tool_choice is False
+        ):
+            tool_choice = cast(ToolChoice, {"auto": {}})
         if self._get_model_family() == "anthropic":
             return self._format_anthropic_request(
                 messages, tool_specs, system_prompt_content, tool_choice, dynamic_trailing_blocks
@@ -1077,7 +1086,11 @@ class BedrockInvokeModel(BedrockModel):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, T | Any], None]:
-        """Constrain the model to a Pydantic ``BaseModel`` via a forced tool call."""
+        """Validate a tool response as a Pydantic ``BaseModel``, forcing tool choice when supported.
+
+        Raises:
+            ValueError: If the model does not return the output tool or its arguments do not match the schema.
+        """
         tool_spec = convert_pydantic_to_tool_spec(output_model)
         response = self.stream(
             messages=prompt,

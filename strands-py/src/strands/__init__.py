@@ -1,10 +1,11 @@
 """A framework for building, deploying, and managing AI agents."""
 
-from . import agent, models, storage, telemetry, types
+from . import agent, decisions, models, storage, telemetry, types
 from .agent.agent import Agent
 from .agent.base import AgentBase
 from .agent.invocation_context import InvocationContext, InvocationContextUsage
 from .background_tasks import BackgroundTasksConfig
+from .decisions import DecisionModel, LLMDecisionModel, Uncertain
 from .event_loop._retry import ModelRetryStrategy
 from .interventions import InterventionHandler
 from .plugins import MultiAgentPlugin, Plugin
@@ -24,11 +25,14 @@ __all__ = [
     "AgentBase",
     "AgentSkills",
     "BackgroundTasksConfig",
+    "DecisionModel",
     "InterventionHandler",
     "InvocationContext",
     "InvocationContextUsage",
+    "LLMDecisionModel",
     "LocalAgent",
     "agent",
+    "decisions",
     "models",
     "ModelRetryStrategy",
     "MultiAgentPlugin",
@@ -44,4 +48,5 @@ __all__ = [
     "ToolContext",
     "types",
     "telemetry",
+    "Uncertain",
 ]

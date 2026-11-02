@@ -94,7 +94,7 @@ async def main() -> None:
         system_prompt="You are a friendly voice assistant. Keep replies short.",
     )
     # One AudioIO drives both the microphone and the speakers
-    audio_io = AudioIO()
+    audio_io = AudioIO(audio_processor=True)
     await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
 
@@ -135,18 +135,14 @@ Say **"Goodbye."** The agent calls `end_conversation`, closes the connection, an
 
 ## Cancel echo on open speakers
 
-Without headphones, the agent may cut itself off a few words into every reply. The
-microphone picks up the agent's voice from the speakers, and the model hears that as
-you talking over it.
+Without headphones, the microphone picks up the agent's voice from the speakers, and
+the model hears that as you talking over it. The agent then cuts itself off a few
+words into every reply.
 
-Turn on audio processing to fix it:
-
-```python
-audio_io = AudioIO(audio_processor=True)
-```
-
-`AudioIO` now subtracts the audio it plays from the microphone signal before the
-model hears it. For other audio settings, see [Audio processing](io.mdx#audio-processing).
+`audio_processor=True` prevents this. `AudioIO` subtracts the audio it plays from the
+microphone signal before the model hears it, and also applies noise suppression and
+automatic gain control. To change these settings, see
+[Audio processing](io.mdx#audio-processing).
 
 ## Use a different provider
 

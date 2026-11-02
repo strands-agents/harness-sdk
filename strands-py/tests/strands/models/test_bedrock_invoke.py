@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError, EventStreamError
 import strands
 from strands import _exception_notes, tool
 from strands.event_loop import streaming
+from strands.models import ModelCapabilities, ModelInfo
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
 from strands.models.bedrock_invoke import BedrockInvokeModel
 from strands.models.model import CacheConfig, CacheToolsConfig, Model
@@ -1866,8 +1867,11 @@ async def test_stream_generator_close_does_not_set_caller_cancel_signal(bedrock_
 
 
 @pytest.mark.parametrize("family", ["anthropic", "openai"])
+@pytest.mark.parametrize("use_model_info", [False, True])
 @pytest.mark.asyncio
-async def test_agent_structured_output_retry_limits_tools(bedrock_client: unittest.mock.Mock, family: str) -> None:
+async def test_agent_structured_output_retry_limits_tools(
+    bedrock_client: unittest.mock.Mock, family: str, use_model_info: bool
+) -> None:
     # The agent must isolate the output tool for Invoke endpoints without native schema enforcement (#1217).
     class Person(pydantic.BaseModel):
         name: str
@@ -1907,7 +1911,13 @@ async def test_agent_structured_output_retry_limits_tools(bedrock_client: unitte
         {"body": unittest.mock.Mock(read=unittest.mock.Mock(return_value=json.dumps(response).encode()))}
         for response in responses
     ]
-    model = BedrockInvokeModel(model_id=IMPORTED_ID, model_family=family, streaming=False, params=params)
+    model = BedrockInvokeModel(
+        model_id=IMPORTED_ID,
+        model_family=family,
+        streaming=False,
+        params=None if use_model_info else params,
+        model_info=ModelInfo(capabilities=ModelCapabilities(forced_tool_choice=False)) if use_model_info else None,
+    )
     agent = strands.Agent(model=model, tools=[string_length], callback_handler=None)
 
     result = await agent.invoke_async("Return Ada's name.", structured_output_model=Person)
@@ -1920,7 +1930,8 @@ async def test_agent_structured_output_retry_limits_tools(bedrock_client: unitte
     ]
     exp_tool_names = [[string_length.tool_name, Person.__name__], [Person.__name__]]
     assert tru_tool_names == exp_tool_names
-    assert model.get_config()["params"] == params
+    assert requests[-1]["tool_choice"] == params["tool_choice"]
+    assert model.get_config()["params"] == (None if use_model_info else params)
 
 
 @pytest.mark.parametrize("thinking", [None, {"type": "enabled", "budget_tokens": 1024}])
@@ -2137,6 +2148,58 @@ def test_format_request_cache_boundaries_match_converse(manual_boundary: bool) -
     assert converse_request["system"][-1] == {"cachePoint": {"type": "default", "ttl": "1h"}}
     assert converse_request["toolConfig"]["tools"][-1] == {"cachePoint": {"type": "default", "ttl": "1h"}}
     assert (messages, system, tools) == original
+
+
+@pytest.mark.parametrize("prompt_caching", ["unsupported", "auto", "cache_points", None])
+@pytest.mark.parametrize("strategy", ["auto", "anthropic"])
+def test_format_request_cache_capabilities(prompt_caching: str | None, strategy: str) -> None:
+    # Automatic placement respects model capabilities while explicit strategies remain available (#1217).
+    model = BedrockInvokeModel(
+        model_id=IMPORTED_ID,
+        model_family="anthropic",
+        cache_config=CacheConfig(strategy=strategy, ttl="5m", tools_ttl=True),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching)),
+    )
+    request = model._format_invoke_request(
+        [{"role": "user", "content": [{"text": "hello"}]}], [string_length.tool_spec], [{"text": "rules"}], None
+    )
+    control = {"type": "ephemeral", "ttl": "5m"}
+    exp_request = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+        "system": "rules",
+        "tools": [
+            {
+                "name": string_length.tool_name,
+                "description": string_length.tool_spec["description"],
+                "input_schema": string_length.tool_spec["inputSchema"]["json"],
+            }
+        ],
+    }
+    if strategy == "anthropic" or prompt_caching in (None, "cache_points"):
+        exp_request["system"] = [{"type": "text", "text": "rules", "cache_control": control}]
+        exp_request["tools"][0]["cache_control"] = control
+        exp_request["messages"][0]["content"][0]["cache_control"] = control
+    assert request == exp_request
+
+
+@pytest.mark.parametrize("family, auto_choice", [("anthropic", {"type": "auto"}), ("openai", "auto")])
+@pytest.mark.parametrize("tool_choice", [{"any": {}}, {"tool": {"name": "string_length"}}])
+@pytest.mark.parametrize("explicit_params", [False, True])
+def test_format_request_unsupported_forced_tool_choice(family, auto_choice, tool_choice, explicit_params) -> None:
+    # Known unsupported forcing falls back to auto; native params retain explicit precedence (#1217).
+    forced_choice = BedrockInvokeModel._to_tool_choice(tool_choice, family)
+    model = BedrockInvokeModel(
+        model_id=IMPORTED_ID,
+        model_family=family,
+        model_info=ModelInfo(capabilities=ModelCapabilities(forced_tool_choice=False)),
+        params={"tool_choice": forced_choice} if explicit_params else None,
+    )
+    request = model._format_invoke_request(
+        [{"role": "user", "content": [{"text": "hello"}]}], [string_length.tool_spec], None, tool_choice
+    )
+    assert request["tool_choice"] == (forced_choice if explicit_params else auto_choice)
 
 
 @pytest.mark.parametrize(
