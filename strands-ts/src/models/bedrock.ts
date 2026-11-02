@@ -309,7 +309,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
   additionalResponseFieldPaths?: string[]
 
   /**
-   * Additional arguments to pass through to the Bedrock Converse API.
+   * Additional arguments to pass through to the Bedrock Converse API. Spread over the built request; an
+   * `inferenceConfig` here is merged per key over the one built from the typed options, so the caller's keys win.
    * @see https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/bedrock-runtime/command/ConverseStreamCommand/
    */
   additionalArgs?: JSONValue
@@ -1002,13 +1003,15 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     // Runs after toolConfig so the tools checkpoint ahead of the system one is known.
     this._applySystemCacheTTL(request)
 
-    // Add inference configuration
+    // Add inference configuration; an additionalArgs inferenceConfig is merged per key over it.
+    const additionalArgs = this._config.additionalArgs as Record<string, JSONValue> | undefined
     const inferenceConfig: InferenceConfiguration = {}
     const maxTokens = this.getConfig().maxTokens
     if (maxTokens !== undefined) inferenceConfig.maxTokens = maxTokens
     if (this._config.temperature !== undefined) inferenceConfig.temperature = this._config.temperature
     if (this._config.topP !== undefined) inferenceConfig.topP = this._config.topP
     if (this._config.stopSequences !== undefined) inferenceConfig.stopSequences = this._config.stopSequences
+    Object.assign(inferenceConfig, additionalArgs?.inferenceConfig)
 
     if (Object.keys(inferenceConfig).length > 0) {
       request.inferenceConfig = inferenceConfig
@@ -1025,14 +1028,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       request.additionalModelResponseFieldPaths = this._config.additionalResponseFieldPaths
     }
 
-    // Add additional args (spread them into the request for forward compatibility); an inferenceConfig
-    // in them extends the built one per key, so it does not drop the default maxTokens.
-    if (this._config.additionalArgs) {
-      const { inferenceConfig, ...additionalArgs } = this._config.additionalArgs as Record<string, JSONValue>
-      Object.assign(request, additionalArgs)
-      if (inferenceConfig) {
-        request.inferenceConfig = { ...request.inferenceConfig, ...(inferenceConfig as InferenceConfiguration) }
-      }
+    // Add additional args (spread them into the request for forward compatibility)
+    if (additionalArgs) {
+      const { inferenceConfig: _merged, ...rest } = additionalArgs
+      Object.assign(request, rest)
     }
 
     // Add guardrail configuration

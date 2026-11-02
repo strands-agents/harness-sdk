@@ -561,6 +561,7 @@ describe('BedrockModel', () => {
         expect(sentInferenceConfig()).toStrictEqual({ maxTokens: 1 })
       })
 
+      // https://github.com/strands-agents/harness-sdk/issues/5753
       it('merges an additionalArgs inferenceConfig over the default maxTokens', () => {
         const provider = new BedrockModel({
           modelId: 'anthropic.claude-sonnet-4-6',
