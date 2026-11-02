@@ -54,7 +54,10 @@ state, interrupt state, model state, and message history.
 The restore also applies saved redactions and repairs incomplete tool-use pairs in the
 history. A trailing orphan is repaired when the agent receives its next prompt. For a
 stateful model, the manager restores model state instead of local messages because the
-model provider manages conversation history server-side.
+model provider manages conversation history server-side. The migration copies only the
+provider's response ID, not the conversation itself. The history remains available only
+while the provider retains it, so verify a stateful session by sending it a prompt after
+cutover.
 
 ## Protect existing data
 
@@ -112,7 +115,8 @@ async def migrate_session(session_id: str, *, agent_id: str = "default") -> None
         session_manager=source,
     )
 
-    if not agent.messages and not agent.state.get():
+    # Stateful models restore only model state, so check it as well.
+    if not agent.messages and not agent.state.get() and not agent._model_state:
         raise ValueError(
             f"no source data found for session={session_id!r} agent={agent_id!r}"
         )
