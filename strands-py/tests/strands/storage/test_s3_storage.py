@@ -293,6 +293,16 @@ class TestS3StorageWithPrefix:
         assert response["Body"].read() == b"hello"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("prefix", ["agents/data/", "/agents//data//"])
+    async def test_prefix_with_extra_slashes_maps_to_the_same_keys(self, s3_bucket, prefix):
+        await S3Storage("test-bucket", prefix=prefix, boto_session=s3_bucket).write("key", b"hello")
+
+        client = s3_bucket.client("s3")
+        response = client.get_object(Bucket="test-bucket", Key="agents/data/key")
+        assert response["Body"].read() == b"hello"
+        assert await S3Storage("test-bucket", prefix=prefix, boto_session=s3_bucket).list() == ["key"]
+
+    @pytest.mark.asyncio
     async def test_list_strips_prefix(self, prefixed_storage):
         await prefixed_storage.write("a", b"")
         await prefixed_storage.write("b", b"")

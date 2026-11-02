@@ -62,6 +62,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent  # noqa: E402
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E402
 from ._defaults import resolve_config_metadata  # noqa: E402
+from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
@@ -213,12 +214,16 @@ class OpenAIResponsesModel(Model):
 
     @property
     @override
-    def stateful(self) -> bool:
-        """Whether server-side conversation storage is enabled.
+    def model_info(self) -> ModelInfo:
+        """Adds whether server-side conversation storage is enabled.
 
-        Derived from the ``stateful`` configuration option.
+        Taken from the ``stateful`` configuration option, which a ``model_info`` override still wins over.
         """
-        return bool(self.config.get("stateful"))
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
+            cast(ModelInfo | None, self.config.get("model_info")),
+        )
 
     @override
     def update_config(self, **model_config: Unpack[OpenAIResponsesConfig]) -> None:  # type: ignore[override]
@@ -573,16 +578,17 @@ class OpenAIResponsesModel(Model):
                 format.
         """
         input_items = self._format_request_messages(messages)
+        stateful = self.stateful
         request: dict[str, Any] = {
             "model": self.config["model_id"],
             "input": input_items,
             "stream": True,
             **cast(dict[str, Any], self.config.get("params", {})),
-            "store": self.stateful,
+            "store": stateful,
         }
 
         response_id = model_state.get("response_id") if model_state else None
-        if response_id and self.stateful:
+        if response_id and stateful:
             request["previous_response_id"] = response_id
 
         if system_prompt:

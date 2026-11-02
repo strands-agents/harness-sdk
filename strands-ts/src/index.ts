@@ -19,7 +19,14 @@ export type { ConcurrentInvocationMode, PendingInvocation, PendingInvocationMode
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
-export type { InvocationState, InvokeArgs, InvokeLimits, InvokeOptions, LocalAgent } from './types/agent.js'
+export type {
+  CancelOptions,
+  InvocationState,
+  InvokeArgs,
+  InvokeLimits,
+  InvokeOptions,
+  LocalAgent,
+} from './types/agent.js'
 export type { InvocationContext, InvocationContextUsage } from './agent/invocation-context.js'
 export type { LifecycleObserver } from './types/lifecycle-observer.js'
 
@@ -194,6 +201,7 @@ export {
 
 // Model provider types
 export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 

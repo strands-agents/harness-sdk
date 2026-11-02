@@ -12,6 +12,8 @@ instructions: |
   - "docs" -> documentation
   The prefix wins even when the description sounds user-facing: a "perf:" or "refactor:" title is a chore. When no conventional-commit prefix is present, fall back to the body: maintenance with no user-facing impact (dependency bumps, CI config, internal refactors) is a chore, while anything that adds or changes user-facing functionality is an enhancement.
   If the title starts with [BUG] it is a bug. If the title starts with [FEATURE] it is an enhancement.
+  If the title starts with [DOCS], [NEW CONTENT], or [CORRECTION] it is documentation. If the title starts with [QUESTION] it is a question.
+  If the title starts with [PORT] it ports completed work into the other SDK: a ported fix is a bug, anything else is an enhancement.
   Documentation changes, corrections, or additions are documentation. Documentation questions are questions.
   Proposals or discussions about API shape, architecture, or UX before any implementation are design; this takes precedence over enhancement even when the proposal describes new functionality.
   Requests for or drafts of blog posts, announcements, or long-form articles are blog; this takes precedence over documentation and enhancement for prose content meant for the site.

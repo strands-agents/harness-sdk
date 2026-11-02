@@ -34,7 +34,7 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
-from ._defaults import resolve_config_metadata
+from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -94,6 +94,7 @@ _MODELS_REJECT_REASONING_TEXT = [
     "nvidia.nemotron-super",
     "openai.gpt-5",
     "openai.gpt-6",
+    "openai.gpt-daybreak",
     "qwen.qwen3-235b",
     "qwen.qwen3-coder",
     "writer.palmyra",
@@ -238,7 +239,10 @@ class BedrockModel(Model):
             guardrail_redact_output_message: If a Bedrock Output guardrail triggers, replace output with this message.
             guardrail_latest_message: Flag to send only the lastest user message to guardrails.
                 Defaults to False.
-            max_tokens: Maximum number of tokens to generate in the response
+            max_tokens: Maximum number of tokens to generate in the response. Defaults to the model's
+                output limit from the model info (``model_info.limits.max_output_tokens``) when known;
+                otherwise ``maxTokens`` is not sent and Bedrock's per-model default applies. Pass ``None`` to
+                opt out of the default and leave ``maxTokens`` unset.
             model_id: The Bedrock model ID (e.g., "global.anthropic.claude-sonnet-4-6")
             include_tool_result_status: Flag to include status field in tool results.
                 True includes status, False removes status, "auto" determines based on model_id. Defaults to "auto".
@@ -371,18 +375,22 @@ class BedrockModel(Model):
         """The effective cache strategy for this request, or None when caching is off or unsupported.
 
         Resolves ``cache_config.strategy``: an explicit strategy is returned as written, while ``"auto"``
-        maps to ``"anthropic"`` for Claude/Anthropic model IDs and None for models without automatic
-        caching support.
+        maps to ``"anthropic"`` for models the model info says take cache points, and None for models
+        without automatic caching support. For an id the model info does not list at all, Claude/Anthropic
+        ids still map to ``"anthropic"``.
         """
         cache_config = self.config.get("cache_config")
         if not cache_config:
             return None
         if cache_config.strategy != "auto":
             return cache_config.strategy
-        model_id = self.config.get("model_id", "").lower()
-        if "claude" in model_id or "anthropic" in model_id:
-            return "anthropic"
-        return None
+        prompt_caching = self.model_info.capabilities.prompt_caching
+        if prompt_caching is None:
+            # Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+            # keep the historical name test so caching does not turn off until the data catches up.
+            model_id = str(self.config.get("model_id", "")).lower()
+            return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
+        return "anthropic" if prompt_caching == "cache_points" else None
 
     @override
     def update_config(self, **model_config: Unpack[BedrockConfig]) -> None:  # type: ignore
@@ -403,7 +411,12 @@ class BedrockModel(Model):
         Returns:
             The Bedrock model configuration.
         """
-        return resolve_config_metadata(self.config, self.config.get("model_id", ""))
+        model_id = self.config.get("model_id", "")
+        config = resolve_config_metadata(self.config, model_id)
+        max_tokens = resolve_max_tokens(self.config, model_id)
+        if max_tokens is None or "max_tokens" in config:
+            return config
+        return {**config, "max_tokens": max_tokens}
 
     def format_request(
         self,
@@ -512,7 +525,7 @@ class BedrockModel(Model):
             "inferenceConfig": {
                 key: value
                 for key, value in [
-                    ("maxTokens", self.config.get("max_tokens")),
+                    ("maxTokens", self.get_config().get("max_tokens")),
                     ("temperature", self.config.get("temperature")),
                     ("topP", self.config.get("top_p")),
                     ("stopSequences", self.config.get("stop_sequences")),
@@ -1045,6 +1058,7 @@ class BedrockModel(Model):
             unsupported_mechanisms("bedrock", model_id, structured_output_model),
             request.get("toolConfig", {}).get("toolChoice"),
             structured_output_model,
+            self.model_info,
         )
         if "native" in mechanisms and not self._client_supports_native_output():
             warnings.warn(
