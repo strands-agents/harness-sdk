@@ -331,6 +331,7 @@ class BedrockModel(Model):
         self._tool_result_turn_separation_model_id: str | None = None
         self._drop_stale_thinking_model_id: str | None = None
         self.update_config(**model_config)
+        self._warn_on_unresolved_application_inference_profile()
 
         logger.debug("config=<%s> | initializing", self.config)
 
@@ -394,6 +395,20 @@ class BedrockModel(Model):
             model_id = str(self.config.get("model_id", "")).lower()
             return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
         return "anthropic" if prompt_caching == "cache_points" else None
+
+    def _warn_on_unresolved_application_inference_profile(self) -> None:
+        """Warn when an application inference profile ARN hides the model, so no default ``max_tokens`` is sent."""
+        model_id = str(self.config.get("model_id", ""))
+        if ":application-inference-profile/" not in model_id or "max_tokens" in self.config:
+            return
+        if self.model_info.limits.max_output_tokens is not None:
+            return
+        # stacklevel=1 pins the warning to this line, so the default filter shows it once per process.
+        warnings.warn(
+            f"model_id=<{model_id}> | application inference profile is not in the model info, so no maxTokens is"
+            " sent and Bedrock falls back to 4096 output tokens | set max_tokens or model_info explicitly",
+            stacklevel=1,
+        )
 
     @override
     def update_config(self, **model_config: Unpack[BedrockConfig]) -> None:  # type: ignore
