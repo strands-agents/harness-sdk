@@ -403,7 +403,7 @@ class BedrockModel(Model):
             return
         if self.model_info.limits.max_output_tokens is not None:
             return
-        # stacklevel=1 pins the warning to this line, so the default filter shows it once per process.
+        # stacklevel=1 pins dedup to this line (once per distinct model id).
         warnings.warn(
             f"model_id=<{model_id}> | application inference profile is not in the model info, so no maxTokens is"
             " sent and Bedrock falls back to 4096 output tokens | set max_tokens or model_info explicitly",
