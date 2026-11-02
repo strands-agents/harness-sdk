@@ -26,7 +26,7 @@ export type Percent = `${number}%`
  *   `'70%'` keeps the newest 70% of them.
  *
  * With no `contextUtilization`, the strategy runs before every model call, or on each message as it arrives when the
- * target isn't `'*'` and `preserveRecent` is unset.
+ * target isn't `'*'` and `preserveRecent` is unset or 0. `blockThreshold` doesn't change when it runs.
  *
  * Granularity: target `'*'` acts on whole messages, and `blockThreshold` measures each message. Drop removes them,
  * summarize merges each contiguous run, and truncate elides the middle or, with a `blockThreshold`, previews the
@@ -170,7 +170,9 @@ export class ResolvedConditions {
 
   /** Whether no condition narrows when or what the strategy acts on. */
   get isEmpty(): boolean {
-    return this.contextUtilization === undefined && this.blockThreshold === undefined && !this.preserveRecent
+    return (
+      this.contextUtilization === undefined && this.blockThreshold === undefined && this.preserveRecent === undefined
+    )
   }
 
   /** Whether something other than size defers the strategy past a message's arrival. */

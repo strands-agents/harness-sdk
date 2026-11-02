@@ -1217,14 +1217,16 @@ describe('media conditions', () => {
     ['truncate', () => Offload.truncate('media')],
     ['summarize', () => Offload.summarize('media')],
   ] as const)('Offload.%s("media")', (method, builder) => {
-    it.each([{}, { blockThreshold: 100 }, { preserveRecent: '0%' }] as OffloadConditions[])(
-      'rejects %j',
-      (conditions) => {
-        expect(() => builder().when(conditions)).toThrow(
-          `Offload.${method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
-        )
-      }
-    )
+    it.each([
+      {},
+      { blockThreshold: 100 },
+      { preserveRecent: '0%' },
+      { blockThreshold: 100, preserveRecent: 0 },
+    ] as OffloadConditions[])('rejects %j', (conditions) => {
+      expect(() => builder().when(conditions)).toThrow(
+        `Offload.${method}("media") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0`
+      )
+    })
 
     it.each([{ contextUtilization: '80%' }, { preserveRecent: 1 }] as OffloadConditions[])(
       'accepts %j',
