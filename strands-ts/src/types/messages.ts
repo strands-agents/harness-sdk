@@ -215,9 +215,9 @@ export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
  */
 export interface OffloadedBlockData {
   /**
-   * Offload method that left the placeholder.
+   * Offload method that left the placeholder, when known.
    */
-  method: OffloadMethod
+  method?: OffloadMethod
 
   /**
    * Stash reference under which the original is retrievable; absent when it was not stashed.
