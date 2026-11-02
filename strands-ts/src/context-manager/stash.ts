@@ -54,6 +54,16 @@ export interface StashKey {
   index: number
 }
 
+/**
+ * The keys already in a stash, with the ids they are stored under.
+ *
+ * @internal
+ */
+export interface StoredKeys {
+  keys: ReadonlySet<string>
+  ids: ReadonlySet<string>
+}
+
 /** @internal */
 export function formatStashKey(key: StashKey): string {
   return `${key.id}_${key.index}`
@@ -175,17 +185,13 @@ export class Stash {
    *
    * @param message - The message whose content should be persisted
    * @param skipToolUseIds - Tool results to leave out, such as the retrieval tool's own
-   * @param storedKeys - Keys already in the stash; a block stored under one keeps its entry, since a
-   *   restored history can hold a placeholder where the stored original was
+   * @param stored - Keys already in the stash, from {@link storedKeys}; a block stored under one keeps its entry, since
+   *   a restored history can hold a placeholder where the stored original was
    */
-  async storeMessage(
-    message: Message,
-    skipToolUseIds?: ReadonlySet<string>,
-    storedKeys?: ReadonlySet<string>
-  ): Promise<void> {
+  async storeMessage(message: Message, skipToolUseIds?: ReadonlySet<string>, stored?: StoredKeys): Promise<void> {
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
-      if (this._isSkipped(block, message, blockIndex, skipToolUseIds, storedKeys)) continue
+      if (this._isSkipped(block, message, blockIndex, skipToolUseIds, stored)) continue
       if (block instanceof ToolResultBlock) {
         await this._storeToolResult(block)
         continue
@@ -203,15 +209,15 @@ export class Stash {
     message: Message,
     blockIndex: number,
     skipToolUseIds?: ReadonlySet<string>,
-    storedKeys?: ReadonlySet<string>
+    stored?: StoredKeys
   ): boolean {
     if (isProtocolBlock(block)) return true
     if (block instanceof ToolResultBlock) {
       if (skipToolUseIds?.has(block.toolUseId) || block.content.some(isOffloaded)) return true
-      return storedKeys !== undefined && [...storedKeys].some((key) => parseStashKey(key)?.id === block.toolUseId)
+      return stored?.ids.has(block.toolUseId) ?? false
     }
     if (isOffloaded(block)) return true
-    return storedKeys?.has(formatStashKey({ id: message.trackingId, index: blockIndex })) ?? false
+    return stored?.keys.has(formatStashKey({ id: message.trackingId, index: blockIndex })) ?? false
   }
 
   /**
@@ -231,6 +237,15 @@ export class Stash {
    */
   async list(prefix = ''): Promise<string[]> {
     return this._storage.list(prefix)
+  }
+
+  /**
+   * Every key in the stash, with the ids they are stored under.
+   */
+  async storedKeys(): Promise<StoredKeys> {
+    const keys = await this.list()
+    const ids = keys.map((key) => parseStashKey(key)?.id).filter((id) => id !== undefined)
+    return { keys: new Set(keys), ids: new Set(ids) }
   }
 
   /**
