@@ -68,6 +68,13 @@ describe('compact docs footer output', () => {
     expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'box', 'docs/user-guide/box')
   })
 
+  it('routes generated sample guides to the Samples issue tracker', () => {
+    const footer = footerFor('examples/python/first-agent')
+
+    expect(footer.querySelector('.site-footer__release')).toBeNull()
+    expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'samples', 'examples/python/first-agent')
+  })
+
   it('omits releases for Shell while keeping its issue tracker', () => {
     const footer = footerFor('docs/user-guide/shell')
 
