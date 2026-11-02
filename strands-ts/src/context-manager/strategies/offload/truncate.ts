@@ -65,7 +65,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
   /**
    * Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. With a
-   * `blockThreshold`, shortens each eligible message in place instead.
+   * `blockThreshold`, previews the blocks larger than `previewTokens` in each eligible message instead.
    */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     if (this._conditions.blockThreshold) return this._shortenEach(context)

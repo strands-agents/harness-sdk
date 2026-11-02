@@ -29,7 +29,8 @@ export type Percent = `${number}%`
  * target isn't `'*'` and `preserveRecent` is unset.
  *
  * Granularity: target `'*'` acts on whole messages, and `blockThreshold` measures each message. Drop removes them,
- * summarize merges each contiguous run, and truncate elides the middle or, with a `blockThreshold`, shortens each one.
+ * summarize merges each contiguous run, and truncate elides the middle or, with a `blockThreshold`, previews the
+ * blocks in each one that are larger than `previewTokens`, so a message made of smaller blocks is left as it is.
  * Any other target acts on each block, and `blockThreshold` measures each block. `contextUtilization` only gates when
  * the strategy fires, and `preserveRecent` only protects the newest matching messages.
  *
