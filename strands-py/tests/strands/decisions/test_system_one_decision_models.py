@@ -1,8 +1,12 @@
 """System One decision model tests — the behavioral spec shared by both providers."""
 
 import json
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -724,3 +728,33 @@ async def test_decisions_api_enforces_the_request_body_limit_before_sending():
     with pytest.raises(ContextWindowOverflowException):
         await decision.ask("x" * (33 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
     assert captured == []
+
+
+def test_importing_strands_does_not_import_httpx():
+    # httpx imports optional dependencies such as rich when installed, so the providers load lazily.
+    env = os.environ.copy()
+    python_path = str(Path(__file__).resolve().parents[3] / "src")
+    if existing_python_path := env.get("PYTHONPATH"):
+        python_path = os.pathsep.join((python_path, existing_python_path))
+    env["PYTHONPATH"] = python_path
+
+    code = """
+import sys
+
+import strands
+import strands.decisions
+
+if "httpx" in sys.modules:
+    raise AssertionError("httpx imported eagerly")
+strands.decisions.TypeSafeDecisionModel
+if "httpx" not in sys.modules:
+    raise AssertionError("TypeSafeDecisionModel did not load lazily")
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, env=env)
+
+
+def test_unknown_decisions_attribute_raises_attribute_error():
+    import strands.decisions
+
+    with pytest.raises(AttributeError, match="cannot import name 'MissingDecisionModel'"):
+        strands.decisions.MissingDecisionModel  # noqa: B018
