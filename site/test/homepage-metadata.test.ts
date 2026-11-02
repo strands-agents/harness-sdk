@@ -9,6 +9,10 @@ function configuredPathWithBase(value: string): string {
   return `${base}${normalizedValue}`
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 describe('homepage machine-readable metadata', () => {
   const homepageHtml = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
   const homepage = parse(homepageHtml)
@@ -23,8 +27,8 @@ describe('homepage machine-readable metadata', () => {
     const maskStyle = homepage.querySelector('.banner__halftone-mask')?.getAttribute('style')
     const maskUrl = maskStyle?.match(/--halftone-mask: url\("([^"]+)"\)/)?.[1]
 
-    expect(maskUrl?.startsWith(configuredPathWithBase('/_astro/halftone.'))).toBe(true)
-    expect(maskUrl?.endsWith('.svg')).toBe(true)
+    const assetPrefix = escapeRegExp(configuredPathWithBase('/_astro/halftone.'))
+    expect(maskUrl).toMatch(new RegExp(`^${assetPrefix}[^/]+\\.svg$`))
     expect(homepage.querySelector('.banner__halftone svg')).toBeNull()
   })
 

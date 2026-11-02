@@ -21,8 +21,6 @@ const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140
 const MAX_DESCRIPTION_LENGTH = 160
 const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
-const COMING_SOON_DESCRIPTION =
-  'This sample is coming soon. A runnable guide and implementation are not yet available in the Strands Agents samples repository at this source revision.'
 
 const htmlConverter = new TurndownService({
   headingStyle: 'atx',
@@ -536,7 +534,12 @@ function fillMissingImageAltText(tree: Root, context: GuideContext): void {
     const source = node.url ?? definitions.get(node.identifier?.toLowerCase() ?? '')
     const alt = source ? imageAltFromUrl(source, context.title) : undefined
     if (!alt) {
-      throw new Error(`${context.guidePath} contains an image without alt text or a descriptive filename`)
+      const fallback = `${context.title} illustration`
+      console.warn(
+        `${context.guidePath} contains an image without alt text or a descriptive filename; using fallback alt text "${fallback}"`
+      )
+      node.alt = fallback
+      return
     }
     node.alt = alt
   }
@@ -601,61 +604,6 @@ function descriptionLength(value: string): number {
   return Array.from(value).length
 }
 
-function trimDescription(value: string): string {
-  const normalized = value.replace(/\s+/g, ' ').trim()
-  const characters = Array.from(normalized)
-  if (characters.length <= MAX_DESCRIPTION_LENGTH) return normalized
-
-  const available = characters.slice(0, MAX_DESCRIPTION_LENGTH - 1).join('')
-  const wordBoundary = available.lastIndexOf(' ')
-  const content =
-    wordBoundary !== -1 && descriptionLength(available.slice(0, wordBoundary)) >= MIN_DESCRIPTION_LENGTH
-      ? available.slice(0, wordBoundary)
-      : available.replace(/\s+$/g, '')
-  return `${content.replace(/[,;:.-]+$/g, '')}…`
-}
-
-function descriptionFromGuide(authored: string, body: string): string {
-  const description = authored.replace(/\s+/g, ' ').trim()
-  if (descriptionLength(description) >= MIN_DESCRIPTION_LENGTH) return trimDescription(description)
-  const punctuated = /[.!?…]$/.test(description) ? description : `${description}.`
-  if (descriptionLength(punctuated) >= MIN_DESCRIPTION_LENGTH) return punctuated
-
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(body) as Root
-  const sourceText = toString(tree).replace(/\s+/g, ' ').trim()
-  if (/^coming soon[.!]?$/i.test(sourceText) && /\bcoming soon\b/i.test(description)) return COMING_SOON_DESCRIPTION
-
-  let sourceExcerpt = ''
-  for (const node of tree.children) {
-    if (node.type !== 'paragraph' || containsOnlyImages(node)) continue
-    const content = toString(node).replace(/\s+/g, ' ').trim()
-    if (descriptionLength(content) < 40 || /^\[![A-Z]+\]/.test(content)) continue
-    sourceExcerpt = sourceExcerpt ? `${sourceExcerpt} ${content}` : content
-    if (descriptionLength(sourceExcerpt) >= MIN_DESCRIPTION_LENGTH) return trimDescription(sourceExcerpt)
-  }
-
-  let structuredExcerpt = description.replace(/[.;:]+$/g, '')
-  let itemCount = 0
-  for (const node of tree.children) {
-    if (node.type !== 'list') continue
-    for (const item of node.children) {
-      const content = item.children
-        .filter((child) => child.type === 'paragraph')
-        .map((child) => toString(child).replace(/\s+/g, ' ').trim())
-        .filter(Boolean)
-        .join(' ')
-        .replace(/[.;:]+$/g, '')
-      if (!content) continue
-      structuredExcerpt += `${itemCount === 0 ? '. ' : '; '}${content}`
-      itemCount += 1
-      if (descriptionLength(structuredExcerpt) >= MIN_DESCRIPTION_LENGTH) {
-        return trimDescription(`${structuredExcerpt}.`)
-      }
-    }
-  }
-  return description
-}
-
 function sourceUrl(commit: string, samplePath: string): string {
   return `https://github.com/${CANONICAL_SAMPLES_REPOSITORY}/tree/${commit}/${encodeRepositoryPath(samplePath)}`
 }
@@ -687,6 +635,8 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
 
   await rm(options.outputDir, { recursive: true, force: true })
   const samples = [...manifest.samples].sort((left, right) => left.path.localeCompare(right.path))
+  let shortDescriptions = 0
+  let longDescriptions = 0
   for (const [index, sample] of samples.entries()) {
     const guide = await resolveGuidePath(sourceDir, sample)
     const input =
@@ -701,15 +651,20 @@ export async function buildSampleGuides(options: BuildSampleGuidesOptions): Prom
       title: sample.title,
     }
     const body = await prepareMarkdown(context, input, sample.title)
-    const description = descriptionFromGuide(sample.description, body)
-    if (descriptionLength(description) < MIN_DESCRIPTION_LENGTH) {
-      console.warn(
-        `${sample.path} description is ${descriptionLength(description)} characters; add ${MIN_DESCRIPTION_LENGTH}-${MAX_DESCRIPTION_LENGTH} characters of source prose or manifest metadata`
-      )
-    }
+    const description = sample.description
+    const length = descriptionLength(description)
+    if (length < MIN_DESCRIPTION_LENGTH) shortDescriptions += 1
+    if (length > MAX_DESCRIPTION_LENGTH) longDescriptions += 1
     const outputPath = path.join(options.outputDir, `${sample.slug}.md`)
     await mkdir(path.dirname(outputPath), { recursive: true })
     await writeFile(outputPath, `${frontmatter(sample, description, commit, index)}${body}\n`)
+  }
+
+  const invalidDescriptions = shortDescriptions + longDescriptions
+  if (invalidDescriptions > 0) {
+    console.warn(
+      `Sample description lengths outside ${MIN_DESCRIPTION_LENGTH}-${MAX_DESCRIPTION_LENGTH} characters: ${invalidDescriptions}/${samples.length} (${shortDescriptions} short, ${longDescriptions} long); preserving samples.json values; update metadata in strands-agents/samples`
+    )
   }
 
   return { repository: CANONICAL_SAMPLES_REPOSITORY, commit, sampleCount: manifest.samples.length }

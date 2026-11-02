@@ -421,12 +421,20 @@ describe('buildSampleGuides', () => {
     )
   })
 
-  it.each(['image.png', '1.png'])('rejects blank alt text with the generic filename %s', async (fileName) => {
+  it.each(['image.png', '1.png'])('uses fallback alt text for the generic filename %s', async (fileName) => {
     write(`typescript/01-learn/01-readme/images/${fileName}`, 'image')
     write('typescript/01-learn/01-readme/README.md', `# README guide\n\n![](images/${fileName})\n`)
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const commit = git('rev-parse', 'HEAD')
 
-    await expect(buildSampleGuides({ sourceDir, outputDir })).rejects.toThrow(
-      'contains an image without alt text or a descriptive filename'
+    await buildSampleGuides({ sourceDir, outputDir })
+
+    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
+      `![README guide illustration](https://raw.githubusercontent.com/strands-agents/samples/${commit}/typescript/01-learn/01-readme/images/${fileName})`
+    )
+    expect(warning).toHaveBeenCalledTimes(1)
+    expect(warning).toHaveBeenCalledWith(
+      'typescript/01-learn/01-readme/README.md contains an image without alt text or a descriptive filename; using fallback alt text "README guide illustration"'
     )
   })
 
@@ -464,14 +472,16 @@ describe('buildSampleGuides', () => {
     await buildSampleGuides({ sourceDir, outputDir })
 
     const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
-    expect(readme).toContain('## First section')
-    expect(readme).toContain('## Sibling section')
-    expect(readme).toContain('### Nested section')
-    expect(readme).toContain('## Back')
-    expect(readme).toContain('### Nested again')
+    expect(readme.match(/^#{2,6} .+$/gm)).toEqual([
+      '## First section',
+      '## Sibling section',
+      '### Nested section',
+      '## Back',
+      '### Nested again',
+    ])
   })
 
-  it('uses existing guide prose for short meta descriptions', async () => {
+  it('preserves authored descriptions instead of deriving them from guide prose', async () => {
     updateManifest((manifest) => {
       manifest.samples[0]!.description = 'Short description.'
     })
@@ -489,64 +499,20 @@ describe('buildSampleGuides', () => {
         'It also covers how the pieces fit together, the commands needed to run the example locally, and how to verify the resulting agent behavior.',
       ].join('\n')
     )
-
-    await buildSampleGuides({ sourceDir, outputDir })
-
-    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
-    const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
-    expect(description.startsWith('This guide explains how the sample works')).toBe(true)
-    expect(description.length).toBeGreaterThanOrEqual(140)
-    expect(description.length).toBeLessThanOrEqual(160)
-    expect(description).not.toContain('Short description')
-    expect(description).not.toContain('FeatureDescription')
-  })
-
-  it('uses semantic separators for list-backed descriptions and ignores admonitions', async () => {
-    updateManifest((manifest) => {
-      manifest.samples[0]!.description = 'An example Strands agent that helps with searching AWS documentation.'
-    })
-    write(
-      'typescript/01-learn/01-readme/README.md',
-      [
-        '# README guide',
-        '',
-        'An example Strands agent that helps with searching AWS documentation.',
-        '',
-        '> [!IMPORTANT]',
-        '> This warning should not become the page description even when it is long enough to satisfy the limit.',
-        '',
-        '1. Install uv.',
-        '2. Configure AWS credentials.',
-        '3. Start the A2A server.',
-        '4. Run the test client and verify the response.',
-      ].join('\n')
-    )
-
-    await buildSampleGuides({ sourceDir, outputDir })
-
-    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
-    const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
-    expect(description).toContain('. Install uv; Configure AWS credentials; Start the A2A server')
-    expect(description).not.toContain('[!IMPORTANT]')
-    expect(description).not.toContain('uv.Configure')
-  })
-
-  it('keeps authored short descriptions when the guide has no suitable prose', async () => {
-    updateManifest((manifest) => {
-      manifest.samples[0]!.description = 'Short but accurate.'
-    })
-    write('typescript/01-learn/01-readme/README.md', '# README guide\n\n```typescript\nconst value = true\n```\n')
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await buildSampleGuides({ sourceDir, outputDir })
 
-    expect(readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')).toContain(
-      'description: "Short but accurate."'
+    const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
+    const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
+    expect(description).toBe('Short description.')
+    expect(warning).toHaveBeenCalledTimes(1)
+    expect(warning).toHaveBeenCalledWith(
+      'Sample description lengths outside 140-160 characters: 1/2 (1 short, 0 long); preserving samples.json values; update metadata in strands-agents/samples'
     )
-    expect(warning).toHaveBeenCalledWith(expect.stringContaining('description is 19 characters'))
   })
 
-  it('describes an explicit coming-soon placeholder without inventing guide content', async () => {
+  it('preserves authored coming-soon descriptions', async () => {
     updateManifest((manifest) => {
       manifest.samples[0]!.description = 'Stream responses (Coming Soon)'
     })
@@ -557,39 +523,47 @@ describe('buildSampleGuides', () => {
 
     const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
     const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
-    expect(description).toContain('This sample is coming soon.')
-    expect(description).toContain('not yet available')
-    expect(description.length).toBeGreaterThanOrEqual(140)
-    expect(description.length).toBeLessThanOrEqual(160)
-    expect(warning).not.toHaveBeenCalledWith(expect.stringContaining('description is'))
+    expect(description).toBe('Stream responses (Coming Soon)')
+    expect(warning).toHaveBeenCalledTimes(1)
+    expect(warning).toHaveBeenCalledWith(
+      'Sample description lengths outside 140-160 characters: 1/2 (1 short, 0 long); preserving samples.json values; update metadata in strands-agents/samples'
+    )
   })
 
-  it('trims long authored descriptions at a word boundary', async () => {
+  it('preserves long authored descriptions', async () => {
+    const authored =
+      'This deliberately long but accurate description explains the sample behavior, its primary components, the expected workflow, and the verification steps that readers follow when running the complete application locally.'
     updateManifest((manifest) => {
-      manifest.samples[0]!.description =
-        'This deliberately long but accurate description explains the sample behavior, its primary components, the expected workflow, and the verification steps that readers follow when running the complete application locally.'
+      manifest.samples[0]!.description = authored
     })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await buildSampleGuides({ sourceDir, outputDir })
 
     const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
     const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
-    expect(description.length).toBeGreaterThanOrEqual(140)
-    expect(description.length).toBeLessThanOrEqual(160)
-    expect(description.endsWith('…')).toBe(true)
+    expect(description).toBe(authored)
+    expect(warning).toHaveBeenCalledTimes(1)
+    expect(warning).toHaveBeenCalledWith(
+      'Sample description lengths outside 140-160 characters: 1/2 (0 short, 1 long); preserving samples.json values; update metadata in strands-agents/samples'
+    )
   })
 
-  it('does not split non-BMP characters when trimming descriptions', async () => {
+  it('counts non-BMP characters correctly when validating descriptions', async () => {
+    const authored = `${'a'.repeat(158)}😀 trailing text`
     updateManifest((manifest) => {
-      manifest.samples[0]!.description = `${'a'.repeat(158)}😀 trailing text`
+      manifest.samples[0]!.description = authored
     })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await buildSampleGuides({ sourceDir, outputDir })
 
     const readme = readFileSync(path.join(outputDir, 'typescript/readme.md'), 'utf8')
     const description = JSON.parse(readme.match(/^description: (.+)$/m)![1]!) as string
-    expect(Array.from(description)).toHaveLength(160)
-    expect(description.endsWith('😀…')).toBe(true)
-    expect(description).not.toContain('\uFFFD')
+    expect(description).toBe(authored)
+    expect(warning).toHaveBeenCalledTimes(1)
+    expect(warning).toHaveBeenCalledWith(
+      'Sample description lengths outside 140-160 characters: 1/2 (0 short, 1 long); preserving samples.json values; update metadata in strands-agents/samples'
+    )
   })
 })
