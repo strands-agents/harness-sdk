@@ -14,7 +14,12 @@ from ._model_info import (
     lookup_model_info,
 )
 
-__all__ = ["DEFAULT_CONTEXT_WINDOW_LIMIT", "get_context_window_limit", "resolve_config_metadata"]
+__all__ = [
+    "DEFAULT_CONTEXT_WINDOW_LIMIT",
+    "get_context_window_limit",
+    "resolve_config_metadata",
+    "resolve_max_tokens",
+]
 
 _C = TypeVar("_C", bound=Mapping[str, object])
 
@@ -44,3 +49,24 @@ def resolve_config_metadata(config: _C, model_id: str) -> _C:
         return config
 
     return {**config, "context_window_limit": context_window}  # type: ignore[return-value]
+
+
+def resolve_max_tokens(config: Mapping[str, object], model_id: str) -> int | None:
+    """The ``max_tokens`` to send: the configured value, else the model info's output limit, else None.
+
+    A ``max_tokens`` key in the config wins as is, so an explicit ``None`` opts out of the default. The
+    default is ``limits.max_output_tokens`` from the shared model info, with the ``model_info`` override
+    applied on top; a model the data does not know gets None.
+
+    Args:
+        config: The stored model config dict.
+        model_id: The model ID to look up.
+
+    Returns:
+        The resolved ``max_tokens``, or None when neither the user nor the model info says.
+    """
+    if "max_tokens" in config:
+        return cast(int | None, config["max_tokens"])
+
+    override = cast(ModelInfo | None, config.get("model_info"))
+    return ModelInfo.merge(lookup_model_info(model_id), override).limits.max_output_tokens

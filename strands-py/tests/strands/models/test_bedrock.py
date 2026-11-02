@@ -555,6 +555,113 @@ def test_format_request_inference_config(model, messages, model_id, inference_co
     assert tru_request == exp_request
 
 
+def test_format_request_defaults_max_tokens_to_the_model_info_output_limit(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_for_the_default_model(bedrock_client, messages):
+    _ = bedrock_client
+
+    assert BedrockModel().format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_from_the_model_info_override(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="m1", model_info=ModelInfo(limits=ModelLimits(max_output_tokens=2_000)))
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 2_000}
+
+
+def test_format_request_leaves_max_tokens_unset_for_an_unknown_model(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="unknown.model-v1:0")
+
+    assert model.model_info.limits.max_output_tokens is None
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+def test_format_request_explicit_max_tokens_wins_over_the_model_info_output_limit(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=1)
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 1}
+
+
+def test_format_request_explicit_none_max_tokens_opts_out_of_the_default(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=None)
+
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        {"model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0", "context_window_limit": 100_000},
+    ],
+    ids=["200k-window model", "user-set context_window_limit"],
+)
+def test_format_request_does_not_cap_the_default_max_tokens_by_the_context_window(bedrock_client, messages, config):
+    _ = bedrock_client
+    model = BedrockModel(**config)
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 64_000}
+
+
+@pytest.mark.parametrize(
+    ("config", "exp_config"),
+    [
+        (
+            {"model_id": "anthropic.claude-sonnet-4-6"},
+            {
+                "model_id": "anthropic.claude-sonnet-4-6",
+                "include_tool_result_status": "auto",
+                "context_window_limit": 1_000_000,
+                "max_tokens": 128_000,
+            },
+        ),
+        (
+            {"model_id": "anthropic.claude-sonnet-4-6", "max_tokens": None},
+            {
+                "model_id": "anthropic.claude-sonnet-4-6",
+                "include_tool_result_status": "auto",
+                "context_window_limit": 1_000_000,
+                "max_tokens": None,
+            },
+        ),
+        (
+            {"model_id": "unknown.model-v1:0"},
+            {"model_id": "unknown.model-v1:0", "include_tool_result_status": "auto"},
+        ),
+    ],
+    ids=["listed model", "explicit None", "unknown model"],
+)
+def test_get_config_surfaces_the_default_max_tokens(bedrock_client, config, exp_config):
+    _ = bedrock_client
+
+    assert BedrockModel(**config).get_config() == exp_config
+
+
+def test_format_request_re_resolves_the_default_max_tokens_when_model_id_changes(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
+
+    model.update_config(model_id="anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 64_000}
+
+
 def test_format_request_system_prompt(model, messages, model_id, system_prompt):
     tru_request = model.format_request(messages, system_prompt_content=[{"text": system_prompt}])
     exp_request = {

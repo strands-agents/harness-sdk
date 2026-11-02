@@ -52,6 +52,21 @@ export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, mode
   return { ...config, contextWindowLimit: contextWindow }
 }
 
+/**
+ * The `maxTokens` to send: the configured value, else the model's output ceiling from the shared model
+ * info with the `modelInfo` override applied, else `undefined`. Reads the layers directly rather than
+ * `Model.modelInfo` so `getConfig()` can call it.
+ *
+ * @internal
+ * @param config - The stored model config
+ * @param modelId - The model ID to look up
+ * @returns The resolved `maxTokens`, or `undefined` when neither the user nor the model info says
+ */
+export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
+  if (config.maxTokens !== undefined) return config.maxTokens
+  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
+}
+
 class CitationAccumulator {
   citations: Citation[] = []
   content: CitationGeneratedContent[] = []
