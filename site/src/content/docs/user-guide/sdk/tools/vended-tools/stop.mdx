@@ -1,0 +1,52 @@
+---
+title: Stop
+description: "Let the model end a Strands agent loop deliberately with an optional final message. A cooperative stop: tools requested in the same turn still run to the end."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/stop/stop.ts
+  - path: strands-py/src/strands/vended_tools/stop/stop.py
+---
+
+Lets the model gracefully end the agent loop with an optional final message. The default loop already terminates when the model returns without any tool call; the stop tool is useful when you want an explicit "I am done" affordance, when a workflow enforces that termination is a deliberate model decision, or when a sub-agent needs to signal completion back to a coordinator via the loop's last assistant message.
+
+_Supported in: Node.js, modern browsers (TypeScript); all platforms (Python)._
+
+This is a cooperative stop, not an abort. Any other tools the model requested in the same turn still run to completion; the loop halts after that batch without calling the model again. The final message defaults to a 4096-character cap; pass `max_message_length` / `maxMessageLength` to `make_stop` / `makeStop` when a longer summary is legitimate.
+
+Both SDKs stop the loop through `agent.cancel()` with the deferred flag
+(`agent.cancel({ message, afterCurrentTools: true })` /
+`agent.cancel(message=..., after_current_tools=True)`), so the final `AgentResult`
+is the same in each: `stopReason: "cancelled"` / `stop_reason: "cancelled"`, with
+the stop text as the last assistant message. A sub-agent that ends this way is
+reported as a successful result by <Syntax py="agent.as_tool()" ts="agent.asTool()" />
+and the subagent tool; only an immediate `agent.cancel()` is reported as an error.
+
+**Example:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/stop_imports.ts:stop_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/stop.ts:stop_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import stop
+
+agent = Agent(
+    tools=[stop],
+    system_prompt="Complete the task. Call stop with a short summary when you are done.",
+)
+result = agent("Summarize the changes in ./CHANGELOG.md")
+```
+
+</Tab>
+</Tabs>
+
+[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/stop/README.md)
