@@ -17,6 +17,7 @@ export const DROPPED_MARKER = '[Dropped]'
 
 export class DropStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:drop'
+  protected override readonly _replacesOtherPlaceholders = true
 
   when(conditions: OffloadConditions): ContextStrategy {
     return new DropStrategy(this._target, conditions)

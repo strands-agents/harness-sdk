@@ -11,6 +11,7 @@ import {
   ToolUseBlock,
   CachePointBlock,
   ReasoningBlock,
+  isOffloaded,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
@@ -323,6 +324,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
+  /** Whether this strategy may replace another method's placeholder in a tool result. */
+  protected readonly _replacesOtherPlaceholders: boolean = false
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     if (Array.isArray(target) && target.length === 0) {
@@ -452,6 +455,20 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return false
   }
 
+  /**
+   * Whether a block already is, or holds, a placeholder this strategy shouldn't replace. Only drop may replace another
+   * method's placeholder in a tool result, since truncate and summarize would read the placeholder as the content.
+   */
+  private _isReduced(block: ContentBlock): boolean {
+    if (isOffloaded(block)) return true
+    if (!(block instanceof ToolResultBlock)) return false
+    const placeholder = block.content.find(isOffloaded)
+    return (
+      placeholder !== undefined &&
+      (!this._replacesOtherPlaceholders || placeholder.metadata.offloaded.method === 'drop')
+    )
+  }
+
   /** Process eligible blocks in a message. */
   protected async _transformBlocks(
     message: Message,
@@ -464,7 +481,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
-      if (!this._blockMatchesTarget(block, message, toolNameMap)) continue
+      if (!this._blockMatchesTarget(block, message, toolNameMap) || this._isReduced(block)) continue
 
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
