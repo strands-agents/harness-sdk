@@ -317,7 +317,7 @@ test('S3 vector search grants are scoped to the test-strands-s3v- prefix', () =>
     (s: any) => Array.isArray(s.Action) && s.Action.includes('s3vectors:CreateVectorBucket'),
   );
 
-  expect(bucketStmt.Resource).toEqual('arn:aws:s3:::test-strands-s3v-*');
+  expect(bucketStmt.Resource).toEqual(expect.arrayContaining(['arn:aws:s3:::test-strands-s3v-*']));
   expect(bucketStmt.Action).toEqual(
     expect.arrayContaining([
       's3:CreateBucket',

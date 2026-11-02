@@ -31,12 +31,24 @@ import { AWS_REGION } from './__fixtures__/_aws.js'
 /** Titan Text Embeddings V2, the default embedder, produces 1024-dimensional vectors. */
 const TITAN_V2_DIMENSION = 1024
 
+/** Shared by every storage in the suite; each storage only sees vectors under its own prefix. */
+const INDEX_NAME = 'default'
+
+/**
+ * Applied before prefix filtering, so it must exceed every vector the suite writes to the shared
+ * index; otherwise one prefix's vectors can be ranked out by another's.
+ */
+const MAX_RESULTS = 50
+
 const encode = (text: string): Uint8Array => new TextEncoder().encode(text)
 
 const keys = (results: StorageSearchResult[]): string[] => results.map((r) => r.key)
 
 /** Setup and teardown make several sequential calls to real AWS; vitest's 10 s default is too short. */
 const HOOK_TIMEOUT_MS = 60_000
+
+/** Each test chains two 30 s `searchUntil` polls, so a slow one fails with its own message, not a vitest timeout. */
+const TEST_TIMEOUT_MS = 120_000
 
 /**
  * Polls `storage.search(query)` until `predicate` holds, and returns those results. Guards against
@@ -76,7 +88,8 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
       s3Client: s3,
       searchStrategy: new S3VectorSearchStrategy({
         vectorBucketName: vectorBucket,
-        indexName: 'default',
+        indexName: INDEX_NAME,
+        maxResults: MAX_RESULTS,
         s3VectorsClient: s3Vectors,
         embedder: new BedrockEmbedder({ bedrockClient: bedrockRuntime }),
       }),
@@ -104,7 +117,7 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
     await s3Vectors.send(
       new CreateIndexCommand({
         vectorBucketName: vectorBucket,
-        indexName: 'default',
+        indexName: INDEX_NAME,
         dataType: 'float32',
         dimension: TITAN_V2_DIMENSION,
         distanceMetric: 'cosine',
@@ -116,7 +129,7 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
     // Best-effort teardown in reverse order; one failure should not leak the rest.
     if (s3Vectors && vectorBucket) {
       await s3Vectors
-        .send(new DeleteIndexCommand({ vectorBucketName: vectorBucket, indexName: 'default' }))
+        .send(new DeleteIndexCommand({ vectorBucketName: vectorBucket, indexName: INDEX_NAME }))
         .catch(() => {})
       await s3Vectors.send(new DeleteVectorBucketCommand({ vectorBucketName: vectorBucket })).catch(() => {})
     }
@@ -136,59 +149,71 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
     }
   }, HOOK_TIMEOUT_MS)
 
-  it('indexes on write, finds content by meaning, and de-indexes on delete', async () => {
-    const storage = makeStorage('semantic')
-    await storage.write('auth.md', encode('Users sign in with OAuth2 and receive short-lived JWT access tokens.'))
-    await storage.write('deploy.md', encode('Services are deployed to ECS on Fargate with auto-scaling enabled.'))
+  it(
+    'indexes on write, finds content by meaning, and de-indexes on delete',
+    async () => {
+      const storage = makeStorage('semantic')
+      await storage.write('auth.md', encode('Users sign in with OAuth2 and receive short-lived JWT access tokens.'))
+      await storage.write('deploy.md', encode('Services are deployed to ECS on Fargate with auto-scaling enabled.'))
 
-    const query = 'how do people log in to the app?'
-    const results = await searchUntil(
-      storage,
-      query,
-      (r) => keys(r).includes('auth.md') && keys(r).includes('deploy.md')
-    )
-    const score = (key: string): number | undefined => results.find((r) => r.key === key)?.score
-    expect(results[0]?.key).toBe('auth.md')
-    expect(score('auth.md')).toBeGreaterThan(score('deploy.md')!)
+      const query = 'how do people log in to the app?'
+      const results = await searchUntil(
+        storage,
+        query,
+        (r) => keys(r).includes('auth.md') && keys(r).includes('deploy.md')
+      )
+      const score = (key: string): number | undefined => results.find((r) => r.key === key)?.score
+      expect(results[0]?.key).toBe('auth.md')
+      expect(score('auth.md')).toBeGreaterThan(score('deploy.md')!)
 
-    await storage.delete('auth.md')
-    const afterDelete = await searchUntil(storage, query, (r) => !keys(r).includes('auth.md'))
-    expect(keys(afterDelete)).not.toContain('auth.md')
-    expect(keys(afterDelete)).toContain('deploy.md')
-  })
+      await storage.delete('auth.md')
+      const afterDelete = await searchUntil(storage, query, (r) => !keys(r).includes('auth.md'))
+      expect(keys(afterDelete)).not.toContain('auth.md')
+      expect(keys(afterDelete)).toContain('deploy.md')
+    },
+    TEST_TIMEOUT_MS
+  )
 
-  it('isolates storages that share the default index under different prefixes', async () => {
-    const tenantA = makeStorage('tenant-a')
-    const tenantB = makeStorage('tenant-b')
-    await tenantA.write('notes.md', encode('Tenant A plans a product launch in Lisbon next spring.'))
-    await tenantA.write('a-only.md', encode('Tenant A budget review for the launch event.'))
-    await tenantB.write('notes.md', encode('Tenant B is migrating its database to Postgres.'))
+  it(
+    'isolates storages that share the default index under different prefixes',
+    async () => {
+      const tenantA = makeStorage('tenant-a')
+      const tenantB = makeStorage('tenant-b')
+      await tenantA.write('notes.md', encode('Tenant A plans a product launch in Lisbon next spring.'))
+      await tenantA.write('a-only.md', encode('Tenant A budget review for the launch event.'))
+      await tenantB.write('notes.md', encode('Tenant B is migrating its database to Postgres.'))
 
-    // Wait until every vector is visible, so the per-tenant assertions below can't pass vacuously.
-    const query = 'product launch'
-    const expected = ['tenant-a/notes.md', 'tenant-a/a-only.md', 'tenant-b/notes.md']
-    await searchUntil(makeStorage(), query, (r) => expected.every((key) => keys(r).includes(key)))
+      // Wait until every vector is visible, so the per-tenant assertions below can't pass vacuously.
+      const query = 'product launch'
+      const expected = ['tenant-a/notes.md', 'tenant-a/a-only.md', 'tenant-b/notes.md']
+      await searchUntil(makeStorage(), query, (r) => expected.every((key) => keys(r).includes(key)))
 
-    expect(keys(await tenantA.search(query)).sort()).toEqual(['a-only.md', 'notes.md'])
-    expect(keys(await tenantB.search(query))).toEqual(['notes.md'])
+      expect(keys(await tenantA.search(query)).sort()).toEqual(['a-only.md', 'notes.md'])
+      expect(keys(await tenantB.search(query))).toEqual(['notes.md'])
 
-    // Deleting tenant A's notes.md must not remove tenant B's vector for the same key.
-    await tenantA.delete('notes.md')
-    const afterDeleteA = await searchUntil(tenantA, query, (r) => !keys(r).includes('notes.md'))
-    expect(keys(afterDeleteA)).toEqual(['a-only.md'])
-    expect(keys(await tenantB.search(query))).toEqual(['notes.md'])
-  })
+      // Deleting tenant A's notes.md must not remove tenant B's vector for the same key.
+      await tenantA.delete('notes.md')
+      const afterDeleteA = await searchUntil(tenantA, query, (r) => !keys(r).includes('notes.md'))
+      expect(keys(afterDeleteA)).toEqual(['a-only.md'])
+      expect(keys(await tenantB.search(query))).toEqual(['notes.md'])
+    },
+    TEST_TIMEOUT_MS
+  )
 
-  it('removes the old vector when a text key is overwritten with binary data', async () => {
-    const storage = makeStorage('overwrite')
-    await storage.write('image.md', encode('A description of a sunset over the mountains.'))
-    const query = 'sunset over mountains'
-    expect(keys(await searchUntil(storage, query, (r) => r.length >= 1))).toEqual(['image.md'])
+  it(
+    'removes the old vector when a text key is overwritten with binary data',
+    async () => {
+      const storage = makeStorage('overwrite')
+      await storage.write('image.md', encode('A description of a sunset over the mountains.'))
+      const query = 'sunset over mountains'
+      expect(keys(await searchUntil(storage, query, (r) => r.length >= 1))).toEqual(['image.md'])
 
-    // A PNG signature is not valid UTF-8, so the strategy stores it but drops the old vector.
-    await storage.write('image.md', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff]))
-    const afterOverwrite = await searchUntil(storage, query, (r) => r.length === 0)
-    expect(afterOverwrite).toEqual([])
-    expect(await storage.read('image.md')).not.toBeNull()
-  })
+      // A PNG signature is not valid UTF-8, so the strategy stores it but drops the old vector.
+      await storage.write('image.md', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff]))
+      const afterOverwrite = await searchUntil(storage, query, (r) => r.length === 0)
+      expect(afterOverwrite).toEqual([])
+      expect(await storage.read('image.md')).not.toBeNull()
+    },
+    TEST_TIMEOUT_MS
+  )
 })
