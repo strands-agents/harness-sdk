@@ -27,7 +27,7 @@ import { mediaKind, type OffloadTarget } from './target.js'
 export class SummarizeStrategy extends BaseOffloadStrategy {
   private readonly _config: SummarizeConfig
 
-  constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
+  constructor(target: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
     super('summarize', target, conditions)
     this._config = config ?? {}
   }

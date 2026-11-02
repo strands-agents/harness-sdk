@@ -27,7 +27,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   private readonly _truncateConfig: TruncateConfig
   private readonly _previewTokens: number
 
-  constructor(target?: OffloadTarget, config?: TruncateConfig, conditions?: OffloadConditions) {
+  constructor(target: OffloadTarget, config?: TruncateConfig, conditions?: OffloadConditions) {
     super('truncate', target, conditions)
     this._truncateConfig = config ?? {}
     this._previewTokens = resolvePreviewTokens(this._truncateConfig)

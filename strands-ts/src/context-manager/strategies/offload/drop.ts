@@ -15,7 +15,7 @@ import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
 
 export class DropStrategy extends BaseOffloadStrategy {
-  constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
+  constructor(target: OffloadTarget, conditions?: OffloadConditions) {
     super('drop', target, conditions)
   }
 

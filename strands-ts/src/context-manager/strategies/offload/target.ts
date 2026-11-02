@@ -95,7 +95,7 @@ export function buildToolNameMap(messages: Message[]): Map<string, string> {
  */
 export class OffloadTargetMatcher {
   /** The target as the strategy was built with it. */
-  readonly target: OffloadTarget | undefined
+  readonly target: OffloadTarget
 
   private readonly _include: Set<string> | undefined
   private readonly _exclude: Set<string> | undefined
@@ -104,7 +104,7 @@ export class OffloadTargetMatcher {
    * @param target - The offload target
    * @throws Error when the target is an empty array or excludes every tool it includes
    */
-  constructor(target: OffloadTarget | undefined) {
+  constructor(target: OffloadTarget) {
     if (Array.isArray(target) && target.length === 0) {
       throw new Error('Empty array target matches nothing — provide at least one target')
     }
@@ -117,16 +117,17 @@ export class OffloadTargetMatcher {
     this._exclude = filter.exclude
   }
 
-  /** Whether every kind of block is in scope: `'*'`, or no target. */
+  /** Whether every kind of block is in scope. */
   get matchesAll(): boolean {
-    return this.target === undefined || this.target === '*'
+    return this.target === '*'
   }
 
   /** Whether a block in `message` is one this target covers. */
   matchesBlock(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
+    if (this.matchesAll) return true
     if (block instanceof TextBlock) return this._matchesText(message)
     if (block instanceof ToolResultBlock) return this._matchesToolResult(block, toolNameMap)
-    return this.matchesAll || (this.target === 'media' && isMediaBlock(block))
+    return this.target === 'media' && isMediaBlock(block)
   }
 
   /** Whether a message holds anything this target covers. */
@@ -135,14 +136,12 @@ export class OffloadTargetMatcher {
   }
 
   private _matchesText(message: Message): boolean {
-    if (this.matchesAll) return true
     if (this.target === 'assistantText') return message.role === 'assistant'
     if (this.target === 'userText') return message.role === 'user'
     return false
   }
 
   private _matchesToolResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
-    if (this.matchesAll) return true
     if (this.target === 'toolResults') return block.status === 'success'
     if (this.target === 'toolResultErrors') return block.status === 'error'
 
@@ -159,7 +158,7 @@ export class OffloadTargetMatcher {
  * (e.g. `'tool::bash'`); an additional `!` prefix excludes (e.g. `'!tool::bash'`). A list with includes keeps the
  * includes minus the excludes.
  */
-function resolveToolFilter(target: OffloadTarget | undefined): { include?: Set<string>; exclude?: Set<string> } {
+function resolveToolFilter(target: OffloadTarget): { include?: Set<string>; exclude?: Set<string> } {
   if (!Array.isArray(target)) return {}
 
   const includes: string[] = []

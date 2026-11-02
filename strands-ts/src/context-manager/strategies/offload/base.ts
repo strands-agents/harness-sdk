@@ -115,7 +115,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   readonly name: string
 
   protected readonly _method: OffloadMethod
-  protected readonly _target: OffloadTarget | undefined
+  protected readonly _target: OffloadTarget
   protected readonly _matcher: OffloadTargetMatcher
   protected readonly _conditions: ResolvedConditions
   /** Whether the eager hook processes each message as it arrives. */
@@ -129,7 +129,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * @throws Error when the target is empty or excludes every tool it includes, a condition value is invalid, or
    *   conditions are given that leave the strategy unable to run (see {@link BaseOffloadStrategy.init})
    */
-  constructor(method: OffloadMethod, target?: OffloadTarget, conditions?: OffloadConditions) {
+  constructor(method: OffloadMethod, target: OffloadTarget, conditions?: OffloadConditions) {
     this.name = `offload:${method}`
     this._method = method
     this._target = target
