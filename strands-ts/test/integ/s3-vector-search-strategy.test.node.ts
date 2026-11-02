@@ -126,12 +126,17 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
   }, HOOK_TIMEOUT_MS)
 
   afterAll(async () => {
-    // Best-effort teardown in reverse order; one failure should not leak the rest.
+    // Best-effort teardown in reverse order; one failure should not leak the rest. Failures are
+    // logged so a leaked bucket shows up in the run output.
+    const warnLeak = (resource: string) => (error: unknown) =>
+      console.warn(`resource=<${resource}> | teardown step failed`, error)
     if (s3Vectors && vectorBucket) {
       await s3Vectors
         .send(new DeleteIndexCommand({ vectorBucketName: vectorBucket, indexName: INDEX_NAME }))
-        .catch(() => {})
-      await s3Vectors.send(new DeleteVectorBucketCommand({ vectorBucketName: vectorBucket })).catch(() => {})
+        .catch(warnLeak(`${vectorBucket}/${INDEX_NAME}`))
+      await s3Vectors
+        .send(new DeleteVectorBucketCommand({ vectorBucketName: vectorBucket }))
+        .catch(warnLeak(vectorBucket))
     }
     if (s3 && bucket) {
       try {
@@ -142,10 +147,11 @@ describe.skipIf(bedrock.skip)('S3VectorSearchStrategy', () => {
           if (objects.length) await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects } }))
           token = list.NextContinuationToken
         } while (token)
-      } catch {
-        // Best effort: still attempt DeleteBucket below (e.g. the bucket was never created).
+      } catch (error) {
+        // Still attempt DeleteBucket below (e.g. the bucket was never created).
+        warnLeak(`${bucket} objects`)(error)
       }
-      await s3.send(new DeleteBucketCommand({ Bucket: bucket })).catch(() => {})
+      await s3.send(new DeleteBucketCommand({ Bucket: bucket })).catch(warnLeak(bucket))
     }
   }, HOOK_TIMEOUT_MS)
 
