@@ -75,7 +75,8 @@ export class TruncateStrategy extends BaseOffloadStrategy {
       (message) => !message.content.every(isElisionMarker)
     )
     const middle = await this._selectMiddle(eligible, context.agent)
-    return removeMessages(context.messages, middle, async ({ length }) => formatElided(length), 'truncate', this._stash)
+    const text = async (_removed: Message[], count: number): Promise<string> => formatElided(count)
+    return removeMessages(context.messages, middle, text, 'truncate', this._stash)
   }
 
   /** Previews each block over `previewTokens` in the eligible messages, leaving the newest message alone. */

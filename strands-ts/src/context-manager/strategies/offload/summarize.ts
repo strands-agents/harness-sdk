@@ -53,16 +53,17 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const runs = splitIntoRuns(messages, withPairs(messages, await this._getEligibleMessages(context)))
     let acted = false
     for (const run of runs.reverse()) {
-      const summarize = (removed: Message[]): Promise<string | null> =>
-        this._summarizeRun(removed, model, invocationContext)
+      const summarize = (removed: Message[], count: number): Promise<string | null> =>
+        this._summarizeRun(removed, count, model, invocationContext)
       if (await removeMessages(messages, run, summarize, 'summarize', this._stash)) acted = true
     }
     return acted
   }
 
-  /** The summary marker text for a run of messages; a failure is logged and keeps the run. */
+  /** The summary marker text for a run standing for `count` messages; a failure is logged and keeps the run. */
   private async _summarizeRun(
     run: Message[],
+    count: number,
     model: Model,
     invocationContext?: InvocationContext
   ): Promise<string | null> {
@@ -72,7 +73,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const totalTokens = await model.countTokens(run)
     logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized message run`)
-    return formatSummarized(`${run.length} messages`, totalTokens, summary)
+    return formatSummarized(`${count} messages`, totalTokens, summary)
   }
 
   protected async _replaceBlock(

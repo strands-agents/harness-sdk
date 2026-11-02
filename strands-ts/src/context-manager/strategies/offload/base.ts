@@ -33,9 +33,22 @@ export interface OffloadStrategy extends ContextStrategy {
 
 /**
  * Writes the placeholder text, such as `[Dropped: 3 messages]` or a summary, for messages about to be removed with
- * their tool pairs. Returning null keeps them, as summarize does when its model call fails.
+ * their tool pairs. `count` is how many original messages they stand for. Returning null keeps them, as summarize
+ * does when its model call fails.
  */
-type PlaceholderText = (removed: Message[]) => Promise<string | null>
+type PlaceholderText = (removed: Message[], count: number) => Promise<string | null>
+
+/** How many original messages `message` stands for: each removal marker counts the messages it replaced. */
+function messagesRepresented(message: Message): number {
+  let replaced = 0
+  let hasContent = false
+  for (const block of message.content) {
+    const removedMessages = isOffloaded(block) ? block.metadata.offloaded.removedMessages : undefined
+    if (removedMessages === undefined) hasContent = true
+    else replaced += removedMessages
+  }
+  return hasContent || replaced === 0 ? replaced + 1 : replaced
+}
 
 /**
  * Removes messages with their tool pairs, stashes them under one reference, and leaves a placeholder at the gap. A
@@ -53,7 +66,8 @@ export async function removeMessages(
 ): Promise<boolean> {
   const removed = withPairs(messages, toRemove)
   if (removed.length === 0) return false
-  const text = await textFor(removed)
+  const count = removed.reduce((total, message) => total + messagesRepresented(message), 0)
+  const text = await textFor(removed, count)
   if (text === null) return false
 
   const lowestIndex = messages.indexOf(removed[0]!)
@@ -64,7 +78,7 @@ export async function removeMessages(
   } catch (error) {
     logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
   }
-  insertMarker(messages, lowestIndex, offloadPlaceholder(method, text, stashRef, removed.length))
+  insertMarker(messages, lowestIndex, offloadPlaceholder(method, text, stashRef, count))
   return true
 }
 
@@ -291,7 +305,7 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
-    const textFor = async ({ length }: Message[]): Promise<string> => formatElided(length)
+    const textFor = async (_removed: Message[], count: number): Promise<string> => formatElided(count)
     if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, 'truncate', context.stash))) {
       return false
     }

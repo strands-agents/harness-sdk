@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { EmergencyTruncateStrategy } from '../offload/base.js'
-import { formatElided, offloadPlaceholder } from '../../placeholder.js'
+import { formatDroppedMessages, formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
 import type { OffloadConditions, Percent } from '../offload/conditions.js'
 import { OffloadTargetMatcher } from '../offload/target.js'
@@ -427,6 +427,20 @@ describe('Offload message-level with role alternation', () => {
 
     expect(result).toBe(true)
     expect(textsOf(messages)).toEqual([['q1'], ['a2', '[Dropped: 2 messages]']])
+  })
+
+  it('counts the messages an earlier marker stands for in the new marker', async () => {
+    const messages = conversation(3)
+    messages[1] = new Message({
+      role: 'assistant',
+      content: [new TextBlock('a1'), offloadPlaceholder('drop', formatDroppedMessages(4), undefined, 4)],
+    })
+    const strategy = Offload.drop('*').when({ contextUtilization: '50%' })
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+
+    expect(textsOf(messages)).toEqual([['q1'], ['a3', '[Dropped: 8 messages]']])
+    expect(placeholdersIn(messages)).toStrictEqual([{ method: 'drop', removedMessages: 8 }])
   })
 
   it('message-level starts with user message after operation', async () => {
@@ -1287,7 +1301,7 @@ describe('truncate whole messages', () => {
     }
   )
 
-  it("elides a message carrying another strategy's marker for removed messages", async () => {
+  it("elides another strategy's marker for removed messages, counting the messages it stands for", async () => {
     const messages = history()
     messages[3] = new Message({
       role: 'assistant',
@@ -1301,7 +1315,7 @@ describe('truncate whole messages', () => {
       ['task'],
       [pad('m1')],
       [pad('m2')],
-      ['[... 7 messages elided ...]'],
+      ['[... 9 messages elided ...]'],
       [pad('m10')],
     ])
   })
@@ -1320,7 +1334,7 @@ describe('truncate whole messages', () => {
       ['task'],
       [pad('m1')],
       [pad('m2')],
-      ['[... 7 messages elided ...]'],
+      ['[... 9 messages elided ...]'],
       [pad('m10')],
     ])
   })
