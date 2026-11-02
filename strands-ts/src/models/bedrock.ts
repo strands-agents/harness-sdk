@@ -501,6 +501,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       warnOnce(logger, defaultMaxTokensWarningMessage(maxTokens))
     }
 
+    // An application inference profile id is opaque, so nothing pins maxTokens unless the user does.
+    if (this._config.modelId?.includes(':application-inference-profile/') && maxTokens === undefined) {
+      warnOnce(
+        logger,
+        `model_id=<${this._config.modelId}> | application inference profile is not in the model info, so no maxTokens is sent and Bedrock falls back to 4096 output tokens | set maxTokens or modelInfo explicitly`
+      )
+    }
+
     // Build user agent string (extend if provided, otherwise use SDK identifier)
     const customUserAgent = clientConfig?.customUserAgent
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
