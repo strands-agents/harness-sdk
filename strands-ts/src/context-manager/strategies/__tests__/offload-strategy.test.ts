@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { EmergencyTruncateStrategy } from '../offload/base.js'
-import { offloadPlaceholder } from '../../placeholder.js'
+import { formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
 import type { OffloadConditions, Percent } from '../offload/conditions.js'
 import { OffloadTargetMatcher } from '../offload/target.js'
@@ -1292,6 +1292,25 @@ describe('truncate whole messages', () => {
     messages[3] = new Message({
       role: 'assistant',
       content: [offloadPlaceholder('summarize', pad('summary'), undefined, 3)],
+    })
+    const strategy = Offload.truncate('*', { previewTokens: 40 }).when({ contextUtilization: '50%' })
+
+    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
+
+    expect(textsOf(messages)).toEqual([
+      ['task'],
+      [pad('m1')],
+      [pad('m2')],
+      ['[... 7 messages elided ...]'],
+      [pad('m10')],
+    ])
+  })
+
+  it('elides a message that holds content alongside its own earlier marker', async () => {
+    const messages = history()
+    messages[3] = new Message({
+      role: 'assistant',
+      content: [new TextBlock(pad('m3')), offloadPlaceholder('truncate', formatElided(2), undefined, 2)],
     })
     const strategy = Offload.truncate('*', { previewTokens: 40 }).when({ contextUtilization: '50%' })
 

@@ -70,8 +70,10 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     if (this._conditions.blockThreshold) return this._shortenEach(context)
 
-    // Skipping earlier markers lets a pass with nothing new to elide return false instead of re-eliding them.
-    const eligible = (await this._getEligibleMessages(context)).filter((message) => !carriesElisionMarker(message))
+    // Skipping messages that are only earlier markers lets a pass with nothing new to elide return false.
+    const eligible = (await this._getEligibleMessages(context)).filter(
+      (message) => !message.content.every(isElisionMarker)
+    )
     const middle = await this._selectMiddle(eligible, context.agent)
     return removeMessages(context.messages, middle, async ({ length }) => formatElided(length), 'truncate', this._stash)
   }
@@ -121,13 +123,13 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   }
 }
 
-/** Whether a message carries a placeholder truncate left where it elided messages; other methods' don't count. */
-function carriesElisionMarker(message: Message): boolean {
-  return message.content.some((block) => {
-    if (!isOffloaded(block)) return false
-    const { method, removedMessages } = block.metadata.offloaded
-    return method === 'truncate' && removedMessages !== undefined
-  })
+/** Whether a block is the marker truncate left where it elided messages; other methods' markers don't count. */
+function isElisionMarker(block: ContentBlock): boolean {
+  return (
+    isOffloaded(block) &&
+    block.metadata.offloaded.method === 'truncate' &&
+    block.metadata.offloaded.removedMessages !== undefined
+  )
 }
 
 /** How many leading messages fit within `budget` tokens. */
