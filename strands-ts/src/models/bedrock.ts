@@ -1025,9 +1025,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       request.additionalModelResponseFieldPaths = this._config.additionalResponseFieldPaths
     }
 
-    // Add additional args (spread them into the request for forward compatibility)
+    // Add additional args (spread them into the request for forward compatibility); an inferenceConfig
+    // in them extends the built one per key, so it does not drop the default maxTokens.
     if (this._config.additionalArgs) {
-      Object.assign(request, this._config.additionalArgs)
+      const { inferenceConfig, ...additionalArgs } = this._config.additionalArgs as Record<string, JSONValue>
+      Object.assign(request, additionalArgs)
+      if (inferenceConfig) {
+        request.inferenceConfig = { ...request.inferenceConfig, ...(inferenceConfig as InferenceConfiguration) }
+      }
     }
 
     // Add guardrail configuration
