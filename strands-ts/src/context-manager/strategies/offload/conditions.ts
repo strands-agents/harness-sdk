@@ -18,7 +18,7 @@ export type Percent = `${number}%`
  * Conditions that determine when and how an offload strategy fires.
  *
  * - `contextUtilization` sets when the strategy fires. `'80%'` fires at 80% of the context window; a whole number of
- *   1,000 or more fires at that many conversation tokens, and throws if it exceeds the model's `contextWindowLimit`.
+ *   1,000 or more fires at that many conversation tokens, and throws if it exceeds the model's context window.
  * - `blockThreshold` sets how large each block, or each message for target `'*'`, must be to act on. A whole number
  *   selects content larger than that many tokens; `'5%'` selects content larger than 5% of the context window (10,000
  *   tokens of a 200,000-token window).
@@ -41,7 +41,7 @@ export type Percent = `${number}%`
 export interface OffloadConditions {
   /**
    * Context usage at or above which the strategy fires: `'80%'` of the context window, or a whole number of 1,000 or
-   * more for conversation tokens, at most the model's `contextWindowLimit`.
+   * more for conversation tokens, at most the model's context window.
    */
   contextUtilization?: number | Percent
 
@@ -136,9 +136,9 @@ function formatConditionValue(raw: unknown): string {
   return typeof raw === 'string' ? `"${raw}"` : String(raw)
 }
 
-/** The model's context window limit, falling back to the default `estimateUtilization` uses. */
+/** The model's context window, falling back to the default `estimateUtilization` uses. */
 function effectiveWindowLimit(agent: LocalAgent): number {
-  return agent.model.getConfig().contextWindowLimit || DEFAULT_CONTEXT_WINDOW_LIMIT
+  return agent.model.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
 }
 
 /**
@@ -203,12 +203,12 @@ export class ResolvedConditions {
   /**
    * Checks a token-count `contextUtilization` fits the model's context window.
    *
-   * @throws Error when it is larger than the model's `contextWindowLimit`
+   * @throws Error when it is larger than the model's context window
    */
   checkFits(agent: LocalAgent): void {
     const utilization = this.contextUtilization
     if (!utilization || utilization.isShare) return
-    const limit = agent.model.getConfig().contextWindowLimit
+    const limit = agent.model.modelInfo.limits?.contextWindow
     if (!limit) {
       logger.warn(
         `contextUtilization=<${utilization.value}> | contextWindowLimit is not set on the model, skipping the context window check | set contextWindowLimit in your model config`

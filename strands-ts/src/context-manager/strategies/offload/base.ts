@@ -170,7 +170,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * @param stash - The stash offloaded content is stored in
    * @throws Error when a whole-message strategy has none of `contextUtilization`, `blockThreshold`, or
    *   `preserveRecent`, a `'media'` strategy has neither `contextUtilization` nor `preserveRecent`, or
-   *   `contextUtilization` is a token count larger than the model's `contextWindowLimit`
+   *   `contextUtilization` is a token count larger than the model's context window
    */
   init(agent: LocalAgent, stash?: Stash): void {
     this._stash = stash

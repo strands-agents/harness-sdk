@@ -65,7 +65,7 @@ function makeContext(
 ): ContextState {
   const model = {
     countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs),
-    getConfig: () => (contextWindowLimit === undefined ? {} : { contextWindowLimit }),
+    modelInfo: contextWindowLimit === undefined ? {} : { limits: { contextWindow: contextWindowLimit } },
   }
   const agent = createMockAgent({ messages, extra: { model } as unknown as Partial<Agent> })
   return {
@@ -99,6 +99,17 @@ describe('Offload.truncate', () => {
   it('accepts on init a percent threshold above previewTokens', () => {
     const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: '6%' })
     expect(() => strategy.init!(makeContext([], 0.5, false, 10_000).agent)).not.toThrow()
+  })
+
+  it('measures a percent threshold against the context window in modelInfo', () => {
+    const model = new MockMessageModel()
+    model.updateConfig({ modelInfo: { limits: { contextWindow: 10_000 } } })
+    const agent = createMockAgent({ extra: { model } as Partial<Agent> })
+    const strategy = Offload.truncate('toolResults', { previewTokens: 500 }).when({ blockThreshold: '5%' })
+
+    expect(() => strategy.init!(agent)).toThrow(
+      'blockThreshold (500 tokens of the context window) must be greater than previewTokens (500)'
+    )
   })
 
   it('truncates large tool results', async () => {
