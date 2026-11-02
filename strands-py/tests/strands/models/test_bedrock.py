@@ -590,6 +590,38 @@ def test_format_request_leaves_max_tokens_unset_for_an_unknown_model(bedrock_cli
     assert model.format_request(messages)["inferenceConfig"] == {}
 
 
+_APP_PROFILE_ARN = "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123xyz"
+
+
+def test_init_warns_when_an_application_inference_profile_has_no_max_tokens(bedrock_client, messages):
+    """https://github.com/strands-agents/harness-sdk/issues/5754"""
+    _ = bedrock_client
+
+    with pytest.warns(UserWarning, match="application inference profile is not in the model info"):
+        model = BedrockModel(model_id=_APP_PROFILE_ARN)
+
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_id": _APP_PROFILE_ARN, "max_tokens": 1},
+        {"model_id": _APP_PROFILE_ARN, "max_tokens": None},
+        {"model_id": _APP_PROFILE_ARN, "model_info": ModelInfo(limits=ModelLimits(max_output_tokens=2_000))},
+        {"model_id": "arn:aws:bedrock:us-west-2:123456789012:inference-profile/global.anthropic.claude-sonnet-4-6"},
+        {"model_id": "unknown.model-v1:0"},
+    ],
+    ids=["explicit max_tokens", "explicit None", "model_info override", "system inference profile", "unknown model"],
+)
+def test_init_does_not_warn_about_application_inference_profiles_otherwise(bedrock_client, captured_warnings, config):
+    _ = bedrock_client
+
+    BedrockModel(**config)
+
+    assert all("application inference profile" not in str(w.message) for w in captured_warnings)
+
+
 def test_format_request_explicit_max_tokens_wins_over_the_model_info_output_limit(bedrock_client, messages):
     _ = bedrock_client
     model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=1)
