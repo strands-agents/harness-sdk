@@ -1,5 +1,275 @@
 # Strands Agents Changelog
 
+## SDK Python v1.63.0 — 2026-10-30
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.63.0 · Package: https://pypi.org/project/strands-agents/1.63.0/
+
+### Features
+- consolidate shared agent tool streaming logic [hil, persistence] (https://github.com/strands-agents/harness-sdk/pull/5079)
+- enforce invoke limits and usage accounting across the whole agent tree (Python port of #4667) [multiagent, agent] (https://github.com/strands-agents/harness-sdk/pull/5288)
+- add Python tool registry removal [devx, tool] (https://github.com/strands-agents/harness-sdk/pull/5444)
+- add graph tool in Python [multiagent, tool] (https://github.com/strands-agents/harness-sdk/pull/5131)
+- add edit tool, deprecate file\_editor [tool] (https://github.com/strands-agents/harness-sdk/pull/5317)
+- add DecisionModel primitive and LLMDecisionModel [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/5125)
+- add write tool (py) [tool] (https://github.com/strands-agents/harness-sdk/pull/5549)
+- accept DecisionModel as HumanInTheLoop risk classifier [model, hil] (https://github.com/strands-agents/harness-sdk/pull/5588)
+- add read tool in Python [tool, server] (https://github.com/strands-agents/harness-sdk/pull/5548)
+- add structured output attempt limits [structured-output, agent] (https://github.com/strands-agents/harness-sdk/pull/4926)
+- add Model.model\_info with capabilities and limits (Python) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5627)
+- default Bedrock maxTokens to the model info output limit (Python + TypeScript) [model] (https://github.com/strands-agents/harness-sdk/pull/5645)
+
+### Fixes
+- log unsupported-block skips once per request [model] (https://github.com/strands-agents/harness-sdk/pull/5319)
+- settle cancelled background task executions [async, agent] (https://github.com/strands-agents/harness-sdk/pull/5211)
+- add Mistral Medium 3.5 context window and integ smoke test (py) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5393)
+- add gpt-oss context windows and integ coverage (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5416)
+- add Gemini 3.8 Flash context window and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5392)
+- reject blank prompts before they enter agent history [devx, agent] (https://github.com/strands-agents/harness-sdk/pull/5434)
+- add Mistral Large 4 context window and integ smoke test (py) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5396)
+- add Gemini 4 Argon context window and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5388)
+- add Bedrock Mistral context windows and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5400)
+- add OpenAI chat-latest context window and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5411)
+- add Ministral 3 context windows and integ smoke test (py) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5394)
+- add Bedrock Gemma 4 context windows and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5415)
+- add Mistral Small 4 context window and integ smoke test (py) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5395)
+- add Bedrock Grok 4.x context windows and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5398)
+- add Codestral 25.08 context window and integ smoke test (py) [model] (https://github.com/strands-agents/harness-sdk/pull/5397)
+- add Bedrock OpenAI GPT 5.4/5.5/5.6/6/6.1 context windows (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5453)
+- grant the integ role the new smoke-test Bedrock models [model] (https://github.com/strands-agents/harness-sdk/pull/5506)
+- make integ test metrics and dashboards trustworthy (https://github.com/strands-agents/harness-sdk/pull/5503)
+- grant the integ role the global Claude Haiku 4.5 profile [model] (https://github.com/strands-agents/harness-sdk/pull/5508)
+- strip trailing slash from S3Storage prefix in Python [persistence] (https://github.com/strands-agents/harness-sdk/pull/5551)
+- map a content\_filter finish reason to content\_filtered [model] (https://github.com/strands-agents/harness-sdk/pull/5338)
+- resume a graph node interrupted on revisit after session restore [multiagent, hil] (https://github.com/strands-agents/harness-sdk/pull/5336)
+- handle Mistral list content as reasoning and text blocks (py) [model] (https://github.com/strands-agents/harness-sdk/pull/5487)
+- never stash or serve offload previews as originals (py + ts) [context, persistence] (https://github.com/strands-agents/harness-sdk/pull/5626)
+- ignore pending tool execution when interrupt state is not activated [hil] (https://github.com/strands-agents/harness-sdk/pull/5628)
+- clear pending interrupts when a graph or swarm invocation fails [multiagent, hil] (https://github.com/strands-agents/harness-sdk/pull/5633)
+- gate trusted tools on enableTrust and let live answers win [hil] (https://github.com/strands-agents/harness-sdk/pull/5641)
+- recognize Bedrock OpenAI Daybreak model ids (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5538)
+- map BLOCKLIST, PROHIBITED\_CONTENT and SPII to content\_filtered [model, interventions] (https://github.com/strands-agents/harness-sdk/pull/5517)
+- head+tail ContextOffloader preview; never drop a matched line in search [context] (https://github.com/strands-agents/harness-sdk/pull/5602)
+- summarizing conversation manager falls back to truncation instead of failing every turn [context] (https://github.com/strands-agents/harness-sdk/pull/5603)
+- add GPT-6.1 Terra context window (py + ts + cli) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5563)
+- run ContextOffloader result rewrite after user AfterToolCall hooks [context, hooks] (https://github.com/strands-agents/harness-sdk/pull/5601)
+- stop thought signatures from splitting streamed answer text [model] (https://github.com/strands-agents/harness-sdk/pull/5662)
+- keep Bedrock auto caching on for Claude ids the model info does not list (Python + TypeScript) [model] (https://github.com/strands-agents/harness-sdk/pull/5697)
+- summarizer fallback truncates the largest text blocks first, not every oversized block [context] (https://github.com/strands-agents/harness-sdk/pull/5691)
+
+### Other
+- bump re-actors/alls-green from 1.2.2 to 1.3.0 (https://github.com/strands-agents/harness-sdk/pull/3963)
+- apply area-catalog label to PRs touching catalog entries (https://github.com/strands-agents/harness-sdk/pull/5334)
+- bump actions/upload-artifact from 7.0.1 to 7.0.2 (https://github.com/strands-agents/harness-sdk/pull/5099)
+- bump actions/download-artifact from 8.0.1 to 8.0.2 (https://github.com/strands-agents/harness-sdk/pull/5097)
+- bump cedarpy from 4.12.0 to 4.12.2 in /strands-py (https://github.com/strands-agents/harness-sdk/pull/5227)
+- bump astral-sh/setup-uv from 10.0.1 to 10.3.0 (https://github.com/strands-agents/harness-sdk/pull/5098)
+- update mcp requirement from \<2.2,\>=1.23.0 to \>=1.23.0,\<2.4 in /strands-py (https://github.com/strands-agents/harness-sdk/pull/4912)
+- run harness tests against the local SDK on SDK changes (https://github.com/strands-agents/harness-sdk/pull/5333)
+- fix!(session): raise when context\_manager is used with a RepositorySessionManager [context, sessions] (https://github.com/strands-agents/harness-sdk/pull/5446)
+- enforce TypeScript formatting (https://github.com/strands-agents/harness-sdk/pull/5468)
+- one parametrized model smoke table per SDK for the 2026-10 catalog batch [model] (https://github.com/strands-agents/harness-sdk/pull/5452)
+- close superseded release announcements (https://github.com/strands-agents/harness-sdk/pull/5471)
+- add red teaming launch post for Strands Evals (https://github.com/strands-agents/harness-sdk/pull/5543)
+- align tool deprecation guidance with strands-py warn rules (https://github.com/strands-agents/harness-sdk/pull/5579)
+- stop referencing strands-agents-tools (https://github.com/strands-agents/harness-sdk/pull/5322)
+- cover harness, CLI, and new SDK subsystems in issue classifier (https://github.com/strands-agents/harness-sdk/pull/5592)
+- bump cedar-policy-mcp-schema-generator from 0.6.1 to 0.7.0 in /strands-py (https://github.com/strands-agents/harness-sdk/pull/5524)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/5519)
+- bump astral-sh/setup-uv from 10.3.0 to 10.3.2 (https://github.com/strands-agents/harness-sdk/pull/5518)
+- paginate issue events and comments in auto-close (https://github.com/strands-agents/harness-sdk/pull/5607)
+- update openai requirement from \<3.0.0,\>=1.68.0 to \>=1.68.0,\<4.0.0 in /strands-py (https://github.com/strands-agents/harness-sdk/pull/5522)
+- pin region and rerun the cache test [model] (https://github.com/strands-agents/harness-sdk/pull/5624)
+- read Node from .node-version and raise it to 22.23.4 (https://github.com/strands-agents/harness-sdk/pull/5616)
+- warn that onError proceed fails open [interventions] (https://github.com/strands-agents/harness-sdk/pull/5643)
+- pick Node for previews independently of the PR branch (https://github.com/strands-agents/harness-sdk/pull/5638)
+- raise the TypeScript integ metrics test-name cap to 2000 (https://github.com/strands-agents/harness-sdk/pull/5646)
+
+## SDK TypeScript v1.23.0 — 2026-10-30
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.23.0 · Package: https://www.npmjs.com/package/@strands-agents/sdk/v/1.23.0
+
+### Features
+- persist subagent and swarm interrupts on the parent in TypeScript [multiagent, hil] (https://github.com/strands-agents/harness-sdk/pull/5330)
+- accept DecisionModel as HumanInTheLoop risk classifier [hil, interventions] (https://github.com/strands-agents/harness-sdk/pull/5267)
+- support request-wide limits on Graph and Swarm [multiagent, model] (https://github.com/strands-agents/harness-sdk/pull/5306)
+- add System One providers [model] (https://github.com/strands-agents/harness-sdk/pull/5240)
+- add S3 Vectors search strategy for S3Storage [persistence] (https://github.com/strands-agents/harness-sdk/pull/3967)
+- add Model.info with capabilities and limits (TypeScript) [model] (https://github.com/strands-agents/harness-sdk/pull/5313)
+- port edit tool to TypeScript, deprecate fileEditor [tool] (https://github.com/strands-agents/harness-sdk/pull/5582)
+- port write tool to TypeScript [tool] (https://github.com/strands-agents/harness-sdk/pull/5583)
+- port read tool to TypeScript [tool] (https://github.com/strands-agents/harness-sdk/pull/5614)
+- add graph tool in TypeScript [multiagent, tool] (https://github.com/strands-agents/harness-sdk/pull/5467)
+- use agent.cancel() to stop the event loop (TypeScript) [language, agent] (https://github.com/strands-agents/harness-sdk/pull/4834)
+- add structured output attempt limits [structured-output, agent] (https://github.com/strands-agents/harness-sdk/pull/4926)
+- default Bedrock maxTokens to the model info output limit (Python + TypeScript) [model] (https://github.com/strands-agents/harness-sdk/pull/5645)
+
+### Fixes
+- add gpt-oss context windows and integ coverage (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5416)
+- add Gemini 3.8 Flash context window and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5392)
+- reject blank prompts before they enter agent history [devx, agent] (https://github.com/strands-agents/harness-sdk/pull/5434)
+- add Gemini 4 Argon context window and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5388)
+- add Bedrock Mistral context windows and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5400)
+- add OpenAI chat-latest context window and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5411)
+- add Bedrock Gemma 4 context windows and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5415)
+- add Bedrock Grok 4.x context windows and integ smoke tests (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5398)
+- add Bedrock OpenAI GPT 5.4/5.5/5.6/6/6.1 context windows (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5453)
+- let providers enforce structured output when a model cannot be forced [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/5326)
+- report aborted tools as cancelled [async, tool] (https://github.com/strands-agents/harness-sdk/pull/5433)
+- grant the integ role the new smoke-test Bedrock models [model] (https://github.com/strands-agents/harness-sdk/pull/5506)
+- make integ test metrics and dashboards trustworthy (https://github.com/strands-agents/harness-sdk/pull/5503)
+- grant the integ role the global Claude Haiku 4.5 profile [model] (https://github.com/strands-agents/harness-sdk/pull/5508)
+- tighten URL scheme filtering in web fetch and diagram comment stripping [tool] (https://github.com/strands-agents/harness-sdk/pull/5507)
+- run executeCode tests with node instead of python [server] (https://github.com/strands-agents/harness-sdk/pull/5541)
+- stop skips and shared TS names skewing flaky-test metrics (https://github.com/strands-agents/harness-sdk/pull/5529)
+- preserve structured output before history offloading [context, structured-output] (https://github.com/strands-agents/harness-sdk/pull/5429)
+- never stash or serve offload previews as originals (py + ts) [context, persistence] (https://github.com/strands-agents/harness-sdk/pull/5626)
+- ignore pending tool execution when interrupt state is not activated [hil] (https://github.com/strands-agents/harness-sdk/pull/5628)
+- gate trusted tools on enableTrust and let live answers win [hil] (https://github.com/strands-agents/harness-sdk/pull/5641)
+- recognize Bedrock OpenAI Daybreak model ids (py + ts) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5538)
+- add GPT-6.1 Terra context window (py + ts + cli) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5563)
+- keep Bedrock auto caching on for Claude ids the model info does not list (Python + TypeScript) [model] (https://github.com/strands-agents/harness-sdk/pull/5697)
+
+### Other
+- bump re-actors/alls-green from 1.2.2 to 1.3.0 (https://github.com/strands-agents/harness-sdk/pull/3963)
+- bump hono from 4.13.8 to 4.13.13 (https://github.com/strands-agents/harness-sdk/pull/5302)
+- apply area-catalog label to PRs touching catalog entries (https://github.com/strands-agents/harness-sdk/pull/5334)
+- bump actions/upload-artifact from 7.0.1 to 7.0.2 (https://github.com/strands-agents/harness-sdk/pull/5099)
+- bump actions/download-artifact from 8.0.1 to 8.0.2 (https://github.com/strands-agents/harness-sdk/pull/5097)
+- bump the production-minor group across 1 directory with 2 updates (https://github.com/strands-agents/harness-sdk/pull/5133)
+- bump astral-sh/setup-uv from 10.0.1 to 10.3.0 (https://github.com/strands-agents/harness-sdk/pull/5098)
+- bump qs from 6.15.2 to 6.16.1 (https://github.com/strands-agents/harness-sdk/pull/4123)
+- run harness tests against the local SDK on SDK changes (https://github.com/strands-agents/harness-sdk/pull/5333)
+- enforce TypeScript formatting (https://github.com/strands-agents/harness-sdk/pull/5468)
+- one parametrized model smoke table per SDK for the 2026-10 catalog batch [model] (https://github.com/strands-agents/harness-sdk/pull/5452)
+- close superseded release announcements (https://github.com/strands-agents/harness-sdk/pull/5471)
+- add red teaming launch post for Strands Evals (https://github.com/strands-agents/harness-sdk/pull/5543)
+- align tool deprecation guidance with strands-py warn rules (https://github.com/strands-agents/harness-sdk/pull/5579)
+- stop referencing strands-agents-tools (https://github.com/strands-agents/harness-sdk/pull/5322)
+- cover harness, CLI, and new SDK subsystems in issue classifier (https://github.com/strands-agents/harness-sdk/pull/5592)
+- bump @aws-sdk/client-bedrock-runtime from 3.1152.0 to 3.1154.0 in the production-minor group across 1 directory (https://github.com/strands-agents/harness-sdk/pull/5572)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/5519)
+- bump astral-sh/setup-uv from 10.3.0 to 10.3.2 (https://github.com/strands-agents/harness-sdk/pull/5518)
+- paginate issue events and comments in auto-close (https://github.com/strands-agents/harness-sdk/pull/5607)
+- bump zod from 4.6.5 to 4.6.7 (https://github.com/strands-agents/harness-sdk/pull/5509)
+- bump fast-uri from 3.1.8 to 3.1.9 (https://github.com/strands-agents/harness-sdk/pull/5510)
+- bump @modelcontextprotocol/sdk from 1.30.0 to 1.32.0 (https://github.com/strands-agents/harness-sdk/pull/5282)
+- read Node from .node-version and raise it to 22.23.4 (https://github.com/strands-agents/harness-sdk/pull/5616)
+- warn that onError proceed fails open [interventions] (https://github.com/strands-agents/harness-sdk/pull/5643)
+- pick Node for previews independently of the PR branch (https://github.com/strands-agents/harness-sdk/pull/5638)
+- raise the TypeScript integ metrics test-name cap to 2000 (https://github.com/strands-agents/harness-sdk/pull/5646)
+- update dev dependencies and move tests to vitest 5 (https://github.com/strands-agents/harness-sdk/pull/5617)
+
+## Evals v1.8.0 — 2026-10-30
+Release: https://github.com/strands-agents/evals/releases/tag/v1.8.0 · Package: https://pypi.org/project/strands-agents-evals/1.8.0/
+
+### Features
+- add CrescendoStrategy(stop\_on\_tool\_call=) [redteam] (https://github.com/strands-agents/evals/pull/472)
+- run a case's evaluators concurrently [core, evaluators] (https://github.com/strands-agents/evals/pull/467)
+
+### Other
+- update ruff requirement from \<0.17.0,\>=0.13.0 to \>=0.13.0,\<0.18.0 (https://github.com/strands-agents/evals/pull/427)
+- bump pypa/gh-action-pypi-publish from 1.14.2 to 1.14.3 (https://github.com/strands-agents/evals/pull/473)
+- drop unused strands-agents-tools dependency (https://github.com/strands-agents/evals/pull/471)
+
+## Harness TypeScript v0.3.3 — 2026-10-30
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-typescript/v0.3.3 · Package: https://www.npmjs.com/package/@strands-agents/harness/v/0.3.3
+
+### Features
+- default Bedrock maxTokens to the model info output limit (Python + TypeScript) [model] (https://github.com/strands-agents/harness-sdk/pull/5645)
+
+### Other
+- stop the legacy claude 3 max tokens test depending on an unreleased SDK [harness] (https://github.com/strands-agents/harness-sdk/pull/5701)
+
+## Harness Python v0.3.3 — 2026-10-29
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.3.3 · Package: https://pypi.org/project/strands-harness/0.3.3/
+
+### Fixes
+- report the real working directory on Windows [server] (https://github.com/strands-agents/harness-sdk/pull/5473)
+- make Gemini effort levels per model; Argon and 3.8 Flash reject minimal (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5456)
+- grant the integ role the new smoke-test Bedrock models [model] (https://github.com/strands-agents/harness-sdk/pull/5506)
+- make integ test metrics and dashboards trustworthy (https://github.com/strands-agents/harness-sdk/pull/5503)
+- grant the integ role the global Claude Haiku 4.5 profile [model] (https://github.com/strands-agents/harness-sdk/pull/5508)
+- leave an already-installed tracer provider and its propagators alone [otel] (https://github.com/strands-agents/harness-sdk/pull/5481)
+- match Bedrock GPT effort levels per model and extend the gates to Daybreak ids (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5485)
+
+### Other
+- run harness tests against the local SDK on SDK changes (https://github.com/strands-agents/harness-sdk/pull/5333)
+- enforce TypeScript formatting (https://github.com/strands-agents/harness-sdk/pull/5468)
+- close superseded release announcements (https://github.com/strands-agents/harness-sdk/pull/5471)
+- add red teaming launch post for Strands Evals (https://github.com/strands-agents/harness-sdk/pull/5543)
+- align tool deprecation guidance with strands-py warn rules (https://github.com/strands-agents/harness-sdk/pull/5579)
+- cover harness, CLI, and new SDK subsystems in issue classifier (https://github.com/strands-agents/harness-sdk/pull/5592)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/5519)
+- bump astral-sh/setup-uv from 10.3.0 to 10.3.2 (https://github.com/strands-agents/harness-sdk/pull/5518)
+- paginate issue events and comments in auto-close (https://github.com/strands-agents/harness-sdk/pull/5607)
+- read Node from .node-version and raise it to 22.23.4 (https://github.com/strands-agents/harness-sdk/pull/5616)
+- pick Node for previews independently of the PR branch (https://github.com/strands-agents/harness-sdk/pull/5638)
+- raise the TypeScript integ metrics test-name cap to 2000 (https://github.com/strands-agents/harness-sdk/pull/5646)
+
+## Harness TypeScript v0.3.2 — 2026-10-29
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-typescript/v0.3.2 · Package: https://www.npmjs.com/package/@strands-agents/harness/v/0.3.2
+
+### Fixes
+- run web\_fetch's curl through PowerShell when the sandbox speaks it [tool, server] (https://github.com/strands-agents/harness-sdk/pull/5328)
+- report the real working directory on Windows [server] (https://github.com/strands-agents/harness-sdk/pull/5473)
+- make Gemini effort levels per model; Argon and 3.8 Flash reject minimal (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5456)
+- grant the integ role the new smoke-test Bedrock models [model] (https://github.com/strands-agents/harness-sdk/pull/5506)
+- make integ test metrics and dashboards trustworthy (https://github.com/strands-agents/harness-sdk/pull/5503)
+- grant the integ role the global Claude Haiku 4.5 profile [model] (https://github.com/strands-agents/harness-sdk/pull/5508)
+- match Bedrock GPT effort levels per model and extend the gates to Daybreak ids (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5485)
+
+### Other
+- bump re-actors/alls-green from 1.2.2 to 1.3.0 (https://github.com/strands-agents/harness-sdk/pull/3963)
+- apply area-catalog label to PRs touching catalog entries (https://github.com/strands-agents/harness-sdk/pull/5334)
+- bump actions/upload-artifact from 7.0.1 to 7.0.2 (https://github.com/strands-agents/harness-sdk/pull/5099)
+- bump actions/download-artifact from 8.0.1 to 8.0.2 (https://github.com/strands-agents/harness-sdk/pull/5097)
+- bump astral-sh/setup-uv from 10.0.1 to 10.3.0 (https://github.com/strands-agents/harness-sdk/pull/5098)
+- run harness tests against the local SDK on SDK changes (https://github.com/strands-agents/harness-sdk/pull/5333)
+- enforce TypeScript formatting (https://github.com/strands-agents/harness-sdk/pull/5468)
+- give the web\_fetch end-to-end test a 30 s timeout (https://github.com/strands-agents/harness-sdk/pull/5469)
+- close superseded release announcements (https://github.com/strands-agents/harness-sdk/pull/5471)
+- add red teaming launch post for Strands Evals (https://github.com/strands-agents/harness-sdk/pull/5543)
+- align tool deprecation guidance with strands-py warn rules (https://github.com/strands-agents/harness-sdk/pull/5579)
+- cover harness, CLI, and new SDK subsystems in issue classifier (https://github.com/strands-agents/harness-sdk/pull/5592)
+- bump the npm\_and\_yarn group across 6 directories with 8 updates (https://github.com/strands-agents/harness-sdk/pull/5512)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/5519)
+- bump astral-sh/setup-uv from 10.3.0 to 10.3.2 (https://github.com/strands-agents/harness-sdk/pull/5518)
+- paginate issue events and comments in auto-close (https://github.com/strands-agents/harness-sdk/pull/5607)
+- read Node from .node-version and raise it to 22.23.4 (https://github.com/strands-agents/harness-sdk/pull/5616)
+- pick Node for previews independently of the PR branch (https://github.com/strands-agents/harness-sdk/pull/5638)
+- raise the TypeScript integ metrics test-name cap to 2000 (https://github.com/strands-agents/harness-sdk/pull/5646)
+
+## Harness CLI v0.2.3 — 2026-10-29
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-cli/v0.2.3 · Package: https://www.npmjs.com/package/@strands-agents/cli/v/0.2.3
+
+### Fixes
+- complete the context window mirror against SDK 1.19.0 [context, model] (https://github.com/strands-agents/harness-sdk/pull/5454)
+- make Gemini effort levels per model; Argon and 3.8 Flash reject minimal (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5456)
+- grant the integ role the new smoke-test Bedrock models [model] (https://github.com/strands-agents/harness-sdk/pull/5506)
+- make integ test metrics and dashboards trustworthy (https://github.com/strands-agents/harness-sdk/pull/5503)
+- grant the integ role the global Claude Haiku 4.5 profile [model] (https://github.com/strands-agents/harness-sdk/pull/5508)
+- explain how to install PortAudio when PyAudio cannot load it [devx, bidirectional-streaming] (https://github.com/strands-agents/harness-sdk/pull/5494)
+- match Bedrock GPT effort levels per model and extend the gates to Daybreak ids (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5485)
+- add GPT-6.1 Terra context window (py + ts + cli) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5563)
+
+### Other
+- bump re-actors/alls-green from 1.2.2 to 1.3.0 (https://github.com/strands-agents/harness-sdk/pull/3963)
+- apply area-catalog label to PRs touching catalog entries (https://github.com/strands-agents/harness-sdk/pull/5334)
+- bump actions/upload-artifact from 7.0.1 to 7.0.2 (https://github.com/strands-agents/harness-sdk/pull/5099)
+- bump actions/download-artifact from 8.0.1 to 8.0.2 (https://github.com/strands-agents/harness-sdk/pull/5097)
+- bump astral-sh/setup-uv from 10.0.1 to 10.3.0 (https://github.com/strands-agents/harness-sdk/pull/5098)
+- run harness tests against the local SDK on SDK changes (https://github.com/strands-agents/harness-sdk/pull/5333)
+- enforce TypeScript formatting (https://github.com/strands-agents/harness-sdk/pull/5468)
+- close superseded release announcements (https://github.com/strands-agents/harness-sdk/pull/5471)
+- add red teaming launch post for Strands Evals (https://github.com/strands-agents/harness-sdk/pull/5543)
+- align tool deprecation guidance with strands-py warn rules (https://github.com/strands-agents/harness-sdk/pull/5579)
+- cover harness, CLI, and new SDK subsystems in issue classifier (https://github.com/strands-agents/harness-sdk/pull/5592)
+- bump the npm\_and\_yarn group across 6 directories with 8 updates (https://github.com/strands-agents/harness-sdk/pull/5512)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/5519)
+- bump astral-sh/setup-uv from 10.3.0 to 10.3.2 (https://github.com/strands-agents/harness-sdk/pull/5518)
+- paginate issue events and comments in auto-close (https://github.com/strands-agents/harness-sdk/pull/5607)
+- read Node from .node-version and raise it to 22.23.4 (https://github.com/strands-agents/harness-sdk/pull/5616)
+- pick Node for previews independently of the PR branch (https://github.com/strands-agents/harness-sdk/pull/5638)
+- raise the TypeScript integ metrics test-name cap to 2000 (https://github.com/strands-agents/harness-sdk/pull/5646)
+
 ## Harness Python v0.3.2 — 2026-10-22
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.3.2 · Package: https://pypi.org/project/strands-harness/0.3.2/
 

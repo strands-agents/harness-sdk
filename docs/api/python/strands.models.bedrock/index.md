@@ -47,7 +47,7 @@ Configuration options for Bedrock models.
 -   `guardrail_redact_output` - Flag to redact output if guardrail is triggered. Defaults to False.
 -   `guardrail_redact_output_message` - If a Bedrock Output guardrail triggers, replace output with this message.
 -   `guardrail_latest_message` - Flag to send only the lastest user message to guardrails. Defaults to False.
--   `max_tokens` - Maximum number of tokens to generate in the response
+-   `max_tokens` - Maximum number of tokens to generate in the response. Defaults to the model’s output limit from the model info (`model_info.limits.max_output_tokens`) when known; otherwise `maxTokens` is not sent and Bedrock’s per-model default applies. Pass `None` to opt out of the default and leave `maxTokens` unset.
 -   `model_id` - The Bedrock model ID (e.g., “global.anthropic.claude-sonnet-4-6”)
 -   `include_tool_result_status` - Flag to include status field in tool results. True includes status, False removes status, “auto” determines based on model\_id. Defaults to “auto”.
 -   `service_tier` - Service tier for the request, controlling the trade-off between latency and cost. Valid values: “default” (standard), “priority” (faster, premium), “flex” (cheaper, slower). Please check [https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html](https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html) for supported service tiers, models, and regions
@@ -71,7 +71,7 @@ def __init__(*,
              **model_config: Unpack[BedrockConfig])
 ```
 
-Defined in: [src/strands/models/bedrock.py:294](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L294)
+Defined in: [src/strands/models/bedrock.py:297](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L297)
 
 Initialize provider instance.
 
@@ -91,7 +91,7 @@ Initialize provider instance.
 def update_config(**model_config: Unpack[BedrockConfig]) -> None
 ```
 
-Defined in: [src/strands/models/bedrock.py:389](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L389)
+Defined in: [src/strands/models/bedrock.py:396](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L396)
 
 Update the Bedrock Model configuration with the provided arguments.
 
@@ -106,7 +106,7 @@ Update the Bedrock Model configuration with the provided arguments.
 def get_config() -> BedrockConfig
 ```
 
-Defined in: [src/strands/models/bedrock.py:401](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L401)
+Defined in: [src/strands/models/bedrock.py:408](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L408)
 
 Get the current Bedrock Model configuration.
 
@@ -126,7 +126,7 @@ def format_request(messages: Messages,
                    **kwargs: Any) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/bedrock.py:409](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L409)
+Defined in: [src/strands/models/bedrock.py:421](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L421)
 
 Format a Bedrock converse stream request.
 
@@ -154,7 +154,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/bedrock.py:1433](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1433)
+Defined in: [src/strands/models/bedrock.py:1446](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1446)
 
 Count tokens using Bedrock’s native CountTokens API.
 
@@ -186,7 +186,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1515](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1515)
+Defined in: [src/strands/models/bedrock.py:1528](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1528)
 
 Stream conversation with the Bedrock model.
 
@@ -219,7 +219,7 @@ def convert_non_streaming_to_streaming(response: dict[str, Any],
                                        **kwargs: Any) -> Iterable[StreamEvent]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1767](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1767)
+Defined in: [src/strands/models/bedrock.py:1780](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1780)
 
 Convert a non-streaming response to the streaming format.
 
@@ -243,7 +243,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1893](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1893)
+Defined in: [src/strands/models/bedrock.py:1906](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1906)
 
 Get structured output from the model.
 

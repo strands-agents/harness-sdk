@@ -32,7 +32,7 @@ This class provides an interface for implementing conversation management strate
 
 ConversationManager implements the HookProvider protocol, allowing derived classes to register hooks for agent lifecycle events. Derived classes that override register\_hooks must call the base implementation to ensure proper hook registration chain.
 
-The primary responsibility of a ConversationManager is overflow recovery: when the model encounters a context window overflow, :meth:`reduce_context` is called with `e` set and MUST reduce the history enough for the next model call to succeed.
+The primary responsibility of a ConversationManager is overflow recovery: when the model encounters a context window overflow, :meth:`reduce_context` is called with `e` set and MUST make progress reducing the history or re-raise; the agent retries the model call and calls it again while the overflow persists. Each retry nests one level deeper, so each call should remove a substantial amount, not one small piece.
 
 Subclasses can enable proactive compression by passing `proactive_compression` in the constructor. When enabled, the base class registers a `BeforeModelCallEvent` hook that checks projected input tokens against the model’s context window limit and calls :meth:`reduce_context` (without `e`) when the threshold is exceeded. This is a best-effort operation — errors are swallowed so the model call can still proceed.
 
@@ -56,7 +56,7 @@ def __init__(
 ) -> None
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L66)
+Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:67](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L67)
 
 Initialize the ConversationManager.
 
@@ -81,7 +81,7 @@ Initialize the ConversationManager.
 def register_hooks(registry: HookRegistry, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:97](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L97)
+Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:98](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L98)
 
 Register hooks for agent lifecycle events.
 
@@ -100,7 +100,7 @@ Derived classes that override this method must call the base implementation to e
 def restore_from_session(state: dict[str, Any]) -> list[Message] | None
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:152](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L152)
+Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:153](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L153)
 
 Restore the Conversation Manager’s state from a session.
 
@@ -118,7 +118,7 @@ Optional list of messages to prepend to the agents messages. By default returns 
 def get_state() -> dict[str, Any]
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:165](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L165)
+Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:166](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L166)
 
 Get the current state of a Conversation Manager as a Json serializable dictionary.
 
@@ -129,7 +129,7 @@ Get the current state of a Conversation Manager as a Json serializable dictionar
 def apply_management(agent: "Agent", **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:173](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L173)
+Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:174](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L174)
 
 Applies management strategy to the provided agent.
 
@@ -150,13 +150,13 @@ def reduce_context(agent: "Agent",
                    **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:190](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L190)
+Defined in: [src/strands/agent/conversation\_manager/conversation\_manager.py:191](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/conversation_manager/conversation_manager.py#L191)
 
 Reduce the conversation history.
 
 Called in two scenarios:
 
-1.  **Reactive** (e is set): A context window overflow occurred. The implementation MUST remove enough history for the next model call to succeed, or re-raise the error.
+1.  **Reactive** (e is set): A context window overflow occurred. The implementation MUST make progress reducing the history, or re-raise the error; the agent retries the model call and calls again while the overflow persists. Retries nest (one recursion level per round), so each call should remove a substantial amount.
 2.  **Proactive** (e is None): The compression threshold was exceeded. This is best-effort — returning without reduction or raising is acceptable; the model call proceeds regardless.
 
 Implementations should modify `agent.messages` in-place.
@@ -164,6 +164,6 @@ Implementations should modify `agent.messages` in-place.
 **Arguments**:
 
 -   `agent` - The agent whose conversation history will be reduced. This list is modified in-place.
--   `e` - The exception that triggered the context reduction, if any. When set, this is a reactive overflow recovery call — the implementation MUST reduce enough history for the next model call to succeed. When None, this is a proactive compression call — best-effort reduction to avoid hitting the context window limit.
+-   `e` - The exception that triggered the context reduction, if any. When set, this is a reactive overflow recovery call — the implementation MUST make progress reducing the history or re-raise. When None, this is a proactive compression call — best-effort reduction to avoid hitting the context window limit.
 -   `**kwargs` - Additional keyword arguments for future extensibility. The SDK passes
 -   `invocation_context` - the request this reduction runs for, if any; a nested call that joins it adds to the request’s usage, but the request’s limits don’t apply.

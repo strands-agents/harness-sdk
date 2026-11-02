@@ -6,10 +6,10 @@ The SDK estimates how much of the model’s context window is in use so it can t
 
 ## Context window limit
 
-The threshold check requires the model’s context window size. The SDK auto-populates `context_window_limit``contextWindowLimit` from built-in lookup tables for known models.
+The threshold check requires the model’s context window size. The SDK auto-populates `context_window_limit``contextWindowLimit` from the shared model info for known models.
 
 (( tab "Python" ))
-Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_defaults.py):
+Override it manually for models not in the [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json):
 
 ```python
 model = BedrockModel(
@@ -20,7 +20,7 @@ model = BedrockModel(
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
-Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/defaults.ts):
+Override it manually for models not in the [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json):
 
 ```typescript
 import { BedrockModel } from '@strands-agents/sdk'
@@ -34,7 +34,7 @@ const model = new BedrockModel({
 
 Inaccurate compression with default fallback
 
-If `context_window_limit``contextWindowLimit` is not set and the model ID is not in the built-in lookup table, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
+If `context_window_limit``contextWindowLimit` is not set and the model ID is not in the shared model info, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
 
 ## Token estimation
 
