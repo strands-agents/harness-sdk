@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../../../logging/logger.js'
+import { warnOnce } from '../../../logging/warn-once.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
 import {
   isOffloaded,
@@ -153,7 +154,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     this._conditions.checkFits(agent)
     if (!this._runsEagerly) return
     if (this._conditions.isEmpty) {
-      logger.warn(
+      warnOnce(
+        logger,
         `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
       )
     }

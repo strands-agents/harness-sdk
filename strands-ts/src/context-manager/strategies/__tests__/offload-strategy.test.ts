@@ -1148,9 +1148,10 @@ describe('granularity', () => {
 })
 
 describe('unconditioned strategy warning', () => {
-  it('warns on init for an unconditioned strategy that acts on arrival', () => {
+  it('warns once per process for an unconditioned strategy that acts on arrival', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
+    Offload.drop('assistantText').init!(createMockAgent())
     Offload.drop('assistantText').init!(createMockAgent())
 
     expect(warnSpy).toHaveBeenCalledExactlyOnceWith(
