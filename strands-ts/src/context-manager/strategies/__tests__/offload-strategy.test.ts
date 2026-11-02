@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Offload } from '../offload/index.js'
+import { DROPPED_MARKER, Offload } from '../offload/index.js'
 import {
   getOldestMatches,
   buildToolNameMap,
@@ -13,6 +13,7 @@ import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
+import { offloadPlaceholder } from '../../placeholder.js'
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   return new Message({
@@ -670,6 +671,48 @@ describe('placeholders carry offloaded metadata', () => {
     await Offload.truncate('toolResults').apply(makeContext(messages))
 
     expect(offloadedBlocks(messages)).toEqual([])
+  })
+})
+
+describe('placeholders are not offloaded again', () => {
+  const large = 'x'.repeat(2500 * 4 + 100)
+
+  function toolResultHolding(placeholder: TextBlock): Message {
+    return new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: 'tool-123', status: 'success', content: [placeholder] })],
+    })
+  }
+
+  it.each([
+    ['truncate', 'truncate', Offload.truncate('toolResults')],
+    ['truncate', 'summarize', Offload.truncate('toolResults')],
+    ['summarize', 'truncate', Offload.summarize('toolResults')],
+    ['drop', 'drop', Offload.drop('toolResults')],
+  ] as const)('%s leaves a tool result holding a %s placeholder alone', async (_, method, strategy) => {
+    const messages = [toolResultHolding(offloadPlaceholder(method, large))]
+    const before = messages.map((m) => m.toJSON())
+
+    expect(await strategy.apply(makeContext(messages))).toBe(false)
+    expect(messages.map((m) => m.toJSON())).toEqual(before)
+  })
+
+  it("drop replaces a tool result holding another method's placeholder", async () => {
+    const messages = [toolResultHolding(offloadPlaceholder('truncate', large))]
+
+    expect(await Offload.drop('toolResults').apply(makeContext(messages))).toBe(true)
+    expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([offloadPlaceholder('drop', DROPPED_MARKER)])
+  })
+
+  it('leaves a text block that is a placeholder alone', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q')] }),
+      new Message({ role: 'assistant', content: [offloadPlaceholder('summarize', large)] }),
+    ]
+    const before = messages.map((m) => m.toJSON())
+
+    expect(await Offload.truncate('*').apply(makeContext(messages))).toBe(false)
+    expect(messages.map((m) => m.toJSON())).toEqual(before)
   })
 })
 

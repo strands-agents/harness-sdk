@@ -4,7 +4,7 @@
  * Replaces content with a preview (head, tail, or head-tail).
  */
 
-import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { isOffloaded, JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
 import { offloadPlaceholder } from '../placeholder.js'
 
@@ -74,7 +74,7 @@ export function truncateToolResultBlock(block: ToolResultBlock, config?: Truncat
   const opaque: ToolResultContent[] = []
 
   for (const content of block.content) {
-    if (content instanceof TextBlock) {
+    if (content instanceof TextBlock && !isOffloaded(content)) {
       textual.push(content.text)
     } else if (content instanceof JsonBlock) {
       textual.push(JSON.stringify(content.toJSON()))
