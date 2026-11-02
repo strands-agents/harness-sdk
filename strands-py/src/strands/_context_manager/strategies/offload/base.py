@@ -43,7 +43,8 @@ class OffloadConditions(TypedDict, total=False):
     A number is a count in the condition's unit, and a ``"N%"`` string is a share of the whole.
     Target ``"*"`` acts on whole messages, and ``block_threshold`` measures each message. Drop removes
     them, summarize merges each contiguous run, and truncate elides the middle or, with a
-    ``block_threshold``, shortens each one. Any other target acts on individual blocks, and
+    ``block_threshold``, previews the blocks in each one that are larger than ``preview_tokens``,
+    so a message made of smaller blocks is left as it is. Any other target acts on individual blocks, and
     ``block_threshold`` measures each block.
 
     Attributes:

@@ -97,7 +97,8 @@ class TruncateStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Keep the head and tail of the old messages within ``preview_tokens`` and elide the middle.
 
-        With a ``block_threshold``, shortens each eligible message in place instead.
+        With a ``block_threshold``, previews the blocks larger than ``preview_tokens`` in each eligible
+        message instead.
         """
         if self._block_threshold is not None:
             return await self._shorten_each(context)
