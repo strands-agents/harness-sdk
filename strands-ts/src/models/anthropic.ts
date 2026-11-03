@@ -19,7 +19,12 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import { mergeModelInfo, type ModelInfo } from './model-info.js'
+import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import {
+  TURN_SCOPED_SYSTEM_BETA,
+  hasTurnScopedSystemMessage,
+  turnScopedSystemMessage,
+} from './turn-scoped-system-messages.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -65,38 +70,6 @@ const MAX_PAUSE_TURN_CONTINUATIONS = 10
  * `ephemeral` is the only cache type the Anthropic API supports.
  */
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
-
-/**
- * Beta that lets a mid-conversation system message carry `clear_at`.
- *
- * @see https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
- */
-const TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
-
-// Claude models that accept turn-scoped system messages, by undated id.
-const TURN_SCOPED_SYSTEM_MODELS = new Set([
-  'claude-fable-5',
-  'claude-fable-5-1',
-  'claude-haiku-5-5',
-  'claude-mythos-5',
-  'claude-mythos-5-1',
-  'claude-opus-4-8',
-  'claude-opus-5',
-  'claude-opus-5-5',
-  'claude-sonnet-5-5',
-])
-
-// Dated snapshots (`claude-opus-5-5-20260401`) share the undated model's support.
-const DATE_SUFFIX = /-\d{8}$/
-
-/**
- * A system message the model reads only until a later user message exists. The SDK types lack `clear_at`.
- */
-interface TurnScopedSystemMessage extends Anthropic.MessageParam {
-  role: 'system'
-  content: Anthropic.TextBlockParam[]
-  clear_at: 'next_user_message'
-}
 
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
@@ -308,11 +281,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * Adds whether the model accepts turn-scoped system messages, which carry injected text so that an
-   * `InjectedBlock` in history is cleared at the next user message instead of being rewritten.
+   * Adds `temporaryMessages` from the shared model info: this provider sends injected text as turn-scoped system
+   * messages to the models that accept them.
    */
   override get modelInfo(): ModelInfo {
-    const temporaryMessages = TURN_SCOPED_SYSTEM_MODELS.has((this.modelId ?? '').replace(DATE_SUFFIX, ''))
+    const temporaryMessages = lookupModelInfo(this.modelId ?? '').capabilities?.temporaryMessages
     return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
   }
 
@@ -635,7 +608,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _buildRequestOptions(request: Anthropic.MessageStreamParams): Anthropic.RequestOptions | undefined {
     const required = [
       ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
-      ...(request.messages.some((message) => 'clear_at' in message) ? [TURN_SCOPED_SYSTEM_BETA] : []),
+      ...(hasTurnScopedSystemMessage(request.messages) ? [TURN_SCOPED_SYSTEM_BETA] : []),
     ]
     let betas = this._config.betas ?? []
     // Request headers replace client headers of the same name, so betas set on the client are carried over.
@@ -940,7 +913,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    return withoutEmptyMessages(messages, formatted, this.modelInfo.capabilities?.temporaryMessages === true)
+    return requestMessages(messages, formatted, this.modelInfo.capabilities?.temporaryMessages === true)
   }
 
   private _isCacheableBlock(
@@ -1118,7 +1091,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return undefined
 
       case 'injectedBlock':
-        // Sent after its message by turnScopedSystemMessage, or as text by ModelProxy.
+        // Sent after its message as a turn-scoped system message, or as text by ModelProxy.
         return undefined
 
       default:
@@ -1254,7 +1227,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
  * @param temporaryMessages - Whether the model accepts turn-scoped system messages
  * @returns The messages to send
  */
-function withoutEmptyMessages(
+function requestMessages(
   messages: Message[],
   formatted: Anthropic.MessageParam[],
   temporaryMessages: boolean
@@ -1269,20 +1242,4 @@ function withoutEmptyMessages(
     if (!systemMessage || message.role !== 'user' || kept[index + 1]?.message.role === 'user') return [message]
     return [message, systemMessage]
   })
-}
-
-/**
- * The message's injected text as a system message the model reads only until a later user message exists, so the
- * stored history is sent unchanged on every later request. Never carries `cache_control`: a cleared message is not
- * part of any cache key.
- *
- * @param message - A message of the conversation
- * @returns The system message, or `undefined` when the message has no injected text
- */
-function turnScopedSystemMessage(message: Message): TurnScopedSystemMessage | undefined {
-  const content = message.content.flatMap((block): Anthropic.TextBlockParam[] =>
-    block.type === 'injectedBlock' ? [{ type: 'text', text: block.injected.text }] : []
-  )
-  if (content.length === 0) return undefined
-  return { role: 'system', content, clear_at: 'next_user_message' }
 }

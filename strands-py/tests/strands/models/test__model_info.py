@@ -34,7 +34,13 @@ _PACKAGE_COPY = pathlib.Path(__file__).parents[3] / "src" / "strands" / "models"
 
 _MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.:@-]*$")
 _LIMIT_KEYS = ("contextWindow", "maxOutputTokens")
-_BOOLEAN_CAPABILITY_KEYS = ("stateful", "forcedToolChoice", "nativeStructuredOutput", "serverSideSummary")
+_BOOLEAN_CAPABILITY_KEYS = (
+    "stateful",
+    "forcedToolChoice",
+    "nativeStructuredOutput",
+    "serverSideSummary",
+    "temporaryMessages",
+)
 
 
 def test_model_info_merge_returns_the_base_when_nothing_else_is_given():

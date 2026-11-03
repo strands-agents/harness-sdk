@@ -34,10 +34,10 @@ export interface ModelCapabilities {
   /** Whether the model can summarize conversation history server-side. */
   readonly serverSideSummary?: boolean | undefined
   /**
-   * Whether the provider can send injected text as a message the model reads only until the next user message,
-   * such as Anthropic's turn-scoped system messages. When `true`, an `InjectedBlock` reaches the provider as it
-   * is stored, so the provider must format it. Otherwise only the latest user message's injected blocks are sent,
-   * as text.
+   * Whether the model reads injected text as a message it sees only until the next user message, such as Anthropic's
+   * turn-scoped system messages. The shared data lists the models that accept them, and only a provider that sends
+   * them reports it. When `true`, an `InjectedBlock` reaches the provider as it is stored, so the provider must format
+   * it. Otherwise only the latest user message's injected blocks are sent, as text.
    */
   readonly temporaryMessages?: boolean | undefined
 }
@@ -132,6 +132,20 @@ export function lookupModel(modelId: string): ModelInfo | undefined {
  */
 export function lookupModelInfo(modelId: string): ModelInfo {
   return mergeModelInfo(lookupModel(modelId))
+}
+
+/**
+ * What the shared model info data knows about a model, for any provider. It leaves out `temporaryMessages`, which
+ * holds only for a provider that sends temporary messages; such a provider adds it from {@link lookupModelInfo}.
+ *
+ * @internal
+ * @param modelId - The model id to describe
+ * @returns What the data knows about the model for any provider; empty when it knows nothing
+ */
+export function lookupProviderNeutralModelInfo(modelId: string): ModelInfo {
+  const info = lookupModelInfo(modelId)
+  const { temporaryMessages: _temporaryMessages, ...capabilities } = info.capabilities ?? {}
+  return mergeModelInfo({ ...info, capabilities })
 }
 
 /**

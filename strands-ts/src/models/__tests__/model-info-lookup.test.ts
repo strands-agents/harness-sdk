@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT, lookupModelInfo, getContextWindowLimit, lookupModel } from '../model-info.js'
+import {
+  DEFAULT_CONTEXT_WINDOW_LIMIT,
+  lookupModelInfo,
+  lookupProviderNeutralModelInfo,
+  getContextWindowLimit,
+  lookupModel,
+} from '../model-info.js'
 import modelInfoData from '../model-info.json' with { type: 'json' }
 
 describe('shared model info data', () => {
@@ -42,6 +48,7 @@ describe('shared model info data', () => {
       forcedToolChoice: false,
       nativeStructuredOutput: true,
       serverSideSummary: true,
+      temporaryMessages: true,
     })
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
       capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
@@ -49,6 +56,14 @@ describe('shared model info data', () => {
     })
     expect(lookupModelInfo('claude-future-9')).toEqual({})
     expect(lookupModelInfo('')).toEqual({})
+  })
+
+  it('leaves temporaryMessages out of the facts for any provider', () => {
+    expect(lookupProviderNeutralModelInfo('claude-opus-5-5')).toEqual({
+      capabilities: { promptCaching: 'cachePoints', forcedToolChoice: false, nativeStructuredOutput: true },
+      limits: lookupModelInfo('claude-opus-5-5').limits,
+    })
+    expect(lookupProviderNeutralModelInfo('claude-future-9')).toEqual({})
   })
 
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
@@ -77,7 +92,7 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary'].includes(key))
+        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
       }

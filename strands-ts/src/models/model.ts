@@ -29,7 +29,7 @@ import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
-import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { lookupModelInfo, lookupProviderNeutralModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
 
 /**
@@ -384,7 +384,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, the `contextWindowLimit` config value, and
+   * ones winning: the shared model info for `modelId` (without `temporaryMessages`, which a provider
+   * that sends temporary messages adds), the `contextWindowLimit` config value, and
    * the `modelInfo` config override. Each read returns a new record, so do not compare reads by
    * reference.
    *
@@ -396,7 +397,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
     return mergeModelInfo(
-      lookupModelInfo(this.modelId ?? ''),
+      lookupProviderNeutralModelInfo(this.modelId ?? ''),
       { limits: { contextWindow: config.contextWindowLimit } },
       config.modelInfo
     )
