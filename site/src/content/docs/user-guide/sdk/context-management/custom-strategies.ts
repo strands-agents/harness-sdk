@@ -1,5 +1,6 @@
 import { Agent } from '@strands-agents/sdk'
 import { Offload } from '@strands-agents/sdk/experimental'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 
 async function basicConfig() {
   // --8<-- [start:basic_config]
@@ -34,6 +35,29 @@ async function summarize() {
     preserveRecent: 4,
   })
   // --8<-- [end:summarize]
+}
+
+async function nativeCompaction() {
+  // --8<-- [start:native_compaction]
+  const summarizer = new AnthropicModel({
+    modelId: 'claude-haiku-5-5',
+    // Opt in to on-demand compaction; the summary replaces message 0.
+    modelInfo: { capabilities: { serverSideCompaction: true } },
+  })
+  const agent = new Agent({
+    model: new AnthropicModel({ modelId: 'claude-sonnet-5-5' }),
+    auxModel: summarizer,
+    contextManager: {
+      strategies: [
+        Offload.summarize('*', {
+          systemPrompt:
+            'Summarize the conversation. Restate the original task word for word. Do not call tools.',
+        }).when({ utilization: 0.7, preserveRecent: 3 }),
+      ],
+    },
+  })
+  // --8<-- [end:native_compaction]
+  return agent
 }
 
 async function drop() {

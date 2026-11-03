@@ -24,6 +24,7 @@ export interface CannedReply {
 export class AnthropicWire {
   readonly requests: RecordedRequest[] = []
   private readonly _replies: CannedReply[] = []
+  private _responder: ((body: Record<string, unknown>) => CannedReply | undefined) | undefined
 
   /**
    * Queue replies, served in order.
@@ -33,6 +34,17 @@ export class AnthropicWire {
    */
   reply(...replies: CannedReply[]): this {
     this._replies.push(...replies)
+    return this
+  }
+
+  /**
+   * Answer requests from their parsed body instead of the queue; a request it returns nothing for throws.
+   *
+   * @param responder - Picks the reply for a request
+   * @returns This wire
+   */
+  respond(responder: (body: Record<string, unknown>) => CannedReply | undefined): this {
+    this._responder = responder
     return this
   }
 
@@ -63,7 +75,8 @@ export class AnthropicWire {
       headers[key] = value
     })
     this.requests.push({ path: url.pathname + url.search, headers, body: String(init?.body ?? '') })
-    const reply = this._replies.shift()
+    const body = String(init?.body ?? '')
+    const reply = this._responder ? this._responder(JSON.parse(body) as Record<string, unknown>) : this._replies.shift()
     if (!reply) throw new Error(`unmocked request to ${url.pathname}`)
     if (reply.status !== undefined && reply.status >= 400) {
       return new Response(JSON.stringify({ type: 'error', error: reply.error ?? {} }), {

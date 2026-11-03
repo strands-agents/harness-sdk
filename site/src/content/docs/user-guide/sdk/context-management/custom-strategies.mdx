@@ -9,6 +9,8 @@ sourceLinks:
   - path: strands-py/src/strands/_context_manager/strategies/offload/summarize.py
   - path: strands-ts/src/context-manager/strategies/offload/base.ts
   - path: strands-ts/src/context-manager/strategies/offload/index.ts
+  - path: strands-ts/src/context-manager/strategies/offload/summarize.ts
+  - path: strands-ts/src/models/anthropic-compaction.ts
 addedDate: 2026-09-14
 ---
 
@@ -156,6 +158,29 @@ Offload.summarize("*").when(
 |-----------|-----|---------|
 | Model | `model` | `agent.auxModel` |
 | System prompt | `systemPrompt` | Built-in |
+
+</Tab>
+</Tabs>
+
+#### Summary storage and server-side compaction
+
+A summary of the whole history (`Offload.summarize("*")` with a utilization condition and no threshold) is stored as its own assistant message after the first message. Its text holds only the summary; <Syntax py="block.metadata.offloaded" ts="block.metadata.offloaded" /> marks it, with `method` set to `"summarize"`. When the history is sent to the model, the summary gets its `[Summarized: N messages, ~T tokens]` header and is merged with a neighboring message of the same role. Code that reads the agent's messages directly sees the stored shape.
+
+<Tabs>
+<Tab label="Python">
+
+The Python SDK still appends the summary to a neighboring message with the header in its text. Server-side compaction isn't available in the Python SDK yet.
+
+</Tab>
+<Tab label="TypeScript">
+
+When the summarizer model declares `modelInfo.capabilities.serverSideCompaction`, the summary is written by the provider instead. `AnthropicModel` uses on-demand compaction (beta `compact-2026-09-04`), which keeps the thinking in recent turns valid on preserved-thinking models. The returned block replaces the summarized messages, **including the first message**, so restate anything from it that must stay in force in the summarize `systemPrompt`. If the provider returns no summary, the same pass writes a client-side summary and keeps the first message. `AnthropicModel` doesn't opt in by default, and `BedrockModel` declares no support.
+
+```typescript
+--8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:native_compaction_imports"
+
+--8<-- "user-guide/sdk/context-management/custom-strategies.ts:native_compaction"
+```
 
 </Tab>
 </Tabs>

@@ -13,6 +13,12 @@ import { Offload } from '@strands-agents/sdk/experimental'
 import { Offload } from '@strands-agents/sdk/experimental'
 // --8<-- [end:summarize_imports]
 
+// --8<-- [start:native_compaction_imports]
+import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+// --8<-- [end:native_compaction_imports]
+
 // --8<-- [start:drop_imports]
 import { Offload } from '@strands-agents/sdk/experimental'
 // --8<-- [end:drop_imports]
