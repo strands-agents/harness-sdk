@@ -171,8 +171,6 @@ jobs:
     uses: ./.github/workflows/harness-cli-test-lint.yml
     permissions:
       contents: read
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   cli-tui-integration:
     name: Strands CLI TUI Integration
@@ -181,8 +179,6 @@ jobs:
     uses: ./.github/workflows/harness-cli-tui-integration-test.yml
     permissions:
       contents: read
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   cli-package:
     name: Strands CLI Package
@@ -191,8 +187,6 @@ jobs:
     uses: ./.github/workflows/harness-cli-test-package-pack.yml
     permissions:
       contents: read
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   pr-metrics:
     name: PR Metrics Scripts
