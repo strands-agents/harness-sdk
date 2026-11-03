@@ -16,7 +16,7 @@ async function basicUsage() {
     modelId: 'claude-sonnet-5',
     maxTokens: 1028,
     params: {
-      temperature: 0.7,
+      metadata: { user_id: 'u1' },
     },
   })
 

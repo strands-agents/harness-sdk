@@ -1,4 +1,5 @@
 import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
+import { VERSION as ANTHROPIC_SDK_VERSION } from '@anthropic-ai/sdk/version'
 import {
   Model,
   type BaseModelConfig,
@@ -66,6 +67,11 @@ const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
+// API version 2026-10-21 removed the sampling params and rejects document blocks in assistant messages.
+// @see https://platform.claude.com/docs/en/api/migration-2026-10-21
+const SAMPLING_PARAMS_REMOVED_VERSION = '2026-10-21'
+const REMOVED_SAMPLING_PARAMS = ['temperature', 'top_p', 'top_k']
+
 /**
  * Validates that `anthropicTools` does not contain function tool definitions.
  *
@@ -82,6 +88,11 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
       )
     }
   }
+}
+
+/** A server tool's `name`, or its `type` for a toolset, which has none. */
+function serverToolName(tool: Anthropic.ToolUnion): string {
+  return 'name' in tool ? tool.name : (tool as { type: string }).type
 }
 
 /**
@@ -133,18 +144,34 @@ function apiErrorMessage(error: unknown): string {
 }
 
 /**
- * Reads the `anthropic-beta` values from client default headers, skipping the `undefined` and `null` values
- * the SDK leaves out of the request.
+ * Reads a header's values from client default headers, matching the name case-insensitively and skipping the
+ * `undefined` and `null` values the SDK leaves out of the request.
  */
-function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+function headerValues(headers: ClientOptions['defaultHeaders'], name: string): string[] {
   if (!headers) return []
   const rows: Iterable<readonly unknown[]> =
     headers instanceof Headers || Array.isArray(headers) ? headers : Object.entries(headers)
   return [...rows]
-    .filter(([name]) => typeof name === 'string' && name.toLowerCase() === 'anthropic-beta')
+    .filter(([key]) => typeof key === 'string' && key.toLowerCase() === name)
     .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
     .filter((value): value is string => typeof value === 'string')
-    .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
+}
+
+/** Reads the `anthropic-beta` values from client default headers. */
+function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
+  return headerValues(headers, 'anthropic-beta').flatMap((value) =>
+    value.split(',').flatMap((beta) => beta.trim() || [])
+  )
+}
+
+/**
+ * The `anthropic-version` a client built from `clientConfig` sends: the pinned default header, else the SDK's
+ * own default (`2023-06-01` on 0.x, `2026-10-21` from 1.0).
+ */
+function clientApiVersion(headers: ClientOptions['defaultHeaders']): string {
+  const pinned = headerValues(headers, 'anthropic-version')[0]
+  if (pinned) return pinned
+  return ANTHROPIC_SDK_VERSION.startsWith('0.') ? '2023-06-01' : SAMPLING_PARAMS_REMOVED_VERSION
 }
 
 export interface AnthropicModelConfig extends BaseModelConfig {
@@ -207,11 +234,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _client: Anthropic
   private _dropStaleThinkingModelId: string | undefined
   private _clientBetas: string[]
+  // Unknown for an injected client, whose headers are not readable; the API's own errors surface instead.
+  private _apiVersion: string | undefined
 
   constructor(options?: AnthropicModelOptions) {
     super()
     const { apiKey, client, clientConfig, ...modelConfig } = options || {}
     this._clientBetas = headerBetas(clientConfig?.defaultHeaders)
+    this._apiVersion = client ? undefined : clientApiVersion(clientConfig?.defaultHeaders)
 
     this._config = {
       modelId: MODEL_DEFAULTS.anthropic.modelId,
@@ -579,6 +609,24 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return this._dropStaleThinkingModelId === this._config.modelId
   }
 
+  /** Whether the request goes to an API version that dropped the sampling params and assistant documents. */
+  private _usesCurrentApiVersion(): boolean {
+    return this._apiVersion !== undefined && this._apiVersion >= SAMPLING_PARAMS_REMOVED_VERSION
+  }
+
+  /** The API rejects these params with a 400, so a request that carries them fails here with the fixes instead. */
+  private _rejectRemovedSamplingParams(request: Record<string, unknown>): void {
+    if (!this._usesCurrentApiVersion()) return
+    const set = REMOVED_SAMPLING_PARAMS.filter((name) => request[name] !== undefined)
+    if (set.length === 0) return
+    throw new Error(
+      `${set.join(', ')} ${set.length === 1 ? 'is' : 'are'} not supported by Anthropic API version ` +
+        `${this._apiVersion}, the default for @anthropic-ai/sdk ${ANTHROPIC_SDK_VERSION}. Remove the ` +
+        `${set.length === 1 ? 'param' : 'params'}, or pin the previous API version for models that still ` +
+        `honor them: clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } }`
+    )
+  }
+
   /** Resolves a cache section, disabled when `cacheConfig` is unset or its strategy is unknown. */
   private _cacheSection(section: 'toolsTTL' | 'messagesTTL' | 'systemPromptTTL'): ResolvedCacheSection {
     const cacheConfig = this._config.cacheConfig
@@ -721,7 +769,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       tools.push(...serverTools.map((tool) => ({ ...tool })))
     } else if (serverTools.length > 0) {
       logger.warn(
-        `tool_choice=<${Object.keys(options.toolChoice)[0]}>, server_tools=<${serverTools.map((tool) => tool.name).join(',')}> | forced tool call, omitting server tools`
+        `tool_choice=<${Object.keys(options.toolChoice)[0]}>, server_tools=<${serverTools.map(serverToolName).join(',')}> | forced tool call, omitting server tools`
       )
     }
 
@@ -742,10 +790,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       }
     }
 
-    if (this._config.temperature !== undefined) request.temperature = this._config.temperature
-    if (this._config.topP !== undefined) request.top_p = this._config.topP
+    const sampling: Record<string, number> = {}
+    if (this._config.temperature !== undefined) sampling.temperature = this._config.temperature
+    if (this._config.topP !== undefined) sampling.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
-    if (this._config.params) Object.assign(request, this._config.params)
+    Object.assign(request, sampling, this._config.params)
+    this._rejectRemovedSamplingParams(request)
     const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
@@ -797,7 +847,15 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         }
 
         const formattedBlock = this._formatContentBlock(block)
-        if (formattedBlock) content.push(formattedBlock)
+        if (!formattedBlock) continue
+        if (formattedBlock.type === 'document' && role === 'assistant' && this._usesCurrentApiVersion()) {
+          logger.warn(
+            `msg_idx=<${messageIndex}>, api_version=<${this._apiVersion}> | document blocks are not accepted in ` +
+              `assistant messages, skipping`
+          )
+          continue
+        }
+        content.push(formattedBlock)
       }
 
       // Placed after formatting so the cache point lands on a block that survived translation.

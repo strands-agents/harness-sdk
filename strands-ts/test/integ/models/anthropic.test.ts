@@ -27,6 +27,27 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
       const messageStopEvent = events.find((e) => e.type === 'modelMessageStopEvent')
       expect(messageStopEvent?.stopReason).toBe('maxTokens')
     })
+
+    it.concurrent('sends temperature when the previous API version is pinned', async () => {
+      const provider = anthropic.createModel({
+        modelId: 'claude-haiku-4-5',
+        maxTokens: 20,
+        temperature: 0.2,
+        clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Say hi.')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events.some((e) => e.type === 'modelMessageStopEvent')).toBe(true)
+    })
+
+    it.concurrent('rejects temperature locally on the current API version', async () => {
+      const provider = anthropic.createModel({ modelId: 'claude-haiku-4-5', maxTokens: 20, temperature: 0.2 })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Say hi.')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(/temperature is not supported/)
+    })
   })
 
   describe('Prompt Caching', () => {

@@ -126,6 +126,20 @@ If you encounter the error `ModuleNotFoundError: No module named 'anthropic'`, t
 ### Import Errors
 
 If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is installed: `npm install @anthropic-ai/sdk`.
+
+### Sampling params on `@anthropic-ai/sdk` 1.x
+
+`@anthropic-ai/sdk` 1.0 moved to API version `2026-10-21` ([migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21)), which removed `temperature`, `top_p`, and `top_k`. When one of them is set (`temperature`, `topP`, or in `params`), `AnthropicModel` throws before sending the request instead of letting the API return a 400. Remove the param, or pin the previous API version for models that still honor it:
+
+```typescript
+const model = new AnthropicModel({
+  modelId: 'claude-haiku-4-5',
+  temperature: 0.2,
+  clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } },
+})
+```
+
+The check only covers a client built from `clientConfig`; with a `client` you pass in, the API's own error surfaces. Two more 1.x changes to know about: the API key is sent as `Authorization: Bearer` instead of `X-Api-Key`, which matters behind a proxy that reads the old header, and a client holds a single credential, so passing both `apiKey` and `authToken` in `clientConfig` throws.
 </Tab>
 </Tabs>
 

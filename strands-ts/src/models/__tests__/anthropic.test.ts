@@ -53,6 +53,13 @@ vi.mock('../../logging/warn-once.js', () => ({
   warnOnce: vi.fn(),
 }))
 
+const sdkVersion = vi.hoisted(() => ({ current: '1.4.0' }))
+vi.mock('@anthropic-ai/sdk/version', () => ({
+  get VERSION() {
+    return sdkVersion.current
+  },
+}))
+
 describe('AnthropicModel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -794,7 +801,9 @@ describe('AnthropicModel', () => {
         effort: 'high',
         format: { type: 'json_schema', schema: toNativeOutputSchema(zodSchemaToJsonSchema(schema)) },
       })
-      expect(request?.tools?.map((tool) => tool.name)).toStrictEqual(['strands_structured_output'])
+      expect(request?.tools?.map((tool) => ('name' in tool ? tool.name : undefined))).toStrictEqual([
+        'strands_structured_output',
+      ])
     })
 
     it('uses auto tool choice for a schema native output cannot represent', async () => {
@@ -2564,6 +2573,136 @@ describe('AnthropicModel', () => {
     })
   })
 
+  describe('API version compatibility', () => {
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+    const pdf = new DocumentBlock({ name: 'doc.pdf', format: 'pdf', source: { bytes: new Uint8Array([1, 2, 3]) } })
+
+    /** Captures the request the next client built from `clientConfig` sends. */
+    const captureBuiltClient = () => {
+      const captured: { request: any } = { request: null }
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return {
+          messages: {
+            stream: vi.fn((req) => {
+              captured.request = req
+              return (async function* () {})()
+            }),
+          },
+        }
+      })
+      return captured
+    }
+
+    afterEach(() => {
+      sdkVersion.current = '1.4.0'
+    })
+
+    it.each([
+      { name: 'temperature', config: { temperature: 0.2 }, params: 'temperature is' },
+      { name: 'topP', config: { topP: 0.9 }, params: 'top_p is' },
+      { name: 'params.top_k', config: { params: { top_k: 3 } }, params: 'top_k is' },
+      {
+        name: 'several params',
+        config: { temperature: 0.2, params: { top_p: 0.9 } },
+        params: 'temperature, top_p are',
+      },
+    ])('rejects $name on SDK 1.x before sending the request', async ({ config, params }) => {
+      const captured = captureBuiltClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', ...config })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        `${params} not supported by Anthropic API version 2026-10-21, the default for @anthropic-ai/sdk 1.4.0`
+      )
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow("'anthropic-version': '2023-06-01'")
+      expect(captured.request).toBeNull()
+    })
+
+    it.each([
+      { name: 'an object', defaultHeaders: { 'Anthropic-Version': '2023-06-01' } },
+      { name: 'header tuples', defaultHeaders: [['anthropic-version', '2023-06-01']] },
+      { name: 'a Headers instance', defaultHeaders: new Headers({ 'anthropic-version': '2023-06-01' }) },
+    ])('sends temperature on SDK 1.x when the previous API version is pinned as $name', async ({ defaultHeaders }) => {
+      const captured = captureBuiltClient()
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        modelId: 'm1',
+        temperature: 0.2,
+        clientConfig: { defaultHeaders },
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.temperature).toBe(0.2)
+    })
+
+    it('sends temperature on SDK 0.x', async () => {
+      sdkVersion.current = '0.109.1'
+      const captured = captureBuiltClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2, params: { top_k: 3 } })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request).toMatchObject({ temperature: 0.2, top_k: 3 })
+    })
+
+    it('rejects temperature on SDK 0.x when the current API version is pinned', async () => {
+      sdkVersion.current = '0.109.1'
+      captureBuiltClient()
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        modelId: 'm1',
+        temperature: 0.2,
+        clientConfig: { defaultHeaders: { 'anthropic-version': '2026-10-21' } },
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature is not supported')
+    })
+
+    it('leaves the check to the API for an injected client', async () => {
+      const stream = vi.fn(() => (async function* () {})())
+      const provider = new AnthropicModel({
+        client: { messages: { stream } } as unknown as Anthropic,
+        temperature: 0.2,
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.2 }))
+    })
+
+    it('skips PDF documents in assistant messages on SDK 1.x', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const captured = captureBuiltClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+      const conversation = [
+        new Message({ role: 'user', content: [new TextBlock('Summarize'), pdf] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Here it is'), pdf] }),
+      ]
+
+      await collectIterator(provider.stream(conversation))
+
+      expect(captured.request.messages[0].content.map((block: { type: string }) => block.type)).toEqual([
+        'text',
+        'document',
+      ])
+      expect(captured.request.messages[1].content.map((block: { type: string }) => block.type)).toEqual(['text'])
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('document blocks are not accepted in assistant messages')
+      )
+      warnSpy.mockRestore()
+    })
+
+    it('keeps PDF documents in assistant messages on SDK 0.x', async () => {
+      sdkVersion.current = '0.109.1'
+      const captured = captureBuiltClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+
+      await collectIterator(provider.stream([new Message({ role: 'assistant', content: [pdf] })]))
+
+      expect(captured.request.messages[0].content[0].type).toBe('document')
+    })
+  })
+
   describe('anthropicTools', () => {
     const WEB_SEARCH_TOOL = { type: 'web_search_20260318' as const, name: 'web_search' as const, max_uses: 3 }
     const FUNCTION_TOOL_SPEC = {
@@ -2693,6 +2832,23 @@ describe('AnthropicModel', () => {
         warnSpy.mockRestore()
       }
     )
+
+    it('names a toolset by its type when a forced turn omits it', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { mockClient } = setupCapture()
+      const toolset = { type: 'browser_toolset_20260801' } as unknown as Anthropic.ToolUnion
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [toolset] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+          toolChoice: { any: {} },
+        })
+      )
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('server_tools=<browser_toolset_20260801>'))
+      warnSpy.mockRestore()
+    })
 
     it('does not let params.tools reach a forced turn that has no function tools', async () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
