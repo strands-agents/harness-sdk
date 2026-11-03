@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "prebuild": "npm run samples:sync",
+    "prebuild": "npm run samples:sync && npm run external-docs:generate",
     "build": "astro build",
     "build:all": "npm run sdk:generate && npm run build",
-    "predev": "npm run samples:sync",
+    "predev": "npm run samples:sync && npm run external-docs:generate",
     "dev": "astro dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -25,6 +25,8 @@
     "changelog:sync": "tsx scripts/changelog/sync.ts",
     "catalog:stats": "tsx scripts/catalog/refresh-stats.ts",
     "samples:sync": "tsx scripts/samples/sync.ts",
+    "external-docs:generate": "tsx scripts/external-docs/cli.ts",
+    "external-docs:update-lock": "tsx scripts/external-docs/update-lock.ts",
     "astro": "astro"
   },
   "author": "",
