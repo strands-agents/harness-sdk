@@ -44,7 +44,7 @@ Without a bound sandbox, the tool reads `context.agent.sandbox` at call time.
 ```typescript
 {
   command: string   // The shell command to execute
-  timeout?: number  // Timeout in seconds (default: `defaultTimeout`, 120 unless configured)
+  timeout?: number  // Timeout in seconds (default: defaultTimeout, 120 unless configured)
 }
 ```
 

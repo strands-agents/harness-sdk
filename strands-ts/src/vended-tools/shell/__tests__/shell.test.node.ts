@@ -143,8 +143,9 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
       expect(sandbox.timeouts).toEqual([7])
     })
 
-    it('rejects a non-positive default at construction', () => {
-      expect(() => makeShell({ defaultTimeout: 0 })).toThrow('defaultTimeout must be positive')
+    // Infinity would reach setTimeout, which clamps the overflow to 1 ms and times out every call.
+    it.each([0, -1, Infinity, NaN])('rejects a non-positive or non-finite default (%s) at construction', (value) => {
+      expect(() => makeShell({ defaultTimeout: value })).toThrow('defaultTimeout must be a positive finite number')
     })
   })
 })

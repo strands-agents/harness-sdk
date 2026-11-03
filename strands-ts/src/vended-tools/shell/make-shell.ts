@@ -56,8 +56,8 @@ export function makeShell(
 ): ReturnType<typeof tool> {
   const { boundSandbox, options } = resolveShellArgs(sandboxOrOptions, maybeOptions)
   const defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT
-  if (!(defaultTimeout > 0)) {
-    throw new Error(`defaultTimeout must be positive, got ${defaultTimeout}`)
+  if (!Number.isFinite(defaultTimeout) || defaultTimeout <= 0) {
+    throw new Error(`defaultTimeout must be a positive finite number, got ${defaultTimeout}`)
   }
 
   return tool({

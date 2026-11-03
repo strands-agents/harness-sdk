@@ -123,15 +123,19 @@ class TestToolMetadata:
         assert "tool_context" not in props
 
     def test_default_timeout_in_schema(self):
-        assert shell.tool_spec["inputSchema"]["json"]["properties"]["timeout"]["default"] == 120
+        timeout = shell.tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        assert timeout["default"] == 120
+        assert timeout["description"] == "Timeout in seconds (default: 120)."
 
     def test_custom_default_timeout_in_schema(self):
-        props = make_shell(default_timeout=300).tool_spec["inputSchema"]["json"]["properties"]
-        assert props["timeout"]["default"] == 300
+        timeout = make_shell(default_timeout=300).tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        assert timeout["default"] == 300
+        assert timeout["description"] == "Timeout in seconds (default: 300)."
 
-    def test_default_timeout_must_be_positive(self):
-        with pytest.raises(ValueError, match="default_timeout must be positive"):
-            make_shell(default_timeout=0)
+    @pytest.mark.parametrize("default_timeout", [0, -1, float("inf"), float("nan")])
+    def test_default_timeout_must_be_positive_and_finite(self, default_timeout):
+        with pytest.raises(ValueError, match="default_timeout must be a positive finite number"):
+            make_shell(default_timeout=default_timeout)
 
 
 class TestDefaultTimeout:
