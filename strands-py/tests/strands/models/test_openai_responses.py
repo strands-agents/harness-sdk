@@ -2382,19 +2382,29 @@ def test_format_request_logs_skipped_blocks_once_per_request_with_message_cache_
 @pytest.mark.parametrize(
     ("model_id", "enabled"),
     [
+        # Listed with promptCaching "cachePoints".
         ("gpt-5.6", True),
-        ("gpt-5.6-2026-10-01", True),
         ("gpt-5.6-sol", True),
-        ("gpt-5.10", True),
-        ("gpt-6", True),
         ("gpt-6-sol", True),
+        ("gpt-6.1-terra", True),
+        ("openai.gpt-6.1-sol", True),
+        ("openai.gpt-5.6-sol", True),
+        # Listed without a caching fact, so the name test decides.
+        ("openai.gpt-6.1-terra", True),
+        ("openai.gpt-daybreak-blue-5.6-sol", False),
         ("gpt-5.5", False),
-        ("gpt-5", False),
         ("gpt-4o", False),
         ("gpt-oss-120b", False),
+        # Unlisted: the name test decides.
+        ("gpt-5.6-2026-10-01", True),
+        ("gpt-5.10", True),
+        ("gpt-6", True),
+        ("gpt-7-nova", True),
+        ("us.openai.gpt-7-nova", True),
+        ("gpt-5", False),
         ("custom-gpt-6", False),
-        ("openai.gpt-5.6", False),
         ("gpt-5.6custom", False),
+        ("llama-3.3-70b", False),
     ],
 )
 def test_message_cache_model_support(model_id, enabled, messages):
@@ -2407,6 +2417,43 @@ def test_message_cache_model_support(model_id, enabled, messages):
     if enabled:
         assert request["prompt_cache_options"] == {"mode": "explicit"}
         assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "prompt_caching"),
+    [
+        ("gpt-6-sol", "cache_points"),
+        ("gpt-7-nova", "cache_points"),
+        ("openai.gpt-6.1-terra", "cache_points"),
+        ("gpt-5.5", None),
+        ("llama-3.3-70b", None),
+    ],
+)
+def test_model_info_reports_cache_points_for_gpt_5_6_and_later(model_id, prompt_caching):
+    model = OpenAIResponsesModel(model_id=model_id)
+
+    assert model.model_info.capabilities.prompt_caching == prompt_caching
+
+
+@pytest.mark.parametrize(
+    ("model_id", "prompt_caching", "enabled"),
+    [
+        ("gpt-6-sol", "auto", False),
+        ("gpt-6-sol", "unsupported", False),
+        ("gpt-7-nova", "auto", False),
+        ("my-finetune", "cache_points", True),
+    ],
+)
+def test_message_cache_follows_model_info_override(model_id, prompt_caching, enabled, messages):
+    model = OpenAIResponsesModel(
+        model_id=model_id,
+        cache_config=CacheConfig(),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching)),
+    )
+    request = model._format_request(messages)
+
+    assert ("prompt_cache_breakpoint" in request["input"][0]["content"][0]) is enabled
+    assert ("prompt_cache_options" in request) is enabled
 
 
 @pytest.mark.parametrize("cache_config", [None, CacheConfig(messages_ttl=False)])
@@ -2755,16 +2802,6 @@ def test_message_cache_leaves_native_input_override_under_caller_control():
     assert request["input"] == params["input"]
     assert "prompt_cache_options" not in request
     assert params == {"input": [{"role": "user", "content": "native input"}]}
-
-
-@pytest.mark.parametrize("configured,effective,expected", [("gpt-5.6", "gpt-4o", False), ("gpt-4o", "gpt-5.6", True)])
-def test_message_cache_checks_effective_native_model(configured, effective, expected, messages):
-    model = OpenAIResponsesModel(model_id=configured, cache_config=CacheConfig(), params={"model": effective})
-    request = model._format_request(messages)
-
-    assert request["model"] == effective
-    assert ("prompt_cache_options" in request) is expected
-    assert ("prompt_cache_breakpoint" in str(request)) is expected
 
 
 @pytest.mark.asyncio

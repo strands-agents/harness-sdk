@@ -2,19 +2,27 @@ import { describe, expect, it } from 'vitest'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
 import { formatResponsesRequest } from '../responses-adapter.js'
+import { OpenAIModel } from '../model.js'
 import type { OpenAIResponsesConfig } from '../types.js'
 import type { StreamOptions } from '../../model.js'
+import type { ModelInfo } from '../../model-info.js'
 
 const marker = { mode: 'explicit' }
 const config: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', cacheConfig: {} }
 const user = (...texts: string[]): Message => new Message({ role: 'user', content: texts.map((t) => new TextBlock(t)) })
 
+/** Formats a request with the model info the provider resolves for `modelConfig`. */
+function format(modelConfig: OpenAIResponsesConfig, messages: Message[], options?: StreamOptions): object {
+  const { modelInfo } = new OpenAIModel({ ...modelConfig, api: 'responses', apiKey: 'sk-test' })
+  return formatResponsesRequest(modelConfig, messages, options, false, modelInfo)
+}
+
 function request(messages: Message[], options?: StreamOptions, overrides?: OpenAIResponsesConfig): object {
-  return formatResponsesRequest({ ...config, ...overrides }, messages, options, false)
+  return format({ ...config, ...overrides }, messages, options)
 }
 
 function input(messages: Message[], options?: StreamOptions): unknown {
-  return formatResponsesRequest(config, messages, options, false).input
+  return (request(messages, options) as { input: unknown }).input
 }
 
 describe('Responses durable prompt caching', () => {
@@ -195,23 +203,70 @@ describe('Responses durable prompt caching', () => {
     )
   })
 
-  it.each(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6.1-sol'])('supports checkpoints for %s', (modelId) => {
+  it.each([
+    // Listed with promptCaching 'cachePoints'.
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-6-sol',
+    'gpt-6.1-sol',
+    'openai.gpt-6.1-sol',
+    'openai.gpt-5.6-sol',
+    // Listed without a caching fact, or unlisted: the GPT-5.6-or-later name test decides.
+    'openai.gpt-6.1-terra',
+    'gpt-5.6-2026-10-01',
+    'gpt-5.10',
+    'gpt-7-nova',
+    'us.openai.gpt-7-nova',
+  ])('supports checkpoints for %s', (modelId) => {
     expect(request([user('question')], undefined, { modelId })).toHaveProperty('prompt_cache_options.mode', 'explicit')
   })
 
-  it.each(['gpt-5.5', 'gpt-5.4', 'gpt-4o', 'gpt-oss-120b', 'custom-model'])(
-    'preserves legacy behavior for %s',
-    (modelId) => {
-      const req = request([user('question', 'temporary')], { dynamicTrailingBlocks: 1 }, { modelId })
-      expect(req).not.toHaveProperty('prompt_cache_options')
-      expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
-    }
-  )
+  it.each([
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-4o',
+    'gpt-oss-120b',
+    'openai.gpt-daybreak-blue-5.6-sol',
+    'custom-model',
+    'custom-gpt-6',
+    'gpt-5.6custom',
+  ])('preserves legacy behavior for %s', (modelId) => {
+    const req = request([user('question', 'temporary')], { dynamicTrailingBlocks: 1 }, { modelId })
+    expect(req).not.toHaveProperty('prompt_cache_options')
+    expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
+  })
+
+  it.each([
+    ['gpt-6-sol', 'cachePoints'],
+    ['gpt-7-nova', 'cachePoints'],
+    ['openai.gpt-6.1-terra', 'cachePoints'],
+    ['gpt-5.5', undefined],
+    ['llama-3.3-70b', undefined],
+  ])('reports promptCaching for %s on the Responses API as %s', (modelId, promptCaching) => {
+    const model = new OpenAIModel({ api: 'responses', modelId, apiKey: 'sk-test' })
+    expect(model.modelInfo.capabilities?.promptCaching).toBe(promptCaching)
+  })
+
+  it('does not infer cache points for an unlisted id on Chat Completions', () => {
+    const model = new OpenAIModel({ api: 'chat', modelId: 'gpt-7-nova', apiKey: 'sk-test' })
+    expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+  })
+
+  it.each<[string, NonNullable<ModelInfo['capabilities']>['promptCaching'], boolean]>([
+    ['gpt-6-sol', 'auto', false],
+    ['gpt-6-sol', 'unsupported', false],
+    ['gpt-7-nova', 'auto', false],
+    ['my-finetune', 'cachePoints', true],
+  ])('follows a modelInfo override for %s with promptCaching=%s', (modelId, promptCaching, enabled) => {
+    const req = request([user('question')], undefined, { modelId, modelInfo: { capabilities: { promptCaching } } })
+    expect(JSON.stringify(req).includes('prompt_cache_breakpoint')).toBe(enabled)
+    expect(Object.hasOwn(req, 'prompt_cache_options')).toBe(enabled)
+  })
 
   it.each([{ strategy: 'auto' as const }, { strategy: 'anthropic' as const }])(
     'places checkpoints with cacheConfig=%j',
     (cacheConfig) => {
-      const req = formatResponsesRequest({ modelId: 'gpt-6-sol', cacheConfig }, [user('question')], undefined, false)
+      const req = format({ modelId: 'gpt-6-sol', cacheConfig }, [user('question')])
       expect(req).toHaveProperty('prompt_cache_options.mode', 'explicit')
       expect(req).toHaveProperty('input.0.content.0.prompt_cache_breakpoint', marker)
     }
@@ -219,7 +274,7 @@ describe('Responses durable prompt caching', () => {
 
   it.each([undefined, { messagesTTL: false }])('does not opt in with cacheConfig=%j', (cacheConfig) => {
     const modelConfig: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', ...(cacheConfig ? { cacheConfig } : {}) }
-    const req = formatResponsesRequest(modelConfig, [user('question')], undefined, false)
+    const req = format(modelConfig, [user('question')])
     expect(req).not.toHaveProperty('prompt_cache_options')
     expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
   })

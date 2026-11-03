@@ -14,27 +14,42 @@ const CACHEABLE_INPUT_TYPES = new Set(['input_text', 'input_image', 'input_file'
 type FormatMessages = (messages: Message[]) => ResponseInputItem[]
 
 /**
- * Responses models with content-level cache checkpoints. Unknown model aliases retain their
- * provider's implicit caching behavior rather than receiving potentially unsupported fields.
+ * Whether to place durable message checkpoints for this request.
  *
+ * @param cacheConfig - The provider's configured cache settings, if any
+ * @param supportsCachePoints - Whether the model takes explicit cache points
  * @internal
  */
-export function supportsResponsesCheckpoints(modelId: string): boolean {
-  const version = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/.exec(modelId)
-  if (!version) return false
-  const major = Number(version[1])
-  return major > 5 || (major === 5 && Number(version[2] ?? 0) >= 6)
-}
-
-/** Whether to place durable message checkpoints for this request. @internal */
-export function cacheResponsesMessages(modelId: string, cacheConfig: CacheConfig | undefined): boolean {
+export function cacheResponsesMessages(cacheConfig: CacheConfig | undefined, supportsCachePoints: boolean): boolean {
   return (
+    supportsCachePoints &&
     cacheConfig !== undefined &&
     // 'anthropic' means SDK-placed cache points, the same mechanism these checkpoints use.
     (cacheConfig.strategy === undefined || cacheConfig.strategy === 'auto' || cacheConfig.strategy === 'anthropic') &&
-    cacheConfig.messagesTTL !== false &&
-    supportsResponsesCheckpoints(modelId)
+    cacheConfig.messagesTTL !== false
   )
+}
+
+/**
+ * Defaults `prompt_cache_options.mode` to explicit so the temporary suffix is never written. Without a
+ * durable checkpoint or a temporary suffix, the implicit breakpoint stays so the request still caches.
+ * Caller-supplied mode, TTL and diagnostics take precedence.
+ *
+ * @param request - The request being assembled; mutated in place
+ * @param nativeCacheOptions - `prompt_cache_options` from the caller's `params`, if any
+ * @param hasCheckpoints - Whether the formatted input carries a durable checkpoint
+ * @param dynamicTrailingBlocks - Number of temporary trailing blocks in the final user message
+ * @internal
+ */
+export function applyExplicitCacheMode(
+  request: object,
+  nativeCacheOptions: unknown,
+  hasCheckpoints: boolean,
+  dynamicTrailingBlocks: number
+): void {
+  if (!hasCheckpoints && dynamicTrailingBlocks === 0) return
+  const options = nativeCacheOptions as Record<string, unknown> | undefined
+  Object.assign(request, { prompt_cache_options: { mode: 'explicit', ...options } })
 }
 
 /**

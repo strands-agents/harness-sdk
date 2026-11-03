@@ -380,18 +380,21 @@ class BedrockModel(Model):
         Resolves ``cache_config.strategy``: an explicit strategy is returned as written, while ``"auto"``
         maps to ``"anthropic"`` for models the model info says take cache points, and None for models
         without automatic caching support. For an id the model info does not list at all, Claude/Anthropic
-        ids still map to ``"anthropic"``.
+        ids still map to ``"anthropic"``. OpenAI models map to None: Converse takes no cache points for
+        them, although the model info lists cache points for the OpenAI-compatible APIs.
         """
         cache_config = self.config.get("cache_config")
         if not cache_config:
             return None
         if cache_config.strategy != "auto":
             return cache_config.strategy
+        model_id = str(self.config.get("model_id", "")).lower()
+        if "openai." in model_id:
+            return None
         prompt_caching = self.model_info.capabilities.prompt_caching
         if prompt_caching is None:
             # Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
             # keep the historical name test so caching does not turn off until the data catches up.
-            model_id = str(self.config.get("model_id", "")).lower()
             return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
         return "anthropic" if prompt_caching == "cache_points" else None
 

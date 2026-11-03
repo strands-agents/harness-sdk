@@ -486,6 +486,19 @@ describe('BedrockModel', () => {
       expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
     })
 
+    it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol', 'openai.gpt-5.6-sol'])(
+      'does not auto-cache an OpenAI model on Converse although the info lists cache points: %s',
+      async (modelId) => {
+        const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+        expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+        expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+      }
+    )
+
     it('injects auto cache points on a model the info override says takes them', async () => {
       const provider = new BedrockModel({
         modelId: 'amazon.nova-pro-v1:0',

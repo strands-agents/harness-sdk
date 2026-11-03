@@ -22,7 +22,6 @@ import base64
 import json
 import logging
 import mimetypes
-import re
 from collections import Counter
 from collections.abc import AsyncGenerator
 from importlib.metadata import version as get_package_version
@@ -65,7 +64,7 @@ from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E40
 from ._defaults import resolve_config_metadata  # noqa: E402
 from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
-from ._openai_cache import apply_cache_config  # noqa: E402
+from ._openai_cache import apply_cache_config, infer_prompt_caching  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
 from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
@@ -158,10 +157,10 @@ class OpenAIResponsesModel(Model):
                 When False (default), skips the API call and uses the local estimator.
             cache_config: Prompt-caching configuration. OpenAI routes cache reads on
                 ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` only when it names
-                an OpenAI retention value. On GPT-5.6 and later, automatic message checkpoints
-                exclude per-call injected content; ``strategy="auto"`` or ``"anthropic"``
-                places them and ``messages_ttl=False`` disables them. ``tools_ttl`` and ``system_prompt_ttl`` have
-                no effect. An explicit
+                an OpenAI retention value. On models whose ``model_info`` says they take cache points
+                (GPT-5.6 and later), message checkpoints keep per-call injected content out of the
+                cache; ``strategy="auto"`` or ``"anthropic"`` places them and ``messages_ttl=False``
+                disables them. ``tools_ttl`` and ``system_prompt_ttl`` have no effect. An explicit
                 ``prompt_cache_key``/``prompt_cache_retention`` in ``params`` takes precedence.
         """
 
@@ -221,13 +220,21 @@ class OpenAIResponsesModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Adds whether server-side conversation storage is enabled.
+        """Adds whether server-side conversation storage is enabled, and how unlisted GPT models cache.
 
-        Taken from the ``stateful`` configuration option, which a ``model_info`` override still wins over.
+        ``stateful`` is taken from the ``stateful`` configuration option. When the shared model info has no
+        prompt caching fact for the id, a GPT-5.6-or-later id takes cache points, so a release newer than
+        the data keeps its message checkpoints. A ``model_info`` override still wins over both.
         """
+        info = super().model_info
+        prompt_caching = info.capabilities.prompt_caching or infer_prompt_caching(self.config.get("model_id"))
         return ModelInfo.merge(
-            super().model_info,
-            ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
+            info,
+            ModelInfo(
+                capabilities=ModelCapabilities(
+                    stateful=bool(self.config.get("stateful")), prompt_caching=prompt_caching
+                )
+            ),
             cast(ModelInfo | None, self.config.get("model_info")),
         )
 
@@ -597,15 +604,8 @@ class OpenAIResponsesModel(Model):
                 format.
         """
         cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
-        supports_message_caching = self._supports_message_caching()
-        cache_messages = (
-            supports_message_caching
-            and cache_config is not None
-            # "anthropic" means SDK-placed cache points, the same mechanism these checkpoints use.
-            and cache_config.strategy in ("auto", "anthropic")
-            and cache_config.messages_ttl is not False
-            and "input" not in cast(dict[str, Any], self.config.get("params", {}))
-        )
+        supports_message_caching = cache_config is not None and self._supports_message_caching()
+        cache_messages = supports_message_caching and self._caches_messages(cache_config)
         input_items, has_checkpoints = (
             self._format_cacheable_request_messages(messages, dynamic_trailing_blocks=dynamic_trailing_blocks)
             if cache_messages
@@ -648,10 +648,8 @@ class OpenAIResponsesModel(Model):
             request.update(self._format_request_tool_choice(tool_choice))
 
         apply_cache_config(request, cache_config, agent_metadata, supports_message_caching=supports_message_caching)
-        if cache_messages and (has_checkpoints or dynamic_trailing_blocks > 0):
-            # Explicit mode keeps the temporary suffix out of the cache. Without a durable checkpoint
-            # or a temporary suffix, leave the implicit breakpoint so the request still caches.
-            request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
+        if cache_messages:
+            self._apply_explicit_cache_mode(request, has_checkpoints, dynamic_trailing_blocks)
 
         return request
 
@@ -680,6 +678,18 @@ class OpenAIResponsesModel(Model):
                 return {"tool_choice": "auto"}
 
     @staticmethod
+    def _apply_explicit_cache_mode(
+        request: dict[str, Any], has_checkpoints: bool, dynamic_trailing_blocks: int
+    ) -> None:
+        """Default ``prompt_cache_options.mode`` to explicit so the temporary suffix is never written.
+
+        Without a durable checkpoint or a temporary suffix, the implicit breakpoint stays so the request
+        still caches. Caller-supplied mode, TTL and diagnostics take precedence.
+        """
+        if has_checkpoints or dynamic_trailing_blocks > 0:
+            request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
+
+    @staticmethod
     def _move_new_fields_to_extra_body(request: dict[str, Any]) -> None:
         """Send wire fields newer than the minimum supported OpenAI client through ``extra_body``.
 
@@ -693,11 +703,18 @@ class OpenAIResponsesModel(Model):
             }
 
     def _supports_message_caching(self) -> bool:
-        """Whether the configured model supports explicit Responses input checkpoints."""
-        params = cast(dict[str, Any], self.config.get("params", {}))
-        model_id = params.get("model", self.config["model_id"])
-        match = re.match(r"^gpt-(\d+)(?:\.(\d+))?(?:-|$)", str(model_id))
-        return bool(match and (int(match[1]), int(match[2] or 0)) >= (5, 6))
+        """Whether the configured model takes explicit Responses input checkpoints."""
+        return self.model_info.capabilities.prompt_caching == "cache_points"
+
+    def _caches_messages(self, cache_config: CacheConfig | None) -> bool:
+        """Whether the cache config asks for durable message checkpoints and the SDK owns the input."""
+        return (
+            cache_config is not None
+            # "anthropic" means SDK-placed cache points, the same mechanism these checkpoints use.
+            and cache_config.strategy in ("auto", "anthropic")
+            and cache_config.messages_ttl is not False
+            and "input" not in cast(dict[str, Any], self.config.get("params", {}))
+        )
 
     @classmethod
     def _format_cacheable_request_messages(

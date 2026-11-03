@@ -8,6 +8,7 @@
  */
 
 import type { CacheConfig } from '../model.js'
+import type { PromptCaching } from '../model-info.js'
 import type { AgentMetadata } from '../../agent/agent-metadata.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -17,13 +18,31 @@ import { warnOnce } from '../../logging/warn-once.js'
 const RETENTION_LITERALS = ['in_memory', '24h'] as const
 type RetentionLiteral = (typeof RETENTION_LITERALS)[number]
 
+// GPT-5.6 and later take explicit cache points. Matches a bare or provider-prefixed id
+// (`gpt-6.2-sol`, `openai.gpt-6.2-sol`), not `gpt-oss-120b` or `custom-gpt-6`.
+const GPT_VERSION = /(?:^|\.)gpt-(\d+)(?:\.(\d+))?(?:-|$)/
+
+/**
+ * Infers the prompt caching of an OpenAI model from its id, for ids the model info has no fact for.
+ *
+ * @param modelId - The configured model id
+ * @returns `'cachePoints'` for a GPT-5.6-or-later id, otherwise undefined (unknown)
+ * @internal
+ */
+export function inferPromptCaching(modelId: string): PromptCaching | undefined {
+  const version = GPT_VERSION.exec(modelId)
+  if (!version) return undefined
+  const major = Number(version[1])
+  return major > 5 || (major === 5 && Number(version[2] ?? 0) >= 6) ? 'cachePoints' : undefined
+}
+
 /**
  * The `CacheConfig`-derived fields both OpenAI request shapes share.
  */
 interface CacheableRequest {
   prompt_cache_key?: string
-  // Legacy retention literals remain supported here. New Responses TTLs can be passed via
-  // native params.prompt_cache_options.ttl without changing existing CacheConfig behavior.
+  // Deprecated in openai 6.45.0 in favor of prompt_cache_options.ttl, whose only accepted value today
+  // is '30m' — so '24h'/'in_memory' remain expressible only through this field.
   prompt_cache_retention?: RetentionLiteral | null
 }
 

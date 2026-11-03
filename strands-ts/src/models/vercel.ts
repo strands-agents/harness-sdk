@@ -415,7 +415,9 @@ function applyBedrockCache(
 /**
  * Reports whether the wrapped Bedrock model takes cache points. An explicit `'anthropic'` strategy
  * opts in regardless; the default `'auto'` caches when `modelInfo` says `'cachePoints'`, or when the id is
- * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`).
+ * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`). OpenAI models
+ * never cache under `'auto'`: Converse takes no cache points for them, although the model info lists cache
+ * points for the OpenAI-compatible APIs.
  *
  * @param cacheConfig - The caller's cache configuration
  * @param modelId - The wrapped Bedrock model id, used in the skip warning
@@ -425,13 +427,13 @@ function applyBedrockCache(
 function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, modelInfo: ModelInfo): boolean {
   if ((cacheConfig.strategy ?? 'auto') !== 'auto') return true
 
+  const id = modelId.toLowerCase()
   const promptCaching = modelInfo.capabilities?.promptCaching
   // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
   // keep the historical name test so caching does not turn off until the data catches up.
   const supported =
-    promptCaching === undefined
-      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
-      : promptCaching === 'cachePoints'
+    !id.includes('openai.') &&
+    (promptCaching === undefined ? id.includes('claude') || id.includes('anthropic') : promptCaching === 'cachePoints')
   if (!supported) {
     warnOnce(
       logger,

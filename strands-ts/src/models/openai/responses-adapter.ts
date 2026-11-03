@@ -33,12 +33,9 @@ import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
-import {
-  cacheResponsesMessages,
-  formatCacheableResponsesMessages,
-  supportsResponsesCheckpoints,
-} from './responses-cache.js'
+import { applyExplicitCacheMode, cacheResponsesMessages, formatCacheableResponsesMessages } from './responses-cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
+import type { ModelInfo } from '../model-info.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 
@@ -56,17 +53,21 @@ export function warnManagedParams(params: Record<string, unknown> | undefined): 
 /**
  * Builds a Responses API streaming request body.
  *
+ * @param modelInfo - What the SDK knows about the model; decides whether durable message checkpoints are placed
  * @internal
  */
 export function formatResponsesRequest(
   config: OpenAIResponsesConfig,
   messages: Message[],
   options: StreamOptions | undefined,
-  stateful: boolean
+  stateful: boolean,
+  modelInfo: ModelInfo
 ): ResponseCreateParamsStreaming {
-  const cacheMessages = cacheResponsesMessages(config.modelId ?? DEFAULT_RESPONSES_MODEL_ID, config.cacheConfig)
+  const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
+  const cacheMessages = cacheResponsesMessages(config.cacheConfig, cachePoints)
+  const dynamicTrailingBlocks = options?.dynamicTrailingBlocks ?? 0
   const { input, hasCheckpoints } = cacheMessages
-    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks ?? 0, formatResponsesMessages)
+    ? formatCacheableResponsesMessages(messages, dynamicTrailingBlocks, formatResponsesMessages)
     : { input: formatResponsesMessages(messages), hasCheckpoints: false }
 
   // User `params` are spread first so provider-managed fields (asserted
@@ -134,20 +135,11 @@ export function formatResponsesRequest(
   if (config.maxTokens !== undefined) request.max_output_tokens = config.maxTokens
   if (config.topP !== undefined) request.top_p = config.topP
 
-  if (cacheMessages && (hasCheckpoints || (options?.dynamicTrailingBlocks ?? 0) > 0)) {
-    // Explicit mode keeps the temporary suffix out of the cache. Without a durable checkpoint or a
-    // temporary suffix, leave the implicit breakpoint so the request still caches. Caller-supplied
-    // mode, TTL and diagnostics take precedence.
-    const nativeCacheOptions = config.params?.prompt_cache_options as Record<string, unknown> | undefined
-    Object.assign(request, { prompt_cache_options: { mode: 'explicit', ...nativeCacheOptions } })
+  if (cacheMessages) {
+    applyExplicitCacheMode(request, config.params?.prompt_cache_options, hasCheckpoints, dynamicTrailingBlocks)
   }
 
-  applyCacheConfig(
-    request,
-    config.cacheConfig,
-    options?.agentMetadata,
-    supportsResponsesCheckpoints(request.model ?? DEFAULT_RESPONSES_MODEL_ID)
-  )
+  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata, cachePoints)
 
   return request
 }
