@@ -18,6 +18,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { SummaryRequest, SummaryResult } from '../../../models/summary.js'
 import { unwrapInvocationContext } from '../../../agent/invocation-context.js'
 import { planCut, type Cut } from '../../summarizers/cut.js'
+import { renderHistory } from '../../render.js'
 import { BaseSummarizer } from '../../summarizers/base-summarizer.js'
 import { NativeSummarizer } from '../../summarizers/native-summarizer.js'
 import type { Summarizer } from '../../summarizers/summarizer.js'
@@ -73,24 +74,26 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * otherwise.
    *
    * @param agent - The agent whose history is summarized
+   * @param invocationContext - Where the base summarizer records its usage
    * @returns The summarizer, or undefined when no summarizer model resolves
    */
-  resolve(agent: LocalAgent): Summarizer | undefined {
+  resolve(agent: LocalAgent, invocationContext?: InvocationContext): Summarizer | undefined {
     const model = this._resolveModel(agent)
     if (!model) return undefined
     if (model.modelInfo?.capabilities?.serverSideCompaction === true) return new NativeSummarizer(model)
-    return new BaseSummarizer(model)
+    return new BaseSummarizer(model, invocationContext)
   }
 
   /**
-   * Plans the cut of a pass, keeping `preserveRecent` messages.
+   * Plans the cut of a pass, keeping `preserveRecent` messages. A native cut (`keepHead` 0) ends on a user message.
    *
    * @param messages - The history
    * @param keepHead - How many opening messages to keep in front of the summary
    * @returns The cut, or undefined when nothing can be summarized
    */
   planCut(messages: Message[], keepHead: number): Cut | undefined {
-    return planCut(messages, keepHead, this._preserveRecent)
+    // A whole-prefix compaction request ends on the user turn whose reply the kept turns begin with.
+    return planCut(messages, keepHead, this._preserveRecent, keepHead === 0)
   }
 
   /**
@@ -112,12 +115,16 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
   /** Runs one pass; when the native summarizer writes no summary, the base summarizer re-cuts and runs instead. */
   private async _applySummarizer(context: ContextState): Promise<boolean> {
-    const summarizer = this.resolve(context.agent)
+    const summarizer = this.resolve(context.agent, context.invocationContext)
     if (!summarizer) return false
     const outcome = await this._summarizeCut(context, summarizer)
     if (outcome !== 'noSummary' || summarizer.keepHead === 1) return outcome === 'placed'
-    logger.debug(`model_id=<${summarizer.model.modelId}> | native compaction wrote no summary, summarizing client-side`)
-    return (await this._summarizeCut(context, new BaseSummarizer(summarizer.model))) === 'placed'
+    logger.debug(
+      `model_id=<${summarizer.model.modelId}> | native compaction wrote no summary so summarizing client-side`
+    )
+    return (
+      (await this._summarizeCut(context, new BaseSummarizer(summarizer.model, context.invocationContext))) === 'placed'
+    )
   }
 
   private async _summarizeCut(
@@ -262,7 +269,8 @@ function summaryRequest(
         }
       : {}
   return {
-    messages: cut.body,
+    // A native request sends the body as the model saw it; the base summarizer flattens it instead.
+    messages: summarizer.keepHead === 0 ? renderHistory(cut.body) : cut.body,
     ...live,
     ...(instructions !== undefined && { instructions }),
     ...(agent.cancelSignal && { cancelSignal: agent.cancelSignal }),

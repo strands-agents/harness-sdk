@@ -159,6 +159,24 @@ describe('SummarizeStrategy routing', () => {
       expect(state.invocationContext.usage).toMatchObject(nativeUsage)
     })
 
+    it('sends the body as the model saw it, with an earlier client-side summary rendered', async () => {
+      const model = summarizerModel(true)
+      const compact = vi.spyOn(model, 'compact').mockResolvedValue(nativeResult())
+      const messages = history()
+      messages[1] = new Message({
+        role: 'assistant',
+        content: [
+          new TextBlock('EARLIER', {
+            metadata: { offloaded: { method: 'summarize', removedMessages: 3, removedTokens: 40 } },
+          }),
+        ],
+      })
+      await strategy().apply(context(messages, { auxModel: model }))
+      const sent = compact.mock.calls[0]![0].messages.flatMap((message) => message.content)
+      expect(sent).toContainEqual(new TextBlock('[Summarized: 3 messages, ~40 tokens]\n\nEARLIER'))
+      expect(compact.mock.calls[0]![0].messages.at(-1)!.role).toBe('user')
+    })
+
     it('compacts again over the earlier native block', async () => {
       const model = summarizerModel(true)
       const compact = vi

@@ -254,6 +254,14 @@ describe('native compaction on the wire (offline)', () => {
     const next = bodies[failed + 2]!
     expect(next.tools).toBeDefined()
     expect(messagesOf(next)[0]).toStrictEqual({ role: 'user', content: [{ type: 'text', text: TASK }] })
-    expect(String(blocksOf(next)[1]!.text)).toMatch(/^\[Summarized: \d+ messages, ~\d+ tokens\]\n\nBASE SUMMARY$/)
+    const summary = messagesOf(next).findIndex((message) =>
+      message.content.some((block) =>
+        /^\[Summarized: \d+ messages, ~\d+ tokens\]\n\nBASE SUMMARY$/.test(String(block.text))
+      )
+    )
+    expect(summary).toBeGreaterThan(0)
+    const carrier = messagesOf(next)[summary]!
+    expect(carrier.content.at(-1)!.text).toMatch(/^\[Summarized:/)
+    expect(carrier.content[0]!.type).not.toBe('text')
   })
 })

@@ -41,11 +41,17 @@ export interface Cut {
  * @param keepHead - How many opening messages to keep in front of the summary
  * @param preserveRecent - Integer (1 or above): absolute count. Decimal (between 0 and 1 exclusive): ratio of the
  *   history to keep.
+ * @param endOnUser - Whether the body must end with a user message, as a whole-prefix compaction request does
  * @returns The cut, or undefined when no legal cut summarizes anything
  */
-export function planCut(messages: Message[], keepHead: number, preserveRecent: number): Cut | undefined {
+export function planCut(
+  messages: Message[],
+  keepHead: number,
+  preserveRecent: number,
+  endOnUser = false
+): Cut | undefined {
   const bodyStart = headEnd(messages, keepHead)
-  const tailStart = tailBoundary(messages, bodyStart, preserveRecent)
+  const tailStart = tailBoundary(messages, bodyStart, preserveRecent, endOnUser)
   if (tailStart <= bodyStart) return undefined
   // Summarizing only an earlier summary reclaims nothing.
   if (tailStart - bodyStart === 1 && messages[bodyStart]!.content.every(isSummary)) return undefined
@@ -61,12 +67,12 @@ function headEnd(messages: Message[], keepHead: number): number {
   return end > 0 && splitsToolPair(messages, end) ? end + 1 : end
 }
 
-function tailBoundary(messages: Message[], bodyStart: number, preserveRecent: number): number {
+function tailBoundary(messages: Message[], bodyStart: number, preserveRecent: number, endOnUser: boolean): number {
   const last = messages.length - 1
   let tailStart = Math.min(messages.length - resolvePreserveCount(messages.length, preserveRecent), last)
   if (splitsToolPair(messages, tailStart) && tailStart < last) tailStart += 1
   tailStart = Math.min(tailStart, firstPin(messages, bodyStart, tailStart))
-  while (tailStart > bodyStart && !isLegalBoundary(messages, tailStart)) tailStart -= 1
+  while (tailStart > bodyStart && !isLegalBoundary(messages, tailStart, endOnUser)) tailStart -= 1
   return tailStart
 }
 
@@ -77,8 +83,10 @@ function firstPin(messages: Message[], from: number, to: number): number {
   return to
 }
 
-function isLegalBoundary(messages: Message[], index: number): boolean {
-  return !splitsToolPair(messages, index) && messages[index - 1]!.role !== messages[index]!.role
+function isLegalBoundary(messages: Message[], index: number, endOnUser: boolean): boolean {
+  const last = messages[index - 1]!
+  if (endOnUser && last.role !== 'user') return false
+  return !splitsToolPair(messages, index) && last.role !== messages[index]!.role
 }
 
 /** Whether `messages[index]` holds a tool result answering a tool call in the message before it. */

@@ -11,9 +11,11 @@ import { formatSummarized } from './methods/summarize.js'
 /**
  * Renders the history sent to the model.
  *
- * - A client-side summary is sent as `[Summarized: N messages, ~T tokens]` followed by its text, the cue the model
- *   has always been given. A provider's native summary is sent as stored.
- * - A summary message is merged with a neighbor of the same role, so roles alternate on the wire.
+ * - A client-side summary is sent as `[Summarized: N messages, ~T tokens]` followed by its text. A provider's native
+ *   summary is sent as stored.
+ * - A client-side summary message followed by a message of the same role is sent after that message's content, in
+ *   one message, so roles alternate and the kept message's own blocks stay first. A native summary message is
+ *   never merged: its block must stay first in its own message.
  *
  * Returns new messages where anything changes; the stored messages and blocks are never modified.
  *
@@ -23,17 +25,14 @@ import { formatSummarized } from './methods/summarize.js'
  */
 export function renderHistory(messages: Message[]): Message[] {
   const rendered: Message[] = []
-  let previousHoldsSummary = false
-  for (const message of messages) {
-    const current = renderSummaries(message)
-    const holds = holdsSummary(message)
-    const previous = rendered.at(-1)
-    if (previous && previous.role === current.role && (previousHoldsSummary || holds)) {
-      rendered[rendered.length - 1] = merge(previous, current)
-      previousHoldsSummary = true
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!
+    const next = messages[index + 1]
+    if (next && next.role === message.role && message.content.some(isClientSummary)) {
+      rendered.push(appendContent(renderSummaries(next), renderSummaries(message)))
+      index++
     } else {
-      rendered.push(current)
-      previousHoldsSummary = holds
+      rendered.push(renderSummaries(message))
     }
   }
   return rendered
@@ -48,10 +47,6 @@ export function renderHistory(messages: Message[]): Message[] {
  */
 export function isSummary(block: ContentBlock): block is TextBlock {
   return block instanceof TextBlock && block.metadata?.offloaded?.method === 'summarize'
-}
-
-function holdsSummary(message: Message): boolean {
-  return message.content.some(isSummary)
 }
 
 function renderSummaries(message: Message): Message {
@@ -73,11 +68,11 @@ function withHeader(block: TextBlock): TextBlock {
   return new TextBlock(formatSummarized(`${removedMessages ?? 0} messages`, removedTokens ?? 0, block.text))
 }
 
-function merge(previous: Message, current: Message): Message {
+function appendContent(message: Message, appended: Message): Message {
   return new Message({
-    role: previous.role,
-    content: [...previous.content, ...current.content],
-    trackingId: previous.trackingId,
-    ...(previous.metadata !== undefined && { metadata: previous.metadata }),
+    role: message.role,
+    content: [...message.content, ...appended.content],
+    trackingId: message.trackingId,
+    ...(message.metadata !== undefined && { metadata: message.metadata }),
   })
 }

@@ -4,6 +4,7 @@ import { summarizeContent, flattenMessagesToContent } from '../../methods/summar
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { MaxTokensError } from '../../../errors.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 
 const body = [
   new Message({
@@ -39,22 +40,28 @@ describe('BaseSummarizer', () => {
     expect(referenceStream.mock.calls[0]![1]).toStrictEqual({ systemPrompt: 'keep ids' })
   })
 
-  it('returns the summary alone with offloaded metadata and the usage', async () => {
+  it('returns the summary alone with offloaded metadata and records the usage', async () => {
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'the summary' }, { usage })
     vi.spyOn(model, 'countTokens').mockResolvedValue(77)
+    const context = new InvocationContextImpl()
 
-    expect(await new BaseSummarizer(model).summarize({ messages: body })).toStrictEqual({
+    expect(await new BaseSummarizer(model, context).summarize({ messages: body })).toStrictEqual({
       block: new TextBlock('the summary', {
         metadata: { offloaded: { method: 'summarize', removedMessages: 2, removedTokens: 77 } },
       }),
-      usage,
     })
     expect(model.countTokens).toHaveBeenCalledWith(body)
+    expect(context.usage).toMatchObject(usage)
   })
 
-  it('returns undefined when the model writes no text', async () => {
-    const model = new MockMessageModel().addTurn({ type: 'toolUseBlock', name: 'x', toolUseId: 'y', input: {} })
-    expect(await new BaseSummarizer(model).summarize({ messages: body })).toBeUndefined()
+  it('returns undefined when the model writes no text, and still records the usage', async () => {
+    const model = new MockMessageModel().addTurn(
+      { type: 'toolUseBlock', name: 'x', toolUseId: 'y', input: {} },
+      { usage }
+    )
+    const context = new InvocationContextImpl()
+    expect(await new BaseSummarizer(model, context).summarize({ messages: body })).toBeUndefined()
+    expect(context.usage).toMatchObject(usage)
   })
 
   it('propagates model errors', async () => {

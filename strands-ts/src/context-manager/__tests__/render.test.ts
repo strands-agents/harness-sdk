@@ -23,7 +23,7 @@ const nativeSummary = (): Message =>
     ],
   })
 
-const wire = (messages: Message[]): unknown =>
+const wire = (messages: Message[]): unknown[] =>
   messages.map((message) => ({ role: message.role, content: message.content.map((block) => block.toJSON()) }))
 
 describe('renderHistory', () => {
@@ -42,27 +42,34 @@ describe('renderHistory', () => {
     expect(rendered[0]!.content[0]).toBe(native.content[0])
   })
 
-  it('merges a summary message with a neighbor of the same role, summary first', () => {
-    const rendered = renderHistory([text('user', 'task'), baseSummary(), text('assistant', 'kept'), text('user', 'u')])
-    expect(wire(rendered)).toStrictEqual([
-      { role: 'user', content: [{ text: 'task' }] },
-      {
-        role: 'assistant',
-        content: [{ text: '[Summarized: 4 messages, ~1,234 tokens]\n\nS' }, { text: 'kept' }],
-      },
-      { role: 'user', content: [{ text: 'u' }] },
-    ])
+  it('sends a summary after the content of a following message of the same role', () => {
+    const kept = new Message({
+      role: 'assistant',
+      content: [new TextBlock('kept'), new ToolUseBlock({ name: 't', toolUseId: '1', input: {} })],
+    })
+    const rendered = renderHistory([text('user', 'task'), baseSummary(), kept, text('user', 'u')])
+    expect(rendered).toHaveLength(3)
+    expect(rendered[1]!.trackingId).toBe(kept.trackingId)
+    expect(wire(rendered)[1]).toStrictEqual({
+      role: 'assistant',
+      content: [
+        { text: 'kept' },
+        { toolUse: { name: 't', toolUseId: '1', input: {} } },
+        { text: '[Summarized: 4 messages, ~1,234 tokens]\n\nS' },
+      ],
+    })
   })
 
-  it('merges a native summary into the kept turn behind it, the block staying first', () => {
+  it('keeps a native summary in its own message, ahead of the kept turn', () => {
     const native = nativeSummary()
     const kept = new Message({
       role: 'assistant',
       content: [new TextBlock('kept'), new ToolUseBlock({ name: 't', toolUseId: '1', input: {} })],
     })
-    const rendered = renderHistory([native, kept])
-    expect(rendered).toHaveLength(1)
-    expect(rendered[0]!.content).toStrictEqual([native.content[0], ...kept.content])
+    const rendered = renderHistory([native, kept, text('user', 'u')])
+    expect(rendered).toHaveLength(3)
+    expect(rendered[0]).toBe(native)
+    expect(rendered[1]).toBe(kept)
   })
 
   it('leaves adjacent same-role messages without a summary as they are', () => {

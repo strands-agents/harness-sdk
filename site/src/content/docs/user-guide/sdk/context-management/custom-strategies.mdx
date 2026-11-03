@@ -164,7 +164,7 @@ Offload.summarize("*").when(
 
 #### Summary storage and server-side compaction
 
-A summary of the whole history (`Offload.summarize("*")` with a utilization condition and no threshold) is stored as its own assistant message after the first message. Its text holds only the summary; <Syntax py="block.metadata.offloaded" ts="block.metadata.offloaded" /> marks it, with `method` set to `"summarize"`. When the history is sent to the model, the summary gets its `[Summarized: N messages, ~T tokens]` header and is merged with a neighboring message of the same role. Code that reads the agent's messages directly sees the stored shape.
+A summary of the whole history (`Offload.summarize("*")` with a utilization condition and no threshold) is stored as its own assistant message after the first message. Its text holds only the summary; <Syntax py="block.metadata.offloaded" ts="block.metadata.offloaded" /> marks it, with `method` set to `"summarize"`. When the history is sent to the model, the summary gets its `[Summarized: N messages, ~T tokens]` header and, when the next message has the same role, is sent at the end of that message. Code that reads the agent's messages directly sees the stored shape.
 
 <Tabs>
 <Tab label="Python">

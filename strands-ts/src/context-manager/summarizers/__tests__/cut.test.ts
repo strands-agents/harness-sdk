@@ -111,6 +111,18 @@ describe('planCut', () => {
     })
   })
 
+  describe('endOnUser', () => {
+    it('moves the boundary back until the body ends with a user message', () => {
+      const history = [text('user'), text('assistant'), text('user'), text('assistant'), text('user')]
+      expect(indices(history, planCut(history, 0, 1)!.body)).toStrictEqual([0, 1, 2, 3])
+      expect(indices(history, planCut(history, 0, 1, true)!.body)).toStrictEqual([0, 1, 2])
+    })
+
+    it('summarizes nothing when no user message can end the body', () => {
+      expect(planCut([text('assistant'), text('user')], 0, 0, true)).toBeUndefined()
+    })
+  })
+
   describe('pins', () => {
     it('stops in front of the first pin', () => {
       const history = [
@@ -206,11 +218,15 @@ describe('planCut', () => {
 
     it('holds every invariant', { timeout: 30_000 }, () => {
       for (const { messages } of histories) {
-        for (const keepHead of [0, 1]) {
+        for (const [keepHead, endOnUser] of [
+          [0, true],
+          [0, false],
+          [1, false],
+        ] as const) {
           for (const preserveRecent of preserveValues) {
-            const cut = planCut(messages, keepHead, preserveRecent)
-            if (cut) expectInvariants(messages, cut, keepHead)
-            else expectNoLegalCut(messages, keepHead, preserveRecent)
+            const cut = planCut(messages, keepHead, preserveRecent, endOnUser)
+            if (cut) expectInvariants(messages, cut, keepHead, endOnUser)
+            else expectNoLegalCut(messages, keepHead, preserveRecent, endOnUser)
           }
         }
       }
@@ -228,7 +244,12 @@ describe('planCut', () => {
   })
 })
 
-function expectInvariants(messages: Message[], cut: NonNullable<ReturnType<typeof planCut>>, keepHead: number): void {
+function expectInvariants(
+  messages: Message[],
+  cut: NonNullable<ReturnType<typeof planCut>>,
+  keepHead: number,
+  endOnUser: boolean
+): void {
   expect([...cut.head, ...cut.body, ...cut.tail]).toStrictEqual(messages)
   expect(cut.body.length).toBeGreaterThan(0)
   expect(cut.tail.at(-1)).toBe(messages.at(-1))
@@ -238,15 +259,17 @@ function expectInvariants(messages: Message[], cut: NonNullable<ReturnType<typeo
   expect(splitsPair(messages, bodyStart)).toBe(false)
   expect(splitsPair(messages, tailStart)).toBe(false)
   expect(messages[tailStart - 1]!.role).not.toBe(messages[tailStart]!.role)
+  if (endOnUser) expect(cut.body.at(-1)!.role).toBe('user')
   for (let index = bodyStart; index < tailStart; index++) expect(isPinned(messages, index)).toBe(false)
 }
 
 /** Brute force: no boundary up to the preserveRecent target summarizes anything legally. */
-function expectNoLegalCut(messages: Message[], keepHead: number, preserveRecent: number): void {
+function expectNoLegalCut(messages: Message[], keepHead: number, preserveRecent: number, endOnUser: boolean): void {
   const bodyStart = keepHead > 0 && splitsPair(messages, keepHead) ? keepHead + 1 : keepHead
   const target = Math.min(messages.length - resolvePreserveCount(messages.length, preserveRecent), messages.length - 1)
   for (let tailStart = bodyStart + 1; tailStart <= target; tailStart++) {
     const legal =
+      (!endOnUser || messages[tailStart - 1]!.role === 'user') &&
       !splitsPair(messages, tailStart) &&
       messages[tailStart - 1]!.role !== messages[tailStart]!.role &&
       messages.slice(bodyStart, tailStart).every((_, offset) => !isPinned(messages, bodyStart + offset))

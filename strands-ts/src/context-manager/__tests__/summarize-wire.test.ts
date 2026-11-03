@@ -3,25 +3,13 @@ import { TextBlock } from '../../types/messages.js'
 import { WIRE_SCENARIOS, captureBaseWire, type WireCapture } from './summarize-wire-scenarios.js'
 import { MAIN_BASE_WIRE } from './__fixtures__/main-base-wire-3baec37.js'
 
-// Request bodies main (3baec37fe) sent for the same scenarios, captured on the same fail-closed wire.
+// Request bodies main (3baec37fe) sent for the same scenarios, captured on the same fail-closed wire; the branch
+// must send the same bytes.
 const MAIN: Record<string, WireCapture> = MAIN_BASE_WIRE
 
 interface WireMessage {
   role: string
   content: { type: string; text?: string }[]
-}
-
-/**
- * Main's conversation request with the one intended difference applied: where main appended the summary to the
- * assistant message after message 0, the summary is now its own message, so the shared render step places it first
- * in that merged message.
- */
-function withSummaryFirst(conversation: string): string {
-  const request = JSON.parse(conversation) as { messages: WireMessage[] }
-  const carrier = request.messages[1]!
-  const index = carrier.content.findIndex((block) => block.text?.startsWith('[Summarized:'))
-  if (index > 0) carrier.content.unshift(...carrier.content.splice(index, 1))
-  return JSON.stringify(request)
 }
 
 function summaryText(conversation: string): string | undefined {
@@ -38,7 +26,7 @@ describe('base summary wire against main', () => {
     expect(branch.summarizer).toBe(main.summarizer)
     expect(summaryText(branch.conversation)).toBe(summaryText(main.conversation))
     expect(summaryText(branch.conversation)).toMatch(/^\[Summarized: \d+ messages, ~\d+ tokens\]\n\n/)
-    expect(branch.conversation).toBe(withSummaryFirst(main.conversation))
+    expect(branch.conversation).toBe(main.conversation)
   })
 
   it('stores the summary as its own message, without the header', async () => {
@@ -55,14 +43,5 @@ describe('base summary wire against main', () => {
         metadata: { offloaded: { method: 'summarize', removedMessages: 2, removedTokens: 60 } },
       }),
     ])
-  })
-
-  it('differs from main only where main appended the summary after kept assistant content', async () => {
-    const differing = []
-    for (const scenario of WIRE_SCENARIOS) {
-      const branch = await captureBaseWire(scenario)
-      if (branch.conversation !== MAIN[scenario.name]!.conversation) differing.push(scenario.name)
-    }
-    expect(differing).toStrictEqual(['first kept message is assistant', 'tool pair at the boundary'])
   })
 })
