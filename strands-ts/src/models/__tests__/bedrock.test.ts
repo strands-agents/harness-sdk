@@ -1222,6 +1222,52 @@ describe('BedrockModel', () => {
       expect(call?.messages?.[1]?.content).toEqual([...expReasoning, { text: 'Response' }])
     })
 
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5766: skipping the emptied
+    // assistant turn sent `user, user`, so the earlier question looked unanswered and the model
+    // answered it again instead of the new one.
+    it('keeps an assistant turn emptied by a reasoning drop', async () => {
+      const provider = new BedrockModel({ modelId: 'us.amazon.nova-pro-v1:0' })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('What is the capital of France?')] }),
+        new Message({ role: 'assistant', content: [signedBlock] }),
+        new Message({ role: 'user', content: [new TextBlock('What is 2 + 2?')] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+      expect(call?.messages?.[1]?.content).toEqual([{ text: '[blank text]' }])
+    })
+
+    it('leaves a reasoning-only assistant turn the model accepts', async () => {
+      const provider = new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('What is the capital of France?')] }),
+        new Message({ role: 'assistant', content: [signedBlock] }),
+        new Message({ role: 'user', content: [new TextBlock('What is 2 + 2?')] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+      expect(call?.messages?.[1]?.content).toEqual([SIGNED_REASONING])
+    })
+
+    it('still skips a user turn emptied by a reasoning drop', async () => {
+      const provider = new BedrockModel({ modelId: 'us.deepseek.r1-v1:0' })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello')] }),
+        new Message({ role: 'user', content: [redactedBlock] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.map((message) => message.role)).toEqual(['user'])
+    })
+
     it('formats cache point blocks in messages', async () => {
       const provider = new BedrockModel()
       const messages = [

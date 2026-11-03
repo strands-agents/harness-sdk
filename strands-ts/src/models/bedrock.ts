@@ -1086,10 +1086,12 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const formattedMessages = messages.reduce<BedrockMessage[]>((acc, message, idx) => {
       const shouldApplyGuardBlocks = idx === lastUserTextIdx
+      let droppedReasoningFromMessage = false
       const content = message.content
         .filter((block: ContentBlock) => {
           if (block.type !== 'reasoningBlock' || !this._rejectsReasoningBlock(block)) return true
           droppedReasoningContent = true
+          droppedReasoningFromMessage = true
           return false
         })
         .map((block: ContentBlock) => {
@@ -1100,6 +1102,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
       if (content.length > 0) {
         acc.push({ role: message.role, content })
+      } else if (droppedReasoningFromMessage && message.role === 'assistant') {
+        // Dropping the reasoning emptied an assistant turn. Skipping it would put two user turns
+        // next to each other, and the model then answers the earlier one again, so stand in the
+        // same placeholder the Python SDK uses for an empty assistant message.
+        acc.push({ role: 'assistant', content: [{ text: '[blank text]' }] })
       }
 
       return acc

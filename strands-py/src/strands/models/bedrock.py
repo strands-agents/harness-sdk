@@ -971,6 +971,7 @@ class BedrockModel(Model):
 
         for idx, message in enumerate(messages):
             cleaned_content: list[dict[str, Any]] = []
+            dropped_reasoning_from_message = False
 
             for content_block in message["content"]:
                 # Filter out SDK_UNKNOWN_MEMBER content blocks
@@ -982,6 +983,7 @@ class BedrockModel(Model):
                     content_block["reasoningContent"]
                 ):
                     dropped_reasoning_content = True
+                    dropped_reasoning_from_message = True
                     continue
 
                 # Format content blocks for Bedrock API compatibility
@@ -1020,6 +1022,12 @@ class BedrockModel(Model):
             # Create new message with cleaned content (skip if empty)
             if cleaned_content:
                 cleaned_messages.append({"content": cleaned_content, "role": message["role"]})
+            elif dropped_reasoning_from_message and message["role"] == "assistant":
+                # Dropping the reasoning emptied an assistant turn. Skipping it would put two user
+                # turns next to each other, and the model then answers the earlier one again, so
+                # stand in the placeholder _normalize_messages already uses for an empty assistant
+                # message (see strands.event_loop.streaming).
+                cleaned_messages.append({"content": [{"text": "[blank text]"}], "role": "assistant"})
 
         if filtered_unknown_members:
             logger.warning(

@@ -3131,8 +3131,15 @@ async def test_stream_deepseek_filters_reasoning_content(bedrock_client, alist):
 
 
 @pytest.mark.asyncio
-async def test_stream_deepseek_skips_empty_messages(bedrock_client, alist):
-    """Test that DeepSeek models skip messages that would be empty after filtering reasoningContent."""
+async def test_stream_deepseek_never_sends_a_message_emptied_by_reasoning_filtering(bedrock_client, alist):
+    """A message emptied by filtering reasoningContent is never sent empty.
+
+    This asserted that the emptied assistant turn was dropped from the request, which is the
+    `user, user` history #5766 measured: the earlier question then looks unanswered and the model
+    answers it again. The guarantee the test was written for -- Bedrock rejects a message whose
+    content is empty -- is unchanged; the turn now carries the `[blank text]` placeholder instead
+    of being removed.
+    """
     model = BedrockModel(model_id="us.deepseek.r1-v1:0")
 
     messages = [
@@ -3145,13 +3152,15 @@ async def test_stream_deepseek_skips_empty_messages(bedrock_client, alist):
 
     await alist(model.stream(messages))
 
-    # Verify the request was made with only non-empty messages
     call_args = bedrock_client.converse_stream.call_args[1]
     sent_messages = call_args["messages"]
 
-    assert len(sent_messages) == 2
+    assert len(sent_messages) == 3
     assert sent_messages[0]["content"] == [{"text": "Hello"}]
-    assert sent_messages[1]["content"] == [{"text": "Follow up"}]
+    assert sent_messages[1] == {"content": [{"text": "[blank text]"}], "role": "assistant"}
+    assert sent_messages[2]["content"] == [{"text": "Follow up"}]
+    # The guarantee this test was originally written for.
+    assert all(message["content"] for message in sent_messages)
 
 
 SIGNED_REASONING = {"reasoningContent": {"reasoningText": {"text": "Claude thinking", "signature": "sig"}}}
@@ -3205,6 +3214,72 @@ def test_format_request_drops_reasoning_the_model_rejects(bedrock_client, model_
     tru_content = model.format_request(messages)["messages"][1]["content"]
     exp_content = [*exp_reasoning, {"text": "Response"}]
     assert tru_content == exp_content
+
+
+def test_format_request_keeps_an_assistant_turn_emptied_by_a_reasoning_drop(bedrock_client):
+    """An assistant turn left empty by dropping its reasoning keeps its place in the history.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/5766: skipping the message
+    sent `user, user`, which left the earlier question looking unanswered, so the model answered it
+    again instead of the new one.
+    """
+    model = BedrockModel(model_id="us.amazon.nova-pro-v1:0")
+    messages = [
+        {"role": "user", "content": [{"text": "What is the capital of France?"}]},
+        {"role": "assistant", "content": [SIGNED_REASONING]},
+        {"role": "user", "content": [{"text": "What is 2 + 2?"}]},
+    ]
+
+    sent = model.format_request(messages)["messages"]
+
+    assert [message["role"] for message in sent] == ["user", "assistant", "user"]
+    assert sent[1]["content"] == [{"text": "[blank text]"}]
+
+
+def test_format_request_leaves_a_reasoning_only_assistant_turn_the_model_accepts(bedrock_client):
+    """The placeholder stands in only when the reasoning is actually dropped."""
+    model = BedrockModel(model_id="global.anthropic.claude-opus-5")
+    messages = [
+        {"role": "user", "content": [{"text": "What is the capital of France?"}]},
+        {"role": "assistant", "content": [SIGNED_REASONING]},
+        {"role": "user", "content": [{"text": "What is 2 + 2?"}]},
+    ]
+
+    sent = model.format_request(messages)["messages"]
+
+    assert [message["role"] for message in sent] == ["user", "assistant", "user"]
+    assert sent[1]["content"] == [SIGNED_REASONING]
+
+
+def test_format_request_still_skips_an_assistant_turn_emptied_without_a_reasoning_drop(bedrock_client):
+    """Only a reasoning drop stands a placeholder in; other emptied messages are skipped as before.
+
+    SDK_UNKNOWN_MEMBER filtering can leave the same gap, but #5766 measured the reasoning path, so
+    this pins the narrower change rather than altering a path nothing has tested against a model.
+    """
+    model = BedrockModel(model_id="us.amazon.nova-pro-v1:0")
+    messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {"role": "assistant", "content": [{"SDK_UNKNOWN_MEMBER": {"name": "someFutureBlock"}}]},
+        {"role": "user", "content": [{"text": "Follow up"}]},
+    ]
+
+    sent = model.format_request(messages)["messages"]
+
+    assert [message["role"] for message in sent] == ["user", "user"]
+
+
+def test_format_request_keeps_a_user_turn_emptied_by_a_reasoning_drop_skipped(bedrock_client):
+    """The placeholder is an assistant-only convention, so an emptied user turn is still skipped."""
+    model = BedrockModel(model_id="us.deepseek.r1-v1:0")
+    messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {"role": "user", "content": [REDACTED_REASONING]},
+    ]
+
+    sent = model.format_request(messages)["messages"]
+
+    assert [message["role"] for message in sent] == ["user"]
 
 
 def test_format_request_filters_image_content_blocks(model, model_id):
