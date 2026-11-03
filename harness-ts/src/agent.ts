@@ -84,7 +84,8 @@ export interface HarnessAgentOptions extends Omit<
   model?: Model | ModelRouter | string
   /**
    * Reasoning effort applied to the resolved model, mapped to each provider's request fields.
-   * `'auto'` (the default) uses the provider's recommended level, `'off'` turns reasoning off
+   * `'auto'` (the default) uses the model vendor's default level (what Claude Code, Codex, or Gemini CLI run it
+   * at; the provider's `'high'` otherwise), `'off'` turns reasoning off
    * (the provider's `none` level where it has one), and a named level (`'minimal'`, `'low'`,
    * `'medium'`, `'high'`, `'xhigh'`, `'max'`) sets it explicitly; a level the resolved provider
    * does not support throws. Ignored when `model` is a `Model` or `ModelRouter` instance.

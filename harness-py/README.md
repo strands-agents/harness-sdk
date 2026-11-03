@@ -142,7 +142,7 @@ for every provider:
 
 ```python
 create_harness(effort="high")     # minimal | low | medium | high | xhigh | max, as the provider offers them
-create_harness(effort="auto")     # the provider's recommended level (high where supported), the default
+create_harness(effort="auto")     # the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 create_harness(effort="off")      # no reasoning
 ```
 
