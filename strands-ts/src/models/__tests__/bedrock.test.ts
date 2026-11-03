@@ -1651,6 +1651,23 @@ describe('BedrockModel', () => {
           expected: ContextWindowOverflowError,
         },
         {
+          name: 'ContextWindowOverflowError for Nova input tokens exceeded (#5739)',
+          error: new ValidationException({
+            message:
+              'The model returned the following errors: Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.',
+            $metadata: {},
+          }),
+          expected: ContextWindowOverflowError,
+        },
+        {
+          name: 'ContextWindowOverflowError for OpenAI-style maximum context length (#5739)',
+          error: new ValidationException({
+            message: "The model returned the following errors: This model's maximum context length is 32768 tokens.",
+            $metadata: {},
+          }),
+          expected: ContextWindowOverflowError,
+        },
+        {
           name: 'ValidationException for invalid input',
           error: new ValidationException({ message: 'ValidationException', $metadata: {} }),
           expected: ValidationException,
