@@ -308,7 +308,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @returns Total input token count
    */
   override async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    if (this._config.useNativeTokenCount !== true) return super.countTokens(messages, options)
+    if (this._config.useNativeTokenCount !== true) return this._estimateTokens(messages, options)
 
     try {
       const request = this._formatRequest(messages, options)
@@ -329,8 +329,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       return response.input_tokens
     } catch (error) {
       logger.debug(`error=<${error}> | native token counting failed, falling back to estimation`)
-      return super.countTokens(messages, options)
+      return this._estimateTokens(messages, options)
     }
+  }
+
+  /** Estimates the tokens of the messages a request would send. */
+  private _estimateTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
+    return super.countTokens(this._sendsNativeBlocks() ? fromLastNativeBlock(messages) : messages, options)
   }
 
   /**

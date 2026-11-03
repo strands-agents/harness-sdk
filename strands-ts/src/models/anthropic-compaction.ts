@@ -31,9 +31,19 @@ const ANTHROPIC_PROVIDER = 'anthropic'
  * @returns The returned block, or undefined for any other text block
  */
 function formatNativeBlock(block: TextBlock): Anthropic.ContentBlockParam | undefined {
+  return nativeData(block) as Anthropic.ContentBlockParam | undefined
+}
+
+/**
+ * The block the API returned, held as Anthropic provider data: an object, not null or an array.
+ * @param block - A text block
+ * @returns The returned block, or undefined when the block holds none
+ */
+function nativeData(block: TextBlock): object | undefined {
   const providerData = block.metadata?.providerData
   if (providerData?.provider !== ANTHROPIC_PROVIDER) return undefined
-  return providerData.data as Anthropic.ContentBlockParam
+  const { data } = providerData
+  return typeof data === 'object' && data !== null && !Array.isArray(data) ? data : undefined
 }
 
 /**
@@ -78,7 +88,7 @@ export function fromLastNativeBlock(messages: Message[]): Message[] {
 }
 
 function isNativeBlock(block: ContentBlock): boolean {
-  return block instanceof TextBlock && block.metadata?.providerData?.provider === ANTHROPIC_PROVIDER
+  return block instanceof TextBlock && nativeData(block) !== undefined
 }
 
 /**

@@ -47,6 +47,29 @@ describe('flattenMessagesToContent', () => {
 
     expect(flattenMessagesToContent(messages)).toEqual([new TextBlock('\n---\n[assistant]'), new TextBlock('hi')])
   })
+  it('sends a text block as its text alone, without its provider data', () => {
+    const metadata = { providerData: { provider: 'anthropic', data: { type: 'compaction', content: 'summary' } } }
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('summary', { metadata })] }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('out', { metadata })] }),
+        ],
+      }),
+    ]
+
+    const flattened = flattenMessagesToContent(messages)
+
+    expect(flattened).toStrictEqual([
+      new TextBlock('\n---\n[user]'),
+      new TextBlock('summary'),
+      new TextBlock('\n---\n[user]'),
+      new TextBlock('[tool result]'),
+      new TextBlock('out'),
+    ])
+  })
+
   it('skips the role marker for a message with only reasoning', () => {
     const messages = [
       new Message({ role: 'assistant', content: [new ReasoningBlock({ text: 'plan', signature: 'sig' })] }),

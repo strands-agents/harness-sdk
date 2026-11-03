@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AnthropicModel } from '../anthropic.js'
+import { carriesNativeBlock, formatTextBlock, fromLastNativeBlock } from '../anthropic-compaction.js'
 import { ModelThrottledError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { ToolSpec } from '../../tools/types.js'
@@ -141,5 +142,49 @@ describe('AnthropicModel.summarize', () => {
     expect(replayed).toStrictEqual([RETURNED])
     expect(canonical(replayed[0])).toBe(canonical(RETURNED))
     expect(wire.requests[1]!.headers['anthropic-beta']).toBe('compact-2026-09-04')
+  })
+})
+
+describe('formatTextBlock', () => {
+  const stored = (provider: string, data: unknown): TextBlock =>
+    new TextBlock('summary', { metadata: { providerData: { provider, data } } })
+
+  it('sends Anthropic provider data that is an object as the block itself', () => {
+    expect(formatTextBlock(stored('anthropic', RETURNED))).toStrictEqual(RETURNED)
+  })
+
+  it.each([
+    ['another provider', stored('bedrock', RETURNED)],
+    ['null data', stored('anthropic', null)],
+    ['array data', stored('anthropic', [RETURNED])],
+    ['string data', stored('anthropic', 'opaque')],
+  ])('sends a block with %s as text, which no request trims to or needs the beta for', (_, block) => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [block] }),
+    ]
+    expect(formatTextBlock(block)).toStrictEqual({ type: 'text', text: 'summary' })
+    expect(carriesNativeBlock(messages)).toBe(false)
+    expect(fromLastNativeBlock(messages)).toBe(messages)
+  })
+})
+
+describe('AnthropicModel.countTokens', () => {
+  it('estimates from the last compaction block, as a request sends', async () => {
+    const compaction = new TextBlock(RETURNED.content, {
+      metadata: { providerData: { provider: 'anthropic', data: RETURNED } },
+    })
+    const history = [
+      new Message({ role: 'user', content: [new TextBlock('earlier context '.repeat(500))] }),
+      new Message({ role: 'assistant', content: [compaction] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+    const compacting = model(new AnthropicWire())
+    const plain = model(new AnthropicWire(), {}, false)
+
+    const counted = await compacting.countTokens(history)
+
+    expect(counted).toBe(await compacting.countTokens(history.slice(1)))
+    expect(counted).toBeLessThan(await plain.countTokens(history))
   })
 })
