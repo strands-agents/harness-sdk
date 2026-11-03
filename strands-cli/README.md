@@ -477,11 +477,11 @@ and spoken responses, answers ordinary conversation directly, and routes status,
 cancellation through the active harness conversation. The selected coding model still owns files,
 tools, approvals, and execution.
 
-The panel controls the provider, spoken replies, supported voices, and fast/balanced/patient
-end-of-turn detection. Spoken replies are off by default. When enabled, the voice model speaks
-directly and turns completed harness responses into short grounded updates. A themed frog hops into
-the bottom-right corner while voice is active and moves its mouth during speech. Voice conversation
-continues while delegated work runs; only an explicit cancel request stops that work.
+The panel controls the provider, supported voices, and fast/balanced/patient end-of-turn detection.
+While voice mode is on, the voice model speaks directly and turns completed harness responses into
+short grounded updates. A themed frog hops into the bottom-right corner while voice is active and
+moves its mouth during speech. Voice conversation continues while delegated work runs; only an
+explicit cancel request stops that work.
 
 With an empty composer, one Space tap toggles microphone mute, including while the voice panel is
 open. Provider, voice, and endpointing changes restart an active sidecar; selections made while

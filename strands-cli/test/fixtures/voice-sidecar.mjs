@@ -122,8 +122,6 @@ lines.on('line', (line) => {
     )
   } else if (command.type === 'stop_speaking') {
     emit({ type: 'speech_output_stopped' })
-  } else if (command.type === 'set_spoken_replies' && command.enabled === false) {
-    emit({ type: 'speech_output_stopped' })
   } else if (command.type === 'supervisor_result' && supervisorResultMarker) {
     writeFileSync(supervisorResultMarker, JSON.stringify(command))
   } else if (command.type === 'stop') {

@@ -406,7 +406,7 @@ class _SilentConsoleIO:
 
 
 class ControlledAudioOutput:
-    """Play conversational and narrated replies while spoken output is enabled."""
+    """Play conversational and narrated replies with interruption handling."""
 
     def __init__(self, output_stream: OutputStream) -> None:
         self._output_stream = output_stream
@@ -414,7 +414,6 @@ class ControlledAudioOutput:
         self._play_current = False
         self._audio_started = False
         self._tool_response = False
-        self._enabled = False
         self._interrupted_response_id: str | None = None
         self._idle = asyncio.Event()
 
@@ -436,7 +435,7 @@ class ControlledAudioOutput:
         elif isinstance(event, BidiResponseStartEvent):
             self._response_id = event.response_id
             self._idle.clear()
-            self._play_current = self._enabled
+            self._play_current = True
             self._audio_started = False
             self._tool_response = False
         elif isinstance(event, BidiToolUseBlocksEvent):
@@ -481,10 +480,6 @@ class ControlledAudioOutput:
         """Reserve playback before a programmatic response is submitted."""
         self._finish_response(idle=False)
 
-    def set_enabled(self, enabled: bool) -> None:
-        """Enable or suppress speaker output for subsequent responses."""
-        self._enabled = enabled
-
     async def stop_speaking(self) -> None:
         """Clear speaker output without ending the model's turn."""
         was_speaking = self._audio_started
@@ -519,7 +514,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-device", type=int)
     parser.add_argument("--output-device", type=int)
-    parser.add_argument("--spoken-replies", action="store_true")
     parser.add_argument("--muted", action="store_true")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument(
@@ -640,7 +634,6 @@ async def run_voice(args: argparse.Namespace, region: str | None) -> None:
     audio_input = MutableAudioInput(audio.input())
     audio_input.set_muted(args.muted)
     audio_output = ControlledAudioOutput(audio.output())
-    audio_output.set_enabled(args.spoken_replies)
     event_output = JsonEventOutput()
     control = SidecarControl()
     narrations: asyncio.Queue[str] = asyncio.Queue()
@@ -663,11 +656,6 @@ async def run_voice(args: argparse.Namespace, region: str | None) -> None:
                 muted = command.get("muted") is True
                 audio_input.set_muted(muted)
                 emit("mute_changed", muted=muted)
-            elif command_type == "set_spoken_replies":
-                enabled = command.get("enabled") is True
-                audio_output.set_enabled(enabled)
-                if not enabled:
-                    await audio_output.stop_speaking()
             elif command_type == "narrate":
                 text = str(command.get("text", "")).strip()
                 if not text:

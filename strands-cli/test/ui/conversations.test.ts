@@ -361,7 +361,7 @@ describe('ConversationManager', () => {
       prompt: 'inspect the parser',
       entries: [{ type: 'assistant', text: 'coding:inspect the parser' }],
     })
-    expect(voice.narrate).not.toHaveBeenCalled()
+    expect(voice.narrate).toHaveBeenCalledExactlyOnceWith('coding:inspect the parser')
     expect(voice.resolveSupervisorRequest).toHaveBeenCalledWith('supervisor-1', {
       ok: true,
       result: {
@@ -408,10 +408,6 @@ describe('ConversationManager', () => {
           value: 'voice:model=amazon.nova-2-5-sonic',
         }),
         expect.objectContaining({
-          label: 'spoken replies',
-          control: expect.objectContaining({ kind: 'toggle', checked: false }),
-        }),
-        expect.objectContaining({
           label: 'provider',
           control: expect.objectContaining({ kind: 'segmented' }),
         }),
@@ -422,9 +418,7 @@ describe('ConversationManager', () => {
       ]),
     })
 
-    const spokenReplies = manager.getSnapshot().panel?.rows.findIndex((row) => row.value === 'voice:spokenReplies')
-    await manager.activatePanelRow(manager.getSnapshot().panel!.rows[spokenReplies!]!)
-    expect(voice.setSpokenReplies).toHaveBeenCalledWith(true)
+    expect(manager.getSnapshot().panel?.rows.some((row) => row.value === 'voice:spokenReplies')).toBe(false)
 
     await manager.activatePanelRow({
       label: 'end of turn',
@@ -555,7 +549,6 @@ describe('ConversationManager', () => {
     const manager = new ConversationManager(primary, { fork: async () => primary, voice })
 
     await manager.submit('/voice on')
-    voice.setSpokenReplies(true)
     const running = manager.submit('explain the change')
     await firstChunk
     expect(voice.narrate).not.toHaveBeenCalled()
@@ -582,7 +575,6 @@ describe('ConversationManager', () => {
       const manager = new ConversationManager(primary, { fork: async () => primary, voice })
       try {
         await manager.submit('/voice on')
-        voice.setSpokenReplies(true)
         await manager.submit('update the build')
 
         const turn = manager.getSnapshot().completedTurns.at(-1)
@@ -1044,7 +1036,6 @@ function fakeVoiceInput(status: VoiceSessionSnapshot['status'] = 'off') {
     muted: false,
     inputLevel: 0,
     inputLevelDb: -60,
-    spokenReplies: false,
     endpointingSensitivity: 'LOW',
     provider: 'bedrock',
     voice: 'tiffany',
@@ -1063,7 +1054,6 @@ function fakeVoiceInput(status: VoiceSessionSnapshot['status'] = 'off') {
       muted: false,
       inputLevel: 0,
       inputLevelDb: -60,
-      spokenReplies: snapshot.spokenReplies,
       endpointingSensitivity: snapshot.endpointingSensitivity,
       provider: snapshot.provider,
       voice: snapshot.voice,
@@ -1086,7 +1076,7 @@ function fakeVoiceInput(status: VoiceSessionSnapshot['status'] = 'off') {
       emit()
     }),
     stop: vi.fn(reset),
-    narrate: vi.fn((_text: string) => snapshot.status !== 'off' && snapshot.spokenReplies),
+    narrate: vi.fn((_text: string) => snapshot.status !== 'off'),
     resolveSupervisorRequest: vi.fn(() => snapshot.status !== 'off'),
     toggleMuted: () => {
       if (snapshot.status === 'off') {
@@ -1102,11 +1092,6 @@ function fakeVoiceInput(status: VoiceSessionSnapshot['status'] = 'off') {
       emit()
       return true
     },
-    setSpokenReplies: vi.fn((enabled: boolean) => {
-      snapshot = { ...snapshot, spokenReplies: enabled }
-      emit()
-      return true
-    }),
     setEndpointingSensitivity: vi.fn(async (sensitivity: VoiceSessionSnapshot['endpointingSensitivity']) => {
       snapshot = { ...snapshot, endpointingSensitivity: sensitivity }
       emit()

@@ -76,7 +76,6 @@ function VoiceSection({
     const action = row.value === 'voice:enabled'
     const endpointing = row.value === 'voice:endpointing'
     const provider = row.value === 'voice:provider'
-    const stackedToggle = row.control?.kind === 'toggle' && contentWidth < 26
     const rowHeight = action
       ? Math.min(3, capacity)
       : endpointing
@@ -85,17 +84,14 @@ function VoiceSection({
           : 2
         : provider && outlined
           ? 3
-          : stackedToggle
-            ? 2
-            : !row.value
-              ? Math.min(2, capacity)
-              : 1
+          : !row.value
+            ? Math.min(2, capacity)
+            : 1
     return {
       row,
       index,
       height: Math.min(rowHeight, capacity),
-      gap:
-        capacity >= 10 && position < rows.length - 1 && (action || provider || row.control?.kind === 'toggle') ? 1 : 0,
+      gap: capacity >= 10 && position < rows.length - 1 && (action || provider) ? 1 : 0,
     }
   })
   const window = rowWindow(layout, selected, capacity, viewportStart)
@@ -153,35 +149,35 @@ function VoiceControlRow({
   const action = row.value === 'voice:enabled'
   const endpointing = row.value === 'voice:endpointing'
   const provider = row.value === 'voice:provider'
-  const toggle = row.control?.kind === 'toggle' ? row.control : undefined
-  const stacked = endpointing || (toggle !== undefined && height > 1)
   const language = row.value === 'voice:voice'
   const narrow = width < 28
   const label = endpointing
     ? width < 15
       ? 'Turn end'
       : 'End of turn'
-    : toggle
-      ? width < 26
-        ? 'Replies'
-        : 'Spoken replies'
-      : provider
+    : provider
+      ? narrow
+        ? ''
+        : 'Provider'
+      : row.section === 'Model'
         ? narrow
           ? ''
-          : 'Provider'
-        : row.section === 'Model'
-          ? narrow
-            ? ''
-            : 'Model'
-          : narrow && language
-            ? compactLanguage(row.label)
-            : row.label
-  const labelWidth = !label ? 0 : stacked ? width : Math.min(narrow && !toggle ? 6 : 16, Math.max(1, width - 9))
-  const controlWidth = stacked ? width : Math.max(1, width - labelWidth)
+          : 'Model'
+        : narrow && language
+          ? compactLanguage(row.label)
+          : row.label
+  const labelWidth = !label ? 0 : endpointing ? width : Math.min(narrow ? 6 : 16, Math.max(1, width - 9))
+  const controlWidth = endpointing ? width : Math.max(1, width - labelWidth)
   const labelElement = label ? (
-    <Box width={labelWidth} height={1} flexShrink={0} overflow="hidden">
+    <Box
+      width={labelWidth}
+      height={1}
+      flexShrink={0}
+      justifyContent={endpointing ? 'center' : 'flex-start'}
+      overflow="hidden"
+    >
       <Text color={highlighted ? theme.accent : theme.foreground} bold={focused} wrap="truncate-end">
-        {focused ? '› ' : '  '}
+        {focused ? '› ' : endpointing ? '' : '  '}
         {label}
       </Text>
     </Box>
@@ -193,13 +189,12 @@ function VoiceControlRow({
         rowIndex={index}
         width={controlWidth}
         outlined={outlined && (provider || endpointing)}
+        centered={endpointing}
         {...(pressedControl ? { pressedControl } : {})}
         {...(hoveredControl ? { hoveredControl } : {})}
         {...(onControlElement ? { onControlElement } : {})}
       />
     ) : null
-  const toggleTarget = panelControlTarget(index, 'toggle')
-  const toggleHighlighted = highlighted || pressedControl === toggleTarget || hoveredControl === toggleTarget
   return (
     <Box
       ref={(element) => onRowElement?.(index, element)}
@@ -207,8 +202,8 @@ function VoiceControlRow({
       height={height}
       marginBottom={gap}
       flexShrink={0}
-      flexDirection={stacked ? 'column' : 'row'}
-      alignItems={stacked ? 'flex-start' : 'center'}
+      flexDirection={endpointing ? 'column' : 'row'}
+      alignItems={endpointing ? 'flex-start' : 'center'}
       overflow="hidden"
     >
       {action && row.control?.kind === 'segmented' ? (
@@ -233,33 +228,22 @@ function VoiceControlRow({
       ) : (
         <>
           {labelElement}
-          {toggle ? (
-            <Box ref={(element) => onControlElement?.(toggleTarget, element)} width={9} flexShrink={0}>
-              <Text
-                color={toggle.checked || toggleHighlighted ? theme.accent : theme.foreground}
-                bold={toggle.checked || toggleHighlighted}
-              >
-                {toggle.checked ? ' ━━● On ' : ' ●━━ Off'}
-              </Text>
-            </Box>
-          ) : (
-            (options ?? (
-              <Box width={controlWidth} height={1} overflow="hidden">
-                <Box flexShrink={0}>
-                  <Text color={theme.foreground} bold wrap="truncate-end">
-                    {narrow && focused ? '› ' : ''}
-                    {row.label}
+          {options ?? (
+            <Box width={controlWidth} height={1} overflow="hidden">
+              <Box flexShrink={0}>
+                <Text color={theme.foreground} bold wrap="truncate-end">
+                  {narrow && focused ? '› ' : ''}
+                  {row.label}
+                </Text>
+              </Box>
+              {row.description && controlWidth >= stringWidth(row.label) + 10 ? (
+                <Box marginLeft={1} flexShrink={1} overflow="hidden">
+                  <Text dimColor wrap="truncate-end">
+                    {row.description}
                   </Text>
                 </Box>
-                {row.description && controlWidth >= stringWidth(row.label) + 10 ? (
-                  <Box marginLeft={1} flexShrink={1} overflow="hidden">
-                    <Text dimColor wrap="truncate-end">
-                      {row.description}
-                    </Text>
-                  </Box>
-                ) : null}
-              </Box>
-            ))
+              ) : null}
+            </Box>
           )}
         </>
       )}
@@ -272,6 +256,7 @@ function VoiceOptions({
   rowIndex,
   width,
   outlined,
+  centered,
   pressedControl,
   hoveredControl,
   onControlElement,
@@ -280,8 +265,9 @@ function VoiceOptions({
   rowIndex: number
   width: number
   outlined: boolean
+  centered: boolean
 }): ReactElement {
-  const { accent, foreground, border } = useTheme()
+  const { accent, foreground, border, selection, canvas } = useTheme()
   const padding = outlined && width >= 33 ? 1 : 0
   const optionWidths = control.options.map((option) => stringWidth(option.label) + 2 + padding * 2)
   const active = Math.max(
@@ -299,7 +285,14 @@ function VoiceOptions({
     )
   }
   return (
-    <Box width={width} height={outlined ? 3 : 1} flexShrink={0} alignItems="center" overflow="hidden">
+    <Box
+      width={width}
+      height={outlined ? 3 : 1}
+      flexShrink={0}
+      justifyContent={centered ? 'center' : 'flex-start'}
+      alignItems="center"
+      overflow="hidden"
+    >
       {start > 0 ? marker(start - 1, '‹') : null}
       {control.options.slice(start, end).map((option, visibleIndex) => {
         const target = panelControlTarget(rowIndex, option.value)
@@ -314,13 +307,17 @@ function VoiceOptions({
             flexShrink={0}
             {...(outlined
               ? { borderStyle: 'single' as const, borderColor: highlighted ? accent : border, paddingX: padding }
-              : {})}
+              : { backgroundColor: highlighted ? accent : selection })}
             justifyContent="center"
             alignItems="center"
             overflow="hidden"
           >
-            <Text color={highlighted ? accent : foreground} bold={Boolean(highlighted)} wrap="truncate-end">
-              {outlined ? option.label : `[${option.label}]`}
+            <Text
+              color={highlighted ? (outlined ? accent : canvas) : foreground}
+              bold={Boolean(highlighted)}
+              wrap="truncate-end"
+            >
+              {option.label}
             </Text>
           </Box>
         )

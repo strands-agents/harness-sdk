@@ -123,19 +123,17 @@ class VoicePlaybackTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(emitter.stop)
         self.sink = RecordingOutput()
         self.output = sidecar.ControlledAudioOutput(self.sink)
-        self.output.set_enabled(True)
         await self.output(sidecar.BidiConnectionStartEvent("connection", "model"))
 
-    async def test_silent_routed_response_releases_future_narration(self) -> None:
-        self.output.set_enabled(False)
+    async def test_plays_routed_response_and_releases_future_narration(self) -> None:
         await self.output(sidecar.BidiResponseStartEvent("response"))
         await self.output(tool_event())
         await self.output(audio_event())
         await self.output(sidecar.BidiResponseStopEvent("response"))
-        self.output.set_enabled(True)
 
         self.assertTrue(await narration_ready(self.output))
-        self.assertEqual(self.sink.events, [])
+        self.assertEqual(len(self.sink.events), 1)
+        self.assertIsInstance(self.sink.events[0], sidecar.BidiAudioDeltaEvent)
 
     async def test_stopping_playback_preserves_the_active_model_turn(self) -> None:
         await self.output(sidecar.BidiResponseStartEvent("response"))
@@ -283,7 +281,7 @@ class VoiceRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime.captured_inputs[0].source["bytes"], bytes(320))
 
     async def test_narration_accepted_during_startup_waits_for_connection(self) -> None:
-        async with sidecar_runtime("--spoken-replies") as runtime:
+        async with sidecar_runtime() as runtime:
             await asyncio.wait_for(runtime.input_received.wait(), timeout=1)
             await runtime.controls.put({"type": "narrate", "text": "The task finished."})
             for _ in range(3):

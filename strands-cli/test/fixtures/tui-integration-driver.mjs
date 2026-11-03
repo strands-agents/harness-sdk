@@ -355,11 +355,7 @@ async function main() {
         ['/tasks', ['Search tasks', 'Fixture background task', 'completed', 'Enter open'], undefined],
         ['/settings', ['Appearance', 'Auto-Discovery'], '› Theme'],
         ['/permissions', ['Permissions', 'Search tools', 'Ask', 'Bypass', 'Custom', 'Custom to edit'], undefined],
-        [
-          '/voice',
-          ['Off', 'On', 'Spoken replies', 'Speaker', 'Nova', 'OpenAI', 'Nova 2.5 Sonic', 'tiffany', 'Space mute'],
-          '› Provider',
-        ],
+        ['/voice', ['Off', 'On', 'Speaker', 'Nova', 'OpenAI', 'Nova 2.5 Sonic', 'tiffany', 'Space mute'], '› Provider'],
         ['/export', ['Export Lifecycle Fixture', 'Python', 'TypeScript'], undefined],
         [
           '/sessions ',

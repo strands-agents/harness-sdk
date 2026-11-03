@@ -57,14 +57,12 @@ describe('strands CLI e2e', () => {
           resolve('test/fixtures/voice-sidecar-live.py'),
           '--provider',
           'bedrock',
-          '--spoken-replies',
         ],
         cwd,
         env: { STRANDS_TEST_VOICE_DIRECTORY: cwd },
         startTimeoutMs: 120_000,
         stopTimeoutMs: 10_000,
       })
-      voice.setSpokenReplies(true)
       voice.onSupervisorRequest((request) => requests.push(request))
       voice.subscribe(() => {
         const { status } = voice.getSnapshot()

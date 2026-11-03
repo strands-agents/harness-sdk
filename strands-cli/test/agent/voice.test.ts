@@ -21,11 +21,11 @@ describe('PythonVoiceSession', () => {
     })
     session.subscribe(() => statuses.push(session.getSnapshot().status))
 
+    expect(session.narrate('Voice is not enabled yet.')).toBe(false)
     await session.start()
     expect(session.getSnapshot()).toMatchObject({
       status: 'listening',
       muted: false,
-      spokenReplies: false,
       endpointingSensitivity: 'LOW',
       provider: 'bedrock',
       voice: 'tiffany',
@@ -43,12 +43,7 @@ describe('PythonVoiceSession', () => {
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('muted'))
     expect(session.getSnapshot()).toMatchObject({ inputLevel: 0, inputLevelDb: -60 })
 
-    expect(session.setSpokenReplies(true)).toBe(true)
     expect(session.narrate('Finished the task.')).toBe(true)
-
-    expect(session.setSpokenReplies(false)).toBe(true)
-    expect(session.narrate('This should remain silent.')).toBe(false)
-    expect(session.getSnapshot().spokenReplies).toBe(false)
 
     await session.stop()
     expect(session.getSnapshot()).toEqual({
@@ -56,12 +51,18 @@ describe('PythonVoiceSession', () => {
       muted: false,
       inputLevel: 0,
       inputLevelDb: -60,
-      spokenReplies: false,
       endpointingSensitivity: 'LOW',
       provider: 'bedrock',
       voice: 'tiffany',
       model: 'test-sonic',
     })
+    expect(session.narrate('Voice is off.')).toBe(false)
+
+    statuses.length = 0
+    await session.start()
+    expect(session.narrate('Voice replies resume after restarting.')).toBe(true)
+    await vi.waitFor(() => expect(statuses).toContain('speaking'))
+    await session.stop()
   })
 
   it('forwards grounded narrations and restarts when endpointing or voice changes', async () => {
@@ -75,7 +76,6 @@ describe('PythonVoiceSession', () => {
     session.subscribe(() => statuses.push(session.getSnapshot().status))
 
     await session.start()
-    expect(session.setSpokenReplies(true)).toBe(true)
     expect(session.narrate('The first completed response.')).toBe(true)
     expect(session.narrate('The second completed response.')).toBe(true)
     await vi.waitFor(() => expect(statuses.filter((status) => status === 'speaking')).toHaveLength(2))
@@ -83,10 +83,6 @@ describe('PythonVoiceSession', () => {
 
     expect(session.narrate('Stop this reply.')).toBe(true)
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
-    session.setSpokenReplies(false)
-    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))
-    session.setSpokenReplies(true)
-
     expect(await session.setEndpointingSensitivity('MEDIUM')).toBe(true)
     expect(session.getSnapshot()).toMatchObject({
       status: 'listening',
@@ -105,6 +101,8 @@ describe('PythonVoiceSession', () => {
       provider: 'openai',
       voice: 'coral',
     })
+    expect(session.narrate('A reply from the new voice provider.')).toBe(true)
+    await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
 
     await session.dispose()
   })
@@ -143,7 +141,7 @@ describe('PythonVoiceSession', () => {
     }
   })
 
-  it.each(['deliver', 'off', 'disable'] as const)(
+  it.each(['deliver', 'off'] as const)(
     'preserves only current narrations across a process gap with %s',
     async (action) => {
       const directory = await mkdtemp(join(tmpdir(), 'strands-voice-narration-'))
@@ -176,7 +174,6 @@ describe('PythonVoiceSession', () => {
           .map((event) => event.text)
       try {
         await session.start()
-        session.setSpokenReplies(true)
         await rm(started)
         const restarting = session.setVoice('matthew')
         await vi.waitFor(async () => {
@@ -186,21 +183,13 @@ describe('PythonVoiceSession', () => {
         if (action === 'off') {
           await Promise.all([restarting, session.stop(), session.start()])
         } else {
-          if (action === 'disable') {
-            session.setSpokenReplies(false)
-            session.setSpokenReplies(true)
-          }
           await vi.waitFor(async () => {
             await expect(access(started)).resolves.toBeUndefined()
           })
           expect(session.narrate('Second completed task')).toBe(true)
-          if (action === 'deliver') {
-            const setting = session.setEndpointingSensitivity('MEDIUM')
-            expect(session.narrate('Third completed task')).toBe(true)
-            await Promise.all([restarting, setting])
-          } else {
-            await restarting
-          }
+          const setting = session.setEndpointingSensitivity('MEDIUM')
+          expect(session.narrate('Third completed task')).toBe(true)
+          await Promise.all([restarting, setting])
         }
         expect(session.narrate('Current task')).toBe(true)
         await vi.waitFor(async () => {
@@ -209,9 +198,7 @@ describe('PythonVoiceSession', () => {
         expect(await narrations()).toEqual(
           action === 'off'
             ? ['Current task']
-            : action === 'disable'
-              ? ['Second completed task', 'Current task']
-              : ['First completed task', 'Second completed task', 'Third completed task', 'Current task']
+            : ['First completed task', 'Second completed task', 'Third completed task', 'Current task']
         )
       } finally {
         await session.dispose()
@@ -417,7 +404,6 @@ describe('PythonVoiceSession', () => {
       stopTimeoutMs: 500,
     })
     await session.start()
-    session.setSpokenReplies(true)
     expect(session.narrate('A requested spoken reply.')).toBe(true)
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('speaking'))
     await vi.waitFor(() => expect(session.getSnapshot().status).toBe('listening'))

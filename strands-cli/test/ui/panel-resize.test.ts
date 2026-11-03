@@ -143,13 +143,6 @@ describe('mounted panel resizing', () => {
           },
         },
         {
-          label: 'spoken replies',
-          description: 'off',
-          value: 'voice:spokenReplies',
-          section: 'Audio',
-          control: { kind: 'toggle', checked: false },
-        },
-        {
           label: 'provider',
           description: 'Nova',
           value: 'voice:provider',
@@ -212,14 +205,11 @@ describe('mounted panel resizing', () => {
     const activate = vi.spyOn(controller, 'activatePanelRow').mockImplementation(async (selected) => {
       const [action, value] = selected.value!.split('=')
       const rows = current.panel.rows.map((row) => {
-        if (row.value !== action || !row.control) return row
-        const control =
-          row.control.kind === 'toggle'
-            ? { ...row.control, checked: !row.control.checked }
-            : {
-                ...row.control,
-                options: row.control.options.map((option) => ({ ...option, active: option.value === value })),
-              }
+        if (row.value !== action || row.control?.kind !== 'segmented') return row
+        const control = {
+          ...row.control,
+          options: row.control.options.map((option) => ({ ...option, active: option.value === value })),
+        }
         return { ...row, control }
       })
       current = { ...current, panel: { ...current.panel, rows } }
@@ -249,12 +239,8 @@ describe('mounted panel resizing', () => {
     expect(activate).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'voice:enabled=on' }))
     await view.press('\u001b[D')
 
-    await view.click(view.pointOnRow('Spoken replies', 'Off'))
-    expect(activate).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'voice:spokenReplies' }))
-    await view.press('\u001b[D')
-    expect(current.panel.rows[1]!.control).toMatchObject({ kind: 'toggle', checked: false })
-
     await view.press('\t')
+    await view.press('\u001b[B')
     await view.press('\r')
     expect(activate).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'voice:model=amazon.nova-2-5-sonic' }))
     await view.press('\u001b[Z')
@@ -265,6 +251,10 @@ describe('mounted panel resizing', () => {
 
     await view.press('\u001b[F')
     expect(view.screen()).toContain('German')
+    await view.click(view.point('lennart'))
+    expect(activate).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'voice:voice=lennart' }))
+    await view.click(view.point('greta'))
+    expect(activate).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'voice:voice=greta' }))
     await view.resize(40, 14)
     await vi.waitFor(() => {
       view.fits()

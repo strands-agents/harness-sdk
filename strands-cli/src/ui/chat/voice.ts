@@ -131,8 +131,6 @@ export class ConversationVoice {
           }
           return true
         }
-        case 'voice:spokenReplies':
-          return this._voice.setSpokenReplies(!this._voice.getSnapshot().spokenReplies)
         case 'voice:endpointing': {
           const sensitivity = selected
             ? ENDPOINTING_OPTIONS.find((option) => option.value === selected)?.value
@@ -194,13 +192,6 @@ export class ConversationVoice {
           ]
         : []),
       {
-        label: 'spoken replies',
-        description: voice.spokenReplies ? 'on' : 'off',
-        value: 'voice:spokenReplies',
-        section: 'Audio',
-        control: { kind: 'toggle', checked: voice.spokenReplies },
-      },
-      {
         label: 'provider',
         description: voice.provider === 'bedrock' ? 'Nova' : 'OpenAI',
         value: 'voice:provider',
@@ -250,7 +241,7 @@ export class ConversationVoice {
         !this._voice ||
         !isActive() ||
         turn.source === 'background' ||
-        !voice?.spokenReplies ||
+        !voice ||
         voice.status === 'off' ||
         voice.status === 'error' ||
         turn.status === 'cancelled'
@@ -366,7 +357,6 @@ function sameVoiceState(
   return (
     left.status === right.status &&
     left.muted === right.muted &&
-    left.spokenReplies === right.spokenReplies &&
     left.endpointingSensitivity === right.endpointingSensitivity &&
     left.provider === right.provider &&
     left.voice === right.voice &&

@@ -81,7 +81,6 @@ export interface VoiceSessionSnapshot {
   muted: boolean
   inputLevel: number
   inputLevelDb: number
-  spokenReplies: boolean
   endpointingSensitivity: VoiceEndpointingSensitivity
   provider: VoiceProvider
   voice: VoiceId
@@ -99,7 +98,6 @@ export interface VoiceInput {
   resolveSupervisorRequest(requestId: string, response: VoiceSupervisorResponse): boolean
   toggleMuted(): boolean
   setMuted(muted: boolean): boolean
-  setSpokenReplies(enabled: boolean): boolean
   setEndpointingSensitivity(sensitivity: VoiceEndpointingSensitivity): Promise<boolean>
   setProvider(provider: VoiceProvider): Promise<boolean>
   setModel(model: VoiceModelId): Promise<boolean>
@@ -151,7 +149,6 @@ export class PythonVoiceSession implements VoiceInput {
     muted: false,
     inputLevel: 0,
     inputLevelDb: -60,
-    spokenReplies: false,
     endpointingSensitivity: 'LOW',
     provider: 'bedrock',
     voice: 'tiffany',
@@ -201,7 +198,7 @@ export class PythonVoiceSession implements VoiceInput {
 
   narrate(text: string): boolean {
     const clean = text.trim()
-    if (!clean || !this._desired.enabled || !this._snapshot.spokenReplies) {
+    if (!clean || !this._desired.enabled) {
       return false
     }
     if (this._pendingNarrations.length || !this._isCurrent(this._process)) {
@@ -233,16 +230,6 @@ export class PythonVoiceSession implements VoiceInput {
     }
     this._writeControl({ type: 'set_muted', muted })
     this._setConnectedSnapshot('listening', muted)
-    return true
-  }
-
-  setSpokenReplies(enabled: boolean): boolean {
-    if (this._snapshot.spokenReplies === enabled) {
-      return true
-    }
-    if (!enabled) this._pendingNarrations.length = 0
-    this._writeControl({ type: 'set_spoken_replies', enabled })
-    this._setSnapshot({ ...this._snapshot, spokenReplies: enabled })
     return true
   }
 
@@ -443,7 +430,6 @@ export class PythonVoiceSession implements VoiceInput {
       this._process!.phase = 'connected'
       this._process!.finishStart()
       this._watchProgress(this._process!)
-      this._writeControl({ type: 'set_spoken_replies', enabled: this._snapshot.spokenReplies })
       this._setSnapshot({
         status: this._snapshot.muted ? 'muted' : 'listening',
         muted: this._snapshot.muted,
@@ -606,7 +592,6 @@ export class PythonVoiceSession implements VoiceInput {
       muted: snapshot.muted,
       inputLevel: snapshot.inputLevel ?? this._snapshot.inputLevel,
       inputLevelDb: snapshot.inputLevelDb ?? this._snapshot.inputLevelDb,
-      spokenReplies: snapshot.spokenReplies ?? this._snapshot.spokenReplies,
       endpointingSensitivity: snapshot.endpointingSensitivity ?? this._snapshot.endpointingSensitivity,
       provider: snapshot.provider ?? this._snapshot.provider,
       voice: snapshot.voice ?? this._snapshot.voice,
