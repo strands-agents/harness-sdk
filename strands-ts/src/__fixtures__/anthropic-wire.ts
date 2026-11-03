@@ -9,7 +9,7 @@ export interface RecordedRequest {
 
 /** A canned response: the content blocks and stop reason of one Messages API reply. */
 export interface CannedReply {
-  content: Record<string, unknown>[]
+  content?: Record<string, unknown>[]
   stopReason?: string
   usage?: Record<string, unknown>
   /** HTTP status; a non-2xx status returns `error` as the JSON body. */
@@ -89,7 +89,7 @@ function sse(reply: CannedReply): string {
       },
     ],
   ]
-  reply.content.forEach((block, index) => {
+  ;(reply.content ?? []).forEach((block, index) => {
     events.push(...blockEvents(block, index))
   })
   events.push(

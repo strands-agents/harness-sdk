@@ -11,6 +11,9 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { TextBlock } from '../types/messages.js'
 import type { ContentBlock, Message } from '../types/messages.js'
+import { logger } from '../logging/logger.js'
+import type { Usage } from './streaming.js'
+import type { SummaryResult } from './summary.js'
 
 /**
  * Beta that enables on-demand compaction and compaction blocks in later requests.
@@ -64,4 +67,72 @@ export function storeCompactionBlock(block: Record<string, unknown>): TextBlock 
   const { content, ...data } = block
   if (typeof content !== 'string' || content.length === 0) return undefined
   return new TextBlock(content, { providerData: { provider: ANTHROPIC_PROVIDER, data } })
+}
+
+/**
+ * Turns a conversation request into an on-demand compaction request. Leaves out the parameters the API rejects on a
+ * compaction request: `stop_sequences`, a structured-output `output_config.format`, and a `tool_choice` that forces
+ * a tool. `compaction` is not in the installed SDK's request types; the client sends body fields as given.
+ *
+ * @internal
+ * @param request - The request the model would send for the same messages, system prompt and tools
+ * @param instructions - Summarization instructions replacing the API's own prompt
+ * @returns The compaction request
+ */
+export function compactionParams(
+  request: Anthropic.MessageStreamParams,
+  instructions: string | undefined
+): Anthropic.Beta.Messages.MessageCreateParamsStreaming {
+  const { stop_sequences: _stopSequences, tool_choice: toolChoice, output_config: outputConfig, ...rest } = request
+  const { format: _format, ...keptOutputConfig } = outputConfig ?? {}
+  const params: Record<string, unknown> = {
+    ...rest,
+    ...(toolChoice && toolChoice.type !== 'any' && toolChoice.type !== 'tool' && { tool_choice: toolChoice }),
+    ...(Object.keys(keptOutputConfig).length > 0 && { output_config: keptOutputConfig }),
+    compaction: { type: 'summarize', ...(instructions && { instructions }) },
+  }
+  return params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming
+}
+
+/**
+ * Reads a compaction response.
+ *
+ * @internal
+ * @param response - The response message
+ * @param modelId - The model id, for the log line
+ * @returns The stored summary and the compaction iteration's usage, or undefined when no summary was written
+ */
+export function readCompaction(
+  response: Anthropic.Beta.Messages.BetaMessage,
+  modelId: string | undefined
+): SummaryResult | undefined {
+  const returned = (response.content as unknown as Record<string, unknown>[]).find(
+    (block) => block.type === 'compaction'
+  )
+  const block =
+    response.stop_reason === ('compaction' as string) && returned ? storeCompactionBlock(returned) : undefined
+  if (!block) {
+    logger.warn(`model_id=<${modelId}>, stop_reason=<${response.stop_reason}> | compaction returned no summary`)
+    return undefined
+  }
+  const usage = compactionUsage(response.usage)
+  return { block, ...(usage && { usage }) }
+}
+
+/** The usage of the compaction iteration; the top-level counts of a compaction response are zero. */
+function compactionUsage(usage: Anthropic.Beta.Messages.BetaUsage): Usage | undefined {
+  const iteration = usage.iterations?.find((entry) => entry.type === 'compaction') as
+    Anthropic.Beta.Messages.BetaCompactionIterationUsage | undefined
+  if (!iteration) return undefined
+  const inputTokens = iteration.input_tokens ?? 0
+  const outputTokens = iteration.output_tokens ?? 0
+  const cacheRead = iteration.cache_read_input_tokens ?? 0
+  const cacheWrite = iteration.cache_creation_input_tokens ?? 0
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    ...(cacheRead > 0 && { cacheReadInputTokens: cacheRead }),
+    ...(cacheWrite > 0 && { cacheWriteInputTokens: cacheWrite }),
+  }
 }

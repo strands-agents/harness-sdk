@@ -31,6 +31,7 @@ import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
 import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
+import type { SummaryRequest, SummaryResult } from './summary.js'
 
 /**
  * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
@@ -428,6 +429,24 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
+  }
+
+  /**
+   * Summarizes `request.messages` server-side, returning the provider's native summary.
+   *
+   * The summarize strategy calls this only when `modelInfo.capabilities.serverSideCompaction` is `true`. It sends the
+   * conversation's opening messages with the live system prompt and tools, and places the returned block first in
+   * place of the messages it summarizes, replacing message 0. When this returns `undefined`, the strategy writes a
+   * client-side summary in the same pass instead, keeping message 0.
+   *
+   * The base implementation returns `undefined`.
+   *
+   * @experimental
+   * @param _request - The messages to summarize, the live system prompt and tools, and optional instructions
+   * @returns The summary, or `undefined` when native compaction is unavailable or wrote none
+   */
+  async compact(_request: SummaryRequest): Promise<SummaryResult | undefined> {
+    return undefined
   }
 
   /**
