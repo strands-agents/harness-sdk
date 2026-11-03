@@ -338,7 +338,7 @@ def test_reduce_context_truncates_largest_block_first_and_reraises_once_nothing_
 
 
 def test_reduce_context_truncation_fallback_handles_many_blocks_below_the_full_preview_size(mock_agent):
-    """One message of many 5K blocks (none over 3 * preserve) is shrunk round by round instead of failing forever."""
+    """Every block above preserve_chars is truncatable, so an 80-block message shrinks round by round (#5791)."""
     manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3)
     mock_agent.messages = [{"role": "user", "content": [{"text": str(i % 10) * 5_000} for i in range(80)]}]
 

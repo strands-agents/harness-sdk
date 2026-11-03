@@ -77,12 +77,16 @@ class TestTruncateLargestTextBlocks:
         assert messages == exp_messages
 
     def test_mid_sized_blocks_keep_a_quarter_at_each_end(self):
-        # Shorter than 4 * preserve: a quarter is kept at each end so at least half of the block goes.
-        messages = [_text_message("y" * 300), _text_message("z" * 150)]
+        # Up to 4 * preserve a quarter is kept at each end, so at least half of every block goes.
+        messages = [_text_message("x" * 400), _text_message("y" * 300), _text_message("z" * 150)]
 
-        assert _truncate_largest_text_blocks(messages, budget=2, preserve_chars=100) == 2
+        assert _truncate_largest_text_blocks(messages, budget=3, preserve_chars=100) == 3
 
-        exp_messages = [_text_message(_truncated("y" * 300, 75)), _text_message(_truncated("z" * 150, 37))]
+        exp_messages = [
+            _text_message(_truncated("x" * 400, 100)),
+            _text_message(_truncated("y" * 300, 75)),
+            _text_message(_truncated("z" * 150, 37)),
+        ]
         assert messages == exp_messages
 
     def test_blocks_no_longer_than_preserve_chars_are_left_alone(self):
@@ -97,12 +101,12 @@ class TestTruncateLargestTextBlocks:
         assert messages == exp_messages
 
     def test_many_blocks_below_the_full_preview_size_are_still_truncated(self):
-        # Regression: one message of many blocks under 3 * preserve used to leave nothing to truncate.
+        # Every block above preserve_chars is truncatable, so a message of many mid-sized blocks still shrinks (#5791).
         message = {"role": "user", "content": [{"text": str(i % 10) * 250} for i in range(80)]}
 
         assert _truncate_largest_text_blocks([message], budget=80, preserve_chars=100) == 80
 
-        assert all(block["text"] == _truncated(str(i % 10) * 250, 62) for i, block in enumerate(message["content"]))
+        assert message["content"] == [{"text": _truncated(str(i % 10) * 250, 62)} for i in range(80)]
 
     def test_returns_zero_when_nothing_qualifies(self):
         messages = [_text_message("short"), _tool_result_message("also short"), {"role": "user", "content": ["raw"]}]
