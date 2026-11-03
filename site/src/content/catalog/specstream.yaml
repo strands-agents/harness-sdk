@@ -1,0 +1,8 @@
+name: specstream
+description: Hosted MCP server returning structured records from the live web for requests in plain words, with the price before each run and a source URL on every value.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/specstream/specstream-tools
+docsUrl: https://specstream.ai/docs/mcp
+addedDate: 2026-11-03
