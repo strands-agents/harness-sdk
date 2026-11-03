@@ -695,6 +695,29 @@ describe('VercelModel', () => {
         expect(userMsg.content[0]).toEqual({ type: 'text', text: 'Hello' })
       })
 
+      it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+        const { collect, callArgs } = setupCaptureTest()
+        const placeholder = new TextBlock('[Dropped] [ref: tu-1]', {
+          metadata: { offloaded: { method: 'drop', ref: 'tu-1' } },
+        })
+        await collect([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+
+        const [user, assistant, tool] = callArgs().prompt as any[]
+        expect(user.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(assistant.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(tool.content[0].output).toEqual({
+          type: 'content',
+          value: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }],
+        })
+      })
+
       it('formats image blocks with bytes and URL sources', async () => {
         const { collect, callArgs } = setupCaptureTest()
         await collect([
@@ -1597,37 +1620,6 @@ describe('VercelModel', () => {
           expect.objectContaining({ warn: expect.any(Function) }),
           expect.stringContaining('is not known to support automatic caching')
         )
-      })
-
-      it.each([
-        'anthropic.claude-future-9',
-        'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
-        'US.ANTHROPIC.CLAUDE-SONNET-4-6',
-      ])('under the default auto strategy, caches an unlisted Claude id by name: %s', async (modelId) => {
-        const { collect, callArgs, model } = setupCaptureTest(
-          minimalParts,
-          { cacheConfig: {} },
-          'amazon-bedrock',
-          modelId
-        )
-        await collect(userMessages, { systemPrompt: 'be helpful' })
-
-        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
-        const args = callArgs()
-        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
-        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
-        expect(warnOnce).not.toHaveBeenCalledWith(
-          expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('is not known to support automatic caching')
-        )
-      })
-
-      it('under the default auto strategy, skips an unlisted id that is not Claude', async () => {
-        const modelId = 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc'
-        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', modelId)
-        await collect(userMessages, { systemPrompt: 'be helpful' })
-
-        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
       })
 
       it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {

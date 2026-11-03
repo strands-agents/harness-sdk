@@ -12,36 +12,29 @@ import type { ContentBlock } from '../../../types/messages.js'
 import type { Model } from '../../../models/model.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import type { ContextStrategy, ContextState } from '../../types.js'
+import type { ContextState } from '../../types.js'
 import {
   flattenMessagesToContent,
-  formatSummarized,
+  formatToolResultLabel,
   summarizeContent,
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { formatStashRefs } from '../../stash.js'
-import {
-  BaseOffloadStrategy,
-  collectRemovableWithPair,
-  insertMarker,
-  spliceWithPairs,
-  repairAlternation,
-  type OffloadConditions,
-  type OffloadTarget,
-} from './base.js'
+import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
+import { removeMessages } from '../../message-trimming.js'
+import { BaseOffloadStrategy } from './base.js'
+import type { OffloadConditions } from './conditions.js'
+import { mediaKind, type OffloadTarget } from './target.js'
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
-  readonly name = 'offload:summarize'
-
   private readonly _config: SummarizeConfig
 
-  constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
-    super(target, conditions)
+  constructor(target: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
+    super('summarize', target, conditions)
     this._config = config ?? {}
   }
 
-  when(conditions: OffloadConditions): ContextStrategy {
+  when(conditions: OffloadConditions = {}): SummarizeStrategy {
     return new SummarizeStrategy(this._target, this._config, conditions)
   }
 
@@ -53,39 +46,28 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return super.apply(context)
   }
 
-  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const model = this._resolveModel(context.agent)
-    if (!model) return false
+  /** Summarizes each contiguous run of eligible messages into its own summary. */
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+    // apply returns early without a model.
+    const model = this._resolveModel(context.agent)!
+    const { messages, invocationContext } = context
+    const summarize = (run: Message[]): Promise<string | null> => this._summarizeRun(run, model, invocationContext)
+    return removeMessages(messages, await this._removableMessages(context), summarize, 'summarize', this._stash)
+  }
 
-    const { messages } = context
-    if (messages.length <= 1) return false
+  /** The summary marker text for a run; a failure is logged and keeps the run. */
+  private async _summarizeRun(
+    run: Message[],
+    model: Model,
+    invocationContext?: InvocationContext
+  ): Promise<string | null> {
+    const content = flattenMessagesToContent(run)
+    const summary = await this._trySummarize(content, model, `runLength=<${run.length}>`, invocationContext)
+    if (!summary) return null
 
-    const eligible = await this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    // Expand to include paired messages so we don't orphan tool pairs
-    const safeSet = new Set<Message>()
-    for (const message of eligible) {
-      const index = messages.indexOf(message)
-      if (index === -1) continue
-      for (const removable of collectRemovableWithPair(messages, index)) {
-        safeSet.add(removable)
-      }
-    }
-    const safe = messages.filter((message) => safeSet.has(message))
-    if (safe.length === 0) return false
-
-    const contentBlocks = flattenMessagesToContent(safe)
-    const summary = await summarizeContent(contentBlocks, model, this._config, context.invocationContext)
-    if (!summary) return false
-
-    const totalTokens = await model.countTokens(safe)
-    const { lowestIndex } = spliceWithPairs(messages, safe)
-    insertMarker(messages, lowestIndex, formatSummarized(`${safe.length} messages`, totalTokens, summary))
-
-    repairAlternation(messages)
-    logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
-    return true
+    const totalTokens = await model.countTokens(run)
+    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized message run`)
+    return formatSummarized(REMOVED_MESSAGES, totalTokens, summary)
   }
 
   protected async _replaceBlock(
@@ -93,62 +75,39 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRefs: string[],
+    stashRef: string | undefined,
+    toolName: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
     if (!model) return null
 
-    if (block instanceof ToolResultBlock) {
-      const summary = await this._trySummarize(
-        toolResultToContentBlocks(block.content),
-        model,
-        message,
-        invocationContext
-      )
-      if (!summary) return null
-
-      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | summarized tool result`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content: [new TextBlock(`${formatSummarized('tool result', tokens, summary)}${formatStashRefs(stashRefs)}`)],
-      })
+    const input = summaryInput(block, toolName)
+    const logFields = `trackingId=<${message.trackingId}>`
+    const summary = input ? await this._trySummarize(input.content, model, logFields, invocationContext) : null
+    if (input && summary) {
+      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized ${input.description}`)
+      const placeholder = this._placeholder(formatSummarized(input.description, tokens, summary), stashRef)
+      return block instanceof ToolResultBlock ? block.with({ content: [placeholder] }) : placeholder
     }
-
-    if (block instanceof TextBlock) {
-      const summary = await this._trySummarize([new TextBlock(block.text)], model, message, invocationContext)
-      if (!summary) return null
-
-      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
-      return new TextBlock(`${formatSummarized('text block', tokens, summary)}${formatStashRefs(stashRefs)}`)
-    }
-
-    if (block instanceof ImageBlock || block instanceof DocumentBlock) {
-      const summary = await this._trySummarize([block], model, message, invocationContext)
-      if (summary) {
-        logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
-        return new TextBlock(`${formatSummarized('media block', tokens, summary)}${formatStashRefs(stashRefs)}`)
-      }
-    }
+    // A tool result or text the summarizer failed on is kept for a later pass; media is offloaded instead.
+    if (block instanceof ToolResultBlock || block instanceof TextBlock) return null
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
+    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef)
   }
 
-  /** Summarizes one block; a failure is logged and leaves the block unsummarized so the pass continues. */
+  /** Summarizes `content`, or logs a failure and returns null so the pass continues and keeps the content. */
   private async _trySummarize(
     content: ContentBlock[],
     model: Model,
-    message: Message,
+    logFields: string,
     invocationContext?: InvocationContext
   ): Promise<string | null> {
     try {
       return await summarizeContent(content, model, this._config, invocationContext)
     } catch (error) {
-      logger.warn(
-        `trackingId=<${message.trackingId}>, error=<${normalizeError(error).message}> | block summarization failed`
-      )
+      logger.warn(`${logFields}, error=<${normalizeError(error).message}> | summarization failed`)
       return null
     }
   }
@@ -156,4 +115,19 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   private _resolveModel(agent: LocalAgent): Model | undefined {
     return this._config.model ?? agent.auxModel
   }
+}
+
+/** What the summarizer reads for a block and how its marker describes it, or undefined when it can't summarize it. */
+function summaryInput(
+  block: ContentBlock,
+  toolName: string | undefined
+): { content: ContentBlock[]; description: string } | undefined {
+  if (block instanceof ToolResultBlock) {
+    const label = new TextBlock(formatToolResultLabel(block, toolName))
+    return { content: [label, ...toolResultToContentBlocks(block.content)], description: 'tool result' }
+  }
+  if (block instanceof TextBlock) return { content: [new TextBlock(block.text)], description: 'text block' }
+  if (block instanceof ImageBlock || block instanceof DocumentBlock)
+    return { content: [block], description: 'media block' }
+  return undefined
 }
