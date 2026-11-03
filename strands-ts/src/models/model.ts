@@ -750,6 +750,9 @@ function estimateContentBlockTokens(block: ContentBlock): number {
         if ('text' in item) total += heuristicText(item.text)
       }
       break
+    case 'injectedBlock':
+      total += heuristicText(block.injected.text)
+      break
     default:
       break
   }

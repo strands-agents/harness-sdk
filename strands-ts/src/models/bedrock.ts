@@ -1644,6 +1644,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           throw new Error('guardContent must have either text or image')
         }
       }
+
+      case 'injectedBlock':
+        // Skipped. ModelProxy sends the latest ones as text, so only a call that bypasses it gets here.
+        return undefined
     }
   }
 

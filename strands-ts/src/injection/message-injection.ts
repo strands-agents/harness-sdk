@@ -1,9 +1,12 @@
-import { Message, TextBlock } from '../types/messages.js'
-import type { MessageData } from '../types/messages.js'
+import { BeforeModelCallEvent } from '../hooks/events.js'
+import { HookOrder } from '../hooks/types.js'
+import { InjectedBlock, Message, TextBlock } from '../types/messages.js'
+import type { ContentBlock, MessageData } from '../types/messages.js'
+import type { LocalAgent } from '../types/agent.js'
 import { logger } from '../logging/logger.js'
 import { normalizeError } from '../errors.js'
 import type { InvokeModelContext } from '../middleware/index.js'
-import type { InjectionMiddlewareOptions, InjectionTrigger, InjectionContext } from './types.js'
+import type { InjectionMiddlewareOptions, InjectionOptions, InjectionTrigger, InjectionContext } from './types.js'
 
 /**
  * Builds an `InvokeModelStage` `Input` handler that folds {@link InjectionMiddlewareOptions.renderContent}'s
@@ -50,6 +53,77 @@ export function createInjectionMiddleware(
     // Accumulate: several producers may append on one call, and the cache point precedes all of it.
     return { ...context, messages: folded, dynamicTrailingBlocks: (context.dynamicTrailingBlocks ?? 0) + appended }
   }
+}
+
+/**
+ * Writes {@link InjectionOptions.renderContent}'s text into the latest user message before each model
+ * call, as an {@link InjectedBlock}, and leaves it there.
+ *
+ * The write happens in a `BeforeModelCallEvent` hook that runs after the SDK's other hooks, so it reaches
+ * that model call and lands in any user message those hooks added. Continuation input is appended after the
+ * hooks run, so it lands after the injected text, or is sent without it. It only ever touches the latest message
+ * while it is a user message, which the model has not answered yet, so the stored history before it never changes.
+ * A model with temporary messages reads each block only until the next user message; every other model is sent
+ * only the latest user message's blocks (see `ModelProxy`).
+ *
+ * No event fires for the write. Listeners that see messages as they are added (the session manager, the
+ * context manager's stash, memory extraction) heard this message before the text was written, and a session
+ * saves the whole conversation, so it picks the text up at its next save.
+ *
+ * An injection writes into a message at most once, so a retry, a forced structured output call or a resume
+ * sends the same request again. The check reads the conversation itself, so it holds after a session restore.
+ * Anything that skips — a cancelled call, the trigger not firing, `renderContent` returning empty, or any
+ * callback throwing — leaves the conversation unchanged so the model call proceeds (fail open).
+ *
+ * @param agent - The agent to inject into
+ * @param opts - The source name, trigger and `renderContent` callback
+ * @internal Delivery primitive. Reach injection through `ContextInjector`.
+ */
+export function addInjection(agent: LocalAgent, opts: InjectionOptions): void {
+  const trigger = resolveTrigger(opts.trigger)
+
+  agent.addHook(
+    BeforeModelCallEvent,
+    async (event) => {
+      const messages = event.agent.messages
+      const latest = messages.at(-1)
+      if (event.cancel || !latest || latest.role !== 'user') {
+        return
+      }
+      // A retry, forced structured output call or resume re-enters a message this injection already wrote into.
+      if (latest.content.some((block) => isInjectedBy(block, opts.source))) {
+        return
+      }
+
+      const injectionContext: InjectionContext = {
+        messages: messages.map((message) => message.toJSON()),
+        appState: event.agent.appState,
+        agent: event.agent,
+      }
+      if (!trigger(injectionContext)) {
+        return
+      }
+
+      let text: string | undefined
+      try {
+        text = await opts.renderContent(injectionContext)
+      } catch (error) {
+        logger.warn(`reason=<${normalizeError(error).message}> | injection renderContent threw; skipping injection`)
+        return
+      }
+      if (!text?.trim()) {
+        return
+      }
+
+      messages[messages.length - 1] = new Message({
+        role: 'user',
+        content: [...latest.content, new InjectedBlock({ text, source: opts.source })],
+        trackingId: latest.trackingId,
+        ...(latest.metadata !== undefined && { metadata: latest.metadata }),
+      })
+    },
+    { order: HookOrder.SDK_LAST }
+  )
 }
 
 /**
@@ -146,4 +220,8 @@ export function foldIntoLastUserMessage(messages: Message[], text: string): { me
   const result = [...messages]
   result[targetIndex] = folded
   return { messages: result, appended: targetIndex === messages.length - 1 ? 1 : 0 }
+}
+
+function isInjectedBy(block: ContentBlock, source: string): block is InjectedBlock {
+  return block.type === 'injectedBlock' && block.injected.source === source
 }

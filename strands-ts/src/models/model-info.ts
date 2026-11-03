@@ -33,6 +33,13 @@ export interface ModelCapabilities {
   readonly nativeStructuredOutput?: boolean | undefined
   /** Whether the model can summarize conversation history server-side. */
   readonly serverSideSummary?: boolean | undefined
+  /**
+   * Whether the provider can send injected text as a message the model reads only until the next user message,
+   * such as Anthropic's turn-scoped system messages. When `true`, an `InjectedBlock` reaches the provider as it
+   * is stored, so the provider must format it. Otherwise only the latest user message's injected blocks are sent,
+   * as text.
+   */
+  readonly temporaryMessages?: boolean | undefined
 }
 
 /** Size limits of the model. */
