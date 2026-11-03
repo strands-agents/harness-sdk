@@ -337,6 +337,22 @@ def test_reduce_context_truncates_largest_block_first_and_reraises_once_nothing_
         manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
 
 
+def test_reduce_context_truncation_fallback_handles_many_blocks_below_the_full_preview_size(mock_agent):
+    """One message of many 5K blocks (none over 3 * preserve) is shrunk round by round instead of failing forever."""
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3)
+    mock_agent.messages = [{"role": "user", "content": [{"text": str(i % 10) * 5_000} for i in range(80)]}]
+
+    rounds = 0
+    while any("[truncated:" not in block["text"] for block in mock_agent.messages[0]["content"]):
+        manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+        rounds += 1
+
+    assert rounds == 7  # 1 + 2 + 4 + ... + 64 >= 80 blocks
+    assert mock_agent.messages[0]["content"] == [{"text": _truncated(str(i % 10) * 5_000, 1_250)} for i in range(80)]
+    with pytest.raises(ContextWindowOverflowException, match="insufficient messages for summarization"):
+        manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
+
+
 def test_reduce_context_truncation_fallback_skips_pin_first_messages(mock_agent):
     """``pin_first`` protects messages from the truncation fallback even when no summarization ran yet."""
     manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=3, pin_first=1)
