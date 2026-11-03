@@ -14,7 +14,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided, offloadPlaceholder } from '../../placeholder.js'
-import { insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
+import { collectRemovableWithPair, insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -229,10 +229,19 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       .filter((message) => !isPinned(messages, messages.indexOf(message)))
   }
 
-  /** Messages outside `preserveRecent` and larger than `blockThreshold`, excluding message 0 and pinned messages. */
+  /**
+   * Messages outside `preserveRecent` and larger than `blockThreshold`, excluding message 0, pinned messages, and
+   * messages whose tool partner is protected, since removing a message removes its partner too.
+   */
   protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
     const { messages, agent } = context
-    const eligible = this._candidates(messages, buildToolNameMap(messages)).filter((message) => message !== messages[0])
+    const candidates = this._candidates(messages, buildToolNameMap(messages))
+    const unprotected = new Set(candidates)
+    const eligible = candidates.filter(
+      (message) =>
+        message !== messages[0] &&
+        collectRemovableWithPair(messages, messages.indexOf(message)).every((removed) => unprotected.has(removed))
+    )
     const threshold = this._conditions.thresholdTokens(agent)
     if (threshold === undefined) return eligible
 

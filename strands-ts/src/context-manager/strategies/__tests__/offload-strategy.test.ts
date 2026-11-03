@@ -429,6 +429,35 @@ describe('Offload message-level with role alternation', () => {
     }
   })
 
+  it('drop("*") keeps a tool use whose result preserveRecent protects', async () => {
+    const toolUse = new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ name: 'bash', toolUseId: 'tu-1', input: {} })],
+    })
+    const toolResult = new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('result')] })],
+    })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      toolUse,
+      toolResult,
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('*').when({ preserveRecent: 2 })
+
+    await strategy.apply(makeContext(messages))
+
+    expect(messages.map((message) => message.content.map((block) => block.type))).toEqual([
+      ['textBlock'],
+      ['toolUseBlock', 'textBlock'],
+      ['toolResultBlock'],
+      ['textBlock'],
+    ])
+  })
+
   it('drop("*") acts when only message 0 precedes the candidates', async () => {
     const messages = conversation(2)
     const strategy = Offload.drop('*').when({ contextUtilization: '50%' })
