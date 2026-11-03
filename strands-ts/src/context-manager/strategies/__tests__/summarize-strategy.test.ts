@@ -389,6 +389,25 @@ describe('summarizing whole messages', () => {
     expect(messages[1]!.metadata?.custom?.pinned).toBe(true)
   })
 
+  it('places the summary ahead of the assistant message after a run ending on a user turn', async () => {
+    summarizeContent.mockClear().mockResolvedValueOnce('run')
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    const a3 = messages[3]!
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 4 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
+    expect(texts).toEqual([
+      ['task'],
+      [expect.stringMatching(/^\[Summarized: 2 messages, ~\d+ tokens\]\n\nrun$/), 'a3'],
+      ['u4'],
+      ['a5'],
+      ['u6'],
+    ])
+    expect(mergedMessages(messages[1]!).find((part) => part.trackingId === a3.trackingId)?.offset).toBe(1)
+  })
+
   it('keeps the tool result of a pinned tool use', async () => {
     summarizeContent.mockClear().mockResolvedValueOnce('run')
     const toolUse = new ToolUseBlock({ name: 'lookup', toolUseId: 't1', input: {} })

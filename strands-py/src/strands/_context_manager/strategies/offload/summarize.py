@@ -214,7 +214,11 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return acted
 
     async def _summarize_run(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Replace ``run`` with a summary marker, ahead of the run's pinned messages; a failure keeps the run."""
+        """Replace ``run`` with a summary marker; a failure is logged and keeps the run.
+
+        The marker joins the assistant message before the gap, or leads the run's pinned messages and any assistant
+        message after it.
+        """
         kept, summarized = _split_pinned(run)
         if not summarized or _holds_only_summaries(summarized):
             return False
@@ -226,10 +230,11 @@ class SummarizeStrategy(BaseOffloadStrategy):
         start = next(index for index, message in enumerate(messages) if message is run[0])
         marker = _format_summarized(f"{len(summarized)} messages", total_tokens, summary)
         messages[start : start + len(run)] = kept
-        if kept:
-            messages.insert(start, Message(role="assistant", content=[ContentBlock(text=marker)]))
-        else:
+        if not kept and start > 1 and messages[start - 1]["role"] == "assistant":
             _insert_marker(messages, start, marker)
+        else:
+            # Its own message, so it leads any assistant content after the gap once alternation is repaired.
+            messages.insert(start, Message(role="assistant", content=[ContentBlock(text=marker)]))
         logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(summarized), total_tokens)
         return True
 

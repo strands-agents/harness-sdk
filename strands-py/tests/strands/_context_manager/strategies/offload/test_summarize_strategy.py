@@ -475,7 +475,9 @@ class TestSummarizeRuns:
         assert _texts(messages)[1][-1].endswith("\n\nagain")
 
     @pytest.mark.asyncio
-    async def test_summarizes_a_run_that_ends_on_a_user_turn_into_the_next_assistant_message(self, mock_agent):
+    async def test_places_the_summary_ahead_of_the_assistant_message_after_a_run_ending_on_a_user_turn(
+        self, mock_agent
+    ):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         mock_agent.messages = messages
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
@@ -486,7 +488,7 @@ class TestSummarizeRuns:
 
         assert _texts(messages) == [
             ["task"],
-            ["a3", "[Summarized: 2 messages, ~7 tokens]\n\nrun"],
+            ["[Summarized: 2 messages, ~7 tokens]\n\nrun", "a3"],
             ["u4"],
             ["a5"],
             ["u6"],

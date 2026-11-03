@@ -97,7 +97,10 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return acted
   }
 
-  /** Replaces `run` with a summary marker, ahead of the run's pinned messages; a failure is logged and keeps the run. */
+  /**
+   * Replaces `run` with a summary marker; a failure is logged and keeps the run. The marker joins the assistant
+   * message before the gap, or leads the run's pinned messages and any assistant message after it.
+   */
   private async _summarizeRun(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
     const { kept, summarized } = splitPinned(run)
     if (summarized.length === 0 || holdsOnlySummaries(summarized)) return false
@@ -108,11 +111,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const totalTokens = await model.countTokens(summarized)
     const start = messages.indexOf(run[0]!)
     const marker = formatSummarized(`${summarized.length} messages`, totalTokens, summary)
-    if (kept.length > 0) {
-      messages.splice(start, run.length, new Message({ role: 'assistant', content: [new TextBlock(marker)] }), ...kept)
-    } else {
-      messages.splice(start, run.length)
+    messages.splice(start, run.length, ...kept)
+    if (kept.length === 0 && start > 1 && messages[start - 1]!.role === 'assistant') {
       insertMarker(messages, start, marker)
+    } else {
+      // Its own message, so it leads any assistant content after the gap once alternation is repaired.
+      messages.splice(start, 0, new Message({ role: 'assistant', content: [new TextBlock(marker)] }))
     }
     logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | summarized message run`)
     return true
