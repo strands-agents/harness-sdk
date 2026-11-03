@@ -21,10 +21,8 @@ import { warnOnce } from '../../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
 import { bedrockMantleBaseUrl, createMantleApiKeySetter, resolveMantleRegion } from './mantle.js'
 import { classifyOpenAIError } from './errors.js'
-import { inferPromptCaching } from './cache.js'
 import { formatChatRequest, mapChatChunkToEvents, warnManagedParams as warnChatManagedParams } from './chat-adapter.js'
 import {
-  DEFAULT_RESPONSES_MODEL_ID,
   createResponsesStreamState,
   finalizeResponsesStream,
   formatResponsesRequest,
@@ -131,18 +129,11 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   /**
    * Adds whether this model manages conversation state server-side: `true` only for
    * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
-   * Responses defaults to stateless. On `api: 'responses'`, when the shared model info has no
-   * prompt caching fact for the id, a GPT-5.6-or-later id takes cache points, so a release newer
-   * than the data keeps its message checkpoints. A `modelInfo` override still wins over both.
+   * Responses defaults to stateless.
    */
   override get modelInfo(): ModelInfo {
-    const responses = this._api === 'responses'
-    const stateful = responses && this._config.stateful === true
-    const info = super.modelInfo
-    const promptCaching =
-      info.capabilities?.promptCaching ??
-      (responses ? inferPromptCaching(this._config.modelId ?? DEFAULT_RESPONSES_MODEL_ID) : undefined)
-    return mergeModelInfo(info, { capabilities: { stateful, promptCaching } }, this._config.modelInfo)
+    const stateful = this._api === 'responses' && this._config.stateful === true
+    return mergeModelInfo(super.modelInfo, { capabilities: { stateful } }, this._config.modelInfo)
   }
 
   /**

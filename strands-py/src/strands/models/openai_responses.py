@@ -64,7 +64,7 @@ from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E40
 from ._defaults import resolve_config_metadata  # noqa: E402
 from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
-from ._openai_cache import apply_cache_config, infer_prompt_caching  # noqa: E402
+from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
 from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
@@ -220,21 +220,13 @@ class OpenAIResponsesModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Adds whether server-side conversation storage is enabled, and how unlisted GPT models cache.
+        """Adds whether server-side conversation storage is enabled.
 
-        ``stateful`` is taken from the ``stateful`` configuration option. When the shared model info has no
-        prompt caching fact for the id, a GPT-5.6-or-later id takes cache points, so a release newer than
-        the data keeps its message checkpoints. A ``model_info`` override still wins over both.
+        Taken from the ``stateful`` configuration option, which a ``model_info`` override still wins over.
         """
-        info = super().model_info
-        prompt_caching = info.capabilities.prompt_caching or infer_prompt_caching(self.config.get("model_id"))
         return ModelInfo.merge(
-            info,
-            ModelInfo(
-                capabilities=ModelCapabilities(
-                    stateful=bool(self.config.get("stateful")), prompt_caching=prompt_caching
-                )
-            ),
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
             cast(ModelInfo | None, self.config.get("model_info")),
         )
 
@@ -604,10 +596,16 @@ class OpenAIResponsesModel(Model):
                 format.
         """
         cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
-        supports_message_caching = cache_config is not None and self._supports_message_caching()
-        cache_messages = supports_message_caching and self._caches_messages(cache_config)
-        input_items, has_checkpoints = (
-            self._format_cacheable_request_messages(messages, dynamic_trailing_blocks=dynamic_trailing_blocks)
+        cache_points = cache_config is not None and self.model_info.capabilities.prompt_caching == "cache_points"
+        cache_messages = (
+            cache_points
+            and cache_config is not None
+            and cache_config.messages_ttl is not False
+            # A native input override stays under the caller's control.
+            and "input" not in cast(dict[str, Any], self.config.get("params", {}))
+        )
+        input_items, explicit_cache = (
+            self._format_cacheable_request_messages(messages, dynamic_trailing_blocks)
             if cache_messages
             else (self._format_request_messages(messages), False)
         )
@@ -647,9 +645,10 @@ class OpenAIResponsesModel(Model):
             ]
             request.update(self._format_request_tool_choice(tool_choice))
 
-        apply_cache_config(request, cache_config, agent_metadata, supports_message_caching=supports_message_caching)
-        if cache_messages:
-            self._apply_explicit_cache_mode(request, has_checkpoints, dynamic_trailing_blocks)
+        apply_cache_config(request, cache_config, agent_metadata, supports_message_caching=cache_points)
+        if explicit_cache:
+            # Caller-supplied mode, TTL and diagnostics take precedence.
+            request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
 
         return request
 
@@ -678,18 +677,6 @@ class OpenAIResponsesModel(Model):
                 return {"tool_choice": "auto"}
 
     @staticmethod
-    def _apply_explicit_cache_mode(
-        request: dict[str, Any], has_checkpoints: bool, dynamic_trailing_blocks: int
-    ) -> None:
-        """Default ``prompt_cache_options.mode`` to explicit so the temporary suffix is never written.
-
-        Without a durable checkpoint or a temporary suffix, the implicit breakpoint stays so the request
-        still caches. Caller-supplied mode, TTL and diagnostics take precedence.
-        """
-        if has_checkpoints or dynamic_trailing_blocks > 0:
-            request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
-
-    @staticmethod
     def _move_new_fields_to_extra_body(request: dict[str, Any]) -> None:
         """Send wire fields newer than the minimum supported OpenAI client through ``extra_body``.
 
@@ -702,76 +689,71 @@ class OpenAIResponsesModel(Model):
                 **(request.get("extra_body") or {}),
             }
 
-    def _supports_message_caching(self) -> bool:
-        """Whether the configured model takes explicit Responses input checkpoints."""
-        return self.model_info.capabilities.prompt_caching == "cache_points"
-
-    def _caches_messages(self, cache_config: CacheConfig | None) -> bool:
-        """Whether the cache config asks for durable message checkpoints and the SDK owns the input."""
-        return (
-            cache_config is not None
-            # "anthropic" means SDK-placed cache points, the same mechanism these checkpoints use.
-            and cache_config.strategy in ("auto", "anthropic")
-            and cache_config.messages_ttl is not False
-            and "input" not in cast(dict[str, Any], self.config.get("params", {}))
-        )
-
     @classmethod
     def _format_cacheable_request_messages(
-        cls, messages: Messages, *, dynamic_trailing_blocks: int = 0
+        cls, messages: Messages, dynamic_trailing_blocks: int
     ) -> tuple[list[dict[str, Any]], bool]:
-        """Keep durable checkpoints stable when temporary trailing content changes between requests.
+        """Format messages with a cache checkpoint on the last input part of each durable user message.
 
-        Only input content blocks (text, image, file) can be marked. This changes cache placement, not the
-        lifetime of content retained by a stateful server-side conversation.
+        The final user message's last ``dynamic_trailing_blocks`` blocks are temporary: they go after the
+        checkpoint and after any tool outputs, so a changing injection never shifts the cached prefix.
+
+        Returns:
+            The input items, and whether the request should default ``prompt_cache_options.mode`` to explicit.
+            Without a checkpoint or a temporary suffix, implicit caching stays so the request still caches.
         """
-        formatted_messages: list[dict[str, Any]] = []
+        input_items: list[dict[str, Any]] = []
         has_checkpoints = False
         skipped: Counter[str] = Counter()
-        for message_index, message in enumerate(messages):
-            dynamic_count = dynamic_trailing_blocks if message_index == len(messages) - 1 else 0
-            if message["role"] != "user":
-                dynamic_count = 0
-            boundary = max(0, len(message["content"]) - dynamic_count)
-            contents = message["content"][:boundary]
+        for index, message in enumerate(messages):
+            role, content = message["role"], message["content"]
+            dynamic_count = dynamic_trailing_blocks if role == "user" and index == len(messages) - 1 else 0
+            boundary = max(0, len(content) - dynamic_count)
             items = cls._format_request_messages(
-                [{"role": message["role"], "content": contents}],
-                tool_output_content_array=True,
-                skipped_blocks=skipped,
+                [{"role": role, "content": content[:boundary]}], skipped_blocks=skipped
             )
-            if message["role"] == "user":
-                candidate = cls._last_cacheable_part(items)
-                if candidate is not None:
-                    # Preserve every historical boundary: the provider bounds lookup and writes,
-                    # not the number of markers callers may include in the request.
-                    candidate["prompt_cache_breakpoint"] = {"mode": "explicit"}
-                    has_checkpoints = True
-            cls._append_dynamic_content(items, message["content"][boundary:], skipped_blocks=skipped)
-            formatted_messages.extend(items)
+            cls._normalize_tool_outputs(items)
+            part = cls._last_cacheable_part(items) if role == "user" else None
+            if part is not None:
+                # Mark every durable user message, not just the latest: the provider bounds lookups and
+                # writes itself, and earlier markers keep the previous request's cache entry reachable.
+                part["prompt_cache_breakpoint"] = {"mode": "explicit"}
+                has_checkpoints = True
+            if dynamic_count:
+                tail = cls._format_request_messages(
+                    [{"role": "user", "content": content[boundary:]}], skipped_blocks=skipped
+                )
+                cls._normalize_tool_outputs(tail)
+                cls._append_dynamic_content(items, tail)
+            input_items.extend(items)
         _log_skipped_blocks(logger, skipped)
-        return formatted_messages, has_checkpoints
+        return input_items, has_checkpoints or dynamic_trailing_blocks > 0
 
-    @classmethod
-    def _append_dynamic_content(
-        cls, items: list[dict[str, Any]], contents: list[ContentBlock], *, skipped_blocks: Counter[str]
-    ) -> None:
-        """Append temporary content after durable tool outputs, merging only with ordinary user content.
+    @staticmethod
+    def _normalize_tool_outputs(items: list[dict[str, Any]]) -> None:
+        """Send text tool outputs as one input_text block, so they can carry a checkpoint and replay identically.
 
-        The temporary blocks go through the regular formatter so unsupported blocks are skipped the
-        same way as durable content.
+        An empty output stays a string: an empty text block would be a meaningless checkpoint.
         """
-        if not contents:
-            return
-        tail = cls._format_request_messages(
-            [{"role": "user", "content": contents}], tool_output_content_array=True, skipped_blocks=skipped_blocks
-        )
-        if (
-            tail
-            and tail[0].get("role") == "user"
-            and items
-            and items[-1].get("role") == "user"
-            and isinstance(items[-1].get("content"), list)
-        ):
+        for item in items:
+            if item.get("type") == "function_call_output" and isinstance(item["output"], str) and item["output"]:
+                item["output"] = [{"type": "input_text", "text": item["output"]}]
+
+    @staticmethod
+    def _last_cacheable_part(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Find the final input part (text, image, or file) in a formatted, normalized durable user message."""
+        parts = [
+            part
+            for item in items
+            for part in (item.get("output") if item.get("type") == "function_call_output" else item.get("content"))
+            or []
+        ]
+        return next((part for part in reversed(parts) if part.get("type") in _CACHEABLE_INPUT_TYPES), None)
+
+    @staticmethod
+    def _append_dynamic_content(items: list[dict[str, Any]], tail: list[dict[str, Any]]) -> None:
+        """Merge temporary content into the durable user message; after tool outputs, it becomes its own message."""
+        if tail and items and "role" in tail[0] and "role" in items[-1]:
             items[-1]["content"].extend(tail.pop(0)["content"])
         items.extend(tail)
 
@@ -780,14 +762,12 @@ class OpenAIResponsesModel(Model):
         cls,
         messages: Messages,
         *,
-        tool_output_content_array: bool = False,
         skipped_blocks: Counter[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Format an OpenAI compatible messages array.
 
         Args:
             messages: List of message objects to be processed by the model.
-            tool_output_content_array: Preserve tool text blocks so they can carry cache checkpoints.
             skipped_blocks: Caller-owned counter for unsupported blocks. When given, the caller logs
                 the skips once for the whole request; otherwise they are logged here.
 
@@ -829,7 +809,7 @@ class OpenAIResponsesModel(Model):
             ]
 
             formatted_tool_messages = [
-                cls._format_request_tool_message(content["toolResult"], content_array=tool_output_content_array)
+                cls._format_request_tool_message(content["toolResult"])
                 for content in contents
                 if "toolResult" in content
             ]
@@ -871,18 +851,6 @@ class OpenAIResponsesModel(Model):
             for message in formatted_messages
             if message.get("content") or message.get("type") in ["function_call", "function_call_output"]
         ]
-
-    @staticmethod
-    def _last_cacheable_part(items: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Find the final input content block in a formatted durable user message."""
-        for item in reversed(items):
-            parts = item.get("output") if item.get("type") == "function_call_output" else item.get("content")
-            if not isinstance(parts, list):
-                continue
-            for part in reversed(parts):
-                if part.get("type") in _CACHEABLE_INPUT_TYPES:
-                    return cast(dict[str, Any], part)
-        return None
 
     @classmethod
     def _format_request_message_content(cls, content: ContentBlock, *, role: Role = "user") -> dict[str, Any]:
@@ -942,12 +910,11 @@ class OpenAIResponsesModel(Model):
         }
 
     @classmethod
-    def _format_request_tool_message(cls, tool_result: ToolResult, *, content_array: bool = False) -> dict[str, Any]:
+    def _format_request_tool_message(cls, tool_result: ToolResult) -> dict[str, Any]:
         """Format an OpenAI compatible tool message.
 
         Args:
             tool_result: Tool result collected from a tool execution.
-            content_array: Send text outputs as one content block so it can carry a cache checkpoint.
 
         Returns:
             OpenAI compatible tool message.
@@ -988,9 +955,6 @@ class OpenAIResponsesModel(Model):
             output = output_parts
         else:
             output = "\n".join(part.get("text", "") for part in output_parts) if output_parts else ""
-            if content_array and output:
-                # One text block, matching the string form, so it can carry a cache checkpoint.
-                output = [{"type": "input_text", "text": output}]
 
         return {
             "type": "function_call_output",

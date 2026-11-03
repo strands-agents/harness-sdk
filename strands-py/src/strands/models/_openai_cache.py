@@ -5,12 +5,10 @@ OpenAI caches prompt prefixes automatically server-side and routes reads on a ca
 also places explicit message checkpoints on models that support them.
 """
 
-import re
 import warnings
 from typing import Any
 
 from ..agent.agent_metadata import AgentMetadata
-from ._model_info import PromptCaching
 from ._validation import warn_on_cache_config_not_supported
 from .model import CacheConfig
 
@@ -20,23 +18,6 @@ from .model import CacheConfig
 # prompt_cache_retention is deprecated in openai 2.54.0 in favor of prompt_cache_options.ttl, whose only
 # accepted value today is "30m" - so "24h"/"in_memory" remain expressible only through this field.
 _RETENTION_LITERALS = frozenset({"in_memory", "24h"})
-
-# GPT-5.6 and later take explicit cache points. Matches a bare or provider-prefixed id
-# (`gpt-6.2-sol`, `openai.gpt-6.2-sol`), not `gpt-oss-120b` or `custom-gpt-6`.
-_GPT_VERSION = re.compile(r"(?:^|\.)gpt-(\d+)(?:\.(\d+))?(?:-|$)")
-
-
-def infer_prompt_caching(model_id: object) -> PromptCaching | None:
-    """Infer the prompt caching of an OpenAI model from its id, for ids the model info has no fact for.
-
-    Args:
-        model_id: The configured model id.
-
-    Returns:
-        ``"cache_points"`` for a GPT-5.6-or-later id, otherwise None (unknown).
-    """
-    match = _GPT_VERSION.search(str(model_id))
-    return "cache_points" if match and (int(match[1]), int(match[2] or 0)) >= (5, 6) else None
 
 
 def _resolve_cache_key(cache_config: CacheConfig, agent_metadata: AgentMetadata | None) -> str | None:

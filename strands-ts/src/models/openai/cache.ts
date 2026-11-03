@@ -8,7 +8,6 @@
  */
 
 import type { CacheConfig } from '../model.js'
-import type { PromptCaching } from '../model-info.js'
 import type { AgentMetadata } from '../../agent/agent-metadata.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -17,24 +16,6 @@ import { warnOnce } from '../../logging/warn-once.js'
 // match — the SDK never guesses a conversion from an arbitrary duration string.
 const RETENTION_LITERALS = ['in_memory', '24h'] as const
 type RetentionLiteral = (typeof RETENTION_LITERALS)[number]
-
-// GPT-5.6 and later take explicit cache points. Matches a bare or provider-prefixed id
-// (`gpt-6.2-sol`, `openai.gpt-6.2-sol`), not `gpt-oss-120b` or `custom-gpt-6`.
-const GPT_VERSION = /(?:^|\.)gpt-(\d+)(?:\.(\d+))?(?:-|$)/
-
-/**
- * Infers the prompt caching of an OpenAI model from its id, for ids the model info has no fact for.
- *
- * @param modelId - The configured model id
- * @returns `'cachePoints'` for a GPT-5.6-or-later id, otherwise undefined (unknown)
- * @internal
- */
-export function inferPromptCaching(modelId: string): PromptCaching | undefined {
-  const version = GPT_VERSION.exec(modelId)
-  if (!version) return undefined
-  const major = Number(version[1])
-  return major > 5 || (major === 5 && Number(version[2] ?? 0) >= 6) ? 'cachePoints' : undefined
-}
 
 /**
  * The `CacheConfig`-derived fields both OpenAI request shapes share.

@@ -4,7 +4,7 @@ import { ImageBlock } from '../../../types/media.js'
 import { formatResponsesRequest } from '../responses-adapter.js'
 import { OpenAIModel } from '../model.js'
 import type { OpenAIResponsesConfig } from '../types.js'
-import type { StreamOptions } from '../../model.js'
+import type { CacheConfig, StreamOptions } from '../../model.js'
 import type { ModelInfo } from '../../model-info.js'
 
 const marker = { mode: 'explicit' }
@@ -154,36 +154,27 @@ describe('Responses durable prompt caching', () => {
     expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
   })
 
-  it('joins a multi-text tool result into one checkpointed block', () => {
-    const result = new ToolResultBlock({
-      toolUseId: 'a',
-      status: 'success',
-      content: [new TextBlock('one'), new TextBlock('two')],
-    })
-    expect(input([new Message({ role: 'user', content: [result] })])).toEqual([
-      {
-        type: 'function_call_output',
-        call_id: 'a',
-        output: [{ type: 'input_text', text: 'one\ntwo', prompt_cache_breakpoint: marker }],
-      },
-    ])
-  })
-
-  it('uses the array tool-output form for a tool result in the temporary tail', () => {
-    const result = new ToolResultBlock({ toolUseId: 'a', status: 'success', content: [new TextBlock('out')] })
-    const msg = new Message({ role: 'user', content: [new TextBlock('durable'), result] })
-    expect(input([msg], { dynamicTrailingBlocks: 1 })).toContainEqual({
-      type: 'function_call_output',
-      call_id: 'a',
-      output: [{ type: 'input_text', text: 'out' }],
-    })
-  })
-
-  it('keeps an empty tool result as a string output', () => {
-    const result = new ToolResultBlock({ toolUseId: 'a', status: 'success', content: [] })
-    const msg = new Message({ role: 'user', content: [result, new TextBlock('next')] })
-    expect(input([msg])).toContainEqual({ type: 'function_call_output', call_id: 'a', output: '' })
-  })
+  it.each([
+    // Durable text outputs join into one checkpointed block.
+    {
+      texts: ['one', 'two'],
+      dynamicTrailingBlocks: 0,
+      output: [{ type: 'input_text', text: 'one\ntwo', prompt_cache_breakpoint: marker }],
+    },
+    // A temporary tool output uses the same array form, without a checkpoint.
+    { texts: ['out'], dynamicTrailingBlocks: 1, output: [{ type: 'input_text', text: 'out' }] },
+    // An empty output stays a string: an empty text block would be a meaningless checkpoint.
+    { texts: [], dynamicTrailingBlocks: 0, output: '' },
+  ])(
+    'formats tool output for texts=$texts, dynamicTrailingBlocks=$dynamicTrailingBlocks',
+    ({ texts, dynamicTrailingBlocks, output }) => {
+      const content = texts.map((t) => new TextBlock(t))
+      const result = new ToolResultBlock({ toolUseId: 'a', status: 'success', content })
+      const blocks = dynamicTrailingBlocks ? [new TextBlock('durable'), result] : [result]
+      const items = input([new Message({ role: 'user', content: blocks })], { dynamicTrailingBlocks }) as unknown[]
+      expect(items.at(-1)).toEqual({ type: 'function_call_output', call_id: 'a', output })
+    }
+  )
 
   it('avoids implicit writes when the only text is a temporary suffix', () => {
     const req = request([user('temporary')], { dynamicTrailingBlocks: 1 })
@@ -203,74 +194,37 @@ describe('Responses durable prompt caching', () => {
     )
   })
 
-  it.each([
-    // Listed with promptCaching 'cachePoints'.
-    'gpt-5.6-sol',
-    'gpt-5.6-terra',
-    'gpt-6-sol',
-    'gpt-6.1-sol',
-    'openai.gpt-6.1-sol',
-    'openai.gpt-5.6-sol',
-    // Listed without a caching fact, or unlisted: the GPT-5.6-or-later name test decides.
-    'openai.gpt-6.1-terra',
-    'gpt-5.6-2026-10-01',
-    'gpt-5.10',
-    'gpt-7-nova',
-    'us.openai.gpt-7-nova',
-  ])('supports checkpoints for %s', (modelId) => {
-    expect(request([user('question')], undefined, { modelId })).toHaveProperty('prompt_cache_options.mode', 'explicit')
-  })
-
-  it.each([
-    'gpt-5.5',
-    'gpt-5.4',
-    'gpt-4o',
-    'gpt-oss-120b',
-    'openai.gpt-daybreak-blue-5.6-sol',
-    'custom-model',
-    'custom-gpt-6',
-    'gpt-5.6custom',
-  ])('preserves legacy behavior for %s', (modelId) => {
-    const req = request([user('question', 'temporary')], { dynamicTrailingBlocks: 1 }, { modelId })
-    expect(req).not.toHaveProperty('prompt_cache_options')
-    expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
-  })
-
-  it.each([
-    ['gpt-6-sol', 'cachePoints'],
-    ['gpt-7-nova', 'cachePoints'],
-    ['openai.gpt-6.1-terra', 'cachePoints'],
-    ['gpt-5.5', undefined],
-    ['llama-3.3-70b', undefined],
-  ])('reports promptCaching for %s on the Responses API as %s', (modelId, promptCaching) => {
-    const model = new OpenAIModel({ api: 'responses', modelId, apiKey: 'sk-test' })
-    expect(model.modelInfo.capabilities?.promptCaching).toBe(promptCaching)
-  })
-
-  it('does not infer cache points for an unlisted id on Chat Completions', () => {
-    const model = new OpenAIModel({ api: 'chat', modelId: 'gpt-7-nova', apiKey: 'sk-test' })
-    expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
-  })
-
   it.each<[string, NonNullable<ModelInfo['capabilities']>['promptCaching'], boolean]>([
+    // Listed with promptCaching 'cachePoints'.
+    ['gpt-5.6', undefined, true],
+    ['gpt-6.1-terra', undefined, true],
+    ['openai.gpt-6.1-sol', undefined, true],
+    // Listed without cache points, or not listed at all: no id-based inference.
+    ['gpt-5.5', undefined, false],
+    ['openai.gpt-6.1-terra', undefined, false],
+    ['gpt-7-nova', undefined, false],
+    // A modelInfo override wins over the data.
     ['gpt-6-sol', 'auto', false],
     ['gpt-6-sol', 'unsupported', false],
-    ['gpt-7-nova', 'auto', false],
     ['my-finetune', 'cachePoints', true],
-  ])('follows a modelInfo override for %s with promptCaching=%s', (modelId, promptCaching, enabled) => {
-    const req = request([user('question')], undefined, { modelId, modelInfo: { capabilities: { promptCaching } } })
+  ])('follows model info for %s (override promptCaching=%s)', (modelId, promptCaching, enabled) => {
+    const overrides = { modelId, ...(promptCaching && { modelInfo: { capabilities: { promptCaching } } }) }
+    const req = request([user('question', 'temporary')], { dynamicTrailingBlocks: 1 }, overrides)
     expect(JSON.stringify(req).includes('prompt_cache_breakpoint')).toBe(enabled)
     expect(Object.hasOwn(req, 'prompt_cache_options')).toBe(enabled)
   })
 
-  it.each([{ strategy: 'auto' as const }, { strategy: 'anthropic' as const }])(
-    'places checkpoints with cacheConfig=%j',
-    (cacheConfig) => {
-      const req = format({ modelId: 'gpt-6-sol', cacheConfig }, [user('question')])
-      expect(req).toHaveProperty('prompt_cache_options.mode', 'explicit')
-      expect(req).toHaveProperty('input.0.content.0.prompt_cache_breakpoint', marker)
-    }
-  )
+  it.each<CacheConfig>([
+    {},
+    // 'anthropic' means SDK-placed cache points, the same mechanism as these checkpoints.
+    { strategy: 'anthropic' },
+    { messagesTTL: true },
+    { cacheKey: false },
+  ])('places checkpoints with cacheConfig=%j', (cacheConfig) => {
+    const req = format({ modelId: 'gpt-6-sol', cacheConfig }, [user('question')])
+    expect(req).toHaveProperty('prompt_cache_options.mode', 'explicit')
+    expect(req).toHaveProperty('input.0.content.0.prompt_cache_breakpoint', marker)
+  })
 
   it.each([undefined, { messagesTTL: false }])('does not opt in with cacheConfig=%j', (cacheConfig) => {
     const modelConfig: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', ...(cacheConfig ? { cacheConfig } : {}) }
@@ -279,15 +233,11 @@ describe('Responses durable prompt caching', () => {
     expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
   })
 
-  it('merges a native TTL without losing explicit mode', () => {
-    const req = request([user('question')], undefined, { params: { prompt_cache_options: { ttl: '12h' } } })
-    expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit', ttl: '12h' })
-  })
-
-  it('preserves native options including implicit mode and TTL', () => {
-    const req = request([user('question')], undefined, {
-      params: { prompt_cache_options: { mode: 'implicit', ttl: '12h' } },
-    })
-    expect(req).toHaveProperty('prompt_cache_options', { mode: 'implicit', ttl: '12h' })
-  })
+  it.each([{ mode: 'implicit', ttl: '30m' }, { mode: 'explicit' }, { ttl: '30m' }])(
+    'lets native prompt_cache_options=%j win over the explicit default',
+    (options) => {
+      const req = request([user('question')], undefined, { params: { prompt_cache_options: options } })
+      expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit', ...options })
+    }
+  )
 })
