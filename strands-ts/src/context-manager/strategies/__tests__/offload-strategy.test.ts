@@ -438,24 +438,20 @@ describe('Offload message-level with role alternation', () => {
       role: 'user',
       content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('result')] })],
     })
-    const messages = [
-      new Message({ role: 'user', content: [new TextBlock('q1')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
-      new Message({ role: 'user', content: [new TextBlock('q2')] }),
-      toolUse,
-      toolResult,
-      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
-    ]
+    const q1 = new Message({ role: 'user', content: [new TextBlock('q1')] })
+    const a1 = new Message({ role: 'assistant', content: [new TextBlock('a1')] })
+    const q2 = new Message({ role: 'user', content: [new TextBlock('q2')] })
+    const a3 = new Message({ role: 'assistant', content: [new TextBlock('a3')] })
+    const messages = [q1, a1, q2, toolUse, toolResult, a3]
+    const context = makeContext(messages)
+    const removedTokens = await context.agent.model.countTokens([a1, q2])
     const strategy = Offload.drop('*').when({ preserveRecent: 2 })
 
-    await strategy.apply(makeContext(messages))
+    expect(await strategy.apply(context)).toBe(true)
 
-    expect(messages.map((message) => message.content.map((block) => block.type))).toEqual([
-      ['textBlock'],
-      ['toolUseBlock', 'textBlock'],
-      ['toolResultBlock'],
-      ['textBlock'],
-    ])
+    const marker = offloadPlaceholder('drop', formatDroppedMessages(removedTokens), undefined)
+    expect(messages).toEqual([q1, toolUse.with({ content: [...toolUse.content, marker] }), toolResult, a3])
+    expect(messages[2]).toBe(toolResult)
   })
 
   it('drop("*") acts when only message 0 precedes the candidates', async () => {
