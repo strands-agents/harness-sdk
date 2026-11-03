@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import {
   Message,
   CachePointBlock,
@@ -549,6 +549,34 @@ describe('GoogleModel', () => {
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+    })
+
+    it('throws ModelNetworkError for a fetch network error', async () => {
+      const networkError = new TypeError('Failed to fetch')
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw networkError
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const error = await collectIterator(provider.stream(messages)).catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(ModelNetworkError)
+      expect(error).toMatchObject({ message: 'Failed to fetch', cause: networkError })
+    })
+
+    it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield { candidates: [{ content: { parts: [{ text: 'Hel' }] } }] }
+        throw new TypeError('network error')
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelNetworkError)
     })
 
     it('rethrows unrecognized errors', async () => {

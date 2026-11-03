@@ -261,6 +261,28 @@ export const announcementSchema = z
   })
 export type Announcement = z.infer<typeof announcementSchema>
 
+const sampleGuideSchema = z
+  .object({
+    title: z.string(),
+    description: z.string(),
+    slug: z.string(),
+    language: z.enum(ALL_SDK_LANGUAGES),
+    category: z.string(),
+    categoryLabel: z.string(),
+    sourceUrl: z.string().url(),
+    order: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((guide, context) => {
+    if (!guide.slug.startsWith(`${guide.language}/`)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['slug'],
+        message: `slug must begin with the guide language "${guide.language}/"`,
+      })
+    }
+  })
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -322,6 +344,13 @@ export const collections = {
       pattern: '**/*.{yml,yaml}',
     }),
     schema: announcementSchema,
+  }),
+  sampleGuides: defineCollection({
+    loader: glob({
+      base: '.build/samples/pages',
+      pattern: '**/*.md',
+    }),
+    schema: sampleGuideSchema,
   }),
   docs: defineCollection({
     loader: glob({

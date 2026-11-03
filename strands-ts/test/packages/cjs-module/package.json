@@ -6,5 +6,8 @@
   "description": "Test package to verify SDK works with CSJ",
   "dependencies": {
     "@strands-agents/sdk": "file:../../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }

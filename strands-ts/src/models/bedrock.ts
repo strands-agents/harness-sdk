@@ -94,11 +94,11 @@ const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 /**
- * Models that require the status field in tool results.
- * According to AWS Bedrock API documentation, the status field is only supported by Anthropic Claude models.
+ * Models Bedrock documents as supporting the status field in tool results. Deliberately an allow-list:
+ * undocumented models may accept it (Llama 4) or reject it with a ValidationException (Writer).
  * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
  */
-const MODELS_INCLUDE_STATUS = ['anthropic.claude']
+const MODELS_INCLUDE_STATUS = ['amazon.nova', 'anthropic.claude']
 
 /**
  * Models that reject any reasoning text block replayed in history

@@ -16,6 +16,21 @@ export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
   box: { label: 'Box', languages: [] },
 }
 
+/**
+ * Release stream for each navbar product, used by the docs footer to show the
+ * release of the product being read. Every product label needs an entry (a
+ * test enforces it); `null` marks a product with no release stream yet, which
+ * shows no release. The `cli` stream has no docs product of its own, so it
+ * surfaces only on the changelog.
+ */
+export const PRODUCT_RELEASE_STREAM: Record<string, Sdk | null> = {
+  Harness: 'harness',
+  'Harness SDK': 'sdk',
+  Shell: null,
+  Box: 'box',
+  Evals: 'evals',
+}
+
 /** Products released as separate per-language streams; only these carry `language`. */
 export function hasLanguageStreams(sdk: Sdk): boolean {
   return SDK_META[sdk].languages.length > 1

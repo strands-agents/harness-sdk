@@ -1,0 +1,22 @@
+---
+import type { GetStaticPaths } from 'astro'
+import { getCollection } from 'astro:content'
+import type { ComponentProps } from 'astro/types'
+import SampleGuidePage from '../../components/samples/SampleGuidePage.astro'
+import { sortSampleGuides } from '../../util/sample-guides'
+
+export const getStaticPaths = (async () => {
+  const guides = sortSampleGuides(await getCollection('sampleGuides'))
+  return guides.map((guide) => ({
+    params: { sample: guide.data.slug },
+    props: { guide, guides },
+  }))
+}) satisfies GetStaticPaths
+
+type GuideProps = ComponentProps<typeof SampleGuidePage>
+type Props = GuideProps
+
+const { guide, guides } = Astro.props
+---
+
+<SampleGuidePage {guide} {guides} />

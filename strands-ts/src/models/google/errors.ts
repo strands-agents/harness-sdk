@@ -4,6 +4,7 @@
  * @internal This module is not part of the public API.
  */
 
+import { isFetchNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 
 /**
@@ -12,7 +13,7 @@ import { logger } from '../../logging/logger.js'
  * This union type will expand as more error types are supported
  * (e.g., 'throttling', 'invalidRequest').
  */
-export type GoogleErrorType = 'contextOverflow' | 'throttling'
+export type GoogleErrorType = 'contextOverflow' | 'throttling' | 'network'
 
 /**
  * Configuration for handling a specific error status.
@@ -51,6 +52,10 @@ export const ERROR_STATUS_MAP: Record<string, ErrorStatusConfig> = {
  * @internal
  */
 export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
+  if (isFetchNetworkError(error)) {
+    return 'network'
+  }
+
   if (!error.message) {
     return undefined
   }
