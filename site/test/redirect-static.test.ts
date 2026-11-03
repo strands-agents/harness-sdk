@@ -190,8 +190,14 @@ describe('buildStaticRedirects', () => {
     // specific entry.
     const redirects = buildPublishedRedirects(path.resolve(__dirname, '../src/content'), legacyRoutes)
 
-    expect(redirects['/docs/user-guide/box']).toBe('/docs/user-guide/box/quickstart/')
-    expect(redirects['/docs/user-guide/box/getting-started']).toBe('/docs/user-guide/box/quickstart/')
+    expect(redirects).toMatchObject({
+      '/docs/user-guide/box': '/docs/user-guide/box/quickstart/',
+      '/docs/user-guide/box/getting-started': '/docs/user-guide/box/quickstart/',
+      '/docs/user-guide/box/guides/add-a-tool': '/docs/user-guide/box/guides/add-an-mcp-server/',
+      '/docs/user-guide/box/guides/grant-files': '/docs/user-guide/box/reference/configuration/',
+      '/docs/user-guide/box/reference/cli': '/docs/user-guide/box/reference/configuration/',
+      '/docs/user-guide/box/security/agent-and-tool-containment': '/docs/user-guide/box/security/',
+    })
     expect(Object.keys(redirects).length).toBeGreaterThan(0)
   })
 })
