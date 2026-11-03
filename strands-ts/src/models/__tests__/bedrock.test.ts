@@ -17,7 +17,8 @@ import { TextBlock, GuardContentBlock, CachePointBlock } from '../../types/messa
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
 import { CitationsBlock } from '../../types/citations.js'
 import type { StreamOptions } from '../model.js'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
@@ -1682,6 +1683,33 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5763: after a tool result, Bedrock
+    // can end an empty turn with messageStop and metadata but no messageStart.
+    describe('when Bedrock ends an empty turn without a messageStart', () => {
+      it('aggregates an empty assistant message', async () => {
+        setupMockSend(async function* () {
+          yield { messageStop: { stopReason: 'end_turn' } }
+          yield { metadata: { usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } } }
+        })
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: { usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } },
+          },
+          stopReason: 'endTurn',
+          metadata: { type: 'modelMetadataEvent', usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } },
+        })
+      })
+    })
+
     describe('structured output enforcement', () => {
       const forcedRejection = new ValidationException({
         message:
