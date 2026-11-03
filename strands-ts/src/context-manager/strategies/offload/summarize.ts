@@ -21,7 +21,8 @@ import {
   type SummarizeConfig,
 } from '../../methods/summarize.js'
 import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
-import { BaseOffloadStrategy, removeMessages } from './base.js'
+import { removeMessages } from '../../message-trimming.js'
+import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
 
@@ -51,7 +52,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const model = this._resolveModel(context.agent)!
     const { messages, invocationContext } = context
     const summarize = (run: Message[]): Promise<string | null> => this._summarizeRun(run, model, invocationContext)
-    return removeMessages(messages, await this._getEligibleMessages(context), summarize, 'summarize', this._stash)
+    return removeMessages(messages, await this._removableMessages(context), summarize, 'summarize', this._stash)
   }
 
   /** The summary marker text for a run; a failure is logged and keeps the run. */

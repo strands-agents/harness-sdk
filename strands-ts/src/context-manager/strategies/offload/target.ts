@@ -69,8 +69,8 @@ export function mediaKind(block: ContentBlock | ToolResultContent): string | und
 }
 
 /**
- * Builds a toolUseId → toolName map from all assistant messages in the conversation.
- * Called once per apply() to avoid O(messages × toolResults) scanning.
+ * Builds a toolUseId → toolName map from all assistant messages in the conversation, once per pass, so naming
+ * each tool result is a lookup rather than a scan.
  *
  * @internal
  */

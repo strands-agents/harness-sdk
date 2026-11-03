@@ -10,7 +10,8 @@ import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatDropped, formatDroppedMessages } from '../../placeholder.js'
-import { BaseOffloadStrategy, removeMessages } from './base.js'
+import { removeMessages } from '../../message-trimming.js'
+import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
 
@@ -27,7 +28,7 @@ export class DropStrategy extends BaseOffloadStrategy {
     const { messages, agent } = context
     const text = async (removed: Message[]): Promise<string> =>
       formatDroppedMessages(await agent.model.countTokens(removed))
-    return removeMessages(messages, await this._getEligibleMessages(context), text, 'drop', this._stash)
+    return removeMessages(messages, await this._removableMessages(context), text, 'drop', this._stash)
   }
 
   protected async _replaceBlock(

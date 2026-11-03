@@ -1,6 +1,10 @@
 /**
  * Base offload strategy: conditions, target routing, eager hooks, and the shared per-block and
  * message-level execution paths.
+ *
+ * Reading order: `apply` checks `reached`, then a block target runs `_transformBlocks`, which calls each strategy's
+ * `_replaceBlock`, and target `'*'` runs `_applyPerMessage` on `_removableMessages`, which hands them to
+ * `removeMessages` in message-trimming.ts before `repairAlternation` restores alternation.
  */
 
 import { logger } from '../../../logging/logger.js'
@@ -14,7 +18,7 @@ import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
-import { collectRemovableWithPair, insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
+import { collectRemovableWithPair, removeMessages, repairAlternation } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -29,71 +33,6 @@ import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, 
 export interface OffloadStrategy extends ContextStrategy {
   /** Returns a copy of this strategy with these conditions in place of its current ones. */
   when(conditions?: OffloadConditions): OffloadStrategy
-}
-
-/**
- * Writes the placeholder text, such as `[Dropped: earlier messages, ~1,200 tokens]` or a summary, for messages about
- * to be removed with their tool pairs. Returning null keeps them, as summarize does when its model call fails.
- */
-type PlaceholderText = (removed: Message[]) => Promise<string | null>
-
-/**
- * Removes messages with their tool pairs and leaves one placeholder for each contiguous run of them, each stashed
- * under its own reference. A run whose text is null is kept, and a failed stash write leaves the placeholder without
- * a reference. Callers restore alternation once they are done.
- *
- * @returns Whether anything was removed
- * @internal
- */
-export async function removeMessages(
-  messages: Message[],
-  toRemove: Message[],
-  textFor: PlaceholderText,
-  method: OffloadMethod,
-  stash: Stash | undefined
-): Promise<boolean> {
-  let acted = false
-  // Last run first, so removing a run leaves the earlier runs' positions unchanged.
-  for (const run of splitIntoRuns(messages, withPairs(messages, toRemove)).reverse()) {
-    if (await removeRun(messages, run, textFor, method, stash)) acted = true
-  }
-  return acted
-}
-
-/** Replaces a contiguous run of messages with one placeholder. */
-async function removeRun(
-  messages: Message[],
-  run: Message[],
-  textFor: PlaceholderText,
-  method: OffloadMethod,
-  stash: Stash | undefined
-): Promise<boolean> {
-  const text = await textFor(run)
-  if (text === null) return false
-
-  const start = messages.indexOf(run[0]!)
-  messages.splice(start, run.length)
-  let stashRef: string | undefined
-  try {
-    stashRef = await stash?.storeRemoved(run)
-  } catch (error) {
-    logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
-  }
-  insertMarker(messages, start, offloadPlaceholder(method, text, stashRef))
-  return true
-}
-
-/** Splits `selected`, in conversation order, into runs of messages adjacent in `messages`. */
-function splitIntoRuns(messages: Message[], selected: Message[]): Message[][] {
-  const runs: Message[][] = []
-  let previousIndex = -2
-  for (const message of selected) {
-    const index = messages.indexOf(message)
-    if (index === previousIndex + 1) runs.at(-1)!.push(message)
-    else runs.push([message])
-    previousIndex = index
-  }
-  return runs
 }
 
 /** Shared offload logic: conditions, firing, granularity, eager hooks, preserveRecent. */
@@ -188,7 +127,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /**
-   * Message-level execution for target `'*'`, on the messages {@link _getEligibleMessages} returns. `apply` restores
+   * Message-level execution for target `'*'`, on the messages {@link _removableMessages} returns. `apply` restores
    * alternation afterwards.
    */
   protected abstract _applyPerMessage(context: ContextState): Promise<boolean>
@@ -199,7 +138,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     const toolNameMap = buildToolNameMap(messages)
     const threshold = this._conditions.thresholdTokens(agent)
     let acted = false
-    for (const message of this._candidates(messages, toolNameMap)) {
+    for (const message of this._unprotectedMatches(messages, toolNameMap)) {
       // Without the eager hook, message 0 is the task and the last message is one the model has not yet responded to.
       if (!this._runsEagerly && (message === messages[0] || message === messages.at(-1))) continue
       if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, invocationContext)) acted = true
@@ -208,7 +147,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /** Matching messages outside `preserveRecent`, without pinned ones, in history order. */
-  private _candidates(messages: Message[], toolNameMap: Map<string, string>): Message[] {
+  private _unprotectedMatches(messages: Message[], toolNameMap: Map<string, string>): Message[] {
     const matching = messages.filter((message) => this._matcher.matchesMessage(message, toolNameMap))
     return this._conditions
       .withoutPreserved(matching)
@@ -219,20 +158,20 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * Messages outside `preserveRecent` and larger than `blockThreshold`, excluding message 0, pinned messages, and
    * messages whose tool partner is protected, since removing a message removes its partner too.
    */
-  protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
+  protected async _removableMessages(context: ContextState): Promise<Message[]> {
     const { messages, agent } = context
-    const candidates = this._candidates(messages, buildToolNameMap(messages))
-    const unprotected = new Set(candidates)
-    const eligible = candidates.filter(
+    const unprotected = this._unprotectedMatches(messages, buildToolNameMap(messages))
+    const unprotectedSet = new Set(unprotected)
+    const removable = unprotected.filter(
       (message) =>
         message !== messages[0] &&
-        collectRemovableWithPair(messages, messages.indexOf(message)).every((removed) => unprotected.has(removed))
+        collectRemovableWithPair(messages, messages.indexOf(message)).every((removed) => unprotectedSet.has(removed))
     )
     const threshold = this._conditions.thresholdTokens(agent)
-    if (threshold === undefined) return eligible
+    if (threshold === undefined) return removable
 
-    const sizes = await Promise.all(eligible.map((message) => agent.model.countTokens([message])))
-    return eligible.filter((_message, index) => sizes[index]! > threshold)
+    const sizes = await Promise.all(removable.map((message) => agent.model.countTokens([message])))
+    return removable.filter((_message, index) => sizes[index]! > threshold)
   }
 
   /** The placeholder this strategy leaves for a block it replaced. */

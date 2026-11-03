@@ -17,9 +17,9 @@ import {
   type TruncateConfig,
 } from '../../methods/truncate.js'
 import type { Stash } from '../../stash.js'
-import { withPairs } from '../../message-trimming.js'
+import { removeMessages, withPairs } from '../../message-trimming.js'
 import { formatElided, formatOffloaded } from '../../placeholder.js'
-import { BaseOffloadStrategy, removeMessages } from './base.js'
+import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
 import { isOffloaded } from '../../placeholder.js'
@@ -74,7 +74,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   /** Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages, agent } = context
-    const middle = withPairs(messages, await this._selectMiddle(await this._getEligibleMessages(context), agent))
+    const middle = withPairs(messages, await this._selectMiddle(await this._removableMessages(context), agent))
     // A middle of only placeholders has nothing new to elide.
     if (middle.every((message) => message.content.every(isOffloaded))) return false
     const text = async (removed: Message[]): Promise<string> => formatElided(await agent.model.countTokens(removed))
