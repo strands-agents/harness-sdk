@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../strategies/offload/index.js'
 import { offloadPlaceholder } from '../placeholder.js'
 import { repairAlternation } from '../message-trimming.js'
+import { flattenMessagesToContent } from '../methods/summarize.js'
 import { Stash } from '../stash.js'
 import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
@@ -243,8 +244,10 @@ describe('Offload strategies with stash', () => {
       ])
       const retrieve = createRetrievalTool(stash)
       expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1' })).toEqual([
-        first.toJSON(),
-        second.toJSON(),
+        new TextBlock('\n---\n[assistant]'),
+        new TextBlock('first answer'),
+        new TextBlock('\n---\n[user]'),
+        new TextBlock('second question'),
       ])
       expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1', pattern: 'second' })).toContain(
         'second question'
@@ -335,17 +338,18 @@ describe('Offload strategies with stash', () => {
     ] as const)('%s message-level marker references the removed messages', async (method, strategy, first) => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       const messages = conversation()
-      const original = messages.map((message) => message.toJSON())
+      const original = [...messages]
 
       await strategy.when({ contextUtilization: '50%' }).apply(makeContext(messages, { stash, utilization: 0.9 }))
 
       const marker = markerOf(messages)
       const { removedMessages } = marker.metadata!.offloaded!
       const ref = `removed-m${first}`
+      const removed = original.slice(first, first + removedMessages!)
       expect(marker.metadata).toEqual({ offloaded: { method, ref, removedMessages } })
       expect(marker.text.endsWith(` [ref: ${ref}]`)).toBe(true)
       expect(await invokeRetrievalTool(createRetrievalTool(stash, 1_000_000), { reference: ref })).toEqual(
-        original.slice(first, first + removedMessages!)
+        flattenMessagesToContent(removed)
       )
     })
 

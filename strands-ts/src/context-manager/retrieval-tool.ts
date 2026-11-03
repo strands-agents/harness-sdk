@@ -30,6 +30,7 @@ import type {
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
 import type { Stash } from './stash.js'
+import { flattenMessagesToContent } from './methods/summarize.js'
 
 /** What a stash entry holds: one stored block, or the messages removed together. */
 type StashEntry = ToolResultContent | ContentBlock | Message[]
@@ -96,13 +97,15 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
 }
 
 /**
- * The stored content itself. Tool result items are returned as the blocks they are, so media reaches
- * the model as media and only their text is cut to `maxChars`; anything else is returned in its JSON form.
+ * The stored content itself. Tool result items, and removed messages rendered as role markers and their
+ * content, are returned as blocks, so media reaches the model as media and only their text is cut to
+ * `maxChars`; anything else is returned in its JSON form.
  */
 function fullContent(entries: StashEntry[], maxChars: number): JSONValue {
-  if (entries.every(isToolResultContent)) {
-    const blocks = clipText(entries, maxChars)
-    return (blocks.length === 1 ? blocks[0]! : blocks) as unknown as JSONValue
+  const blocks = entries.flatMap((entry) => (Array.isArray(entry) ? flattenMessagesToContent(entry) : [entry]))
+  if (blocks.every(isToolResultContent)) {
+    const clipped = clipText(blocks, maxChars)
+    return (clipped.length === 1 ? clipped[0]! : clipped) as unknown as JSONValue
   }
   const data = entries.length === 1 ? entryToData(entries[0]!) : entries.map(entryToData)
   const serialized = JSON.stringify(data)

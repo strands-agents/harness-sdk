@@ -211,15 +211,37 @@ describe('retrieval tool', () => {
       },
     ]
 
-    it('returns the stored messages and searches their text and tool-result text', async () => {
+    it('returns the stored messages as role markers and their content, and searches their text', async () => {
       const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
       await stash.store('removed-m1', 0, encodeJSON(removed))
       const retrievalTool = createRetrievalTool(stash)
 
-      expect(await invoke(retrievalTool, { reference: 'removed-m1' })).toEqual(removed)
+      expect(await invoke(retrievalTool, { reference: 'removed-m1' })).toEqual([
+        new TextBlock('\n---\n[user]'),
+        new TextBlock('alpha'),
+        new TextBlock('\n---\n[assistant]'),
+        new TextBlock('[tool call: x] {}'),
+        new TextBlock('\n---\n[user]'),
+        new TextBlock('[tool result: x]'),
+        new TextBlock('beta ERROR'),
+        new TextBlock('1'),
+      ])
       const matches = (await invoke(retrievalTool, { reference: 'removed-m1', pattern: 'ERROR' })) as string
       expect(matches).toContain('[1 match for /ERROR/]')
       expect(matches).toContain('> 2| beta ERROR')
+    })
+
+    it('returns media in the stored messages as media and cuts only their text', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const image = { image: { format: 'png', source: { bytes: 'iVBORw0KGgo=' } } }
+      await stash.store('removed-m1', 0, encodeJSON([{ role: 'user', content: [image, { text: 'x'.repeat(100) }] }]))
+      const retrievalTool = createRetrievalTool(stash, 10)
+
+      const result = (await invoke(retrievalTool, { reference: 'removed-m1' })) as unknown[]
+
+      expect(result[0]).toEqual(new TextBlock('\n---\n[user]'))
+      expect((result[1] as ImageBlock).toJSON()).toEqual(image)
+      expect(result[2]).toEqual(new TextBlock(`${'x'.repeat(40 - '\n---\n[user]'.length)}\n\n[truncated]`))
     })
   })
 
