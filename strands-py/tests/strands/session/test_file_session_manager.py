@@ -235,6 +235,22 @@ def test_message_durable_id_persists(file_manager, sample_session, sample_agent)
     assert result.to_message()["tracking_id"] == "durable-1"
 
 
+def test_message_text_block_metadata_persists(file_manager, sample_session, sample_agent):
+    """A text block's metadata is written to disk and survives a create/read round-trip."""
+    file_manager.create_session(sample_session)
+    file_manager.create_agent(sample_session.session_id, sample_agent)
+
+    summary = ContentBlock(
+        text="[Summarized: 3 messages]\n\nsummary",
+        metadata={"providerData": {"provider": "anthropic", "data": {"type": "compaction", "content": "summary"}}},
+    )
+    message = SessionMessage.from_message(message={"role": "user", "content": [summary]}, index=0)
+    file_manager.create_message(sample_session.session_id, sample_agent.agent_id, message)
+
+    result = file_manager.read_message(sample_session.session_id, sample_agent.agent_id, message.message_id)
+    assert result.to_message()["content"] == [summary]
+
+
 def test_read_message(file_manager, sample_session, sample_agent, sample_message):
     """Test reading a message."""
     # Create session, agent, and message

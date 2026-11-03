@@ -10,7 +10,7 @@ from typing_extensions import TypedDict
 from ....agent.conversation_manager.compression.pin_message import _get_tool_use_ids, _has_pinned_flag
 from ....event_loop.streaming import _record_usage
 from ....models._summarize import SummarizeResult, _summarize_with_stream
-from ....types.content import ContentBlock, Message, Messages
+from ....types.content import ContentBlock, Message, Messages, ProviderData
 from ....types.tools import ToolResult, ToolResultContent
 from ...stash import MERGED_MESSAGES_KEY, _format_stash_refs
 from ...types import ContextState
@@ -135,6 +135,15 @@ def _summary_text(result: SummarizeResult | None) -> str:
     return "\n".join(block["text"] for block in result.content if "text" in block).strip()
 
 
+def _provider_data_of(content: list[ContentBlock]) -> ProviderData | None:
+    """Return the provider data of the first text block in ``content`` that carries any."""
+    for block in content:
+        provider_data = block.get("metadata", {}).get("providerData") if "text" in block else None
+        if provider_data:
+            return provider_data
+    return None
+
+
 def _block_request(block: ContentBlock, message: Message, messages: Messages) -> Messages:
     """Return the ``Model.summarize()`` input for one block of ``message``.
 
@@ -242,7 +251,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Compact message 0 and the run after it server-side, keeping message 0 in place.
 
         The summary takes the run's place as an assistant message, followed by the run's pinned messages and ahead of
-        any assistant content that follows.
+        any assistant content that follows, and the provider sends its block, which covers message 0, in place of the
+        text.
         """
         kept, summarized = _split_pinned(run)
         if not summarized or _holds_only_summaries(summarized):
@@ -255,6 +265,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return False
         total_tokens = await model.count_tokens(summarized)
         marker = ContentBlock(text=_format_summarized(f"{len(summarized)} messages", total_tokens, summary))
+        provider_data = _provider_data_of(result.content)
+        if provider_data:
+            marker["metadata"] = {"providerData": provider_data}
         messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker]), *kept]
         logger.debug("summarized=<%s>, tokens=<%s> | compacted opening messages", len(summarized), total_tokens)
         return True

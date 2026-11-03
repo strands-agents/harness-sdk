@@ -77,6 +77,29 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
+class ProviderData(TypedDict):
+    """Data only the provider that produced a block can interpret, such as a signed server-side summary.
+
+    Attributes:
+        provider: Name of the provider that produced the data, for example "anthropic".
+        data: Opaque, JSON-serializable data, sent back to its provider unchanged.
+    """
+
+    provider: str
+    data: Any
+
+
+class TextBlockMetadata(TypedDict, total=False):
+    """Metadata about a text block, read only by the provider named in it.
+
+    Attributes:
+        providerData: Present when the block holds data its provider sends in place of the text; other providers send
+            the text.
+    """
+
+    providerData: ProviderData
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
@@ -86,6 +109,8 @@ class ContentBlock(TypedDict, total=False):
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
+        metadata: Metadata about the block, meaningful only alongside `text`. Not sent to model providers, except
+            `providerData`, which only the provider named in it reads.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.
@@ -99,6 +124,7 @@ class ContentBlock(TypedDict, total=False):
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
+    metadata: TextBlockMetadata
     reasoningContent: ReasoningContentBlock
     text: str
     toolResult: ToolResult
@@ -109,6 +135,7 @@ class ContentBlock(TypedDict, total=False):
 
 class _TextBlockData(TypedDict):
     text: str
+    metadata: NotRequired[TextBlockMetadata]
 
 
 @dataclass
@@ -117,13 +144,18 @@ class TextBlock:
 
     Attributes:
         text: Text to send.
+        metadata: Optional metadata about the block.
     """
 
     text: str
+    metadata: TextBlockMetadata | None = None
 
     def to_dict(self) -> _TextBlockData:
         """Return the dictionary form of this block."""
-        return {"text": self.text}
+        data: _TextBlockData = {"text": self.text}
+        if self.metadata is not None:
+            data["metadata"] = self.metadata
+        return data
 
 
 class SystemContentBlock(TypedDict, total=False):

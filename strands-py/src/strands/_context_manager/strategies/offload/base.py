@@ -446,7 +446,8 @@ class BaseOffloadStrategy(ABC):
         if "reasoningContent" in block or "cachePoint" in block:
             return False
         if is_text_block(block):
-            return _target_matches_message(self._target, message)
+            # Provider data is signed over the block as returned, so an in-place edit would invalidate it.
+            return "providerData" not in block.get("metadata", {}) and _target_matches_message(self._target, message)
         if is_tool_result_block(block):
             if self._stash and tool_name_map.get(block["toolResult"]["toolUseId"]) == RETRIEVAL_TOOL_NAME:
                 return False

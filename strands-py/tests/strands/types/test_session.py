@@ -109,6 +109,19 @@ def test_session_message_preserves_durable_id():
     assert loaded_message.to_message()["tracking_id"] == "durable-abc"
 
 
+def test_session_message_preserves_text_block_metadata():
+    summary = {
+        "text": "[Summarized: 3 messages]\n\nsummary",
+        "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "compaction", "content": "summary"}}},
+    }
+    message = {"role": "user", "content": [summary]}
+
+    session_message = SessionMessage.from_message(message, 0)
+    loaded_message = SessionMessage.from_dict(json.loads(json.dumps(session_message.to_dict())))
+
+    assert loaded_message.to_message()["content"] == [summary]
+
+
 def test_session_message_without_durable_id():
     # Legacy messages persisted before durable ids have no id, and none is backfilled.
     message = {"role": "user", "content": [{"text": "Hello!"}]}
