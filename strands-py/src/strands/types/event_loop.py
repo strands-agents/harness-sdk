@@ -14,6 +14,10 @@ class Usage(TypedDict, total=False):
         totalTokens: Total number of tokens (input + output).
         cacheReadInputTokens: Number of tokens read from cache (optional).
         cacheWriteInputTokens: Number of tokens written to cache (optional).
+        cacheWriteInputTokensByTtl: Breakdown of ``cacheWriteInputTokens`` by the cache TTL the
+            tokens were written with, keyed by the same TTL values accepted on a cache point
+            (e.g. ``{"5m": 1024, "1h": 2048}``). Only set by providers that report the split
+            (optional).
     """
 
     inputTokens: Required[int]
@@ -21,6 +25,7 @@ class Usage(TypedDict, total=False):
     totalTokens: Required[int]
     cacheReadInputTokens: int
     cacheWriteInputTokens: int
+    cacheWriteInputTokensByTtl: dict[str, int]
 
 
 class Metrics(TypedDict, total=False):

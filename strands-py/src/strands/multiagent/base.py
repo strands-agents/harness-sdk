@@ -16,6 +16,7 @@ from .._async import run_async
 from ..agent import AgentResult
 from ..hooks.registry import HookCallback, HookOrder
 from ..interrupt import Interrupt
+from ..telemetry.metrics import _accumulate_tokens_by_ttl
 from ..types.event_loop import Metrics, Usage
 from ..types.multiagent import MultiAgentInput
 from ..types.traces import AttributeValue
@@ -396,6 +397,8 @@ def _parse_usage(usage_data: dict[str, Any]) -> Usage:
         usage["cacheReadInputTokens"] = usage_data["cacheReadInputTokens"]
     if "cacheWriteInputTokens" in usage_data:
         usage["cacheWriteInputTokens"] = usage_data["cacheWriteInputTokens"]
+    if "cacheWriteInputTokensByTtl" in usage_data:
+        usage["cacheWriteInputTokensByTtl"] = usage_data["cacheWriteInputTokensByTtl"]
     return usage
 
 
@@ -410,3 +413,7 @@ def _accumulate_cache_usage(target: Usage, source: Usage) -> None:
         target["cacheReadInputTokens"] = target.get("cacheReadInputTokens", 0) + source["cacheReadInputTokens"]
     if "cacheWriteInputTokens" in source:
         target["cacheWriteInputTokens"] = target.get("cacheWriteInputTokens", 0) + source["cacheWriteInputTokens"]
+    if "cacheWriteInputTokensByTtl" in source:
+        target["cacheWriteInputTokensByTtl"] = _accumulate_tokens_by_ttl(
+            target.get("cacheWriteInputTokensByTtl"), source["cacheWriteInputTokensByTtl"]
+        )
