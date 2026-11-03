@@ -4,7 +4,7 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, UnknownBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
@@ -587,6 +587,18 @@ describe("OpenAIModel (api: 'responses')", () => {
       ]
       const req = await runOnce({}, messages)
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
+    })
+
+    it('skips unknown blocks', async () => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }])
     })
   })
 

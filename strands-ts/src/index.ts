@@ -95,6 +95,7 @@ export {
   ReasoningBlock,
   CachePointBlock,
   GuardContentBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,

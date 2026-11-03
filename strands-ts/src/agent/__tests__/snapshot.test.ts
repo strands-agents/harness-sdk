@@ -10,11 +10,12 @@ import {
   takeSnapshot,
   loadSnapshot,
 } from '../snapshot.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, UnknownBlock } from '../../types/messages.js'
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { logger } from '../../logging/logger.js'
 
 // Fixed timestamp for testing
 const MOCK_TIMESTAMP = '2026-01-15T12:00:00.000Z'
@@ -188,6 +189,33 @@ describe('Snapshot API', () => {
           trackingId: anyTrackingId,
         })
       )
+    })
+
+    it('restores a message with a content block type this version does not recognize, unchanged', () => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const savedMessage = {
+        role: 'user',
+        content: [{ text: 'Restored message' }, { futureBlock: { value: 1 } }],
+        trackingId: 'durable-1',
+      }
+      const snapshot: Snapshot = {
+        scope: 'agent',
+        schemaVersion: '1.0',
+        createdAt: createTimestamp(),
+        data: { messages: [savedMessage] },
+        appData: {},
+      }
+
+      loadSnapshot(agent, snapshot)
+
+      expect(agent.messages).toEqual([
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Restored message'), new UnknownBlock({ futureBlock: { value: 1 } })],
+          trackingId: 'durable-1',
+        }),
+      ])
+      expect(takeSnapshot(agent, { preset: 'session' }).data.messages).toEqual([savedMessage])
     })
 
     it('restores state from snapshot', () => {
