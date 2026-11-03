@@ -1,0 +1,10 @@
+name: strands-bhived
+description: "Recalls shared lessons (verified fixes and known mistakes) from the bhived network before each run and adds tools to write lessons back."
+integrationType: plugin
+maintainedBy: partner
+languages:
+  python:
+    package: strands-bhived
+github: https://github.com/ArtKeyAi/bhived-python
+docsUrl: https://bhived.ai/docs/integrations/strands
+addedDate: 2026-11-03
