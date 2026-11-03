@@ -174,14 +174,6 @@ function translateError(unknownError: unknown): Error {
   return error
 }
 
-/** Returns request options whose `anthropic-beta` header also carries `beta`. */
-function withBeta(options: Anthropic.RequestOptions | undefined, beta: string): Anthropic.RequestOptions {
-  const header = (options?.headers as Record<string, string> | undefined)?.['anthropic-beta']
-  const betas = header ? header.split(',') : []
-  if (!betas.includes(beta)) betas.push(beta)
-  return { ...options, headers: { 'anthropic-beta': betas.join(',') } }
-}
-
 export interface AnthropicModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens the model can generate in a response.
@@ -584,7 +576,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         }),
         request.instructions
       )
-      const options = withBeta(this._buildRequestOptions(request.messages), COMPACTION_BETA)
+      const options = this._buildRequestOptions(request.messages, true)
       // The beta stream keeps `usage.iterations`, where a compaction response reports its usage.
       const response = await this._client.beta.messages
         .stream(params, { ...options, ...(request.cancelSignal && { signal: request.cancelSignal }) })
@@ -618,10 +610,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
   }
 
-  private _buildRequestOptions(messages: Message[] = []): Anthropic.RequestOptions | undefined {
+  private _buildRequestOptions(messages: Message[] = [], compacting = false): Anthropic.RequestOptions | undefined {
     const required = [
       ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
-      ...(carriesNativeBlock(messages) ? [COMPACTION_BETA] : []),
+      ...(compacting || carriesNativeBlock(messages) ? [COMPACTION_BETA] : []),
     ]
     let betas = this._config.betas ?? []
     // Request headers replace client headers of the same name, so betas set on the client are carried over.

@@ -81,9 +81,9 @@ export function storeCompactionBlock(block: Record<string, unknown>): TextBlock 
 }
 
 /**
- * Turns a conversation request into an on-demand compaction request. Leaves out the parameters the API rejects on a
- * compaction request: `stop_sequences`, a structured-output `output_config.format`, and a `tool_choice` that forces
- * a tool. `compaction` is not in the installed SDK's request types; the client sends body fields as given.
+ * Turns a conversation request into an on-demand compaction request. Leaves out what the API rejects on, or refuses to combine
+ * with, a compaction request: `stop_sequences`, a structured-output `output_config.format`, a `tool_choice` that
+ * forces a tool, `output_config.task_budget.remaining`, and `context_management`. `compaction` is not in the installed SDK's request types; the client sends body fields as given.
  *
  * @internal
  * @param request - The request the model would send for the same messages, system prompt and tools
@@ -94,8 +94,19 @@ export function compactionParams(
   request: Anthropic.MessageStreamParams,
   instructions: string | undefined
 ): Anthropic.Beta.Messages.MessageCreateParamsStreaming {
-  const { stop_sequences: _stopSequences, tool_choice: toolChoice, output_config: outputConfig, ...rest } = request
-  const { format: _format, ...keptOutputConfig } = outputConfig ?? {}
+  const {
+    stop_sequences: _stopSequences,
+    tool_choice: toolChoice,
+    output_config: outputConfig,
+    context_management: _contextManagement,
+    ...rest
+  } = request as Anthropic.MessageStreamParams & { context_management?: unknown }
+  const { format: _format, ...keptOutputConfig } = (outputConfig ?? {}) as Record<string, unknown>
+  const taskBudget = keptOutputConfig.task_budget as Record<string, unknown> | undefined
+  if (taskBudget && 'remaining' in taskBudget) {
+    const { remaining: _remaining, ...keptBudget } = taskBudget
+    keptOutputConfig.task_budget = keptBudget
+  }
   const params: Record<string, unknown> = {
     ...rest,
     ...(toolChoice && toolChoice.type !== 'any' && toolChoice.type !== 'tool' && { tool_choice: toolChoice }),

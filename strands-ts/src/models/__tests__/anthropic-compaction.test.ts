@@ -98,6 +98,36 @@ describe('AnthropicModel.compact', () => {
       )
     })
 
+    it('keeps betas set on the client, as conversation requests do', async () => {
+      const wire = new AnthropicWire().reply(COMPACTED, { content: [{ type: 'text', text: 'ok' }] })
+      const defaultHeaders = { 'anthropic-beta': 'context-1m-2025-08-07' }
+      const anthropic = new AnthropicModel({
+        client: wire.client(defaultHeaders),
+        clientConfig: { defaultHeaders },
+        modelId: 'claude-sonnet-5-5',
+        maxTokens: 4096,
+      })
+      await anthropic.compact({ messages: body() })
+      await collectIterator(anthropic.stream(body()))
+
+      expect(wire.requests[0]!.headers['anthropic-beta']).toBe('context-1m-2025-08-07,compact-2026-09-04')
+      expect(wire.requests[1]!.headers['anthropic-beta']).toBe('context-1m-2025-08-07')
+    })
+
+    it("leaves out context_management and a task budget's remaining tokens", async () => {
+      const wire = new AnthropicWire().reply(COMPACTED)
+      await model(wire, {
+        params: {
+          context_management: { edits: [{ type: 'clear_thinking_20251015' }] },
+          output_config: { effort: 'high', task_budget: { type: 'tokens', total: 1000, remaining: 400 } },
+        },
+      }).compact({ messages: body() })
+
+      const [compaction] = wire.bodies
+      expect(compaction!).not.toHaveProperty('context_management')
+      expect(compaction!.output_config).toStrictEqual({ effort: 'high', task_budget: { type: 'tokens', total: 1000 } })
+    })
+
     it('sends an earlier compaction block first, exactly as returned', async () => {
       const wire = new AnthropicWire().reply(COMPACTED, COMPACTED)
       const anthropic = model(wire)

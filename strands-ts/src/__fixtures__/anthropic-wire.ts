@@ -51,15 +51,17 @@ export class AnthropicWire {
   /**
    * A real SDK client whose only transport is this wire.
    *
+   * @param defaultHeaders - Client default headers
    * @returns The client
    */
-  client(): Anthropic {
+  client(defaultHeaders?: Record<string, string>): Anthropic {
     // The key is a placeholder and every request stays on this wire, so the client may run in a browser test.
     return new Anthropic({
       apiKey: 'offline-test-key',
       maxRetries: 0,
       fetch: this._fetch,
       dangerouslyAllowBrowser: true,
+      ...(defaultHeaders && { defaultHeaders }),
     })
   }
 
