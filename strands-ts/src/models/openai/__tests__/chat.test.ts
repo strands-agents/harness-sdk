@@ -1741,7 +1741,7 @@ describe('OpenAIModel', () => {
 
       // Verify warning was logged
       expect(warnSpy).toHaveBeenCalledWith(
-        'block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
+        'count=<1> | block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
       )
 
       // Verify guard content filtered out
@@ -1784,7 +1784,7 @@ describe('OpenAIModel', () => {
 
       // Verify warning was logged
       expect(warnSpy).toHaveBeenCalledWith(
-        'block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
+        'count=<1> | block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
       )
 
       // Verify guard content filtered out
@@ -1819,13 +1819,41 @@ describe('OpenAIModel', () => {
 
       // Verify warning was logged
       expect(warnSpy).toHaveBeenCalledWith(
-        'block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
+        'count=<1> | block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
       )
 
       // Verify no user message added (only guard content)
       expect(captured.request).toBeDefined()
       expect(captured.request!.messages).toEqual([])
 
+      warnSpy.mockRestore()
+    })
+
+    it('logs one counted skip warning per request across history', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = []
+      for (let turn = 0; turn < 3; turn++) {
+        messages.push(
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('look'),
+              new GuardContentBlock({ text: { qualifiers: ['guard_content'], text: 'Guard content' } }),
+            ],
+          })
+        )
+        messages.push(new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }))
+      }
+
+      await collectIterator(provider.stream(messages))
+
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'count=<3> | block_type=<guardContentBlock> | unsupported content type in openai user message | skipping'
+      )
       warnSpy.mockRestore()
     })
   })
