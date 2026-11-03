@@ -1,0 +1,490 @@
+import { type ChatEntry, type ChatTurn } from '../../agent/types.js'
+import { type ChatSnapshot } from './controller.js'
+import { memo, type ReactElement } from 'react'
+import { Box, type DOMElement } from 'ink'
+import { Markdown } from '../markdown.js'
+import { MediaView, ToolResultContentView, AttachmentPreview } from '../media.js'
+import {
+  backgroundTaskDispatch,
+  formatValue,
+  formatTurnMetrics,
+  isBackgroundAgent,
+  sentPeerMessage,
+  summarizeToolInput,
+  summarizeToolResult,
+  toolAction,
+} from '../presentation.js'
+import { expandTabs } from '../../terminal/text.js'
+import { useSpinner } from '../animation.js'
+import { Text, useTheme } from '../theme.js'
+
+type ToolStatus = Extract<ChatEntry, { type: 'tool' }>['status']
+
+/** The still marker that replaces the spinner while activity waits on the user. */
+export const PAUSED_MARKER = '◆'
+
+/** What the active turn is doing, shown on the line under its transcript. */
+export type TurnActivity =
+  'working' | 'awaitingApproval' | 'waitingForResponse' | 'reviewingBackground' | 'respondingToPeer'
+
+export const TURN_ACTIVITY: Record<TurnActivity, { label: string; animated: boolean; interruptible: boolean }> = {
+  working: { label: 'Working', animated: true, interruptible: true },
+  // The approval prompt owns Esc, so the turn line does not advertise interrupting.
+  awaitingApproval: { label: 'Waiting for approval', animated: false, interruptible: false },
+  waitingForResponse: { label: 'Waiting for model response', animated: true, interruptible: true },
+  reviewingBackground: { label: 'Reviewing background result', animated: true, interruptible: true },
+  respondingToPeer: { label: 'Responding to', animated: true, interruptible: true },
+}
+
+/** A tool row's displayed state; `paused` is a running call held on an approval prompt. */
+export type ToolActivity = 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled'
+
+export const TOOL_ACTIVITY: Record<
+  ToolActivity,
+  { label?: string; marker?: string; color: 'yellow' | 'green' | 'red' }
+> = {
+  running: { label: 'running', color: 'yellow' },
+  paused: { label: 'paused', marker: PAUSED_MARKER, color: 'yellow' },
+  succeeded: { marker: '✓', color: 'green' },
+  failed: { label: 'failed', marker: '×', color: 'red' },
+  cancelled: { label: 'cancelled', marker: '○', color: 'yellow' },
+}
+
+const TOOL_ACTIVITY_BY_STATUS: Record<ToolStatus, ToolActivity> = {
+  running: 'running',
+  success: 'succeeded',
+  error: 'failed',
+  cancelled: 'cancelled',
+}
+
+export function turnActivity(turn: ChatTurn, awaitingApproval: boolean): TurnActivity {
+  if (awaitingApproval) return 'awaitingApproval'
+  if (turn.responseDelayed) return 'waitingForResponse'
+  if (turn.source === 'background') return 'reviewingBackground'
+  return turn.source === 'peer' ? 'respondingToPeer' : 'working'
+}
+
+export function turnActivityText(activity: TurnActivity, turn: ChatTurn, spinner: string): string {
+  const { label, animated, interruptible } = TURN_ACTIVITY[activity]
+  const subject = activity === 'respondingToPeer' ? `${label} ${turn.peer?.name ?? 'agent'}` : label
+  return `${animated ? spinner : PAUSED_MARKER} ${subject}${interruptible ? ' (esc to interrupt)' : ''}`
+}
+
+export function toolActivity(status: ToolStatus, paused: boolean): ToolActivity {
+  return status === 'running' && paused ? 'paused' : TOOL_ACTIVITY_BY_STATUS[status]
+}
+
+/** A group reads as its most pressing member: any running call, then failures, then cancellations. */
+export function toolGroupActivity(statuses: readonly ToolStatus[], paused: boolean): ToolActivity {
+  if (statuses.includes('running')) return paused ? 'paused' : 'running'
+  if (statuses.includes('error')) return 'failed'
+  return statuses.includes('cancelled') ? 'cancelled' : 'succeeded'
+}
+
+export function toolActivityMarker(activity: ToolActivity, spinner: string): string {
+  return TOOL_ACTIVITY[activity].marker ?? spinner
+}
+
+export function TurnView({
+  turn,
+  settings,
+  active = false,
+  approvalToolName,
+  expandedToolGroups,
+  onToolGroupElement,
+}: {
+  turn: ChatTurn
+  settings: ChatSnapshot['settings']
+  active?: boolean
+  /** The tool whose call is paused on an open approval prompt; stills the spinners. */
+  approvalToolName?: string
+  expandedToolGroups: ReadonlySet<string>
+  onToolGroupElement?: (id: string, element: DOMElement | null) => void
+}): ReactElement {
+  const theme = useTheme()
+  const silentOpening = turn.prompt === '' && turn.source === undefined && !turn.attachments?.length
+  const awaitingApproval = active && approvalToolName !== undefined
+  const activity = turnActivity(turn, awaitingApproval)
+  const spinner = useSpinner(
+    active && turn.status === 'running' && !silentOpening && !awaitingApproval,
+    settings.animations
+  )
+  const directShell = turn.prompt.trimStart().startsWith('!')
+  const visibleEntries = silentOpening
+    ? turn.entries.filter((entry) => entry.type === 'assistant' || entry.type === 'media')
+    : turn.entries
+  const groupedEntries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
+  const entries = settings.showReasoning ? groupedEntries : groupedEntries.filter((entry) => entry.type !== 'reasoning')
+  const firstEntry = entries[0]
+  const startsWithTool = firstEntry?.type === 'tool' || firstEntry?.type === 'toolGroup'
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      {(turn.prompt || turn.attachments?.length) && turn.source !== 'background' ? (
+        <Box
+          width="100%"
+          flexDirection="column"
+          paddingX={1}
+          marginBottom={startsWithTool && settings.transcriptSpacing === 'compact' ? 1 : 0}
+          backgroundColor={theme.surface}
+        >
+          {turn.source === 'peer' ? (
+            <Text bold>
+              <Text color={theme.accent}>◆</Text> Message from {turn.peer?.name ?? 'agent'}
+            </Text>
+          ) : null}
+          {turn.attachments?.length ? <AttachmentPreview attachments={turn.attachments} maxRows={3} /> : null}
+          {turn.prompt ? <Text>{expandTabs(turn.prompt)}</Text> : null}
+        </Box>
+      ) : null}
+      {entries.map((entry, index) => {
+        const followsReasoning = entries[index - 1]?.type === 'reasoning'
+        return entry.type === 'toolGroup' ? (
+          <ToolActivityGroup
+            key={entry.id}
+            entries={entry.entries}
+            spinner={spinner}
+            {...(awaitingApproval ? { approvalToolName } : {})}
+            settings={settings}
+            agentName={turn.agentName}
+            forceFullResult={directShell}
+            expanded={expandedToolGroups.has(entry.id)}
+            followsReasoning={followsReasoning}
+            {...(onToolGroupElement ? { onElement: onToolGroupElement } : {})}
+          />
+        ) : (
+          <EntryView
+            key={entry.id}
+            entry={entry}
+            spinner={spinner}
+            {...(awaitingApproval ? { approvalToolName } : {})}
+            settings={settings}
+            agentName={turn.agentName}
+            forceFullResult={directShell}
+            expanded={expandedToolGroups.has(`${entry.id}:output`)}
+            followsReasoning={followsReasoning}
+            {...(onToolGroupElement ? { onElement: onToolGroupElement } : {})}
+          />
+        )
+      })}
+      {active && turn.status === 'running' && !silentOpening ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.warning}>{turnActivityText(activity, turn, spinner)}</Text>
+          {activity === 'waitingForResponse' ? (
+            <Text dimColor>No response for 30s. /exit to close, then resume.</Text>
+          ) : null}
+        </Box>
+      ) : null}
+      {turn.status === 'cancelled' ? <Text color="yellow">Cancelled</Text> : null}
+      {turn.status === 'error' ? (
+        <Box flexDirection="column">
+          <Text color="red">Error: {turn.error}</Text>
+          {turn.recoveryHint ? <Text dimColor>{turn.recoveryHint}</Text> : null}
+        </Box>
+      ) : null}
+      {turn.stopReason === 'maxTokens' ? (
+        <Text color="yellow">Response reached its output limit.</Text>
+      ) : turn.stopReason && !['endTurn', 'end_turn', 'cancelled'].includes(turn.stopReason) ? (
+        <Text dimColor>Stopped: {turn.stopReason}</Text>
+      ) : null}
+      {!silentOpening && (turn.durationMs !== undefined || turn.usage) ? (
+        <Box marginTop={1}>
+          <Text dimColor>{formatTurnMetrics(turn.durationMs, turn.usage?.totalTokens)}</Text>
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
+export const CompletedTurnView = memo(
+  TurnView,
+  (previous, next) =>
+    previous.turn === next.turn &&
+    previous.settings.transcriptSpacing === next.settings.transcriptSpacing &&
+    previous.settings.animations === next.settings.animations &&
+    previous.settings.showReasoning === next.settings.showReasoning &&
+    previous.settings.toolOutput === next.settings.toolOutput &&
+    previous.expandedToolGroups === next.expandedToolGroups
+)
+
+type ToolEntry = Extract<ChatEntry, { type: 'tool' }>
+type TranscriptEntry =
+  | ChatEntry
+  | {
+      id: string
+      type: 'toolGroup'
+      entries: readonly ToolEntry[]
+    }
+
+function groupToolEntries(entries: readonly ChatEntry[]): TranscriptEntry[] {
+  const grouped: TranscriptEntry[] = []
+  let tools: ToolEntry[] = []
+  const flushTools = (): void => {
+    if (tools.length === 1) {
+      grouped.push(tools[0]!)
+    } else if (tools.length > 1) {
+      grouped.push({ id: tools[0]!.id, type: 'toolGroup', entries: tools })
+    }
+    tools = []
+  }
+  for (const entry of entries) {
+    if (entry.type === 'tool' && !sentPeerMessage(entry) && !isBackgroundAgent(entry)) {
+      tools.push(entry)
+      continue
+    }
+    flushTools()
+    grouped.push(entry)
+  }
+  flushTools()
+  return grouped
+}
+
+function ToolActivityGroup({
+  entries,
+  spinner,
+  settings,
+  agentName,
+  forceFullResult,
+  approvalToolName,
+  expanded,
+  followsReasoning,
+  onElement,
+}: Omit<Parameters<typeof EntryView>[0], 'entry'> & {
+  entries: readonly ToolEntry[]
+  expanded: boolean
+}): ReactElement {
+  const theme = useTheme()
+  const id = entries[0]!.id
+  const running = entries.filter((entry) => entry.status === 'running')
+  const paused = approvalToolName !== undefined && running.some((entry) => entry.name === approvalToolName)
+  const failed = entries.filter((entry) => entry.status === 'error').length
+  const cancelled = entries.filter((entry) => entry.status === 'cancelled').length
+  const activity = toolGroupActivity(
+    entries.map((entry) => entry.status),
+    paused
+  )
+  const marker = toolActivityMarker(activity, spinner)
+  const { color } = TOOL_ACTIVITY[activity]
+  const counts = new Map<string, number>()
+  for (const entry of entries) {
+    const action = toolAction(entry.name)
+    counts.set(action, (counts.get(action) ?? 0) + 1)
+  }
+  const details = [
+    `${entries.length} tool calls`,
+    ...Array.from(counts, ([action, count]) => `${action} ×${count}`),
+    ...(failed > 0 ? [`${failed} failed`] : []),
+    ...(cancelled > 0 ? [`${cancelled} cancelled`] : []),
+  ]
+  return (
+    <Box flexDirection="column" marginTop={!followsReasoning && settings.transcriptSpacing === 'comfortable' ? 1 : 0}>
+      <Box ref={(element) => onElement?.(id, element)} width="100%" paddingX={1} backgroundColor={theme.surface}>
+        <Text wrap="wrap">
+          <Text dimColor>{expanded ? '▾' : '▸'} </Text>
+          <Text color={color} bold>
+            {marker} Tool activity
+          </Text>
+          <Text dimColor> · {details.join(' · ')}</Text>
+        </Text>
+      </Box>
+      {(expanded ? entries : running.slice(-1)).map((entry) => (
+        <Box key={entry.id} paddingLeft={2} flexDirection="column">
+          <EntryView
+            entry={entry}
+            spinner={spinner}
+            {...(approvalToolName !== undefined ? { approvalToolName } : {})}
+            settings={{ ...settings, transcriptSpacing: 'compact' }}
+            agentName={agentName}
+            forceFullResult={forceFullResult}
+          />
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+function EntryView({
+  entry,
+  spinner,
+  settings,
+  agentName,
+  forceFullResult,
+  approvalToolName,
+  expanded = false,
+  followsReasoning = false,
+  onElement,
+}: {
+  entry: ChatEntry
+  spinner: string
+  settings: ChatSnapshot['settings']
+  agentName: string
+  forceFullResult: boolean
+  approvalToolName?: string
+  expanded?: boolean
+  followsReasoning?: boolean
+  onElement?: (id: string, element: DOMElement | null) => void
+}): ReactElement {
+  const theme = useTheme()
+  const marginTop = !followsReasoning && settings.transcriptSpacing === 'comfortable' ? 1 : 0
+  if (entry.type === 'user') {
+    return (
+      <Box
+        width="100%"
+        flexDirection="column"
+        paddingX={1}
+        marginTop={1}
+        marginBottom={settings.transcriptSpacing === 'compact' ? 1 : 0}
+        backgroundColor={theme.surface}
+      >
+        <Text>{expandTabs(entry.text)}</Text>
+      </Box>
+    )
+  }
+  if (entry.type === 'reasoning') {
+    return (
+      <Box flexDirection="column" marginTop={1} marginBottom={1}>
+        <Text dimColor bold>
+          Reasoning
+        </Text>
+        <Text dimColor italic>
+          {expandTabs(entry.text)}
+        </Text>
+      </Box>
+    )
+  }
+  if (entry.type === 'assistant') {
+    return (
+      <Box flexDirection="column" marginTop={marginTop}>
+        <Text color={theme.accent} bold>
+          {agentName}
+        </Text>
+        <Markdown>{entry.text}</Markdown>
+      </Box>
+    )
+  }
+  if (entry.type === 'media') {
+    return (
+      <Box marginTop={marginTop}>
+        <MediaView content={entry.content} />
+      </Box>
+    )
+  }
+
+  const peerMessage = sentPeerMessage(entry)
+  if (peerMessage) {
+    const color =
+      entry.status === 'running'
+        ? theme.warning
+        : entry.status === 'success'
+          ? theme.accent
+          : entry.status === 'error'
+            ? 'red'
+            : 'yellow'
+    return (
+      <Box flexDirection="column" marginTop={marginTop} paddingX={1} backgroundColor={theme.surface}>
+        <Text color={color} bold>
+          ◆ Message to {peerMessage.recipient}
+        </Text>
+        <Text>{expandTabs(peerMessage.body)}</Text>
+        {entry.error ? <Text color="red">Failed: {entry.error}</Text> : null}
+      </Box>
+    )
+  }
+
+  const backgroundAgent = isBackgroundAgent(entry)
+  const activity = toolActivity(entry.status, entry.name === approvalToolName)
+  const dispatched = backgroundAgent && activity === 'succeeded'
+  const marker = dispatched ? '↗' : toolActivityMarker(activity, spinner)
+  const color = dispatched ? theme.accent : TOOL_ACTIVITY[activity].color
+  if (backgroundAgent) {
+    const dispatch = backgroundTaskDispatch(entry)
+    const state =
+      entry.status === 'error'
+        ? `Background task failed (${entry.name})`
+        : entry.status === 'cancelled'
+          ? `Background task cancelled (${entry.name})`
+          : dispatch
+            ? `Background task started (${dispatch.toolName}) - ${dispatch.taskId}`
+            : `Background task starting (${entry.name})`
+    return (
+      <Box flexDirection="column" marginTop={marginTop}>
+        <Box width="100%" paddingX={1} backgroundColor={theme.surface}>
+          <Text color={color} bold>
+            {marker} {state}
+          </Text>
+        </Box>
+        {entry.error ? (
+          <Box paddingLeft={3}>
+            <Text color="red">└ {entry.error}</Text>
+          </Box>
+        ) : null}
+      </Box>
+    )
+  }
+
+  const statusLabel = TOOL_ACTIVITY[activity].label
+  const hiddenOutput = settings.toolOutput === 'hidden'
+  // Direct shell output starts open even when tool output is hidden; clicking its row still collapses it.
+  const open = forceFullResult ? !expanded : expanded
+  const showDetails = !hiddenOutput || open
+  const showResult = showDetails ? entry.result : undefined
+  const fullResult = forceFullResult || settings.toolOutput === 'full'
+  const resultPreview = showResult
+    ? summarizeToolResult(showResult.filter((item) => item.type === 'text' || item.type === 'json'))
+    : undefined
+  const mediaResults = showResult?.filter((item) => item.type !== 'text' && item.type !== 'json') ?? []
+  return (
+    <Box flexDirection="column" marginTop={marginTop}>
+      <Box
+        ref={hiddenOutput ? (element): void => onElement?.(`${entry.id}:output`, element) : undefined}
+        width="100%"
+        paddingX={1}
+        backgroundColor={theme.surface}
+      >
+        <Text wrap="wrap">
+          {hiddenOutput ? <Text dimColor>{open ? '▾' : '▸'} </Text> : null}
+          <Text color={color} bold>
+            {marker} {toolAction(entry.name)}
+          </Text>
+          <Text dimColor> {summarizeToolInput(entry.name, entry.input)}</Text>
+          {statusLabel ? <Text color={color}> · {statusLabel}</Text> : null}
+        </Text>
+      </Box>
+      {settings.toolOutput === 'full' ? (
+        <Box paddingLeft={3} flexDirection="column">
+          <Text dimColor>input</Text>
+          <Text dimColor>{formatValue(entry.input)}</Text>
+        </Box>
+      ) : null}
+      {showResult ? (
+        <Box paddingLeft={3} flexDirection="column">
+          <Text dimColor>result</Text>
+          {fullResult ? (
+            <ToolResultContentView content={showResult} />
+          ) : (
+            <>
+              {resultPreview?.lines.map((line, index) => (
+                <Text key={`${entry.id}-result-${index}`} dimColor>
+                  <Text color={color}>
+                    {index === resultPreview.lines.length - 1 && resultPreview.hiddenLines === 0 ? '└' : '│'}
+                  </Text>{' '}
+                  {line || ' '}
+                </Text>
+              ))}
+              {resultPreview && resultPreview.hiddenLines > 0 ? (
+                <Text dimColor>
+                  <Text color={color}>└</Text> … {resultPreview.hiddenLines} more lines
+                </Text>
+              ) : null}
+              {mediaResults.length > 0 ? <ToolResultContentView content={mediaResults} /> : null}
+            </>
+          )}
+        </Box>
+      ) : null}
+      {showDetails && entry.error ? (
+        <Box paddingLeft={3}>
+          <Text color="red">└ {entry.error}</Text>
+        </Box>
+      ) : null}
+    </Box>
+  )
+}

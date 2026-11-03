@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import type { Agent, JSONValue } from '@strands-agents/sdk'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 
-import { CliConfigStore } from '../../src/tui/config.js'
-import { createInteractiveChat } from '../../src/tui/runtime.js'
-import type { StrandsChatBackend } from '../../src/tui/strands-backend.js'
+import { CliConfigStore } from '../../src/config/store.js'
+import { createInteractiveChat } from '../../src/ui/chat/runtime.js'
+import type { StrandsChatBackend } from '../../src/agent/backend.js'
 
 const root = await realpath(await mkdtemp(join(tmpdir(), 'strands-self-extensions-')))
 const workspace = join(root, 'workspace')
@@ -45,7 +45,7 @@ const profile = defineHarnessAgentConfig({
   mcpServers: {
     authored: {
       command: process.execPath,
-      args: [join(import.meta.dirname, 'self-building-mcp.mjs')],
+      args: [join(import.meta.dirname, './self-building-mcp.mjs')],
       continueOnError: false,
     },
   },

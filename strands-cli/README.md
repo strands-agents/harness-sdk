@@ -618,7 +618,7 @@ Contributions are welcome: bug reports, features, docs, or a well-scoped PR. See
 development setup, how we work, and the pull-request flow. Please also review our
 [Code of Conduct](https://github.com/strands-agents/harness-sdk/blob/main/CODE_OF_CONDUCT.md).
 
-The cache patch in `src/tui/terminal/ink.ts` bounds Ink 7.1.1's text-layout caches in memory during streaming.
+The cache patch in `src/terminal/ink.ts` bounds Ink 7.1.1's text-layout caches in memory during streaming.
 Review this patch when upgrading Ink; it works with read-only installations without changing dependency files.
 
 ## Security

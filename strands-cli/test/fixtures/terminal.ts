@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { render as inkRender, type Instance, type RenderOptions } from 'ink'
 import { afterEach, vi } from 'vitest'
 
-import { sanitizeTerminalText } from '../../src/tui/terminal/sanitize.js'
+import { sanitizeTerminalText } from '../../src/terminal/text.js'
 
 const instances: Instance[] = []
 

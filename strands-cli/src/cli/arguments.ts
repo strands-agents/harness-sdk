@@ -1,9 +1,9 @@
-import { Command } from 'commander'
 import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { Command } from 'commander'
 
-import { readCliVersion } from '../tui/package-version.js'
-import { isRecord } from '../tui/values.js'
+import { readCliVersion } from '../package-version.js'
+import { isRecord } from '../values.js'
 
 export interface ParsedArgs {
   update: boolean

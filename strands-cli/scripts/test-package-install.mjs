@@ -40,13 +40,13 @@ try {
 
   const installedRoot = join(installRoot, 'node_modules', '@strands-agents', 'cli')
   const { resolveVoiceSidecarPath } = await import(
-    pathToFileURL(join(installedRoot, 'dist', 'src', 'tui', 'voice', 'session.js')).href
+    pathToFileURL(join(installedRoot, 'dist', 'src', 'agent', 'voice.js')).href
   )
   const bundledSidecar = resolveVoiceSidecarPath()
   if (
-    (await realpath(bundledSidecar)) !== (await realpath(join(installedRoot, 'src', 'tui', 'voice', 'sidecar.py'))) ||
+    (await realpath(bundledSidecar)) !== (await realpath(join(installedRoot, 'src', 'agent', 'voice-sidecar.py'))) ||
     (await readFile(bundledSidecar, 'utf8')) !==
-      (await readFile(join(packageRoot, 'src', 'tui', 'voice', 'sidecar.py'), 'utf8'))
+      (await readFile(join(packageRoot, 'src', 'agent', 'voice-sidecar.py'), 'utf8'))
   ) {
     throw new Error('installed voice runtime did not resolve the bundled sidecar')
   }

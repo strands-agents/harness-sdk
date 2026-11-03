@@ -2,8 +2,8 @@
 
 import { writeFile } from 'node:fs/promises'
 
-await import('../../dist/src/tui/terminal/ink.js')
-const tuiRoot = process.env.STRANDS_CLI_TEST_DIST === 'true' ? '../../dist/src/tui' : '../../src/tui'
+await import('../../dist/src/terminal/ink.js')
+const sourceRoot = process.env.STRANDS_CLI_TEST_DIST === 'true' ? '../../dist/src' : '../../src'
 const [
   { WorkspaceSandbox },
   { ChatController },
@@ -11,11 +11,11 @@ const [
   { ConversationManager },
   { workspaceSessionDirectory },
 ] = await Promise.all([
-  import(`${tuiRoot}/workspace/sandbox.js`),
-  import(`${tuiRoot}/chat/controller.js`),
-  import(`${tuiRoot}/run.js`),
-  import(`${tuiRoot}/session/conversations.js`),
-  import(`${tuiRoot}/session/catalog.js`),
+  import(`${sourceRoot}/agent/sandbox.js`),
+  import(`${sourceRoot}/ui/chat/controller.js`),
+  import(`${sourceRoot}/ui/run.js`),
+  import(`${sourceRoot}/ui/chat/conversations.js`),
+  import(`${sourceRoot}/session/catalog.js`),
 ])
 
 const sandbox = new WorkspaceSandbox(process.cwd())

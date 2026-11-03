@@ -9,7 +9,7 @@ import wave
 from pathlib import Path
 from typing import Any
 
-SIDECAR_PATH = Path(__file__).parents[2] / "src/tui/voice/sidecar.py"
+SIDECAR_PATH = Path(__file__).parents[2] / "src/agent/voice-sidecar.py"
 spec = importlib.util.spec_from_file_location("voice_sidecar", SIDECAR_PATH)
 assert spec is not None and spec.loader is not None
 sidecar: Any = importlib.util.module_from_spec(spec)

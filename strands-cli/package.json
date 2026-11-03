@@ -10,7 +10,7 @@
   "files": [
     "bin",
     "dist",
-    "src/tui/voice/sidecar.py",
+    "src/agent/voice-sidecar.py",
     "README.md",
     "LICENSE",
     "NOTICE"

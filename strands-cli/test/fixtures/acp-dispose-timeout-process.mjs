@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { AcpService } from '../../src/tui/acp/server.js'
+import { AcpService } from '../../src/cli/acp.js'
 
 let markStarted
 const started = new Promise((resolve) => {

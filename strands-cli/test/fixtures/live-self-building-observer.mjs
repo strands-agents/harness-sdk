@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs'
 
-import { ChatController } from '../../dist/src/tui/chat/controller.js'
+import { ChatController } from '../../dist/src/ui/chat/controller.js'
 
 // Observe the same snapshots the TUI renders, without replacing the model, tools, or command handlers.
 const createSnapshot = ChatController.prototype._createSnapshot

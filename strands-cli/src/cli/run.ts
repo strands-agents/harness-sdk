@@ -1,19 +1,19 @@
-import { stdin, stdout } from 'node:process'
-import { CommanderError } from 'commander'
 import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
+import { CommanderError } from 'commander'
+import { stdin, stdout } from 'node:process'
 
-import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
-import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
+import { confirmWorkspaceMcp, resolveMcpConfig } from '../config/trust.js'
 import { initLogging } from '../logging.js'
-import { runPlainChat, runTurn } from '../console.js'
-import { importAgentProject } from '../tui/project/import.js'
-import { withWorkspaceSessionDirectory } from '../tui/session/sessions.js'
-import { rethrowWithProviderHint } from '../tui/provider/packages.js'
-import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
-import { errorMessage } from '../tui/terminal/sanitize.js'
-import { confirmWorkspaceMcp, resolveMcpConfig } from '../tui/workspace/trust.js'
+import { rethrowWithProviderHint } from '../model/packages.js'
+import { importAgentProject } from '../project/import.js'
+import { withWorkspaceSessionDirectory } from '../session/sessions.js'
+import { errorMessage } from '../terminal/text.js'
+import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
+import { runPlainChat, runTurn } from './console.js'
+import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
+import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
 
-export { TurnRenderer, runPlainChat, runTurn } from '../console.js'
+export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
 /** Run the Strands CLI using ACP, Ink, plain readline, or one-shot output as the streams allow. */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -93,8 +93,8 @@ async function readStdin(): Promise<string> {
 
 async function runAcp(args: ParsedArgs): Promise<void> {
   try {
-    const { runAcpServer } = await import('../tui/acp/server.js')
-    const { CliConfigStore } = await import('../tui/config.js')
+    const { runAcpServer } = await import('./acp.js')
+    const { CliConfigStore } = await import('../config/store.js')
     const config = await CliConfigStore.load()
     config.useEnvironmentFiles(args.envFiles)
     const { settings } = config.snapshot()
@@ -102,7 +102,7 @@ async function runAcp(args: ParsedArgs): Promise<void> {
     const projectPath = args.agent ?? config.snapshot().agentProject
     const project = projectPath ? importAgentProject(projectPath) : undefined
     if (project?.language === 'python') {
-      const { runPythonAcpServer } = await import('../tui/project/acp.js')
+      const { runPythonAcpServer } = await import('./acp-python.js')
       await runPythonAcpServer(project, config, await pythonInvocationOptions(args, process.cwd(), settings, mcp))
       return
     }
@@ -121,16 +121,19 @@ async function runAcp(args: ParsedArgs): Promise<void> {
 }
 
 async function runConsole(args: ParsedArgs, request: string | undefined, mode: 'print' | 'plain'): Promise<void> {
-  let loadedMcp: Awaited<ReturnType<(typeof import('../tui/mcp.js'))['loadMcp']>> | undefined
+  let loadedMcp: Awaited<ReturnType<(typeof import('../agent/mcp.js'))['loadMcp']>> | undefined
   let agent: Awaited<ReturnType<typeof createHarness>> | undefined
   try {
-    const [{ loadMcp }, { CliConfigStore }] = await Promise.all([import('../tui/mcp.js'), import('../tui/config.js')])
+    const [{ loadMcp }, { CliConfigStore }] = await Promise.all([
+      import('../agent/mcp.js'),
+      import('../config/store.js'),
+    ])
     const config = await CliConfigStore.load()
     config.useEnvironmentFiles(args.envFiles)
     const projectPath = args.agent ?? config.snapshot().agentProject
     const project = projectPath ? importAgentProject(projectPath) : undefined
     if (project?.language === 'python') {
-      const { runPythonConsole } = await import('../tui/project/run.js')
+      const { runPythonConsole } = await import('./console.js')
       const settings = config.snapshot().settings
       const mcp = await resolveMcpConfig(args.mcpConfig, {
         ...(mode === 'plain' ? { confirm: confirmWorkspaceMcp } : {}),
@@ -182,7 +185,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
 
 async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
   try {
-    await import('../tui/terminal/ink.js')
+    await import('../terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
     // without changing the environment inherited by tools and user commands.
     const nodeEnvironment = process.env.NODE_ENV
@@ -197,8 +200,8 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       }
     }
     const [{ runInkChat }, { CliConfigStore }] = await Promise.all([
-      import('../tui/run.js'),
-      import('../tui/config.js'),
+      import('../ui/run.js'),
+      import('../config/store.js'),
     ])
     const config = await CliConfigStore.load()
     config.useEnvironmentFiles(args.envFiles)
@@ -219,7 +222,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject))
         const project = projectPath ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
-          const { createPythonChat } = await import('../tui/project/run.js')
+          const { createPythonChat } = await import('../ui/chat/runtime.js')
           return createPythonChat(
             project.entrypoint,
             config,
@@ -231,7 +234,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           )
         }
         if (project?.language === 'typescript') {
-          const { createTypescriptChat } = await import('../tui/project/run.js')
+          const { createTypescriptChat } = await import('../ui/chat/runtime.js')
           return createTypescriptChat(
             project.entrypoint,
             config,
@@ -249,7 +252,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
             launch?.conversationId
           )
         }
-        const { createInteractiveChat } = await import('../tui/runtime.js')
+        const { createInteractiveChat } = await import('../ui/chat/runtime.js')
         signal.throwIfAborted()
         if (launch?.configuration) config.applyProviderEnvironment()
         const invocation =

@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 
-import type { ChatBackend } from '../../src/tui/chat/controller.js'
+import type { ChatBackend } from '../../src/agent/types.js'
 
 export function idleBackend(overrides: Partial<ChatBackend> = {}): ChatBackend {
   return {

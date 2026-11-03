@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { URL } from 'node:url'
 
-await import('../../dist/src/tui/terminal/ink.js')
-await import('../../dist/src/tui/terminal/ink.js')
+await import('../../dist/src/terminal/ink.js')
+await import('../../dist/src/terminal/ink.js')
 
 const entrypoint = import.meta.resolve('ink')
 const { default: measure } = await import(new URL('./measure-text.js', entrypoint))
