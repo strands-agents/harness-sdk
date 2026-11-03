@@ -18,6 +18,7 @@ import type { ContextManagerConfig, ContextStrategy, ContextState } from './type
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
+import { renderHistory } from './render.js'
 import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
 
 const AUTO_TRUNCATE_THRESHOLD = 1_500
@@ -208,7 +209,7 @@ export class ContextManager implements Plugin {
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await agent.model.countTokens(messages))
+    const inputTokens = precomputedInputTokens ?? (await agent.model.countTokens(renderHistory(messages)))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
@@ -227,7 +228,9 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await agent.model.countTokens(messages))
+          strategyContext.utilization = agent.model.estimateUtilization(
+            await agent.model.countTokens(renderHistory(messages))
+          )
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

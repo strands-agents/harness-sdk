@@ -270,6 +270,42 @@ describe('ContextManager', () => {
       expect(messages.length).toBe(originalLength)
     })
 
+    it('counts tokens on the history as it is sent, with summaries rendered', async () => {
+      const summary = new Message({
+        role: 'assistant',
+        content: [
+          new TextBlock('S', {
+            metadata: { offloaded: { method: 'summarize', removedMessages: 2, removedTokens: 9 } },
+          }),
+        ],
+      })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('task')] }),
+        summary,
+        new Message({ role: 'assistant', content: [new TextBlock('kept')] }),
+        new Message({ role: 'user', content: [new TextBlock('next')] }),
+      ]
+      const counted: Message[][] = []
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }] })
+      const agent = makeMockAgent({
+        messages,
+        countTokens: async (msgs) => {
+          counted.push(msgs)
+          return 100
+        },
+      })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent))
+
+      expect(counted[0]!.map((message) => message.role)).toStrictEqual(['user', 'assistant', 'user'])
+      expect(counted[0]![1]!.content.map((block) => (block as TextBlock).text)).toStrictEqual([
+        'kept',
+        '[Summarized: 2 messages, ~9 tokens]\n\nS',
+      ])
+      expect(messages[1]).toBe(summary)
+    })
+
     it('emergency truncate fires when estimate undercounts on overflow', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('system')] }),

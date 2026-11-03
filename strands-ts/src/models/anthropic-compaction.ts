@@ -105,7 +105,8 @@ export function compactionParams(
   const taskBudget = keptOutputConfig.task_budget as Record<string, unknown> | undefined
   if (taskBudget && 'remaining' in taskBudget) {
     const { remaining: _remaining, ...keptBudget } = taskBudget
-    keptOutputConfig.task_budget = keptBudget
+    if (Object.keys(keptBudget).length > 0) keptOutputConfig.task_budget = keptBudget
+    else delete keptOutputConfig.task_budget
   }
   const params: Record<string, unknown> = {
     ...rest,

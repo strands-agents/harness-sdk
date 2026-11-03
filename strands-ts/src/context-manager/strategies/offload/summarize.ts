@@ -70,8 +70,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Picks the summarizer for a pass: native when the summarizer model declares server-side compaction, base
-   * otherwise.
+   * Picks the summarizer for a pass: native when the summarizer model declares server-side compaction and the agent's
+   * model, which reads the native summary on every later request, does not declare it unsupported; base otherwise.
    *
    * @param agent - The agent whose history is summarized
    * @param invocationContext - Where the base summarizer records its usage
@@ -80,7 +80,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   resolve(agent: LocalAgent, invocationContext?: InvocationContext): Summarizer | undefined {
     const model = this._resolveModel(agent)
     if (!model) return undefined
-    if (model.modelInfo?.capabilities?.serverSideCompaction === true) return new NativeSummarizer(model)
+    if (compactsFor(model, agent.model)) return new NativeSummarizer(model)
     return new BaseSummarizer(model, invocationContext)
   }
 
@@ -279,4 +279,9 @@ function summaryRequest(
 
 function recordSummaryUsage(context: ContextState, result: SummaryResult): void {
   if (result.usage) unwrapInvocationContext(context.invocationContext)?.recordUsage(result.usage)
+}
+
+function compactsFor(summarizer: Model, model: Model | undefined): boolean {
+  if (summarizer.modelInfo?.capabilities?.serverSideCompaction !== true) return false
+  return model?.modelInfo?.capabilities?.serverSideCompaction !== false
 }

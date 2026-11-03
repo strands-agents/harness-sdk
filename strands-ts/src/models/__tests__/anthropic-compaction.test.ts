@@ -128,6 +128,14 @@ describe('AnthropicModel.compact', () => {
       expect(compaction!.output_config).toStrictEqual({ effort: 'high', task_budget: { type: 'tokens', total: 1000 } })
     })
 
+    it('leaves out a task budget that only had remaining tokens', async () => {
+      const wire = new AnthropicWire().reply(COMPACTED)
+      await model(wire, { params: { output_config: { task_budget: { remaining: 400 } } } }).compact({
+        messages: body(),
+      })
+      expect(wire.bodies[0]!).not.toHaveProperty('output_config')
+    })
+
     it('sends an earlier compaction block first, exactly as returned', async () => {
       const wire = new AnthropicWire().reply(COMPACTED, COMPACTED)
       const anthropic = model(wire)

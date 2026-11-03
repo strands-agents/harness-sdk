@@ -174,7 +174,7 @@ The Python SDK still appends the summary to a neighboring message with the heade
 </Tab>
 <Tab label="TypeScript">
 
-When the summarizer model declares `modelInfo.capabilities.serverSideCompaction`, the summary is written by the provider instead. `AnthropicModel` uses on-demand compaction (beta `compact-2026-09-04`), which keeps the thinking in recent turns valid on preserved-thinking models. The returned block replaces the summarized messages, **including the first message**, so restate anything from it that must stay in force in the summarize `systemPrompt`. If the provider returns no summary, the same pass writes a client-side summary and keeps the first message. `AnthropicModel` doesn't opt in by default, and `BedrockModel` declares no support.
+When the summarizer model declares `modelInfo.capabilities.serverSideCompaction`, the summary is written by the provider instead. `AnthropicModel` uses on-demand compaction (beta `compact-2026-09-04`), which keeps the thinking in recent turns valid on preserved-thinking models. The returned block replaces the summarized messages, **including the first message**, so restate anything from it that must stay in force in the summarize `systemPrompt`. If the provider returns no summary, the same pass writes a client-side summary and keeps the first message. `AnthropicModel` doesn't opt in by default. `BedrockModel` declares no support, so an agent whose model is a `BedrockModel` always gets a client-side summary, whatever its summarizer declares.
 
 ```typescript
 --8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:native_compaction_imports"

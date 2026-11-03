@@ -268,7 +268,13 @@ function expectNoLegalCut(messages: Message[], keepHead: number, preserveRecent:
   const bodyStart = keepHead > 0 && splitsPair(messages, keepHead) ? keepHead + 1 : keepHead
   const target = Math.min(messages.length - resolvePreserveCount(messages.length, preserveRecent), messages.length - 1)
   for (let tailStart = bodyStart + 1; tailStart <= target; tailStart++) {
+    const loneSummary =
+      tailStart - bodyStart === 1 &&
+      messages[bodyStart]!.content.every(
+        (block) => block instanceof TextBlock && block.metadata?.offloaded?.method === 'summarize'
+      )
     const legal =
+      !loneSummary &&
       (!endOnUser || messages[tailStart - 1]!.role === 'user') &&
       !splitsPair(messages, tailStart) &&
       messages[tailStart - 1]!.role !== messages[tailStart]!.role &&

@@ -86,6 +86,16 @@ describe('SummarizeStrategy routing', () => {
       expect(strategy().resolve(agent)?.constructor.name).toBe(name)
     })
 
+    it('uses the base path when the agent model declares no server-side compaction', () => {
+      const aux = summarizerModel(true)
+      expect(
+        strategy().resolve(context(history(), { model: summarizerModel(false), auxModel: aux }).agent)?.constructor.name
+      ).toBe('BaseSummarizer')
+      expect(
+        strategy().resolve(context(history(), { model: summarizerModel(), auxModel: aux }).agent)?.constructor.name
+      ).toBe('NativeSummarizer')
+    })
+
     it('reads the configured model before agent.auxModel', () => {
       const configured = summarizerModel(true)
       const agent = context(history(), { auxModel: summarizerModel(false) }).agent
