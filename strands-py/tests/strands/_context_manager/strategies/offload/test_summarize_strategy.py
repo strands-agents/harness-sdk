@@ -479,6 +479,7 @@ class TestSummarizeRuns:
         self, mock_agent
     ):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[3]["tracking_id"] = "a3"
         mock_agent.messages = messages
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
         mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
@@ -493,6 +494,7 @@ class TestSummarizeRuns:
             ["a5"],
             ["u6"],
         ]
+        assert messages[1]["tracking_id"] == "a3"
 
 
 class TestServerSideCompaction:
@@ -574,6 +576,7 @@ class TestServerSideCompaction:
         texts = _texts(messages)
         assert texts[1][0].endswith("\n\ncompacted") and texts[1][1:] == ["a3", "a7"]
         assert [part.get("tracking_id") for part in messages[1]["metadata"]["custom"]["merged_messages"]][1] == "a3"
+        assert messages[1]["tracking_id"] == "a3"
 
     @pytest.mark.asyncio
     async def test_places_the_summary_ahead_of_the_next_assistant_message(self, compacting_agent):

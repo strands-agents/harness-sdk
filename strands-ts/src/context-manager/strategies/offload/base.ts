@@ -228,6 +228,21 @@ export function spliceWithPairs(messages: Message[], toRemove: Message[]): { rem
   return { removed, lowestIndex }
 }
 
+/** Assistant markers this module creates; a merge that starts with one keeps the next message's tracking id. */
+const markers = new WeakSet<Message>()
+
+/**
+ * Creates an assistant message holding a marker. Its tracking id is not one a caller saw, so merging it ahead of
+ * another message keeps that message's tracking id.
+ *
+ * @internal
+ */
+export function markerMessage(content: ContentBlock[]): Message {
+  const message = new Message({ role: 'assistant', content })
+  markers.add(message)
+  return message
+}
+
 /**
  * Adds a removal marker as assistant content at the gap left by removed messages.
  *
@@ -250,7 +265,7 @@ export function insertMarker(messages: Message[], index: number, text: string): 
       return
     }
   }
-  messages.splice(index, 0, new Message({ role: 'assistant', content: [block] }))
+  messages.splice(index, 0, markerMessage([block]))
 }
 
 /**
@@ -278,8 +293,8 @@ export function repairAlternation(messages: Message[]): void {
  *
  * `metadata.custom.mergedMessages` lists every message the merge combines, in content order, with its tracking id,
  * metadata and the offset its content starts at, so stash refs to each one's blocks still resolve. The merge keeps
- * `prev`'s tracking id and custom metadata; its usage and metrics are `current`'s, the latest response it holds. It
- * is pinned when either message is.
+ * `prev`'s tracking id, or `current`'s when `prev` is a marker, and `prev`'s custom metadata; its usage and metrics
+ * are `current`'s, the latest response it holds. It is pinned when either message is.
  */
 function mergeMessages(prev: Message, current: Message): Message {
   const parts = [...mergedParts(prev, 0), ...mergedParts(current, prev.content.length)]
@@ -288,12 +303,14 @@ function mergeMessages(prev: Message, current: Message): Message {
     [MERGED_MESSAGES_KEY]: parts as unknown as JSONValue,
     ...(hasPinnedFlag(prev) || hasPinnedFlag(current) ? { pinned: true } : {}),
   }
-  return new Message({
+  const merged = new Message({
     role: prev.role,
     content: [...prev.content, ...current.content],
-    trackingId: prev.trackingId,
+    trackingId: markers.has(prev) ? current.trackingId : prev.trackingId,
     metadata: { ...current.metadata, custom },
   })
+  if (markers.has(prev) && markers.has(current)) markers.add(merged)
+  return merged
 }
 
 /** Returns the messages `message` combines, at their offsets in a merge where its content starts at `offset`. */

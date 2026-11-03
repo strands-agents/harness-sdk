@@ -406,6 +406,7 @@ describe('summarizing whole messages', () => {
       ['u6'],
     ])
     expect(mergedMessages(messages[1]!).find((part) => part.trackingId === a3.trackingId)?.offset).toBe(1)
+    expect(messages[1]!.trackingId).toBe(a3.trackingId)
   })
 
   it('keeps the tool result of a pinned tool use', async () => {
@@ -549,6 +550,7 @@ describe('server-side compaction', () => {
     expect(summary!.metadata?.providerData).toEqual(COMPACTION)
     expect(rest.map((block) => block.text)).toEqual(['a3', 'a7'])
     expect(mergedMessages(messages[1]!)[1]?.trackingId).toBe(a3.trackingId)
+    expect(messages[1]!.trackingId).toBe(a3.trackingId)
   })
 
   it('uses the base summary when the run does not start right after message 0', async () => {

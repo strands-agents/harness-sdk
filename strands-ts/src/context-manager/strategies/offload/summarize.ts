@@ -20,6 +20,7 @@ import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
   insertMarker,
+  markerMessage,
   repairAlternation,
   type OffloadConditions,
   type OffloadTarget,
@@ -116,7 +117,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       insertMarker(messages, start, marker)
     } else {
       // Its own message, so it leads any assistant content after the gap once alternation is repaired.
-      messages.splice(start, 0, new Message({ role: 'assistant', content: [new TextBlock(marker)] }))
+      messages.splice(start, 0, markerMessage([new TextBlock(marker)]))
     }
     logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | summarized message run`)
     return true
@@ -139,7 +140,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const providerData = providerDataOf(result.content)
     const text = formatSummarized(`${summarized.length} messages`, totalTokens, summary)
     const block = new TextBlock(text, providerData ? { metadata: { providerData } } : undefined)
-    messages.splice(1, run.length, new Message({ role: 'assistant', content: [block] }), ...kept)
+    messages.splice(1, run.length, markerMessage([block]), ...kept)
     logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | compacted opening messages`)
     return true
   }
