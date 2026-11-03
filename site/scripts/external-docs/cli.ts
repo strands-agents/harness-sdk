@@ -31,7 +31,6 @@ for (const product of config.products) {
   const built = buildExternalDocsProduct({
     sourceRoot: source.root,
     config: effectiveConfig,
-    lock: productLock,
     manifest,
     revision: source.revision,
     editRef: source.local ? null : product.ref,

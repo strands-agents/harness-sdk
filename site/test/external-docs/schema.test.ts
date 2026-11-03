@@ -75,6 +75,7 @@ describe('external docs schema', () => {
           manifest: 'docs/site-manifest.json',
           routePrefix: 'docs/user-guide/box/source',
           navLabel: 'Upstream docs preview',
+          publicationStatus: 'preview',
         },
         {
           id: 'other-product',
@@ -83,6 +84,7 @@ describe('external docs schema', () => {
           manifest: 'docs/site-manifest.json',
           routePrefix: 'docs/user-guide/box/source',
           navLabel: 'Other docs',
+          publicationStatus: 'preview',
         },
       ],
     }
@@ -90,5 +92,43 @@ describe('external docs schema', () => {
 
     config.products[1]!.routePrefix = 'docs/user-guide/box/source/nested'
     expect(() => parseExternalDocsConfig(config)).toThrow(/route prefixes.*overlap/)
+  })
+
+  it('rejects repository URLs ending in .git', () => {
+    expect(() =>
+      parseExternalDocsConfig({
+        schemaVersion: 1,
+        products: [
+          {
+            id: 'strands-box',
+            repository: 'https://github.com/strands-agents/box.git',
+            ref: 'main',
+            manifest: 'docs/site-manifest.json',
+            routePrefix: 'docs/user-guide/box/source',
+            navLabel: 'Upstream docs preview',
+            publicationStatus: 'preview',
+          },
+        ],
+      })
+    ).toThrow(/without \.git/)
+  })
+
+  it('rejects an unsupported site publication status', () => {
+    expect(() =>
+      parseExternalDocsConfig({
+        schemaVersion: 1,
+        products: [
+          {
+            id: 'strands-box',
+            repository: 'https://github.com/strands-agents/box',
+            ref: 'main',
+            manifest: 'docs/site-manifest.json',
+            routePrefix: 'docs/user-guide/box/source',
+            navLabel: 'Upstream docs preview',
+            publicationStatus: 'draft',
+          },
+        ],
+      })
+    ).toThrow(/publicationStatus.*preview.*stable/)
   })
 })

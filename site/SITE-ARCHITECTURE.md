@@ -128,39 +128,46 @@ The collection base is `src/content` (not `src/content/docs`), so all doc slugs 
 [AgentResult](@api/python/strands.agent.agent_result#AgentResult)
 ```
 
-### 6. External Documentation Federation
+### 7. External Documentation Federation
 
 **What it does:** Imports versioned Markdown from product repositories into the Starlight
-content collection. The first integration publishes the Box manifest under
+content collection. The first integration publishes the pages selected by Box's manifest under
 `/docs/user-guide/box/source/` so reviewers can compare it with the current Box guide.
 
 **Why:** Product documentation changes with its implementation. Keeping the source Markdown
 in the product repository lets one commit update behavior and documentation together. The
-site still owns public routes, navigation placement, presentation, and the pinned production
-revision.
+site owns the route prefix, publication status, navigation placement, presentation, and pinned
+revision; the upstream manifest owns each page's route suffix.
 
 #### Upstream contract
 
 Each product publishes `docs/site-manifest.json` with `schemaVersion`, product metadata, and
-an ordered page list. A page declares a stable ID, repository-relative Markdown source, route
-slug, title, description, and navigation position. Schema version 1 accepts plain Markdown
-under `docs/user/`. The files are not evaluated as MDX, so braces and import/export-like
-prose remain literal text.
+an ordered page list. Each page declares a unique lowercase kebab-case ID, a unique normalized
+Markdown source under `docs/user/`, a unique route suffix composed of lowercase kebab-case path
+components, title, description, and `nav: { group: string, order: positive integer }`.
+Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
+import/export-like prose remain literal text.
 
-The product status is `preview` or `stable`. Preview pages render an
+The upstream product status is `preview` or `stable` and must match the site's
+`publicationStatus`. Preview pages render an
 `Upstream documentation preview` caution so comparison content cannot be mistaken for the
 canonical guide. When the same slug exists in the current guide, the caution links directly
-to that page for comparison.
+to that page for comparison. Promotion to `stable` requires a coordinated site change for the
+publication status, route, navigation label, and canonical-content decision; a lock-only update
+cannot promote pages. After the upstream stable commit merges, the site promotion PR must manually
+pin that SHA in `external-docs.lock.json` alongside those changes.
 
 #### Site registry and lock
 
 `external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
-prefix, and sidebar label. `external-docs.lock.json` contains only immutable commit SHAs.
+prefix, sidebar label, and publication status. `external-docs.lock.json` maps product IDs to
+immutable commit SHAs.
 Site builds read the SHA, never the moving ref. The scheduled
 `docs-external-sync.yml` workflow resolves each tracked ref, validates and builds the imported
-pages with the same `npm run cms:build` path as docs CI, then opens or updates a draft
-lock-only PR when the SHA changes. The workflow summary and PR body link to each upstream
-old-to-new commit comparison.
+pages with the same `npm run cms:build` path as docs CI, then opens or updates a draft lock-only PR
+when a status-compatible SHA changes. A status mismatch fails generation before a PR opens so a
+promotion follows the manual sequence above. The workflow summary and PR body link to each
+upstream old-to-new commit comparison.
 
 #### Generated layout
 
@@ -193,7 +200,8 @@ The generator:
 
 The importer core is reusable, but each product still requires explicit site wiring:
 
-1. Add the repository, tracked ref, manifest, route prefix, and navigation label to
+1. Add the repository, tracked ref, manifest, route prefix, navigation label, and publication
+   status to
    `external-docs.config.json`, plus its initial immutable revision to
    `external-docs.lock.json`.
 2. Keep source files under `docs/user/` for schema version 1. A different source root requires
@@ -209,8 +217,8 @@ The importer core is reusable, but each product still requires explicit site wir
    generated route that the content collection failed to load.
 
 Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and
-machine-readable documentation endpoints also omit them until the upstream product marks the
-manifest `stable`.
+machine-readable documentation endpoints also omit them until a coordinated promotion changes
+both the upstream status and the site's publication status to `stable`.
 
 Build and development scripts generate external docs before Astro starts. To preview changes
 from a local product checkout instead of the lock, set its source environment variable:
@@ -278,8 +286,9 @@ The documentation extends Starlight's default schema with custom fields that aut
 ### `externalDocs`
 
 Generated external pages record their product, repository, tracked ref, immutable revision,
-and source file. Authors do not set this field by hand. A `preview` status renders the upstream
-preview caution; a `stable` status keeps the provenance without the caution.
+and source file. Authors do not set this field by hand. The verified site publication status is
+recorded in the generated frontmatter: `preview` renders the upstream caution, while `stable`
+keeps the provenance without the caution.
 
 ### `languages`
 
@@ -322,7 +331,8 @@ Renders a tip aside warning the feature may change in future versions.
 
 ### Rendering Order
 
-When multiple fields are set, banners render top to bottom: experimental → community → languages.
+When multiple fields are set, banners render top to bottom: experimental → external preview →
+community → languages. Community pages suppress the separate language banner.
 
 ### Sidebar Badges
 
@@ -410,7 +420,7 @@ These override default Starlight components:
 - **`Head.astro`**: Adds Mermaid diagram support and loads `SiteScripts` (Shortbread + WebSDK).
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
-- **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, community, languages) at the top of page content.
+- **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
 - **`PageFrame.astro`**: Extends Starlight's default `PageFrame` to add a full-width site footer containing the `Copyright` component. The footer spans the content area (respecting sidebar offset) with `--sl-color-bg-nav` background to match the header.
 - **`Sidebar.astro`** and **`SidebarSublist.astro`**: Custom sidebar navigation that mimics MkDocs Material theme's `navigation.sections` behavior.
 
@@ -469,6 +479,7 @@ const rawNavLinks: NavLink[] = [
 Used by `MarkdownContent.astro` to render frontmatter banners:
 
 - `ExperimentalAside.astro`
+- `ExternalDocsPreviewAside.astro`
 - `CommunityContributionAside.astro`
 - `LanguageSupportAside.astro`
 

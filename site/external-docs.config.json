@@ -7,7 +7,8 @@
       "ref": "main",
       "manifest": "docs/site-manifest.json",
       "routePrefix": "docs/user-guide/box/source",
-      "navLabel": "Upstream docs preview"
+      "navLabel": "Upstream docs preview",
+      "publicationStatus": "preview"
     }
   ]
 }

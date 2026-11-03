@@ -1,11 +1,13 @@
 import path from 'node:path'
 
+export type ExternalDocsStatus = 'preview' | 'stable'
+
 export interface ExternalDocsManifest {
   schemaVersion: 1
   product: {
     id: string
     name: string
-    status: 'preview' | 'stable'
+    status: ExternalDocsStatus
   }
   pages: ExternalDocsManifestPage[]
 }
@@ -34,6 +36,7 @@ export interface ExternalDocsProductConfig {
   manifest: string
   routePrefix: string
   navLabel: string
+  publicationStatus: ExternalDocsStatus
 }
 
 export interface ExternalDocsLock {
@@ -113,10 +116,7 @@ function parseProduct(input: unknown, label: string): ExternalDocsManifest['prod
 
   const id = safeComponent(product.id, `${label}.id`)
   const name = nonEmptyString(product.name, `${label}.name`)
-  const status = product.status
-  if (status !== 'preview' && status !== 'stable') {
-    fail(`${label}.status must be "preview" or "stable"`)
-  }
+  const status = externalDocsStatus(product.status, `${label}.status`)
   return { id, name, status }
 }
 
@@ -147,10 +147,10 @@ function parsePage(input: unknown, label: string): ExternalDocsManifestPage {
 
 function parseConfigProduct(input: unknown, label: string): ExternalDocsProductConfig {
   const product = asObject(input, label)
-  assertKeys(product, ['id', 'repository', 'ref', 'manifest', 'routePrefix', 'navLabel'], label)
+  assertKeys(product, ['id', 'repository', 'ref', 'manifest', 'routePrefix', 'navLabel', 'publicationStatus'], label)
 
   const repository = nonEmptyString(product.repository, `${label}.repository`)
-  if (!GITHUB_REPOSITORY.test(repository)) {
+  if (!GITHUB_REPOSITORY.test(repository) || repository.endsWith('.git')) {
     fail(`${label}.repository must be an https://github.com/<owner>/<repo> URL without .git`)
   }
 
@@ -161,6 +161,7 @@ function parseConfigProduct(input: unknown, label: string): ExternalDocsProductC
     manifest: repositoryPath(product.manifest, `${label}.manifest`, '.json'),
     routePrefix: safePath(product.routePrefix, `${label}.routePrefix`),
     navLabel: nonEmptyString(product.navLabel, `${label}.navLabel`),
+    publicationStatus: externalDocsStatus(product.publicationStatus, `${label}.publicationStatus`),
   }
 }
 
@@ -214,6 +215,13 @@ function safeComponent(input: unknown, label: string): string {
 function nonEmptyString(input: unknown, label: string): string {
   if (typeof input !== 'string' || input.trim() !== input || input.length === 0) {
     fail(`${label} must be a non-empty trimmed string`)
+  }
+  return input
+}
+
+function externalDocsStatus(input: unknown, label: string): ExternalDocsStatus {
+  if (input !== 'preview' && input !== 'stable') {
+    fail(`${label} must be "preview" or "stable"`)
   }
   return input
 }

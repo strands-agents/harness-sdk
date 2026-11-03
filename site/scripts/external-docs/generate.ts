@@ -2,12 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { transformExternalMarkdown } from './markdown'
 import { parseExternalDocsManifest } from './schema'
-import type {
-  ExternalDocsManifest,
-  ExternalDocsManifestPage,
-  ExternalDocsProductConfig,
-  ExternalDocsProductLock,
-} from './schema'
+import type { ExternalDocsManifest, ExternalDocsManifestPage, ExternalDocsProductConfig } from './schema'
 import type { GeneratedExternalDocsNavigation } from '../../src/external-docs-navigation'
 
 export interface BuiltExternalDocsProduct {
@@ -20,24 +15,19 @@ export function loadExternalDocsManifest(sourceRoot: string, config: ExternalDoc
   const manifestPath = readSourcePath(sourceRoot, config.manifest)
   const parsed: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
   const manifest = parseExternalDocsManifest(parsed, manifestPath)
-  if (manifest.product.id !== config.id) {
-    throw new Error(`${manifestPath}: product id "${manifest.product.id}" does not match configured id "${config.id}"`)
-  }
+  assertManifestMatchesConfig(manifest, config, manifestPath)
   return manifest
 }
 
 export function buildExternalDocsProduct(options: {
   sourceRoot: string
   config: ExternalDocsProductConfig
-  lock: ExternalDocsProductLock
   manifest: ExternalDocsManifest
   revision: string
   editRef: string | null
 }): BuiltExternalDocsProduct {
-  const { sourceRoot, config, lock, manifest, revision, editRef } = options
-  if (config.id !== lock.id || config.id !== manifest.product.id) {
-    throw new Error('external docs product ids must match across config, lock, and manifest')
-  }
+  const { sourceRoot, config, manifest, revision, editRef } = options
+  assertManifestMatchesConfig(manifest, config)
 
   const publishedRoutes = new Map(manifest.pages.map((page) => [page.source, `${config.routePrefix}/${page.slug}`]))
   const files = new Map<string, string>()
@@ -54,7 +44,7 @@ export function buildExternalDocsProduct(options: {
       editRef,
       publishedRoutes,
     })
-    files.set(`${page.slug}.md`, renderPage(page, manifest, config, lock, revision, editRef, content))
+    files.set(`${page.slug}.md`, renderPage(page, manifest, config, revision, editRef, content))
   }
 
   return {
@@ -87,7 +77,6 @@ function renderPage(
   page: ExternalDocsManifestPage,
   manifest: ExternalDocsManifest,
   config: ExternalDocsProductConfig,
-  lock: ExternalDocsProductLock,
   revision: string,
   editRef: string | null,
   content: string
@@ -95,7 +84,7 @@ function renderPage(
   const route = `${config.routePrefix}/${page.slug}`
   const editUrl = editRef === null ? false : `${config.repository}/edit/${editRef}/${page.source}`
   const previewFrontmatter =
-    manifest.product.status === 'preview'
+    config.publicationStatus === 'preview'
       ? [
           'pagefind: false',
           'head:',
@@ -115,7 +104,7 @@ function renderPage(
     'externalDocs:',
     `  product: ${JSON.stringify(manifest.product.name)}`,
     `  productId: ${JSON.stringify(manifest.product.id)}`,
-    `  status: ${JSON.stringify(manifest.product.status)}`,
+    `  status: ${JSON.stringify(config.publicationStatus)}`,
     `  repository: ${JSON.stringify(config.repository)}`,
     `  ref: ${JSON.stringify(config.ref)}`,
     `  revision: ${JSON.stringify(revision)}`,
@@ -141,7 +130,7 @@ function buildNavigation(
 
   return {
     schemaVersion: 1,
-    product: manifest.product,
+    product: { ...manifest.product, status: config.publicationStatus },
     revision,
     routePrefix: config.routePrefix,
     label: config.navLabel,
@@ -154,6 +143,21 @@ function buildNavigation(
           slug: `${config.routePrefix}/${page.slug}`,
         })),
     })),
+  }
+}
+
+function assertManifestMatchesConfig(
+  manifest: ExternalDocsManifest,
+  config: ExternalDocsProductConfig,
+  label = 'external docs manifest'
+): void {
+  if (manifest.product.id !== config.id) {
+    throw new Error(`${label}: product id "${manifest.product.id}" does not match configured id "${config.id}"`)
+  }
+  if (manifest.product.status !== config.publicationStatus) {
+    throw new Error(
+      `${label}: product status "${manifest.product.status}" does not match configured publication status "${config.publicationStatus}"`
+    )
   }
 }
 

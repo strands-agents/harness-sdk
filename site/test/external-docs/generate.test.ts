@@ -7,11 +7,7 @@ import {
   loadExternalDocsManifest,
   writeExternalDocsProduct,
 } from '../../scripts/external-docs/generate'
-import {
-  parseExternalDocsConfig,
-  parseExternalDocsLock,
-  parseExternalDocsManifest,
-} from '../../scripts/external-docs/schema'
+import { parseExternalDocsConfig, parseExternalDocsManifest } from '../../scripts/external-docs/schema'
 import { loadPreviewExternalDocsRoutes } from '../../src/plugins/sitemap-lastmod'
 import { loadSidebarFromConfig } from '../../src/sidebar'
 
@@ -155,6 +151,18 @@ github:
     const loaded = loadExternalDocsManifest(fixture.sourceRoot, fixture.config)
     expect(loaded).toEqual(fixture.manifest)
   })
+
+  it('rejects an upstream promotion without an intentional site change', () => {
+    const fixture = createFixture()
+    const manifest = {
+      ...fixture.manifest,
+      product: { ...fixture.manifest.product, status: 'stable' as const },
+    }
+
+    expect(() => buildExternalDocsProduct({ ...fixture, manifest })).toThrow(
+      /product status "stable" does not match configured publication status "preview"/
+    )
+  })
 })
 
 function createFixture() {
@@ -189,20 +197,11 @@ function createFixture() {
         manifest: 'docs/site-manifest.json',
         routePrefix: 'docs/user-guide/example/source',
         navLabel: 'Upstream docs preview',
+        publicationStatus: 'preview',
       },
     ],
   }).products[0]!
-  const lock = parseExternalDocsLock({
-    schemaVersion: 1,
-    products: [
-      {
-        id: 'example',
-        revision,
-      },
-    ],
-  }).products[0]!
-
-  return { sourceRoot, config, lock, manifest, revision, editRef: 'main' }
+  return { sourceRoot, config, manifest, revision, editRef: 'main' }
 }
 
 function page(id: string, source: string, slug: string, title: string, group: string, order: number) {

@@ -14,6 +14,7 @@ const config = parseExternalDocsConfig({
       manifest: 'docs/site-manifest.json',
       routePrefix: 'docs/user-guide/box/source',
       navLabel: 'Upstream docs preview',
+      publicationStatus: 'preview',
     },
   ],
 })
