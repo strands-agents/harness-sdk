@@ -202,6 +202,70 @@ export type ContentBlock =
   | CitationsBlock
 
 /**
+ * Offload method that replaced content with a placeholder.
+ *
+ * @experimental
+ */
+export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
+
+/**
+ * What a text block stands in for when the context manager offloaded the original.
+ *
+ * @experimental
+ */
+export interface OffloadedBlockData {
+  /**
+   * Offload method that left the placeholder; absent when whatever left it didn't record one.
+   */
+  method?: OffloadMethod
+
+  /**
+   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   */
+  ref?: string
+
+  /**
+   * Number of whole messages the placeholder stands for; absent when it replaced a single block.
+   */
+  removedMessages?: number
+
+  /**
+   * Estimated token count of the messages the placeholder stands for; absent when it replaced a single block.
+   */
+  removedTokens?: number
+}
+
+/**
+ * Metadata attached to a text block. Not sent to model providers.
+ *
+ * @experimental
+ */
+export interface TextBlockMetadata {
+  /**
+   * Present when the block stands in for content the context manager offloaded.
+   */
+  offloaded?: OffloadedBlockData
+}
+
+/**
+ * Data only the provider that produced a block can interpret, such as a signed server-side summary.
+ * Other providers send the block's `text` as plain text.
+ *
+ * @experimental
+ */
+export interface ProviderData {
+  /**
+   * Name of the provider that produced the data, for example `'anthropic'`.
+   */
+  provider: string
+
+  /**
+   * Opaque, JSON-serializable data, sent back to its provider unchanged.
+   */
+  data: unknown
+}
+
+/**
  * Data for a text block.
  */
 export interface TextBlockData {
@@ -209,6 +273,16 @@ export interface TextBlockData {
    * Plain text content.
    */
   text: string
+
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  metadata?: TextBlockMetadata
+
+  /**
+   * Optional data for the provider that produced the block.
+   */
+  providerData?: ProviderData
 }
 
 /**
@@ -225,8 +299,20 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    */
   readonly text: string
 
-  constructor(data: string) {
-    this.text = data
+  /**
+   * Optional metadata about the block. Not sent to model providers.
+   */
+  readonly metadata?: TextBlockMetadata
+
+  /**
+   * Optional data for the provider that produced the block.
+   */
+  readonly providerData?: ProviderData
+
+  constructor(text: string, options?: { metadata?: TextBlockMetadata; providerData?: ProviderData }) {
+    this.text = text
+    if (options?.metadata !== undefined) this.metadata = options.metadata
+    if (options?.providerData !== undefined) this.providerData = options.providerData
   }
 
   /**
@@ -234,7 +320,11 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * Called automatically by JSON.stringify().
    */
   toJSON(): TextBlockData {
-    return { text: this.text }
+    return {
+      text: this.text,
+      ...(this.metadata !== undefined && { metadata: this.metadata }),
+      ...(this.providerData !== undefined && { providerData: this.providerData }),
+    }
   }
 
   /**
@@ -244,7 +334,10 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
    * @returns TextBlock instance
    */
   static fromJSON(data: TextBlockData): TextBlock {
-    return new TextBlock(data.text)
+    return new TextBlock(data.text, {
+      ...(data.metadata !== undefined && { metadata: data.metadata }),
+      ...(data.providerData !== undefined && { providerData: data.providerData }),
+    })
   }
 }
 
@@ -999,7 +1092,7 @@ export class GuardContentBlock
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
   if ('text' in data) {
-    return new TextBlock(data.text)
+    return TextBlock.fromJSON(data)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {

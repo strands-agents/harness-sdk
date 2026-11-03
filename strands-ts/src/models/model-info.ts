@@ -31,6 +31,8 @@ export interface ModelCapabilities {
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
+  /** Whether the model summarizes history server-side through `Model.compact`; the summarize strategy reads it. */
+  readonly serverSideCompaction?: boolean | undefined
 }
 
 /** Size limits of the model. */

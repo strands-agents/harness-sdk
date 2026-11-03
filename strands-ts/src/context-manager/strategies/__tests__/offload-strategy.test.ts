@@ -561,6 +561,19 @@ describe('Offload with * target (fires on everything)', () => {
     expect((toolBlock.content[0] as TextBlock).text).toContain('[Truncated:')
   })
 
+  it('leaves a block with provider data unedited', async () => {
+    const native = new TextBlock('x'.repeat(20_000), {
+      providerData: { provider: 'anthropic', data: { signature: 's' } },
+    })
+    const assistantMsg = new Message({ role: 'assistant', content: [native] })
+    const strategy = Offload.truncate('*')
+
+    const result = await strategy.apply(makeContext([assistantMsg]))
+
+    expect(result).toBe(false)
+    expect(assistantMsg.content[0]).toBe(native)
+  })
+
   it('Offload.truncate("*") with threshold skips small content', async () => {
     const smallText = 'short'
     const assistantMsg = new Message({

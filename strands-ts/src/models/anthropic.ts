@@ -11,6 +11,7 @@ import {
   type ResolvedCacheSection,
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
+import { COMPACTION_BETA, carriesNativeBlock, formatNativeBlock } from './anthropic-compaction.js'
 import {
   handleRejectedMechanism,
   structuredOutputMechanisms,
@@ -291,7 +292,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(request.tool_choice && { tool_choice: request.tool_choice }),
       }
 
-      const requestOptions = this._buildRequestOptions()
+      const requestOptions = this._buildRequestOptions(messages)
       const response = requestOptions
         ? await this._client.messages.countTokens(params, requestOptions)
         : await this._client.messages.countTokens(params)
@@ -325,7 +326,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
-      const requestOptions = this._buildRequestOptions()
+      const requestOptions = this._buildRequestOptions(messages)
       const usage = createEmptyUsage()
 
       while (true) {
@@ -563,13 +564,15 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
   }
 
-  private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
+  private _buildRequestOptions(messages: Message[] = []): Anthropic.RequestOptions | undefined {
+    const required = [
+      ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
+      ...(carriesNativeBlock(messages) ? [COMPACTION_BETA] : []),
+    ]
     let betas = this._config.betas ?? []
-    if (this._dropsStaleThinking()) {
-      // Request headers replace client headers of the same name, so betas set on the client are carried over.
-      if (betas.length === 0) betas = this._clientBetas
-      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
-    }
+    // Request headers replace client headers of the same name, so betas set on the client are carried over.
+    if (required.length > 0 && betas.length === 0) betas = this._clientBetas
+    betas = [...betas, ...required.filter((beta) => !betas.includes(beta))]
     if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
   }
@@ -845,7 +848,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   ): Anthropic.ContentBlockParam | Anthropic.ToolResultBlockParam | undefined {
     switch (block.type) {
       case 'textBlock':
-        return { type: 'text', text: block.text }
+        return formatNativeBlock(block) ?? { type: 'text', text: block.text }
 
       case 'imageBlock': {
         const imgBlock = block as ImageBlock

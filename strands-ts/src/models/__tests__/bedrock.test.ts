@@ -443,6 +443,17 @@ describe('BedrockModel', () => {
   })
 
   describe('info', () => {
+    it('declares no server-side compaction unless the modelInfo override says otherwise', () => {
+      expect(
+        new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-5-5' }).modelInfo.capabilities?.serverSideCompaction
+      ).toBe(false)
+      const overridden = new BedrockModel({
+        modelId: 'us.anthropic.claude-sonnet-5-5',
+        modelInfo: { capabilities: { serverSideCompaction: true } },
+      })
+      expect(overridden.modelInfo.capabilities?.serverSideCompaction).toBe(true)
+    })
+
     it('reads cache points for Claude model ids from the shared model info', () => {
       const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
 

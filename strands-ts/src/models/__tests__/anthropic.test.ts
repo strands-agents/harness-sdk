@@ -193,6 +193,19 @@ describe('AnthropicModel', () => {
   })
 
   describe('info', () => {
+    it('leaves server-side compaction unknown unless the modelInfo override sets it', () => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-5-5' })
+      expect(model.modelInfo.capabilities?.serverSideCompaction).toBeUndefined()
+      for (const serverSideCompaction of [true, false]) {
+        const overridden = new AnthropicModel({
+          apiKey: 'sk-ant-test',
+          modelId: 'claude-sonnet-5-5',
+          modelInfo: { capabilities: { serverSideCompaction } },
+        })
+        expect(overridden.modelInfo.capabilities?.serverSideCompaction).toBe(serverSideCompaction)
+      }
+    })
+
     it('reads cache points from the shared model info', () => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
 

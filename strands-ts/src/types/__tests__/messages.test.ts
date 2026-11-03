@@ -13,6 +13,8 @@ import {
   type SystemPromptData,
   systemPromptFromData,
   systemPromptToData,
+  contentBlockFromData,
+  type TextBlockData,
 } from '../messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
@@ -176,6 +178,37 @@ describe('TextBlock', () => {
     expect(block).toEqual({
       type: 'textBlock',
       text: 'hello',
+    })
+  })
+
+  describe('metadata and providerData', () => {
+    const metadata = { offloaded: { method: 'summarize' as const, removedMessages: 3, removedTokens: 120 } }
+    const providerData = {
+      provider: 'anthropic',
+      data: { type: 'compaction', signature: 'sig', extra: [1, { a: null }] },
+    }
+
+    test('serializes only the fields that are set', () => {
+      expect(new TextBlock('plain').toJSON()).toStrictEqual({ text: 'plain' })
+      expect(new TextBlock('summary', { metadata, providerData }).toJSON()).toStrictEqual({
+        text: 'summary',
+        metadata,
+        providerData,
+      })
+    })
+
+    test('round-trips through JSON, contentBlockFromData and Message.clone', () => {
+      const block = new TextBlock('summary', { metadata, providerData })
+      const data = JSON.parse(JSON.stringify(block)) as TextBlockData
+      expect(TextBlock.fromJSON(data)).toStrictEqual(block)
+      expect(contentBlockFromData(data)).toStrictEqual(block)
+      const clone = new Message({ role: 'assistant', content: [block] }).clone()
+      expect(clone.content[0]).toStrictEqual(block)
+      expect(JSON.stringify(clone.content[0])).toBe(JSON.stringify(block))
+    })
+
+    test('reads saved text blocks that have neither field', () => {
+      expect(contentBlockFromData({ text: 'old' })).toStrictEqual(new TextBlock('old'))
     })
   })
 })

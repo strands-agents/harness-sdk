@@ -83,6 +83,7 @@ import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { z } from 'zod'
 import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 
@@ -657,6 +658,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     const config = resolveConfigMetadata(this._config, modelId)
     const maxTokens = resolveMaxTokens(this._config, modelId)
     return maxTokens === undefined || config.maxTokens !== undefined ? config : { ...config, maxTokens }
+  }
+
+  /**
+   * Adds that Bedrock does not compact server-side: on-demand compaction is not documented on Bedrock paths, so
+   * {@link Model.compact} is not called and summaries are written client-side.
+   */
+  override get modelInfo(): ModelInfo {
+    return mergeModelInfo(super.modelInfo, { capabilities: { serverSideCompaction: false } }, this._config.modelInfo)
   }
 
   /**
