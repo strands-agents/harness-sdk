@@ -44,6 +44,7 @@ export {
   JsonValidationError,
   ConcurrentInvocationError,
   ModelThrottledError,
+  ModelNetworkError,
   ToolValidationError,
   StructuredOutputError,
   ToolNotFoundError,
@@ -220,6 +221,7 @@ export {
 export type {
   AnswerOf,
   AskOptions,
+  DecisionCallOptions,
   DecisionInput,
   DecisionResult,
   DecisionsAPIDecisionModelOptions,

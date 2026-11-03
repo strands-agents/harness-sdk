@@ -133,6 +133,52 @@ export class ModelThrottledError extends ModelError {
 }
 
 /**
+ * Error thrown when the network connection to the model provider fails, before or while the response
+ * is received.
+ *
+ * Retrying the same request may succeed. The default model retry strategy retries it, like
+ * {@link ModelThrottledError}.
+ */
+export class ModelNetworkError extends ModelError {
+  /**
+   * Creates a new ModelNetworkError.
+   *
+   * @param message - Error message describing the network failure
+   * @param options - Optional error options including cause for error chaining
+   */
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'ModelNetworkError'
+  }
+}
+
+/**
+ * Lower-cased `TypeError` messages that `fetch` implementations use when the connection fails.
+ */
+const FETCH_NETWORK_ERROR_MESSAGES = new Set([
+  'failed to fetch', // Chromium, before a response
+  'network error', // Chromium, while reading the response body
+  'fetch failed', // Node.js (undici)
+  'networkerror when attempting to fetch resource', // Firefox
+  'load failed', // Safari
+  'network request failed', // React Native
+  'the internet connection appears to be offline', // Safari, offline
+])
+
+/**
+ * Whether `error` is a `fetch` network failure rather than an HTTP error response.
+ *
+ * @param error - The error a request or response read rejected with
+ * @returns True for the network-failure `TypeError` of any supported runtime
+ *
+ * @internal
+ */
+export function isFetchNetworkError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false
+  return FETCH_NETWORK_ERROR_MESSAGES.has(error.message.toLowerCase().replace(/\.$/, ''))
+}
+
+/**
  * Normalizes an unknown error value to an Error instance.
  *
  * This helper ensures that any thrown value (Error, string, number, etc.)
