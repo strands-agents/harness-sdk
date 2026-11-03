@@ -15,7 +15,7 @@ import {
   COMPACTION_BETA,
   carriesNativeBlock,
   compactionParams,
-  formatNativeBlock,
+  formatTextBlock,
   readCompaction,
 } from './anthropic-compaction.js'
 import type { SummaryRequest, SummaryResult } from './summary.js'
@@ -902,7 +902,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   ): Anthropic.ContentBlockParam | Anthropic.ToolResultBlockParam | undefined {
     switch (block.type) {
       case 'textBlock':
-        return formatNativeBlock(block) ?? { type: 'text', text: block.text }
+        return formatTextBlock(block)
 
       case 'imageBlock': {
         const imgBlock = block as ImageBlock

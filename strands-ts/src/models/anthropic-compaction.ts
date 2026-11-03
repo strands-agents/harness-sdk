@@ -42,6 +42,17 @@ export function formatNativeBlock(block: TextBlock): Anthropic.ContentBlockParam
 }
 
 /**
+ * Formats a text block: Anthropic's own provider data as the block the API returned, anything else as plain text.
+ *
+ * @internal
+ * @param block - A text block
+ * @returns The block to send
+ */
+export function formatTextBlock(block: TextBlock): Anthropic.ContentBlockParam {
+  return formatNativeBlock(block) ?? { type: 'text', text: block.text }
+}
+
+/**
  * Whether any message carries a block only Anthropic can read, so the request needs {@link COMPACTION_BETA}.
  *
  * @internal
