@@ -5,6 +5,8 @@
  */
 
 import { logger } from '../../../logging/logger.js'
+import { warnOnce } from '../../../logging/warn-once.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { normalizeError } from '../../../errors.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../../types/media.js'
@@ -123,7 +125,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     summarizer: Summarizer
   ): Promise<'placed' | 'noCut' | 'noSummary'> {
     const cut = this.planCut(context.messages, summarizer.keepHead)
-    if (!cut) return 'noCut'
+    if (!cut) {
+      if (summarizer.keepHead === 0 && context.messages.length > 0 && isPinned(context.messages, 0)) {
+        warnOnce(logger, `model_id=<${summarizer.model.modelId}> | message 0 is pinned, skipping native compaction`)
+      }
+      return 'noCut'
+    }
     const result = await summarizer.summarize(summaryRequest(context, cut, summarizer, this._config.systemPrompt))
     if (!result) return 'noSummary'
     this.place(context.messages, cut, result.block)

@@ -8,6 +8,7 @@ import { ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Message } from '../../types/messages.js'
 import { isPinned } from '../../conversation-manager/compression/pin-message.js'
 import { resolvePreserveCount } from '../strategies/offload/base.js'
+import { isSummary } from '../render.js'
 
 /**
  * A partition of a history: `head + body + tail` is the history, in order.
@@ -33,7 +34,7 @@ export interface Cut {
  *   call responds to. A tool pair split by the boundary moves into `body`, unless its result is the last message.
  * - `body` stops in front of the first pinned message.
  * - The boundary never splits a tool pair, and the last summarized and first kept messages differ in role.
- * - An earlier summary is an ordinary message here, so it rolls into `body`.
+ * - An earlier summary rolls into `body`; a body that would hold only that summary is no cut.
  *
  * @internal
  * @param messages - The history
@@ -46,6 +47,8 @@ export function planCut(messages: Message[], keepHead: number, preserveRecent: n
   const bodyStart = headEnd(messages, keepHead)
   const tailStart = tailBoundary(messages, bodyStart, preserveRecent)
   if (tailStart <= bodyStart) return undefined
+  // Summarizing only an earlier summary reclaims nothing.
+  if (tailStart - bodyStart === 1 && messages[bodyStart]!.content.every(isSummary)) return undefined
   return {
     head: messages.slice(0, bodyStart),
     body: messages.slice(bodyStart, tailStart),

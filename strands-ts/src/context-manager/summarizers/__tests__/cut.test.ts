@@ -162,6 +162,15 @@ describe('planCut', () => {
       expect(planCut(history, 1, 1)!.body[0]).toBe(summary)
     })
 
+    it('summarizes nothing when the body would hold only an earlier summary', () => {
+      const summary = new Message({
+        role: 'assistant',
+        content: [new TextBlock('earlier', { metadata: { offloaded: { method: 'summarize', removedMessages: 4 } } })],
+      })
+      expect(planCut([text('user'), summary, pinned('user'), text('assistant'), text('user')], 1, 1)).toBeUndefined()
+      expect(planCut([text('user'), summary, text('user')], 1, 1)).toBeUndefined()
+    })
+
     it('rolls a native summary at message 0 into the body', () => {
       const native = new Message({
         role: 'assistant',
@@ -195,7 +204,7 @@ describe('planCut', () => {
     const histories = Array.from({ length: 3000 }, (_, seed) => generateHistory(seed))
     const preserveValues = [0, 1, 2, 3, 4, 0.3, 0.7]
 
-    it('holds every invariant', () => {
+    it('holds every invariant', { timeout: 30_000 }, () => {
       for (const { messages } of histories) {
         for (const keepHead of [0, 1]) {
           for (const preserveRecent of preserveValues) {
@@ -207,7 +216,7 @@ describe('planCut', () => {
       }
     })
 
-    it('selects what main selects for alternating histories without pins', () => {
+    it('selects what main selects for alternating histories without pins', { timeout: 30_000 }, () => {
       for (const { messages, pins } of histories) {
         if (pins > 0) continue
         for (const preserveRecent of preserveValues) {

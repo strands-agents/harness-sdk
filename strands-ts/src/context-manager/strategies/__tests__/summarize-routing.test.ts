@@ -17,6 +17,7 @@ import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import { z } from 'zod'
+import { logger } from '../../../logging/logger.js'
 
 const usage = { inputTokens: 30, outputTokens: 7, totalTokens: 37 }
 const nativeUsage = { inputTokens: 144, outputTokens: 276, totalTokens: 420 }
@@ -239,17 +240,23 @@ describe('SummarizeStrategy routing', () => {
       expect(state.invocationContext.usage.totalTokens).toBe(0)
     })
 
-    it('skips the pass when message 0 is pinned', async () => {
+    it('skips the pass with a warning when message 0 is pinned', async () => {
       const model = summarizerModel(true)
       const compact = vi.spyOn(model, 'compact')
+      const stream = vi.spyOn(model, 'stream')
+      const warn = vi.spyOn(logger, 'warn')
       const messages = history()
       messages[0] = new Message({
         role: 'user',
         content: [new TextBlock('TASK')],
         metadata: { custom: { pinned: true } },
       })
+      const original = [...messages]
       expect(await strategy().apply(context(messages, { auxModel: model }))).toBe(false)
       expect(compact).not.toHaveBeenCalled()
+      expect(stream).not.toHaveBeenCalled()
+      expect(messages).toStrictEqual(original)
+      expect(warn).toHaveBeenCalledWith('model_id=<test-model> | message 0 is pinned, skipping native compaction')
     })
   })
 
