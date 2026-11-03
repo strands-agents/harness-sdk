@@ -24,6 +24,7 @@ const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
 afterEach(() => {
   resetWarnOnce()
   vi.unstubAllEnvs()
+  vi.mocked(lookupModelInfo).mockReset()
 })
 
 function resolve(
@@ -155,6 +156,7 @@ describe('resolveModel', () => {
     'resolves Astra and 6.1 Sol effort without none for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
+        ['auto', 'low'],
         ['low', 'low'],
         ['max', 'max'],
       ] as const) {
@@ -173,6 +175,7 @@ describe('resolveModel', () => {
     'resolves GPT-5.4/5.5 effort without max for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
+        ['auto', 'medium'],
         ['low', 'low'],
         ['xhigh', 'xhigh'],
         ['off', 'none'],
@@ -664,8 +667,7 @@ describe('default effort', () => {
   })
 
   it('falls back to the provider level when the vendor default is not one the provider takes', async () => {
-    const ultra = { capabilities: { reasoning: { defaultEffort: 'ultra' } } }
-    vi.mocked(lookupModelInfo).mockReturnValueOnce(ultra).mockReturnValueOnce(ultra)
+    vi.mocked(lookupModelInfo).mockReturnValue({ capabilities: { reasoning: { defaultEffort: 'ultra' } } })
 
     expect((await resolve('bedrock/us.openai.gpt-6-sol')).getConfig().additionalRequestFields).toEqual({
       reasoning: { effort: 'high' },

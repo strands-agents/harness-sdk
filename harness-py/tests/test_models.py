@@ -288,7 +288,7 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
     "model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us.openai.gpt-6.1-sol"]
 )
 def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
-    for effort, level in [("low", "low"), ("max", "max")]:
+    for effort, level in [("auto", "low"), ("low", "low"), ("max", "max")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     assert "additional_request_fields" not in resolve(f"bedrock/{model_id}", effort="off").config
@@ -301,7 +301,7 @@ def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
 )
 def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):
     # https://github.com/strands-agents/harness-sdk/issues/5191
-    for effort, level in [("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
+    for effort, level in [("auto", "medium"), ("low", "low"), ("xhigh", "xhigh"), ("off", "none")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}
     for effort in ("minimal", "max"):
