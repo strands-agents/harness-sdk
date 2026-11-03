@@ -41,13 +41,16 @@ export type ProviderEnvironment = Partial<Record<ProviderEnvironmentKey, string>
 export type ProviderEnvironmentSource =
   'process' | 'session' | 'config' | '.env.local' | '.env' | 'env-file' | 'aws-profile'
 
-const appliedEnvironment = new Map<string, { original: string | undefined; value: string }>()
+const appliedEnvironment = new Map<string, { original: string | undefined; value: string | undefined }>()
 
 function processEnvironmentValue(key: string): string | undefined {
   return Object.hasOwn(process.env, key) ? process.env[key] : undefined
 }
 
-export function applyProviderEnvironmentValues(environment: Readonly<Record<string, string>>): void {
+export function applyProviderEnvironmentValues(
+  environment: Readonly<Record<string, string>>,
+  useAwsProfile = false
+): void {
   for (const [key, applied] of appliedEnvironment) {
     if (processEnvironmentValue(key) === applied.value) {
       if (applied.original === undefined) {
@@ -60,10 +63,15 @@ export function applyProviderEnvironmentValues(environment: Readonly<Record<stri
   appliedEnvironment.clear()
   for (const [key, value] of Object.entries(environment)) {
     const original = processEnvironmentValue(key)
-    if (!original && value) {
+    if (value && (!original || (key === 'AWS_PROFILE' && useAwsProfile))) {
       appliedEnvironment.set(key, { original, value })
       process.env[key] = value
     }
+  }
+  if (useAwsProfile) {
+    const key = 'AWS_BEARER_TOKEN_BEDROCK'
+    appliedEnvironment.set(key, { original: processEnvironmentValue(key), value: undefined })
+    delete process.env[key]
   }
 }
 
@@ -106,14 +114,14 @@ export function detectEnvironment(
     const current = processEnvironmentValue(key)
     const raw = applied && current === applied.value ? applied.original : current
     const processValue = key === 'AWS_CONFIG_FILE' || key === 'AWS_SHARED_CREDENTIALS_FILE' ? raw : raw?.trim()
-    if (processValue) {
+    if (processValue && (key !== 'AWS_PROFILE' || !(session.AWS_PROFILE || stored.AWS_PROFILE))) {
       detected[key] = { value: processValue, source: 'process' }
     }
   }
-  return withAwsProfileRegion(detected)
+  return withAwsProfile(detected)
 }
 
-export function withAwsProfileRegion(
+export function withAwsProfile(
   environment: DetectedEnvironment,
   aws: AwsConfigurationDiscovery = discoverAwsConfiguration({
     AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,
@@ -121,6 +129,9 @@ export function withAwsProfileRegion(
   })
 ): DetectedEnvironment {
   const resolved = { ...environment }
+  if (resolved.AWS_PROFILE?.source === 'config' || resolved.AWS_PROFILE?.source === 'session') {
+    delete resolved.AWS_BEARER_TOKEN_BEDROCK
+  }
   if (resolved.AWS_REGION?.source === 'aws-profile') {
     delete resolved.AWS_REGION
   }

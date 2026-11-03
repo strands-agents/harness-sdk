@@ -630,6 +630,86 @@ describe('CliConfigStore', () => {
     expect(config.providerEnvironment().AWS_PROFILE?.value).toBe('saved')
   })
 
+  it('persists an explicit AWS profile and restores token authentication when cleared', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'cli.toml')
+    const awsConfig = join(directory, 'config')
+    const credentials = join(directory, 'credentials')
+    await writeFile(
+      awsConfig,
+      '[default]\nregion=us-east-2\n[profile shell]\nregion=us-east-1\n[profile selected]\nregion=us-west-2\n'
+    )
+    await writeFile(credentials, '')
+    vi.stubEnv('AWS_CONFIG_FILE', awsConfig)
+    vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', credentials)
+    vi.stubEnv('AWS_PROFILE', 'shell')
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'shell-token')
+    vi.stubEnv('AWS_REGION', undefined)
+    vi.stubEnv('AWS_DEFAULT_REGION', undefined)
+    vi.stubEnv('OPENAI_API_KEY', 'shell-key')
+    const config = await CliConfigStore.load(path)
+    config.setSessionProviderCredential('OPENAI_API_KEY', 'session-key')
+    config.applyProviderEnvironment()
+    expect(process.env.AWS_REGION).toBe('us-east-1')
+    expect(config.providerEnvironment().AWS_BEARER_TOKEN_BEDROCK?.value).toBe('shell-token')
+
+    const setup = {
+      providers: ['bedrock'],
+      profile: DEFAULT_HARNESS_AGENT_CONFIG,
+      permissionMode: 'default',
+      providerEnvironment: { AWS_PROFILE: ' selected ' },
+    } as const
+    await config.saveSetup(setup)
+    expect(config.providerEnvironment()).toMatchObject({
+      AWS_PROFILE: { value: 'selected', source: 'config' },
+      AWS_REGION: { value: 'us-west-2', source: 'aws-profile' },
+      OPENAI_API_KEY: { value: 'shell-key', source: 'process' },
+    })
+    expect(config.providerEnvironment()).not.toHaveProperty('AWS_BEARER_TOKEN_BEDROCK')
+    expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('shell-token')
+    config.applyProviderEnvironment()
+    expect(process.env.AWS_PROFILE).toBe('selected')
+    expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
+    expect(process.env.AWS_REGION).toBe('us-west-2')
+    expect(process.env.OPENAI_API_KEY).toBe('shell-key')
+    vi.stubEnv('OPENAI_API_KEY', undefined)
+    expect(config.providerEnvironment({})).toMatchObject({
+      AWS_PROFILE: { value: 'shell', source: 'process' },
+      AWS_REGION: { value: 'us-east-1', source: 'aws-profile' },
+      AWS_BEARER_TOKEN_BEDROCK: { value: 'shell-token', source: 'process' },
+      OPENAI_API_KEY: { value: 'session-key', source: 'session' },
+    })
+    expect(config.providerEnvironment().AWS_PROFILE).toEqual({ value: 'selected', source: 'config' })
+    vi.stubEnv('OPENAI_API_KEY', 'shell-key')
+
+    applyProviderEnvironmentValues({})
+    expect(process.env.AWS_PROFILE).toBe('shell')
+    expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('shell-token')
+    const reloaded = await CliConfigStore.load(path)
+    expect(reloaded.configuredProviderEnvironment().AWS_PROFILE).toBe('selected')
+    expect(reloaded.providerEnvironment()).toMatchObject({
+      AWS_PROFILE: { value: 'selected', source: 'config' },
+      AWS_REGION: { value: 'us-west-2', source: 'aws-profile' },
+    })
+    expect(reloaded.providerEnvironment()).not.toHaveProperty('AWS_BEARER_TOKEN_BEDROCK')
+    reloaded.applyProviderEnvironment()
+    expect(process.env.AWS_PROFILE).toBe('selected')
+    expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
+    for (const profile of ['shell', 'default']) {
+      await config.saveSetup({ ...setup, providerEnvironment: { AWS_PROFILE: profile } })
+      config.applyProviderEnvironment()
+      expect(process.env.AWS_PROFILE).toBe(profile)
+      expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
+    }
+    await config.saveSetup({ ...setup, providerEnvironment: {} })
+    config.applyProviderEnvironment()
+    expect(config.providerEnvironment().AWS_PROFILE).toEqual({ value: 'shell', source: 'process' })
+    expect(process.env.AWS_PROFILE).toBe('shell')
+    expect(process.env.AWS_REGION).toBe('us-east-1')
+    expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('shell-token')
+    expect(await readFile(path, 'utf8')).not.toContain('shell-token')
+  })
+
   it.each(['', ...(process.platform === 'win32' ? [] : [' '])])(
     'resolves and persists AWS file selectors with suffix %j',
     async (suffix) => {

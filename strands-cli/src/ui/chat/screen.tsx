@@ -63,6 +63,7 @@ import {
   errorPanelLayout,
   activateMetadataTarget,
   adjacentSliderOption,
+  awsProfileItems,
   composerPanelContentHeight,
   composerPanelHeight,
   composerStatusLayout,
@@ -160,6 +161,7 @@ export function ChatApp({
   const [dockLanguage, setDockLanguage] = useState<ChatConfigurationLanguage | undefined>(undefined)
   const [dockScroll, setDockScroll] = useState<number | undefined>(undefined)
   const [modelPanelFocus, setModelPanelFocus] = useState<ModelPanelFocus>('providers')
+  const [modelProfileSelection, setModelProfileSelection] = useState(0)
   const [settingsPanelFocus, setSettingsPanelFocus] = useState<SettingsPanelFocus>('categories')
   const [panelViewportStart, setPanelViewportStart] = useState(0)
   const [detailScroll, setDetailScroll] = useState(0)
@@ -304,6 +306,12 @@ export function ChatApp({
       viewport: panelViewportStartRef.current,
     }
   }, [])
+  const resetPanelPosition = useCallback((): void => {
+    panelSelectionRef.current = 0
+    panelViewportStartRef.current = 0
+    setPanelSelection(0)
+    setPanelViewportStart(0)
+  }, [])
   const activateRow = useCallback(
     (row: ChatPanelRow): Promise<boolean> => {
       if (row.value === SETTINGS_UPDATE_ACTION) {
@@ -333,8 +341,17 @@ export function ChatApp({
         return Promise.resolve(true)
       }
       return controller.activatePanelRow(row).then((activated) => {
-        if (panelKind === 'models' && activated && controller.getSnapshot().panel?.kind === 'models') {
+        if (
+          panelKind === 'models' &&
+          !row.value?.startsWith('aws-profile:') &&
+          activated &&
+          controller.getSnapshot().panel?.kind === 'models'
+        ) {
           controller.dismissPanel()
+        }
+        if (activated && row.value?.startsWith('aws-profile:')) {
+          setModelPanelFocus('profiles')
+          setModelProfileSelection(0)
         }
         return activated
       })
@@ -349,12 +366,6 @@ export function ChatApp({
       setEditor(draft)
     }
   }, [setEditor])
-  const resetPanelPosition = useCallback((): void => {
-    panelSelectionRef.current = 0
-    panelViewportStartRef.current = 0
-    setPanelSelection(0)
-    setPanelViewportStart(0)
-  }, [])
   const selectPanelRow = useCallback((selection: number, capacity: number, rowCount: number): void => {
     panelSelectionRef.current = selection
     setPanelSelection(selection)
@@ -427,6 +438,7 @@ export function ChatApp({
     panelQuery,
     panelFilter,
     modelPanelFocus,
+    modelProfileSelection,
     settingsPanelFocus,
     panelViewportStart,
     suggestionSelection,
@@ -633,6 +645,7 @@ export function ChatApp({
       setPanelSelection(snapshot.panel.selected)
     }
     setPanelQuery('')
+    setModelProfileSelection(0)
     setPanelFilter(initialPanelFilter(snapshot.panel))
     setModelPanelFocus(
       snapshot.panel?.kind === 'permissions'
@@ -847,6 +860,14 @@ export function ChatApp({
             panelSelectionRef.current = nextSelection
             setPanelSelection(nextSelection)
           }
+        } else if (
+          snapshot.panel?.kind === 'models' &&
+          snapshot.panel.awsProfile?.open &&
+          elementAtMouse(panelFilterElements, mouse)?.startsWith('aws-profile:')
+        ) {
+          const total = awsProfileItems(snapshot.panel, viewPropsRef.current.panelFilter).length
+          setModelPanelFocus('profiles')
+          setModelProfileSelection((selected) => Math.max(0, Math.min(total - 1, selected + scroll)))
         } else if (snapshot.panel) {
           const rows = panelRows ?? []
           const capacity = panelRowCapacity(
@@ -977,7 +998,7 @@ export function ChatApp({
         } else if (sliderHit && snapshot.panel?.kind === 'permissions') {
           setModelPanelFocus('providers')
         } else if (panelFilterId) {
-          setModelPanelFocus('providers')
+          setModelPanelFocus(panelFilterId.startsWith('aws-profile:') ? 'profiles' : 'providers')
           setSettingsPanelFocus('categories')
         } else if (panelRowIndex !== undefined) {
           setModelPanelFocus('models')
@@ -1084,12 +1105,18 @@ export function ChatApp({
       if (jumpToBottomHit) {
         setTranscriptScroll(0)
       } else if (panelFilterId) {
-        if (snapshot.panel?.kind === 'settings' && snapshot.panel.settingsCategory) {
+        if (snapshot.panel?.kind === 'models' && panelFilterId.startsWith('aws-profile:')) {
+          void activateRow({ label: '', description: '', value: panelFilterId })
+        } else if (snapshot.panel?.kind === 'settings' && snapshot.panel.settingsCategory) {
           void activateRow({ label: '', description: '', value: panelFilterId })
         } else if (!snapshot.panel && (panelFilterId === 'typescript' || panelFilterId === 'python')) {
           setDockLanguage(panelFilterId)
           setDockScroll(undefined)
         } else {
+          if (snapshot.panel?.kind === 'models' && snapshot.panel.awsProfile?.open) {
+            void controller.activatePanelRow({ label: '', description: '', value: 'aws-profile:toggle' })
+            setModelProfileSelection(0)
+          }
           setPanelFilter(panelFilterId)
           setDetailScroll(0)
           resetPanelPosition()
@@ -1207,6 +1234,7 @@ export function ChatApp({
         panelQuery,
         panelFilter,
         modelPanelFocus,
+        modelProfileSelection,
         settingsPanelFocus,
         composerHeight,
         party,
@@ -1384,6 +1412,10 @@ export function ChatApp({
           return
         }
         if (key.escape) {
+          if (snapshot.panel.kind === 'models' && snapshot.panel.awsProfile?.open) {
+            void activateRow({ label: '', description: '', value: 'aws-profile:toggle' })
+            return
+          }
           if (
             (snapshot.panel.kind === 'models' ||
               snapshot.panel.kind === 'sessions' ||
@@ -1530,6 +1562,10 @@ export function ChatApp({
           return
         }
         if (snapshot.panel.kind === 'models' || snapshot.panel.kind === 'sessions' || snapshot.panel.kind === 'help') {
+          if (snapshot.panel.kind === 'models' && snapshot.panel.awsProfile?.open && (key.tab || character === '/')) {
+            void controller.activatePanelRow({ label: '', description: '', value: 'aws-profile:toggle' })
+            setModelProfileSelection(0)
+          }
           if (snapshot.panel.kind === 'help' && character === '/' && modelPanelFocus !== 'search') {
             setModelPanelFocus('search')
             return
@@ -1537,13 +1573,27 @@ export function ChatApp({
           if (key.tab) {
             setModelPanelFocus(
               snapshot.panel.kind === 'models'
-                ? cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1)
+                ? cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1, panelFilter)
                 : modelPanelFocus === 'providers'
                   ? 'models'
                   : modelPanelFocus === 'models'
                     ? 'providers'
                     : 'models'
             )
+            return
+          }
+          if (snapshot.panel.kind === 'models' && modelPanelFocus === 'profiles') {
+            const items = awsProfileItems(snapshot.panel, panelFilter)
+            if (key.return && items[modelProfileSelection]) {
+              void activateRow({ label: '', description: '', value: items[modelProfileSelection]!.id })
+            } else if (key.upArrow && modelProfileSelection === 0) {
+              setModelPanelFocus('providers')
+            } else if (character === '/') {
+              setModelPanelFocus('search')
+            } else {
+              const next = moveSelection(modelProfileSelection, key, items.length, rowCapacity)
+              if (next !== undefined) setModelProfileSelection(next)
+            }
             return
           }
           if (modelPanelFocus === 'search' && (key.downArrow || key.return)) {
@@ -1555,6 +1605,18 @@ export function ChatApp({
             return
           }
           if (modelPanelFocus === 'providers' && snapshot.panel.filters?.length && (key.upArrow || key.downArrow)) {
+            if (snapshot.panel.kind === 'models' && awsProfileItems(snapshot.panel, panelFilter).length) {
+              const index = snapshot.panel.filters.findIndex((item) => item.id === panelFilter)
+              if ((key.downArrow && index === snapshot.panel.filters.length - 1) || (key.upArrow && index === 0)) {
+                setModelPanelFocus('profiles')
+                setModelProfileSelection(key.upArrow ? awsProfileItems(snapshot.panel, panelFilter).length - 1 : 0)
+                return
+              }
+              if (snapshot.panel.awsProfile?.open) {
+                void controller.activatePanelRow({ label: '', description: '', value: 'aws-profile:toggle' })
+                setModelProfileSelection(0)
+              }
+            }
             setPanelFilter(cyclePanelFilter(snapshot.panel.filters, panelFilter, key.upArrow ? -1 : 1))
             resetPanelPosition()
             return

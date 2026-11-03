@@ -225,6 +225,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           agentProject: previous!.agentProject,
           persist: false,
         })
+        config!.applyProviderEnvironment()
       }
       throw error
     }

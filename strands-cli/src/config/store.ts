@@ -31,7 +31,7 @@ export {
   applyProviderEnvironmentValues,
   PROVIDER_CREDENTIAL_KEYS,
   PROVIDER_ENVIRONMENT_KEYS,
-  withAwsProfileRegion,
+  withAwsProfile,
   type DetectedProviderEnvironment,
   type DetectedProviderEnvironmentValue,
   type ProviderEnvironment,
@@ -269,7 +269,8 @@ export class CliConfigStore {
         Object.entries(
           detectEnvironment(this._environmentFiles, this._providerEnvironment, this._sessionProviderEnvironment)
         ).flatMap(([key, detected]) => (detected ? [[key, detected.value]] : []))
-      )
+      ),
+      Boolean(this._providerEnvironment.AWS_PROFILE)
     )
   }
 

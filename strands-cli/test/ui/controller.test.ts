@@ -1950,6 +1950,49 @@ describe('ChatController', () => {
     }
   )
 
+  it('changes only known AWS profiles and skips the current explicit selection', async () => {
+    const target = backend()
+    target.listModels = () => []
+    target.switchModel = vi.fn()
+    const select = vi.fn()
+    let profile = ''
+    const controller = new ChatController(target, {
+      awsProfile: {
+        get: () => ({
+          value: profile,
+          options: [
+            { value: '', label: 'Default credential chain' },
+            { value: 'team/a b', label: 'team/a b' },
+          ],
+        }),
+        select,
+      },
+    })
+    const activate = (value: string): Promise<boolean> =>
+      controller.activatePanelRow({ label: '', description: '', value })
+    try {
+      await controller.openModelPanel()
+      expect(await activate('aws-profile:toggle')).toBe(true)
+      expect(controller.getSnapshot().panel).toMatchObject({ awsProfile: { open: true } })
+      expect(await activate('aws-profile:select:')).toBe(true)
+      expect(controller.getSnapshot().panel).toMatchObject({ awsProfile: { open: false } })
+      expect(await activate('aws-profile:select:unknown')).toBe(false)
+      expect(select).not.toHaveBeenCalled()
+      expect(await activate('aws-profile:select:team%2Fa%20b')).toBe(true)
+      expect(select).toHaveBeenCalledExactlyOnceWith('team/a b')
+      expect(target.switchModel).not.toHaveBeenCalled()
+
+      profile = 'team/a b'
+      await controller.openModelPanel()
+      expect(await activate('aws-profile:select:team%2Fa%20b')).toBe(true)
+      expect(select).toHaveBeenCalledTimes(1)
+      expect(await activate('aws-profile:select:')).toBe(true)
+      expect(select).toHaveBeenLastCalledWith('')
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('rebuilds immediately for a model change that requires restart', async () => {
     const target = backend(async function* () {
       yield* []

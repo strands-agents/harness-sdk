@@ -44,6 +44,7 @@ describe('setup resize layout', () => {
     const config = CliConfigStore.memory({}, { animations: false }, { profile: { model } })
     vi.spyOn(config, 'providerEnvironment').mockReturnValue({
       AWS_REGION: { value: 'us-west-2', source: 'process' },
+      AWS_PROFILE: { value: 'work', source: 'process' },
     })
     const input = ttyInput()
     const output = ttyOutput(140, 40)
@@ -97,8 +98,23 @@ describe('setup resize layout', () => {
         expect(lines.every((line) => stringWidth(line) <= columns)).toBe(true)
         expect(frame).toContain('Providers')
         expect(frame).toContain('Models')
+        const profileLabel = columns === 40 ? 'Profile' : 'AWS profile'
+        expect(frame).toContain(profileLabel)
+        expect(frame).toContain('work')
+        const profileColumn = lines.find((line) => line.includes(profileLabel))!.indexOf(profileLabel)
+        expect(profileColumn).toBeGreaterThan(lines.find((line) => line.includes('●'))!.indexOf('●'))
+        expect(profileColumn).toBeLessThan(lines.find((line) => line.includes('Models'))!.indexOf('Models'))
         expect(frame).toContain('Back')
         expect(frame).toContain('Launch')
+        if (columns === 80 && rows === 24) {
+          for (const label of ['Bedrock', 'Mantle', 'Anthropic', 'OpenAI', 'Gemini', 'Ollama', 'LiteLLM']) {
+            expect(frame).toContain(`● ${label}`)
+          }
+          expect(frame).toContain('Refresh')
+          expect(lines.findIndex((line) => line.includes('AWS profile'))).toBeLessThan(
+            lines.findIndex((line) => line.includes('● LiteLLM'))
+          )
+        }
         expect(frame).toMatch(/[┌╭]/)
         expect(frame).toMatch(/[┘╯]/)
         const providerRow = lines.findIndex((line) => line.includes('Providers'))

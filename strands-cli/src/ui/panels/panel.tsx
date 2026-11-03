@@ -3,7 +3,7 @@ import { type DOMElement } from 'ink'
 import stringWidth from 'string-width'
 import { type ChatPanelRow, type ChatPanel, type ChatSettings } from '../chat/controller.js'
 import { type ChatContextUsage } from '../../agent/types.js'
-import { PanelHelpFooter } from '../footer.js'
+import { PanelHelpFooter, panelModelId } from '../footer.js'
 import { badgeColor, TONE_COLORS, type PanelRowsProps, PanelSection } from './shared.js'
 import { SettingsControl, SettingsPicker } from './settings.js'
 import { Cursor } from '../text-input.js'
@@ -263,6 +263,7 @@ export function ResourcePanel({
   query,
   filter,
   modelPanelFocus,
+  modelProfileSelection = 0,
   settingsPanelFocus,
   pressedFilter,
   hoveredFilter,
@@ -292,6 +293,7 @@ export function ResourcePanel({
   query: string
   filter: string
   modelPanelFocus: ModelPanelFocus
+  modelProfileSelection?: number
   settingsPanelFocus: SettingsPanelFocus
   pressedFilter?: string
   hoveredFilter?: string
@@ -446,7 +448,7 @@ export function ResourcePanel({
     )
   }
   if (panel.kind === 'models' || panel.kind === 'settings') {
-    const modelId = panel.kind === 'models' ? allRows[hoveredRow ?? selected]?.value : undefined
+    const modelId = panelModelId(panel, allRows[hoveredRow ?? selected])
     const sectionProps = {
       rows,
       allRows,
@@ -471,6 +473,7 @@ export function ResourcePanel({
             query={query}
             filter={filter}
             focus={modelPanelFocus}
+            profileSelected={modelProfileSelection}
             animate={settings.animations}
             {...(onSearchElement ? { onSearchElement } : {})}
           />

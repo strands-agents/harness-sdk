@@ -1,4 +1,4 @@
-import { wrapLines } from '../terminal/text.js'
+import { sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import { type DOMElement, type Key } from 'ink'
 import {
   type ChatControllerApi,
@@ -68,7 +68,7 @@ const SECTIONED_PANEL_KINDS = new Set<ChatPanel['kind']>([
   'settings',
 ])
 
-export type ModelPanelFocus = 'providers' | 'search' | 'models'
+export type ModelPanelFocus = 'providers' | 'profiles' | 'search' | 'models'
 export type SettingsPanelFocus = 'categories' | 'settings'
 
 /** Panels that render inside the prompt editor instead of over the conversation. */
@@ -132,13 +132,15 @@ export function composerPanelHeight(
     return errorPanelLayout(snapshot.panel, Math.max(1, terminalWidth - 2), Math.min(10, availableHeight)).height
   }
   const panelHeight =
-    snapshot.panel?.kind === 'voice' ||
-    snapshot.panel?.kind === 'permission' ||
-    (snapshot.panel?.kind === 'context' && snapshot.context.breakdown)
-      ? COMPOSER_EXPANDED_PANEL_HEIGHT
-      : isComposerPanel(snapshot.panel?.kind)
-        ? COMPOSER_RESOURCE_PANEL_HEIGHT
-        : COMPOSER_PANEL_HEIGHT
+    snapshot.panel?.kind === 'models' && snapshot.panel.awsProfile
+      ? COMPOSER_RESOURCE_PANEL_HEIGHT + 1
+      : snapshot.panel?.kind === 'voice' ||
+          snapshot.panel?.kind === 'permission' ||
+          (snapshot.panel?.kind === 'context' && snapshot.context.breakdown)
+        ? COMPOSER_EXPANDED_PANEL_HEIGHT
+        : isComposerPanel(snapshot.panel?.kind)
+          ? COMPOSER_RESOURCE_PANEL_HEIGHT
+          : COMPOSER_PANEL_HEIGHT
   return Math.min(availableHeight, panelHeight + (party ? 2 : 0))
 }
 
@@ -337,6 +339,26 @@ export function filterPanelRows(
   return filtered
 }
 
+export function awsProfileItems(panel: ChatModelPanel, filter: string): { id: string; label: string }[] {
+  const profile = panel.awsProfile
+  const provider =
+    filter === 'all' || filter === 'current' ? panel.rows.find((row) => row.badge?.text === 'current')?.filter : filter
+  if (!profile || (provider && provider !== 'bedrock' && provider !== 'bedrock-mantle')) return []
+  const current = profile.options.find((option) => option.value === profile.value)?.label ?? profile.value
+  return [
+    {
+      id: 'aws-profile:toggle',
+      label: `${sanitizeTerminalText(profile.value ? current : 'Environment')} ${profile.open ? '▴' : '▾'}`,
+    },
+    ...(profile.open
+      ? profile.options.map((option) => ({
+          id: `aws-profile:select:${encodeURIComponent(option.value)}`,
+          label: `${sanitizeTerminalText(option.label)}${option.value === profile.value ? ' ✓' : ''}`,
+        }))
+      : []),
+  ]
+}
+
 function customModelSpecifier(query: string): string | undefined {
   const trimmed = query.trim()
   if (!trimmed) {
@@ -386,9 +408,14 @@ export function cyclePanelFilter(filters: readonly { id: string }[], current: st
 export function cycleModelPanelFocus(
   current: ModelPanelFocus,
   panel: ChatModelPanel,
-  direction: number
+  direction: number,
+  filter: string
 ): ModelPanelFocus {
-  const sections: ModelPanelFocus[] = [...(panel.filters?.length ? (['providers'] as const) : []), 'models']
+  const sections: ModelPanelFocus[] = [
+    ...(panel.filters?.length ? (['providers'] as const) : []),
+    ...(awsProfileItems(panel, filter).length ? (['profiles'] as const) : []),
+    'models',
+  ]
   const section = current === 'search' ? 'models' : current
   const index = Math.max(0, sections.indexOf(section))
   return sections[(index + (direction < 0 ? -1 : 1) + sections.length) % sections.length]!

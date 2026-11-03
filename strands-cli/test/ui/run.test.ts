@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ChatController, type ChatControllerApi } from '../../src/ui/chat/controller.js'
 import { type ChatConversation, type ChatConversations } from '../../src/agent/types.js'
-import { CliConfigStore } from '../../src/config/store.js'
+import { applyProviderEnvironmentValues, CliConfigStore } from '../../src/config/store.js'
 import { configurationFromStore, type RequestSetup, type SetupChange } from '../../src/agent/configuration.js'
 import { runInkChat } from '../../src/ui/run.js'
 import * as processTree from '../../src/terminal/process-tree.js'
@@ -99,12 +99,21 @@ describe('runInkChat', () => {
     expect(writes.filter((value) => value === '\u001b[23;2t')).toHaveLength(1)
   })
 
-  it('retains chat on reload or failed setup', async () => {
+  it.each(['environment', 'profile'] as const)('restores chat and %s auth on failure', async (auth) => {
+    vi.stubEnv('AWS_PROFILE', 'shell-profile')
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'shell-token')
     const config = CliConfigStore.memory(
       {},
       { toolOutput: 'full', animations: false, showReasoning: false, frogTheme: 'merlin' },
-      { onboardingVersion: 0, profile: { name: 'Original' } }
+      {
+        onboardingVersion: 0,
+        profile: { name: 'Original' },
+        providerEnvironment: auth === 'profile' ? { AWS_PROFILE: 'saved-profile' } : {},
+      }
     )
+    config.applyProviderEnvironment()
+    const activeProfile = config.providerEnvironment().AWS_PROFILE
+    const activeToken = process.env.AWS_BEARER_TOKEN_BEDROCK
     const messages = [new Message({ role: 'user', content: [new TextBlock('Remember the blue frog.')] })]
     const snapshot: ChatConversation['snapshot'] = {
       scope: 'agent',
@@ -180,12 +189,18 @@ describe('runInkChat', () => {
       expect(source.mock.calls[1]?.[2]?.entries[0]?.conversation.snapshot).toEqual(snapshot)
       expect(source.mock.calls[1]?.[2]?.entries[0]?.conversation.session).toEqual(session)
       expect(source.mock.calls[1]?.[2]?.entries[0]?.conversation.sourceSelection).toEqual(sourceSelection)
-      source.mockRejectedValueOnce(new Error('Invalid configuration'))
+      source.mockImplementationOnce(async () => {
+        config.applyProviderEnvironment()
+        expect(process.env.AWS_PROFILE).toBe(auth === 'profile' ? 'shell-profile' : 'replacement-profile')
+        expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe(auth === 'profile' ? 'shell-token' : undefined)
+        throw new Error('Invalid configuration')
+      })
       const before = configurationFromStore(config)
       root.props.onSetupComplete(0, true, {
         configuration: {
           ...before,
           profile: { ...before.profile, name: 'Invalid' },
+          providerEnvironment: auth === 'profile' ? {} : { AWS_PROFILE: 'replacement-profile' },
           settings: {
             ...before.settings,
             toolOutput: 'hidden',
@@ -197,6 +212,10 @@ describe('runInkChat', () => {
       })
       await vi.waitFor(() => expect(current.getSnapshot().panel?.title).toBe('Setup failed'))
       expect(configurationFromStore(config)).toEqual(before)
+      expect(config.providerEnvironment().AWS_PROFILE).toEqual(activeProfile)
+      expect(process.env.AWS_PROFILE).toBe(activeProfile?.value)
+      expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe(activeToken)
+      expect(config.providerEnvironment().AWS_BEARER_TOKEN_BEDROCK?.value).toBe(activeToken)
       expect(config.needsSetup()).toBe(true)
       expect(root.props.controller).toBe(current)
       expect(current.getSnapshot().completedTurns[0]?.prompt).toBe('Remember the blue frog.')
@@ -206,6 +225,8 @@ describe('runInkChat', () => {
     } finally {
       finish()
       await running
+      applyProviderEnvironmentValues({})
+      vi.unstubAllEnvs()
     }
   })
 
@@ -401,7 +422,11 @@ describe('runInkChat', () => {
     }
   })
 
-  it('returns the requested exit code while a replacement is starting', async () => {
+  it('restores the AWS profile when exiting while a replacement is starting', async () => {
+    vi.stubEnv('AWS_PROFILE', 'shell-profile')
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'shell-token')
+    const config = CliConfigStore.memory()
+    const configuration = configurationFromStore(config)
     const snapshot: ChatConversation['snapshot'] = {
       scope: 'agent',
       schemaVersion: '1.0',
@@ -417,12 +442,15 @@ describe('runInkChat', () => {
     })
     const source = vi.fn(async (): Promise<ChatControllerApi> => {
       if (source.mock.calls.length === 1) return previous
+      config.applyProviderEnvironment()
+      expect(process.env.AWS_PROFILE).toBe('replacement-profile')
+      expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
       await gate
       return replacement
     })
     let finish!: () => void
     let root!: {
-      props: { onSetupComplete(code: 0, changed: boolean): void; controller?: ChatControllerApi }
+      props: { onSetupComplete(code: 0, changed: boolean, change?: SetupChange): void; controller?: ChatControllerApi }
     }
     const instance = {
       unmount: vi.fn(() => finish?.()),
@@ -434,6 +462,7 @@ describe('runInkChat', () => {
       },
     } as unknown as Instance
     const running = runInkChat(source, {
+      config,
       alternateScreen: false,
       errorOutput: new PassThrough() as unknown as NodeJS.WriteStream,
       renderApp: ((element: unknown) => {
@@ -443,15 +472,23 @@ describe('runInkChat', () => {
     })
     try {
       await vi.waitFor(() => expect(finish).toBeDefined())
-      root.props.onSetupComplete(0, true)
+      root.props.onSetupComplete(0, true, {
+        configuration: { ...configuration, providerEnvironment: { AWS_PROFILE: 'replacement-profile' } },
+      })
       await vi.waitFor(() => expect(source).toHaveBeenCalledTimes(2))
       root.props.controller!.close(130)
       release()
       await expect(running).resolves.toBe(130)
+      expect(configurationFromStore(config)).toEqual(configuration)
+      expect(config.providerEnvironment().AWS_PROFILE).toEqual({ value: 'shell-profile', source: 'process' })
+      expect(process.env.AWS_PROFILE).toBe('shell-profile')
+      expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('shell-token')
     } finally {
       release()
       instance.unmount()
       await running
+      applyProviderEnvironmentValues({})
+      vi.unstubAllEnvs()
     }
   })
 

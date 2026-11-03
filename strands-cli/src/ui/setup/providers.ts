@@ -1,7 +1,7 @@
 import {
   PROVIDER_ENVIRONMENT_KEYS,
   PROVIDER_IDS,
-  withAwsProfileRegion,
+  withAwsProfile,
   type DetectedProviderEnvironment,
   type DetectedProviderEnvironmentValue,
   type ProviderEnvironment,
@@ -381,11 +381,14 @@ export function effectiveProviderEnvironment(
   const environment = { ...detected }
   for (const key of PROVIDER_ENVIRONMENT_KEYS) {
     const value = configured[key]
-    if (value && detected[key]?.source !== 'process' && detected[key]?.source !== 'session') {
+    if (
+      value &&
+      (key === 'AWS_PROFILE' || (detected[key]?.source !== 'process' && detected[key]?.source !== 'session'))
+    ) {
       environment[key] = { value, source: 'config' }
     }
   }
-  return withAwsProfileRegion(environment, aws)
+  return withAwsProfile(environment, aws)
 }
 
 export function sourceLabel(source: DetectedProviderEnvironmentValue['source']): string {
@@ -498,8 +501,9 @@ export function useProviderDiscovery(config: CliConfigStore): ProviderDiscovery 
   )
 
   const recheck = useCallback((): void => {
-    const environment = config.providerEnvironment(providerEnvironment)
-    setDetectedEnvironment(config.providerEnvironment({}))
+    const detected = config.providerEnvironment({})
+    const environment = effectiveProviderEnvironment(providerEnvironment, detected)
+    setDetectedEnvironment(detected)
     setAwsDiscovery(
       discoverAwsConfiguration({
         AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,

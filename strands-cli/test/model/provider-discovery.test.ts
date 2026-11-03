@@ -70,7 +70,7 @@ describe('AWS credential refresh', () => {
     }
   })
 
-  it('uses selected AWS files for credential checks and both catalogs before applying process values', async () => {
+  it('uses selected profile credentials for both catalogs while a process token remains set', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-aws-files-'))
     try {
       for (const key of [
@@ -87,6 +87,7 @@ describe('AWS credential refresh', () => {
         vi.stubEnv(key, undefined)
       }
       vi.stubEnv('AWS_EC2_METADATA_DISABLED', 'true')
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'fixture-token')
       const envFile = join(directory, 'provider.env')
       const configFile = join(directory, 'config')
       const credentialsFile = join(directory, 'credentials')
@@ -99,7 +100,7 @@ describe('AWS credential refresh', () => {
         envFile,
         `AWS_CONFIG_FILE=${configFile}\nAWS_SHARED_CREDENTIALS_FILE=${credentialsFile}\nAWS_PROFILE=review`
       )
-      const config = CliConfigStore.memory()
+      const config = CliConfigStore.memory({}, {}, { providerEnvironment: { AWS_PROFILE: 'review' } })
       config.useEnvironmentFiles([envFile])
       const environment = config.providerEnvironment()
       const identities: string[] = []
@@ -107,10 +108,24 @@ describe('AWS credential refresh', () => {
         identities.push((await this.config.credentials()).accessKeyId)
         return {}
       })
-      vi.spyOn(BedrockClient.prototype, 'send').mockImplementation(async function (this: BedrockClient) {
+      const send = BedrockClient.prototype.send
+      const authorizations: string[] = []
+      vi.spyOn(BedrockClient.prototype, 'send').mockImplementation(async function (this: BedrockClient, command) {
         identities.push((await this.config.credentials()).accessKeyId)
         expect(await this.config.region()).toBe('eu-west-1')
-        return { modelSummaries: [], inferenceProfileSummaries: [] }
+        this.config.requestHandler = {
+          handle: async (request) => {
+            authorizations.push(request.headers.authorization!)
+            return {
+              response: {
+                statusCode: 200,
+                headers: { 'content-type': 'application/json' },
+                body: Buffer.from('{"modelSummaries":[],"inferenceProfileSummaries":[]}'),
+              },
+            }
+          },
+        }
+        return send.bind(this)(command)
       })
       const fetch = vi
         .spyOn(globalThis, 'fetch')
@@ -120,9 +135,14 @@ describe('AWS credential refresh', () => {
       expect((await discoverProviderModels('bedrock-mantle', environment)).available).toBe(true)
       expect(identities.length).toBeGreaterThan(1)
       expect(identities.every((identity) => identity === 'SELECTED_FAKE_ID')).toBe(true)
+      expect(authorizations).toHaveLength(2)
+      expect(authorizations.every((value) => value.startsWith('AWS4-HMAC-SHA256 Credential=SELECTED_FAKE_ID/'))).toBe(
+        true
+      )
       expect(fetch.mock.calls[0]?.[0]).toBe('https://bedrock-mantle.eu-west-1.api.aws/v1/models')
       expect(process.env.AWS_CONFIG_FILE).toBeUndefined()
       expect(process.env.AWS_SHARED_CREDENTIALS_FILE).toBeUndefined()
+      expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('fixture-token')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

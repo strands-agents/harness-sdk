@@ -116,7 +116,13 @@ export async function discoverProviderModels(
 ): Promise<ProviderModelDiscovery> {
   try {
     if (provider === 'bedrock') {
-      const catalog = await listBedrockModels(new BedrockClient(awsClientConfiguration(environment)))
+      const profileSource = environment.AWS_PROFILE?.source
+      const catalog = await listBedrockModels(
+        new BedrockClient({
+          ...awsClientConfiguration(environment),
+          ...(profileSource === 'config' || profileSource === 'session' ? { authSchemePreference: ['sigv4'] } : {}),
+        })
+      )
       return { ...catalog, models: cleanModels(catalog.models), available: true }
     }
     const models = await listProviderModels(provider, environment, ollama)

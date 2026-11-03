@@ -1,8 +1,20 @@
 import { type ReactElement } from 'react'
 import { type DOMElement } from 'ink'
 import { type ChatModelPanel, type ChatPanelRow, type ChatPanelSlider } from '../chat/controller.js'
-import { sectionedPanelSidebarWidth, type ModelPanelFocus } from '../interaction.js'
-import { PanelSearchHeader, badgeColor, type PanelRowsProps, PanelSection, PanelSectionList } from './shared.js'
+import {
+  awsProfileItems,
+  sectionedPanelSidebarWidth,
+  trailingWindowStart,
+  type ModelPanelFocus,
+} from '../interaction.js'
+import {
+  PanelSearchHeader,
+  badgeColor,
+  type PanelRowsProps,
+  PanelSection,
+  PanelSectionList,
+  ProviderList,
+} from './shared.js'
 import { Box, Text, useTheme } from '../theme.js'
 import { useSpinner, mixHexColors } from '../animation.js'
 import stringWidth from 'string-width'
@@ -20,6 +32,7 @@ export function ModelPicker({
   query,
   filter,
   focus,
+  profileSelected = 0,
   animate,
   pressedFilter,
   hoveredFilter,
@@ -35,6 +48,7 @@ export function ModelPicker({
   query: string
   filter: string
   focus: ModelPanelFocus
+  profileSelected?: number
   animate: boolean
   pressedFilter?: string
   hoveredFilter?: string
@@ -52,6 +66,21 @@ export function ModelPicker({
     )
   }
   const filters = panel.filters ?? []
+  const profiles = awsProfileItems(panel, filter)
+  const sidebarWidth = profiles.length
+    ? Math.max(sectionedPanelSidebarWidth(width), Math.min(58, Math.floor(width / 2)))
+    : sectionedPanelSidebarWidth(width)
+  const contentWidth = Math.max(1, sidebarWidth - 4)
+  const providerWidth = Math.max(1, Math.floor(contentWidth / 2))
+  const profileWidth = Math.max(1, contentWidth - providerWidth)
+  const capacity = Math.max(1, height - 4)
+  const providerStart = trailingWindowStart(
+    filters.findIndex((item) => item.id === filter),
+    capacity,
+    filters.length
+  )
+  const profileCapacity = Math.max(1, capacity - 1)
+  const profileStart = trailingWindowStart(profileSelected, profileCapacity, profiles.length)
   const emptyMessage = query.trim()
     ? 'No matching models'
     : filter === 'all' || filter === 'current'
@@ -59,19 +88,59 @@ export function ModelPicker({
       : 'No models available. Configure this provider with /setup.'
   return (
     <Box flexGrow={1} height={height} overflow="hidden">
-      <PanelSectionList
-        title="Providers"
-        items={filters}
-        selected={filter}
-        focused={focus === 'providers'}
-        width={sectionedPanelSidebarWidth(width)}
-        height={height}
-        {...(pressedFilter ? { pressed: pressedFilter } : {})}
-        {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
-        {...(onFilterElement ? { onElement: onFilterElement } : {})}
-      />
+      {profiles.length ? (
+        <PanelSection
+          header={<Text dimColor>Providers</Text>}
+          focused={focus === 'providers' || focus === 'profiles'}
+          width={sidebarWidth}
+          height={height}
+        >
+          <Box paddingX={1}>
+            <Box width={providerWidth} flexShrink={0} flexDirection="column">
+              <ProviderList
+                items={filters.slice(providerStart, providerStart + capacity).map((item) => ({
+                  ...item,
+                  label: providerWidth < 25 && item.id === 'bedrock-mantle' ? 'Mantle' : item.label,
+                }))}
+                selected={filter}
+                focused={focus === 'providers'}
+                width={providerWidth}
+                {...(pressedFilter ? { pressed: pressedFilter } : {})}
+                {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
+                {...(onFilterElement ? { onElement: onFilterElement } : {})}
+              />
+            </Box>
+            <Box width={profileWidth} flexShrink={0} flexDirection="column">
+              <Text dimColor wrap="truncate-end">
+                AWS profile
+              </Text>
+              <ProviderList
+                items={profiles.slice(profileStart, profileStart + profileCapacity)}
+                selected={profiles[profileSelected]?.id ?? 'aws-profile:toggle'}
+                focused={focus === 'profiles'}
+                width={profileWidth}
+                {...(pressedFilter ? { pressed: pressedFilter } : {})}
+                {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
+                {...(onFilterElement ? { onElement: onFilterElement } : {})}
+              />
+            </Box>
+          </Box>
+        </PanelSection>
+      ) : (
+        <PanelSectionList
+          title="Providers"
+          items={filters}
+          selected={filter}
+          focused={focus === 'providers'}
+          width={sidebarWidth}
+          height={height}
+          {...(pressedFilter ? { pressed: pressedFilter } : {})}
+          {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
+          {...(onFilterElement ? { onElement: onFilterElement } : {})}
+        />
+      )}
       <PanelSection
-        focused={focus !== 'providers'}
+        focused={focus === 'models' || focus === 'search'}
         meta={
           allRows.length > rows.length
             ? `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}`

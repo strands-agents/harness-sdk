@@ -297,7 +297,7 @@ describe('setup provider credentials', () => {
     if (key === 'AWS_DEFAULT_REGION') expect(environment.AWS_REGION).toBeUndefined()
   })
 
-  it.each(['process', 'session'] as const)('keeps %s profile and region values ahead of setup overrides', (source) => {
+  it.each(['process', 'session'] as const)('selects a profile while preserving the explicit %s region', (source) => {
     const environment = effectiveProviderEnvironment(
       { AWS_PROFILE: 'review', AWS_REGION: 'eu-west-1' },
       {
@@ -306,7 +306,7 @@ describe('setup provider credentials', () => {
       },
       aws
     )
-    expect(environment.AWS_PROFILE?.value).toBe('default')
+    expect(environment.AWS_PROFILE?.value).toBe('review')
     expect(environment.AWS_REGION?.value).toBe('us-east-2')
   })
 

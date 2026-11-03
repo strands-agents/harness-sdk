@@ -288,7 +288,9 @@ Workspace, saved-profile, and imported-project `.env` and `.env.local` files are
 files explicitly, in precedence order: `strands --env-file .env --env-file .env.local`.
 This also loads custom environment variables used by agent code or MCP configuration.
 `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` in selected files also control setup discovery.
-Existing shell values take precedence over saved provider settings, which take precedence over selected files.
+Existing shell values take precedence over saved provider settings, which take precedence over selected files,
+except for an AWS profile chosen in setup or `/model`. That choice persists and overrides the shell profile
+and Bedrock API token; choose the environment/default credential chain to restore automatic authentication.
 For an imported agent, use `strands --agent ./project --env-file ./project/.env`.
 In setup, **Refresh** reloads
 those files and rechecks AWS credentials without restarting; new exports in another

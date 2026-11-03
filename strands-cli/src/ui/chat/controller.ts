@@ -157,6 +157,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _streamPresentation: StreamPresentationOptions | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
+  private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
   private readonly _exportAgentProject: ChatControllerOptions['exportAgentProject']
@@ -225,6 +226,7 @@ export class ChatController implements ChatControllerApi {
     this._streamPresentation = options.streamPresentation
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
+    this._awsProfile = options.awsProfile
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
     this._useExportedProject = options.useExportedProject
@@ -1070,6 +1072,9 @@ export class ChatController implements ChatControllerApi {
       }
       case 'effort':
       case 'models':
+        if (row.value.startsWith('aws-profile:')) {
+          return this._selectAwsProfile(row.value)
+        }
         return row.value.startsWith('effort:')
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
@@ -1501,6 +1506,36 @@ export class ChatController implements ChatControllerApi {
     return true
   }
 
+  private _selectAwsProfile(value: string): boolean {
+    const panel = this._panel
+    if (panel?.kind !== 'models' || !panel.awsProfile || !this._awsProfile) return false
+    const profile = panel.awsProfile
+    if (value === 'aws-profile:toggle') {
+      this._panel = { ...panel, awsProfile: { ...profile, open: !profile.open } }
+      this._emit()
+      return true
+    }
+    const selected = profile.options.find(
+      (option) => value === `aws-profile:select:${encodeURIComponent(option.value)}`
+    )
+    if (!selected) return false
+    if (selected.value !== profile.value) {
+      if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+        this._openError('AWS profile change blocked', selected.label, 'Finish or cancel running work first.')
+        return false
+      }
+      try {
+        this._awsProfile.select(selected.value)
+      } catch (error) {
+        this._openError('AWS profile change failed', selected.label, errorMessage(error))
+        return false
+      }
+    }
+    this._panel = { ...panel, awsProfile: { ...profile, open: false } }
+    this._emit()
+    return true
+  }
+
   async openModelPanel(): Promise<void> {
     if (!this._backend.listModels) {
       this._openError('models unavailable', this._runtime.model, 'This backend does not expose model selection.')
@@ -1522,6 +1557,7 @@ export class ChatController implements ChatControllerApi {
           this._backend.protocol
         ),
         body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
+        ...(this._awsProfile ? { awsProfile: this._awsProfile.get() } : {}),
       })
     } catch (error) {
       if (this._panel?.id === loading.id) {
@@ -2862,6 +2898,7 @@ export class ChatController implements ChatControllerApi {
       ...(panel.searchable !== undefined ? { searchable: panel.searchable } : {}),
       ...(panel.filters ? { filters: panel.filters } : {}),
       body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
+      ...(panel.awsProfile ? { awsProfile: panel.awsProfile } : {}),
     })
     this._panel = { ...updated, id: panel.id }
   }

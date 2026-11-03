@@ -1,16 +1,18 @@
 import { resolve } from 'node:path'
+import { type HarnessAgentConfig } from '@strands-agents/harness'
 
-import { createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
+import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
 import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
 import { type ChatSettings } from '../../config/settings.js'
-import { ChatController } from './controller.js'
+import { ChatController, type ChatControllerOptions } from './controller.js'
 import { isUnresolvedBackgroundTask } from './state.js'
 import { ConversationManager, type InitialConversations } from './conversations.js'
 import { CliConfigStore } from '../../config/store.js'
 import { AgentMessaging } from '../../agent/messaging.js'
 import { AgentModelRuntime } from '../../model/runtime.js'
+import { discoverAwsConfiguration } from '../../model/aws-config.js'
 import {
   sessionSettings,
   DEFAULT_SESSION_DIR,
@@ -94,6 +96,7 @@ export async function createTypescriptChat(
           await backend.syncConfiguration()
         },
         requestSetup,
+        awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
         project,
         exportAgentProject: (language, destination, output): Promise<string | undefined> =>
           exportSourceProject(
@@ -263,6 +266,7 @@ export async function createPythonChat(
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
+      awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
       exportAgentProject: (language, destination, output): Promise<string | undefined> => {
         return exportSourceProject(project, backend.name, language, backend.privatePaths, destination, output)
@@ -474,6 +478,13 @@ export async function createInteractiveChat(
         ...(options.requestSetup
           ? {
               requestSetup: options.requestSetup,
+              awsProfile: awsProfileSelection(
+                config,
+                options.requestSetup,
+                peerEndpointId,
+                options.project?.entrypoint,
+                options.project ? undefined : currentProfile
+              ),
               useExportedProject: (path: string): void =>
                 options.requestSetup?.({ agentProject: path, conversationId: peerEndpointId }),
             }
@@ -624,5 +635,47 @@ export async function createInteractiveChat(
     await Promise.allSettled(entries.map(({ controller }) => controller.dispose()))
     await owner.dispose()
     throw error
+  }
+}
+
+function awsProfileSelection(
+  config: CliConfigStore,
+  requestSetup: RequestSetup,
+  conversationId?: string,
+  agentProject?: string,
+  currentProfile?: () => HarnessAgentConfig
+): NonNullable<ChatControllerOptions['awsProfile']> {
+  return {
+    get: (): ReturnType<NonNullable<ChatControllerOptions['awsProfile']>['get']> => {
+      const environment = config.providerEnvironment()
+      const value = config.configuredProviderEnvironment().AWS_PROFILE ?? ''
+      const aws = discoverAwsConfiguration({
+        AWS_CONFIG_FILE: environment.AWS_CONFIG_FILE?.value,
+        AWS_SHARED_CREDENTIALS_FILE: environment.AWS_SHARED_CREDENTIALS_FILE?.value,
+      })
+      return {
+        value,
+        options: [
+          { value: '', label: 'Environment/default' },
+          ...[...new Set([...aws.profiles, ...(environment.AWS_PROFILE ? [environment.AWS_PROFILE.value] : [])])].map(
+            (profile) => ({
+              value: profile,
+              label: profile,
+            })
+          ),
+        ],
+      }
+    },
+    select: (profile): void => {
+      const configuration = configurationFromStore(config)
+      if (profile) configuration.providerEnvironment.AWS_PROFILE = profile
+      else delete configuration.providerEnvironment.AWS_PROFILE
+      requestSetup({
+        configuration,
+        ...(currentProfile ? { profile: currentProfile() } : {}),
+        ...(conversationId ? { conversationId } : {}),
+        ...(agentProject ? { agentProject } : {}),
+      })
+    },
   }
 }

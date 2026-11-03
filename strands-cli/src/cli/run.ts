@@ -274,8 +274,11 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
             ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
             ...(invocation.project ? { project: invocation.project } : {}),
             cwd: initialWorkspace,
-            // Flags describe one run; only a profile-driven session writes model changes back to it.
-            persistModelChanges: !invocation.project && (profile !== undefined || shouldPersistModelChanges(args)),
+            // A profile accompanying configuration preserves runtime flags without saving them as defaults.
+            persistModelChanges:
+              !invocation.project &&
+              ((profile !== undefined && !(launch?.configuration && launch.profile)) ||
+                shouldPersistModelChanges(args)),
             config,
             mcpPaths: initialMcp.paths,
             mcpStrictPaths: initialMcp.strictPaths,

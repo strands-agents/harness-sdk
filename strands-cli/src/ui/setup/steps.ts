@@ -223,51 +223,52 @@ export function rowsForStep(
         activate: noop,
       }
     })
-    if (!readyProviders.includes(selectedProvider)) {
-      const fields =
-        selectedProvider === 'litellm' && !liteLlmDiscovery?.authenticationRequired
-          ? []
-          : PROVIDERS[selectedProvider].fields
-      rows.push(
-        ...fields.map((field): WizardRow => {
-          const configured = providerEnvironment[field.key]
-          const detected = environment[field.key]
-          const selectOptions = providerSelectOptions(field, environment, awsDiscovery)
-          const credential = PROVIDER_CREDENTIAL_KEYS.includes(field.key)
-          const rejectedLiteLlmKey =
-            selectedProvider === 'litellm' &&
-            field.key === 'LITELLM_API_KEY' &&
-            liteLlmDiscovery?.authenticationRequired === true
-          const rejectedCredential =
-            rejectedLiteLlmKey || (selectedProvider === credentialRejectedProvider && credential)
-          const validatingCredential = selectedProvider === credentialValidationProvider && credential
-          const editable = !credential || !detected || rejectedCredential
-          return {
-            id: `${selectedProvider}:${field.key}`,
-            label: field.label,
-            description: credential
-              ? detected
-                ? rejectedCredential && credentialRejectionMessage
-                  ? credentialRejectionMessage
-                  : validatingCredential
-                    ? 'Checking API key...'
-                    : `${rejectedCredential ? 'Rejected' : 'Detected'} · ${sourceLabel(detected.source)}`
-                : credentialSetupDescription()
+    const fields =
+      selectedProvider === 'litellm' && !liteLlmDiscovery?.authenticationRequired
+        ? []
+        : PROVIDERS[selectedProvider].fields.filter(
+            (field) => field.key === 'AWS_PROFILE' || !readyProviders.includes(selectedProvider)
+          )
+    rows.push(
+      ...fields.map((field): WizardRow => {
+        const configured = providerEnvironment[field.key]
+        const detected = environment[field.key]
+        const selectOptions = providerSelectOptions(field, environment, awsDiscovery)
+        const credential = PROVIDER_CREDENTIAL_KEYS.includes(field.key)
+        const rejectedLiteLlmKey =
+          selectedProvider === 'litellm' &&
+          field.key === 'LITELLM_API_KEY' &&
+          liteLlmDiscovery?.authenticationRequired === true
+        const rejectedCredential = rejectedLiteLlmKey || (selectedProvider === credentialRejectedProvider && credential)
+        const validatingCredential = selectedProvider === credentialValidationProvider && credential
+        const editable = !credential || !detected || rejectedCredential
+        return {
+          id: `${selectedProvider}:${field.key}`,
+          label: field.label,
+          description: credential
+            ? detected
+              ? rejectedCredential && credentialRejectionMessage
+                ? credentialRejectionMessage
+                : validatingCredential
+                  ? 'Checking API key...'
+                  : `${rejectedCredential ? 'Rejected' : 'Detected'} · ${sourceLabel(detected.source)}`
+              : credentialSetupDescription()
+            : field.key === 'AWS_PROFILE' && environment.AWS_BEARER_TOKEN_BEDROCK
+              ? `${field.placeholder}  ▾`
               : configured
                 ? `${configured}${selectOptions ? '  ▾' : ''}`
                 : detected
                   ? `${detected.value} · ${sourceLabel(detected.source)}${selectOptions ? '  ▾' : ''}`
                   : `${field.placeholder}${selectOptions ? '  ▾' : ''}`,
-            input: editable,
-            field: field.key,
-            ...(selectOptions ? { selectOptions } : {}),
-            activate: editable
-              ? edit(field.key, configured ?? (rejectedCredential ? '' : (detected?.value ?? '')))
-              : noop,
-          }
-        })
-      )
-    }
+          input: editable,
+          field: field.key,
+          ...(selectOptions ? { selectOptions } : {}),
+          activate: editable
+            ? edit(field.key, configured ?? (rejectedCredential ? '' : (detected?.value ?? '')))
+            : noop,
+        }
+      })
+    )
     if (readyProviders.includes(selectedProvider)) {
       const thinking = effortForModel(draft.profile.model, draft.profile.effort)
       const efforts = effortOptions(draft.profile.model, thinking)

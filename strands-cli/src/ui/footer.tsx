@@ -9,7 +9,7 @@ export const PanelHelpContext = createContext<ChatPanel | undefined>(undefined)
 export type FooterAction = 'settings' | 'setup' | 'help' | 'update'
 
 export function panelModelId(panel: ChatPanel | undefined, row?: ChatPanelRow): string | undefined {
-  if (panel?.kind !== 'models') return undefined
+  if (panel?.kind !== 'models' || panel.awsProfile?.open) return undefined
   return row?.value || panel.body?.split('\n', 2)[1] || undefined
 }
 
@@ -74,7 +74,12 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
   if (panel.kind === 'effort') {
     return width < 53 ? '←→ · Enter done · Esc close' : '←→ change · Enter done · Esc close'
   }
-  if (!panel.rows.some((row) => row.value !== undefined)) return 'Esc close'
+  if (panel.kind === 'models' && panel.awsProfile?.open) {
+    return width < 53 ? 'Tab · ↑↓ · Enter · Esc' : 'Tab section · ↑↓ · Enter choose · Esc back'
+  }
+  if (!panel.rows.some((row) => row.value !== undefined) && !(panel.kind === 'models' && panel.awsProfile)) {
+    return 'Esc close'
+  }
   switch (panel.kind) {
     case 'settings':
       return width < 42 ? '↑↓ move · ←→ change · Esc back' : '↑↓ · ←→ change · Tab section · Esc back'

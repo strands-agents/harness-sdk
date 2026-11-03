@@ -4,6 +4,7 @@ import stringWidth from 'string-width'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatController, type ChatControllerApi, type ChatPanel } from '../../src/ui/chat/controller.js'
+import type { ChatControllerOptions } from '../../src/ui/chat/types.js'
 import { type ChatBackend } from '../../src/agent/types.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
@@ -26,7 +27,7 @@ afterEach(async () => {
   }
 })
 
-function createController(options: { requestSetup?: () => void } = {}) {
+function createController(options: Pick<ChatControllerOptions, 'requestSetup' | 'awsProfile'> = {}) {
   const switchModel = vi.fn(async (_model: string) => {})
   const backend: ChatBackend = {
     id: 'panel-resize-test',
@@ -52,7 +53,7 @@ function createController(options: { requestSetup?: () => void } = {}) {
   const controller = new ChatController(backend, {
     settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
-    ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
+    ...options,
   })
   return { controller, switchModel }
 }
@@ -391,11 +392,126 @@ describe('mounted panel resizing', () => {
         expect(view.screen()).toContain('Model 08')
         expect(view.screen()).toMatch(/Enter(?: choose)? · Esc(?: back)?/)
         expect(view.screen()).not.toContain('/help')
+        if (width >= 80) {
+          for (const provider of ['All', 'Amazon Bedrock', 'Anthropic', 'OpenAI', 'Google', 'Ollama', 'LiteLLM']) {
+            expect(view.screen()).toContain(provider)
+          }
+        }
       })
     }
     await view.click(view.point('Model 08'))
     await vi.waitFor(() => expect(switchModel).toHaveBeenCalledWith('model-08'))
   })
+
+  it.each(['bedrock', 'bedrock-mantle'])(
+    'chooses AWS profiles in the %s sidebar while preserving the model list and search',
+    async (catalog) => {
+      const select = vi.fn()
+      const { controller, switchModel } = createController({
+        awsProfile: {
+          get: () => ({
+            value: '',
+            options: [
+              { value: '', label: 'Environment/default' },
+              { value: 'team/a b', label: 'team/a b' },
+            ],
+          }),
+          select,
+        },
+      })
+      controller.backend.listModels = () => [
+        { id: `${catalog}/model`, name: 'Current Model', description: '', catalog, active: true },
+      ]
+      const view = await mount(controller)
+      await view.resize(80, 24)
+      await controller.openModelPanel()
+      await vi.waitFor(() => expect(view.screen()).toContain('Environment'))
+      for (const provider of ['Anthropic', 'OpenAI', 'Google', 'Ollama', 'LiteLLM']) {
+        expect(view.screen()).toContain(provider)
+      }
+      const modelColumn = view.point('Current Model').column
+      expect(view.point('Environment').column).toBeGreaterThan(view.point('LiteLLM').column)
+      expect(view.point('Environment').column).toBeLessThan(modelColumn)
+      expect(view.point('Environment').row).toBeLessThan(view.point('LiteLLM').row)
+      await view.press('\t')
+      await view.press('\r')
+      await vi.waitFor(() => expect(view.screen()).toContain('team/a b'))
+      expect(view.screen()).toContain('Current Mod')
+      expect(view.screen()).toContain('Search models')
+      for (const provider of ['Anthropic', 'OpenAI', 'Google', 'Ollama', 'LiteLLM']) {
+        expect(view.screen()).toContain(provider)
+      }
+      expect(view.point('team/a b').column).toBeLessThan(modelColumn)
+      expect(view.point('Current Model').column).toBe(modelColumn)
+      expect(
+        view
+          .screen()
+          .split('\n')
+          .find((line) => line.includes('team/a b'))
+          ?.match(/│/g)
+      ).toHaveLength(4)
+      await view.press('\u001b[B')
+      await view.press('\u001b[B')
+      await view.press('\r')
+      await vi.waitFor(() => expect(select).toHaveBeenCalledExactlyOnceWith('team/a b'))
+      expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models', awsProfile: { open: false } })
+      expect(switchModel).not.toHaveBeenCalled()
+
+      await view.click(view.point('Environment'))
+      await vi.waitFor(() => expect(view.screen()).toContain('team/a b'))
+      for (const [width, height] of terminalSizes) {
+        await view.resize(width, height)
+        view.fits()
+        expect(view.screen()).toContain(width >= 80 ? 'team/a b' : 'team')
+        if (width >= 80) expect(view.screen()).toContain(width === 80 ? 'Current Mod' : 'Current Model')
+        if (width >= 120) expect(view.screen()).toContain('Environment/default')
+      }
+      await view.click(view.point('team/a b'))
+      await vi.waitFor(() => expect(select).toHaveBeenCalledTimes(2))
+      await view.resize(40, 24)
+      for (const key of ['\t', '/']) {
+        await view.click(view.point('Env'))
+        await vi.waitFor(() => expect(view.screen()).toContain('team'))
+        expect(view.screen()).toContain('current')
+        await view.press(key)
+        await vi.waitFor(() =>
+          expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models', awsProfile: { open: false } })
+        )
+        expect(view.screen()).toContain('current')
+        expect(switchModel).not.toHaveBeenCalled()
+      }
+      await view.resize(120, 40)
+      await view.press('unmatched model')
+      expect(view.screen()).toContain('AWS profile')
+      expect(view.screen()).toContain('No matching models')
+      await view.click(view.point('Environment'))
+      await vi.waitFor(() => expect(view.screen()).toContain('team/a b'))
+      expect(view.screen()).toContain('No matching models')
+      await view.press('\u001b')
+      await vi.waitFor(() =>
+        expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models', awsProfile: { open: false } })
+      )
+      expect(view.screen()).toContain('No matching models')
+      await view.press('/')
+      await view.press('\u001b')
+      await vi.waitFor(() => expect(view.screen()).toContain('Current Model'))
+      await view.press('/')
+      await view.press(`${catalog}/new-model`)
+      expect(view.screen()).toContain('AWS profile')
+      await view.press('\r')
+      await view.press('\r')
+      await vi.waitFor(() => expect(switchModel, view.screen()).toHaveBeenCalledExactlyOnceWith(`${catalog}/new-model`))
+      expect(controller.getSnapshot().panel).toBeUndefined()
+      await controller.openModelPanel()
+      await vi.waitFor(() => expect(view.screen()).toContain('AWS profile'))
+      await view.click(view.point('Environment'))
+      await view.press('\u001b[Z')
+      for (let index = 0; index < (catalog === 'bedrock' ? 3 : 2); index++) await view.press('\u001b[B')
+      expect(view.screen()).toContain('› OpenAI')
+      expect(view.screen()).not.toContain('AWS profile')
+      expect(controller.getSnapshot().panel).toMatchObject({ awsProfile: { open: false } })
+    }
+  )
 
   it('keeps the selected agent visible as grid dimensions change', async () => {
     const manager = new ConversationManager(createController().controller, {

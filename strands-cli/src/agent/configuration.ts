@@ -30,7 +30,7 @@ export type SetupChange = {
   conversationId?: string
   onFailure?: (message: string) => Promise<void>
 } & (
-  | { configuration: SetupConfiguration; profile?: never; agentProject?: string }
+  | { configuration: SetupConfiguration; profile?: HarnessAgentConfig; agentProject?: string }
   | { configuration?: never; profile: HarnessAgentConfig; agentProject?: never }
   | { configuration?: never; profile?: never; agentProject: string }
 )

@@ -123,6 +123,11 @@ export type NewChatPanel =
       kind: 'models'
       /** Models are still being discovered. */
       loading?: boolean
+      awsProfile?: {
+        value: string
+        options: readonly { value: string; label: string }[]
+        open?: boolean
+      }
     })
   | (ChatPanelBase & {
       kind: 'effort'
@@ -239,6 +244,10 @@ export interface ChatControllerOptions {
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
+  awsProfile?: {
+    get(): Omit<NonNullable<ChatModelPanel['awsProfile']>, 'open'>
+    select(profile: string): void
+  }
   builtinTools?: ChatBuiltinToolsRuntime
   exportAgentProject?: (
     language: ChatConfigurationLanguage,

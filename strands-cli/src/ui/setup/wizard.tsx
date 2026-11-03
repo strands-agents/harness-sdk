@@ -371,7 +371,10 @@ function SetupWizardContent({
   const actionColumnGap = bubbleWidth >= 3 ? 1 : 0
   const actionWidth = Math.max(1, Math.floor((bubbleWidth - actionColumnGap) / 2))
   const splitQuickstart = isProviderSetup && bubbleWidth >= 38
-  const quickstartProviderColumnWidth = Math.max(16, Math.min(31, Math.floor(bubbleWidth * 0.34)))
+  const quickstartProviderColumnWidth =
+    quickstartProvider === 'bedrock' || quickstartProvider === 'bedrock-mantle'
+      ? Math.min(52, Math.floor(bubbleWidth / 2))
+      : Math.max(16, Math.min(31, Math.floor(bubbleWidth * 0.34)))
   const quickstartDetailColumnWidth = bubbleWidth - quickstartProviderColumnWidth
   const rowHeight = isSettings
     ? 1
@@ -632,7 +635,14 @@ function SetupWizardContent({
   const providerRows = isProviderSetup ? rows.slice(0, PROVIDER_IDS.length) : []
   const providerFieldRows = isProviderSetup ? rows.slice(PROVIDER_IDS.length) : []
   const refreshRow = providerFieldRows.find((row) => row.id === 'refresh-provider')
-  const providerConfigurationRows = providerFieldRows.filter((row) => row.id !== 'refresh-provider')
+  const awsProfileRow = providerFieldRows.find((row) => row.field === 'AWS_PROFILE')
+  const quickstartProviderListWidth = awsProfileRow
+    ? Math.max(8, Math.floor((quickstartProviderColumnWidth - 3) * 0.45))
+    : quickstartProviderColumnWidth - 2
+  const quickstartProfileWidth = quickstartProviderColumnWidth - quickstartProviderListWidth - 3
+  const providerConfigurationRows = providerFieldRows.filter(
+    (row) => row.id !== 'refresh-provider' && row !== awsProfileRow
+  )
   const providerWarningStatus = providerConfigurationRows.some(
     (row) => row.input === true && PROVIDER_CREDENTIAL_KEYS.includes(row.field as ProviderEnvironmentKey)
   )
@@ -671,7 +681,9 @@ function SetupWizardContent({
     )
   )
   const quickstartBodyHeight = bubbleHeight - panelChromeHeight - extraRows
-  const providerFooterHeight = refreshRow ? 4 : 0
+  const compactProviderControls = quickstartBodyHeight - 2 - (refreshRow ? 4 : 0) < PROVIDER_IDS.length
+  const providerRefreshHeight = compactProviderControls ? 1 : 4
+  const providerFooterHeight = refreshRow ? providerRefreshHeight : 0
   const quickstartProviderListCapacity = Math.max(1, quickstartBodyHeight - 2 - providerFooterHeight)
   const quickstartProviderRowHeight =
     quickstartProviderListCapacity >= PROVIDER_IDS.length * 3 - 1
@@ -785,7 +797,11 @@ function SetupWizardContent({
   const quickstartSelectableRows =
     rows.length + (modelPanelVisible && providerModels.available ? filteredProviderModels.length : 0)
   const providerSectionRows: Record<Exclude<ProviderSetupSection, 'actions'>, number[]> = {
-    providers: [...providerRows.map((row) => rows.indexOf(row)), ...(refreshRow ? [rows.indexOf(refreshRow)] : [])],
+    providers: [
+      ...providerRows.map((row) => rows.indexOf(row)),
+      ...(awsProfileRow ? [rows.indexOf(awsProfileRow)] : []),
+      ...(refreshRow ? [rows.indexOf(refreshRow)] : []),
+    ],
     models: providerReady
       ? Array.from(
           { length: Math.max(0, quickstartSelectableRows - quickstartModelOffset) },
@@ -1183,10 +1199,11 @@ function SetupWizardContent({
   const renderRefreshButton = (row: WizardRow, fieldWidth: number, compact = false): ReactElement => {
     const index = rows.indexOf(row)
     const buttonWidth = Math.min(fieldWidth, Math.max(13, Math.floor(fieldWidth / 2)))
+    const singleRow = compact && compactProviderControls
     return (
       <Box
         key={row.id}
-        height={compact ? 4 : quickstartFieldRowHeight}
+        height={compact ? providerRefreshHeight : quickstartFieldRowHeight}
         flexShrink={0}
         flexDirection="column"
         justifyContent={compact ? 'flex-end' : 'flex-start'}
@@ -1195,10 +1212,11 @@ function SetupWizardContent({
         <Box
           ref={(element) => registerElement(rowElements.current, index, element)}
           width={buttonWidth}
-          height={3}
-          borderStyle="single"
+          height={singleRow ? 1 : 3}
+          borderStyle={singleRow ? undefined : 'single'}
           borderColor={rowHighlighted(index) ? accent : undefined}
           borderDimColor={!rowHighlighted(index)}
+          backgroundColor={singleRow && rowHighlighted(index) ? palette.selection : undefined}
           flexDirection="column"
           justifyContent="center"
           alignItems="center"
@@ -1211,41 +1229,58 @@ function SetupWizardContent({
     )
   }
 
-  const renderProviderField = (row: WizardRow, fieldWidth: number): ReactElement => {
+  const renderProviderField = (row: WizardRow, fieldWidth: number, compact = false): ReactElement => {
     const index = rows.indexOf(row)
     const activeEditing = editing?.field === row.field ? editing : undefined
     const credential = PROVIDER_CREDENTIAL_KEYS.includes(row.field as ProviderEnvironmentKey)
     const editable = row.input === true
+    const shortControl = compact && (fieldWidth < 16 || quickstartBodyHeight < 8)
     return (
       <Box
         key={row.id}
         ref={(element) => registerElement(rowElements.current, index, element)}
-        height={quickstartFieldRowHeight}
+        height={compact ? (shortControl ? 2 : 4) : quickstartFieldRowHeight}
         flexShrink={0}
         flexDirection="column"
         backgroundColor={rowHighlighted(index) ? palette.selection : undefined}
       >
         <Text bold {...(rowHighlighted(index) ? { color: accent } : {})} wrap="truncate-end">
-          {row.label}
+          {compact && fieldWidth < 11 ? 'Profile' : row.label}
         </Text>
         {editable ? (
           <>
             <Box
               width={fieldWidth}
-              height={3}
-              paddingX={1}
+              height={shortControl ? 1 : 3}
+              paddingX={shortControl ? 0 : 1}
               alignItems="center"
-              borderStyle="single"
+              borderStyle={shortControl ? undefined : 'single'}
               borderColor={rowHighlighted(index) ? accent : undefined}
               borderDimColor={!rowHighlighted(index)}
             >
-              <EditableText
-                value={activeEditing?.value ?? (row.selectOptions ? row.description : '')}
-                cursor={activeEditing?.cursor ?? graphemes(activeEditing?.value ?? '').length}
-                width={Math.max(1, fieldWidth - 4)}
-                active={Boolean(activeEditing)}
-                masked={credential}
-              />
+              {compact && !activeEditing ? (
+                <>
+                  <Box flexGrow={1} flexBasis={0}>
+                    <Text dimColor wrap="truncate-end">
+                      {sanitizeTerminalText(
+                        providerEnvironment.AWS_PROFILE ??
+                          (effectiveEnvironment.AWS_BEARER_TOKEN_BEDROCK
+                            ? 'Environment'
+                            : (effectiveEnvironment.AWS_PROFILE?.value ?? 'Environment'))
+                      )}
+                    </Text>
+                  </Box>
+                  <Text dimColor> ▾</Text>
+                </>
+              ) : (
+                <EditableText
+                  value={activeEditing?.value ?? (row.selectOptions ? row.description : '')}
+                  cursor={activeEditing?.cursor ?? graphemes(activeEditing?.value ?? '').length}
+                  width={Math.max(1, fieldWidth - (shortControl ? 0 : 4))}
+                  active={Boolean(activeEditing)}
+                  masked={credential}
+                />
+              )}
             </Box>
             {credential ? (
               <Text dimColor wrap="truncate-end">
@@ -1328,12 +1363,23 @@ function SetupWizardContent({
   }
 
   const renderProviderSelect = (state: NonNullable<typeof selecting>): ReactElement => {
-    const capacity = Math.max(1, quickstartBodyHeight - middleDetailHeight - 3)
+    const capacity = Math.max(
+      1,
+      quickstartBodyHeight - (state.field === 'AWS_PROFILE' && splitQuickstart ? 0 : middleDetailHeight) - 3
+    )
     const start = Math.max(0, Math.min(state.selection - capacity + 1, state.options.length - capacity))
     return (
-      <Box width="100%" flexGrow={1} paddingX={1} flexDirection="column" overflow="hidden">
+      <Box
+        width="100%"
+        flexGrow={1}
+        paddingX={state.field === 'AWS_PROFILE' && splitQuickstart ? 0 : 1}
+        flexDirection="column"
+        overflow="hidden"
+      >
         <Text bold wrap="truncate-end">
-          {providerFieldRows.find((row) => row.field === state.field)?.label ?? 'Choose'}
+          {state.field === 'AWS_PROFILE' && splitQuickstart && quickstartProfileWidth < 11
+            ? 'Profile'
+            : (providerFieldRows.find((row) => row.field === state.field)?.label ?? 'Choose')}
         </Text>
         {state.options.slice(start, start + capacity).map((option, index) => {
           const optionIndex = start + index
@@ -1409,6 +1455,7 @@ function SetupWizardContent({
   }
 
   function focusNextProviderField(field: ProviderEnvironmentKey): void {
+    if (field === 'AWS_PROFILE') return
     const current = rows.findIndex((row) => row.field === field)
     const next = rows.findIndex((row, index) => index > current && !row.disabled)
     if (next >= 0) {
@@ -1447,7 +1494,12 @@ function SetupWizardContent({
             filteredProviderModels.length
           )
         )
-      } else if (isProviderSetup && index >= PROVIDER_IDS.length && rows[index]?.id !== 'refresh-provider') {
+      } else if (
+        isProviderSetup &&
+        index >= PROVIDER_IDS.length &&
+        rows[index]?.id !== 'refresh-provider' &&
+        rows[index]?.field !== 'AWS_PROFILE'
+      ) {
         setProviderDetailSection(providerReady ? 'options' : 'models')
       }
       if (isProviderSetup && index >= 0 && index < PROVIDER_IDS.length) {
@@ -1638,21 +1690,19 @@ function SetupWizardContent({
     let saved: Promise<void>
     setSaving(true)
     if (agentProject) {
+      const configuration = {
+        ...configurationFromStore(config),
+        providerEnvironment,
+        settings: { ...panelSettings, ...completedDraft.settings, ...appearance },
+      }
       if (deferred) {
         onComplete({
-          configuration: {
-            ...configurationFromStore(config),
-            settings: { ...panelSettings, ...completedDraft.settings, ...appearance },
-          },
+          configuration,
           agentProject,
         })
         return
       }
-      saved = config.useAgentProject(agentProject, {
-        ...panelSettings,
-        ...completedDraft.settings,
-        ...appearance,
-      })
+      saved = config.saveSetup(configuration, { agentProject })
     } else {
       setError(undefined)
       const configuration: SetupConfiguration = {
@@ -1927,7 +1977,10 @@ function SetupWizardContent({
       return
     }
     if (row.selectOptions && row.field && isProviderEnvironmentKey(row.field)) {
-      const current = providerEnvironment[row.field] ?? effectiveEnvironment[row.field]?.value
+      const current =
+        row.field === 'AWS_PROFILE'
+          ? (providerEnvironment.AWS_PROFILE ?? '')
+          : (providerEnvironment[row.field] ?? effectiveEnvironment[row.field]?.value)
       const selected = Math.max(
         0,
         row.selectOptions.findIndex((option) => !option.custom && option.value === current)
@@ -2053,6 +2106,7 @@ function SetupWizardContent({
           modelOptionsElement.current &&
           elementContainsMouse(modelOptionsElement.current, mouse)
         ) {
+          if (selecting) return
           const candidates = providerSectionRows.options
           const current = Math.max(
             0,
@@ -2831,40 +2885,51 @@ function SetupWizardContent({
                       quickstartProviderViewportStart + visibleProviderRows.length < providerRows.length ? '↓' : '',
                     ].join('')}
                   >
-                    <Box
-                      ref={providerListElement}
-                      height={quickstartProviderListHeight}
-                      flexShrink={0}
-                      flexDirection="column"
-                      overflow="hidden"
-                    >
-                      <ProviderList
-                        items={visibleProviderRows.map((row) => ({
-                          id: row.id,
-                          label:
-                            quickstartProviderColumnWidth < 29
-                              ? SHORT_PROVIDER_LABELS[row.id as ProviderId]
-                              : row.label,
-                          description: row.description,
-                          ...(row.status ? { status: row.status } : {}),
-                        }))}
-                        selected={quickstartProvider}
-                        width={quickstartProviderColumnWidth - 2}
-                        rowHeight={quickstartProviderRowHeight}
-                        focused={focusedProviderSection === 'providers'}
-                        selectedBackground
-                        {...(typeof hoveredControl === 'number' &&
-                        hoveredControl >= 0 &&
-                        hoveredControl < PROVIDER_IDS.length
-                          ? { hovered: PROVIDER_IDS[hoveredControl] }
-                          : {})}
-                        onElement={(id, element) =>
-                          registerElement(rowElements.current, PROVIDER_IDS.indexOf(id as ProviderId), element)
-                        }
-                      />
+                    <Box flexGrow={1} columnGap={awsProfileRow ? 1 : 0} overflow="hidden">
+                      <Box width={quickstartProviderListWidth} flexShrink={0} flexDirection="column">
+                        <Box
+                          ref={providerListElement}
+                          height={quickstartProviderListHeight}
+                          flexShrink={0}
+                          flexDirection="column"
+                          overflow="hidden"
+                        >
+                          <ProviderList
+                            items={visibleProviderRows.map((row) => ({
+                              id: row.id,
+                              label:
+                                quickstartProviderListWidth < 29
+                                  ? SHORT_PROVIDER_LABELS[row.id as ProviderId]
+                                  : row.label,
+                              description: row.description,
+                              ...(row.status ? { status: row.status } : {}),
+                            }))}
+                            selected={quickstartProvider}
+                            width={quickstartProviderListWidth}
+                            rowHeight={quickstartProviderRowHeight}
+                            focused={focusedProviderSection === 'providers'}
+                            selectedBackground
+                            {...(typeof hoveredControl === 'number' &&
+                            hoveredControl >= 0 &&
+                            hoveredControl < PROVIDER_IDS.length
+                              ? { hovered: PROVIDER_IDS[hoveredControl] }
+                              : {})}
+                            onElement={(id, element) =>
+                              registerElement(rowElements.current, PROVIDER_IDS.indexOf(id as ProviderId), element)
+                            }
+                          />
+                        </Box>
+                        <Box flexGrow={1} />
+                        {refreshRow ? renderRefreshButton(refreshRow, quickstartProviderListWidth, true) : null}
+                      </Box>
+                      {awsProfileRow ? (
+                        <Box width={quickstartProfileWidth} flexShrink={0} flexDirection="column" overflow="hidden">
+                          {selecting?.field === 'AWS_PROFILE'
+                            ? renderProviderSelect(selecting)
+                            : renderProviderField(awsProfileRow, quickstartProfileWidth, true)}
+                        </Box>
+                      ) : null}
                     </Box>
-                    <Box flexGrow={1} />
-                    {refreshRow ? renderRefreshButton(refreshRow, quickstartProviderColumnWidth - 2, true) : null}
                   </PanelSection>
                   <Box width={quickstartDetailColumnWidth} flexShrink={0} flexDirection="row" overflow="hidden">
                     {showProviderConfiguration ? (
@@ -2898,7 +2963,7 @@ function SetupWizardContent({
                                 ) : null}
                               </Box>
                             ) : null}
-                            {selecting
+                            {selecting && selecting.field !== 'AWS_PROFILE'
                               ? renderProviderSelect(selecting)
                               : visibleProviderFieldRows.map((row) =>
                                   renderProviderField(row, quickstartDetailContentWidth)
@@ -2948,8 +3013,8 @@ function SetupWizardContent({
                           }
                           header={
                             !showModelOptionsPanel && modelOptionRows.length > 0 ? (
-                              <Box columnGap={1}>
-                                <Box ref={modelSectionElement}>
+                              <Box columnGap={quickstartModelColumnWidth < 22 ? 0 : 1}>
+                                <Box ref={modelSectionElement} flexShrink={0}>
                                   <Text
                                     color={
                                       providerDetailSection === 'models' || hoveredControl === 'section:models'
@@ -2962,7 +3027,7 @@ function SetupWizardContent({
                                   </Text>
                                 </Box>
                                 <Text dimColor>│</Text>
-                                <Box ref={optionsSectionElement}>
+                                <Box ref={optionsSectionElement} flexShrink={0}>
                                   <Text
                                     color={
                                       providerDetailSection === 'options' || hoveredControl === 'section:options'

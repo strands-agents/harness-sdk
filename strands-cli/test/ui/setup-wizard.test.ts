@@ -261,7 +261,7 @@ describe('setup presentation', () => {
       await vi.waitFor(() =>
         expect(vi.mocked(discoverAwsCredentials).mock.lastCall![0]!.AWS_PROFILE?.value).toBe(profile)
       )
-      expect(frame).toContain('review�[31m-red')
+      expect(frame).toContain('review-red')
       expect(frame).toContain('--profile review-red')
       expect(frame).not.toContain('\u001b[31m')
     } finally {
@@ -273,6 +273,128 @@ describe('setup presentation', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+
+  it.each(['bedrock', 'bedrock-mantle'] as const)(
+    'selects local AWS profiles for ready %s while a token is present',
+    async (provider) => {
+      const directory = await mkdtemp(join(tmpdir(), 'strands-setup-profiles-'))
+      const credentials = join(directory, 'credentials')
+      const configFile = join(directory, 'config')
+      await writeFile(credentials, '[default]\n[work]\n[shell]\n')
+      await writeFile(
+        configFile,
+        '[default]\nregion=us-east-1\n[profile shell]\nregion=us-east-1\n[profile work]\nregion=eu-west-1\n'
+      )
+      vi.stubEnv('AWS_PROFILE', 'shell')
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'test-token')
+      vi.stubEnv('AWS_CONFIG_FILE', configFile)
+      vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', credentials)
+      for (const key of ['AWS_REGION', 'AWS_DEFAULT_REGION']) vi.stubEnv(key, undefined)
+      vi.mocked(discoverAwsConfiguration).mockImplementation(readAwsConfiguration)
+      const model = PROVIDERS[provider].model({})
+      vi.mocked(discoverProviderModels).mockResolvedValue({
+        available: true,
+        models: [{ id: model.slice(model.indexOf('/') + 1), name: 'Profile test model' }],
+      })
+      const config = CliConfigStore.memory({}, { animations: false }, { profile: { model } })
+      const input = ttyInput()
+      const output = ttyOutput(80, 24)
+      const onComplete = vi.fn()
+      let frame = ''
+      output.on('data', (chunk: Buffer) => {
+        if (chunk.includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+      })
+      const instance = render(createElement(SetupWizard, { config, deferred: true, onComplete }), {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+      })
+      const click = async (text: string): Promise<void> => {
+        const lines = frame.split('\n')
+        const row = lines.findIndex((line) => line.includes(text))
+        expect(row, text).toBeGreaterThanOrEqual(0)
+        const column = lines[row]!.indexOf(text)
+        input.push(mouseInputSequence(0, column, row, 'M'))
+        input.push(mouseInputSequence(3, column, row, 'm'))
+        await instance.waitUntilRenderFlush()
+      }
+      try {
+        await instance.waitUntilRenderFlush()
+        await click('Quickstart')
+        await vi.waitFor(() => expect(frame).toContain('Profile test model'))
+        expect(vi.mocked(discoverProviderModels).mock.lastCall![1]!.AWS_BEARER_TOKEN_BEDROCK?.value).toBe('test-token')
+        expect(config.configuredProviderEnvironment()).toEqual({})
+        expect(frame).not.toContain('AWS region')
+        for (const label of ['Bedrock', 'Mantle', 'Anthropic', 'OpenAI', 'Gemini', 'Ollama', 'LiteLLM']) {
+          expect(frame).toContain(`● ${label}`)
+        }
+        await click('AWS profile')
+        expect(frame).toContain('› Default')
+        const popupLines = frame.split('\n')
+        const popupColumn = popupLines.find((line) => line.includes('› Default'))!.indexOf('› Default')
+        expect(popupColumn).toBeGreaterThan(popupLines.find((line) => line.includes('● Bedrock'))!.indexOf('●'))
+        expect(popupColumn).toBeLessThan(popupLines.find((line) => line.includes('Models'))!.indexOf('Models'))
+        for (const label of ['Bedrock', 'Mantle', 'Anthropic', 'OpenAI', 'Gemini', 'Ollama', 'LiteLLM']) {
+          expect(frame).toContain(`● ${label}`)
+        }
+        await click(provider === 'bedrock' ? 'Mantle' : 'Bedrock')
+        await vi.waitFor(() =>
+          expect(vi.mocked(discoverProviderModels).mock.lastCall![0]).toBe(
+            provider === 'bedrock' ? 'bedrock-mantle' : 'bedrock'
+          )
+        )
+        expect(frame).not.toContain('Enter profile name')
+        await click(provider === 'bedrock' ? 'Bedrock' : 'Mantle')
+        await vi.waitFor(() => expect(vi.mocked(discoverProviderModels).mock.lastCall![0]).toBe(provider))
+        await click('AWS profile')
+        await click('default')
+        await vi.waitFor(() =>
+          expect(vi.mocked(discoverAwsCredentials).mock.lastCall![0]!.AWS_PROFILE?.value).toBe('default')
+        )
+        expect(vi.mocked(discoverAwsCredentials).mock.lastCall![0]!.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined()
+        await click('AWS profile')
+        await click('work')
+        await vi.waitFor(() =>
+          expect(discoverProviderModels).toHaveBeenLastCalledWith(
+            provider,
+            expect.objectContaining({
+              AWS_PROFILE: { value: 'work', source: 'config' },
+              AWS_REGION: { value: 'eu-west-1', source: 'aws-profile' },
+            }),
+            expect.anything()
+          )
+        )
+        expect(config.configuredProviderEnvironment()).toEqual({})
+        expect(process.env.AWS_PROFILE).toBe('shell')
+        expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('test-token')
+
+        await click('AWS profile')
+        expect(frame).toContain('› work')
+        await click('Default')
+        await vi.waitFor(() =>
+          expect(vi.mocked(discoverProviderModels).mock.lastCall![1]!.AWS_BEARER_TOKEN_BEDROCK?.value).toBe(
+            'test-token'
+          )
+        )
+        await click('AWS profile')
+        await click('work')
+        await vi.waitFor(() => expect(frame).toContain('Profile test model'))
+        await click('Save and Launch')
+        expect(onComplete).toHaveBeenCalledWith(
+          expect.objectContaining({
+            configuration: expect.objectContaining({ providerEnvironment: { AWS_PROFILE: 'work' } }),
+          })
+        )
+      } finally {
+        instance.unmount()
+        await instance.waitUntilExit()
+        vi.mocked(discoverAwsConfiguration).mockReturnValue({ profiles: [], regions: [] })
+        vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
+        vi.unstubAllEnvs()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it.each([
     [80, 24],
@@ -476,6 +598,7 @@ describe('setup presentation', () => {
     [80, 24],
     [140, 20],
   ])('keeps model options clickable and scrollable at %s×%s', async (columns, terminalRows) => {
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', undefined)
     const model = PROVIDERS.bedrock.model({})
     const discovery = vi.mocked(discoverProviderModels)
     discovery.mockResolvedValue({
@@ -526,6 +649,7 @@ describe('setup presentation', () => {
         await click('Options')
         expect(frame).not.toContain('Search models')
       }
+      expect(frame).toContain('AWS profile')
       expect(frame).toContain('Reasoning')
       await scroll('Reasoning', 65)
       expect(frame).toContain('Web search')
@@ -545,6 +669,7 @@ describe('setup presentation', () => {
       instance.unmount()
       await instance.waitUntilExit()
       discovery.mockResolvedValue({ available: true, models: [] })
+      vi.unstubAllEnvs()
     }
   })
 
@@ -559,7 +684,7 @@ describe('setup presentation', () => {
         status: 401,
       })
       const input = ttyInput()
-      const output = ttyOutput(40, 24)
+      const output = ttyOutput(60, 20)
       let frame = ''
       output.on('data', (chunk: Buffer) => {
         if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
@@ -590,7 +715,8 @@ describe('setup presentation', () => {
         await press('\r')
         await vi.waitFor(() => expect(frame).toContain('Bedrock'))
         expect(frame).toContain('Mantle')
-        expect(frame).toContain('Gemini')
+        expect(frame).toContain('AWS profile')
+        expect(frame).not.toContain('● LiteLLM')
         const lines = frame.split('\n')
         const providerRow = lines.findIndex((line) => line.includes('Bedrock'))
         const providerColumn = lines[providerRow]!.indexOf('Bedrock')
@@ -605,7 +731,7 @@ describe('setup presentation', () => {
         await press('\t')
         expect(frame).toContain('LiteLLM')
         expect(frame).toContain('API Key')
-        expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(24)
+        expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(20)
       } finally {
         instance.unmount()
         await instance.waitUntilExit()
@@ -631,7 +757,7 @@ describe('setup presentation', () => {
       ],
     })
     const input = ttyInput()
-    const output = ttyOutput(90, 36)
+    const output = ttyOutput(100, 36)
     let frame = ''
     output.on('data', (chunk: Buffer) => {
       if (chunk.toString().includes('\n')) {
@@ -701,7 +827,7 @@ describe('setup presentation', () => {
       models: [{ id: modelId, name: 'Default reasoning model' }],
     })
     const input = ttyInput()
-    const output = ttyOutput(140, 36)
+    const output = ttyOutput(140, 50)
     const config = CliConfigStore.memory({}, { animations: false })
     const onComplete = vi.fn()
     let frame = ''
@@ -775,7 +901,7 @@ describe('setup presentation', () => {
       })),
     })
     const input = ttyInput()
-    const output = ttyOutput(90, 30)
+    const output = ttyOutput(112, 30)
     let frame = ''
     output.on('data', (chunk: Buffer) => {
       if (chunk.toString().includes('\n')) {
@@ -819,7 +945,7 @@ describe('setup presentation', () => {
         .filter((line) => line.includes('bedrock/model-'))
         .map((line) => line.indexOf('bedrock/model-'))
       expect(new Set(modelIdColumns).size).toBe(1)
-      expect(initialLines.every((line) => stringWidth(line) <= 90)).toBe(true)
+      expect(initialLines.every((line) => stringWidth(line) <= 112)).toBe(true)
       const nextRow = initialLines.findIndex((line) => line.includes('↓ Next ·'))
       expect(initialLines[nextRow - 1]!.trim()).not.toBe('')
       await click('↓ Next ·')
@@ -839,6 +965,8 @@ describe('setup presentation', () => {
     ['quickstart', 0],
     ['customize', 1],
   ])('keeps a clicked AWS region visible in %s setup', async (_flow, openingMoves) => {
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', undefined)
+    vi.stubEnv('AWS_PROFILE', undefined)
     vi.mocked(discoverAwsCredentials).mockResolvedValue('missing')
     const input = ttyInput()
     const output = ttyOutput(100, 50)
@@ -884,7 +1012,7 @@ describe('setup presentation', () => {
 
       await click('AWS region')
       await vi.waitFor(() => expect(frame).toContain('us-east-1'))
-      expect(frame).not.toContain('AWS profile')
+      expect(frame).toContain('AWS profile')
       await click('us-east-1')
 
       expect(frame).toContain('us-east-1  ▾')
@@ -892,6 +1020,8 @@ describe('setup presentation', () => {
       await instance.waitUntilRenderFlush()
       expect(frame).toContain('AWS profile')
       expect(frame).toContain('Default credential chain')
+      input.push('\t')
+      await instance.waitUntilRenderFlush()
       input.push('\t')
       await instance.waitUntilRenderFlush()
       input.push('\r')
@@ -902,6 +1032,7 @@ describe('setup presentation', () => {
       instance.unmount()
       await instance.waitUntilExit()
       vi.mocked(discoverAwsCredentials).mockResolvedValue('valid')
+      vi.unstubAllEnvs()
     }
   })
 
@@ -1726,6 +1857,7 @@ describe('setup refresh', () => {
     await writeFile(path, fallback ? 'AWS_PROFILE=fallback\n' : '')
     for (const key of [
       'AWS_PROFILE',
+      'AWS_BEARER_TOKEN_BEDROCK',
       'AWS_CONFIG_FILE',
       'AWS_SHARED_CREDENTIALS_FILE',
       'AWS_REGION',

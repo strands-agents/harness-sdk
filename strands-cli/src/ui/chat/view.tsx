@@ -72,6 +72,7 @@ function ChatViewContent({
   panelQuery = '',
   panelFilter = 'all',
   modelPanelFocus = 'models',
+  modelProfileSelection = 0,
   settingsPanelFocus = 'settings',
   detailScroll = 0,
   dockLanguage,
@@ -137,6 +138,7 @@ function ChatViewContent({
   panelQuery?: string
   panelFilter?: string
   modelPanelFocus?: ModelPanelFocus
+  modelProfileSelection?: number
   settingsPanelFocus?: SettingsPanelFocus
   detailScroll?: number
   dockLanguage?: ChatConfigurationLanguage
@@ -383,6 +385,7 @@ function ChatViewContent({
           query={panelQuery}
           filter={panelFilter}
           modelPanelFocus={modelPanelFocus}
+          modelProfileSelection={modelProfileSelection}
           settingsPanelFocus={settingsPanelFocus}
           detailScroll={detailScroll}
           rows={panelRows ?? snapshot.panel.rows}

@@ -522,6 +522,75 @@ describe('interactive runtime lifecycle', () => {
     }
   })
 
+  it.each([
+    { configured: 'saved', selected: 'team' },
+    { configured: undefined, selected: 'shell' },
+  ])('routes AWS profile $selected through the conversation-preserving reload', async ({ configured, selected }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'strands-runtime-profiles-'))
+    const awsConfig = join(directory, 'config')
+    await writeFile(awsConfig, '[profile shell]\nregion=us-east-1\n[profile team]\nregion=us-west-2\n')
+    vi.stubEnv('AWS_PROFILE', 'shell')
+    vi.stubEnv('AWS_CONFIG_FILE', awsConfig)
+    vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(directory, 'credentials'))
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'fixture-token')
+    const config = CliConfigStore.memory({}, {}, { providerEnvironment: configured ? { AWS_PROFILE: configured } : {} })
+    const requestSetup = vi.fn()
+    const modelDiscovery = vi.spyOn(providerDiscovery, 'discoverProviderModels').mockResolvedValue({
+      available: true,
+      models: [{ id: 'anthropic.claude-old', name: 'Current model' }],
+    })
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const runtimeProfile = { ...config.snapshot().profile, model: 'bedrock/cli-override', name: 'From flags' }
+    const controller = await createInteractiveChat({
+      config,
+      requestSetup,
+      agentProfile: runtimeProfile,
+      agentOptions: { model: runtimeProfile.model },
+      persistModelChanges: false,
+    })
+    try {
+      await controller.openModelPanel()
+      expect(controller.getSnapshot().panel).toMatchObject({
+        kind: 'models',
+        awsProfile: {
+          value: configured ?? '',
+          options: [
+            { value: '', label: 'Environment/default' },
+            { value: 'shell', label: 'shell' },
+            { value: 'team', label: 'team' },
+            ...(configured ? [{ value: configured, label: configured }] : []),
+          ],
+        },
+      })
+      await controller.activatePanelRow({
+        label: 'AWS profile',
+        description: '',
+        value: 'aws-profile:toggle',
+      })
+      await controller.activatePanelRow({
+        label: selected,
+        description: '',
+        value: `aws-profile:select:${selected}`,
+      })
+      expect(requestSetup).toHaveBeenCalledExactlyOnceWith({
+        configuration: expect.objectContaining({
+          profile: config.snapshot().profile,
+          providerEnvironment: { AWS_PROFILE: selected },
+        }),
+        profile: runtimeProfile,
+        conversationId: 'agent-1',
+      })
+      expect(config.configuredProviderEnvironment().AWS_PROFILE).toBe(configured)
+      expect(process.env.AWS_PROFILE).toBe('shell')
+      expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('fixture-token')
+    } finally {
+      await controller.dispose()
+      modelDiscovery.mockRestore()
+      vi.unstubAllEnvs()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('loads persistent permission settings into the Strands backend', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-runtime-config-'))
     const configPath = join(directory, 'cli.toml')
