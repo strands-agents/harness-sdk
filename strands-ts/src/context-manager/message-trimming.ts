@@ -6,7 +6,7 @@
  */
 
 import { Message, ToolResultBlock, ToolUseBlock } from '../types/messages.js'
-import type { TextBlock } from '../types/messages.js'
+import type { MessageMetadata, TextBlock } from '../types/messages.js'
 
 /**
  * Collects a message and its paired partner (if any) for safe removal.
@@ -79,7 +79,7 @@ export function insertMarker(messages: Message[], index: number, marker: TextBlo
  * that Anthropic/Bedrock APIs require. Called after message-level operations that
  * may leave gaps. Constructs new Message objects for merges to avoid mutating
  * objects that may be referenced elsewhere (session storage, event payloads).
- * A merge keeps the earlier message's tracking id and metadata, and is pinned if either was.
+ * A merge keeps the earlier message's tracking id and merges both messages' metadata, so it is pinned if either was.
  */
 export function repairAlternation(messages: Message[]): void {
   let writeIndex = 0
@@ -87,15 +87,22 @@ export function repairAlternation(messages: Message[]): void {
     const current = messages[readIndex]!
     if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
       const prev = messages[writeIndex - 1]!
-      let merged = prev.with({ content: [...prev.content, ...current.content] })
-      if (current.metadata?.custom?.pinned === true && prev.metadata?.custom?.pinned !== true) {
-        merged = merged.with({ metadata: { ...prev.metadata, custom: { ...prev.metadata?.custom, pinned: true } } })
-      }
-      messages[writeIndex - 1] = merged
+      const metadata = mergeMetadata(prev.metadata, current.metadata)
+      messages[writeIndex - 1] = prev.with({
+        content: [...prev.content, ...current.content],
+        ...(metadata && { metadata }),
+      })
     } else {
       messages[writeIndex] = current
       writeIndex++
     }
   }
   messages.length = writeIndex
+}
+
+/** The later message's metadata fields win, and `custom` holds both messages' entries. */
+function mergeMetadata(earlier?: MessageMetadata, later?: MessageMetadata): MessageMetadata | undefined {
+  if (!earlier || !later) return later ?? earlier
+  const custom = { ...earlier.custom, ...later.custom }
+  return { ...earlier, ...later, ...(Object.keys(custom).length > 0 && { custom }) }
 }

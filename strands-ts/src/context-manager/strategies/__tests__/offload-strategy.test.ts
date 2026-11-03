@@ -6,7 +6,7 @@ import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
 import type { OffloadConditions, Percent } from '../offload/conditions.js'
 import { OffloadTargetMatcher } from '../offload/target.js'
 import type { OffloadTarget } from '../offload/target.js'
-import { collectRemovableWithPair, insertMarker } from '../../message-trimming.js'
+import { collectRemovableWithPair, insertMarker, repairAlternation } from '../../message-trimming.js'
 import type { TruncateConfig } from '../../methods/truncate.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
@@ -746,6 +746,36 @@ describe('pinned message protection', () => {
       message.content.some((block) => block instanceof TextBlock && (block as TextBlock).text === 'pinned-a3')
     )
     expect(merged?.metadata?.custom?.pinned).toBe(true)
+  })
+
+  it('repairAlternation merges metadata, the later message winning and custom holding both', () => {
+    const earlierUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+    const laterUsage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 }
+    const messages = [
+      text('user', 'q1'),
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('a1')],
+        trackingId: 'a1',
+        metadata: { usage: earlierUsage, custom: { pinned: true, source: 'a1' } },
+      }),
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('a2')],
+        metadata: { usage: laterUsage, custom: { source: 'a2', tag: 'x' } },
+      }),
+    ]
+
+    repairAlternation(messages)
+
+    expect(messages[1]).toEqual(
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('a1'), new TextBlock('a2')],
+        trackingId: 'a1',
+        metadata: { usage: laterUsage, custom: { pinned: true, source: 'a2', tag: 'x' } },
+      })
+    )
   })
 })
 
