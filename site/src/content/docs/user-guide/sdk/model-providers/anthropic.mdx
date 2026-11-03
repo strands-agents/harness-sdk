@@ -48,9 +48,6 @@ model = AnthropicModel(
     # **model_config
     max_tokens=1028,
     model_id="claude-sonnet-5",
-    params={
-        "temperature": 0.7,
-    }
 )
 
 agent = Agent(model=model, tools=[notebook])
@@ -126,6 +123,24 @@ If you encounter the error `ModuleNotFoundError: No module named 'anthropic'`, t
 ### Import Errors
 
 If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is installed: `npm install @anthropic-ai/sdk`.
+</Tab>
+</Tabs>
+
+### Anthropic SDK 1.x and 2.x
+
+<Tabs>
+<Tab label="Python">
+
+`strands-agents[anthropic]` installs any `anthropic` release from 0.21 up to, but not including, 3.0. The 1.0 and 2.0 releases changed behavior that reaches `AnthropicModel`:
+
+- **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}`. The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+- **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages; a document nested inside a tool result is unaffected.
+- **`http_client`.** From 1.0 the SDK is built on `httpx2`, so a custom `http_client` passed through `client_args` must be an `httpx2.AsyncClient`, not an `httpx.AsyncClient`.
+- **Authentication.** From 2.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `api_key` or `auth_token` in `client_args`, not both.
+</Tab>
+<Tab label="TypeScript">
+
+The TypeScript provider pins `@anthropic-ai/sdk` separately; see the package's `peerDependencies`.
 </Tab>
 </Tabs>
 
