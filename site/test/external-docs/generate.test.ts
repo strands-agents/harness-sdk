@@ -152,15 +152,38 @@ github:
     expect(loaded).toEqual(fixture.manifest)
   })
 
-  it('rejects an upstream promotion without an intentional site change', () => {
+  it('keeps upstream stable docs in preview until the site promotes them', () => {
     const fixture = createFixture()
     const manifest = {
       ...fixture.manifest,
       product: { ...fixture.manifest.product, status: 'stable' as const },
     }
 
-    expect(() => buildExternalDocsProduct({ ...fixture, manifest })).toThrow(
-      /product status "stable" does not match configured publication status "preview"/
+    expect(buildExternalDocsProduct({ ...fixture, manifest })).toEqual(buildExternalDocsProduct(fixture))
+  })
+
+  it('publishes stable docs only when upstream is stable', () => {
+    const fixture = createFixture()
+    const manifest = {
+      ...fixture.manifest,
+      product: { ...fixture.manifest.product, status: 'stable' as const },
+    }
+    const config = { ...fixture.config, publicationStatus: 'stable' as const }
+    const built = buildExternalDocsProduct({ ...fixture, manifest, config })
+    const firstGuide = built.files.get('guides/first.md')
+
+    expect(built.navigation.product.status).toBe('stable')
+    expect(firstGuide).toContain('  status: "stable"')
+    expect(firstGuide).not.toContain('pagefind: false')
+    expect(firstGuide).not.toContain('name: robots')
+  })
+
+  it('rejects a site promotion before upstream is stable', () => {
+    const fixture = createFixture()
+    const config = { ...fixture.config, publicationStatus: 'stable' as const }
+
+    expect(() => buildExternalDocsProduct({ ...fixture, config })).toThrow(
+      /publication status "stable" requires upstream product status "stable"/
     )
   })
 })

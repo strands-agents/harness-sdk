@@ -15,7 +15,7 @@ export function loadExternalDocsManifest(sourceRoot: string, config: ExternalDoc
   const manifestPath = readSourcePath(sourceRoot, config.manifest)
   const parsed: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
   const manifest = parseExternalDocsManifest(parsed, manifestPath)
-  assertManifestMatchesConfig(manifest, config, manifestPath)
+  assertManifestCompatibleWithConfig(manifest, config, manifestPath)
   return manifest
 }
 
@@ -27,7 +27,7 @@ export function buildExternalDocsProduct(options: {
   editRef: string | null
 }): BuiltExternalDocsProduct {
   const { sourceRoot, config, manifest, revision, editRef } = options
-  assertManifestMatchesConfig(manifest, config)
+  assertManifestCompatibleWithConfig(manifest, config)
 
   const publishedRoutes = new Map(manifest.pages.map((page) => [page.source, `${config.routePrefix}/${page.slug}`]))
   const files = new Map<string, string>()
@@ -146,7 +146,7 @@ function buildNavigation(
   }
 }
 
-function assertManifestMatchesConfig(
+function assertManifestCompatibleWithConfig(
   manifest: ExternalDocsManifest,
   config: ExternalDocsProductConfig,
   label = 'external docs manifest'
@@ -154,10 +154,8 @@ function assertManifestMatchesConfig(
   if (manifest.product.id !== config.id) {
     throw new Error(`${label}: product id "${manifest.product.id}" does not match configured id "${config.id}"`)
   }
-  if (manifest.product.status !== config.publicationStatus) {
-    throw new Error(
-      `${label}: product status "${manifest.product.status}" does not match configured publication status "${config.publicationStatus}"`
-    )
+  if (config.publicationStatus === 'stable' && manifest.product.status !== 'stable') {
+    throw new Error(`${label}: publication status "stable" requires upstream product status "stable"`)
   }
 }
 

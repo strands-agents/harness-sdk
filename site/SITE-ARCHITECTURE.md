@@ -148,14 +148,13 @@ components, title, description, and `nav: { group: string, order: positive integ
 Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
 import/export-like prose remain literal text.
 
-The upstream product status is `preview` or `stable` and must match the site's
-`publicationStatus`. Preview pages render an
-`Upstream documentation preview` caution so comparison content cannot be mistaken for the
-canonical guide. When the same slug exists in the current guide, the caution links directly
-to that page for comparison. Promotion to `stable` requires a coordinated site change for the
-publication status, route, navigation label, and canonical-content decision; a lock-only update
-cannot promote pages. After the upstream stable commit merges, the site promotion PR must manually
-pin that SHA in `external-docs.lock.json` alongside those changes.
+The upstream product status is `preview` or `stable`. The site may keep stable upstream docs in
+preview, but it cannot set `publicationStatus` to `stable` while the upstream status is still
+`preview`. Preview pages render an `Upstream documentation preview` caution so comparison content
+cannot be mistaken for the canonical guide. When the same slug exists in the current guide, the
+caution links directly to that page for comparison. Promotion to `stable` requires a coordinated
+site change for the publication status, route, navigation label, and canonical-content decision;
+a lock-only update cannot promote pages.
 
 #### Site registry and lock
 
@@ -165,9 +164,9 @@ immutable commit SHAs.
 Site builds read the SHA, never the moving ref. The scheduled
 `docs-external-sync.yml` workflow resolves each tracked ref, validates and builds the imported
 pages with the same `npm run cms:build` path as docs CI, then opens or updates a draft lock-only PR
-when a status-compatible SHA changes. A status mismatch fails generation before a PR opens so a
-promotion follows the manual sequence above. The workflow summary and PR body link to each
-upstream old-to-new commit comparison.
+when a compatible SHA changes. An upstream stable commit may be pinned while the site keeps the
+pages in preview. A site-side promotion fails generation until the upstream status is also
+`stable`. The workflow summary and PR body link to each upstream old-to-new commit comparison.
 
 #### Generated layout
 
