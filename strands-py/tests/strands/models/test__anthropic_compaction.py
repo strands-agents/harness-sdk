@@ -27,6 +27,10 @@ def test_format_native_block_returns_anthropic_provider_data_unchanged():
         {"text": "plain"},
         {"text": "other", "metadata": {"providerData": {"provider": "bedrock", "data": {"type": "x"}}}},
         {"text": "no data", "metadata": {}},
+        {"text": "string data", "metadata": {"providerData": {"provider": "anthropic", "data": "opaque"}}},
+        {"text": "list data", "metadata": {"providerData": {"provider": "anthropic", "data": [RETURNED]}}},
+        {"text": "null data", "metadata": {"providerData": {"provider": "anthropic", "data": None}}},
+        {"text": "missing data", "metadata": {"providerData": {"provider": "anthropic"}}},
         {"image": {"format": "png", "source": {"bytes": b""}}},
     ],
 )
@@ -117,6 +121,46 @@ def test_compaction_params_keeps_a_non_forcing_tool_choice_and_drops_an_empty_ou
     assert tru_params == {"model": "m1", **exp_extra, "extra_body": {"compaction": {"type": "summarize"}}}
 
 
+def test_compaction_params_leaves_out_what_a_compaction_request_rejects_from_extra_body():
+    request = {
+        "model": "m1",
+        "extra_body": {
+            "other": 1,
+            "stop_sequences": ["STOP"],
+            "context_management": {"edits": []},
+            "tool_choice": {"type": "tool", "name": "x"},
+            "output_config": {"format": {"type": "json_schema"}, "task_budget": {"total": 9, "remaining": 4}},
+        },
+    }
+
+    tru_params = compaction_params(request, None)
+
+    exp_params = {
+        "model": "m1",
+        "extra_body": {"other": 1, "output_config": {"task_budget": {"total": 9}}, "compaction": {"type": "summarize"}},
+    }
+    assert tru_params == exp_params
+
+
+@pytest.mark.parametrize(
+    ("extra_body", "exp_extra_body"),
+    [
+        (
+            {"tool_choice": {"type": "auto"}, "output_config": {"task_budget": {"remaining": 4}}},
+            {"tool_choice": {"type": "auto"}},
+        ),
+        ({"tool_choice": {"type": "any"}, "output_config": {"format": {"type": "json_schema"}}}, {}),
+    ],
+)
+def test_compaction_params_keeps_a_non_forcing_tool_choice_and_drops_an_empty_output_config_in_extra_body(
+    extra_body, exp_extra_body
+):
+    tru_params = compaction_params({"model": "m1", "extra_body": extra_body}, None)
+
+    exp_params = {"model": "m1", "extra_body": {**exp_extra_body, "compaction": {"type": "summarize"}}}
+    assert tru_params == exp_params
+
+
 def test_read_compaction_returns_the_stored_block_and_the_compaction_usage():
     response = {
         "content": [RETURNED],
@@ -192,3 +236,16 @@ async def test_until_cancelled_cancels_the_request_once_the_signal_is_set():
     assert await until_cancelled(request, cancel_signal) is True
     with pytest.raises(asyncio.CancelledError):
         await request
+
+
+@pytest.mark.asyncio
+async def test_until_cancelled_cancels_the_request_when_the_wait_is_cancelled():
+    request = asyncio.ensure_future(asyncio.sleep(60))
+    wait = asyncio.ensure_future(until_cancelled(request, threading.Event()))
+    await asyncio.sleep(0)
+
+    wait.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await wait
+
+    assert request.cancelled()

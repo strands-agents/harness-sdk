@@ -544,10 +544,26 @@ class TestServerSideCompaction:
         assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
 
         assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
-        summary, kept = messages[1]["content"]
-        assert summary["text"].endswith("\n\ncompacted")
-        assert summary["metadata"]["providerData"] == _COMPACTION
-        assert kept == {"text": "a1"}
+        tru_message = messages[1]
+        exp_message = Message(
+            role="assistant",
+            content=[
+                ContentBlock(
+                    text="[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
+                ),
+                ContentBlock(text="a1"),
+            ],
+            metadata={
+                "custom": {
+                    "pinned": True,
+                    "merged_messages": [
+                        {"offset": 0, "metadata": {}},
+                        {"offset": 1, "metadata": {"custom": {"pinned": True}}},
+                    ],
+                }
+            },
+        )
+        assert tru_message == exp_message
 
     @pytest.mark.asyncio
     async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
@@ -661,10 +677,27 @@ class TestServerSideCompaction:
         assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
 
         compacting_agent.model.summarize.assert_awaited_once()
-        assert [message["role"] for message in messages] == ["user", "assistant", "user"]
-        summary, tool_use = messages[1]["content"]
-        assert summary["metadata"]["providerData"] == _COMPACTION
-        assert "toolUse" in tool_use
+        exp_messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(
+                role="assistant",
+                content=[
+                    ContentBlock(
+                        text="[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted",
+                        metadata={"providerData": _COMPACTION},
+                    ),
+                    ContentBlock(toolUse={"toolUseId": "t2", "name": "read", "input": {}}),
+                ],
+                metadata={
+                    "custom": {"merged_messages": [{"offset": 0, "metadata": {}}, {"offset": 1, "metadata": {}}]}
+                },
+            ),
+            Message(
+                role="user",
+                content=[ContentBlock(toolResult={"toolUseId": "t2", "status": "success", "content": [{"text": "r"}]})],
+            ),
+        ]
+        assert messages == exp_messages
 
     @pytest.mark.asyncio
     async def test_copies_the_provider_data_of_the_first_block_that_carries_any(self, compacting_agent):

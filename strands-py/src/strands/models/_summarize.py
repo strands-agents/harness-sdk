@@ -33,8 +33,8 @@ class SummarizeResult:
     """Result of a :meth:`Model.summarize` call.
 
     Attributes:
-        content: The summary, empty when the model wrote none. A provider with server-side compaction may return
-            its own block, which only that provider reads.
+        content: The summary, empty when the model wrote none. A block may carry ``metadata.providerData`` that its
+            provider sends in place of the text, such as a server-side compaction block.
         usage: Token usage of the summary call, ``None`` when the provider reports none.
     """
 

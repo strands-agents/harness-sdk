@@ -34,6 +34,7 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
+from ._cancellation import _poll_cancel_signal
 from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._native_output import (
     StructuredOutputMechanism,
@@ -140,15 +141,6 @@ def _suppress_task_exception(task: "asyncio.Task[None]") -> None:
         task.exception()
 
 
-async def _poll_cancel_signal(cancel_signal: threading.Event) -> None:
-    """Complete once the cancellation signal is set."""
-    # threading.Event has no async notification hook. Poll on this loop rather than running
-    # Event.wait() in an executor: cancelling that await cannot stop a worker already blocked
-    # in Event.wait(), so completed streams could strand worker threads.
-    while not cancel_signal.is_set():
-        await asyncio.sleep(_CANCEL_POLL_INTERVAL)
-
-
 async def _next_stream_event(
     queue: "asyncio.Queue[StreamEvent | None]", cancel_poll: "asyncio.Future[None] | None"
 ) -> "StreamEvent | None":
@@ -189,9 +181,6 @@ async def _next_stream_event(
 T = TypeVar("T", bound=BaseModel)
 
 DEFAULT_READ_TIMEOUT = 120
-
-# How often the consumer side checks a cancellation signal while waiting for the next event.
-_CANCEL_POLL_INTERVAL = 0.05
 
 
 def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:

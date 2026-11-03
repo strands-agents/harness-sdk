@@ -1024,8 +1024,10 @@ class AnthropicModel(Model):
         Returns:
             Total input token count.
         """
+        # The estimate counts what a request sends, which starts at the last native block when one is sent.
+        estimated = from_last_native_block(messages) if self._sends_native_blocks() else messages
         if self.config.get("use_native_token_count") is not True:
-            return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
+            return await super().count_tokens(estimated, tool_specs, system_prompt, system_prompt_content)
 
         try:
             request = self.format_request(
@@ -1050,7 +1052,7 @@ class AnthropicModel(Model):
                 self.config["model_id"],
                 e,
             )
-            return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
+            return await super().count_tokens(estimated, tool_specs, system_prompt, system_prompt_content)
 
     @override
     async def stream(
@@ -1266,7 +1268,7 @@ class AnthropicModel(Model):
             ContextWindowOverflowException: If the request does not fit the context window.
             ModelThrottledException: If the request is throttled by Anthropic.
         """
-        if self.model_info.capabilities.server_side_compaction is not True:
+        if not self._compacts_on_demand():
             return await super().summarize(
                 messages,
                 tool_specs=tool_specs,
@@ -1289,6 +1291,24 @@ class AnthropicModel(Model):
             return SummarizeResult(content=[])
         block, usage = compacted
         return SummarizeResult(content=[block], usage=usage)
+
+    def _compacts_on_demand(self) -> bool:
+        """Whether summarize uses on-demand compaction: the capability is on and the installed SDK has the beta stream.
+
+        An SDK without ``client.beta.messages.stream`` falls back to the base summarize with a warning.
+        """
+        if self.model_info.capabilities.server_side_compaction is not True:
+            return False
+        beta_messages = getattr(getattr(self.client, "beta", None), "messages", None)
+        if callable(getattr(beta_messages, "stream", None)):
+            return True
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+        warnings.warn(
+            "server_side_compaction is enabled but the installed anthropic SDK has no client.beta.messages.stream;"
+            " summarize falls back to the base summarize. Upgrade anthropic to use on-demand compaction",
+            stacklevel=1,
+        )
+        return False
 
     async def _compact(self, params: dict[str, Any]) -> dict[str, Any]:
         """Send a compaction request and return the response message as returned.

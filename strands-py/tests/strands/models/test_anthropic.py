@@ -1685,6 +1685,24 @@ class TestCountTokens:
         assert call_kwargs["messages"] == [{"role": "user", "content": [{"type": "c"}]}]
         assert call_kwargs["extra_headers"] == {"anthropic-beta": "compact-2026-09-04"}
 
+    @pytest.mark.parametrize("use_native_token_count", [False, True])
+    @pytest.mark.asyncio
+    async def test_estimate_counts_from_the_last_native_block_with_the_capability(
+        self, model_with_client, anthropic_client, use_native_token_count
+    ):
+        anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(side_effect=Exception("API error"))
+        model_with_client.update_config(
+            use_native_token_count=use_native_token_count,
+            model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+        )
+        stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "c"}}}}
+        compacted = [{"role": "user", "content": [{"text": "x" * 4000}]}, {"role": "assistant", "content": [stored]}]
+
+        tru_count = await model_with_client.count_tokens(messages=compacted)
+
+        exp_count = await model_with_client.count_tokens(messages=[{"role": "assistant", "content": [stored]}])
+        assert tru_count == exp_count
+
     @pytest.mark.asyncio
     async def test_fallback_on_api_error(self, model_with_client, anthropic_client, messages):
         anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(
@@ -3364,11 +3382,24 @@ async def test_summarize_compacts_with_the_beta_and_the_live_system_prompt_and_t
     assert wire.requests[0].url.path == "/v1/messages"
     assert wire.requests[0].url.params["beta"] == "true"
     assert wire.requests[0].headers["anthropic-beta"] == "compact-2026-09-04"
-    assert compaction["compaction"] == {"type": "summarize", "instructions": "Keep the task."}
-    assert compaction["system"] == conversation["system"]
-    assert compaction["tools"] == conversation["tools"]
-    assert compaction["messages"] == conversation["messages"]
+    assert compaction.pop("compaction") == {"type": "summarize", "instructions": "Keep the task."}
+    assert compaction == conversation
     assert "anthropic-beta" not in wire.requests[1].headers
+
+
+@pytest.mark.asyncio
+async def test_summarize_uses_the_base_summary_when_the_sdk_has_no_beta_stream():
+    wire = AnthropicWire({"content": [{"type": "text", "text": "BASE SUMMARY"}]})
+    model = wire.model()
+    model.client.beta = types.SimpleNamespace()
+
+    with pytest.warns(UserWarning, match="no client.beta.messages.stream"):
+        tru_result = await model.summarize(_compaction_body())
+
+    [body] = wire.bodies
+    assert "compaction" not in body
+    assert "anthropic-beta" not in wire.requests[0].headers
+    assert tru_result.content == [{"text": "BASE SUMMARY"}]
 
 
 @pytest.mark.asyncio
@@ -3535,6 +3566,26 @@ def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(
         "content": "Summary: the user plans a release.",
         "signature": "EuYBCkQY-opaque",
     }
+
+
+def test_format_request_sends_a_block_whose_provider_data_is_not_a_block_as_text(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+    )
+    stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": "opaque"}}}
+    messages = [{"role": "user", "content": [{"text": "first"}]}, {"role": "assistant", "content": [stored]}]
+
+    tru_request = model.format_request(messages)
+
+    exp_messages = [
+        {"role": "user", "content": [{"type": "text", "text": "first"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "summary"}]},
+    ]
+    assert tru_request["messages"] == exp_messages
+    assert "extra_headers" not in tru_request
 
 
 def test_format_request_without_a_stored_block_adds_no_beta_with_the_capability(anthropic_client):

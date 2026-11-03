@@ -135,7 +135,6 @@ class ContentBlock(TypedDict, total=False):
 
 class _TextBlockData(TypedDict):
     text: str
-    metadata: NotRequired[TextBlockMetadata]
 
 
 @dataclass
@@ -144,18 +143,13 @@ class TextBlock:
 
     Attributes:
         text: Text to send.
-        metadata: Optional metadata about the block.
     """
 
     text: str
-    metadata: TextBlockMetadata | None = None
 
     def to_dict(self) -> _TextBlockData:
         """Return the dictionary form of this block."""
-        data: _TextBlockData = {"text": self.text}
-        if self.metadata is not None:
-            data["metadata"] = self.metadata
-        return data
+        return {"text": self.text}
 
 
 class SystemContentBlock(TypedDict, total=False):

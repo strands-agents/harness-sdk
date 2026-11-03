@@ -12,6 +12,7 @@ from typing import Any
 
 from ..types.content import ContentBlock, Message, Messages
 from ..types.event_loop import Usage
+from ._cancellation import _poll_cancel_signal
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,13 @@ _ANTHROPIC_PROVIDER = "anthropic"
 
 _FORCING_TOOL_CHOICES = frozenset({"any", "tool"})
 
-_CANCEL_POLL_INTERVAL = 0.05
-
 
 def _is_native_block(block: ContentBlock) -> bool:
-    """Whether ``block`` is a text block holding Anthropic provider data."""
+    """Whether ``block`` is a text block holding an Anthropic block as its provider data."""
     provider_data = block.get("metadata", {}).get("providerData")
-    return "text" in block and provider_data is not None and provider_data.get("provider") == _ANTHROPIC_PROVIDER
+    if "text" not in block or not isinstance(provider_data, dict):
+        return False
+    return provider_data.get("provider") == _ANTHROPIC_PROVIDER and isinstance(provider_data.get("data"), dict)
 
 
 def format_native_block(block: ContentBlock) -> dict[str, Any] | None:
@@ -39,7 +40,8 @@ def format_native_block(block: ContentBlock) -> dict[str, Any] | None:
         block: A content block.
 
     Returns:
-        The returned block, unchanged, or None for any other block.
+        The returned block, unchanged, or None for any other block, including one whose provider data is not a
+        block.
     """
     if not _is_native_block(block):
         return None
@@ -92,7 +94,11 @@ def _store_compaction_block(block: dict[str, Any]) -> ContentBlock | None:
     return ContentBlock(text=content, metadata={"providerData": {"provider": _ANTHROPIC_PROVIDER, "data": block}})
 
 
-def _without_task_budget_remaining(output_config: dict[str, Any]) -> dict[str, Any]:
+_DROPPED_FIELDS = frozenset({"stop_sequences", "context_management", "tool_choice", "output_config"})
+"""Request fields a compaction request leaves out, or keeps only in part."""
+
+
+def _without_format_and_remaining(output_config: dict[str, Any]) -> dict[str, Any]:
     """Return ``output_config`` without ``format`` and ``task_budget.remaining``, dropping what is left empty."""
     kept = {key: value for key, value in output_config.items() if key != "format"}
     task_budget = kept.get("task_budget")
@@ -105,13 +111,26 @@ def _without_task_budget_remaining(output_config: dict[str, Any]) -> dict[str, A
     return kept
 
 
+def _compactable(fields: dict[str, Any]) -> dict[str, Any]:
+    """Return request ``fields`` without what a compaction request rejects, dropping containers left empty."""
+    kept = {key: value for key, value in fields.items() if key not in _DROPPED_FIELDS}
+    tool_choice = fields.get("tool_choice")
+    if isinstance(tool_choice, dict) and tool_choice.get("type") not in _FORCING_TOOL_CHOICES:
+        kept["tool_choice"] = tool_choice
+    output_config = fields.get("output_config")
+    if isinstance(output_config, dict) and (kept_output := _without_format_and_remaining(output_config)):
+        kept["output_config"] = kept_output
+    return kept
+
+
 def compaction_params(request: dict[str, Any], instructions: str | None) -> dict[str, Any]:
     """Turn a conversation request into an on-demand compaction request.
 
     Leaves out what the API rejects on, or refuses to combine with, a compaction request: ``stop_sequences``, a
     structured-output ``output_config.format``, a ``tool_choice`` that forces a tool,
-    ``output_config.task_budget.remaining``, and ``context_management``. ``compaction`` is not in the installed SDK's
-    request parameters, so it is sent through ``extra_body``.
+    ``output_config.task_budget.remaining``, and ``context_management``, both at the top level and in
+    ``extra_body``. ``compaction`` is not in the installed SDK's request parameters, so it is sent through
+    ``extra_body``.
 
     Args:
         request: The request the model would send for the same messages, system prompt and tools.
@@ -120,15 +139,9 @@ def compaction_params(request: dict[str, Any], instructions: str | None) -> dict
     Returns:
         The keyword arguments of the compaction request.
     """
-    dropped = {"stop_sequences", "context_management", "tool_choice", "output_config", "extra_body"}
-    params = {key: value for key, value in request.items() if key not in dropped}
-    tool_choice = request.get("tool_choice")
-    if tool_choice and tool_choice.get("type") not in _FORCING_TOOL_CHOICES:
-        params["tool_choice"] = tool_choice
-    if output_config := _without_task_budget_remaining(request.get("output_config") or {}):
-        params["output_config"] = output_config
+    params = _compactable({key: value for key, value in request.items() if key != "extra_body"})
     compaction: dict[str, Any] = {"type": "summarize", **({"instructions": instructions} if instructions else {})}
-    params["extra_body"] = {**(request.get("extra_body") or {}), "compaction": compaction}
+    params["extra_body"] = {**_compactable(request.get("extra_body") or {}), "compaction": compaction}
     return params
 
 
@@ -166,12 +179,6 @@ def _compaction_usage(usage: dict[str, Any]) -> Usage | None:
     if cache_write > 0:
         result["cacheWriteInputTokens"] = cache_write
     return result
-
-
-async def _poll_cancel_signal(cancel_signal: threading.Event) -> None:
-    """Complete once the cancellation signal is set."""
-    while not cancel_signal.is_set():
-        await asyncio.sleep(_CANCEL_POLL_INTERVAL)
 
 
 async def until_cancelled(request: "asyncio.Future[Any]", cancel_signal: threading.Event | None) -> bool:
