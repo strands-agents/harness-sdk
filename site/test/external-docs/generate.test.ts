@@ -170,12 +170,43 @@ github:
     }
     const config = { ...fixture.config, publicationStatus: 'stable' as const }
     const built = buildExternalDocsProduct({ ...fixture, manifest, config })
-    const firstGuide = built.files.get('guides/first.md')
 
-    expect(built.navigation.product.status).toBe('stable')
-    expect(firstGuide).toContain('  status: "stable"')
-    expect(firstGuide).not.toContain('pagefind: false')
-    expect(firstGuide).not.toContain('name: robots')
+    expect(built.navigation).toEqual({
+      schemaVersion: 1,
+      product: { id: 'example', name: 'Example', status: 'stable' },
+      revision,
+      routePrefix: 'docs/user-guide/example/source',
+      label: 'Upstream docs preview',
+      groups: [
+        {
+          label: 'Guides',
+          items: [
+            { label: 'First guide', slug: 'docs/user-guide/example/source/guides/first' },
+            { label: 'Second guide', slug: 'docs/user-guide/example/source/guides/second' },
+          ],
+        },
+        {
+          label: 'Overview',
+          items: [{ label: 'Overview', slug: 'docs/user-guide/example/source/overview' }],
+        },
+      ],
+    })
+    expect(built.files.get('guides/first.md')).toBe(`---
+title: "First guide"
+description: "First guide description."
+slug: "docs/user-guide/example/source/guides/first"
+editUrl: "https://github.com/example/docs/edit/main/docs/user/first.md"
+externalDocs:
+  product: "Example"
+  productId: "example"
+  status: "stable"
+  repository: "https://github.com/example/docs"
+  ref: "main"
+  revision: "${revision}"
+  source: "docs/user/first.md"
+---
+Read [Second](../second/).
+`)
   })
 
   it('rejects a site promotion before upstream is stable', () => {
