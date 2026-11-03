@@ -41,10 +41,8 @@ export interface SummarizeConfig {
 
 /**
  * Format a `[Summarized: ...]` marker with an optional summary body.
- *
- * @internal
  */
-export function formatSummarized(description: string, tokens: number, summary?: string): string {
+function formatSummarized(description: string, tokens: number, summary?: string): string {
   const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
   return summary ? `${header}\n\n${summary}` : header
 }

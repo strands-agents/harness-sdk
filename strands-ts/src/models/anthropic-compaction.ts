@@ -22,19 +22,15 @@ export const COMPACTION_BETA = 'compact-2026-09-04'
 
 /**
  * `metadata.providerData.provider` of a block only Anthropic can read.
- *
- * @internal
  */
-export const ANTHROPIC_PROVIDER = 'anthropic'
+const ANTHROPIC_PROVIDER = 'anthropic'
 
 /**
  * Formats a block that holds Anthropic provider data as the block the API returned.
- *
- * @internal
  * @param block - A text block
  * @returns The returned block, or undefined for any other text block
  */
-export function formatNativeBlock(block: TextBlock): Anthropic.ContentBlockParam | undefined {
+function formatNativeBlock(block: TextBlock): Anthropic.ContentBlockParam | undefined {
   const providerData = block.metadata?.providerData
   if (providerData?.provider !== ANTHROPIC_PROVIDER) return undefined
   return providerData.data as Anthropic.ContentBlockParam
@@ -87,12 +83,10 @@ function isNativeBlock(block: ContentBlock): boolean {
 
 /**
  * Stores a returned compaction block: `content` as the text, the whole block as opaque provider data.
- *
- * @internal
  * @param block - A `compaction` block from a response
  * @returns The stored block, or undefined when the block holds no summary
  */
-export function storeCompactionBlock(block: Record<string, unknown>): TextBlock | undefined {
+function storeCompactionBlock(block: Record<string, unknown>): TextBlock | undefined {
   const { content } = block
   if (typeof content !== 'string' || content.length === 0) return undefined
   return new TextBlock(content, { metadata: { providerData: { provider: ANTHROPIC_PROVIDER, data: block } } })

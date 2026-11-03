@@ -206,20 +206,16 @@ function messageToContentBlocks(message: Message, toolNames: Map<string, string>
 
 /**
  * The label the summarizer reads before a tool result's content, such as `[tool result: bash (error)]`.
- *
- * @internal
  */
-export function formatToolResultLabel(block: ToolResultBlock, name: string | undefined): string {
+function formatToolResultLabel(block: ToolResultBlock, name: string | undefined): string {
   const status = block.status === 'error' ? ' (error)' : ''
   return name ? `[tool result: ${name}${status}]` : `[tool result${status}]`
 }
 
 /**
  * Converts tool result content to the blocks the summarizer accepts.
- *
- * @internal
  */
-export function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[] {
+function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[] {
   return content.flatMap(toSummarizerBlocks)
 }
 
