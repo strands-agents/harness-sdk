@@ -15,15 +15,23 @@ import { SandboxTimeoutError } from '../../sandbox/errors.js'
 import { Sandbox } from '../../sandbox/base.js'
 import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type ShellOutput } from './types.js'
 
-const sandboxShellInputSchema = z.object({
-  command: z.string().describe('The shell command to execute.'),
-  timeout: z.number().positive().optional().describe('Timeout in seconds (default: 120).'),
-})
+const DEFAULT_TIMEOUT = 120
+
+type SandboxShellInputSchema = z.ZodObject<{ command: z.ZodString; timeout: z.ZodOptional<z.ZodNumber> }>
+
+function sandboxShellInputSchema(defaultTimeout: number): SandboxShellInputSchema {
+  return z.object({
+    command: z.string().describe('The shell command to execute.'),
+    timeout: z.number().positive().optional().describe(`Timeout in seconds (default: ${defaultTimeout}).`),
+  })
+}
 
 export interface MakeShellOptions {
   name?: string
   description?: string
   inputSchema?: z.ZodType
+  /** Timeout in seconds used when the model omits `timeout`. Defaults to 120. */
+  defaultTimeout?: number
 }
 
 /**
@@ -47,11 +55,15 @@ export function makeShell(
   maybeOptions?: MakeShellOptions
 ): ReturnType<typeof tool> {
   const { boundSandbox, options } = resolveShellArgs(sandboxOrOptions, maybeOptions)
+  const defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT
+  if (!(defaultTimeout > 0)) {
+    throw new Error(`defaultTimeout must be positive, got ${defaultTimeout}`)
+  }
 
   return tool({
     name: options.name ?? 'shell',
     description: options.description ?? SANDBOX_SHELL_DESCRIPTION,
-    inputSchema: (options.inputSchema ?? sandboxShellInputSchema) as typeof sandboxShellInputSchema,
+    inputSchema: (options.inputSchema ?? sandboxShellInputSchema(defaultTimeout)) as SandboxShellInputSchema,
     callback: async (input, context) => {
       if (!context) {
         throw new Error('Tool context is required for shell operations')
@@ -59,7 +71,7 @@ export function makeShell(
 
       const sandbox = boundSandbox ?? context.agent.sandbox
       try {
-        const result = await sandbox.execute(input.command, { timeout: input.timeout ?? 120 })
+        const result = await sandbox.execute(input.command, { timeout: input.timeout ?? defaultTimeout })
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
         // Shell* extends Bash* so pre-rename catch clauses keep matching.

@@ -32,6 +32,7 @@ def make_shell(
     sandbox: Sandbox | None = None,
     name: str = "shell",
     description: str = SANDBOX_SHELL_DESCRIPTION,
+    default_timeout: int = _DEFAULT_TIMEOUT,
 ) -> DecoratedFunctionTool:
     """Create a stateless, sandbox-routed shell tool.
 
@@ -45,19 +46,26 @@ def make_shell(
             configured sandbox is used at call time.
         name: Tool name. Defaults to ``"shell"``.
         description: Tool description shown to the model.
+        default_timeout: Timeout in seconds used when the model omits ``timeout``.
+            Becomes the schema default the model sees. Defaults to ``120``.
 
     Returns:
         A decorated tool that executes shell commands through the sandbox.
+
+    Raises:
+        ValueError: If ``default_timeout`` is not positive.
     """
+    if default_timeout <= 0:
+        raise ValueError(f"default_timeout must be positive, got {default_timeout}")
 
     @tool(name=name, description=description, context="tool_context")
-    async def shell_tool(command: str, tool_context: ToolContext, timeout: int = _DEFAULT_TIMEOUT) -> ShellOutput:
+    async def shell_tool(command: str, tool_context: ToolContext, timeout: int = default_timeout) -> ShellOutput:
         """Executes a shell command and returns its output and exit code.
 
         Args:
             command: The shell command to execute.
             tool_context: Injected by the framework. Not user-facing.
-            timeout: Timeout in seconds (default: 120).
+            timeout: Timeout in seconds.
         """
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
         try:
