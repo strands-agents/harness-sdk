@@ -79,7 +79,7 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
-    "satteri": "^0.10.5",
+    "satteri": "^0.11.6",
     "sitemapper": "^4.1.4",
     "tsx": "^4.21.0",
     "typedoc": "^0.28.20",
