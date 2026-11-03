@@ -34,13 +34,14 @@ describe('shared model info data', () => {
 
   it('returns the entry facts and nothing for unknown ids', () => {
     expect(lookupModelInfo('eu.anthropic.claude-sonnet-4-6')).toEqual({
-      capabilities: { promptCaching: 'cachePoints' },
+      capabilities: { promptCaching: 'cachePoints', reasoning: { defaultEffort: 'high' } },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
     expect(lookupModelInfo('anthropic.claude-opus-5-5').capabilities).toEqual({
       promptCaching: 'cachePoints',
       forcedToolChoice: false,
       nativeStructuredOutput: true,
+      reasoning: { defaultEffort: 'medium' },
     })
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
       capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
@@ -57,6 +58,11 @@ describe('shared model info data', () => {
 
   it('exposes the context window default from the data', () => {
     expect(DEFAULT_CONTEXT_WINDOW_LIMIT).toBe(200_000)
+  })
+
+  it('exports lookupModelInfo from the package root', async () => {
+    const sdk = await import('../../index.js')
+    expect(sdk.lookupModelInfo).toBe(lookupModelInfo)
   })
 
   it('has only the fields ModelInfo defines, with the right types, in every entry', () => {
@@ -76,7 +82,14 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (key === 'forcedToolChoice' || key === 'nativeStructuredOutput')
+        else if (key === 'reasoning') {
+          // The vendors' own level names; a default outside this set is a typo, not a new level.
+          expect(Object.keys(value as object), `${id}.capabilities.reasoning`).toEqual(['defaultEffort'])
+          expect(
+            ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+            `${id}.capabilities.reasoning.defaultEffort`
+          ).toContain((value as { defaultEffort: unknown }).defaultEffort)
+        } else if (key === 'forcedToolChoice' || key === 'nativeStructuredOutput')
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
       }

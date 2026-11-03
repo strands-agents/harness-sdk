@@ -20,12 +20,26 @@ PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 
 
 @dataclass(frozen=True, kw_only=True)
+class ReasoningCapability:
+    """How the model reasons.
+
+    Attributes:
+        default_effort: The effort the vendor's own agent harness runs the model at by default, in
+            the vendor's level names (``medium``, ``high``); the SDK does not send it.
+    """
+
+    default_effort: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class ModelCapabilities:
     """What the model can do.
 
     A yes/no fact is a ``bool``; a fact with more than two states is a string literal, like
-    :data:`PromptCaching` (which mechanism). A fact about two features together gets its own field
-    named after the pair. ``None`` is unknown either way.
+    :data:`PromptCaching` (which mechanism); a value the SDK passes through uninterpreted (a vendor's
+    own level name) is a plain ``str``. A fact about two features together gets its own field named
+    after the pair; facts about one feature are grouped in a nested record, like
+    :class:`ReasoningCapability`. ``None`` is unknown either way.
 
     Attributes:
         stateful: Whether the model keeps conversation state server-side;
@@ -35,12 +49,14 @@ class ModelCapabilities:
             (``any`` or a named tool).
         native_structured_output: Whether the provider can make the model's text output conform to a
             JSON schema.
+        reasoning: How the model reasons; always present, every field None when unknown.
     """
 
     stateful: bool | None = None
     prompt_caching: PromptCaching | None = None
     forced_tool_choice: bool | None = None
     native_structured_output: bool | None = None
+    reasoning: ReasoningCapability = ReasoningCapability()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,7 +79,8 @@ class ModelInfo:
 
     Read it from :attr:`strands.models.Model.model_info`.
 
-    Both sections are always present; when nothing is known about one, every field in it is None.
+    Both sections are always present; when nothing is known about one, every fact in it is None
+    (``capabilities.reasoning`` is a nested record that is always present too).
 
     Attributes:
         capabilities: What the model can do.
@@ -93,18 +110,23 @@ class ModelInfo:
         )
 
 
-_SectionT = TypeVar("_SectionT", ModelCapabilities, ModelLimits)
+_SectionT = TypeVar("_SectionT", ModelCapabilities, ModelLimits, ReasoningCapability)
 
 
 def _merge_section(parts: list[_SectionT], empty: _SectionT) -> _SectionT:
-    """Merge one section of the records, later defined fields winning; the empty section when nothing is known."""
+    """Merge one section of the records, later defined fields winning; the empty section when nothing is known.
+
+    A nested record (``capabilities.reasoning``) merges field by field the same way.
+    """
     merged = empty
     for part in parts:
-        known = {
-            field.name: getattr(part, field.name) for field in fields(part) if getattr(part, field.name) is not None
-        }
-        if known:
-            merged = replace(merged, **known)
+        for field in fields(part):
+            value = getattr(part, field.name)
+            if isinstance(value, ReasoningCapability):
+                value = _merge_section([getattr(merged, field.name), value], ReasoningCapability())
+            elif value is None:
+                continue
+            merged = replace(merged, **{field.name: value})
     return merged
 
 
@@ -113,7 +135,9 @@ _CAPABILITY_FIELDS = {
     "promptCaching": "prompt_caching",
     "forcedToolChoice": "forced_tool_choice",
     "nativeStructuredOutput": "native_structured_output",
+    "reasoning": "reasoning",
 }
+_REASONING_FIELDS = {"defaultEffort": "default_effort"}
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.
 _PROMPT_CACHING_VALUES: dict[str, PromptCaching] = {
@@ -141,6 +165,10 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     if "prompt_caching" in known:
         value = known["prompt_caching"]
         known["prompt_caching"] = _PROMPT_CACHING_VALUES.get(value) if isinstance(value, str) else None
+    if "reasoning" in known:
+        known["reasoning"] = _section(raw, "reasoning", _REASONING_FIELDS, ReasoningCapability)
+    if "default_effort" in known and not isinstance(known["default_effort"], str):
+        known["default_effort"] = None
     return section(**known)
 
 
@@ -177,7 +205,7 @@ def _load_data() -> tuple[int, dict[str, ModelInfo]]:
 DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS = _load_data()
 
 
-def lookup_model(model_id: str) -> ModelInfo | None:
+def lookup_model(model_id: object) -> ModelInfo | None:
     """Find the entry for a model id.
 
     Tries the id as given, then without a trailing Bedrock version suffix, then without a trailing
@@ -187,11 +215,13 @@ def lookup_model(model_id: str) -> ModelInfo | None:
     ``anthropic.claude-opus-5-5-20260401-v1:0`` too.
 
     Args:
-        model_id: The model id to look up.
+        model_id: The model id to look up; a config without one (``None``) is unknown.
 
     Returns:
         The entry, or None when the id is not in the data.
     """
+    if not isinstance(model_id, str):
+        return None
     candidate = model_id
     while True:
         unversioned = _VERSION_SUFFIX.sub("", candidate)
@@ -204,16 +234,19 @@ def lookup_model(model_id: str) -> ModelInfo | None:
         candidate = candidate[dot_index + 1 :]
 
 
-def lookup_model_info(model_id: object) -> ModelInfo:
-    """Report what the shared model info data knows about a model.
+def lookup_model_info(model_id: str) -> ModelInfo:
+    """Report what the shared model info data knows about a model, without building one.
+
+    :attr:`strands.models.Model.model_info` is the resolved view once a model exists: it adds what
+    the provider declares and the ``model_info`` config override on top of this.
 
     Args:
-        model_id: The model id to describe; anything but a string is unknown.
+        model_id: The model id to describe.
 
     Returns:
         What the data knows about the model; empty when it knows nothing.
     """
-    return ModelInfo.merge(lookup_model(model_id) if isinstance(model_id, str) else None)
+    return ModelInfo.merge(lookup_model(model_id))
 
 
 def get_context_window_limit(model_id: str) -> int | None:

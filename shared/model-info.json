@@ -12,7 +12,10 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-sonnet-4-20250514": {
@@ -41,7 +44,10 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-opus-4-7": {
@@ -50,7 +56,10 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "reasoning": {
+          "defaultEffort": "xhigh"
+        }
       }
     },
     "claude-opus-4-8": {
@@ -61,7 +70,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-opus-5": {
@@ -72,7 +84,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-opus-5-5": {
@@ -83,7 +98,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "claude-fable-5": {
@@ -92,7 +110,10 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-fable-5-1": {
@@ -102,7 +123,10 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "forcedToolChoice": false
+        "forcedToolChoice": false,
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-sonnet-5": {
@@ -113,7 +137,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "claude-sonnet-5-5": {
@@ -124,7 +151,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "claude-haiku-5-5": {
@@ -135,7 +165,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "claude-opus-4-5": {
@@ -330,56 +363,111 @@
     "gpt-6-astra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "low"
+        }
       }
     },
     "gpt-6.1-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "low"
+        }
       }
     },
     "openai.gpt-6.1-sol": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "low"
+        }
       }
     },
     "gpt-6.1-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "low"
+        }
       }
     },
     "openai.gpt-6.1-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "low"
+        }
       }
     },
     "gpt-6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-6-luna": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.6": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "low"
+        }
       }
     },
     "gpt-5.6-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.6-luna": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "openai.gpt-5.6-cyber": {
@@ -395,6 +483,11 @@
     "gpt-5.5": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.5-pro": {
@@ -405,6 +498,11 @@
     "gpt-5.4": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.4-pro": {
@@ -415,6 +513,11 @@
     "gpt-5.4-mini": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.4-nano": {
@@ -425,6 +528,11 @@
     "gpt-5.2": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5.2-pro": {
@@ -435,11 +543,21 @@
     "gpt-5.1": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-5-mini": {
@@ -540,11 +658,21 @@
     "gemini-3-pro-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "gemini-3-flash-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "gemini-3.6-flash": {
@@ -555,26 +683,51 @@
     "gemini-3.5-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "gemini-3.5-flash-lite": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "gemini-3.1-flash-lite": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "gemini-3.1-pro-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "gemini-3.1-flash-lite-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "high"
+        }
       }
     },
     "mistral-large-latest": {
@@ -615,11 +768,21 @@
     "openai.gpt-oss-120b": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "openai.gpt-oss-20b": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "openai.gpt-oss-safeguard-120b": {
@@ -710,11 +873,21 @@
     "gpt-oss-120b": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gpt-oss-20b": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "reasoning": {
+          "defaultEffort": "medium"
+        }
       }
     },
     "gemini-4-argon": {
