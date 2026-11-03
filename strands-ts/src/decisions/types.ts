@@ -15,8 +15,14 @@ import type { ContentBlock, Message } from '../types/messages.js'
  */
 export type DecisionInput = string | ContentBlock[] | Message[]
 
+/** Per-call options a {@link DecisionModel} implementation receives in `_ask`. */
+export interface DecisionCallOptions {
+  /** Aborts the underlying decision call when signalled. Built-in implementations honor it; the provider decides how promptly the call stops. */
+  cancelSignal?: AbortSignal
+}
+
 /** Per-call options for {@link DecisionModel.ask}. */
-export interface AskOptions {
+export interface AskOptions extends DecisionCallOptions {
   /** The request to add this decision's token usage to, such as a hook event's or tool context's `invocationContext`; the request's limits don't apply to the decision. */
   invocationContext?: InvocationContext
 }

@@ -132,7 +132,7 @@ describe('LLMDecisionModel', () => {
       expect((answer as Uncertain).reason).toBe('the input mentioned no color')
     })
 
-    it('omits uncertain from the enum when a question opts out', async () => {
+    it('omits uncertain from the enum and offers no reason when a question opts out', async () => {
       const model = toolUseModel({ q: 'yes' })
       const decision = new LLMDecisionModel({ model })
 
@@ -144,10 +144,14 @@ describe('LLMDecisionModel', () => {
       const schema = toolSpec?.inputSchema as {
         properties?: Record<string, { properties?: { answer?: { enum?: string[] } } }>
       }
-      expect(schema.properties?.['q']?.properties?.answer?.enum).toEqual(['yes', 'no'])
+      const answerSchema = schema.properties?.['q']?.properties
+      expect({ fields: Object.keys(answerSchema ?? {}), choices: answerSchema?.answer?.enum }).toEqual({
+        fields: ['answer'],
+        choices: ['yes', 'no'],
+      })
     })
 
-    it('appends uncertain to the enum by default', async () => {
+    it('appends uncertain to the enum and offers a reason by default', async () => {
       const model = toolUseModel({ q: 'uncertain' })
       const decision = new LLMDecisionModel({ model })
 
@@ -157,7 +161,11 @@ describe('LLMDecisionModel', () => {
       const schema = toolSpec?.inputSchema as {
         properties?: Record<string, { properties?: { answer?: { enum?: string[] } } }>
       }
-      expect(schema.properties?.['q']?.properties?.answer?.enum).toEqual(['yes', 'no', 'uncertain'])
+      const answerSchema = schema.properties?.['q']?.properties
+      expect({ fields: Object.keys(answerSchema ?? {}), choices: answerSchema?.answer?.enum }).toEqual({
+        fields: ['answer', 'reason'],
+        choices: ['yes', 'no', 'uncertain'],
+      })
     })
 
     it('forces the structured-output tool', async () => {
@@ -167,6 +175,17 @@ describe('LLMDecisionModel', () => {
       await decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(model.options[0]?.toolChoice).toEqual({ tool: { name: STRUCTURED_OUTPUT_TOOL_NAME } })
+      expect(model.options[0]).not.toHaveProperty('cancelSignal')
+    })
+
+    it('forwards the cancel signal to the model call', async () => {
+      const model = toolUseModel({ q: 'true' })
+      const decision = new LLMDecisionModel({ model })
+      const controller = new AbortController()
+
+      await decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } }, { cancelSignal: controller.signal })
+
+      expect(model.options[0]?.cancelSignal).toBe(controller.signal)
     })
 
     it('wraps a plain string state as a single user message', async () => {
