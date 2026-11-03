@@ -63,6 +63,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ env.PR_HEAD_SHA }}
+          fetch-depth: 0
           persist-credentials: false
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
 

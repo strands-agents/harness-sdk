@@ -1,5 +1,6 @@
 import { getCollection, type CollectionEntry } from 'astro:content'
 import type { ChangelogEntry } from '../content.config'
+import { SDK_META, type Sdk } from '../config/changelog'
 import { compareVersionDesc } from './semver'
 export { compareVersionDesc } from './semver'
 
@@ -181,4 +182,56 @@ export function getAreaCounts(entries: ChangelogEntry[]): AreaCount[] {
 
 export function formatChangelogDate(date: Date): string {
   return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/**
+ * Newest release of each of a product's streams: one per language, or one for
+ * single-stream products. Expects newest-first input (see getReleases).
+ */
+export function latestPerStream(releases: ChangelogRelease[], sdk: Sdk): ChangelogRelease[] {
+  const seen = new Set<string>()
+  return releases.filter((r) => {
+    if (r.data.sdk !== sdk || seen.has(streamKey(r))) return false
+    seen.add(streamKey(r))
+    return true
+  })
+}
+
+export interface FooterReleases {
+  byProduct: Record<Sdk, ChangelogRelease[]>
+}
+
+/**
+ * Releases to show in the docs footer. Pages outside a product (`undefined`)
+ * and products without their own stream (`null`) show none, so a page never
+ * shows another product's release.
+ */
+export function footerReleasesForProduct(
+  releases: FooterReleases | undefined,
+  sdk: Sdk | null | undefined
+): ChangelogRelease[] {
+  if (!releases || !sdk) return []
+  return releases.byProduct[sdk]
+}
+
+let footerReleases: Promise<FooterReleases> | undefined
+
+/**
+ * Latest release per stream for every product, for the docs footer. The
+ * footer renders on every page, so the build computes this once instead of
+ * re-reading the collection per page, which nearly doubled peak build memory. Dev skips the cache so content edits show up.
+ */
+export function getFooterReleases(): Promise<FooterReleases> {
+  if (import.meta.env.DEV) return loadFooterReleases()
+  footerReleases ??= loadFooterReleases()
+  return footerReleases
+}
+
+async function loadFooterReleases(): Promise<FooterReleases> {
+  const releases = await getReleases()
+  const sdks = Object.keys(SDK_META) as Sdk[]
+  const byProduct = Object.fromEntries(
+    sdks.map((sdk) => [sdk, latestPerStream(releases, sdk)])
+  ) as FooterReleases['byProduct']
+  return { byProduct }
 }
