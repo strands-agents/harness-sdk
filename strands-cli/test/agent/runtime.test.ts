@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, normalize, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { unzipSync } from 'fflate'
 import {
@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
 import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
-import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
+import { AgentSkills, type Skill } from '@strands-agents/sdk/vended-plugins/skills'
 
 const mocks = vi.hoisted(() => ({
   createHarness: vi.fn(),
@@ -1575,7 +1575,8 @@ describe('interactive runtime lifecycle', () => {
       expect(await realpath(pwd!.stdout.trim())).toBe(realSecondWorkspace)
       const skillsAgent = new Agent({ plugins: [secondOptions.skills], sandbox })
       await skillsAgent.initialize()
-      await expect(secondOptions.skills.getAvailableSkills(skillsAgent)).resolves.toEqual(
+      const availableSkills: readonly Skill[] = await secondOptions.skills.getAvailableSkills(skillsAgent)
+      expect(availableSkills.map((skill) => ({ ...skill, path: skill.path && normalize(skill.path) }))).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: 'remote', path: join(secondWorkspace, '.agent', 'skills', 'remote') }),
         ])

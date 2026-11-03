@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 import { parseArgs } from '../../src/cli/arguments.js'
-import type { ChatEvent, ChatPermissionRequest } from '../../src/agent/types.js'
+import type { ChatEvent, ChatPermissionRequest, ChatTask } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { AgentMessaging, type PeerMessage, type PeerMessageRouter } from '../../src/agent/messaging.js'
 import { importAgentProject } from '../../src/project/import.js'
@@ -224,6 +224,7 @@ export const agent = await createHarness({
     const backends: TypescriptBackend[] = []
     const runs: Promise<ChatEvent[]>[] = []
     let stopActivity: (() => void) | undefined
+    let stopTasks: (() => void) | undefined
     let controlRequest: Promise<unknown> | undefined
     const received: { message: PeerMessage; result: Promise<ChatEvent[]> }[] = []
     const collect = (stream: AsyncIterable<ChatEvent>): Promise<ChatEvent[]> => {
@@ -311,6 +312,10 @@ export const agent = await createHarness({
         text: expect.stringContaining('hello child'),
       })
 
+      let watchedTasks: readonly ChatTask[] = []
+      stopTasks = second.watchTasks((tasks) => {
+        watchedTasks = tasks
+      })
       const background = collect(
         second.stream(
           JSON.stringify({
@@ -331,9 +336,10 @@ export const agent = await createHarness({
       )
       expect(delivered).toContainEqual(expect.objectContaining({ type: 'toolResult', status: 'success' }))
       const backgroundEvents = await background
-      const backgroundTask = backgroundEvents
-        .flatMap((event) => (event.type === 'tasks' ? event.tasks : []))
-        .find((task) => task.source === 'background')!
+      const backgroundTask = [
+        ...watchedTasks,
+        ...backgroundEvents.flatMap((event) => (event.type === 'tasks' ? event.tasks : [])),
+      ].find((task) => task.source === 'background')!
       expect(backgroundTask).toBeDefined()
       let activityUpdates = 0
       stopActivity = second.watchTaskActivity(backgroundTask.id, () => {
@@ -358,6 +364,7 @@ export const agent = await createHarness({
       expect(() => registry.send('agent-1', task.id, 'too late')).toThrow('Unknown peer agent')
     } finally {
       stopActivity?.()
+      stopTasks?.()
       await writeFile(release, 'done')
       await Promise.all(backends.map((backend) => backend.dispose()))
       await Promise.allSettled([...runs, controlRequest])

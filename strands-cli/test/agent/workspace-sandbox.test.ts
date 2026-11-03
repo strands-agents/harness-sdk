@@ -88,13 +88,15 @@ describe('WorkspaceSandbox', () => {
     ].join(';')
     const command =
       process.platform === 'win32'
-        ? `& '${process.execPath.replaceAll("'", "''")}' -e '${script.replaceAll("'", "''")}'`
-        : `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`
+        ? '& $env:STRANDS_TEST_NODE -e $env:STRANDS_TEST_SCRIPT'
+        : '"$STRANDS_TEST_NODE" -e "$STRANDS_TEST_SCRIPT"'
     const sandbox = new WorkspaceSandbox(process.cwd())
     const streamed = { stdout: '', stderr: '' }
     let result
 
-    for await (const event of sandbox.executeStreaming(command)) {
+    for await (const event of sandbox.executeStreaming(command, {
+      env: { STRANDS_TEST_NODE: process.execPath, STRANDS_TEST_SCRIPT: script },
+    })) {
       if (event.type === 'streamChunk') {
         streamed[event.streamType] += event.data
       } else {
@@ -116,7 +118,7 @@ describe('WorkspaceSandbox', () => {
         "process.stdout.write(String(child.pid) + '\\n')",
         'setInterval(() => {}, 1_000)',
       ].join(';')
-      const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(parentScript)}`
+      const command = '"$STRANDS_TEST_NODE" -e "$STRANDS_TEST_SCRIPT"'
       const sandbox = new WorkspaceSandbox(process.cwd())
       const abort = new AbortController()
       let descendantPid: number | undefined
@@ -125,7 +127,10 @@ describe('WorkspaceSandbox', () => {
       try {
         await expect(
           (async () => {
-            for await (const event of sandbox.executeStreaming(command, { signal: abort.signal })) {
+            for await (const event of sandbox.executeStreaming(command, {
+              signal: abort.signal,
+              env: { STRANDS_TEST_NODE: process.execPath, STRANDS_TEST_SCRIPT: parentScript },
+            })) {
               if (event.type === 'streamChunk' && event.streamType === 'stdout') {
                 const pid = Number(event.data.trim())
                 expect(pid).toBeGreaterThan(0)

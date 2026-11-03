@@ -17,7 +17,10 @@ export class TerminalScreen {
   get text() {
     const buffer = this.terminal.buffer.active
     return Array.from({ length: this.terminal.rows }, (_, row) =>
-      buffer.getLine(buffer.viewportY + row)?.translateToString(true)
+      buffer
+        .getLine(buffer.viewportY + row)
+        ?.translateToString(true, 0, this.terminal.cols)
+        .trimEnd()
     ).join('\n')
   }
 

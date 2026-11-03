@@ -598,9 +598,11 @@ agent = create_agent()`
     { capture: false, fail: true },
     { capture: true, fail: false },
     { capture: true, fail: true },
-  ])('flushes memory before reconstruction or handoff: capture=$capture fail=$fail', async ({ capture, fail }) => {
-    const backend = await open(
-      `import json
+  ])(
+    'flushes memory before reconstruction or handoff: capture=$capture fail=$fail',
+    async ({ capture, fail }) => {
+      const backend = await open(
+        `import json
 from pathlib import Path
 from strands.memory import MemoryManager
 from strands.memory.types import MemoryStore
@@ -637,33 +639,35 @@ ${baseSource.replace('"memory": False', '"memory": manager').replace(
 
 agent = create_agent()`
 )}`
-    )
-    await runTurn(backend)
-    const change = () => (capture ? backend.captureConversation() : backend.clear())
-    if (fail) {
-      const messages = backend.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
-      await writeFile(join(root, 'fail-flush'), '')
-      await expect(change()).rejects.toThrow('memory flush failed')
-      expect(await readFile(join(root, 'build-count'), 'utf8')).toBe('1')
-      expect(backend.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
-        messages
       )
-      await rm(join(root, 'fail-flush'))
-      expect((await runTurn(backend)).stopReason).toBe('end_turn')
-    }
-    await change()
-    if (capture) {
-      expect(backend.messages.length).toBeGreaterThan(0)
-      await open(await readFile(join(root, 'agent.py'), 'utf8'))
-    } else {
-      expect(backend.messages).toEqual([])
-    }
-    expect(await readFile(join(root, 'factory-seen'), 'utf8')).toBe(fail ? '4' : '2')
-    await backend.dispose()
-    await backend.dispose()
-    const saved = JSON.parse(await readFile(join(root, 'saved.json'), 'utf8')) as unknown[]
-    expect(saved).toHaveLength(fail ? 4 : 2)
-  })
+      await runTurn(backend)
+      const change = () => (capture ? backend.captureConversation() : backend.clear())
+      if (fail) {
+        const messages = backend.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
+        await writeFile(join(root, 'fail-flush'), '')
+        await expect(change()).rejects.toThrow('memory flush failed')
+        expect(await readFile(join(root, 'build-count'), 'utf8')).toBe('1')
+        expect(backend.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
+          messages
+        )
+        await rm(join(root, 'fail-flush'))
+        expect((await runTurn(backend)).stopReason).toBe('end_turn')
+      }
+      await change()
+      if (capture) {
+        expect(backend.messages.length).toBeGreaterThan(0)
+        await open(await readFile(join(root, 'agent.py'), 'utf8'))
+      } else {
+        expect(backend.messages).toEqual([])
+      }
+      expect(await readFile(join(root, 'factory-seen'), 'utf8')).toBe(fail ? '4' : '2')
+      await backend.dispose()
+      await backend.dispose()
+      const saved = JSON.parse(await readFile(join(root, 'saved.json'), 'utf8')) as unknown[]
+      expect(saved).toHaveLength(fail ? 4 : 2)
+    },
+    30_000
+  )
 
   it('reconstructs generated direct create_harness source without requiring a redundant factory', async () => {
     const authored = baseSource

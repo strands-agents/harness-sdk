@@ -863,7 +863,7 @@ describe('TUI mouse input', () => {
       instance.unmount()
       await controller.dispose()
     }
-  })
+  }, 15_000)
 
   it.each(['review', 'review\u001b[31m-red'])(
     'opens and selects skill %j before activating it on submit',

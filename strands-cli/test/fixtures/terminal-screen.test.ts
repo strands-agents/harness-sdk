@@ -34,6 +34,10 @@ it('reads viewport text and locates styled controls after wide characters', asyn
     expect(screen.text.split('\n')).toEqual(['File 界Launch', 'Ready', '', ''])
     expect(screen.locate('Launch')).toMatchObject({ column: 8, row: 1 })
     expect(screen.locate('Launch')!.style).not.toEqual(screen.locate('Ready')!.style)
+    await screen.write('\u001b[?1049h\u001b[HReady\u001b[1;21HHidden')
+    screen.resize(10, 4)
+    expect(screen.text.split('\n')).toEqual(['Ready', '', '', ''])
+    expect(screen.locate('Hidden')).toBeUndefined()
   } finally {
     screen.dispose()
   }

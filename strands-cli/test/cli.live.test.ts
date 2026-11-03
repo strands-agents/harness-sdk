@@ -147,7 +147,8 @@ describe('strands CLI e2e', () => {
         expect(() => process.kill(pid!, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
         passed = true
       } finally {
-        await (manager?.dispose() ?? voice.dispose())
+        if (manager) await manager.dispose()
+        else await voice.dispose()
         if (passed) rmSync(cwd, { recursive: true, force: true })
         else {
           writeFileSync(

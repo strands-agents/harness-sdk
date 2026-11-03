@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { Agent } from '@strands-agents/sdk'
 import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { describe, expect, it, vi } from 'vitest'
@@ -89,7 +89,8 @@ describe('skill discovery', () => {
         () => agent,
         () => plugin
       )
-      await expect(runtime.list()).resolves.toMatchObject([
+      const skills = await runtime.list()
+      expect(skills.map((skill) => ({ ...skill, path: skill.path && normalize(skill.path) }))).toMatchObject([
         {
           name: 'review',
           description: 'Project review',
