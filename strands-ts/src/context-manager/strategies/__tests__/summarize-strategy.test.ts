@@ -510,53 +510,92 @@ describe('server-side compaction', () => {
     expect(toolUse).toBeInstanceOf(ToolUseBlock)
   })
 
-  it('compacts a pinned message 1 and keeps it after the summary', async () => {
+  const pinned = (role: 'user' | 'assistant', text: string): Message =>
+    new Message({ role, content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
+
+  it('leaves the opening run in place when message 1 is pinned', async () => {
     const model = compactingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
-    messages[1] = new Message({
-      role: 'assistant',
-      content: [new TextBlock('a1')],
-      metadata: { custom: { pinned: true } },
-    })
-    const [task, a1, u2, a3] = messages
+    messages[1] = pinned('assistant', 'a1')
+    const before = messages.map((message) => message.toJSON())
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
+
+    expect(model.summarize).not.toHaveBeenCalled()
+    expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
+  })
+
+  it('compacts the opening run up to a pinned message', async () => {
+    const model = compactingModel()
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    const a3 = pinned('assistant', 'a3')
+    messages[3] = a3
+    const [task, a1, u2] = messages
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
     expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
 
-    expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2, a3])
-    const [summary, kept] = messages[1]!.content as TextBlock[]
-    expect(summary!.metadata?.providerData).toEqual(COMPACTION)
-    expect([kept!.text, kept!.metadata?.providerData]).toEqual(['a1', undefined])
+    expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2])
+    expect(messages[0]).toBe(task)
+    expect(messages[1]!.content).toStrictEqual([
+      new TextBlock(`[Summarized: 2 messages, ~${await model.countTokens([a1!, u2!])} tokens]\n\ncompacted`, {
+        metadata: { providerData: COMPACTION },
+      }),
+      new TextBlock('a3'),
+    ])
+    expect(messages[1]!.trackingId).toBe(a3.trackingId)
+    expect(messages.slice(2).map((message) => (message.content[0] as TextBlock).text)).toEqual(['u4', 'a5', 'u6'])
   })
 
-  it('compacts again after the summary joins a pinned message', async () => {
+  it('does not compact past a pinned message on a later pass', async () => {
     const model = compactingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
-    const a3 = new Message({
-      role: 'assistant',
-      content: [new TextBlock('a3')],
-      metadata: { custom: { pinned: true } },
-    })
-    messages[3] = a3
+    messages[3] = pinned('assistant', 'a3')
     await Offload.summarize('*', { model })
       .when({ utilization: 0.5, preserveRecent: 3 })
       .apply(makeContext(messages, 0.9, { stream: vi.fn() }))
-    expect((messages[1]!.content as TextBlock[]).slice(1).map((block) => block.text)).toEqual(['a3'])
     messages.push(
       new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
       new Message({ role: 'user', content: [new TextBlock('u8')] })
     )
+    const before = messages.map((message) => message.toJSON())
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
 
-    expect(model.summarize).toHaveBeenCalledTimes(2)
-    const [summary, ...rest] = messages[1]!.content as TextBlock[]
-    expect(summary!.text).toMatch(/\n\ncompacted$/)
-    expect(summary!.metadata?.providerData).toEqual(COMPACTION)
-    expect(rest.map((block) => block.text)).toEqual(['a3', 'a7'])
-    expect(mergedMessages(messages[1]!)[1]?.trackingId).toBe(a3.trackingId)
-    expect(messages[1]!.trackingId).toBe(a3.trackingId)
+    expect(model.summarize).toHaveBeenCalledOnce()
+    expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
+  })
+
+  it('stops the compaction before a tool use whose result is left out', async () => {
+    const model = compactingModel()
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    messages[1] = new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ name: 'read', toolUseId: 't1', input: {} })],
+    })
+    // A merged message whose pinned part keeps it, with the tool result beside it, out of the compaction.
+    const result = makeToolResultMessage('one', 't1')
+    messages[2] = new Message({
+      role: 'user',
+      content: [...result.content, new TextBlock('pin')],
+      metadata: {
+        custom: {
+          mergedMessages: [
+            { offset: 0, metadata: {} },
+            { offset: 1, metadata: { custom: { pinned: true } } },
+          ],
+        },
+      },
+    })
+    const before = messages.map((message) => message.toJSON())
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
+
+    expect(model.summarize).not.toHaveBeenCalled()
+    expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
   })
 
   it('uses the base summary when the run does not start right after message 0', async () => {

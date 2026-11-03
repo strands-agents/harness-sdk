@@ -90,9 +90,11 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     let acted = false
     // Last run first, so replacing a run leaves the earlier runs' positions unchanged.
     for (const run of runs.reverse()) {
-      // An opening run compaction left in place gets the base summary instead.
-      const compacted = run === opening && (await this._compactOpening(context, model, run))
-      if (compacted || (await this._summarizeRun(context, model, run))) acted = true
+      const summarized =
+        run === opening
+          ? await this._summarizeOpening(context, model, run)
+          : await this._summarizeRun(context, model, run)
+      if (summarized) acted = true
     }
     if (acted) repairAlternation(messages)
     return acted
@@ -124,24 +126,36 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Compacts message 0 and the run after it server-side, keeping message 0 in place. The summary takes the run's
-   * place as an assistant message, followed by the run's pinned messages and ahead of any assistant content that
-   * follows, and the provider sends its block, which covers message 0, in place of the text.
+   * Compacts the opening run server-side up to its first pinned message. A pinned message and the rest of the run
+   * after it stay in place. A run without pinned messages whose compaction writes no summary gets the base summary
+   * instead.
+   */
+  private async _summarizeOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
+    const prefix = unpinnedPrefix(run)
+    if (prefix.length === run.length) {
+      return (await this._compactOpening(context, model, run)) || (await this._summarizeRun(context, model, run))
+    }
+    return prefix.length > 0 && (await this._compactOpening(context, model, prefix))
+  }
+
+  /**
+   * Compacts message 0 and `run`, which holds no pinned message, server-side, keeping message 0 in place. The summary
+   * takes the run's place as an assistant message, ahead of any assistant content that follows, and the provider
+   * sends its block, which covers message 0, in place of the text.
    */
   private async _compactOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    const { kept, summarized } = splitPinned(run)
-    if (summarized.length === 0 || holdsOnlySummaries(summarized)) return false
+    if (holdsOnlySummaries(run)) return false
     const { messages, agent, invocationContext } = context
     const result = await this._trySummarize([messages[0]!, ...run], model, agent, invocationContext, true)
     const summary = summaryText(result)
     if (!result || !summary) return false
 
-    const totalTokens = await model.countTokens(summarized)
+    const totalTokens = await model.countTokens(run)
     const providerData = providerDataOf(result.content)
-    const text = formatSummarized(`${summarized.length} messages`, totalTokens, summary)
+    const text = formatSummarized(`${run.length} messages`, totalTokens, summary)
     const block = new TextBlock(text, providerData ? { metadata: { providerData } } : undefined)
-    messages.splice(1, run.length, markerMessage([block]), ...kept)
-    logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | compacted opening messages`)
+    messages.splice(1, run.length, markerMessage([block]))
+    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | compacted opening messages`)
     return true
   }
 
@@ -293,6 +307,26 @@ function splitPinned(run: Message[]): { kept: Message[]; summarized: Message[] }
   const pinnedIds = new Set(all.filter(hasPinnedFlag).flatMap(toolUseIds))
   const isKept = (piece: Message): boolean => hasPinnedFlag(piece) || toolUseIds(piece).some((id) => pinnedIds.has(id))
   return { kept: all.filter(isKept), summarized: all.filter((piece) => !isKept(piece)) }
+}
+
+/**
+ * The messages of `run` before its first pinned message, its tool-pair partner, or a split tool pair. Server-side
+ * compaction covers a contiguous start of the conversation, and a message it covers can't be kept after its block
+ * without breaking the thinking bound to the messages after it.
+ */
+function unpinnedPrefix(run: Message[]): Message[] {
+  const parts = run.map(pieces)
+  const pinnedIds = new Set(parts.flat().filter(hasPinnedFlag).flatMap(toolUseIds))
+  const holdsPinned = (piece: Message): boolean =>
+    hasPinnedFlag(piece) || toolUseIds(piece).some((id) => pinnedIds.has(id))
+  let end = parts.findIndex((messageParts) => messageParts.some(holdsPinned))
+  if (end < 0) end = run.length
+  const leftOutIds = new Set(run.slice(end).flatMap(toolUseIds))
+  while (end > 0 && toolUseIds(run[end - 1]!).some((id) => leftOutIds.has(id))) {
+    end -= 1
+    for (const id of toolUseIds(run[end]!)) leftOutIds.add(id)
+  }
+  return run.slice(0, end)
 }
 
 /** Whether every block of `run` is an earlier summary, so summarizing it would only restate that summary. */

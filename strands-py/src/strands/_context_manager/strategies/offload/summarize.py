@@ -119,6 +119,27 @@ def _split_pinned(run: list[Message]) -> tuple[list[Message], list[Message]]:
     return kept, [piece for piece in pieces if id(piece) not in kept_ids]
 
 
+def _unpinned_prefix(run: list[Message]) -> list[Message]:
+    """Return the messages of ``run`` before its first pinned message, its tool-pair partner, or a split tool pair.
+
+    Server-side compaction covers a contiguous start of the conversation, and a message it covers can't be kept after
+    its block without breaking the thinking bound to the messages after it.
+    """
+    pieces = [_pieces(message) for message in run]
+    pinned_ids = {
+        tool_id for parts in pieces for part in parts if _has_pinned_flag(part) for tool_id in _get_tool_use_ids(part)
+    }
+    holds_pinned = [
+        any(_has_pinned_flag(part) or pinned_ids & _get_tool_use_ids(part) for part in parts) for parts in pieces
+    ]
+    end = holds_pinned.index(True) if True in holds_pinned else len(run)
+    left_out_ids = {tool_id for message in run[end:] for tool_id in _get_tool_use_ids(message)}
+    while end > 0 and _get_tool_use_ids(run[end - 1]) & left_out_ids:
+        end -= 1
+        left_out_ids |= _get_tool_use_ids(run[end])
+    return run[:end]
+
+
 def _holds_only_summaries(run: list[Message]) -> bool:
     """Whether every block of ``run`` is an earlier summary, so summarizing it would only restate that summary."""
     return all(
@@ -215,9 +236,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         acted = False
         # Last run first, so replacing a run leaves the earlier runs' positions unchanged.
         for run in reversed(runs):
-            # An opening run compaction left in place gets the base summary instead.
-            compacted = run is opening and await self._compact_opening(context, model, run)
-            acted = compacted or await self._summarize_run(context, model, run) or acted
+            summarize = self._summarize_opening if run is opening else self._summarize_run
+            acted = await summarize(context, model, run) or acted
         if acted:
             _repair_alternation(messages)
         return acted
@@ -247,15 +267,24 @@ class SummarizeStrategy(BaseOffloadStrategy):
         logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(summarized), total_tokens)
         return True
 
-    async def _compact_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Compact message 0 and the run after it server-side, keeping message 0 in place.
+    async def _summarize_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
+        """Compact the opening run server-side up to its first pinned message.
 
-        The summary takes the run's place as an assistant message, followed by the run's pinned messages and ahead of
-        any assistant content that follows, and the provider sends its block, which covers message 0, in place of the
-        text.
+        A pinned message and the rest of the run after it stay in place. A run without pinned messages whose
+        compaction writes no summary gets the base summary instead.
         """
-        kept, summarized = _split_pinned(run)
-        if not summarized or _holds_only_summaries(summarized):
+        prefix = _unpinned_prefix(run)
+        if len(prefix) == len(run):
+            return await self._compact_opening(context, model, run) or await self._summarize_run(context, model, run)
+        return bool(prefix) and await self._compact_opening(context, model, prefix)
+
+    async def _compact_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
+        """Compact message 0 and ``run``, which holds no pinned message, server-side, keeping message 0 in place.
+
+        The summary takes the run's place as an assistant message, ahead of any assistant content that follows, and
+        the provider sends its block, which covers message 0, in place of the text.
+        """
+        if _holds_only_summaries(run):
             return False
         messages = context.messages
         request = [messages[0], *run]
@@ -263,13 +292,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         summary = _summary_text(result)
         if not result or not summary:
             return False
-        total_tokens = await model.count_tokens(summarized)
-        marker = ContentBlock(text=_format_summarized(f"{len(summarized)} messages", total_tokens, summary))
+        total_tokens = await model.count_tokens(run)
+        marker = ContentBlock(text=_format_summarized(f"{len(run)} messages", total_tokens, summary))
         provider_data = _provider_data_of(result.content)
         if provider_data:
             marker["metadata"] = {"providerData": provider_data}
-        messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker]), *kept]
-        logger.debug("summarized=<%s>, tokens=<%s> | compacted opening messages", len(summarized), total_tokens)
+        messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker])]
+        logger.debug("summarized=<%s>, tokens=<%s> | compacted opening messages", len(run), total_tokens)
         return True
 
     async def _replace_block(

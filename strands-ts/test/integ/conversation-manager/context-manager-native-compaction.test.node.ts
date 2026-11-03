@@ -87,7 +87,7 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
     expect(report.usage.totalTokens).toBeGreaterThan(0)
   })
 
-  it('compacts on every pass when the summary joins a pinned message, sending the block first', async () => {
+  it('compacts up to a pinned message and never past it', async () => {
     const report = await runCompactionTask({
       apiKey: apiKey(),
       mainModelId,
@@ -95,16 +95,23 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
       serverSideCompaction: true,
       thinking: STRICT_THINKING,
       passBeforeCalls: PASSES,
-      pinBeforeFirstPass: 1,
+      pinBeforeFirstPass: 3,
     })
     console.log(`native pinned run | ${describeReport(report)}`)
 
     expect(report.exchanges.map((exchange) => exchange.status).filter((status) => status !== 200)).toStrictEqual([])
     expect(report.dropBlockWarnings).toStrictEqual([])
-    expect(ofKind(report.exchanges, 'compaction')).toHaveLength(PASSES.length)
+    // The first pass compacts the messages before the pinned tool use; the second can't compact past it.
+    expect(ofKind(report.exchanges, 'compaction')).toHaveLength(1)
     expect(ofKind(report.exchanges, 'summarizer')).toHaveLength(0)
-    // The pinned tool use stays after the summary in message 1, so its block leads live assistant content.
+    // The pinned tool use follows the summary in message 1, where it stood after the covered messages.
     expect(report.messageOneAfter).toMatch(/^assistant:textBlock\+anthropic,.*toolUseBlock/)
+    const conversations = ofKind(report.exchanges, 'conversation')
+    const returnedThinking = new Set(conversations.flatMap((exchange) => exchange.returnedThinking))
+    expect(conversations.flatMap((exchange) => exchange.sentThinking).every((sent) => returnedThinking.has(sent))).toBe(
+      true
+    )
+    expect(conversations.flatMap((exchange) => exchange.inputTransformations ?? [])).toStrictEqual([])
     expect(report.finalText).toContain(`DONE ${EXPECTED_SUM}`)
   })
 

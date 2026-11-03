@@ -1,5 +1,6 @@
 """Tests for the SummarizeStrategy."""
 
+import copy
 import functools
 import json
 import logging
@@ -534,36 +535,98 @@ class TestServerSideCompaction:
         assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
 
     @pytest.mark.asyncio
-    async def test_compacts_a_pinned_message_one_and_keeps_it_after_the_summary(self, compacting_agent):
+    async def test_leaves_the_opening_run_in_place_when_message_one_is_pinned(self, compacting_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[1]["metadata"] = {"custom": {"pinned": True}}
-        task, a1, u2, a3 = messages[:4]
+        before = copy.deepcopy(messages)
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
+
+        compacting_agent.model.summarize.assert_not_awaited()
+        assert messages == before
+
+    @pytest.mark.asyncio
+    async def test_compacts_the_opening_run_up_to_a_pinned_message(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[3]["metadata"] = {"custom": {"pinned": True}}
+        task, a1, u2 = messages[:3]
         compacting_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
         assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
 
-        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
-        tru_message = messages[1]
-        exp_message = Message(
-            role="assistant",
-            content=[
-                ContentBlock(
-                    text="[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
-                ),
-                ContentBlock(text="a1"),
-            ],
+        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2]
+        summary = ContentBlock(
+            text="[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
+        )
+        assert messages == [
+            task,
+            Message(
+                role="assistant",
+                content=[summary, ContentBlock(text="a3")],
+                metadata={
+                    "custom": {
+                        "pinned": True,
+                        "merged_messages": [
+                            {"offset": 0, "metadata": {}},
+                            {"offset": 1, "metadata": {"custom": {"pinned": True}}},
+                        ],
+                    }
+                },
+            ),
+            *_turns("u4", "a5", "u6"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_does_not_compact_past_a_pinned_message_on_a_later_pass(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[3]["metadata"] = {"custom": {"pinned": True}}
+        compacting_agent.messages = messages
+        first = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+        await first.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+        messages.extend(
+            [
+                Message(role="assistant", content=[ContentBlock(text="a7")]),
+                Message(role="user", content=[ContentBlock(text="u8")]),
+            ]
+        )
+        before = copy.deepcopy(messages)
+        second = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await second.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
+
+        assert compacting_agent.model.summarize.await_count == 1
+        assert messages == before
+
+    @pytest.mark.asyncio
+    async def test_stops_the_compaction_before_a_tool_use_whose_result_is_left_out(self, compacting_agent):
+        tool_use = ContentBlock(toolUse={"toolUseId": "t1", "name": "lookup", "input": {}})
+        tool_result = ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "r1"}]})
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[1] = Message(role="assistant", content=[tool_use])
+        # A merged message whose pinned part keeps it, with the tool result beside it, out of the compaction.
+        messages[2] = Message(
+            role="user",
+            content=[tool_result, ContentBlock(text="pin")],
             metadata={
                 "custom": {
-                    "pinned": True,
                     "merged_messages": [
                         {"offset": 0, "metadata": {}},
                         {"offset": 1, "metadata": {"custom": {"pinned": True}}},
-                    ],
+                    ]
                 }
             },
         )
-        assert tru_message == exp_message
+        before = copy.deepcopy(messages)
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
+
+        compacting_agent.model.summarize.assert_not_awaited()
+        assert messages == before
 
     @pytest.mark.asyncio
     async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
@@ -579,32 +642,6 @@ class TestServerSideCompaction:
 
         compacting_agent.model.summarize.assert_not_awaited()
         assert "providerData" not in json.dumps(messages)
-
-    @pytest.mark.asyncio
-    async def test_compacts_again_after_the_summary_joins_a_pinned_message(self, compacting_agent):
-        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        messages[3]["tracking_id"] = "a3"
-        messages[3]["metadata"] = {"custom": {"pinned": True}}
-        compacting_agent.messages = messages
-        first = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
-        await first.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
-        assert _texts(messages)[1][1:] == ["a3"]
-        messages.extend(
-            [
-                Message(role="assistant", content=[ContentBlock(text="a7")]),
-                Message(role="user", content=[ContentBlock(text="u8")]),
-            ]
-        )
-        second = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
-
-        assert await second.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
-
-        assert compacting_agent.model.summarize.await_count == 2
-        texts = _texts(messages)
-        assert texts[1][0].endswith("\n\ncompacted") and texts[1][1:] == ["a3", "a7"]
-        assert messages[1]["content"][0]["metadata"]["providerData"] == _COMPACTION
-        assert [part.get("tracking_id") for part in messages[1]["metadata"]["custom"]["merged_messages"]][1] == "a3"
-        assert messages[1]["tracking_id"] == "a3"
 
     @pytest.mark.asyncio
     async def test_places_the_summary_ahead_of_the_next_assistant_message(self, compacting_agent):

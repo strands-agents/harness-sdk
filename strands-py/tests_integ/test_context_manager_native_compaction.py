@@ -102,14 +102,20 @@ async def test_compacts_every_pass_replays_each_block_unchanged_and_keeps_tail_t
 
 
 @pytest.mark.asyncio
-async def test_compacts_every_pass_when_the_summary_joins_a_pinned_message() -> None:
-    report = await harness.run_compaction_task(_options(pin_before_first_pass=1))
+async def test_compacts_up_to_a_pinned_message_and_never_past_it() -> None:
+    report = await harness.run_compaction_task(_options(pin_before_first_pass=3))
     print(f"native pinned run | {harness.describe_report(report)}")
 
     _assert_first_attempts_succeeded(report)
-    _assert_every_pass_compacted_natively(report)
-    # The pinned tool use stays after the summary in message 1, so its block leads live assistant content.
+    # The first pass compacts the messages before the pinned tool use; the second can't compact past it.
+    assert len(report.of_kind("compaction")) == 1
+    assert report.of_kind("summarizer") == []
+    # The pinned tool use follows the summary in message 1, where it stood after the covered messages.
     assert re.match(r"^assistant:text\+anthropic,.*toolUse", report.message_one_after)
+    conversations = report.of_kind("conversation")
+    returned_thinking = {signature for exchange in conversations for signature in exchange.returned_thinking}
+    assert all(sent in returned_thinking for exchange in conversations for sent in exchange.sent_thinking)
+    assert [entry for exchange in conversations for entry in exchange.input_transformations or []] == []
     _assert_task_finished(report)
 
 
