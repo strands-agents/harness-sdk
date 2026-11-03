@@ -82,6 +82,7 @@ def test_format_request_default(model, messages, model_id):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -96,6 +97,7 @@ def test_format_request_with_override(model, messages, model_id):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -109,6 +111,7 @@ def test_format_request_with_system_prompt(model, messages, model_id, system_pro
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -124,6 +127,7 @@ def test_format_request_with_image(model, model_id):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -157,6 +161,7 @@ def test_format_request_with_tool_result_preserves_non_ascii(model, model_id):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -191,6 +196,7 @@ def test_format_request_with_tool_use(model, model_id):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -243,6 +249,7 @@ def test_format_request_with_tool_result(model, model_id):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -291,6 +298,7 @@ def test_format_request_with_tool_specs(model, messages, model_id):
                 },
             }
         ],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -317,6 +325,7 @@ def test_format_request_with_inference_config(model, messages, model_id):
         },
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -333,6 +342,7 @@ def test_format_request_with_options(model, messages, model_id):
         "options": {"o1": 1},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
 
     assert tru_request == exp_request
@@ -468,7 +478,7 @@ async def test_stream(ollama_client, model, agenerator, alist, captured_warnings
     mock_event.prompt_eval_count = 5
     mock_event.total_duration = 1000000  # 1ms in nanoseconds
 
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+    ollama_client._request = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
 
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
     response = model.stream(messages)
@@ -495,8 +505,11 @@ async def test_stream(ollama_client, model, agenerator, alist, captured_warnings
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
-    ollama_client.chat.assert_called_once_with(**expected_request)
+    ollama_client._request.assert_called_once_with(
+        ollama.ChatResponse, "POST", "/api/chat", json=expected_request, stream=True
+    )
 
     # Ensure no warnings emitted
     assert len(captured_warnings) == 0
@@ -504,7 +517,7 @@ async def test_stream(ollama_client, model, agenerator, alist, captured_warnings
 
 @pytest.mark.asyncio
 async def test_stream_empty_response(ollama_client, model, agenerator, alist):
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([]))
+    ollama_client._request = unittest.mock.AsyncMock(return_value=agenerator([]))
 
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
     response = model.stream(messages)
@@ -533,7 +546,7 @@ async def test_tool_choice_not_supported_warns(ollama_client, model, agenerator,
     mock_event.prompt_eval_count = 5
     mock_event.total_duration = 1000000  # 1ms in nanoseconds
 
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+    ollama_client._request = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
 
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
     await alist(model.stream(messages, tool_choice=tool_choice))
@@ -555,7 +568,7 @@ async def test_stream_with_tool_calls(ollama_client, model, agenerator, alist):
     mock_event.prompt_eval_count = 8
     mock_event.total_duration = 2000000  # 2ms in nanoseconds
 
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+    ollama_client._request = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
 
     messages = [{"role": "user", "content": [{"text": "Calculate 2+2"}]}]
     response = model.stream(messages)
@@ -588,8 +601,11 @@ async def test_stream_with_tool_calls(ollama_client, model, agenerator, alist):
         "options": {},
         "stream": True,
         "tools": [],
+        "truncate": False,
     }
-    ollama_client.chat.assert_called_once_with(**expected_request)
+    ollama_client._request.assert_called_once_with(
+        ollama.ChatResponse, "POST", "/api/chat", json=expected_request, stream=True
+    )
 
 
 @pytest.mark.asyncio
@@ -599,7 +615,7 @@ async def test_structured_output(ollama_client, model, test_output_model_cls, al
     mock_response = unittest.mock.Mock()
     mock_response.message.content = '{"name": "John", "age": 30}'
 
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=mock_response)
+    ollama_client._request = unittest.mock.AsyncMock(return_value=mock_response)
 
     stream = model.structured_output(test_output_model_cls, messages)
     events = await alist(stream)
@@ -746,10 +762,61 @@ def test_format_request_uses_tool_name_not_tool_use_id(model, model_id):
     assert tool_call["function"]["name"] != "unique-id-abc-123"
 
 
+def test_format_request_disables_truncation(model, messages):
+    """Regression for #5742: Ollama must be told not to silently drop history server-side."""
+    request = model.format_request(messages)
+
+    assert request["truncate"] is False
+
+
+def test_format_request_truncation_cannot_be_overridden_by_additional_args(host, model_id, messages):
+    """A caller cannot re-enable Ollama's silent truncation through additional_args."""
+    model = OllamaModel(host, model_id=model_id, additional_args={"truncate": True})
+
+    request = model.format_request(messages)
+
+    assert request["truncate"] is False
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_truncate_false(ollama_client, model, agenerator, alist):
+    """The chat request disables server-side truncation so overflow reaches the SDK."""
+    mock_event = unittest.mock.Mock()
+    mock_event.message.tool_calls = None
+    mock_event.message.content = "Hello"
+    mock_event.done_reason = "stop"
+    mock_event.eval_count = 1
+    mock_event.prompt_eval_count = 1
+    mock_event.total_duration = 1000000
+    ollama_client._request = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+
+    await alist(model.stream([{"role": "user", "content": [{"text": "Hello"}]}]))
+
+    ollama_client._request.assert_called_once()
+    sent_json = ollama_client._request.call_args.kwargs["json"]
+    assert sent_json["truncate"] is False
+
+
+@pytest.mark.asyncio
+async def test_structured_output_sends_truncate_false(ollama_client, model, test_output_model_cls, alist):
+    """Structured output requests also disable server-side truncation."""
+    mock_response = unittest.mock.Mock()
+    mock_response.message.content = '{"name": "John", "age": 30}'
+    ollama_client._request = unittest.mock.AsyncMock(return_value=mock_response)
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=mock_response)
+
+    await alist(model.structured_output(test_output_model_cls, [{"role": "user", "content": [{"text": "test"}]}]))
+
+    ollama_client._request.assert_called_once()
+    sent_json = ollama_client._request.call_args.kwargs["json"]
+    assert sent_json["truncate"] is False
+
+
 @pytest.mark.asyncio
 async def test_stream_context_overflow_error_on_request(ollama_client, model, alist):
     error = ollama.ResponseError("request exceeds the available context size (2048 tokens), try increasing it")
-    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+    ollama_client._request = unittest.mock.AsyncMock(side_effect=error)
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(ContextWindowOverflowException) as exc_info:
@@ -767,7 +834,7 @@ async def test_stream_context_overflow_error_during_iteration(ollama_client, mod
         raise error
         yield  # pragma: no cover - generator never yields
 
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=overflowing_stream())
+    ollama_client._request = unittest.mock.AsyncMock(return_value=overflowing_stream())
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(ContextWindowOverflowException) as exc_info:
@@ -780,7 +847,7 @@ async def test_stream_context_overflow_error_during_iteration(ollama_client, mod
 @pytest.mark.asyncio
 async def test_stream_non_overflow_response_error_propagates(ollama_client, model, alist):
     error = ollama.ResponseError("model 'm1' not found")
-    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+    ollama_client._request = unittest.mock.AsyncMock(side_effect=error)
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(ollama.ResponseError, match="not found"):
@@ -790,7 +857,7 @@ async def test_stream_non_overflow_response_error_propagates(ollama_client, mode
 @pytest.mark.asyncio
 async def test_structured_output_context_overflow_error(ollama_client, model, test_output_model_cls, alist):
     error = ollama.ResponseError("request exceeds the available context size (2048 tokens), try increasing it")
-    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+    ollama_client._request = unittest.mock.AsyncMock(side_effect=error)
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(ContextWindowOverflowException) as exc_info:
@@ -805,7 +872,7 @@ async def test_structured_output_non_overflow_response_error_propagates(
     ollama_client, model, test_output_model_cls, alist
 ):
     error = ollama.ResponseError("model 'm1' not found")
-    ollama_client.chat = unittest.mock.AsyncMock(side_effect=error)
+    ollama_client._request = unittest.mock.AsyncMock(side_effect=error)
 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(ollama.ResponseError, match="not found"):

@@ -242,6 +242,9 @@ class OllamaModel(Model):
                 if "additional_args" in self.config and self.config["additional_args"] is not None
                 else {}
             ),
+            # Set after additional_args so a caller cannot re-enable Ollama's silent server-side truncation, which
+            # would drop history without an overflow signal and bypass the conversation manager.
+            "truncate": False,
         }
         # Ollama applies no CacheConfig fields; warn that any set field is ignored.
         warn_on_cache_config_not_supported(self.config.get("cache_config"), "Ollama", supported=set(), stacklevel=3)
@@ -310,6 +313,29 @@ class OllamaModel(Model):
             case _:
                 raise RuntimeError(f"chunk_type=<{event['chunk_type']} | unknown type")
 
+    async def _chat(self, client: ollama.AsyncClient, request: dict[str, Any]) -> Any:
+        """Issue a /api/chat request with server-side truncation disabled.
+
+        The installed ollama-python client's chat() does not expose ``truncate``, so the request is sent
+        through the client's raw request path. Without ``truncate: false`` Ollama silently drops history
+        that exceeds ``num_ctx`` and returns no error, so the SDK never sees an overflow.
+
+        Args:
+            client: The Ollama async client to send the request with.
+            request: The formatted chat request, including the ``truncate`` field.
+
+        Returns:
+            A ChatResponse or, when streaming, an async iterator of ChatResponse.
+        """
+        raw_client = cast(Any, client)
+        return await raw_client._request(
+            ollama.ChatResponse,
+            "POST",
+            "/api/chat",
+            json=request,
+            stream=request.get("stream", False),
+        )
+
     @override
     async def stream(
         self,
@@ -348,9 +374,9 @@ class OllamaModel(Model):
 
         client = ollama.AsyncClient(self.host, **self.client_args)
 
-        # Ollama issues the request lazily, so overflow can surface at chat() or during iteration.
+        # Ollama issues the request lazily, so overflow can surface at request time or during iteration.
         try:
-            response = await client.chat(**request)
+            response = await self._chat(client, request)
 
             logger.debug("got response from model")
             yield self.format_chunk({"chunk_type": "message_start"})
@@ -404,7 +430,7 @@ class OllamaModel(Model):
 
         client = ollama.AsyncClient(self.host, **self.client_args)
         try:
-            response = await client.chat(**formatted_request)
+            response = await self._chat(client, formatted_request)
         except ollama.ResponseError as error:
             if any(message in str(error).lower() for message in self.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error
