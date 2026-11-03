@@ -1542,6 +1542,37 @@ describe('VercelModel', () => {
         )
       })
 
+      it.each([
+        'anthropic.claude-future-9',
+        'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
+        'US.ANTHROPIC.CLAUDE-SONNET-4-6',
+      ])('under the default auto strategy, caches an unlisted Claude id by name: %s', async (modelId) => {
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('under the default auto strategy, skips an unlisted id that is not Claude', async () => {
+        const modelId = 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc'
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', modelId)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
       it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {
         const config = { cacheConfig: {}, modelInfo: { capabilities: { promptCaching: 'cachePoints' as const } } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', UNSUPPORTED_MODEL_ID)

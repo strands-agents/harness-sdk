@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { StarlightRouteData } from '@astrojs/starlight/route-data'
 import { getCollection } from 'astro:content'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import { pathWithBase } from './links'
@@ -7,6 +8,24 @@ import { pathWithBase } from './links'
 export type ProductNavItem =
   | { type: 'link'; label: string; href: string; external?: boolean }
   | { type: 'group'; label: string; items: ProductNavItem[] }
+
+/** Convert Starlight's normalized route sidebar into the mobile navigation shape. */
+export function normalizedSidebarToProductNav(sidebar: StarlightRouteData['sidebar']): ProductNavItem[] {
+  return sidebar.map((entry) =>
+    entry.type === 'group'
+      ? {
+          type: 'group',
+          label: entry.label,
+          items: normalizedSidebarToProductNav(entry.entries),
+        }
+      : {
+          type: 'link',
+          label: entry.label,
+          href: entry.href,
+          ...(/^https?:\/\//.test(entry.href) && { external: true }),
+        }
+  )
+}
 
 // Built once per build: the nav renders on every page but the tree is static.
 let cached: Promise<StarlightSidebarItem[]> | undefined

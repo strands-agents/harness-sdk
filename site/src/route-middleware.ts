@@ -11,6 +11,7 @@ import { pathWithBase } from './util/links'
 import { navLinks, type NavLink } from './config/navbar'
 import { isNew, NEW_BADGE } from './util/new-badge'
 import { buildIntegrationsSidebar } from './util/integrations-sidebar'
+import { isSampleGuidePath } from './util/sample-guides'
 
 type SidebarEntry = StarlightRouteData['sidebar'][number]
 type SidebarGroup = Extract<SidebarEntry, { type: 'group' }>
@@ -183,6 +184,9 @@ export const onRequest = defineRouteMiddleware(async (context) => {
     starlightRoute.pagination = { prev: undefined, next: undefined }
     return
   }
+
+  // Generated sample guides supply their own language/category sidebar.
+  if (isSampleGuidePath(currentPath)) return
 
   // The /integrations/ catalog page supplies its own sidebar: a single group of
   // type filters. Keep that group intact (skipping the base-path filter that
