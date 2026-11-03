@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models import Model as SAModel
-from strands.models._model_info import lookup_model_info
 from strands.models.model import _ModelPlugin
 
 
@@ -255,9 +254,10 @@ class TestModelInfo:
         assert provider.model_info == ModelInfo()
         assert provider.stateful is False
 
-    def test_lookup_treats_a_non_string_model_id_as_unknown(self):
-        assert lookup_model_info(None) == ModelInfo()
-        assert lookup_model_info(1234) == ModelInfo()
+    def test_treats_a_missing_model_id_as_unknown(self, provider):
+        provider.update_config(model_id=None)
+
+        assert provider.model_info == ModelInfo()
 
     def test_lets_a_provider_put_its_facts_over_the_shared_model_info_with_the_user_override_over_both(self):
         class GatewayModel(ConfigurableModel):

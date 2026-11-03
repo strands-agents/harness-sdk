@@ -6,7 +6,14 @@ This package includes an abstract base Model class along with concrete implement
 from typing import Any
 
 from . import bedrock, model, routing
-from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, PromptCaching
+from ._model_info import (
+    ModelCapabilities,
+    ModelInfo,
+    ModelLimits,
+    PromptCaching,
+    ReasoningCapability,
+    lookup_model_info,
+)
 from .bedrock import BedrockModel
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 from .routing import (
@@ -37,10 +44,12 @@ __all__ = [
     "ModelLimits",
     "ModelRouter",
     "PromptCaching",
+    "ReasoningCapability",
     "RoutingAttempt",
     "RoutingCandidate",
     "RoutingContext",
     "RoutingStrategy",
+    "lookup_model_info",
 ]
 
 
