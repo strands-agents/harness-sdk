@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -160,6 +160,8 @@ beforeEach(() => {
       ],
     })
   )
+  write('typescript/01-learn/01-workshop/README.md', '# TypeScript workshop lesson\n\nProtected workshop curriculum.\n')
+  write('python/01-learn/01-workshop/README.md', '# Python workshop lesson\n\nProtected workshop curriculum.\n')
 
   git('init', '--quiet')
   git('config', 'user.email', 'test@example.com')
@@ -196,11 +198,15 @@ describe('buildSampleGuides', () => {
   })
 
   it('excludes protected workshop curriculum from the public examples build', async () => {
-    await expect(buildSampleGuides({ sourceDir, outputDir, requireSamples: true })).resolves.toMatchObject({
+    const commit = git('rev-parse', 'HEAD')
+    await expect(buildSampleGuides({ sourceDir, outputDir, requireSamples: true })).resolves.toEqual({
+      repository: 'strands-agents/samples',
+      commit,
       sampleCount: 2,
     })
-    expect(() => readFileSync(path.join(outputDir, 'typescript/workshop.md'), 'utf8')).toThrow()
-    expect(() => readFileSync(path.join(outputDir, 'python/workshop.md'), 'utf8')).toThrow()
+    expect(
+      (readdirSync(outputDir, { recursive: true }) as string[]).filter((file) => file.endsWith('.md')).sort()
+    ).toEqual(['python/notebook.md', 'typescript/readme.md'])
   })
 
   it('allows unpublished README changes in local previews', async () => {

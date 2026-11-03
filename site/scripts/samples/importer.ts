@@ -21,6 +21,9 @@ const MAX_GUIDE_BYTES = 2 * 1024 * 1024
 const MIN_DESCRIPTION_LENGTH = 140
 const MAX_DESCRIPTION_LENGTH = 160
 const SNIPPET_DIRECTIVE_PATTERN = /^-+8<-+\s*"[^"]+"$/
+// These ordered curricula are protected workshop content, not standalone public examples.
+// Keep the prefixes aligned with:
+// https://github.com/strands-agents/samples/blob/main/docs/WORKSHOP_COMPATIBILITY.md
 const WORKSHOP_SAMPLE_PREFIXES = ['python/01-learn/', 'typescript/01-learn/']
 
 const htmlConverter = new TurndownService({
