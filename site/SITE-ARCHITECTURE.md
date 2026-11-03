@@ -132,7 +132,7 @@ The collection base is `src/content` (not `src/content/docs`), so all doc slugs 
 
 **What it does:** Imports versioned Markdown from product repositories into the Starlight
 content collection. The first integration publishes the pages selected by Box's manifest under
-`/docs/user-guide/box/source/` so reviewers can compare it with the current Box guide.
+`/docs/user-guide/box/`.
 
 **Why:** Product documentation changes with its implementation. Keeping the source Markdown
 in the product repository lets one commit update behavior and documentation together. The
@@ -150,10 +150,8 @@ import/export-like prose remain literal text.
 
 The upstream product status is `preview` or `stable`. The site may keep stable upstream docs in
 preview, but it cannot set `publicationStatus` to `stable` while the upstream status is still
-`preview`. Preview pages render an `Upstream documentation preview` caution so comparison content
-cannot be mistaken for the canonical guide. When the same slug exists in the current guide, the
-caution links directly to that page for comparison. Promotion to `stable` requires a coordinated
-site change for the publication status, route, navigation label, and canonical-content decision;
+`preview`. Preview pages render a documentation-preview caution and remain out of search and
+machine-readable publication surfaces. Promotion to `stable` requires a coordinated site change;
 a lock-only update cannot promote pages.
 
 #### Site registry and lock
@@ -178,9 +176,11 @@ pages in preview. A site-side promotion fails generation until the upstream stat
 └── navigation.json  # Generated groups and page links
 ```
 
-The tracked `src/content/docs/user-guide/box/source` symlink exposes the generated content to
-Astro. The one `externalDocs: strands-box` entry in `navigation.yml` expands
-`navigation.json`; page lists do not need a second manually maintained copy.
+The tracked `src/content/docs/user-guide/box` symlink exposes the generated content to Astro.
+The one `externalDocs: strands-box` entry in `navigation.yml` expands `navigation.json`; page
+lists do not need a second manually maintained copy. Until the upstream manifest publishes a
+landing page, static aliases serve the imported quickstart at `/docs/user-guide/box/` and the
+former `/docs/user-guide/box/getting-started/` URL.
 
 The generator:
 
@@ -209,10 +209,7 @@ The importer core is reusable, but each product still requires explicit site wir
    the `docs` collection glob in `src/content.config.ts`.
 4. Add one `externalDocs: <product-id>` placeholder at the intended location in
    `src/config/navigation.yml`.
-5. Preview comparison links currently assume the imported route contains `/source/` and that
-   removing it produces the canonical route. Extend the product configuration before using a
-   different route relationship.
-6. Run the full CMS build and content-collection tests; the sidebar-slug validation catches a
+5. Run the full CMS build and content-collection tests; the sidebar-slug validation catches a
    generated route that the content collection failed to load.
 
 Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and

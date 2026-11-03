@@ -3,20 +3,12 @@ import { Aside } from '@astrojs/starlight/components'
 
 interface Props {
   product: string
-  counterpartHref?: string
 }
 
-const { product, counterpartHref } = Astro.props
+const { product } = Astro.props
 ---
 
-<Aside type="caution" title="Upstream documentation preview">
-  This page is generated from the {product} repository. It is not the canonical website guide yet.
-  {
-    counterpartHref && (
-      <>
-        {' '}
-        <a href={counterpartHref}>Compare it with the current website page.</a>
-      </>
-    )
-  }
+<Aside type="caution" title="Documentation preview">
+  This page is generated from the {product} repository. Its content may change while the upstream
+  documentation manifest remains in preview.
 </Aside>

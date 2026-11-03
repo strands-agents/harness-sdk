@@ -86,9 +86,12 @@ function buildLlmsTxt(
   // navigation.yml surfaces it here automatically.
   for (const section of sidebar) {
     if ('label' in section && 'items' in section && section.items) {
+      const sectionLines = extractLinks(section.items, descriptions, excludedSlugs, 0)
+      if (sectionLines.length === 0) continue
+
       lines.push(`## ${section.label}`)
       lines.push('')
-      lines.push(...extractLinks(section.items, descriptions, excludedSlugs, 0))
+      lines.push(...sectionLines)
       lines.push('')
     }
   }

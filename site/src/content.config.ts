@@ -372,8 +372,7 @@ export const collections = {
       pattern: [
         '404.mdx',
 
-        'docs/user-guide/**/*.mdx',
-        'docs/user-guide/box/source/**/*.md',
+        'docs/user-guide/**/*.{md,mdx}',
         'docs/learning/**/*.mdx',
         'docs/integrations/**/*.mdx',
         'docs/contribute/**/*.mdx',

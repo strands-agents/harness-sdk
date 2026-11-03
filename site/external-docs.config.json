@@ -6,8 +6,8 @@
       "repository": "https://github.com/strands-agents/box",
       "ref": "main",
       "manifest": "docs/site-manifest.json",
-      "routePrefix": "docs/user-guide/box/source",
-      "navLabel": "Upstream docs preview",
+      "routePrefix": "docs/user-guide/box",
+      "navLabel": "Box",
       "publicationStatus": "preview"
     }
   ]

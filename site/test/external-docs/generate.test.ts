@@ -136,6 +136,54 @@ github:
     ])
   })
 
+  it('mounts canonical external routes without a second hand-authored page list', () => {
+    const fixture = createFixture()
+    fixture.config = {
+      ...fixture.config,
+      routePrefix: 'docs/user-guide/example',
+      navLabel: 'Example',
+    }
+    const built = buildExternalDocsProduct(fixture)
+    const root = temporaryDirectory()
+    const outputRoot = path.join(root, 'external-docs')
+    const contentRoot = path.join(root, 'content')
+    const navigationPath = path.join(root, 'navigation.yml')
+
+    writeExternalDocsProduct(outputRoot, built)
+    fs.mkdirSync(path.join(contentRoot, 'docs/user-guide'), { recursive: true })
+    fs.symlinkSync(path.join(outputRoot, 'example/content'), path.join(contentRoot, 'docs/user-guide/example'), 'dir')
+    fs.writeFileSync(
+      navigationPath,
+      `navbar: []
+sidebar:
+  - externalDocs: example
+github:
+  sections: []
+`
+    )
+
+    const sidebar = loadSidebarFromConfig(navigationPath, contentRoot, new Date('2026-11-03T00:00:00Z'), outputRoot)
+
+    expect(sidebar).toEqual([
+      {
+        label: 'Example',
+        items: [
+          {
+            label: 'Guides',
+            items: [
+              { label: 'First guide', slug: 'docs/user-guide/example/guides/first' },
+              { label: 'Second guide', slug: 'docs/user-guide/example/guides/second' },
+            ],
+          },
+          {
+            label: 'Overview',
+            items: [{ label: 'Overview', slug: 'docs/user-guide/example/overview' }],
+          },
+        ],
+      },
+    ])
+  })
+
   it('rejects source symlinks even when they point to a regular file', () => {
     const fixture = createFixture()
     const outside = path.join(temporaryDirectory(), 'outside.md')

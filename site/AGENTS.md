@@ -94,7 +94,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── labs/
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
-│   │           └── box/source    # Symlink to .build/external-docs/strands-box/content
+│   │           └── box           # Symlink to .build/external-docs/strands-box/content
 │   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
 │   ├── layouts/                  # Custom layouts
 │   ├── pages/                    # Astro pages, including generated /examples routes

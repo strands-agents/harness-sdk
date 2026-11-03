@@ -25,6 +25,11 @@ import { exactly, startsWith } from './regex'
  * fallback.
  */
 export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
+  // Box content is owned by the product repository, whose manifest currently
+  // starts at quickstart rather than publishing a separate landing page.
+  'docs/user-guide/box': 'docs/user-guide/box/quickstart',
+  'docs/user-guide/box/getting-started': 'docs/user-guide/box/quickstart',
+
   // gemini was renamed to google (concepts/ was later consolidated under harness/)
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
 
