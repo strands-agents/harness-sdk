@@ -480,6 +480,7 @@ class TestSummarizeRuns:
     ):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[3]["tracking_id"] = "a3"
+        messages[3]["metadata"] = {"custom": {"source": "planner"}}
         mock_agent.messages = messages
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
         mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
@@ -495,6 +496,7 @@ class TestSummarizeRuns:
             ["u6"],
         ]
         assert messages[1]["tracking_id"] == "a3"
+        assert messages[1]["metadata"]["custom"]["source"] == "planner"
 
 
 class TestServerSideCompaction:

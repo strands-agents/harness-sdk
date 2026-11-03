@@ -293,20 +293,21 @@ export function repairAlternation(messages: Message[]): void {
  *
  * `metadata.custom.mergedMessages` lists every message the merge combines, in content order, with its tracking id,
  * metadata and the offset its content starts at, so stash refs to each one's blocks still resolve. The merge keeps
- * `prev`'s tracking id, or `current`'s when `prev` is a marker, and `prev`'s custom metadata; its usage and metrics
- * are `current`'s, the latest response it holds. It is pinned when either message is.
+ * `prev`'s tracking id and custom metadata, or `current`'s when `prev` is a marker; its usage and metrics are
+ * `current`'s, the latest response it holds. It is pinned when either message is.
  */
 function mergeMessages(prev: Message, current: Message): Message {
   const parts = [...mergedParts(prev, 0), ...mergedParts(current, prev.content.length)]
+  const lead = markers.has(prev) ? current : prev
   const custom = {
-    ...prev.metadata?.custom,
+    ...lead.metadata?.custom,
     [MERGED_MESSAGES_KEY]: parts as unknown as JSONValue,
     ...(hasPinnedFlag(prev) || hasPinnedFlag(current) ? { pinned: true } : {}),
   }
   const merged = new Message({
     role: prev.role,
     content: [...prev.content, ...current.content],
-    trackingId: markers.has(prev) ? current.trackingId : prev.trackingId,
+    trackingId: lead.trackingId,
     metadata: { ...current.metadata, custom },
   })
   if (markers.has(prev) && markers.has(current)) markers.add(merged)

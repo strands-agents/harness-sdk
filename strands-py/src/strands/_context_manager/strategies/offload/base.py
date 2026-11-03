@@ -255,15 +255,17 @@ def _merge_messages(prev: Message, current: Message) -> Message:
 
     ``metadata.custom.merged_messages`` lists every message the merge combines, in content order, with its tracking
     id, metadata and the offset its content starts at, so stash refs to each one's blocks still resolve. The merge
-    keeps ``prev``'s tracking id, or ``current``'s when ``prev`` has none, and ``prev``'s custom metadata; its usage
-    and metrics are ``current``'s, the latest response it holds. It is pinned when either message is.
+    keeps ``prev``'s tracking id and custom metadata, or ``current``'s when ``prev`` has no tracking id, as a marker
+    has none; its usage and metrics are ``current``'s, the latest response it holds. It is pinned when either message
+    is.
     """
     merged = Message(role=prev["role"], content=[*prev["content"], *current["content"]])
-    tracking_id = prev.get("tracking_id") or current.get("tracking_id")
+    lead = prev if prev.get("tracking_id") else current
+    tracking_id = lead.get("tracking_id")
     if tracking_id:
         merged["tracking_id"] = tracking_id
     parts = [*_merged_parts(prev, 0), *_merged_parts(current, len(prev["content"]))]
-    custom = {**prev.get("metadata", {}).get("custom", {}), MERGED_MESSAGES_KEY: parts}
+    custom = {**lead.get("metadata", {}).get("custom", {}), MERGED_MESSAGES_KEY: parts}
     if _has_pinned_flag(prev) or _has_pinned_flag(current):
         custom["pinned"] = True
     metadata: MessageMetadata = {**current.get("metadata", {}), "custom": custom}

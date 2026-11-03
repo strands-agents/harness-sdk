@@ -392,7 +392,12 @@ describe('summarizing whole messages', () => {
   it('places the summary ahead of the assistant message after a run ending on a user turn', async () => {
     summarizeContent.mockClear().mockResolvedValueOnce('run')
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
-    const a3 = messages[3]!
+    const a3 = new Message({
+      role: 'assistant',
+      content: [new TextBlock('a3')],
+      metadata: { custom: { source: 'planner' } },
+    })
+    messages[3] = a3
     const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 4 })
 
     expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
@@ -407,6 +412,7 @@ describe('summarizing whole messages', () => {
     ])
     expect(mergedMessages(messages[1]!).find((part) => part.trackingId === a3.trackingId)?.offset).toBe(1)
     expect(messages[1]!.trackingId).toBe(a3.trackingId)
+    expect(messages[1]!.metadata?.custom?.source).toBe('planner')
   })
 
   it('keeps the tool result of a pinned tool use', async () => {
