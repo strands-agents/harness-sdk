@@ -2655,7 +2655,9 @@ describe('AnthropicModel', () => {
         clientConfig: { defaultHeaders: { 'anthropic-version': '2026-10-21' } },
       })
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature is not supported')
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        "temperature is not supported by Anthropic API version 2026-10-21, pinned by clientConfig.defaultHeaders['anthropic-version']"
+      )
     })
 
     it('leaves the check to the API for an injected client', async () => {
