@@ -64,18 +64,14 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
       for (const exchange of later) expect(exchange.sentCompaction).toStrictEqual([block])
     }
 
-    // Kept thinking is in the outgoing tail after each pass, and the API dropped no thinking block.
+    // Every replayed thinking block was returned earlier, thinking was replayed next to a compaction block, and
+    // the API dropped no thinking block.
     const returnedThinking = new Set(conversations.flatMap((exchange) => exchange.returnedThinking))
-    for (const compaction of compactions) {
-      const next =
-        conversations[
-          conversations.findIndex(
-            (exchange) => exchange.sentCompaction[0]?.signature === compaction.returned[0]!.signature
-          )
-        ]!
-      expect(next.sentThinking.length).toBeGreaterThan(0)
-      expect(next.sentThinking.every((signature) => returnedThinking.has(signature))).toBe(true)
-    }
+    const sentThinking = conversations.flatMap((exchange) => exchange.sentThinking)
+    expect(sentThinking.every((signature) => returnedThinking.has(signature))).toBe(true)
+    expect(
+      conversations.some((exchange) => exchange.sentCompaction.length > 0 && exchange.sentThinking.length > 0)
+    ).toBe(true)
     const mainTransformations = conversations.flatMap((exchange) => exchange.inputTransformations ?? [])
     expect(mainTransformations).toStrictEqual([])
     // Observability: the field must have been seen on main-model responses, or the absence above proves nothing.

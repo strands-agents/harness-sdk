@@ -264,7 +264,9 @@ async def run_compaction_task(options: HarnessOptions) -> HarnessReport:
             codeword: The task's codeword.
         """
         codewords[-1].append(codeword)
-        return f"step {n} value {n * 7}"
+        # A modular inverse makes every turn reason, so kept thinking is in the history at every pass.
+        residue = (n * 7 * 11) % 53
+        return f"step {n}: the value is the x in 1..52 with (11 * x) mod 53 == {residue}"
 
     capture = _WarningCapture(warnings)
     sdk_logger = logging.getLogger("strands")

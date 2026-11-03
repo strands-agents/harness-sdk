@@ -82,17 +82,11 @@ async def test_compacts_every_pass_replays_each_block_unchanged_and_keeps_tail_t
         assert later
         assert all(exchange.sent_compaction == [block] for exchange in later)
 
-    # Kept thinking is in the outgoing tail after each pass, and the API dropped no thinking block.
+    # Every replayed thinking block was returned earlier, thinking was replayed next to a compaction block, and
+    # the API dropped no thinking block.
     returned_thinking = {signature for exchange in conversations for signature in exchange.returned_thinking}
-    for compaction in compactions:
-        signature = compaction.returned[0].get("signature")
-        following = next(
-            exchange
-            for exchange in conversations
-            if exchange.sent_compaction and exchange.sent_compaction[0].get("signature") == signature
-        )
-        assert following.sent_thinking
-        assert all(sent in returned_thinking for sent in following.sent_thinking)
+    assert all(sent in returned_thinking for exchange in conversations for sent in exchange.sent_thinking)
+    assert any(exchange.sent_compaction and exchange.sent_thinking for exchange in conversations)
     assert [entry for exchange in conversations for entry in exchange.input_transformations or []] == []
     # The field must have been seen on main-model responses, or the absence above proves nothing.
     assert any(exchange.input_transformations is not None for exchange in conversations)

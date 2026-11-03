@@ -116,7 +116,8 @@ export async function runCompactionTask(options: HarnessOptions): Promise<Harnes
     inputSchema: z.object({ n: z.number(), codeword: z.string() }),
     callback: ({ n, codeword }) => {
       codewords.at(-1)!.push(codeword)
-      return `step ${n} value ${n * 7}`
+      // A modular inverse makes every turn reason, so kept thinking is in the history at every pass.
+      return `step ${n}: the value is the x in 1..52 with (11 * x) mod 53 == ${(n * 7 * 11) % 53}`
     },
   })
 
