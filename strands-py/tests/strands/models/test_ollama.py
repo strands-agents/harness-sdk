@@ -451,6 +451,29 @@ def test_format_chunk_metadata(model):
     assert tru_chunk == exp_chunk
 
 
+def test_format_chunk_metadata_missing_counts(model):
+    event = {
+        "chunk_type": "metadata",
+        "data": unittest.mock.Mock(eval_count=None, prompt_eval_count=None, total_duration=None),
+    }
+
+    tru_chunk = model.format_chunk(event)
+    exp_chunk = {
+        "metadata": {
+            "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "totalTokens": 0,
+            },
+            "metrics": {
+                "latencyMs": 0,
+            },
+        },
+    }
+
+    assert tru_chunk == exp_chunk
+
+
 def test_format_chunk_other(model):
     event = {"chunk_type": "other"}
 
