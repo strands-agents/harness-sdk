@@ -7,8 +7,8 @@
  */
 
 import type { Model } from '../../models/model.js'
-import { ModelProxy } from '../../models/model-proxy.js'
-import type { InvocationContext } from '../../agent/invocation-context.js'
+import { unwrapInvocationContext, type InvocationContext } from '../../agent/invocation-context.js'
+import type { Usage } from '../../models/streaming.js'
 import {
   GuardContentBlock,
   JsonBlock,
@@ -73,6 +73,29 @@ export async function summarizeContent(
   config?: SummarizeConfig,
   invocationContext?: InvocationContext
 ): Promise<string | null> {
+  const { text, usage } = await streamSummary(content, model, config?.systemPrompt)
+  const context = unwrapInvocationContext(invocationContext)
+  if (usage !== undefined && context !== undefined) context.recordUsage(usage)
+  return text
+}
+
+/**
+ * Streams one summarization request: `content` between `<content>` delimiters in a single user turn, under the
+ * summarizer system prompt, with no tools. Model errors propagate to the caller.
+ *
+ * @internal
+ * @param content - The content to summarize
+ * @param model - The model to stream from
+ * @param systemPrompt - A custom summarizer system prompt, replacing the default one
+ * @param cancelSignal - Signal that aborts the request
+ * @returns The summary text, or null if the model returned no text, and the usage the provider reported
+ */
+export async function streamSummary(
+  content: ContentBlock[],
+  model: Model,
+  systemPrompt?: string,
+  cancelSignal?: AbortSignal
+): Promise<{ text: string | null; usage?: Usage }> {
   const messages = [
     new Message({
       role: 'user',
@@ -80,11 +103,10 @@ export async function summarizeContent(
     }),
   ]
 
-  const stream = new ModelProxy(model).streamAggregated(
-    messages,
-    { systemPrompt: config?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
-    invocationContext
-  )
+  const stream = model.streamAggregated(messages, {
+    systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    ...(cancelSignal && { cancelSignal }),
+  })
 
   let result: Awaited<ReturnType<typeof stream.next>> | undefined
   for (;;) {
@@ -94,7 +116,7 @@ export async function summarizeContent(
 
   if (!result?.done || !result.value) {
     logger.warn('summarization produced no response')
-    return null
+    return { text: null }
   }
 
   const parts: string[] = []
@@ -104,7 +126,8 @@ export async function summarizeContent(
     }
   }
 
-  return parts.join('\n') || null
+  const usage = result.value.metadata?.usage
+  return { text: parts.join('\n') || null, ...(usage !== undefined && { usage }) }
 }
 
 /**
