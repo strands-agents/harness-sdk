@@ -134,18 +134,22 @@ class TruncateStrategy(BaseOffloadStrategy):
 
 _EMERGENCY_REMOVAL_RATIO = 0.2
 _EMERGENCY_TARGET_UTILIZATION = 0.9
+_EMERGENCY_MIN_CUT = 0.25
+_FULL_PREVIEW_CHARS = DEFAULT_PREVIEW_TOKENS * CHARS_PER_TOKEN
 
 
 def _text_size(block: ContentBlock) -> int:
-    """Characters of previewable text in a block: its text, or the text and JSON items of a tool result."""
+    """Characters of previewable text in a block: its text, or the joined text and JSON items of a tool result."""
     if is_text_block(block):
         return len(block["text"])
     if "toolResult" not in block:
         return 0
-    return sum(
-        len(item["text"]) if "text" in item else len(json.dumps(item["json"])) if "json" in item else 0
+    textual = [
+        item["text"] if "text" in item else json.dumps(item["json"])
         for item in block["toolResult"]["content"]
-    )
+        if "text" in item or "json" in item
+    ]
+    return len("\n".join(textual))
 
 
 def _first_text(block: ContentBlock) -> str:
@@ -200,9 +204,10 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         chars_now = _total_text_size(context.messages)
         excess_chars = chars_now - fits_chars
         if context.overflow:
-            # The model rejected the input even if the local count (messages only, no system prompt or tool specs)
-            # says it fits, so cut at least a tenth of the text rather than letting the 3-retry cap run out.
-            excess_chars = max(excess_chars, chars_now * (1 - _EMERGENCY_TARGET_UTILIZATION))
+            # The model rejected the input, so the local count (messages only, no system prompt or tool specs, a
+            # heuristic tokenizer) is optimistic by an unknown margin: cut at least a quarter of the text per pass
+            # so the 3-retry cap cannot run out on a context the count undersells by 2x.
+            excess_chars = max(excess_chars, chars_now * _EMERGENCY_MIN_CUT)
         truncated = await self._truncate_largest_text_blocks(context, excess_chars)
         return dropped or truncated
 
@@ -236,7 +241,8 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         Each block keeps at most a quarter of its text as preview (never more than the default preview), so
         every truncation removes most of the block. Ties go to the oldest block. Protected blocks (head message,
         pinned messages, summaries) are only cut once every other block is, so an overflow that lives in one of
-        them still recovers.
+        them still recovers. Already truncated blocks are skipped unless they are still larger than a full
+        preview, so a block that merely starts with the marker cannot stall the recovery.
         """
         messages = context.messages
         candidates = sorted(
@@ -244,7 +250,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
                 (_is_protected(messages, index, block), -_text_size(block), index, block_index)
                 for index, message in enumerate(messages)
                 for block_index, block in enumerate(message["content"])
-                if _text_size(block) > 0 and not _is_truncated(block)
+                if _text_size(block) > _FULL_PREVIEW_CHARS or (_text_size(block) > 0 and not _is_truncated(block))
             )
         )
         saved = 0

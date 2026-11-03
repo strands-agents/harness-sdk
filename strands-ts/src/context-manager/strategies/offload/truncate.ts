@@ -112,19 +112,21 @@ function appendStashRefs(block: ToolResultBlock, stashRefs: string[]): ToolResul
 
 const EMERGENCY_REMOVAL_RATIO = 0.2
 const EMERGENCY_TARGET_UTILIZATION = 0.9
+const EMERGENCY_MIN_CUT = 0.25
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
+const FULL_PREVIEW_CHARS = DEFAULT_PREVIEW_TOKENS * CHARS_PER_TOKEN
 
-/** Characters of previewable text in a block: its text, or the text and JSON items of a tool result. */
+/** Characters of previewable text in a block: its text, or the joined text and JSON items of a tool result. */
 function textSize(block: ContentBlock): number {
   if (block instanceof TextBlock) return block.text.length
   if (!(block instanceof ToolResultBlock)) return 0
-  let size = 0
+  const textual: string[] = []
   for (const item of block.content) {
-    if (item instanceof TextBlock) size += item.text.length
-    else if (item instanceof JsonBlock) size += JSON.stringify(item.toJSON()).length
+    if (item instanceof TextBlock) textual.push(item.text)
+    else if (item instanceof JsonBlock) textual.push(JSON.stringify(item.toJSON()))
   }
-  return size
+  return textual.join('\n').length
 }
 
 function firstText(block: ContentBlock): string {
@@ -179,9 +181,10 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
     const fitsChars = utilization > 0 ? (charsBefore * EMERGENCY_TARGET_UTILIZATION) / utilization : 0
     const charsNow = totalTextSize(context.messages)
     let excessChars = charsNow - fitsChars
-    // The model rejected the input even if the local count (messages only, no system prompt or tool specs)
-    // says it fits, so cut at least a tenth of the text rather than letting the 3-retry cap run out.
-    if (context.overflow) excessChars = Math.max(excessChars, charsNow * (1 - EMERGENCY_TARGET_UTILIZATION))
+    // The model rejected the input, so the local count (messages only, no system prompt or tool specs, a
+    // heuristic tokenizer) is optimistic by an unknown margin: cut at least a quarter of the text per pass
+    // so the 3-retry cap cannot run out on a context the count undersells by 2x.
+    if (context.overflow) excessChars = Math.max(excessChars, charsNow * EMERGENCY_MIN_CUT)
     const truncated = await this._truncateLargestTextBlocks(context, excessChars)
     return dropped || truncated
   }
@@ -210,7 +213,8 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
    * Each block keeps at most a quarter of its text as preview (never more than the default preview),
    * so every truncation removes most of the block. Ties go to the oldest block. Protected blocks (head
    * message, pinned messages, summaries) are only cut once every other block is, so an overflow that
-   * lives in one of them still recovers.
+   * lives in one of them still recovers. Already truncated blocks are skipped unless they are still larger
+   * than a full preview, so a block that merely starts with the marker cannot stall the recovery.
    */
   private async _truncateLargestTextBlocks(context: ContextState, excessChars: number): Promise<boolean> {
     const { messages } = context
@@ -218,7 +222,7 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
     messages.forEach((message, index) => {
       message.content.forEach((block, blockIndex) => {
         const size = textSize(block)
-        if (size > 0 && !isTruncated(block)) {
+        if (size > FULL_PREVIEW_CHARS || (size > 0 && !isTruncated(block))) {
           candidates.push({ protected: isProtected(messages, index, block) ? 1 : 0, size, index, blockIndex })
         }
       })
