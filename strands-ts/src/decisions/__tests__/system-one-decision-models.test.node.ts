@@ -248,7 +248,7 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect(captured[0]?.body['model']).toBe('pinned-model')
     })
 
-    it.each([429, 529])('maps HTTP %s to ModelThrottledError with the HTTP failure as cause', async (status) => {
+    it.each([429, 503, 529])('maps HTTP %s to ModelThrottledError with the HTTP failure as cause', async (status) => {
       const decision = create({
         apiKey: 'test-key',
         fetch: fakeFetch({ error: 'retry later' }, { status }),
