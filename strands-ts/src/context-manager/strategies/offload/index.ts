@@ -11,7 +11,7 @@ import { DropStrategy } from './drop.js'
 import { TruncateStrategy } from './truncate.js'
 import { SummarizeStrategy } from './summarize.js'
 
-export { EmergencyTruncateStrategy } from './base.js'
+export { EmergencyTruncateStrategy } from './truncate.js'
 export { DROPPED_MARKER } from './drop.js'
 export type { OffloadTarget, OffloadConditions, OffloadStrategyBuilder } from './base.js'
 

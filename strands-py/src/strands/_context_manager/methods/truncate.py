@@ -16,6 +16,7 @@ from ...types.tools import ToolResult, ToolResultContent
 
 DEFAULT_PREVIEW_TOKENS = 1000
 CHARS_PER_TOKEN = 4
+_TRUNCATED_PREFIX = "[Truncated:"
 
 
 class TruncateConfig(TypedDict, total=False):
@@ -57,7 +58,7 @@ def _build_preview(full_text: str, block_count: int, config: TruncateConfig | No
 
     blocks_word = "block" if block_count == 1 else "blocks"
     approx_tokens = math.ceil(total_chars / CHARS_PER_TOKEN)
-    result = f"[Truncated: {block_count} {blocks_word}, ~{approx_tokens:,} tokens]\n\n{preview}"
+    result = f"{_TRUNCATED_PREFIX} {block_count} {blocks_word}, ~{approx_tokens:,} tokens]\n\n{preview}"
 
     if len(result) >= total_chars:
         return full_text
