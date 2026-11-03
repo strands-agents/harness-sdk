@@ -4,6 +4,7 @@
  * @internal
  */
 
+import { TextBlock } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
 import type { SummaryRequest, SummaryResult } from '../../models/summary.js'
 import type { Summarizer } from './summarizer.js'
@@ -24,7 +25,17 @@ export class NativeSummarizer implements Summarizer {
     this.model = model
   }
 
-  summarize(request: SummaryRequest): Promise<SummaryResult | undefined> {
-    return this.model.compact(request)
+  async summarize(request: SummaryRequest): Promise<SummaryResult | undefined> {
+    const result = await this.model.compact(request)
+    if (!result) return undefined
+    const { block } = result
+    const offloaded = { method: 'summarize' as const, removedMessages: request.messages.length }
+    return {
+      ...result,
+      block: new TextBlock(block.text, {
+        metadata: { ...block.metadata, offloaded: { ...offloaded, ...block.metadata?.offloaded } },
+        ...(block.providerData !== undefined && { providerData: block.providerData }),
+      }),
+    }
   }
 }

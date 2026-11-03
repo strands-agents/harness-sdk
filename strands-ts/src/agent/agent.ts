@@ -129,6 +129,7 @@ import { ContextManager } from '../context-manager/context-manager.js'
 import type { ContextManagerStrategy } from '../context-manager/context-manager.js'
 import { BackgroundTasks } from '../background-tasks/background-tasks.js'
 import type { BackgroundTasksConfig } from '../background-tasks/types.js'
+import { renderHistory } from '../context-manager/render.js'
 
 /**
  * Recursive type definition for nested tool arrays.
@@ -2704,7 +2705,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    messages = normalizeToolUseNames(messages)
+    messages = renderHistory(normalizeToolUseNames(messages))
     const proxy = new ModelProxy(model)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {

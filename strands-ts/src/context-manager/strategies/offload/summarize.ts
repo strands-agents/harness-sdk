@@ -13,6 +13,12 @@ import type { Model } from '../../../models/model.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
+import type { SummaryRequest, SummaryResult } from '../../../models/summary.js'
+import { unwrapInvocationContext } from '../../../agent/invocation-context.js'
+import { planCut, type Cut } from '../../summarizers/cut.js'
+import { BaseSummarizer } from '../../summarizers/base-summarizer.js'
+import { NativeSummarizer } from '../../summarizers/native-summarizer.js'
+import type { Summarizer } from '../../summarizers/summarizer.js'
 import {
   flattenMessagesToContent,
   formatSummarized,
@@ -35,6 +41,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:summarize'
 
   private readonly _config: SummarizeConfig
+  /** Message 0 as it was when a native summary first replaced it, kept for re-statement. */
+  private _openingMessage: Message | undefined
 
   constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
     super(target, conditions)
@@ -54,6 +62,80 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
+    if (this._summarizesHistory) return this._applySummarizer(context)
+    return this._applyToSelection(context)
+  }
+
+  /**
+   * Picks the summarizer for a pass: native when the summarizer model declares server-side compaction, base
+   * otherwise.
+   *
+   * @param agent - The agent whose history is summarized
+   * @returns The summarizer, or undefined when no summarizer model resolves
+   */
+  resolve(agent: LocalAgent): Summarizer | undefined {
+    const model = this._resolveModel(agent)
+    if (!model) return undefined
+    if (model.modelInfo?.capabilities?.serverSideCompaction === true) return new NativeSummarizer(model)
+    return new BaseSummarizer(model)
+  }
+
+  /**
+   * Plans the cut of a pass, keeping `preserveRecent` messages.
+   *
+   * @param messages - The history
+   * @param keepHead - How many opening messages to keep in front of the summary
+   * @returns The cut, or undefined when nothing can be summarized
+   */
+  planCut(messages: Message[], keepHead: number): Cut | undefined {
+    return planCut(messages, keepHead, this._preserveRecent)
+  }
+
+  /**
+   * Replaces the cut's body with the summary as its own message: `head + [summary] + tail`.
+   *
+   * @param messages - The history, changed in place
+   * @param cut - The cut the summary was written for
+   * @param block - The summary
+   */
+  place(messages: Message[], cut: Cut, block: TextBlock): void {
+    if (cut.head.length === 0 && !this._openingMessage) this._openingMessage = cut.body[0]
+    messages.splice(0, messages.length, ...cut.head, new Message({ role: 'assistant', content: [block] }), ...cut.tail)
+  }
+
+  /** Whether message-level passes summarize the history through a summarizer, rather than a target selection. */
+  private get _summarizesHistory(): boolean {
+    return (this._target === undefined || this._target === '*') && this._threshold === undefined
+  }
+
+  /** Runs one pass; when the native summarizer writes no summary, the base summarizer re-cuts and runs instead. */
+  private async _applySummarizer(context: ContextState): Promise<boolean> {
+    const summarizer = this.resolve(context.agent)
+    if (!summarizer) return false
+    const outcome = await this._summarizeCut(context, summarizer)
+    if (outcome !== 'noSummary' || summarizer.keepHead === 1) return outcome === 'placed'
+    logger.debug(`model_id=<${summarizer.model.modelId}> | native compaction wrote no summary, summarizing client-side`)
+    return (await this._summarizeCut(context, new BaseSummarizer(summarizer.model))) === 'placed'
+  }
+
+  private async _summarizeCut(
+    context: ContextState,
+    summarizer: Summarizer
+  ): Promise<'placed' | 'noCut' | 'noSummary'> {
+    const cut = this.planCut(context.messages, summarizer.keepHead)
+    if (!cut) return 'noCut'
+    const result = await summarizer.summarize(summaryRequest(context, cut, summarizer, this._config.systemPrompt))
+    if (!result) return 'noSummary'
+    this.place(context.messages, cut, result.block)
+    recordSummaryUsage(context, result)
+    logger.debug(
+      `summarized=<${cut.body.length}>, keep_head=<${summarizer.keepHead}> | summarized the opening of the history`
+    )
+    return 'placed'
+  }
+
+  /** Summarizes the messages a target or threshold selects, joining the summary to a neighbor. */
+  private async _applyToSelection(context: ContextState): Promise<boolean> {
     const model = this._resolveModel(context.agent)
     if (!model) return false
 
@@ -156,4 +238,30 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   private _resolveModel(agent: LocalAgent): Model | undefined {
     return this._config.model ?? agent.auxModel
   }
+}
+
+function summaryRequest(
+  context: ContextState,
+  cut: Cut,
+  summarizer: Summarizer,
+  instructions: string | undefined
+): SummaryRequest {
+  const { agent } = context
+  const live =
+    summarizer.keepHead === 0
+      ? {
+          ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
+          toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
+        }
+      : {}
+  return {
+    messages: cut.body,
+    ...live,
+    ...(instructions !== undefined && { instructions }),
+    ...(agent.cancelSignal && { cancelSignal: agent.cancelSignal }),
+  }
+}
+
+function recordSummaryUsage(context: ContextState, result: SummaryResult): void {
+  if (result.usage) unwrapInvocationContext(context.invocationContext)?.recordUsage(result.usage)
 }

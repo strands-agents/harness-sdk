@@ -42,7 +42,13 @@ export class AnthropicWire {
    * @returns The client
    */
   client(): Anthropic {
-    return new Anthropic({ apiKey: 'offline-test-key', maxRetries: 0, fetch: this._fetch })
+    // The key is a placeholder and every request stays on this wire, so the client may run in a browser test.
+    return new Anthropic({
+      apiKey: 'offline-test-key',
+      maxRetries: 0,
+      fetch: this._fetch,
+      dangerouslyAllowBrowser: true,
+    })
   }
 
   /** Bodies parsed as JSON, in request order. */

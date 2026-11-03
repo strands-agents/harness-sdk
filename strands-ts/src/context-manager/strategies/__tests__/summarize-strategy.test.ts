@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { summarizeContent } from '../../methods/summarize.js'
+import { streamSummary, summarizeContent } from '../../methods/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
@@ -15,6 +15,7 @@ vi.mock('../../methods/summarize.js', async (importOriginal) => {
   return {
     ...actual,
     summarizeContent: vi.fn(async () => 'Summary of multimodal content'),
+    streamSummary: vi.fn(async () => ({ text: 'Summary of multimodal content' })),
   }
 })
 
@@ -234,7 +235,7 @@ describe('Offload.summarize', () => {
     it('summarizes tool calls as text in a single model call', async () => {
       const actualSummarize =
         await vi.importActual<typeof import('../../methods/summarize.js')>('../../methods/summarize.js')
-      vi.mocked(summarizeContent).mockImplementationOnce(actualSummarize.summarizeContent)
+      vi.mocked(streamSummary).mockImplementationOnce(actualSummarize.streamSummary)
       const summarizer = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Listed the files' })
       const streamSpy = vi.spyOn(summarizer, 'stream')
       const messages = [
@@ -352,7 +353,7 @@ describe('repeated summarization', () => {
     expect(messages[0]!.metadata).toEqual(task().metadata)
     const summaries = messages
       .flatMap((message) => message.content)
-      .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
+      .filter((block) => block instanceof TextBlock && block.metadata?.offloaded?.method === 'summarize')
     expect(summaries).toHaveLength(1)
   })
 })

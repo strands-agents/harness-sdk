@@ -22,7 +22,12 @@ describe('NativeSummarizer', () => {
       instructions: 'keep the task',
     }
 
-    expect(await new NativeSummarizer(model).summarize(request)).toBe(result)
+    expect(await new NativeSummarizer(model).summarize(request)).toStrictEqual({
+      block: new TextBlock('native', {
+        metadata: { offloaded: { method: 'summarize', removedMessages: 1 } },
+        providerData: { provider: 'test', data: { id: 1 } },
+      }),
+    })
     expect(compact).toHaveBeenCalledWith(request)
     expect(stream).not.toHaveBeenCalled()
   })
