@@ -94,6 +94,52 @@ describe('edit tool', () => {
       await editTool.invoke({ path: filePath, old_str: '1', new_str: '$& $1 $$' }, context)
       expect(await readFile(filePath)).toBe('x = $& $1 $$')
     })
+
+    it('matches a multiline LF old_str in a CRLF file and writes CRLF back', async () => {
+      // Models write `\n`; the file's CRLF endings must still match, and the
+      // replacement must come back with CRLF too.
+      const filePath = await writeFile('a\r\nb\r\nc\r\n')
+      await editTool.invoke({ path: filePath, old_str: 'a\nb', new_str: 'x\ny' }, context)
+      expect(await readFile(filePath)).toBe('x\r\ny\r\nc\r\n')
+    })
+
+    it('matches a CRLF old_str in a CRLF file', async () => {
+      const filePath = await writeFile('a\r\nb\r\nc\r\n')
+      await editTool.invoke({ path: filePath, old_str: 'a\r\nb', new_str: 'x\r\ny' }, context)
+      expect(await readFile(filePath)).toBe('x\r\ny\r\nc\r\n')
+    })
+
+    it('keeps a CRLF file intact on a single-line edit', async () => {
+      const filePath = await writeFile('a\r\nb\r\nc\r\n')
+      await editTool.invoke({ path: filePath, old_str: 'b', new_str: 'x\ny' }, context)
+      expect(await readFile(filePath)).toBe('a\r\nx\r\ny\r\nc\r\n')
+    })
+
+    it('does not rewrite an LF file when old_str uses CRLF', async () => {
+      const filePath = await writeFile('a\nb\nc\n')
+      await editTool.invoke({ path: filePath, old_str: 'a\r\nb', new_str: 'x\r\ny' }, context)
+      expect(await readFile(filePath)).toBe('x\ny\nc\n')
+    })
+
+    it('prefers the verbatim match in a file with mixed line endings', async () => {
+      const filePath = await writeFile('foo\nbar\n---\nfoo\r\nbar\n')
+      await editTool.invoke({ path: filePath, old_str: 'foo\nbar', new_str: 'X' }, context)
+      expect(await readFile(filePath)).toBe('X\n---\nfoo\r\nbar\n')
+    })
+
+    it('uses the dominant line ending for a single-line edit', async () => {
+      // One stray CRLF must not turn a mostly-LF file's new lines into CRLF.
+      const filePath = await writeFile('a\nb\nc\r\nd\n')
+      await editTool.invoke({ path: filePath, old_str: 'b', new_str: 'x\ny' }, context)
+      expect(await readFile(filePath)).toBe('a\nx\ny\nc\r\nd\n')
+    })
+
+    it('handles a large multiline old_str in a CRLF file', async () => {
+      const lines = [...Array.from({ length: 5000 }, (_, i) => `line ${i}`), 'x'.repeat(40_000)]
+      const filePath = await writeFile('head\r\n' + lines.join('\r\n') + '\r\n')
+      await editTool.invoke({ path: filePath, old_str: lines.join('\n'), new_str: 'body' }, context)
+      expect(await readFile(filePath)).toBe('head\r\nbody\r\n')
+    })
   })
 
   // The validator's full semantics are covered in `../../__tests__/paths.test.ts`;

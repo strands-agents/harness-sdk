@@ -93,6 +93,52 @@ class TestStrReplace:
         await edit_tool(path=file_path, tool_context=ctx, old_str="b\nc", new_str="B\nC\nC2")
         assert (tmp_path / "f.txt").read_text() == "a\nB\nC\nC2\nd"
 
+    @pytest.mark.asyncio
+    async def test_multiline_old_str_matches_crlf_file(self, edit_tool, ctx, tmp_path):
+        # Models write ``\n``; the file's CRLF endings must still match, and the
+        # replacement must come back with CRLF too.
+        file_path = _write(tmp_path / "f.txt", "a\r\nb\r\nc\r\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="a\nb", new_str="x\ny")
+        assert (tmp_path / "f.txt").read_bytes() == b"x\r\ny\r\nc\r\n"
+
+    @pytest.mark.asyncio
+    async def test_crlf_old_str_matches_crlf_file(self, edit_tool, ctx, tmp_path):
+        file_path = _write(tmp_path / "f.txt", "a\r\nb\r\nc\r\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="a\r\nb", new_str="x\r\ny")
+        assert (tmp_path / "f.txt").read_bytes() == b"x\r\ny\r\nc\r\n"
+
+    @pytest.mark.asyncio
+    async def test_single_line_edit_keeps_crlf_file_intact(self, edit_tool, ctx, tmp_path):
+        file_path = _write(tmp_path / "f.txt", "a\r\nb\r\nc\r\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="b", new_str="x\ny")
+        assert (tmp_path / "f.txt").read_bytes() == b"a\r\nx\r\ny\r\nc\r\n"
+
+    @pytest.mark.asyncio
+    async def test_crlf_old_str_does_not_rewrite_lf_file(self, edit_tool, ctx, tmp_path):
+        file_path = _write(tmp_path / "f.txt", "a\nb\nc\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="a\r\nb", new_str="x\r\ny")
+        assert (tmp_path / "f.txt").read_bytes() == b"x\ny\nc\n"
+
+    @pytest.mark.asyncio
+    async def test_mixed_endings_prefer_verbatim_match(self, edit_tool, ctx, tmp_path):
+        file_path = _write(tmp_path / "f.txt", "foo\nbar\n---\nfoo\r\nbar\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="foo\nbar", new_str="X")
+        assert (tmp_path / "f.txt").read_bytes() == b"X\n---\nfoo\r\nbar\n"
+
+    @pytest.mark.asyncio
+    async def test_single_line_edit_uses_dominant_line_ending(self, edit_tool, ctx, tmp_path):
+        # One stray CRLF must not turn a mostly-LF file's new lines into CRLF.
+        file_path = _write(tmp_path / "f.txt", "a\nb\nc\r\nd\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="b", new_str="x\ny")
+        assert (tmp_path / "f.txt").read_bytes() == b"a\nx\ny\nc\r\nd\n"
+
+    @pytest.mark.asyncio
+    async def test_large_multiline_old_str_in_crlf_file(self, edit_tool, ctx, tmp_path):
+        lines = [f"line {i}" for i in range(5000)] + ["x" * 40_000]
+        file_path = _write(tmp_path / "f.txt", "head\r\n" + "\r\n".join(lines) + "\r\n")
+        await edit_tool(path=file_path, tool_context=ctx, old_str="\n".join(lines), new_str="body")
+        assert (tmp_path / "f.txt").read_bytes() == b"head\r\nbody\r\n"
+
 
 class TestPathValidation:
     """Edit delegates to the shared ``validate_absolute_path`` helper.

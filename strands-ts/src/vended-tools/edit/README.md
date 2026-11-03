@@ -1,6 +1,6 @@
 # Edit Tool
 
-Replaces an exact, unique string in a text file. `old_str` must appear in the file exactly once; the tool errors on zero or multiple occurrences and leaves the file untouched. Paths must be absolute and must not contain `..` segments.
+Replaces an exact, unique string in a text file. `old_str` must appear in the file exactly once; the tool errors on zero or multiple occurrences and leaves the file untouched. Line breaks in `old_str` match the file's own line endings (LF or CRLF), and `new_str` is written with the line ending of the text it replaces (or the file's dominant one). Paths must be absolute and must not contain `..` segments.
 
 All I/O routes through a [Sandbox](../../sandbox/base.ts): either one bound at creation (as the Docker/SSH sandboxes do in `getTools()`) or the agent's configured sandbox read from `context.agent.sandbox` at call time.
 
