@@ -49,7 +49,7 @@
     "markdown-it": "^15.0.3",
     "mdast-util-to-string": "^4.0.0",
     "node-fetch": "^3.3.2",
-    "node-html-parser": "^9.0.5",
+    "node-html-parser": "^9.0.6",
     "p-limit": "^7.3.3",
     "prettier": "^3.9.10",
     "reading-time": "^1.5.0",
