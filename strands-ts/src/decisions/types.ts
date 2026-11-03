@@ -112,5 +112,13 @@ export interface DecisionResult<Q extends Record<string, Question> = Record<stri
   metadata: {
     /** Time spent in the underlying model call, in milliseconds. */
     latencyMs: number
+    /** Provider that served the decision. */
+    providerName?: string
+    /** Provider-reported model identifier that served the decision. */
+    modelId?: string
+    /** Per-question probability distributions, keyed by answer value. */
+    probabilities?: { readonly [K in keyof Q]: Readonly<Record<string, number>> }
+    /** Per-question confidence values in `[0.0, 1.0]`. */
+    confidence?: { readonly [K in keyof Q]: number }
   }
 }

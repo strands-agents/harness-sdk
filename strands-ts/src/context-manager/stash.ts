@@ -25,6 +25,19 @@ function decode(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
+const STASH_REFS_SUFFIX = / \[refs?: [^\]]+\]$/
+
+/**
+ * Whether a block's text ends with a {@link formatStashRefs} token, marking it as an offload replacement.
+ * Accepts live blocks and their serialized JSON form.
+ *
+ * @internal
+ */
+export function isOffloadPlaceholder(block: unknown): boolean {
+  if (typeof block !== 'object' || block === null || !('text' in block)) return false
+  return typeof block.text === 'string' && STASH_REFS_SUFFIX.test(block.text)
+}
+
 /** Format stash refs for display in placeholders. Returns '' when refs is empty. */
 export function formatStashRefs(refs: string[]): string {
   if (refs.length === 0) return ''
@@ -108,6 +121,7 @@ export class Stash {
   /**
    * Eagerly stash all content from a message on arrival.
    * Called via MessageAddedEvent so content is persisted before any strategy runs.
+   * Offload placeholders are never stored: their keys belong to the originals they replaced.
    *
    * @param message - The message whose content should be persisted
    * @param skipToolUseIds - ToolUseIds to skip (e.g. retrieval tool results)
@@ -117,8 +131,11 @@ export class Stash {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
         if (skipToolUseIds?.has(block.toolUseId)) continue
+        if (block.content.some(isOffloadPlaceholder)) continue
         await this._storeToolResult(block)
       } else if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
+        continue
+      } else if (isOffloadPlaceholder(block)) {
         continue
       } else {
         try {

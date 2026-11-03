@@ -509,7 +509,15 @@ class GeminiModel(Model):
                         return {"messageStop": {"stopReason": "max_tokens"}}
                     case "SAFETY":
                         return {"messageStop": {"stopReason": "guardrail_intervened"}}
-                    case "RECITATION":
+                    case (
+                        "RECITATION"
+                        | "BLOCKLIST"
+                        | "PROHIBITED_CONTENT"
+                        | "SPII"
+                        | "IMAGE_SAFETY"
+                        | "IMAGE_PROHIBITED_CONTENT"
+                        | "IMAGE_RECITATION"
+                    ):
                         return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
@@ -651,6 +659,7 @@ class GeminiModel(Model):
             yield self._format_chunk({"chunk_type": "message_start"})
 
             data_type: str | None = None
+            deferred_signature_parts: list[genai.types.Part] = []
             tool_used = False
             candidate = None
             event = None
@@ -690,10 +699,13 @@ class GeminiModel(Model):
                     # attaches it to a trailing empty part), so emit it independently of part.text;
                     # gating on part.text drops those signatures during aggregation. Function-call
                     # parts carry their signature on the tool-use block start instead (see above).
+                    # A signature arriving inside a text block (Gemini can sign an early text part and
+                    # keep streaming text) is held until the stream ends so the text stays one block.
                     if part.thought_signature and not part.function_call:
-                        if data_type != "reasoning_content":
-                            if data_type is not None:
-                                yield self._format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+                        if data_type == "text":
+                            deferred_signature_parts.append(part)
+                            continue
+                        if data_type is None:
                             yield self._format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
                             data_type = "reasoning_content"
                         yield self._format_chunk(
@@ -706,6 +718,16 @@ class GeminiModel(Model):
 
             if data_type is not None:
                 yield self._format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+            for deferred_part in deferred_signature_parts:
+                yield self._format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
+                yield self._format_chunk(
+                    {
+                        "chunk_type": "content_delta",
+                        "data_type": "reasoning_signature",
+                        "data": deferred_part,
+                    },
+                )
+                yield self._format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
             yield self._format_chunk(
                 {
                     "chunk_type": "message_stop",

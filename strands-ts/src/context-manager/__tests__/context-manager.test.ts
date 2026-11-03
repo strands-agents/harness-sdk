@@ -116,6 +116,29 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('seeded messages', () => {
+    it('does not overwrite a stashed original with a seeded preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      const preview = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: tu-1_0]')],
+          }),
+        ],
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [preview] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+    })
+  })
+
   describe('overflow path', () => {
     it('runs strategies on ContextWindowOverflowError and sets retry', async () => {
       let strategyCalled = false

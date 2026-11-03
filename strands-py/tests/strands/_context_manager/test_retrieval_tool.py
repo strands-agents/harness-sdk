@@ -73,6 +73,16 @@ class TestRetrievalTool:
         assert "not found" in result["content"][0]["text"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra_input", [{}, {"pattern": "row-4321"}])
+    async def test_returns_error_for_offload_placeholder(self, stash, extra_input):
+        """A stashed preview is never served as its original (#5620)."""
+        ref = await _store_text(stash, "[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tool-1_0]")
+        tool = _create_retrieval_tool(stash)
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref, **extra_input}})
+        assert result["status"] == "error"
+        assert result["content"][0]["text"] == f"Error: original content for reference {ref} is no longer available"
+
+    @pytest.mark.asyncio
     async def test_retrieves_json_content(self, stash):
         data = json.dumps({"json": {"key": "value"}}).encode("utf-8")
         ref = await stash.store("tool-1", 0, data)
