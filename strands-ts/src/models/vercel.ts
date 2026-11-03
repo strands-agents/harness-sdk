@@ -49,7 +49,13 @@ import {
   ModelMessageStopEvent,
   ModelMetadataEvent,
 } from './streaming.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelThrottledError,
+  ModelNetworkError,
+  isFetchNetworkError,
+} from '../errors.js'
 import { toMimeType } from '../mime.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
@@ -554,7 +560,7 @@ function applyOpenAICache(callOptions: LanguageModelV3CallOptions, cacheConfig: 
  * Classifies an error from doStream into the appropriate Strands error type.
  *
  * @param error - The error thrown by the Vercel provider
- * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, or ModelError)
+ * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, ModelNetworkError, or ModelError)
  */
 function classifyError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error)
@@ -575,7 +581,20 @@ function classifyError(error: unknown): Error {
     return new ContextWindowOverflowError(message)
   }
 
+  if (isNetworkError(error)) {
+    return new ModelNetworkError(`Language model stream error: ${message}`, { cause: error })
+  }
+
   return new ModelError(`Language model stream error: ${message}`, { cause: error })
+}
+
+/**
+ * Whether a Vercel provider error is a network failure. In Node, ai-sdk wraps fetch failures as a
+ * retryable `APICallError` with no status code; in browsers they surface as a raw `TypeError`.
+ */
+function isNetworkError(error: unknown): boolean {
+  if (isFetchNetworkError(error)) return true
+  return APICallError.isInstance(error) && error.isRetryable && error.statusCode === undefined
 }
 
 /**
