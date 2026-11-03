@@ -121,6 +121,25 @@ describe('Offload.summarize', () => {
       expect(vi.mocked(summarizeContent).mock.calls[0]![1]).toBe(auxModel)
     })
 
+    it('labels a tool result with its tool name and status for the summarizer', async () => {
+      vi.mocked(summarizeContent).mockClear()
+      const messages = [
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'bash', toolUseId: 't1', input: {} })] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('boom')] })],
+        }),
+      ]
+      const strategy = Offload.summarize(['bash'])
+
+      await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+
+      expect(vi.mocked(summarizeContent).mock.calls[0]![0]).toEqual([
+        new TextBlock('[tool result: bash (error)]'),
+        new TextBlock('boom'),
+      ])
+    })
+
     it('skips when utilization is below threshold', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]

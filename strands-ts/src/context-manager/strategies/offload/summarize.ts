@@ -15,6 +15,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import {
   flattenMessagesToContent,
+  formatToolResultLabel,
   summarizeContent,
   toolResultToContentBlocks,
   type SummarizeConfig,
@@ -74,12 +75,13 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     message: Message,
     agent: LocalAgent,
     stashRef: string | undefined,
+    toolName: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
     if (!model) return null
 
-    const input = summaryInput(block)
+    const input = summaryInput(block, toolName)
     const logFields = `trackingId=<${message.trackingId}>`
     const summary = input ? await this._trySummarize(input.content, model, logFields, invocationContext) : null
     if (input && summary) {
@@ -115,9 +117,13 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 }
 
 /** What the summarizer reads for a block and how its marker describes it, or undefined when it can't summarize it. */
-function summaryInput(block: ContentBlock): { content: ContentBlock[]; description: string } | undefined {
+function summaryInput(
+  block: ContentBlock,
+  toolName: string | undefined
+): { content: ContentBlock[]; description: string } | undefined {
   if (block instanceof ToolResultBlock) {
-    return { content: toolResultToContentBlocks(block.content), description: 'tool result' }
+    const label = new TextBlock(formatToolResultLabel(block, toolName))
+    return { content: [label, ...toolResultToContentBlocks(block.content)], description: 'tool result' }
   }
   if (block instanceof TextBlock) return { content: [new TextBlock(block.text)], description: 'text block' }
   if (block instanceof ImageBlock || block instanceof DocumentBlock)

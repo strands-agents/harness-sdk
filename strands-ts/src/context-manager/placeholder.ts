@@ -67,7 +67,7 @@ export function formatOffloaded(tokens: number, mediaKind?: string): string {
 /**
  * Marker for summarized content, followed by the summary when there is one.
  *
- * @param description - What was summarized, such as `'tool result'` or `'3 messages'`
+ * @param description - What was summarized, such as `'tool result'` or `'earlier messages'`
  * @param tokens - Size of the original
  * @param summary - The summary text
  * @internal

@@ -277,7 +277,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       if (threshold !== undefined && tokens <= threshold && !(tokens === 0 && holdsMedia(block))) continue
 
       const stashRef = this._stash ? await this._stash.ensureStashed(block, message, blockIndex) : undefined
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, invocationContext)
+      const toolName = block instanceof ToolResultBlock ? toolNameMap.get(block.toolUseId) : undefined
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, toolName, invocationContext)
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -289,6 +290,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   /**
    * Transform a block. Return the replacement, or null to skip.
    * `stashRef` is the reference the original is retrievable under, or `undefined` when there is no stash.
+   * `toolName` names the tool that produced a tool result, when its tool use is in the conversation.
    */
   protected abstract _replaceBlock(
     block: ContentBlock,
@@ -296,6 +298,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     message: Message,
     agent: LocalAgent,
     stashRef: string | undefined,
+    toolName: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null>
 }

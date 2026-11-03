@@ -118,8 +118,12 @@ export function toolResultToContentBlocks(content: ToolResultContent[]): Content
   return content.flatMap(toSummarizerBlocks)
 }
 
-function formatToolResultLabel(block: ToolResultBlock, toolNames: Map<string, string>): string {
-  const name = toolNames.get(block.toolUseId)
+/**
+ * The label the summarizer reads before a tool result's content, such as `[tool result: bash (error)]`.
+ *
+ * @internal
+ */
+export function formatToolResultLabel(block: ToolResultBlock, name: string | undefined): string {
   const status = block.status === 'error' ? ' (error)' : ''
   return name ? `[tool result: ${name}${status}]` : `[tool result${status}]`
 }
@@ -132,7 +136,10 @@ function messageToContentBlocks(message: Message, toolNames: Map<string, string>
   const blocks: ContentBlock[] = []
   for (const block of message.content) {
     if (block instanceof ToolResultBlock) {
-      blocks.push(new TextBlock(formatToolResultLabel(block, toolNames)), ...toolResultToContentBlocks(block.content))
+      blocks.push(
+        new TextBlock(formatToolResultLabel(block, toolNames.get(block.toolUseId))),
+        ...toolResultToContentBlocks(block.content)
+      )
     } else if (block instanceof ToolUseBlock) {
       blocks.push(new TextBlock(`[tool call: ${block.name}] ${JSON.stringify(block.input)}`))
     } else {
