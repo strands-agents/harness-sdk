@@ -233,9 +233,9 @@ describe('Offload strategies with stash', () => {
       const acted = await strategy.apply(makeContext(messages, { stash, utilization: 0.9 }))
 
       expect(acted).toBe(true)
-      const marker = new TextBlock('[Dropped: 2 messages] [ref: removed-m1]', {
+      const marker = new TextBlock('[Dropped: earlier messages, ~7 tokens] [ref: removed-m1]', {
         metadata: {
-          offloaded: { method: 'drop', ref: 'removed-m1', removedMessages: 2 },
+          offloaded: { method: 'drop', ref: 'removed-m1' },
         },
       })
       expect(messages.map((message) => message.content)).toEqual([
@@ -268,8 +268,8 @@ describe('Offload strategies with stash', () => {
 
       expect(messages.at(-1)!.content).toEqual([
         new TextBlock('final'),
-        new TextBlock('[Dropped: 2 messages]', {
-          metadata: { offloaded: { method: 'drop', removedMessages: 2 } },
+        new TextBlock('[Dropped: earlier messages, ~2 tokens]', {
+          metadata: { offloaded: { method: 'drop' } },
         }),
       ])
     })
@@ -343,10 +343,12 @@ describe('Offload strategies with stash', () => {
       await strategy.when({ contextUtilization: '50%' }).apply(makeContext(messages, { stash, utilization: 0.9 }))
 
       const marker = markerOf(messages)
-      const { removedMessages } = marker.metadata!.offloaded!
       const ref = `removed-m${first}`
-      const removed = original.slice(first, first + removedMessages!)
-      expect(marker.metadata).toEqual({ offloaded: { method, ref, removedMessages } })
+      // Copies and merges reuse blocks, so a message none of whose blocks are left was removed.
+      const kept = new Set(messages.flatMap((message) => message.content))
+      const removed = original.filter((message) => !message.content.some((block) => kept.has(block)))
+      expect(removed[0]).toBe(original[first])
+      expect(marker.metadata).toEqual({ offloaded: { method, ref } })
       expect(marker.text.endsWith(` [ref: ${ref}]`)).toBe(true)
       expect(await invokeRetrievalTool(createRetrievalTool(stash, 1_000_000), { reference: ref })).toEqual(
         flattenMessagesToContent(removed)
@@ -363,8 +365,8 @@ describe('Offload strategies with stash', () => {
         .apply(makeContext(messages, { stash, utilization: 0.9 }))
 
       const marker = markerOf(messages)
-      expect(marker.text).toMatch(/^\[Dropped: \d+ messages?\]$/)
-      expect(marker.metadata!.offloaded!.ref).toBeUndefined()
+      expect(marker.text).toMatch(/^\[Dropped: earlier messages, ~[\d,]+ tokens\]$/)
+      expect(marker.metadata).toEqual({ offloaded: { method: 'drop' } })
     })
   })
 

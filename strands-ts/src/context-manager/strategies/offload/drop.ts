@@ -24,8 +24,10 @@ export class DropStrategy extends BaseOffloadStrategy {
   }
 
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const text = async (_removed: Message[], count: number): Promise<string> => formatDroppedMessages(count)
-    return removeMessages(context.messages, await this._getEligibleMessages(context), text, 'drop', this._stash)
+    const { messages, agent } = context
+    const text = async (removed: Message[]): Promise<string> =>
+      formatDroppedMessages(await agent.model.countTokens(removed))
+    return removeMessages(messages, await this._getEligibleMessages(context), text, 'drop', this._stash)
   }
 
   protected async _replaceBlock(

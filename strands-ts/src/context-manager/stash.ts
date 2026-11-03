@@ -9,11 +9,12 @@
  */
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
-import { isOffloaded, Message, ToolResultBlock } from '../types/messages.js'
+import { Message, ToolResultBlock } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
 import { isProtocolBlock } from './strategies/offload/target.js'
+import { isOffloaded } from './placeholder.js'
 
 /** @internal */
 export const STASH_PREFIX = 'context'

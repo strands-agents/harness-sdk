@@ -235,19 +235,14 @@ export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
  */
 export interface OffloadedBlockData {
   /**
-   * Offload method that left the placeholder; absent when whatever left it didn't record one.
+   * Offload method that left the placeholder.
    */
-  method?: OffloadMethod
+  method: OffloadMethod
 
   /**
    * Stash reference under which the original is retrievable; absent when it was not stashed.
    */
   ref?: string
-
-  /**
-   * Number of whole messages the placeholder stands for; absent when it replaced a single block.
-   */
-  removedMessages?: number
 }
 
 /**
@@ -320,17 +315,6 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
   static fromJSON(data: TextBlockData): TextBlock {
     return new TextBlock(data.text, { ...(data.metadata !== undefined && { metadata: data.metadata }) })
   }
-}
-
-/**
- * Whether a block is a placeholder the context manager left where it offloaded content.
- *
- * @internal
- */
-export function isOffloaded(
-  block: unknown
-): block is TextBlock & { metadata: TextBlockMetadata & { offloaded: OffloadedBlockData } } {
-  return block instanceof TextBlock && block.metadata?.offloaded !== undefined
 }
 
 /**

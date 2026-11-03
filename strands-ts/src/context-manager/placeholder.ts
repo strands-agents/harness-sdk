@@ -2,10 +2,14 @@
  * Offload placeholders: the text block left where content was offloaded, and the wording of each marker it carries.
  */
 
-import { TextBlock, type OffloadMethod } from '../types/messages.js'
+import { TextBlock } from '../types/messages.js'
+import type { OffloadedBlockData, OffloadMethod, TextBlockMetadata } from '../types/messages.js'
 
 /** A bare marker reads to the model as media that never arrived, so it doubts what it saw. */
 const AFTER_RECEIVING = 'removed from context after it was received'
+
+/** What a message-level marker stands for. */
+export const REMOVED_MESSAGES = 'earlier messages'
 
 /**
  * The text block that stands in for offloaded content: the preview, followed by the stash reference
@@ -14,22 +18,23 @@ const AFTER_RECEIVING = 'removed from context after it was received'
  * @param method - Offload method that replaced the content
  * @param preview - Text that stands in for the original
  * @param stashRef - Reference the original is retrievable under, or undefined when it was not stashed
- * @param removedMessages - Number of whole messages the placeholder stands for, when it replaces messages
  * @internal
  */
-export function offloadPlaceholder(
-  method: OffloadMethod,
-  preview: string,
-  stashRef: string | undefined,
-  removedMessages?: number
-): TextBlock {
-  const offloaded = {
-    method,
-    ...(stashRef !== undefined && { ref: stashRef }),
-    ...(removedMessages !== undefined && { removedMessages }),
-  }
+export function offloadPlaceholder(method: OffloadMethod, preview: string, stashRef: string | undefined): TextBlock {
+  const offloaded = { method, ...(stashRef !== undefined && { ref: stashRef }) }
   const text = stashRef === undefined ? preview : `${preview} [ref: ${stashRef}]`
   return new TextBlock(text, { metadata: { offloaded } })
+}
+
+/**
+ * Whether a block is a placeholder the context manager left where it offloaded content.
+ *
+ * @internal
+ */
+export function isOffloaded(
+  block: unknown
+): block is TextBlock & { metadata: TextBlockMetadata & { offloaded: OffloadedBlockData } } {
+  return block instanceof TextBlock && block.metadata?.offloaded !== undefined
 }
 
 /**
@@ -42,12 +47,12 @@ export function formatDropped(tokens: number, mediaKind?: string): string {
 }
 
 /**
- * Marker for `count` dropped messages.
+ * Marker for dropped messages of `tokens` in total.
  *
  * @internal
  */
-export function formatDroppedMessages(count: number): string {
-  return marker('Dropped', countOf(count, 'message'))
+export function formatDroppedMessages(tokens: number): string {
+  return marker('Dropped', REMOVED_MESSAGES, approxTokens(tokens))
 }
 
 /**
@@ -81,12 +86,12 @@ export function formatTruncated(blockCount: number, tokens: number, preview: str
 }
 
 /**
- * Marker left where `count` messages were removed from the context window.
+ * Marker left where messages of `tokens` in total were removed from the context window.
  *
  * @internal
  */
-export function formatElided(count: number): string {
-  return `[... ${countOf(count, 'message')} elided ...]`
+export function formatElided(tokens: number): string {
+  return `[... ${[`${REMOVED_MESSAGES} elided`, approxTokens(tokens)].filter(Boolean).join(', ')} ...]`
 }
 
 /** `[Label: detail, detail]`, leaving out empty details, or `[Label]` when none remain. */

@@ -4,9 +4,10 @@
  * Replaces content with a preview (head, tail, or head-tail).
  */
 
-import { isOffloaded, JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ToolResultContent } from '../../types/messages.js'
 import { formatTruncated } from '../placeholder.js'
+import { isOffloaded } from '../placeholder.js'
 
 const DEFAULT_PREVIEW_TOKENS = 1000
 const CHARS_PER_TOKEN = 4
@@ -20,7 +21,7 @@ export interface TruncateConfig {
   /**
    * Number of tokens to keep as preview text. Defaults to 1,000. Content that already fits is left unchanged. For
    * `Offload.truncate('*')`, the budget of whole messages kept at the head and tail; the rest are replaced by one
-   * `[... N messages elided ...]` marker.
+   * `[... earlier messages elided, ~N tokens ...]` marker.
    */
   previewTokens?: number
 

@@ -5,7 +5,7 @@
  */
 
 import { logger } from '../../../logging/logger.js'
-import { isOffloaded, Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
@@ -22,6 +22,7 @@ import { formatElided, formatOffloaded } from '../../placeholder.js'
 import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
+import { isOffloaded } from '../../placeholder.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
   private readonly _truncateConfig: TruncateConfig
@@ -74,9 +75,9 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages, agent } = context
     const middle = withPairs(messages, await this._selectMiddle(await this._getEligibleMessages(context), agent))
-    // A middle of only earlier markers has nothing new to elide.
-    if (middle.every((message) => message.content.every(isElisionMarker))) return false
-    const text = async (_removed: Message[], count: number): Promise<string> => formatElided(count)
+    // A middle of only placeholders has nothing new to elide.
+    if (middle.every((message) => message.content.every(isOffloaded))) return false
+    const text = async (removed: Message[]): Promise<string> => formatElided(await agent.model.countTokens(removed))
     return removeMessages(messages, middle, text, 'truncate', this._stash)
   }
 
@@ -111,15 +112,6 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const tailCount = await countWithinBudget([...rest].reverse(), this._previewTokens - headBudget, agent)
     return rest.slice(0, rest.length - tailCount)
   }
-}
-
-/** Whether a block is the marker truncate left where it elided messages; other methods' markers don't count. */
-function isElisionMarker(block: ContentBlock): boolean {
-  return (
-    isOffloaded(block) &&
-    block.metadata.offloaded.method === 'truncate' &&
-    block.metadata.offloaded.removedMessages !== undefined
-  )
 }
 
 /** How many leading messages fit within `budget` tokens. */

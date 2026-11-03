@@ -3,12 +3,13 @@
  * {@link ContextState} over a mock agent.
  */
 
-import { isOffloaded, Message, TextBlock, ToolResultBlock } from '../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
 import type { OffloadedBlockData, OffloadMethod } from '../types/messages.js'
 import type { Agent } from '../agent/agent.js'
 import type { ContextState } from '../context-manager/types.js'
 import type { Stash } from '../context-manager/stash.js'
 import { createMockAgent } from './agent-helpers.js'
+import { isOffloaded } from '../context-manager/placeholder.js'
 
 /** A user message holding one successful tool result with the given text. */
 export function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {

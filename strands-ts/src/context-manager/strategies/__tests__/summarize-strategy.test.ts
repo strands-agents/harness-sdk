@@ -357,9 +357,9 @@ describe('summarizing whole messages', () => {
       ['task'],
       [
         'a1',
-        '[Summarized: 3 messages, ~3 tokens]\n\nearly run',
+        '[Summarized: earlier messages, ~3 tokens]\n\nearly run',
         'a5',
-        '[Summarized: 2 messages, ~2 tokens]\n\nlate run',
+        '[Summarized: earlier messages, ~2 tokens]\n\nlate run',
       ],
       ['u8'],
       ['a9'],
@@ -389,6 +389,6 @@ describe('summarizing whole messages', () => {
 
     const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
     expect(texts.slice(0, 5)).toEqual([['task'], ['a1'], ['u2'], ['a3'], ['u4']])
-    expect(texts[5]).toContain(formatSummarized('2 messages', 2, 'late run'))
+    expect(texts[5]).toContain(formatSummarized('earlier messages', 2, 'late run'))
   })
 })

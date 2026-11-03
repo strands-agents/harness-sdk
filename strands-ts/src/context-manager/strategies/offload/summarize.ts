@@ -19,7 +19,7 @@ import {
   toolResultToContentBlocks,
   type SummarizeConfig,
 } from '../../methods/summarize.js'
-import { formatOffloaded, formatSummarized } from '../../placeholder.js'
+import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
 import { BaseOffloadStrategy, removeMessages } from './base.js'
 import type { OffloadConditions } from './conditions.js'
 import { mediaKind, type OffloadTarget } from './target.js'
@@ -49,15 +49,13 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     // apply returns early without a model.
     const model = this._resolveModel(context.agent)!
     const { messages, invocationContext } = context
-    const summarize = (run: Message[], count: number): Promise<string | null> =>
-      this._summarizeRun(run, count, model, invocationContext)
+    const summarize = (run: Message[]): Promise<string | null> => this._summarizeRun(run, model, invocationContext)
     return removeMessages(messages, await this._getEligibleMessages(context), summarize, 'summarize', this._stash)
   }
 
-  /** The summary marker text for a run standing for `count` messages; a failure is logged and keeps the run. */
+  /** The summary marker text for a run; a failure is logged and keeps the run. */
   private async _summarizeRun(
     run: Message[],
-    count: number,
     model: Model,
     invocationContext?: InvocationContext
   ): Promise<string | null> {
@@ -67,7 +65,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const totalTokens = await model.countTokens(run)
     logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized message run`)
-    return formatSummarized(`${count} messages`, totalTokens, summary)
+    return formatSummarized(REMOVED_MESSAGES, totalTokens, summary)
   }
 
   protected async _replaceBlock(

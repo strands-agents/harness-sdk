@@ -466,21 +466,7 @@ describe('Offload message-level with role alternation', () => {
     const result = await strategy.apply(context)
 
     expect(result).toBe(true)
-    expect(textsOf(messages)).toEqual([['q1'], ['a2', '[Dropped: 2 messages]']])
-  })
-
-  it('counts the messages an earlier marker stands for in the new marker', async () => {
-    const messages = conversation(3)
-    messages[1] = new Message({
-      role: 'assistant',
-      content: [new TextBlock('a1'), offloadPlaceholder('drop', formatDroppedMessages(4), undefined, 4)],
-    })
-    const strategy = Offload.drop('*').when({ contextUtilization: '50%' })
-
-    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
-
-    expect(textsOf(messages)).toEqual([['q1'], ['a3', '[Dropped: 8 messages]']])
-    expect(placeholdersIn(messages)).toStrictEqual([{ method: 'drop', removedMessages: 8 }])
+    expect(textsOf(messages)).toEqual([['q1'], ['a2', '[Dropped: earlier messages, ~2 tokens]']])
   })
 
   it('message-level starts with user message after operation', async () => {
@@ -531,15 +517,12 @@ describe('Offload with * target and threshold (acts on messages larger than thre
 
     expect(textsOf(messages)).toEqual([
       ['task'],
-      [formatDroppedMessages(1)],
+      [formatDroppedMessages(2525)],
       ['small question'],
-      [formatDroppedMessages(1)],
+      [formatDroppedMessages(2525)],
       ['next'],
     ])
-    expect(placeholdersIn(messages)).toEqual([
-      { method: 'drop', removedMessages: 1 },
-      { method: 'drop', removedMessages: 1 },
-    ])
+    expect(placeholdersIn(messages)).toEqual([{ method: 'drop' }, { method: 'drop' }])
   })
 
   it.each([2500, '5%'] as (number | Percent)[])('Offload.truncate("*") rejects blockThreshold %j', (blockThreshold) => {
@@ -907,7 +890,7 @@ describe('EmergencyTruncateStrategy', () => {
       messages.map((message) => [message.role, message.content.map((block) => (block as TextBlock).text)])
     ).toEqual([
       ['user', ['pin']],
-      ['assistant', ['a2', '[... 2 messages elided ...]']],
+      ['assistant', ['a2', '[... earlier messages elided, ~2 tokens ...]']],
       ['user', ['u3']],
     ])
   })
@@ -1124,39 +1107,6 @@ describe('tool results that already hold a placeholder', () => {
     expect(resultMethods(messages)).toEqual(['drop', 'drop'])
     expect(summarizeContent).not.toHaveBeenCalled()
   })
-
-  function withUnknownPlaceholder(): Message[] {
-    const messages = [...toolHistory([1000]), text('user', 'next')]
-    const placeholder = new TextBlock('x'.repeat(4000), { metadata: { offloaded: { ref: 'x' } } })
-    messages[2] = new Message({
-      role: 'user',
-      content: [new ToolResultBlock({ toolUseId: 'tu-0', status: 'success', content: [placeholder] })],
-    })
-    return messages
-  }
-
-  it('drop replaces a placeholder that names no method once', async () => {
-    const messages = withUnknownPlaceholder()
-    const strategy = Offload.drop('toolResults').when({ contextUtilization: '50%' })
-
-    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(true)
-    expect(resultMethods(messages)).toEqual(['drop'])
-    expect(await strategy.apply(makeContext(messages, 0.9))).toBe(false)
-  })
-
-  it.each([
-    ['truncate', () => Offload.truncate('toolResults', { previewTokens: 100 })],
-    ['summarize', () => Offload.summarize('toolResults')],
-  ] as const)('%s leaves a placeholder that names no method alone', async (_method, builder) => {
-    const messages = withUnknownPlaceholder()
-    const before = messages.map((message) => message.toJSON())
-    vi.mocked(summarizeContent).mockClear()
-
-    expect(await builder().when({ contextUtilization: '50%' }).apply(makeContext(messages, 0.9))).toBe(false)
-
-    expect(messages.map((message) => message.toJSON())).toEqual(before)
-    expect(summarizeContent).not.toHaveBeenCalled()
-  })
 })
 
 describe('placeholders left by another method', () => {
@@ -1242,9 +1192,7 @@ describe('granularity', () => {
       expect(acted).toBe(true)
       if (outcome === 'messages' || outcome === 'large messages') {
         expect(messages.length).toBeLessThan(history().length)
-        expect(placeholdersIn(messages)).toContainEqual(
-          expect.objectContaining({ method, removedMessages: expect.any(Number) })
-        )
+        expect(placeholdersIn(messages)).toContainEqual({ method })
         if (outcome === 'large messages') expect(textsOf(messages).flat()).toContain('end')
         return
       }
@@ -1407,9 +1355,9 @@ describe('truncate whole messages', () => {
   }
 
   it.each([
-    ['headTail', 40, ['task', 'm1', 'm2', '[... 7 messages elided ...]', 'm10']],
-    ['head', 40, ['task', 'm1', 'm2', 'm3', 'm4', '[... 5 messages elided ...]', 'm10']],
-    ['tail', 50, ['task', '[... 5 messages elided ...]', 'm6', 'm7', 'm8', 'm9', 'm10']],
+    ['headTail', 40, ['task', 'm1', 'm2', '[... earlier messages elided, ~70 tokens ...]', 'm10']],
+    ['head', 40, ['task', 'm1', 'm2', 'm3', 'm4', '[... earlier messages elided, ~50 tokens ...]', 'm10']],
+    ['tail', 50, ['task', '[... earlier messages elided, ~50 tokens ...]', 'm6', 'm7', 'm8', 'm9', 'm10']],
   ] as [NonNullable<TruncateConfig['preview']>, number, string[]][])(
     'preview=%s with previewTokens=%s elides the middle',
     async (preview, previewTokens, expected) => {
@@ -1423,11 +1371,11 @@ describe('truncate whole messages', () => {
     }
   )
 
-  it("elides another strategy's marker for removed messages, counting the messages it stands for", async () => {
+  it("elides another strategy's marker for removed messages", async () => {
     const messages = history()
     messages[3] = new Message({
       role: 'assistant',
-      content: [offloadPlaceholder('summarize', pad('summary'), undefined, 3)],
+      content: [offloadPlaceholder('summarize', pad('summary'), undefined)],
     })
     const strategy = Offload.truncate('*', { previewTokens: 40 }).when({ contextUtilization: '50%' })
 
@@ -1437,7 +1385,7 @@ describe('truncate whole messages', () => {
       ['task'],
       [pad('m1')],
       [pad('m2')],
-      ['[... 9 messages elided ...]'],
+      ['[... earlier messages elided, ~70 tokens ...]'],
       [pad('m10')],
     ])
   })
@@ -1446,7 +1394,7 @@ describe('truncate whole messages', () => {
     const messages = history()
     messages[3] = new Message({
       role: 'assistant',
-      content: [new TextBlock(pad('m3')), offloadPlaceholder('truncate', formatElided(2), undefined, 2)],
+      content: [new TextBlock(pad('m3')), offloadPlaceholder('truncate', formatElided(20), undefined)],
     })
     const strategy = Offload.truncate('*', { previewTokens: 40 }).when({ contextUtilization: '50%' })
 
@@ -1456,7 +1404,7 @@ describe('truncate whole messages', () => {
       ['task'],
       [pad('m1')],
       [pad('m2')],
-      ['[... 9 messages elided ...]'],
+      ['[... earlier messages elided, ~82 tokens ...]'],
       [pad('m10')],
     ])
   })

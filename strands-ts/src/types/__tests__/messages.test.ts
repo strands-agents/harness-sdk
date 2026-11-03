@@ -1,6 +1,5 @@
 import { describe, expect, test, it } from 'vitest'
 import {
-  isOffloaded,
   Message,
   TextBlock,
   ToolUseBlock,
@@ -18,6 +17,7 @@ import {
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { isOffloaded } from '../../context-manager/placeholder.js'
 
 describe('Message', () => {
   test('creates message with role and content', () => {

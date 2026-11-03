@@ -6,14 +6,14 @@
 import { logger } from '../../../logging/logger.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
-import { isOffloaded, Message, TextBlock, type OffloadMethod, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, type OffloadMethod, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
-import { formatElided, offloadPlaceholder } from '../../placeholder.js'
+import { formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, insertMarker, repairAlternation, withPairs } from '../../message-trimming.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
@@ -32,23 +32,10 @@ export interface OffloadStrategy extends ContextStrategy {
 }
 
 /**
- * Writes the placeholder text, such as `[Dropped: 3 messages]` or a summary, for messages about to be removed with
- * their tool pairs. `count` is how many original messages they stand for. Returning null keeps them, as summarize
- * does when its model call fails.
+ * Writes the placeholder text, such as `[Dropped: earlier messages, ~1,200 tokens]` or a summary, for messages about
+ * to be removed with their tool pairs. Returning null keeps them, as summarize does when its model call fails.
  */
-type PlaceholderText = (removed: Message[], count: number) => Promise<string | null>
-
-/** How many original messages `message` stands for: each removal marker counts the messages it replaced. */
-function messagesRepresented(message: Message): number {
-  let replaced = 0
-  let hasContent = false
-  for (const block of message.content) {
-    const removedMessages = isOffloaded(block) ? block.metadata.offloaded.removedMessages : undefined
-    if (removedMessages === undefined) hasContent = true
-    else replaced += removedMessages
-  }
-  return hasContent || replaced === 0 ? replaced + 1 : replaced
-}
+type PlaceholderText = (removed: Message[]) => Promise<string | null>
 
 /**
  * Removes messages with their tool pairs and leaves one placeholder for each contiguous run of them, each stashed
@@ -81,8 +68,7 @@ async function removeRun(
   method: OffloadMethod,
   stash: Stash | undefined
 ): Promise<boolean> {
-  const count = run.reduce((total, message) => total + messagesRepresented(message), 0)
-  const text = await textFor(run, count)
+  const text = await textFor(run)
   if (text === null) return false
 
   const start = messages.indexOf(run[0]!)
@@ -93,7 +79,7 @@ async function removeRun(
   } catch (error) {
     logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
   }
-  insertMarker(messages, start, offloadPlaceholder(method, text, stashRef, count))
+  insertMarker(messages, start, offloadPlaceholder(method, text, stashRef))
   return true
 }
 
@@ -342,7 +328,7 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     let removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
-    const textFor = async (_removed: Message[], count: number): Promise<string> => formatElided(count)
+    const textFor = async (removed: Message[]): Promise<string> => formatElided(await agent.model.countTokens(removed))
     if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, 'truncate', context.stash))) {
       return false
     }

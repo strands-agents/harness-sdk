@@ -12,11 +12,9 @@ import { TextBlock } from '../../types/messages.js'
 
 describe('offloadPlaceholder', () => {
   it('appends the stash ref and records what the placeholder stands for', () => {
-    expect(offloadPlaceholder('drop', '[Dropped: 2 messages]', 'removed-abc', 2)).toStrictEqual(
-      new TextBlock('[Dropped: 2 messages] [ref: removed-abc]', {
-        metadata: {
-          offloaded: { method: 'drop', ref: 'removed-abc', removedMessages: 2 },
-        },
+    expect(offloadPlaceholder('drop', '[Dropped: earlier messages]', 'removed-abc')).toStrictEqual(
+      new TextBlock('[Dropped: earlier messages] [ref: removed-abc]', {
+        metadata: { offloaded: { method: 'drop', ref: 'removed-abc' } },
       })
     )
   })
@@ -42,8 +40,8 @@ describe('markers', () => {
       formatDropped(0, 'image'),
       '[Dropped: image, removed from context after it was received]',
     ],
-    ['one dropped message', formatDroppedMessages(1), '[Dropped: 1 message]'],
-    ['dropped messages', formatDroppedMessages(3), '[Dropped: 3 messages]'],
+    ['dropped messages', formatDroppedMessages(1200), '[Dropped: earlier messages, ~1,200 tokens]'],
+    ['unmeasured dropped messages', formatDroppedMessages(0), '[Dropped: earlier messages]'],
     ['an offloaded block', formatOffloaded(2525), '[Offloaded: ~2,525 tokens]'],
     ['an unmeasured block', formatOffloaded(0), '[Offloaded]'],
     [
@@ -60,8 +58,8 @@ describe('markers', () => {
     ],
     ['a truncated block', formatTruncated(1, 7500, 'head'), '[Truncated: 1 block, ~7,500 tokens]\n\nhead'],
     ['truncated blocks', formatTruncated(2, 7500, 'head'), '[Truncated: 2 blocks, ~7,500 tokens]\n\nhead'],
-    ['one elided message', formatElided(1), '[... 1 message elided ...]'],
-    ['elided messages', formatElided(7), '[... 7 messages elided ...]'],
+    ['elided messages', formatElided(1200), '[... earlier messages elided, ~1,200 tokens ...]'],
+    ['unmeasured elided messages', formatElided(0), '[... earlier messages elided ...]'],
   ])('formats %s', (_case, text, expected) => {
     expect(text).toBe(expected)
   })
