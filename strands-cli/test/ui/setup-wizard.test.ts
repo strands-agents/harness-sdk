@@ -1399,10 +1399,7 @@ describe('setup presentation', () => {
     }
   })
 
-  it.each([
-    ['returns through onCancel when a harness is waiting', true],
-    ['exits through onExit when there is nothing to return to', false],
-  ])('cycles opening focus and activates Esc: %s', async (_name, resumable) => {
+  it('cycles opening focus and activates Esc through onCancel', async () => {
     const colorLevel = chalk.level
     chalk.level = 3
     const config = CliConfigStore.memory({}, { animations: false })
@@ -1418,12 +1415,9 @@ describe('setup presentation', () => {
       }
     })
     const onCancel = vi.fn()
-    const onExit = vi.fn()
     const instance = render(
       createElement(SetupWizard, {
         config,
-        escapeHint: resumable ? 'Esc to return to Strands harness' : 'Esc to exit',
-        ...(resumable ? {} : { onExit }),
         onComplete: () => {},
         onCancel,
       }),
@@ -1452,7 +1446,7 @@ describe('setup presentation', () => {
         expect(frame).toContain(title)
       }
       expect(frame).not.toContain('Resume')
-      expect(frame).toContain(resumable ? 'Esc to return to Strands harness' : 'Esc to exit')
+      expect(frame).toContain('Esc to open chat')
       await press('\u001b[B', '\u001b[C')
       expect(gridHasSelection()).toBe(true)
       await press('\t')
@@ -1472,12 +1466,12 @@ describe('setup presentation', () => {
       await press('\u001b')
       await vi.waitFor(() => expect(frame).toContain('Quickstart'))
       await press('\t', '\r')
-      await vi.waitFor(() => expect(resumable ? onCancel : onExit).toHaveBeenCalledTimes(1))
+      await vi.waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1))
       await press('\u001b[Z', '\u001b[Z', ' ')
-      await vi.waitFor(() => expect(resumable ? onCancel : onExit).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(onCancel).toHaveBeenCalledTimes(2))
       await press('\u001b')
-      await vi.waitFor(() => expect(resumable ? onCancel : onExit).toHaveBeenCalledTimes(3))
-      expect(resumable ? onExit : onCancel).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(onCancel).toHaveBeenCalledTimes(3))
+      expect(onCancel.mock.calls).toEqual([[0], [0], [0]])
     } finally {
       instance.unmount()
       await instance.waitUntilExit()

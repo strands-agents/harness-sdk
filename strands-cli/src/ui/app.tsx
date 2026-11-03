@@ -175,13 +175,12 @@ export function ChatRoot({
       )
     }
     const snapshot = config.snapshot()
-    // Without a running chat or a saved harness, Esc leaves the CLI instead of launching an unconfigured agent.
-    const launchable = !config.needsSetup() || snapshot.agentProject !== undefined
+    const hasSavedHarness = !config.needsSetup() || snapshot.agentProject !== undefined
     const escapeHint = controller
       ? 'Esc to return to chat'
-      : launchable
+      : hasSavedHarness
         ? `Esc to launch ${snapshot.agentProject ? basename(snapshot.agentProject) : snapshot.profile.name}`
-        : 'Esc to exit'
+        : 'Esc to open chat'
     return (
       <SetupWizard
         config={config}
@@ -189,14 +188,6 @@ export function ChatRoot({
         escapeHint={sanitizeTerminalText(escapeHint)}
         {...(!controllerAttached.current && introStartedAt.current !== undefined
           ? { introStartedAt: introStartedAt.current }
-          : {})}
-        {...(!controller && !launchable
-          ? {
-              onExit: (): void => {
-                setPhase('cancelled')
-                onExitSetup(0)
-              },
-            }
           : {})}
         checkForUpdate={resolveUpdate}
         onComplete={(change) => finishSetup(0, true, change)}

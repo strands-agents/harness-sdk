@@ -158,8 +158,7 @@ function SetupWizardContent({
   deferred = false,
   onComplete,
   onCancel,
-  onExit,
-  escapeHint = 'Esc to exit',
+  escapeHint = 'Esc to open chat',
   introStartedAt,
   initialSettings,
   checkForUpdate = availableCliUpdate,
@@ -170,8 +169,6 @@ function SetupWizardContent({
   deferred?: boolean
   onComplete(change?: SetupChange): void
   onCancel?(exitCode: 0 | 130): void
-  /** Leaves setup and the CLI from the opening menu when there is no harness to return to. */
-  onExit?(): void
   /** Names where Esc leads from the opening menu. */
   escapeHint?: string
   /** When set, the brand plays the launch spiral intro from this timestamp. */
@@ -889,7 +886,10 @@ function SetupWizardContent({
   }, [focusedAction, focusedSetupSection, isProviderSetup, rows, selection, setupSelectionScope, step])
 
   const rowHighlighted = (index: number): boolean =>
-    !saving && (hoveredControl === index || (focusedAction === undefined && !modelSearchFocused && index === selection))
+    !saving &&
+    (hoveredControl === index ||
+      (typeof hoveredControl === 'string' && hoveredControl.startsWith(`choice:${index}:`)) ||
+      (focusedAction === undefined && !modelSearchFocused && index === selection))
 
   // Sized from every row, not just the visible ones, so descriptions stay aligned while scrolling.
   const capabilityLabelWidth = Math.max(
@@ -1223,6 +1223,7 @@ function SetupWizardContent({
         height={quickstartFieldRowHeight}
         flexShrink={0}
         flexDirection="column"
+        backgroundColor={rowHighlighted(index) ? palette.selection : undefined}
       >
         <Text bold {...(rowHighlighted(index) ? { color: accent } : {})} wrap="truncate-end">
           {row.label}
@@ -1278,6 +1279,7 @@ function SetupWizardContent({
         height={webSearchControlHeight}
         flexShrink={0}
         flexDirection="column"
+        backgroundColor={rowHighlighted(index) ? palette.selection : undefined}
       >
         <Text bold color={accent}>
           {rowHighlighted(index) ? '› ' : ''}
@@ -1340,6 +1342,11 @@ function SetupWizardContent({
               key={`${option.label}:${option.value ?? 'custom'}`}
               ref={(element) => registerElement(selectOptionElements.current, optionIndex, element)}
               flexShrink={0}
+              backgroundColor={
+                optionIndex === state.selection || hoveredControl === `option:${optionIndex}`
+                  ? palette.selection
+                  : undefined
+              }
             >
               <Text {...(optionIndex === state.selection ? { color: accent } : {})} wrap="truncate-end">
                 {optionIndex === state.selection ? '› ' : '  '}
@@ -1356,7 +1363,13 @@ function SetupWizardContent({
     <Box ref={modelOptionsElement} paddingX={1} flexGrow={1} flexDirection="column" overflow="hidden">
       {visibleModelOptionRows.map((row) =>
         row.id === 'thinking' && reasoningSlider ? (
-          <Box key={row.id} height={reasoningControlHeight} flexShrink={0} flexDirection="column">
+          <Box
+            key={row.id}
+            height={reasoningControlHeight}
+            flexShrink={0}
+            flexDirection="column"
+            backgroundColor={rowHighlighted(reasoningRowIndex) ? palette.selection : undefined}
+          >
             <Text bold color={accent}>
               {rowHighlighted(reasoningRowIndex) ? '› ' : ''}
               Reasoning
@@ -1744,8 +1757,7 @@ function SetupWizardContent({
     }
     if (step <= 1) {
       if (step === 0) {
-        if (onExit) onExit()
-        else onCancel?.(0)
+        onCancel?.(0)
         return
       }
       panelTransition.transition(() => {
@@ -2840,7 +2852,7 @@ function SetupWizardContent({
                         width={quickstartProviderColumnWidth - 2}
                         rowHeight={quickstartProviderRowHeight}
                         focused={focusedProviderSection === 'providers'}
-                        paintBackground={false}
+                        selectedBackground
                         {...(typeof hoveredControl === 'number' &&
                         hoveredControl >= 0 &&
                         hoveredControl < PROVIDER_IDS.length
@@ -3049,6 +3061,7 @@ function SetupWizardContent({
                                           paddingX={1}
                                           flexShrink={0}
                                           overflow="hidden"
+                                          backgroundColor={active || highlighted ? palette.selection : undefined}
                                         >
                                           <Box width={2} flexShrink={0}>
                                             <Text {...(active || highlighted ? { color: accent, bold: true } : {})}>
@@ -3242,7 +3255,7 @@ function SetupWizardContent({
                           width={Math.max(1, bubbleWidth - 2)}
                           rowHeight={rowHeight}
                           focused={focusedProviderSection === 'providers'}
-                          paintBackground={false}
+                          selectedBackground
                           {...(hoveredControl === index ? { hovered: row.id } : {})}
                           onElement={(_, element) => registerElement(rowElements.current, index, element)}
                         />
@@ -3257,6 +3270,7 @@ function SetupWizardContent({
                         height={rowHeight}
                         flexShrink={0}
                         flexDirection="column"
+                        backgroundColor={!row.disabled && rowHighlighted(index) ? palette.selection : undefined}
                       >
                         <Box paddingX={row.field ? 1 : 0} justifyContent="space-between" flexShrink={0}>
                           <Text

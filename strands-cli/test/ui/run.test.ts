@@ -799,43 +799,54 @@ describe('runInkChat', () => {
     expect(root.props.intro).toBe(true)
   })
 
-  it('renders explicitly requested setup and waits for its completion before constructing the controller', async () => {
-    const controller = new ChatController(idleBackend())
-    controller.close(0)
-    const source = vi.fn(async () => controller)
-    const instance = {
-      unmount: vi.fn(),
-      cleanup: vi.fn(),
-      waitUntilExit: async () => {},
-      rerender: vi.fn(),
-      clear: vi.fn(),
-    } as unknown as Instance
-    let renderedRoot: unknown
-    const runTask = runInkChat(source, {
+  it('opens chat on Escape from fresh setup, supports returning to setup, and exits on Ctrl+C', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 30)
+    const frame = captureFrame(output)
+    const config = CliConfigStore.memory({}, { animations: false }, { onboardingVersion: 0 })
+    const backend = idleBackend()
+    let controller: ChatController | undefined
+    const source = vi.fn(async (_signal: AbortSignal, requestSetup: RequestSetup) => {
+      controller = new ChatController(backend, { requestSetup, settings: config.snapshot().settings })
+      return controller
+    })
+    const running = runInkChat(source, {
+      input,
+      output,
+      errorOutput: output,
       alternateScreen: false,
+      intro: false,
       setup: true,
-      config: CliConfigStore.memory({}, {}, { onboardingVersion: 0 }),
-      renderApp: ((element: unknown) => {
-        renderedRoot = element
-        return instance
-      }) as never,
+      config,
+      checkForUpdate: async () => undefined,
+      renderApp: (element, options) => render(element, { ...options, incrementalRendering: false }),
     })
 
-    await vi.waitFor(() => expect(renderedRoot).toBeDefined())
-    expect(source).not.toHaveBeenCalled()
-    const root = renderedRoot as {
-      props: {
-        intro: boolean
-        setup: boolean
-        onSetupComplete(exitCode: 0 | 130, changed: boolean): void
-      }
-    }
-    expect(root.props.intro).toBe(true)
-    expect(root.props.setup).toBe(true)
-    root.props.onSetupComplete(0, false)
-    await runTask
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc to open chat'))
+      expect(source).not.toHaveBeenCalled()
+      input.write('\u001b')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Enter to send'))
+      expect(source).toHaveBeenCalledOnce()
 
-    expect(source).toHaveBeenCalledOnce()
+      input.write('/setup')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/setup'))
+      input.write('\r')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc to return to chat'))
+      input.write('\u001b')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Enter to send'))
+      expect(source).toHaveBeenCalledOnce()
+      expect(config.needsSetup()).toBe(true)
+
+      input.write('\u0003')
+      await expect(running).resolves.toBe(130)
+      expect(backend.dispose).toHaveBeenCalledOnce()
+    } finally {
+      controller?.close(0)
+      input.write('\u0003')
+      await running
+      input.destroy()
+    }
   })
 
   it('cancels initial setup without waiting for its completion', async () => {

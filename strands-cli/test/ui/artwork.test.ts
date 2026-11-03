@@ -260,7 +260,7 @@ describe('frog palettes', () => {
     expect(dark).toContain(`;2;${rgb.join(';')}m`)
     expect(light).not.toBe(dark)
     if (theme === 'green') {
-      expect(dark).toContain(';2;235;255;241m')
+      expect(dark).not.toContain(';2;235;255;241m')
       expect(light).toContain(';2;7;28;17m')
       expect(light).toContain(';2;90;179;110m')
     }
@@ -268,7 +268,7 @@ describe('frog palettes', () => {
 
   it('renders Oak with wood grain and keeps Spectre red eyes', () => {
     const oak = renderFrogStartupLockup(98, true, 960, 'oak')
-    const wordOnly = renderFrogStartupLockup(62, true, 960, 'oak')
+    const wordOnly = renderFrogStartupLockup(63, true, 960, 'oak')
     const spectre = renderFrogStartupLockup(98, true, 960, 'spectre')
 
     for (const artwork of [oak, wordOnly]) {
@@ -426,8 +426,8 @@ describe('Strands intro', () => {
   })
 
   it('shows the frog only beside the wordmark and keeps the wordmark alone when narrower', () => {
-    const full = renderFrogStartupLockup(88, false, 0, 'green', false, {}, 12)
-    const wordOnly = renderFrogStartupLockup(87, false, 0, 'green', false, {}, 19)
+    const full = renderFrogStartupLockup(89, false, 0, 'green', false, {}, 12)
+    const wordOnly = renderFrogStartupLockup(88, false, 0, 'green', false, {}, 19)
     const small = renderFrogStartupLockup(56, false, 0, 'green', false, {}, 19)
 
     expect(full).toContain('▄▀▀▀▄')

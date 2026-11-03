@@ -104,7 +104,7 @@ compiled output and skips all source-build behavior.
 
 Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Customize
 edit the same profile. Import loads a harness from a file or zip. Press Esc on the opening screen to
-return to a running harness or launch the saved configuration. Use `/export` in chat to save the agent
+open chat, even before completing setup. Ctrl+C exits during initial setup. Use `/export` in chat to save the agent
 as a TypeScript or Python project.
 
 In interactive chat, the agent can also inspect and change its own configuration with `strands_config`.

@@ -641,9 +641,6 @@ function drawSolidWord(canvas: Canvas, word: WordShape, originX: number, originY
 }
 
 function wordColor(canvas: Canvas, point: WordPoint): Color {
-  if ('╔╗╚╝║═╠╣╦'.includes(point.character)) {
-    return canvas.colorMode === 'light' ? 'ink' : 'white'
-  }
   if (canvas.theme === 'homeland') {
     const region = (Math.floor(point.localX / 3) + Math.floor(point.localY / 2) + point.letterIndex * 2) % 5
     return region < 2 ? (region === 0 ? 'lime' : 'green') : region === 2 ? 'cyan' : 'blue'
@@ -822,7 +819,7 @@ function wordShape(word: string, glyphs: Record<string, readonly string[]> = GLY
             letterIndex,
             localX,
             localY,
-            x: offset + localX,
+            x: offset + localX + ('╔╗╚╝║═╠╣╦'.includes(character) ? 1 : 0),
             y: localY,
           })
         }
@@ -830,7 +827,7 @@ function wordShape(word: string, glyphs: Record<string, readonly string[]> = GLY
     }
     offset += Math.max(...glyph.map((row) => row.length)) + 1
   }
-  return { points, width: offset - 1 }
+  return { points, width: Math.max(...points.map((point) => point.x)) + 1 }
 }
 
 function seededRandom(seed: number): () => number {
