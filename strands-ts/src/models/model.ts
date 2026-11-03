@@ -26,6 +26,13 @@ import {
   type ModelStreamEvent,
 } from './streaming.js'
 import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
+import {
+  INCOMPLETE_STREAM_MESSAGE,
+  summarizeWithStream,
+  TOOL_INPUT_PARSE_MESSAGE,
+  type SummarizeOptions,
+  type SummarizeResult,
+} from './summarize.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
@@ -431,6 +438,32 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Summarizes `messages`.
+   *
+   * The base implementation accepts any messages. It makes a {@link streamAggregated} call, without tools, on one
+   * user message holding a flattened transcript of `messages`, under its own summarization system prompt; the
+   * caller's system prompt and tools are not sent. The summary is empty unless the reply ends its turn or hits a
+   * stop sequence.
+   *
+   * Providers with server-side compaction override this method and set
+   * `modelInfo.capabilities.serverSideCompaction`. For such a model the context manager calls this method only with
+   * the conversation's opening messages, from message 0, and uses the base implementation for every other summary.
+   * A returned block whose `metadata.providerData` names this provider is sent back in place of its text.
+   *
+   * @param messages - The messages to summarize, left unmodified
+   * @param options - The live system prompt and tools, for an override, a custom summarization system prompt, and
+   *   a cancellation signal
+   * @returns The summary content and the call's token usage; the content is empty when the model wrote no summary
+   * @throws ContextWindowOverflowError - When the summarizer input exceeds the model's context window
+   * @throws ModelThrottledError - When the provider throttles the call
+   * @throws ModelError - For any other error the model's stream raises. A reply cut off at the output limit or
+   *   stopped by a guardrail gives an empty summary instead
+   */
+  async summarize(messages: Message[], options: SummarizeOptions = {}): Promise<SummarizeResult> {
+    return summarizeWithStream(this, messages, options)
+  }
+
+  /**
    * Estimate the fraction of the model's context window consumed by the given input token count.
    *
    * Resolves the model's context window limit (falling back to {@link DEFAULT_CONTEXT_WINDOW_LIMIT}
@@ -615,7 +648,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               yield block
             } catch (e: unknown) {
               if (e instanceof SyntaxError) {
-                logger.error('unable to parse tool input JSON', e)
+                logger.error(TOOL_INPUT_PARSE_MESSAGE, e)
                 toolInputParseError = e
               }
             }
@@ -660,7 +693,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       if (!stoppedMessage || !finalStopReason) {
         // If we exit the loop without completing a message or stop reason, throw an error
         throw new ModelError(
-          'Stream ended without completing a message',
+          INCOMPLETE_STREAM_MESSAGE,
           toolInputParseError ? { cause: toolInputParseError } : undefined
         )
       }
@@ -687,7 +720,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       }
 
       if (toolInputParseError !== undefined) {
-        throw new ModelError('unable to parse tool input JSON', { cause: toolInputParseError })
+        throw new ModelError(TOOL_INPUT_PARSE_MESSAGE, { cause: toolInputParseError })
       }
 
       // Return the final message with stop reason and optional metadata

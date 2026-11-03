@@ -5,16 +5,16 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
 from ....agent.invocation_context import _invocation_context_kwargs
-from ....types.content import ContentBlock, Message, Messages
+from ....types.content import ContentBlock, Message, MessageMetadata, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
-from ...stash import Stash
+from ...stash import MERGED_MESSAGES_KEY, Stash
 from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
 
 if TYPE_CHECKING:
@@ -243,22 +243,43 @@ def _repair_alternation(messages: Messages) -> None:
     for read_index in range(len(messages)):
         current = messages[read_index]
         if write_index > 0 and messages[write_index - 1]["role"] == current["role"]:
-            prev = messages[write_index - 1]
-            prev_pinned = _has_pinned_flag(prev)
-            current_pinned = _has_pinned_flag(current)
-            merged = Message(
-                role=prev["role"],
-                content=[*prev["content"], *current["content"]],
-            )
-            if "tracking_id" in prev:
-                merged["tracking_id"] = prev["tracking_id"]
-            if prev_pinned or current_pinned:
-                merged["metadata"] = {"custom": {"pinned": True}}
-            messages[write_index - 1] = merged
+            messages[write_index - 1] = _merge_messages(messages[write_index - 1], current)
         else:
             messages[write_index] = current
             write_index += 1
     del messages[write_index:]
+
+
+def _merge_messages(prev: Message, current: Message) -> Message:
+    """Return ``prev`` with ``current``'s content appended, losing neither message's tracking id or metadata.
+
+    ``metadata.custom.merged_messages`` lists every message the merge combines, in content order, with its tracking
+    id, metadata and the offset its content starts at, so stash refs to each one's blocks still resolve. The merge
+    keeps ``prev``'s tracking id, or ``current``'s when ``prev`` has none, and ``prev``'s custom metadata; its usage
+    and metrics are ``current``'s, the latest response it holds. It is pinned when either message is.
+    """
+    merged = Message(role=prev["role"], content=[*prev["content"], *current["content"]])
+    tracking_id = prev.get("tracking_id") or current.get("tracking_id")
+    if tracking_id:
+        merged["tracking_id"] = tracking_id
+    parts = [*_merged_parts(prev, 0), *_merged_parts(current, len(prev["content"]))]
+    custom = {**prev.get("metadata", {}).get("custom", {}), MERGED_MESSAGES_KEY: parts}
+    if _has_pinned_flag(prev) or _has_pinned_flag(current):
+        custom["pinned"] = True
+    metadata: MessageMetadata = {**current.get("metadata", {}), "custom": custom}
+    merged["metadata"] = metadata
+    return merged
+
+
+def _merged_parts(message: Message, offset: int) -> list[dict[str, Any]]:
+    """Return the messages ``message`` combines, at their offsets in a merge where its content starts at ``offset``."""
+    parts = message.get("metadata", {}).get("custom", {}).get(MERGED_MESSAGES_KEY)
+    if parts is not None:
+        return [{**part, "offset": part["offset"] + offset} for part in parts]
+    part: dict[str, Any] = {"offset": offset, "metadata": message.get("metadata", {})}
+    if "tracking_id" in message:
+        part["tracking_id"] = message["tracking_id"]
+    return [part]
 
 
 def _resolve_tool_filter(target: OffloadTarget | None) -> tuple[set[str] | None, set[str] | None]:

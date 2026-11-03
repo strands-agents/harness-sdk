@@ -6,6 +6,7 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs, _is_offload_placeholder
+from strands._context_manager.strategies.offload.base import _repair_alternation
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolResult
@@ -479,3 +480,67 @@ class TestCallerScopedRoot:
         await stash.clear_session()
 
         assert await storage.list("") == ["team/tool-1_0"]
+
+
+class TestStashRefsAfterMerge:
+    """Stash refs to a block resolve to the key it was stashed under in the message it arrived in."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_refs_to_blocks_merged_in_from_another_message(self, stash):
+        prev = Message(role="user", content=[ContentBlock(text="a")], tracking_id="p")
+        current = Message(role="user", content=[ContentBlock(text="b"), ContentBlock(text="c")], tracking_id="c")
+        later = Message(role="user", content=[ContentBlock(text="d")], tracking_id="d")
+        for message in (prev, current, later):
+            await stash.store_message(message)
+        messages = [prev, current, later]
+
+        _repair_alternation(messages)
+
+        merged = messages[0]
+        refs = [stash.refs_for(block, merged, index) for index, block in enumerate(merged["content"])]
+        assert refs == [["p_0"], ["c_0"], ["c_1"], ["d_0"]]
+        assert [await stash.retrieve(ref) for [ref] in refs] == [{"text": text} for text in "abcd"]
+
+    @pytest.mark.asyncio
+    async def test_stashes_a_merged_message_under_the_keys_of_the_messages_it_merged(self, stash, storage):
+        messages = [
+            Message(role="user", content=[ContentBlock(text="a")], tracking_id="p"),
+            Message(role="user", content=[ContentBlock(text="b")], tracking_id="c"),
+        ]
+        _repair_alternation(messages)
+
+        await stash.store_message(messages[0])
+
+        assert sorted(await stash.list()) == ["c_0", "p_0"]
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_later_tracking_id_and_both_messages_refs_when_the_earlier_has_none(self, stash):
+        prev = Message(role="user", content=[ContentBlock(text="a")])
+        current = Message(role="user", content=[ContentBlock(text="b")], tracking_id="c")
+        for message in (prev, current):
+            await stash.store_message(message)
+        messages = [prev, current]
+
+        _repair_alternation(messages)
+
+        merged = messages[0]
+        assert merged["tracking_id"] == "c"
+        refs = [stash.refs_for(block, merged, index) for index, block in enumerate(merged["content"])]
+        assert refs == [["unknown_0"], ["c_0"]]
+        assert [await stash.retrieve(ref) for [ref] in refs] == [{"text": "a"}, {"text": "b"}]
+
+    @pytest.mark.asyncio
+    async def test_keeps_refs_of_an_id_less_merge_merged_into_a_message_with_an_id(self, stash):
+        messages = [
+            Message(role="user", content=[ContentBlock(text="a")]),
+            Message(role="user", content=[ContentBlock(text="b")]),
+            Message(role="user", content=[ContentBlock(text="c")], tracking_id="c"),
+        ]
+        for message in messages:
+            await stash.store_message(message)
+        _repair_alternation(messages)
+
+        merged = messages[0]
+        refs = [stash.refs_for(block, merged, index) for index, block in enumerate(merged["content"])]
+        assert merged["tracking_id"] == "c"
+        assert refs == [["unknown_0"], ["unknown_0"], ["c_0"]]

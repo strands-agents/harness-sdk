@@ -5,6 +5,7 @@ import {
   buildToolNameMap,
   collectRemovableWithPair,
   insertMarker,
+  repairAlternation,
   EmergencyTruncateStrategy,
 } from '../offload/base.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -914,5 +915,66 @@ describe('repeated message-level reduction', () => {
       expect(messages[0]!.metadata).toEqual(task().metadata)
       expect(messages.length).toBeLessThan(10)
     })
+  })
+})
+
+describe('repairAlternation', () => {
+  const user = (trackingId: string, metadata?: Message['metadata']): Message =>
+    new Message({ role: 'user', content: [new TextBlock(trackingId)], trackingId, ...(metadata && { metadata }) })
+
+  it("keeps both messages' tracking ids and metadata", () => {
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 }
+    const prevMetadata = { usage, custom: { source: 'a' } }
+    const currentMetadata = { custom: { pinned: true, note: 'b' } }
+    const messages = [
+      user('p', prevMetadata),
+      user('c', currentMetadata),
+      new Message({ role: 'assistant', content: [new TextBlock('reply')] }),
+    ]
+
+    repairAlternation(messages)
+
+    expect(messages[0]!.trackingId).toBe('p')
+    expect(messages[0]!.content).toEqual([new TextBlock('p'), new TextBlock('c')])
+    expect(messages[0]!.metadata).toEqual({
+      custom: {
+        source: 'a',
+        pinned: true,
+        mergedMessages: [
+          { trackingId: 'p', offset: 0, metadata: prevMetadata },
+          { trackingId: 'c', offset: 1, metadata: currentMetadata },
+        ],
+      },
+    })
+  })
+
+  it('takes usage from the later message so the estimate counts its content', () => {
+    const older = { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+    const newer = { inputTokens: 20, outputTokens: 5, totalTokens: 25 }
+    const assistant = (text: string, usage: typeof older): Message =>
+      new Message({ role: 'assistant', content: [new TextBlock(text)], metadata: { usage } })
+    const messages = [user('task'), assistant('a', older), assistant('b', newer)]
+
+    repairAlternation(messages)
+
+    expect(messages[1]!.metadata!.usage).toEqual(newer)
+  })
+
+  it('records messages merged into either side at their offsets in the merge', () => {
+    const first = [user('p'), user('q')]
+    const second = [user('c'), user('d')]
+    repairAlternation(first)
+    repairAlternation(second)
+    const messages = [...first, ...second]
+
+    repairAlternation(messages)
+
+    const merged = messages[0]!.metadata!.custom!.mergedMessages as { trackingId: string; offset: number }[]
+    expect(merged.map(({ trackingId, offset }) => [trackingId, offset])).toEqual([
+      ['p', 0],
+      ['q', 1],
+      ['c', 2],
+      ['d', 3],
+    ])
   })
 })

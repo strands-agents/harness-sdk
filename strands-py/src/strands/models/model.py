@@ -19,6 +19,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelInfo, ModelLimits, lookup_model_info
+from ._summarize import SummarizeResult, _summarize_with_stream
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -383,6 +384,49 @@ class Model(abc.ABC):
             Estimated total input tokens.
         """
         return _estimate_tokens_with_heuristic(messages, tool_specs, system_prompt, system_prompt_content)
+
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        **kwargs: Any,
+    ) -> SummarizeResult:
+        """Summarize ``messages``.
+
+        The base implementation accepts any messages. It makes a :meth:`stream` call, without tools, on one user
+        message holding a flattened transcript of ``messages``, under its own summarization system prompt; the
+        caller's system prompt and tools are not sent. The summary is empty unless the reply ends its turn or hits a
+        stop sequence.
+
+        Providers with server-side compaction override this method and set
+        ``model_info.capabilities.server_side_compaction``. For such a model the context manager calls this method
+        only with the conversation's opening messages, from message 0, and uses the base implementation for every
+        other summary.
+
+        Args:
+            messages: The messages to summarize, left unmodified.
+            tool_specs: The live conversation's tool specifications, for an override.
+            system_prompt: The live conversation's plain string system prompt, for an override.
+            system_prompt_content: The live conversation's structured system prompt, for an override.
+            instructions: Summarization system prompt that replaces the default one.
+            cancel_signal: Event that aborts the call, for an override and forwarded to the base stream call.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary content and the call's token usage; the content is empty when the model wrote no summary.
+
+        Raises:
+            ContextWindowOverflowException: If the summarizer input exceeds the model's context window.
+            ModelThrottledException: If the provider throttles the call.
+            Exception: Any other error the model's stream raises. A reply cut off at the output limit or stopped by a
+                guardrail gives an empty summary instead.
+        """
+        return await _summarize_with_stream(self, messages, instructions=instructions, cancel_signal=cancel_signal)
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.

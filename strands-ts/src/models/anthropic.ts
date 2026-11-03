@@ -12,13 +12,23 @@ import {
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import {
+  COMPACTION_BETA,
+  carriesNativeBlock,
+  compactionParams,
+  formatTextBlock,
+  fromLastNativeBlock,
+  readCompaction,
+} from './anthropic-compaction.js'
+import type { SummarizeOptions, SummarizeResult } from './summarize.js'
+import {
   handleRejectedMechanism,
   structuredOutputMechanisms,
   toNativeOutputSchema,
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
+import { Message } from '../types/messages.js'
+import type { ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
@@ -145,6 +155,25 @@ function headerBetas(headers: ClientOptions['defaultHeaders']): string[] {
     .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
     .filter((value): value is string => typeof value === 'string')
     .flatMap((value) => value.split(',').flatMap((beta) => beta.trim() || []))
+}
+
+/** Maps a vendor error to the SDK's typed errors, keeping the original as the cause. */
+function translateError(unknownError: unknown): Error {
+  const error = normalizeError(unknownError)
+
+  const lowered = error.message.toLowerCase()
+  if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
+    return new ContextWindowOverflowError(error.message)
+  }
+
+  const err = unknownError as Error & { status?: number }
+  if (err.status === 429) {
+    const message = error.message ?? 'Request was throttled by the model provider'
+    logger.debug(`throttled | error_message=<${message}>`)
+    return new ModelThrottledError(message, { cause: err })
+  }
+
+  return error
 }
 
 export interface AnthropicModelConfig extends BaseModelConfig {
@@ -291,7 +320,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(request.tool_choice && { tool_choice: request.tool_choice }),
       }
 
-      const requestOptions = this._buildRequestOptions()
+      const requestOptions = this._buildRequestOptions(messages)
       const response = requestOptions
         ? await this._client.messages.countTokens(params, requestOptions)
         : await this._client.messages.countTokens(params)
@@ -325,7 +354,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
-      const requestOptions = this._buildRequestOptions()
+      const requestOptions = this._buildRequestOptions(messages)
       const usage = createEmptyUsage()
 
       while (true) {
@@ -522,21 +551,45 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return
       }
 
-      const error = normalizeError(unknownError)
+      throw translateError(unknownError)
+    }
+  }
 
-      const lowered = error.message.toLowerCase()
-      if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
-        throw new ContextWindowOverflowError(error.message)
-      }
-
-      const err = unknownError as Error & { status?: number }
-      if (err.status === 429) {
-        const message = error.message ?? 'Request was throttled by the model provider'
-        logger.debug(`throttled | error_message=<${message}>`)
-        throw new ModelThrottledError(message, { cause: err })
-      }
-
-      throw error
+  /**
+   * Summarizes the conversation's opening `messages` with Anthropic on-demand compaction (beta
+   * `compact-2026-09-04`), sending the live system prompt and tools unchanged, when
+   * `modelInfo.capabilities.serverSideCompaction` is `true`; otherwise uses the base `Model.summarize()`.
+   * `AnthropicModel` leaves the capability unknown unless set through the `modelInfo` config.
+   *
+   * The returned compaction block is stored as a {@link TextBlock} whose `text` is the summary, for other providers,
+   * and whose `metadata.providerData` holds the block, which later requests send back exactly as returned.
+   *
+   * @param messages - The opening messages to summarize, left unmodified
+   * @param options - The live system prompt and tools, summarization instructions, and a cancellation signal
+   * @returns The summary and the compaction's usage; the summary is empty when the response holds none
+   *   (`stop_reason` other than `compaction`), which leaves the history unchanged
+   * @throws ContextWindowOverflowError when the request does not fit the context window
+   * @throws ModelThrottledError when the request is throttled
+   */
+  override async summarize(messages: Message[], options: SummarizeOptions = {}): Promise<SummarizeResult> {
+    if (this.modelInfo.capabilities?.serverSideCompaction !== true) return super.summarize(messages, options)
+    try {
+      const params = compactionParams(
+        this._formatRequest(messages, {
+          ...(options.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
+          ...(options.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
+        }),
+        options.instructions
+      )
+      const requestOptions = this._buildRequestOptions(messages, true)
+      // The beta stream keeps `usage.iterations`, where a compaction response reports its usage.
+      const response = await this._client.beta.messages
+        .stream(params, { ...requestOptions, ...(options.cancelSignal && { signal: options.cancelSignal }) })
+        .finalMessage()
+      const compacted = readCompaction(response, this._config.modelId)
+      return { content: compacted ? [compacted.block] : [], ...(compacted?.usage && { usage: compacted.usage }) }
+    } catch (unknownError) {
+      throw translateError(unknownError)
     }
   }
 
@@ -563,13 +616,23 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return handleRejectedMechanism('anthropic', modelId, mechanism, schema, apiErrorMessage(error))
   }
 
-  private _buildRequestOptions(): Anthropic.RequestOptions | undefined {
+  /**
+   * Whether requests send a stored compaction block as the block itself, from where it stands, rather than its text.
+   * Only a model that declares `serverSideCompaction` does, since the block needs the compaction beta.
+   */
+  private _sendsNativeBlocks(): boolean {
+    return this.modelInfo.capabilities?.serverSideCompaction === true
+  }
+
+  private _buildRequestOptions(messages: Message[] = [], compacting = false): Anthropic.RequestOptions | undefined {
+    const required = [
+      ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
+      ...(compacting || (this._sendsNativeBlocks() && carriesNativeBlock(messages)) ? [COMPACTION_BETA] : []),
+    ]
     let betas = this._config.betas ?? []
-    if (this._dropsStaleThinking()) {
-      // Request headers replace client headers of the same name, so betas set on the client are carried over.
-      if (betas.length === 0) betas = this._clientBetas
-      if (!betas.includes(THINKING_BINDING_BETA)) betas = [...betas, THINKING_BINDING_BETA]
-    }
+    // Request headers replace client headers of the same name, so betas set on the client are carried over.
+    if (required.length > 0 && betas.length === 0) betas = this._clientBetas
+    betas = [...betas, ...required.filter((beta) => !betas.includes(beta))]
     if (betas.length === 0) return undefined
     return { headers: { 'anthropic-beta': betas.join(',') } }
   }
@@ -681,6 +744,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
+    if (this._sendsNativeBlocks()) messages = fromLastNativeBlock(messages)
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
@@ -845,7 +909,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   ): Anthropic.ContentBlockParam | Anthropic.ToolResultBlockParam | undefined {
     switch (block.type) {
       case 'textBlock':
-        return { type: 'text', text: block.text }
+        return this._sendsNativeBlocks() ? formatTextBlock(block) : { type: 'text', text: block.text }
 
       case 'imageBlock': {
         const imgBlock = block as ImageBlock

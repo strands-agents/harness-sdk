@@ -1,5 +1,6 @@
 """Integration tests for stash + offload strategies."""
 
+import functools
 import json
 import re
 import unittest.mock
@@ -11,6 +12,8 @@ from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.drop import DROPPED_MARKER
 from strands._context_manager.types import ContextState
+from strands.models import ModelInfo
+from strands.models.model import Model
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
@@ -40,6 +43,8 @@ def mock_agent():
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.9)
     agent.model.stream = _make_stream_events("Summary of content.")
+    agent.model.summarize = functools.partial(Model.summarize, agent.model)
+    agent.model.model_info = ModelInfo()
     agent.aux_model = agent.model
     agent.messages = []
     return agent

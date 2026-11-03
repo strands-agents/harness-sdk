@@ -1,5 +1,6 @@
 """Tests for the SummarizeStrategy."""
 
+import functools
 import logging
 import unittest.mock
 
@@ -7,6 +8,8 @@ import pytest
 
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.types import ContextState
+from strands.models import ModelCapabilities, ModelInfo, SummarizeResult
+from strands.models.model import Model
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
 
@@ -46,6 +49,8 @@ def mock_agent():
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.9)
     agent.model.stream = _make_stream_events("Summary of content.")
+    agent.model.summarize = functools.partial(Model.summarize, agent.model)
+    agent.model.model_info = ModelInfo()
     agent.aux_model = agent.model
     agent.messages = []
     return agent
@@ -388,3 +393,136 @@ class TestSummarizationWithToolCalls:
             ]
         ]
         assert tru_calls == exp_calls
+
+
+def _turns(*texts: str) -> Messages:
+    return [
+        Message(role="user" if index % 2 == 0 else "assistant", content=[ContentBlock(text=text)])
+        for index, text in enumerate(texts)
+    ]
+
+
+def _texts(messages: Messages) -> list[list[str]]:
+    return [[block.get("text", "") for block in message["content"]] for message in messages]
+
+
+class TestSummarizeRuns:
+    """Tests for summarizing whole messages run by run."""
+
+    @pytest.mark.asyncio
+    async def test_summarizes_each_contiguous_run_separately_around_pinned_messages(self, mock_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6", "a7", "u8")
+        messages[3]["metadata"] = {"custom": {"pinned": True}}
+        mock_agent.messages = messages
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
+        mock_agent.model.stream = unittest.mock.MagicMock(
+            side_effect=[_make_stream_events("late run")(), _make_stream_events("early run")()]
+        )
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        texts = _texts(messages)
+        assert texts[0] == ["task"]
+        assert sorted(texts[1]) == [
+            "[Summarized: 2 messages, ~7 tokens]\n\nearly run",
+            "[Summarized: 2 messages, ~7 tokens]\n\nlate run",
+            "a3",
+        ]
+        assert texts[2:] == [["u6"], ["a7"], ["u8"]]
+
+    @pytest.mark.asyncio
+    async def test_does_not_summarize_a_run_holding_only_an_earlier_summary(self, mock_agent):
+        messages = _turns("task", "[Summarized: 3 messages, ~10 tokens]\n\nold", "u2", "a3", "u4")
+        mock_agent.messages = messages
+        stream = unittest.mock.MagicMock(side_effect=_make_stream_events("again"))
+        mock_agent.model.stream = stream
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
+        stream.assert_not_called()
+
+
+class TestServerSideCompaction:
+    """Tests for routing the conversation's opening to a model with server-side compaction."""
+
+    @pytest.fixture
+    def compacting_agent(self, mock_agent):
+        mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True))
+        mock_agent.model.summarize = unittest.mock.AsyncMock(
+            return_value=SummarizeResult(content=[ContentBlock(text="compacted")], usage=None)
+        )
+        return mock_agent
+
+    @pytest.mark.asyncio
+    async def test_compacts_the_opening_run_from_message_zero_into_its_own_message(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        task, a1, u2, a3 = messages[:4]
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+
+        compacting_agent.model.summarize.assert_awaited_once()
+        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
+        assert messages[0] is task
+        assert messages[1] == Message(
+            role="assistant", content=[ContentBlock(text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted")]
+        )
+        assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
+
+    @pytest.mark.asyncio
+    async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[1]["metadata"] = {"custom": {"pinned": True}}
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+
+        compacting_agent.model.summarize.assert_not_awaited()
+        assert any(text.startswith("[Summarized:") for message in _texts(messages) for text in message)
+
+    @pytest.mark.asyncio
+    async def test_places_the_summary_ahead_of_the_next_assistant_message(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=4)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+
+        compacting_agent.model.summarize.assert_awaited_once()
+        assert _texts(messages) == [
+            ["task"],
+            ["[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", "a3"],
+            ["u4"],
+            ["a5"],
+            ["u6"],
+        ]
+
+    @pytest.mark.asyncio
+    async def test_gives_the_opening_run_the_base_summary_when_compaction_writes_none(self, compacting_agent):
+        compacting_agent.model.summarize.return_value = SummarizeResult(content=[])
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+
+        compacting_agent.model.summarize.assert_awaited_once()
+        assert messages[0]["content"] == [{"text": "task"}]
+        assert any("Summary of content." in text for message in _texts(messages) for text in message)
+
+    @pytest.mark.asyncio
+    async def test_summarizes_blocks_with_the_base_summary(self, compacting_agent):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
+        ]
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*").when(threshold=100)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.5)) is True
+
+        compacting_agent.model.summarize.assert_not_awaited()
+        assert "Summary of content." in messages[1]["content"][0]["text"]

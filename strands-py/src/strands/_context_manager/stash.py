@@ -25,6 +25,12 @@ STASH_PREFIX = "context"
 
 _STASH_REFS_SUFFIX = re.compile(r" \[refs?: [^\]]+\]$")
 
+MERGED_MESSAGES_KEY = "merged_messages"
+"""``metadata.custom`` key listing the messages merged into a message, in content order.
+
+Each entry holds the merged message's ``tracking_id`` and ``metadata`` and the ``offset`` its content starts at.
+"""
+
 
 class _BytesEncoder(json.JSONEncoder):
     """JSON encoder that base64-encodes bytes values."""
@@ -41,6 +47,16 @@ def _encode(value: object) -> bytes:
 
 def _decode(data: bytes) -> object:
     return json.loads(data.decode("utf-8"))
+
+
+def _block_key(message: Message, block_index: int) -> str:
+    """Return the stash key of a non-tool-result block: its tracking id and index in the message it arrived in."""
+    custom = message.get("metadata", {}).get("custom", {})
+    origins = [origin for origin in custom.get(MERGED_MESSAGES_KEY, []) if origin["offset"] <= block_index]
+    if not origins:
+        return f"{message.get('tracking_id', 'unknown')}_{block_index}"
+    origin = origins[-1]
+    return f"{origin.get('tracking_id', 'unknown')}_{block_index - origin['offset']}"
 
 
 def _format_stash_refs(refs: list[str]) -> str:
@@ -94,7 +110,10 @@ class Stash:
 
         With ``keep_existing``, an entry already stored under the key is left untouched.
         """
-        key = f"{block_id}_{block_index}"
+        return await self._write(f"{block_id}_{block_index}", data, keep_existing=keep_existing)
+
+    async def _write(self, key: str, data: bytes, *, keep_existing: bool) -> str:
+        """Write ``data`` under ``key`` unless ``keep_existing`` and an entry is already there; return ``key``."""
         if keep_existing and await self._storage.read(key) is not None:
             return key
         await self._storage.write(key, data)
@@ -105,7 +124,7 @@ class Stash:
         if "toolResult" in block:
             tool_result = block["toolResult"]
             return [f"{tool_result['toolUseId']}_{index}" for index in range(len(tool_result["content"]))]
-        return [f"{message.get('tracking_id', 'unknown')}_{block_index}"]
+        return [_block_key(message, block_index)]
 
     async def store_message(
         self,
@@ -133,9 +152,7 @@ class Stash:
                 continue
             else:
                 try:
-                    await self.store(
-                        message.get("tracking_id", "unknown"), block_index, _encode(block), keep_existing=keep_existing
-                    )
+                    await self._write(_block_key(message, block_index), _encode(block), keep_existing=keep_existing)
                 except Exception:
                     logger.warning(
                         "tracking_id=<%s>, block_index=<%s> | failed to stash block",

@@ -13,12 +13,13 @@ import {
   ReasoningBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
+import type { JSONValue } from '../../../types/json.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import type { Stash } from '../../stash.js'
+import { MERGED_MESSAGES_KEY, mergedMessages, type MergedMessage, type Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
-import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
+import { hasPinnedFlag, isPinned } from '../../../conversation-manager/compression/pin-message.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -263,20 +264,43 @@ export function repairAlternation(messages: Message[]): void {
   for (let readIndex = 0; readIndex < messages.length; readIndex++) {
     const current = messages[readIndex]!
     if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
-      const prev = messages[writeIndex - 1]!
-      const pinned = prev.metadata?.custom?.pinned === true || current.metadata?.custom?.pinned === true
-      messages[writeIndex - 1] = new Message({
-        role: prev.role,
-        content: [...prev.content, ...current.content],
-        trackingId: prev.trackingId,
-        ...(pinned ? { metadata: { custom: { pinned: true } } } : {}),
-      })
+      messages[writeIndex - 1] = mergeMessages(messages[writeIndex - 1]!, current)
     } else {
       messages[writeIndex] = current
       writeIndex++
     }
   }
   messages.length = writeIndex
+}
+
+/**
+ * Returns `prev` with `current`'s content appended, losing neither message's tracking id or metadata.
+ *
+ * `metadata.custom.mergedMessages` lists every message the merge combines, in content order, with its tracking id,
+ * metadata and the offset its content starts at, so stash refs to each one's blocks still resolve. The merge keeps
+ * `prev`'s tracking id and custom metadata; its usage and metrics are `current`'s, the latest response it holds. It
+ * is pinned when either message is.
+ */
+function mergeMessages(prev: Message, current: Message): Message {
+  const parts = [...mergedParts(prev, 0), ...mergedParts(current, prev.content.length)]
+  const custom = {
+    ...prev.metadata?.custom,
+    [MERGED_MESSAGES_KEY]: parts as unknown as JSONValue,
+    ...(hasPinnedFlag(prev) || hasPinnedFlag(current) ? { pinned: true } : {}),
+  }
+  return new Message({
+    role: prev.role,
+    content: [...prev.content, ...current.content],
+    trackingId: prev.trackingId,
+    metadata: { ...current.metadata, custom },
+  })
+}
+
+/** Returns the messages `message` combines, at their offsets in a merge where its content starts at `offset`. */
+function mergedParts(message: Message, offset: number): MergedMessage[] {
+  const parts = mergedMessages(message)
+  if (parts.length > 0) return parts.map((part) => ({ ...part, offset: part.offset + offset }))
+  return [{ trackingId: message.trackingId, offset, metadata: message.metadata ?? {} }]
 }
 
 /**
@@ -430,7 +454,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof ToolUseBlock) return false
     if (block instanceof CachePointBlock) return false
     if (block instanceof ReasoningBlock) return false
-    if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
+    // Provider data is signed over the block as returned, so an in-place edit would invalidate it.
+    if (block instanceof TextBlock) return !block.metadata?.providerData && targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
       return (

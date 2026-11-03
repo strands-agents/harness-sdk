@@ -68,6 +68,8 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  TextBlockMetadata,
+  ProviderData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
@@ -200,6 +202,7 @@ export {
 
 // Model provider types
 export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type { SummarizeOptions, SummarizeResult } from './models/summarize.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
@@ -319,7 +322,7 @@ export type {
   OffloadStrategyBuilder,
 } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
-export type { SummarizeConfig } from './context-manager/methods/summarize.js'
+export type { SummarizeConfig } from './context-manager/strategies/offload/summarize.js'
 export type { StrategyPresetName } from './context-manager/presets.js'
 
 // Conversation Manager

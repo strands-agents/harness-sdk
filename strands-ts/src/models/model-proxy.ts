@@ -5,7 +5,8 @@ import type { ModelStreamEvent } from './streaming.js'
 
 /**
  * SDK-internal wrapper that adds a model call's token usage to its request. The
- * agent loop and every auxiliary call route their model calls through it. The
+ * agent loop and some auxiliary calls route their model calls through it;
+ * {@link Model.summarize} calls the model directly. The
  * {@link InvocationContext} is passed per call rather than on {@link StreamOptions},
  * so providers never see request state. Usage is added only when the call
  * returns normally and the provider reported it; a thrown error passes through

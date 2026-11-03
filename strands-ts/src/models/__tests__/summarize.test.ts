@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
-import { flattenMessagesToContent, summarizeContent } from '../summarize.js'
-import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
-import { AudioBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
-import { CitationsBlock } from '../../../types/citations.js'
+import { describe, it, expect } from 'vitest'
+import { flattenMessagesToContent } from '../summarize.js'
+import { AudioBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import { CitationsBlock } from '../../types/citations.js'
 import {
   CachePointBlock,
   GuardContentBlock,
@@ -12,9 +11,32 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
-} from '../../../types/messages.js'
+} from '../../types/messages.js'
 
 describe('flattenMessagesToContent', () => {
+  it('renders tool result JSON as text and video as a placeholder, and passes text and images through', () => {
+    const bytes = new Uint8Array([1])
+    const image = new ImageBlock({ format: 'png', source: { bytes } })
+    const content = [
+      new TextBlock('out'),
+      new JsonBlock({ json: { ok: true } }),
+      new VideoBlock({ format: 'mp4', source: { bytes } }),
+      image,
+    ]
+    const messages = [
+      new Message({ role: 'user', content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content })] }),
+    ]
+
+    expect(flattenMessagesToContent(messages)).toEqual([
+      new TextBlock('\n---\n[user]'),
+      new TextBlock('[tool result]'),
+      new TextBlock('out'),
+      new TextBlock(JSON.stringify({ ok: true }, null, 2)),
+      new TextBlock('[video omitted]'),
+      image,
+    ])
+  })
+
   it('excludes reasoning blocks', () => {
     const messages = [
       new Message({
@@ -133,19 +155,5 @@ describe('flattenMessagesToContent', () => {
         new TextBlock('denied'),
       ])
     })
-  })
-})
-
-describe('summarizeContent', () => {
-  // guards against summarizer failures being hidden by a lossy retry (#5291)
-  it('propagates a model error without retrying', async () => {
-    const content = [new TextBlock('notes'), new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })]
-    const model = new MockMessageModel()
-      .addTurn(new Error('images unsupported'))
-      .addTurn({ type: 'textBlock', text: 'summary' })
-    const streamSpy = vi.spyOn(model, 'stream')
-
-    await expect(summarizeContent(content, model)).rejects.toThrow('images unsupported')
-    expect(streamSpy).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Stash, formatStashRefs, isOffloadPlaceholder } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { repairAlternation } from '../strategies/offload/base.js'
 import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 
@@ -186,5 +187,34 @@ describe('Stash', () => {
 
       expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_1': { text: 'see [ref: x] for details' } })
     })
+  })
+})
+
+describe('stash refs after a merge', () => {
+  const user = (trackingId: string, ...texts: string[]): Message =>
+    new Message({ role: 'user', content: texts.map((text) => new TextBlock(text)), trackingId })
+
+  it('resolves refs to blocks merged in from another message', async () => {
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    const messages = [user('p', 'a'), user('c', 'b', 'c'), user('d', 'd')]
+    for (const message of messages) await stash.storeMessage(message)
+
+    repairAlternation(messages)
+
+    const merged = messages[0]!
+    const refs = merged.content.map((block, index) => stash.refsFor(block, merged, index))
+    expect(refs).toEqual([['p_0'], ['c_0'], ['c_1'], ['d_0']])
+    const retrieved = await Promise.all(refs.map(([ref]) => stash.retrieve(ref!)))
+    expect(retrieved.map((entry) => entry!.data)).toEqual(['a', 'b', 'c', 'd'].map((text) => ({ text })))
+  })
+
+  it('stashes a merged message under the keys of the messages it merged', async () => {
+    const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    const messages = [user('p', 'a'), user('c', 'b')]
+    repairAlternation(messages)
+
+    await stash.storeMessage(messages[0]!)
+
+    expect((await stash.list()).sort()).toEqual(['c_0', 'p_0'])
   })
 })
