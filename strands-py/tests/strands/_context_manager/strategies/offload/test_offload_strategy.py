@@ -756,6 +756,62 @@ class TestEmergencyTruncateStrategy:
         assert await strategy.apply(context) is False
 
     @pytest.mark.asyncio
+    async def test_cuts_head_pinned_and_summary_blocks_only_after_everything_else(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="h" * 50_000)]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="[Summarized: 3 messages, ~12,000 tokens]\n\n" + "s" * 30_000)],
+            ),
+            Message(role="user", content=[ContentBlock(text="u" * 20_000)]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.05, overflow=True)
+
+        assert await strategy.apply(context) is True
+
+        assert messages[0]["content"][0]["text"] == "h" * 50_000
+        assert messages[1]["content"][0]["text"].startswith("[Summarized:")
+        assert messages[2]["content"][0]["text"].startswith("[Truncated: 1 block, ~5,000 tokens]")
+
+        # Once nothing unprotected is left, the protected blocks are cut too (largest first) rather than giving up.
+        assert await strategy.apply(context) is True
+        assert messages[0]["content"][0]["text"].startswith("[Truncated: 1 block, ~12,500 tokens]")
+        assert messages[1]["content"][0]["text"].startswith("[Summarized:")
+
+    @pytest.mark.asyncio
+    async def test_equal_sized_blocks_are_cut_oldest_first(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text=str(i) * 5_000) for i in range(6)]),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.05, overflow=True)
+
+        assert await strategy.apply(context) is True
+
+        truncated = [i for i, block in enumerate(messages[1]["content"]) if block["text"].startswith("[Truncated:")]
+        assert truncated == list(range(len(truncated)))
+        assert 0 < len(truncated) < 6
+
+    @pytest.mark.asyncio
+    async def test_overflow_with_an_estimate_under_the_target_still_cuts_a_tenth_of_the_text(self, mock_agent):
+        """The local count omits the system prompt and tool specs, so an overflow can arrive with utilization < 0.9."""
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text=str(i % 10) * 5_000) for i in range(80)]),
+            Message(role="assistant", content=[ContentBlock(text="ok")]),
+            Message(role="user", content=[ContentBlock(text="next")]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.85, overflow=True)
+
+        assert await strategy.apply(context) is True
+
+        chars_after = sum(len(block["text"]) for block in messages[0]["content"])
+        assert chars_after <= 400_000 * 0.9
+
+    @pytest.mark.asyncio
     async def test_drops_messages_first_and_truncates_what_the_drop_did_not_cover(self, mock_agent):
         strategy = EmergencyTruncateStrategy()
         messages: Messages = [

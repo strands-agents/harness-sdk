@@ -7,7 +7,9 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
+from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....types.content import ContentBlock, Message, Messages
+from ...methods.summarize import _SUMMARIZED_PREFIX
 from ...methods.truncate import (
     _TRUNCATED_PREFIX,
     CHARS_PER_TOKEN,
@@ -146,9 +148,18 @@ def _text_size(block: ContentBlock) -> int:
     )
 
 
-def _is_truncated(block: ContentBlock) -> bool:
+def _first_text(block: ContentBlock) -> str:
     items = [block] if is_text_block(block) else block.get("toolResult", {}).get("content", [])
-    return any("text" in item and item["text"].startswith(_TRUNCATED_PREFIX) for item in items[:1])
+    return str(items[0].get("text", "")) if items else ""
+
+
+def _is_truncated(block: ContentBlock) -> bool:
+    return _first_text(block).startswith(_TRUNCATED_PREFIX)
+
+
+def _is_protected(messages: Messages, index: int, block: ContentBlock) -> bool:
+    """The head message, pinned messages and summaries are cut last: they hold the context other strategies kept."""
+    return index == 0 or is_pinned(messages, index) or _first_text(block).startswith(_SUMMARIZED_PREFIX)
 
 
 def _total_text_size(messages: Messages) -> int:
@@ -186,9 +197,12 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         dropped = await self._apply_per_message(context)
         # Scale the utilization by the text that survived the drop to estimate how much is still in excess.
         fits_chars = chars_before * _EMERGENCY_TARGET_UTILIZATION / utilization if utilization > 0 else 0
-        excess_chars = _total_text_size(context.messages) - fits_chars
+        chars_now = _total_text_size(context.messages)
+        excess_chars = chars_now - fits_chars
         if context.overflow:
-            excess_chars = max(excess_chars, 1)  # the model rejected the input even if the estimate disagrees
+            # The model rejected the input even if the local count (messages only, no system prompt or tool specs)
+            # says it fits, so cut at least a tenth of the text rather than letting the 3-retry cap run out.
+            excess_chars = max(excess_chars, chars_now * (1 - _EMERGENCY_TARGET_UTILIZATION))
         truncated = await self._truncate_largest_text_blocks(context, excess_chars)
         return dropped or truncated
 
@@ -220,23 +234,25 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         """Truncate untruncated text blocks, largest first, until ``excess_chars`` characters are gone.
 
         Each block keeps at most a quarter of its text as preview (never more than the default preview), so
-        every truncation removes most of the block. Pins are ignored, as in the message-level pass.
+        every truncation removes most of the block. Ties go to the oldest block. Protected blocks (head message,
+        pinned messages, summaries) are only cut once every other block is, so an overflow that lives in one of
+        them still recovers.
         """
         messages = context.messages
         candidates = sorted(
             (
-                (_text_size(block), index, block_index)
+                (_is_protected(messages, index, block), -_text_size(block), index, block_index)
                 for index, message in enumerate(messages)
                 for block_index, block in enumerate(message["content"])
-                if not _is_truncated(block)
-            ),
-            reverse=True,
+                if _text_size(block) > 0 and not _is_truncated(block)
+            )
         )
         saved = 0
         truncated = 0
-        for size, index, block_index in candidates:
-            if saved >= excess_chars or size == 0:
+        for _, negative_size, index, block_index in candidates:
+            if saved >= excess_chars:
                 break
+            size = -negative_size
             message = messages[index]
             block = message["content"][block_index]
             config = TruncateConfig(preview_tokens=min(DEFAULT_PREVIEW_TOKENS, size // (4 * CHARS_PER_TOKEN)))

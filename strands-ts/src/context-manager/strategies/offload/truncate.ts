@@ -17,7 +17,9 @@ import {
   truncateTextBlock,
   type TruncateConfig,
 } from '../../methods/truncate.js'
+import { SUMMARIZED_PREFIX } from '../../methods/summarize.js'
 import { formatStashRefs } from '../../stash.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
   insertMarker,
@@ -125,9 +127,18 @@ function textSize(block: ContentBlock): number {
   return size
 }
 
-function isTruncated(block: ContentBlock): boolean {
+function firstText(block: ContentBlock): string {
   const first = block instanceof ToolResultBlock ? block.content[0] : block
-  return first instanceof TextBlock && first.text.startsWith(TRUNCATED_PREFIX)
+  return first instanceof TextBlock ? first.text : ''
+}
+
+function isTruncated(block: ContentBlock): boolean {
+  return firstText(block).startsWith(TRUNCATED_PREFIX)
+}
+
+/** The head message, pinned messages and summaries are cut last: they hold the context other strategies kept. */
+function isProtected(messages: Message[], index: number, block: ContentBlock): boolean {
+  return index === 0 || isPinned(messages, index) || firstText(block).startsWith(SUMMARIZED_PREFIX)
 }
 
 function totalTextSize(messages: Message[]): number {
@@ -166,9 +177,11 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
     const dropped = await this._applyPerMessage(context)
     // Scale the utilization by the text that survived the drop to estimate how much is still in excess.
     const fitsChars = utilization > 0 ? (charsBefore * EMERGENCY_TARGET_UTILIZATION) / utilization : 0
-    let excessChars = totalTextSize(context.messages) - fitsChars
-    // The model rejected the input even if the estimate disagrees.
-    if (context.overflow) excessChars = Math.max(excessChars, 1)
+    const charsNow = totalTextSize(context.messages)
+    let excessChars = charsNow - fitsChars
+    // The model rejected the input even if the local count (messages only, no system prompt or tool specs)
+    // says it fits, so cut at least a tenth of the text rather than letting the 3-retry cap run out.
+    if (context.overflow) excessChars = Math.max(excessChars, charsNow * (1 - EMERGENCY_TARGET_UTILIZATION))
     const truncated = await this._truncateLargestTextBlocks(context, excessChars)
     return dropped || truncated
   }
@@ -195,18 +208,24 @@ export class EmergencyTruncateStrategy extends TruncateStrategy {
   /**
    * Truncate untruncated text blocks, largest first, until `excessChars` characters are gone.
    * Each block keeps at most a quarter of its text as preview (never more than the default preview),
-   * so every truncation removes most of the block. Pins are ignored, as in the message-level pass.
+   * so every truncation removes most of the block. Ties go to the oldest block. Protected blocks (head
+   * message, pinned messages, summaries) are only cut once every other block is, so an overflow that
+   * lives in one of them still recovers.
    */
   private async _truncateLargestTextBlocks(context: ContextState, excessChars: number): Promise<boolean> {
     const { messages } = context
-    const candidates: { size: number; index: number; blockIndex: number }[] = []
+    const candidates: { protected: number; size: number; index: number; blockIndex: number }[] = []
     messages.forEach((message, index) => {
       message.content.forEach((block, blockIndex) => {
         const size = textSize(block)
-        if (size > 0 && !isTruncated(block)) candidates.push({ size, index, blockIndex })
+        if (size > 0 && !isTruncated(block)) {
+          candidates.push({ protected: isProtected(messages, index, block) ? 1 : 0, size, index, blockIndex })
+        }
       })
     })
-    candidates.sort((a, b) => b.size - a.size || a.index - b.index || a.blockIndex - b.blockIndex)
+    candidates.sort(
+      (a, b) => a.protected - b.protected || b.size - a.size || a.index - b.index || a.blockIndex - b.blockIndex
+    )
 
     let saved = 0
     let truncated = 0

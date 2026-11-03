@@ -938,6 +938,60 @@ describe('EmergencyTruncateStrategy', () => {
     expect(await strategy.apply(makeContext(messages, 1.1, true))).toBe(false)
   })
 
+  it('cuts head, pinned and summary blocks only after everything else', async () => {
+    const messages = [
+      text('user', 'h'.repeat(50_000)),
+      text('assistant', '[Summarized: 3 messages, ~12,000 tokens]\n\n' + 's'.repeat(30_000)),
+      text('user', 'u'.repeat(20_000)),
+    ]
+    const strategy = new EmergencyTruncateStrategy()
+
+    expect(await strategy.apply(makeContext(messages, 1.05, true))).toBe(true)
+
+    expect((messages[0]!.content[0] as TextBlock).text).toBe('h'.repeat(50_000))
+    expect((messages[1]!.content[0] as TextBlock).text.startsWith('[Summarized:')).toBe(true)
+    expect((messages[2]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~5,000 tokens]')).toBe(true)
+
+    // Once nothing unprotected is left, the protected blocks are cut too (largest first) rather than giving up.
+    expect(await strategy.apply(makeContext(messages, 1.05, true))).toBe(true)
+    expect((messages[0]!.content[0] as TextBlock).text.startsWith('[Truncated: 1 block, ~12,500 tokens]')).toBe(true)
+    expect((messages[1]!.content[0] as TextBlock).text.startsWith('[Summarized:')).toBe(true)
+  })
+
+  it('cuts equal-sized blocks oldest first', async () => {
+    const messages = [
+      text('user', 'task'),
+      new Message({
+        role: 'assistant',
+        content: Array.from({ length: 6 }, (_, i) => new TextBlock(String(i).repeat(5_000))),
+      }),
+      text('user', 'next'),
+    ]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 1.05, true))).toBe(true)
+
+    const truncated = messages[1]!.content.flatMap((block, i) =>
+      (block as TextBlock).text.startsWith('[Truncated:') ? [i] : []
+    )
+    expect(truncated).toEqual(Array.from({ length: truncated.length }, (_, k) => k))
+    expect(truncated.length).toBeGreaterThan(0)
+    expect(truncated.length).toBeLessThan(6)
+  })
+
+  // The local count omits the system prompt and tool specs, so an overflow can arrive with utilization < 0.9.
+  it('still cuts a tenth of the text on overflow when the estimate is under the target', async () => {
+    const big = new Message({
+      role: 'user',
+      content: Array.from({ length: 80 }, (_, i) => new TextBlock(String(i % 10).repeat(5_000))),
+    })
+    const messages = [big, text('assistant', 'ok'), text('user', 'next')]
+
+    expect(await new EmergencyTruncateStrategy().apply(makeContext(messages, 0.85, true))).toBe(true)
+
+    const charsAfter = big.content.reduce((sum, block) => sum + (block as TextBlock).text.length, 0)
+    expect(charsAfter).toBeLessThanOrEqual(400_000 * 0.9)
+  })
+
   it('drops messages first and truncates what the drop did not cover', async () => {
     const messages = [
       text('user', 'p'.repeat(40_000)),
