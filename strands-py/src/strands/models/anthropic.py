@@ -4,10 +4,12 @@
 - Server tools: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
 """
 
+import asyncio
 import base64
 import json
 import logging
 import re
+import threading
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator
@@ -34,6 +36,15 @@ from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
+from ._anthropic_compaction import (
+    COMPACTION_BETA,
+    carries_native_block,
+    compaction_params,
+    format_native_block,
+    from_last_native_block,
+    read_compaction,
+    until_cancelled,
+)
 from ._defaults import resolve_config_metadata
 from ._native_output import (
     StructuredOutputMechanism,
@@ -41,6 +52,7 @@ from ._native_output import (
     structured_output_mechanisms,
     unsupported_mechanisms,
 )
+from ._summarize import SummarizeResult
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import (
     _has_location_source,
@@ -327,7 +339,11 @@ class AnthropicModel(Model):
         raise TypeError(f"content_type=<{next(iter(content))}> | unsupported type")
 
     def _format_request_messages(
-        self, messages: Messages, cache_target_idx: int | None = None, dynamic_trailing_blocks: int = 0
+        self,
+        messages: Messages,
+        cache_target_idx: int | None = None,
+        dynamic_trailing_blocks: int = 0,
+        sends_native_blocks: bool = False,
     ) -> list[dict[str, Any]]:
         """Format an Anthropic messages array.
 
@@ -338,6 +354,7 @@ class AnthropicModel(Model):
                 it already carries the cache point.
             dynamic_trailing_blocks: How many trailing blocks of the cache-target message are rebuilt on
                 every call, so the cache point stays ahead of them.
+            sends_native_blocks: Whether a text block holding Anthropic provider data is sent as that data.
 
         Returns:
             An Anthropic messages array.
@@ -375,7 +392,7 @@ class AnthropicModel(Model):
                     skipped["Location sources are not supported by Anthropic | skipping content block"] += 1
                     continue
 
-                formatted_content = self._format_request_message_content(content)
+                formatted_content = self._format_message_block(content, sends_native_blocks)
                 if formatted_content is None:
                     dropped_unsigned_reasoning = True
                     continue
@@ -399,6 +416,11 @@ class AnthropicModel(Model):
 
         _log_skipped_blocks(logger, skipped)
         return formatted_messages
+
+    def _format_message_block(self, content: ContentBlock, sends_native_blocks: bool) -> dict[str, Any] | None:
+        """Format a message block, sending a block that holds Anthropic provider data as that data when enabled."""
+        native_block = format_native_block(content) if sends_native_blocks else None
+        return native_block if native_block is not None else self._format_request_message_content(content)
 
     @classmethod
     def _attach_cache_control(
@@ -591,6 +613,9 @@ class AnthropicModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
         """
+        sends_native_blocks = self._sends_native_blocks()
+        if sends_native_blocks:
+            messages = from_last_native_block(messages)
         messages, cache_target_idx = self._manage_cache_points(messages)
 
         tools: list[dict[str, Any]] = [
@@ -623,7 +648,9 @@ class AnthropicModel(Model):
 
         request = {
             "max_tokens": self.config["max_tokens"],
-            "messages": self._format_request_messages(messages, cache_target_idx, dynamic_trailing_blocks),
+            "messages": self._format_request_messages(
+                messages, cache_target_idx, dynamic_trailing_blocks, sends_native_blocks
+            ),
             "model": self.config["model_id"],
             **(self._format_tool_choice(tool_choice)),
             **({"system": system} if system else {}),
@@ -631,24 +658,43 @@ class AnthropicModel(Model):
             "tools": tools,
         }
 
+        return self._with_required_betas(request, messages, sends_native_blocks)
+
+    def _with_required_betas(
+        self, request: dict[str, Any], messages: Messages, sends_native_blocks: bool
+    ) -> dict[str, Any]:
+        """Return the request with the betas its messages and the remembered thinking-binding recovery need."""
+        if sends_native_blocks and carries_native_block(messages):
+            request = self._with_beta(request, COMPACTION_BETA)
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
-
         return request
+
+    def _sends_native_blocks(self) -> bool:
+        """Whether requests send a stored compaction block as the block itself, from where it stands.
+
+        Only a model that declares ``server_side_compaction`` does, since the block needs the compaction beta;
+        any other model sends the block's text.
+        """
+        return self.model_info.capabilities.server_side_compaction is True
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
         thinking = thinking_with_drop_block(request.get("thinking"))
         if thinking is None:
             return None
+        return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
+
+    def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
+        """Return the request with ``beta`` added to its ``anthropic-beta`` header."""
         extra_headers = dict(request.get("extra_headers") or {})
         # Request headers replace client headers of the same name, so betas set on the client are carried over.
         configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
-        betas = [beta.strip() for beta in configured.split(",")] if isinstance(configured, str) else []
-        if THINKING_BINDING_BETA not in betas:
-            betas.append(THINKING_BINDING_BETA)
-        extra_headers["anthropic-beta"] = ",".join(beta for beta in betas if beta)
-        return {**request, "thinking": thinking, "extra_headers": extra_headers}
+        betas = [value.strip() for value in configured.split(",")] if isinstance(configured, str) else []
+        if beta not in betas:
+            betas.append(beta)
+        extra_headers["anthropic-beta"] = ",".join(value for value in betas if value)
+        return {**request, "extra_headers": extra_headers}
 
     def _format_system_prompt(
         self, system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None
@@ -986,7 +1032,7 @@ class AnthropicModel(Model):
                 messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content
             )
             # Keep only fields accepted by count_tokens; strip inference params (max_tokens, temperature, etc.)
-            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system"}
+            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system", "extra_headers"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
             response = await self.client.messages.count_tokens(**request)
@@ -1142,7 +1188,7 @@ class AnthropicModel(Model):
             raise ModelThrottledException(str(error)) from error
 
         except anthropic.BadRequestError as error:
-            if any(overflow_message in str(error).lower() for overflow_message in AnthropicModel.OVERFLOW_MESSAGES):
+            if self._is_context_overflow(error):
                 raise ContextWindowOverflowException(str(error)) from error
 
             retry_with_drop_block = (
@@ -1180,6 +1226,90 @@ class AnthropicModel(Model):
             return
 
         logger.debug("finished streaming response from model")
+
+    @override
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        **kwargs: Any,
+    ) -> SummarizeResult:
+        """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
+
+        Uses beta ``compact-2026-09-04``, sending the live system prompt and tools unchanged, when
+        ``model_info.capabilities.server_side_compaction`` is True; otherwise uses the base
+        :meth:`Model.summarize`. ``AnthropicModel`` leaves the capability unknown unless set through the
+        ``model_info`` config.
+
+        The returned compaction block is stored as a text block whose ``text`` is the summary, for other providers,
+        and whose ``metadata.providerData`` holds the block, which later requests send back exactly as returned.
+
+        Args:
+            messages: The opening messages to summarize, left unmodified.
+            tool_specs: The live conversation's tool specifications.
+            system_prompt: The live conversation's plain string system prompt.
+            system_prompt_content: The live conversation's structured system prompt.
+            instructions: Summarization instructions replacing the API's own prompt.
+            cancel_signal: Event that aborts the in-flight compaction request.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary and the compaction's usage. The summary is empty when the response holds none
+            (``stop_reason`` other than ``compaction``) or the call was cancelled, which leaves the history unchanged.
+
+        Raises:
+            ContextWindowOverflowException: If the request does not fit the context window.
+            ModelThrottledException: If the request is throttled by Anthropic.
+        """
+        if self.model_info.capabilities.server_side_compaction is not True:
+            return await super().summarize(
+                messages,
+                tool_specs=tool_specs,
+                system_prompt=system_prompt,
+                system_prompt_content=system_prompt_content,
+                instructions=instructions,
+                cancel_signal=cancel_signal,
+                **kwargs,
+            )
+
+        request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
+        params = self._with_beta(compaction_params(request, instructions), COMPACTION_BETA)
+        compaction = asyncio.ensure_future(self._compact(params))
+        if await until_cancelled(compaction, cancel_signal):
+            logger.debug("model_id=<%s> | compaction cancelled", self.config["model_id"])
+            return SummarizeResult(content=[])
+
+        compacted = read_compaction(compaction.result(), self.config["model_id"])
+        if compacted is None:
+            return SummarizeResult(content=[])
+        block, usage = compacted
+        return SummarizeResult(content=[block], usage=usage)
+
+    async def _compact(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Send a compaction request and return the response message as returned.
+
+        The beta stream keeps ``usage.iterations``, where a compaction response reports its usage.
+        """
+        try:
+            async with self.client.beta.messages.stream(**params) as stream:
+                response = await stream.get_final_message()
+        except anthropic.RateLimitError as error:
+            raise ModelThrottledException(str(error)) from error
+        except anthropic.BadRequestError as error:
+            if self._is_context_overflow(error):
+                raise ContextWindowOverflowException(str(error)) from error
+            raise
+        return cast(dict[str, Any], response.to_dict())
+
+    @staticmethod
+    def _is_context_overflow(error: anthropic.BadRequestError) -> bool:
+        """Whether Anthropic rejected the request because the input exceeds the context window."""
+        return any(overflow_message in str(error).lower() for overflow_message in AnthropicModel.OVERFLOW_MESSAGES)
 
     def _record_rejected_mechanism(
         self,

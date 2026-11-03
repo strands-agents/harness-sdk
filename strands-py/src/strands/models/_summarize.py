@@ -145,9 +145,11 @@ def _to_summarizer_blocks(block: ContentBlock) -> list[ContentBlock]:
     """Convert a block to what the summarizer accepts in a user turn.
 
     Text, images, and documents pass through; other content is rendered as text or a placeholder, and the rest
-    is left out.
+    is left out. A text block passes through as its text alone, so provider data it carries is read as text.
     """
-    if "text" in block or "image" in block or "document" in block:
+    if "text" in block:
+        return [ContentBlock(text=block["text"])]
+    if "image" in block or "document" in block:
         return [block]
     if "citationsContent" in block:
         return [ContentBlock(text=content["text"]) for content in block["citationsContent"].get("content", [])]

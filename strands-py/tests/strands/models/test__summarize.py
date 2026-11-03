@@ -162,6 +162,16 @@ class TestFlattenMessagesToContent:
         ]
         assert tru_result == exp_result
 
+    def test_passes_a_text_block_holding_provider_data_as_its_text(self):
+        provider_data = {"provider": "anthropic", "data": {"type": "compaction", "content": "summary"}}
+        messages: Messages = [
+            Message(role="assistant", content=[ContentBlock(text="summary", metadata={"providerData": provider_data})])
+        ]
+
+        tru_result = _flatten_messages_to_content(messages)
+
+        assert tru_result == [ContentBlock(text="\n---\n[assistant]"), ContentBlock(text="summary")]
+
     def test_renders_tool_calls_and_their_results_as_labeled_text(self):
         # guards against tool-use blocks reaching the summarizer in a user turn (#5291)
         tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})

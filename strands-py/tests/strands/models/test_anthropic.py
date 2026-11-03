@@ -1,17 +1,22 @@
+import asyncio
 import copy
+import json
 import logging
 import mimetypes
 import re
+import threading
 import types
 import unittest.mock
 import warnings
 
 import anthropic
+import httpx
 import pydantic
 import pytest
 
 import strands
 from strands.models import ModelCapabilities, ModelInfo, ModelLimits
+from strands.models._summarize import SummarizeResult
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.tools import convert_pydantic_to_tool_spec
@@ -1662,6 +1667,25 @@ class TestCountTokens:
         assert "max_tokens" not in call_kwargs
 
     @pytest.mark.asyncio
+    async def test_native_count_tokens_sends_the_compaction_beta_with_a_stored_block(
+        self, model_with_client, anthropic_client
+    ):
+        anthropic_client.default_headers = {}
+        model_with_client.update_config(
+            model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True))
+        )
+        mock_response = unittest.mock.MagicMock()
+        mock_response.input_tokens = 10
+        anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=mock_response)
+        stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "c"}}}}
+
+        await model_with_client.count_tokens(messages=[{"role": "user", "content": [stored]}])
+
+        call_kwargs = anthropic_client.messages.count_tokens.call_args[1]
+        assert call_kwargs["messages"] == [{"role": "user", "content": [{"type": "c"}]}]
+        assert call_kwargs["extra_headers"] == {"anthropic-beta": "compact-2026-09-04"}
+
+    @pytest.mark.asyncio
     async def test_fallback_on_api_error(self, model_with_client, anthropic_client, messages):
         anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(
             side_effect=anthropic.APIError(message="Unsupported", request=unittest.mock.MagicMock(), body=None)
@@ -3193,3 +3217,335 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Anthropic" in messages_logged[0]
+
+
+COMPACTION_SYSTEM = "You plan releases."
+COMPACTION_TOOLS = [
+    {
+        "name": "lookup",
+        "description": "Look up.",
+        "inputSchema": {"json": {"type": "object", "properties": {"q": {"type": "string"}}}},
+    }
+]
+RETURNED_COMPACTION = {
+    "type": "compaction",
+    "content": "Summary: the user plans a release.",
+    "signature": "EuYBCkQY-opaque",
+}
+STORED_COMPACTION = {
+    "text": RETURNED_COMPACTION["content"],
+    "metadata": {"providerData": {"provider": "anthropic", "data": RETURNED_COMPACTION}},
+}
+COMPACTED_REPLY = {
+    "content": [RETURNED_COMPACTION],
+    "stop_reason": "compaction",
+    "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "iterations": [{"type": "compaction", "input_tokens": 144, "output_tokens": 276}],
+    },
+}
+TEXT_REPLY = {"content": [{"type": "text", "text": "ok"}]}
+
+
+class AnthropicWire:
+    """A fail-closed Anthropic transport serving canned replies in order and recording every request."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.requests: list[httpx.Request] = []
+
+    @property
+    def bodies(self):
+        return [json.loads(request.content) for request in self.requests]
+
+    def model(self, compacts=True, default_headers=None, **config):
+        client_args = {
+            "api_key": "offline-test-key",
+            "max_retries": 0,
+            "http_client": httpx.AsyncClient(transport=httpx.MockTransport(self._handle)),
+            **({"default_headers": default_headers} if default_headers else {}),
+        }
+        model_info = ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)) if compacts else None
+        return AnthropicModel(
+            client_args=client_args,
+            model_id="claude-sonnet-5-5",
+            max_tokens=4096,
+            **({"model_info": model_info} if model_info else {}),
+            **config,
+        )
+
+    def _handle(self, request):
+        self.requests.append(request)
+        if not self.replies:
+            raise AssertionError(f"unmocked request to {request.url.path}")
+        reply = self.replies.pop(0)
+        if "status" in reply:
+            body = {"type": "error", "error": reply["error"]}
+            return httpx.Response(reply["status"], json=body)
+        return httpx.Response(200, text=self._sse(reply), headers={"content-type": "text/event-stream"})
+
+    @staticmethod
+    def _sse(reply):
+        usage = reply.get("usage", {"input_tokens": 10, "output_tokens": 5})
+        start = {
+            "id": "msg_offline",
+            "type": "message",
+            "role": "assistant",
+            "model": "offline",
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": usage.get("input_tokens", 0), "output_tokens": 0},
+        }
+        events = [("message_start", {"type": "message_start", "message": start})]
+        for index, block in enumerate(reply.get("content", [])):
+            if block["type"] == "text":
+                events.append(
+                    (
+                        "content_block_start",
+                        {"type": "content_block_start", "index": index, "content_block": {"type": "text", "text": ""}},
+                    )
+                )
+                delta = {"type": "text_delta", "text": block["text"]}
+                events.append(("content_block_delta", {"type": "content_block_delta", "index": index, "delta": delta}))
+            else:
+                # Blocks that arrive whole, such as an on-demand compaction block.
+                events.append(
+                    ("content_block_start", {"type": "content_block_start", "index": index, "content_block": block})
+                )
+            events.append(("content_block_stop", {"type": "content_block_stop", "index": index}))
+        delta = {"stop_reason": reply.get("stop_reason", "end_turn"), "stop_sequence": None}
+        events.append(("message_delta", {"type": "message_delta", "delta": delta, "usage": usage}))
+        events.append(("message_stop", {"type": "message_stop"}))
+        return "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events)
+
+
+def _compaction_body():
+    return [
+        {"role": "user", "content": [{"text": "TASK: plan the release"}]},
+        {
+            "role": "assistant",
+            "content": [{"text": "checking"}, {"toolUse": {"name": "lookup", "toolUseId": "t1", "input": {"q": "x"}}}],
+        },
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "found"}]}}],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_summarize_uses_the_base_summary_without_the_capability():
+    wire = AnthropicWire({"content": [{"type": "text", "text": "BASE SUMMARY"}]})
+
+    tru_result = await wire.model(compacts=False).summarize(
+        _compaction_body(), system_prompt=COMPACTION_SYSTEM, tool_specs=COMPACTION_TOOLS
+    )
+
+    [body] = wire.bodies
+    assert "compaction" not in body
+    assert body["tools"] == []
+    assert "anthropic-beta" not in wire.requests[0].headers
+    assert tru_result.content == [{"text": "BASE SUMMARY"}]
+
+
+@pytest.mark.asyncio
+async def test_summarize_compacts_with_the_beta_and_the_live_system_prompt_and_tools(alist):
+    wire = AnthropicWire(COMPACTED_REPLY, TEXT_REPLY)
+    model = wire.model()
+
+    await model.summarize(
+        _compaction_body(), system_prompt=COMPACTION_SYSTEM, tool_specs=COMPACTION_TOOLS, instructions="Keep the task."
+    )
+    await alist(model.stream(_compaction_body(), COMPACTION_TOOLS, COMPACTION_SYSTEM))
+
+    compaction, conversation = wire.bodies
+    assert wire.requests[0].url.path == "/v1/messages"
+    assert wire.requests[0].url.params["beta"] == "true"
+    assert wire.requests[0].headers["anthropic-beta"] == "compact-2026-09-04"
+    assert compaction["compaction"] == {"type": "summarize", "instructions": "Keep the task."}
+    assert compaction["system"] == conversation["system"]
+    assert compaction["tools"] == conversation["tools"]
+    assert compaction["messages"] == conversation["messages"]
+    assert "anthropic-beta" not in wire.requests[1].headers
+
+
+@pytest.mark.asyncio
+async def test_summarize_keeps_client_betas_and_leaves_out_parameters_a_compaction_request_rejects():
+    wire = AnthropicWire(COMPACTED_REPLY)
+    model = wire.model(
+        default_headers={"anthropic-beta": "context-1m-2025-08-07"},
+        params={
+            "stop_sequences": ["STOP"],
+            "context_management": {"edits": []},
+            "output_config": {"task_budget": {"total": 9, "remaining": 4}},
+        },
+    )
+
+    await model.summarize(_compaction_body())
+
+    [compaction] = wire.bodies
+    assert wire.requests[0].headers["anthropic-beta"] == "context-1m-2025-08-07,compact-2026-09-04"
+    assert "stop_sequences" not in compaction
+    assert "context_management" not in compaction
+    assert compaction["output_config"] == {"task_budget": {"total": 9}}
+
+
+@pytest.mark.asyncio
+async def test_summarize_returns_the_summary_text_with_the_returned_block_and_the_compaction_usage():
+    wire = AnthropicWire(COMPACTED_REPLY)
+
+    tru_result = await wire.model().summarize(_compaction_body())
+
+    exp_result = SummarizeResult(
+        content=[STORED_COMPACTION], usage={"inputTokens": 144, "outputTokens": 276, "totalTokens": 420}
+    )
+    assert tru_result == exp_result
+
+
+@pytest.mark.asyncio
+async def test_summarize_returns_an_empty_summary_when_compaction_writes_none(caplog):
+    wire = AnthropicWire({"content": [], "stop_reason": "max_tokens"})
+
+    with caplog.at_level(logging.WARNING, logger="strands.models._anthropic_compaction"):
+        tru_result = await wire.model().summarize(_compaction_body())
+
+    assert tru_result == SummarizeResult(content=[])
+    assert "model_id=<claude-sonnet-5-5>, stop_reason=<max_tokens> | compaction returned no summary" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("reply", "exp_exception"),
+    [
+        ({"status": 429, "error": {"type": "rate_limit_error", "message": "slow"}}, ModelThrottledException),
+        (
+            {"status": 400, "error": {"type": "invalid_request_error", "message": "prompt is too long: 1 > 0"}},
+            ContextWindowOverflowException,
+        ),
+        ({"status": 400, "error": {"type": "invalid_request_error", "message": "bad"}}, anthropic.BadRequestError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_summarize_translates_provider_errors(reply, exp_exception):
+    wire = AnthropicWire(reply)
+
+    with pytest.raises(exp_exception):
+        await wire.model().summarize(_compaction_body())
+
+
+@pytest.mark.asyncio
+async def test_summarize_returns_an_empty_summary_when_cancelled(anthropic_client):
+    started = asyncio.Event()
+
+    async def stalled_final_message():
+        started.set()
+        await asyncio.sleep(60)
+
+    stream = unittest.mock.AsyncMock()
+    stream.get_final_message.side_effect = stalled_final_message
+    anthropic_client.beta.messages.stream.return_value.__aenter__.return_value = stream
+    anthropic_client.default_headers = {}
+    model = AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+    )
+    cancel_signal = threading.Event()
+    asyncio.get_running_loop().call_later(0.01, cancel_signal.set)
+
+    tru_result = await model.summarize(_compaction_body(), cancel_signal=cancel_signal)
+
+    assert started.is_set()
+    assert tru_result == SummarizeResult(content=[])
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_the_stored_block_first_unchanged_and_in_place_of_the_messages_before_it(alist):
+    wire = AnthropicWire(COMPACTED_REPLY, TEXT_REPLY)
+    model = wire.model(default_headers={"anthropic-beta": "thinking-binding-controls-2026-08-01"})
+    [block] = (await model.summarize(_compaction_body())).content
+    placeholder = {**block, "text": f"[Summarized: earlier messages]\n\n{block['text']}"}
+    history = [
+        _compaction_body()[0],
+        {"role": "assistant", "content": [placeholder]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+    restored = json.loads(json.dumps(history))
+
+    await alist(model.stream(restored, COMPACTION_TOOLS))
+
+    sent = wire.bodies[1]["messages"]
+    assert [message["role"] for message in sent] == ["assistant", "user"]
+    assert sent[0]["content"] == [RETURNED_COMPACTION]
+    assert [tool["name"] for tool in wire.bodies[1]["tools"]] == ["lookup"]
+    exp_betas = "thinking-binding-controls-2026-08-01,compact-2026-09-04"
+    assert [request.headers["anthropic-beta"] for request in wire.requests] == [exp_betas, exp_betas]
+
+
+def test_format_request_sends_a_stored_block_as_text_without_the_capability(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+    messages = [
+        {"role": "user", "content": [{"text": "first"}]},
+        {"role": "assistant", "content": [STORED_COMPACTION]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    tru_request = model.format_request(messages)
+
+    exp_messages = [
+        {"role": "user", "content": [{"type": "text", "text": "first"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": RETURNED_COMPACTION["content"]}]},
+        {"role": "user", "content": [{"type": "text", "text": "next"}]},
+    ]
+    assert tru_request["messages"] == exp_messages
+    assert "extra_headers" not in tru_request
+
+
+def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(anthropic_client):
+    anthropic_client.default_headers = {}
+    model = AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        cache_config=CacheConfig(strategy="anthropic"),
+        params={"thinking": {"type": "adaptive"}},
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+    )
+    model._drop_stale_thinking_model_id = "m1"
+    messages = [
+        {"role": "user", "content": [{"text": "first"}]},
+        {"role": "user", "content": [{"text": "lead"}, STORED_COMPACTION, {"text": "kept"}]},
+        {"role": "assistant", "content": [{"text": "reply"}]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    tru_request = model.format_request(messages)
+
+    exp_messages = [
+        {"role": "user", "content": [RETURNED_COMPACTION, {"type": "text", "text": "kept"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+        {"role": "user", "content": [{"type": "text", "text": "next", "cache_control": {"type": "ephemeral"}}]},
+    ]
+    assert tru_request["messages"] == exp_messages
+    assert tru_request["extra_headers"] == {"anthropic-beta": "compact-2026-09-04,thinking-binding-controls-2026-08-01"}
+    assert tru_request["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert RETURNED_COMPACTION == {
+        "type": "compaction",
+        "content": "Summary: the user plans a release.",
+        "signature": "EuYBCkQY-opaque",
+    }
+
+
+def test_format_request_without_a_stored_block_adds_no_beta_with_the_capability(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(
+        model_id="m1",
+        max_tokens=1,
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+    )
+
+    tru_request = model.format_request([{"role": "user", "content": [{"text": "a"}]}])
+
+    assert tru_request["messages"] == [{"role": "user", "content": [{"type": "text", "text": "a"}]}]
+    assert "extra_headers" not in tru_request
