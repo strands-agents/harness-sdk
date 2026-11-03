@@ -30,7 +30,8 @@ project. The source is on [GitHub](https://github.com/strands-agents/box).
 ## Two layers: operating system enforcement and policy
 
 **Sandbox grants** set which files and programs a process's own system calls can reach.
-Box builds them from your `box.toml`, and Seatbelt, the macOS sandbox, enforces them.
+Box builds them from your `box.toml`. macOS uses Seatbelt; Linux uses namespaces and
+system call filters.
 The sandbox also sends the box's network traffic to Box's egress gateway, unless a tool
 or local MCP server you declare sets `network.contain_egress = false`.
 
@@ -108,7 +109,7 @@ The [action reference](reference/policy-actions.md) lists every action and its f
 | Platform | Status |
 |---|---|
 | macOS 15 or later on Apple silicon | Supported |
-| Linux | Not supported yet |
+| Linux ARM64 | [Source evaluation](guides/run-on-linux.md); no Linux binary in the published `v0.1.0` release |
 | Windows | Unsupported |
 
 ## Next steps

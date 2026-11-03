@@ -1,0 +1,144 @@
+---
+title: Evaluate Box on Linux
+description: Build Strands Box on Linux ARM64, check filesystem isolation with a small workload, and understand the setup requirements before adapting an agent.
+sidebar:
+  label: "Linux setup"
+---
+
+Use this guide to build Box on Linux ARM64 and check a workload's filesystem access.
+ARM64 means the 64-bit Arm architecture. This example uses Bash and needs no model
+credentials.
+
+Linux is available for evaluation from source. The published `v0.1.0` download contains
+only macOS binaries, and `download.sh` rejects Linux. A successful local run does not
+qualify a container or cloud deployment.
+
+## Before you start
+
+You need Git, Bash, a C compiler and linker, and [rustup](https://rustup.rs/).
+The repository pins its Rust compiler in `rust-toolchain.toml`.
+Your Linux host must permit user, mount, process, and network namespace creation.
+A namespace gives a process a separate view of resources such as files or network
+interfaces. Container policies and host security settings can prevent this setup.
+
+Keep the Box binaries, configuration, and state outside the workload's writable paths.
+Do not disable host security controls to make this example run. Use an environment
+approved for the required operations.
+
+## Build the binaries
+
+Create a working directory, then build Box and its containment helper:
+
+```bash
+mkdir box-linux-tutorial
+cd box-linux-tutorial
+git clone https://github.com/strands-agents/box.git box-src
+cargo build --release --locked --manifest-path box-src/Cargo.toml \
+  -p strands-box -p strands-box-containment
+```
+
+Keep the binaries together in `box-src/target/release`. Box needs its socket alias
+and containment trampoline beside its executable. The trampoline applies the sandbox
+before the workload starts.
+
+Some evaluation revisions require explicit consent through
+`EXPERIMENTAL_LINUX_SUPPORT=TRUE`. For those revisions, set it in the terminal that
+runs Box:
+
+```bash
+export EXPERIMENTAL_LINUX_SUPPORT=TRUE
+./box-src/target/release/strands-box --version
+```
+
+This setting does not grant filesystem or network access.
+
+## Create a contained workload
+
+Create a readable project with one writable output directory:
+
+```bash
+mkdir -p project/output
+printf 'hello from Linux\n' > project/input.txt
+work_dir="$(pwd -P)"
+cat > box.toml <<EOF
+name = "linux-example"
+box_dir = "$work_dir/state"
+policy = "$work_dir/policy.dw"
+
+[agent]
+command = ["bash", "-eu", "-c", """
+read -r message < input.txt
+printf '%s\n' "\$message"
+printf 'allowed\n' > output/result.txt
+if printf 'forbidden\n' > input.txt; then
+  printf 'ERROR: input.txt was writable\n'
+  exit 1
+fi
+printf 'read-only input protected\n'
+"""]
+workspace = "$work_dir/project"
+
+[agent.filesystem]
+read = ["$work_dir/project"]
+write = ["$work_dir/project/output"]
+EOF
+printf '' > policy.dw
+```
+
+The Bash workload reads the input, writes an output, and attempts to overwrite the
+read-only input. These are direct operations from the workload's process. The operating
+system enforces their grants. They do not produce individual policy decisions.
+The empty policy permits no mediated actions through Box.
+
+Linux requires explicit read access over the entire scope of each write grant.
+Here, the parent read grant covers the writable output directory. Do not add read access
+when the workload must have write-only access. Linux cannot enforce that requirement
+through direct filesystem grants.
+
+## Run and check the result
+
+Run the configured workload:
+
+```bash
+./box-src/target/release/strands-box run --config box.toml
+cat project/output/result.txt
+cat project/input.txt
+```
+
+The workload should print `hello from Linux` and `read-only input protected`.
+Bash also reports the refused attempt to overwrite `input.txt` on stderr.
+The output file contains `allowed`. The input still contains `hello from Linux`.
+A startup error does not prove that the sandbox refused the write during execution.
+
+## Adapt an agent
+
+Replace the Bash command with your agent's executable and arguments.
+Grant its runtime files separately from project files. Resolve symbolic links before
+using their targets in grants. Configure environment variables explicitly in
+`[agent.env]`. Box does not inherit arbitrary host variables.
+
+Linux cannot use the macOS tutorials' `list` grants. A `read` grant exposes contents,
+so it is not an equivalent replacement. Review the
+[Linux restrictions](../security/linux.md) before adapting an existing configuration.
+Runtimes that compile code during execution can fail under Box's memory restrictions.
+
+Keep the agent's file access through [Box's shell](../reference/shell.md) when you need
+policy decisions for individual operations. Configure native tools separately with
+[their own grants](grant-files.md) and keep
+[gateway networking](network-and-credentials.md#linux-network-modes) enabled when
+policy must decide outbound requests.
+
+## Diagnose startup failures
+
+| Symptom | What to check |
+|---|---|
+| Linux consent error | Set the opt-in variable if your revision requests it. |
+| Namespace or mount setup error | Confirm the host permits the complete setup sequence. A user-namespace probe alone is insufficient. |
+| Box refuses a write grant | Check explicit read coverage over its entire scope. |
+| Box refuses a symbolic-link path | Use the resolved path in the grant. |
+| Program exists but fails to start | Check its loader, shared libraries, mount permissions, and workload output. |
+| Runtime fails while it compiles code | Check whether it needs executable-memory operations that Box refuses. |
+
+For cloud deployment, validate the image, kernel, identity, host permissions, and
+workload together. This example does not establish support for a particular cloud
+service or container configuration.

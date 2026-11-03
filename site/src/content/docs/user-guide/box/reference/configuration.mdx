@@ -212,6 +212,10 @@ writable grant, the list carries
 `strands-box: warning: [agent] command <path> lies inside the writable grant <path>, so
 the process can replace the program it runs`.
 
+Linux refuses `list` and write grants without full explicit read coverage. Agent
+`metadata` entries add no metadata-only mount, and `deny` targets must exist.
+See [Linux filesystem access](../security/linux.md#filesystem-access).
+
 ### Which tool a program selects
 
 A `[tool.<label>]` applies when a program the agent's shell starts begins with the

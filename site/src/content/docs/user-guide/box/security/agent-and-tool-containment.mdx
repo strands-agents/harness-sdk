@@ -85,7 +85,8 @@ permit, with the grants in `[mcp.<name>]`. Its `[mcp.<name>.filesystem]` table t
 same six lists as a tool's, and refuses `metadata` and `exec`. A server with no grants
 still runs contained, and it holds every credential binding the box declares. A server
 with `network.contain_egress = false` connects directly to any IP address, loopback
-included, but to no other pathname socket, such as another box's broker socket.
+included. Pathname sockets remain restricted. On Linux, it also shares the surrounding
+network namespace for abstract UNIX sockets. See [Linux network access](linux.md#network-access).
 
 Box's MCP broker decides each request the agent sends. For a local server,
 `initialize`, `ping`, `server/discover`, `subscriptions/listen`, and notifications pass

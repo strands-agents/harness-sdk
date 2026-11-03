@@ -18,9 +18,13 @@ A `box.toml` grant is one of the sandbox grants: the operating system enforces i
 no policy decision or record covers it. A shell or Python file operation is a policy decision,
 recorded like every other. A harness with its own file tools, such as Claude Code or
 Codex CLI, can use both: a box for it grants the project in `box.toml` and permits it
-in `policy.dw`. To have the policy decide every file, grant the project only in `list`.
+in `policy.dw`. On macOS, to have policy decide every file, grant the project only in `list`.
 The harness's file tools then fail, and it falls back to its shell, as
 [Run Claude Code](run-claude-code.md) and [Run Codex CLI](run-codex-cli.md) show.
+
+Linux refuses `list` and requires explicit read coverage for every write grant.
+Review [Linux filesystem access](../security/linux.md#filesystem-access) before adapting
+a macOS configuration.
 
 ## Grant paths to the agent
 
@@ -54,7 +58,7 @@ agent edits files there.
 
 Each `[tool.<name>]` takes its own `filesystem` table with six of the lists: `read`,
 `write`, `read_file`, `write_file`, `list`, and `deny`. A tool can't take `metadata`,
-because it can test for and read the metadata of paths across your home by default, or
+because on macOS it can test for and read metadata across your home by default, or
 `exec`, because on macOS it can run any binary it can reach, and load code it writes into
 its writable grants. A stdio MCP server's `[mcp.<name>.filesystem]` takes the same six
 lists, and `box run` refuses `metadata` and `exec` in either table by name.

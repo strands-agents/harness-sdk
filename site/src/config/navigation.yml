@@ -533,6 +533,7 @@ sidebar:
           - label: "Overview"
             slug: docs/user-guide/box
           - docs/user-guide/box/quickstart
+          - docs/user-guide/box/guides/run-on-linux
       - label: How-to guides
         items:
           - docs/user-guide/box/guides/run-strands-harness
@@ -551,6 +552,7 @@ sidebar:
           - label: "Security model"
             slug: docs/user-guide/box/security
           - docs/user-guide/box/security/agent-and-tool-containment
+          - docs/user-guide/box/security/linux
       - label: Reference
         items:
           - docs/user-guide/box/reference/configuration

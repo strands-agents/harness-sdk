@@ -1,0 +1,102 @@
+---
+title: Linux enforcement and platform differences
+description: Understand how Linux namespaces and syscall filters enforce Box grants, which configurations differ from macOS, and what direct network access exposes.
+sidebar:
+  label: "Linux enforcement"
+---
+
+Review these differences before moving a Box configuration from macOS to Linux.
+Both platforms separate direct filesystem grants from requests that Box checks against
+policy. Linux uses namespaces, restricted mounts, and seccomp system call filters.
+macOS uses Seatbelt, the macOS process sandbox.
+
+For a source build and a small workload, start with [Linux setup](../guides/run-on-linux.md).
+These restrictions describe Linux evaluation behavior, not a supported binary release.
+
+## Filesystem access
+
+Give each process only the files its task needs. Linux starts with a restricted filesystem
+view and exposes granted files through bind mounts. A bind mount places an existing file
+or directory inside that view. An ungranted path can appear absent instead of returning
+the same access error as macOS.
+
+| Configuration | Linux behavior | What to do |
+|---|---|---|
+| `read` or `read_file` | Exposes content without write access. | Use an exact file when a directory would expose too much. |
+| `write` or `write_file` | Also exposes reads. Startup refuses grants without full explicit read coverage. | Add read access only when it is acceptable. |
+| `list` | Startup refuses directory names without contents. | Use mediated directory access when content must remain hidden. |
+| Agent `metadata` | Adds no metadata-only mount. Other grants can still expose the path. | Do not rely on this field for Linux access. |
+| `deny` | Requires an existing target. A denied file can appear as an empty file. | Check the protected content, not just whether a read returns success. |
+| `workspace` | Selects the initial directory without granting its contents. | Add grants only for the contents the workload needs. |
+
+A parent read grant with a narrower write grant makes only the child writable.
+A parent write grant with a narrower read grant does not cover the entire write scope,
+so Linux refuses it. An execution grant does not satisfy the read requirement.
+
+Direct file operations use these grants and do not raise individual `fs:*` policy
+decisions. Use Strands Shell or Monty, Box's Python interpreter, for mediated operations.
+Linux does not support the experimental `native-filesystem-policy` setting.
+
+## Programs and libraries
+
+Keep the agent's execution grants narrow. It can execute its command and programs covered
+by `exec`. Box discovers startup dependencies for supported Linux executables, but a
+library loaded later can need an additional grant.
+
+Recognized system loader directories become executable when granted read access, so
+programs in those directories can also run. See the
+[loader directory list][linux-implementation] before granting a whole system directory.
+
+Tools and local Model Context Protocol (MCP) servers have their own sandboxes.
+On Linux, their readable and writable grants also permit execution. A tool can run
+helpers and load code it builds within those grants. Its launch permit therefore covers
+its process tree, not just its first executable. The agent does not receive this broader
+execution behavior.
+
+## Runtime restrictions
+
+Check runtime compatibility before relying on an agent configuration.
+Seccomp filters system calls and selected arguments. It does not decide file paths.
+Box refuses writable-executable memory mappings and requests to add or retain executable
+access through `mprotect`. It also refuses every `pkey_mprotect` request.
+
+These system calls change memory permissions. A runtime that compiles code during
+execution can fail even when its files have valid grants.
+
+Box provides a process namespace with a read-only `/proc`, the Linux process-information
+filesystem. Setup failure stops startup. Box does not run the workload with a partially
+constructed sandbox.
+
+## Network access
+
+Use gateway networking when policy must decide outbound requests. In that mode, Linux
+uses a private network namespace without external routes. A relay carries traffic to
+Box's gateway, which applies policy.
+
+A tool or local MCP server can set `network.contain_egress = false`.
+It then shares the surrounding operating system's network namespace and bypasses gateway
+policy. Direct connections receive no gateway credential injection or per-request gateway
+record.
+
+Private networks, loopback services, and cloud metadata endpoints can be reachable
+when the surrounding network permits access. Linux abstract UNIX sockets also share this
+network namespace. A local service can identify these clients as the operator and apply
+that account's permissions. Pathname sockets remain subject to filesystem restrictions.
+
+The exception retains filesystem, process, and system call restrictions.
+Linux permits IPv4 and UNIX sockets but refuses IPv6 sockets in either network mode.
+The agent cannot set a network table to bypass the gateway.
+See [Linux network modes](../guides/network-and-credentials.md#linux-network-modes).
+
+## Deployment checks
+
+Validate each deployment configuration separately. A successful local run does not prove
+that a container or managed service permits the same namespace and mount operations.
+Record the Box revision, image, kernel, runtime, grants, and host permissions with the
+allowed and refused operations you test.
+
+The [Linux implementation guide][linux-implementation] explains the enforcement details.
+The [platform comparison][platform-comparison] lists configuration failures and alternatives.
+
+[linux-implementation]: https://github.com/strands-agents/box/blob/main/docs/design/linux-enforcement.md
+[platform-comparison]: https://github.com/strands-agents/box/blob/main/docs/design/platform-differences.md
