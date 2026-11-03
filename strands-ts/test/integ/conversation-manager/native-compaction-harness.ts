@@ -5,7 +5,7 @@
  * instrumentation only: every HTTP status, every compaction block returned and replayed, every
  * `input_transformations` entry, and every SDK warning. Nothing logs keys or full conversations.
  *
- * Shared by `context-manager-native-compaction.test.ts` and `run-native-compaction.ts`.
+ * Shared by `context-manager-native-compaction.test.node.ts` and `run-native-compaction.ts`.
  */
 
 import Anthropic from '@anthropic-ai/sdk'
