@@ -148,11 +148,44 @@ agent = Agent(tools=[delegate])
 
 Combine vended tools in one agent to cover a multi-step workflow:
 
+<Tabs>
+<Tab label="TypeScript">
+
 ```typescript
 --8<-- "user-guide/sdk/tools/vended-tools/index_imports.ts:combined_import"
 
 --8<-- "user-guide/sdk/tools/vended-tools/index.ts:combined_tools_example"
 ```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import file_editor, notebook, shell
+
+agent = Agent(
+    tools=[shell, file_editor, notebook],
+    system_prompt="\n".join(
+        [
+            "You are a software development assistant.",
+            "When given a feature to implement:",
+            "1. Use the notebook tool to create a plan with a checklist of steps",
+            "2. Work through each step, checking them off as you go",
+            "3. Use the shell tool to run tests and verify your changes",
+        ]
+    ),
+)
+
+# Agent plans the work, implements it, and tracks progress
+agent(
+    "Add input validation to the create_user function in src/users.py. "
+    "It should reject empty names and invalid email formats."
+)
+```
+
+</Tab>
+</Tabs>
 
 ## Versioning & maintenance
 
