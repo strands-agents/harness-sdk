@@ -288,7 +288,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       // The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
-      if (threshold !== undefined && tokens <= threshold && !(tokens === 0 && isMediaBlock(block))) continue
+      if (threshold !== undefined && tokens <= threshold && !(tokens === 0 && holdsMedia(block))) continue
 
       const stashRef = this._stash ? await this._stash.ensureStashed(block, message, blockIndex) : undefined
       const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, invocationContext)
@@ -349,4 +349,9 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     repairAlternation(messages)
     return true
   }
+}
+
+/** Whether a block is media, or a tool result holding media. */
+function holdsMedia(block: ContentBlock): boolean {
+  return isMediaBlock(block) || (block instanceof ToolResultBlock && block.content.some(isMediaBlock))
 }

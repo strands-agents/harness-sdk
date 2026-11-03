@@ -10,7 +10,7 @@ import {
   ToolResultBlock,
   ToolUseBlock,
 } from '../../../types/messages.js'
-import type { ContentBlock } from '../../../types/messages.js'
+import type { ContentBlock, ToolResultContent } from '../../../types/messages.js'
 import type { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../../types/media.js'
 
 /**
@@ -32,7 +32,7 @@ export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistan
 
 type MediaBlock = ImageBlock | DocumentBlock | VideoBlock | AudioBlock
 
-const MEDIA_KINDS: Partial<Record<ContentBlock['type'], string>> = {
+const MEDIA_KINDS: Partial<Record<(ContentBlock | ToolResultContent)['type'], string>> = {
   imageBlock: 'image',
   documentBlock: 'document',
   videoBlock: 'video',
@@ -46,7 +46,7 @@ const TOOL_PREFIX = 'tool::'
  *
  * @internal
  */
-export function isMediaBlock(block: ContentBlock): block is MediaBlock {
+export function isMediaBlock(block: ContentBlock | ToolResultContent): block is MediaBlock {
   return mediaKind(block) !== undefined
 }
 
@@ -64,7 +64,7 @@ export function isProtocolBlock(block: ContentBlock): boolean {
  *
  * @internal
  */
-export function mediaKind(block: ContentBlock): string | undefined {
+export function mediaKind(block: ContentBlock | ToolResultContent): string | undefined {
   return MEDIA_KINDS[block.type]
 }
 

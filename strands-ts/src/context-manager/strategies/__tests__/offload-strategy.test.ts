@@ -616,6 +616,22 @@ describe('Offload with media target', () => {
       ])
     })
 
+    it('drops a tool result holding only media with a blockThreshold', async () => {
+      const result = new ToolResultBlock({
+        toolUseId: 'tu-1',
+        status: 'success',
+        content: [new ImageBlock({ format: 'png', source: { bytes: new Uint8Array(4000) } })],
+      })
+      const messages = [text('user', 'task'), new Message({ role: 'user', content: [result] }), text('assistant', 'b')]
+
+      expect(
+        await Offload.drop('toolResults')
+          .when({ contextUtilization: '50%', blockThreshold: 1000 })
+          .apply(withHeuristicModel(messages))
+      ).toBe(true)
+      expect(placeholdersIn(messages)).toEqual([{ method: 'drop' }])
+    })
+
     it('offloads the media with a marker that leaves out the unmeasured size', async () => {
       const message = withImage()
 

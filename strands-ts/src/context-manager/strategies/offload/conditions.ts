@@ -47,7 +47,8 @@ export interface OffloadConditions {
 
   /**
    * Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the
-   * context window. Unset, there is no size check. Media the token count can't measure always passes.
+   * context window. Unset, there is no size check. Media the token count measures as 0, alone or in a tool result,
+   * always passes.
    */
   blockThreshold?: number | Percent
 
