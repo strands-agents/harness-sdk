@@ -87,7 +87,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     if (input && summary) {
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized ${input.description}`)
       const placeholder = this._placeholder(formatSummarized(input.description, tokens, summary), stashRef)
-      return block instanceof ToolResultBlock ? block.withContent([placeholder]) : placeholder
+      return block instanceof ToolResultBlock ? block.with({ content: [placeholder] }) : placeholder
     }
     // A tool result or text the summarizer failed on is kept for a later pass; media is offloaded instead.
     if (block instanceof ToolResultBlock || block instanceof TextBlock) return null

@@ -156,28 +156,23 @@ export class Message implements JSONSerializable<MessageData> {
   }
 
   /**
-   * A copy of this message with other content, keeping its role, tracking id, and metadata.
+   * A shallow copy of this message with the given content or metadata in place of its own. The copy keeps this
+   * message's role and tracking id, and shares its blocks. A field left out, or set to `undefined`, keeps this
+   * message's value.
    *
-   * @param content - The content of the copy
+   * @param overrides - The content or metadata of the copy
    * @returns The copy
+   *
+   * @experimental
    */
-  withContent(content: ContentBlock[]): Message {
+  with(overrides: { content?: ContentBlock[]; metadata?: MessageMetadata }): Message {
+    const metadata = overrides.metadata ?? this.metadata
     return new Message({
       role: this.role,
-      content,
+      content: overrides.content ?? this.content,
       trackingId: this.trackingId,
-      ...(this.metadata !== undefined && { metadata: this.metadata }),
+      ...(metadata !== undefined && { metadata }),
     })
-  }
-
-  /**
-   * A copy of this message with other metadata, keeping its role, content, and tracking id.
-   *
-   * @param metadata - The metadata of the copy
-   * @returns The copy
-   */
-  withMetadata(metadata: MessageMetadata): Message {
-    return new Message({ role: this.role, content: this.content, trackingId: this.trackingId, metadata })
   }
 }
 
@@ -514,16 +509,19 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   }
 
   /**
-   * A copy of this result with other content, keeping its tool use id, status, and error.
+   * A shallow copy of this result with the given content in place of its own. The copy keeps this result's tool use
+   * id, status, and error. Content left out, or set to `undefined`, keeps this result's content.
    *
-   * @param content - The content of the copy
+   * @param overrides - The content of the copy
    * @returns The copy
+   *
+   * @experimental
    */
-  withContent(content: ToolResultContent[]): ToolResultBlock {
+  with(overrides: { content?: ToolResultContent[] }): ToolResultBlock {
     return new ToolResultBlock({
       toolUseId: this.toolUseId,
       status: this.status,
-      content,
+      content: overrides.content ?? this.content,
       ...(this.error !== undefined && { error: this.error }),
     })
   }

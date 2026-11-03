@@ -255,20 +255,20 @@ describe('TextBlock standing in for offloaded content', () => {
 })
 
 describe('copies with other content', () => {
-  test('Message.withContent keeps role, tracking id, and metadata', () => {
+  test('Message.with replaces content, keeping role, tracking id, and metadata', () => {
     const metadata = { custom: { pinned: true } }
     const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
 
-    const copy = message.withContent([new TextBlock('b')])
+    const copy = message.with({ content: [new TextBlock('b')] })
 
     expect(copy).toEqual(new Message({ role: 'user', content: [new TextBlock('b')], trackingId: 'm1', metadata }))
     expect(message.content).toEqual([new TextBlock('a')])
   })
 
-  test('Message.withMetadata keeps role, content, and tracking id', () => {
+  test('Message.with replaces metadata, keeping role, content, and tracking id', () => {
     const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1' })
 
-    const copy = message.withMetadata({ custom: { pinned: true } })
+    const copy = message.with({ metadata: { custom: { pinned: true } } })
 
     expect(copy).toEqual(
       new Message({
@@ -281,11 +281,18 @@ describe('copies with other content', () => {
     expect(message.metadata).toBeUndefined()
   })
 
-  test('ToolResultBlock.withContent keeps tool use id, status, and error', () => {
+  test('Message.with keeps a field set to undefined', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    expect(message.with({ content: undefined, metadata: undefined } as never)).toEqual(message)
+  })
+
+  test('ToolResultBlock.with replaces content, keeping tool use id, status, and error', () => {
     const error = new Error('boom')
     const block = new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('a')], error })
 
-    expect(block.withContent([new TextBlock('b')])).toEqual(
+    expect(block.with({ content: [new TextBlock('b')] })).toEqual(
       new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('b')], error })
     )
   })

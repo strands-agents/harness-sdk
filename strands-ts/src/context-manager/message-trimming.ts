@@ -67,7 +67,7 @@ export function insertMarker(messages: Message[], index: number, marker: TextBlo
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]
     if (neighbor > 0 && carrier?.role === 'assistant') {
-      messages[neighbor] = carrier.withContent([...carrier.content, marker])
+      messages[neighbor] = carrier.with({ content: [...carrier.content, marker] })
       return
     }
   }
@@ -87,9 +87,9 @@ export function repairAlternation(messages: Message[]): void {
     const current = messages[readIndex]!
     if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
       const prev = messages[writeIndex - 1]!
-      let merged = prev.withContent([...prev.content, ...current.content])
+      let merged = prev.with({ content: [...prev.content, ...current.content] })
       if (current.metadata?.custom?.pinned === true && prev.metadata?.custom?.pinned !== true) {
-        merged = merged.withMetadata({ ...prev.metadata, custom: { ...prev.metadata?.custom, pinned: true } })
+        merged = merged.with({ metadata: { ...prev.metadata, custom: { ...prev.metadata?.custom, pinned: true } } })
       }
       messages[writeIndex - 1] = merged
     } else {

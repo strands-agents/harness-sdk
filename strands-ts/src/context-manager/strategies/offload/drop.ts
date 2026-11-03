@@ -37,6 +37,6 @@ export class DropStrategy extends BaseOffloadStrategy {
   ): Promise<ContentBlock | null> {
     logger.debug(`trackingId=<${message.trackingId}>, block=<${block.type}> | dropped block from context window`)
     const placeholder = this._placeholder(formatDropped(tokens, mediaKind(block)), stashRef)
-    return block instanceof ToolResultBlock ? block.withContent([placeholder]) : placeholder
+    return block instanceof ToolResultBlock ? block.with({ content: [placeholder] }) : placeholder
   }
 }
