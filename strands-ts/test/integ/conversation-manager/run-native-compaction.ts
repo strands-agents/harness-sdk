@@ -5,7 +5,8 @@
  *   ANTHROPIC_API_KEY=... npx tsx test/integ/conversation-manager/run-native-compaction.ts [native|base]
  *
  * STRANDS_INTEG_MAIN_MODEL_ID and STRANDS_INTEG_SUMMARIZER_MODEL_ID override the models (default Sonnet 5.5 and
- * Haiku 5.5; set both to the same id for same-model compaction).
+ * Haiku 5.5; set both to the same id for same-model compaction). STRANDS_INTEG_PIN_INDEX pins that message before the
+ * first pass.
  */
 
 import {
@@ -27,5 +28,6 @@ const report = await runCompactionTask({
   serverSideCompaction: native ? true : undefined,
   thinking: native ? STRICT_THINKING : { type: 'adaptive' },
   passBeforeCalls: [4, 7],
+  ...(process.env.STRANDS_INTEG_PIN_INDEX && { pinBeforeFirstPass: Number(process.env.STRANDS_INTEG_PIN_INDEX) }),
 })
 console.log(describeReport(report))

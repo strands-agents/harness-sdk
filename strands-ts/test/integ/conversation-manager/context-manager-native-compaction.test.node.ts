@@ -3,7 +3,7 @@
  *
  * Needs ANTHROPIC_API_KEY, and runs only in GitHub Actions or with STRANDS_INTEG_NATIVE_COMPACTION=1, because the
  * integ setup also loads keys from AWS Secrets Manager and a local aggregate run must not start paid requests.
- * Bounded: one task of 7 tool turns and 2 forced summary passes per run, two runs.
+ * Bounded: one task of 7 tool turns and 2 forced summary passes per run, three runs.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -89,6 +89,27 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
     }
     expect(report.finalText).toContain(`DONE ${EXPECTED_SUM}`)
     expect(report.usage.totalTokens).toBeGreaterThan(0)
+  })
+
+  it('compacts on every pass when the summary joins a pinned message, sending the block first', async () => {
+    const report = await runCompactionTask({
+      apiKey: apiKey(),
+      mainModelId,
+      summarizerModelId,
+      serverSideCompaction: true,
+      thinking: STRICT_THINKING,
+      passBeforeCalls: PASSES,
+      pinBeforeFirstPass: 1,
+    })
+    console.log(`native pinned run | ${describeReport(report)}`)
+
+    expect(report.exchanges.map((exchange) => exchange.status).filter((status) => status !== 200)).toStrictEqual([])
+    expect(report.dropBlockWarnings).toStrictEqual([])
+    expect(ofKind(report.exchanges, 'compaction')).toHaveLength(PASSES.length)
+    expect(ofKind(report.exchanges, 'summarizer')).toHaveLength(0)
+    // The pinned tool use stays after the summary in message 1, so its block leads live assistant content.
+    expect(report.messageOneAfter).toMatch(/^assistant:textBlock\+anthropic,.*toolUseBlock/)
+    expect(report.finalText).toContain(`DONE ${EXPECTED_SUM}`)
   })
 
   it('takes the client-side path when the capability is unset (control)', async () => {

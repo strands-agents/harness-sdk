@@ -6,6 +6,7 @@ import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../type
 import type { ContentBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
+import { mergedMessages } from '../../stash.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -368,8 +369,8 @@ describe('summarizing whole messages', () => {
       (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
     )
 
-  it('summarizes each contiguous run separately, around a pinned message', async () => {
-    summarizeContent.mockClear().mockResolvedValueOnce('late run').mockResolvedValueOnce('early run')
+  it('keeps a pinned message after the summary of its run', async () => {
+    summarizeContent.mockClear().mockResolvedValueOnce('run')
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6', 'a7', 'u8')
     messages[3] = new Message({
       role: 'assistant',
@@ -380,11 +381,32 @@ describe('summarizing whole messages', () => {
 
     expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
 
-    expect(summarizeContent).toHaveBeenCalledTimes(2)
+    expect(summarizeContent).toHaveBeenCalledOnce()
     const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
     expect(texts[0]).toEqual(['task'])
-    expect(texts[1]!.map((text) => text.split('\n\n').at(-1)).sort()).toEqual(['a3', 'early run', 'late run'])
+    expect(texts[1]).toEqual([expect.stringMatching(/^\[Summarized: 4 messages, ~\d+ tokens\]\n\nrun$/), 'a3'])
     expect(texts.slice(2)).toEqual([['u6'], ['a7'], ['u8']])
+    expect(messages[1]!.metadata?.custom?.pinned).toBe(true)
+  })
+
+  it('keeps the tool result of a pinned tool use', async () => {
+    summarizeContent.mockClear().mockResolvedValueOnce('run')
+    const toolUse = new ToolUseBlock({ name: 'lookup', toolUseId: 't1', input: {} })
+    const toolResult = makeToolResultMessage('r1', 't1')
+    const messages = [
+      ...turns('task', 'a1', 'u2'),
+      new Message({ role: 'assistant', content: [toolUse], metadata: { custom: { pinned: true } } }),
+      toolResult,
+      new Message({ role: 'assistant', content: [new TextBlock('a5')] }),
+      new Message({ role: 'user', content: [new TextBlock('u6')] }),
+    ]
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 2 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user'])
+    expect(messages[1]!.content[1]).toBe(toolUse)
+    expect(messages[2]!.content).toEqual(toolResult.content)
   })
 
   it('does not summarize a run holding only an earlier summary', async () => {
@@ -462,16 +484,65 @@ describe('server-side compaction', () => {
     expect(toolUse).toBeInstanceOf(ToolUseBlock)
   })
 
-  it('uses the base summary when the run does not start right after message 0', async () => {
+  it('compacts a pinned message 1 and keeps it after the summary', async () => {
     const model = compactingModel()
-    model.addTurn({ type: 'textBlock', text: 'base summary' })
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     messages[1] = new Message({
       role: 'assistant',
       content: [new TextBlock('a1')],
       metadata: { custom: { pinned: true } },
     })
+    const [task, a1, u2, a3] = messages
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2, a3])
+    const [summary, kept] = messages[1]!.content as TextBlock[]
+    expect(summary!.metadata?.providerData).toEqual(COMPACTION)
+    expect([kept!.text, kept!.metadata?.providerData]).toEqual(['a1', undefined])
+  })
+
+  it('compacts again after the summary joins a pinned message', async () => {
+    const model = compactingModel()
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    const a3 = new Message({
+      role: 'assistant',
+      content: [new TextBlock('a3')],
+      metadata: { custom: { pinned: true } },
+    })
+    messages[3] = a3
+    await Offload.summarize('*', { model })
+      .when({ utilization: 0.5, preserveRecent: 3 })
+      .apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+    expect((messages[1]!.content as TextBlock[]).slice(1).map((block) => block.text)).toEqual(['a3'])
+    messages.push(
+      new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
+      new Message({ role: 'user', content: [new TextBlock('u8')] })
+    )
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(model.summarize).toHaveBeenCalledTimes(2)
+    const [summary, ...rest] = messages[1]!.content as TextBlock[]
+    expect(summary!.text).toMatch(/\n\ncompacted$/)
+    expect(summary!.metadata?.providerData).toEqual(COMPACTION)
+    expect(rest.map((block) => block.text)).toEqual(['a3', 'a7'])
+    expect(mergedMessages(messages[1]!)[1]?.trackingId).toBe(a3.trackingId)
+  })
+
+  it('uses the base summary when the run does not start right after message 0', async () => {
+    const model = compactingModel()
+    model.addTurn({ type: 'textBlock', text: 'base summary' })
+    const messages = [
+      ...turns('task', 'a1', 'u2'),
+      new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'read', toolUseId: 't1', input: {} })] }),
+      makeToolResultMessage('one', 't1'),
+      new Message({ role: 'assistant', content: [new TextBlock('a5')] }),
+      new Message({ role: 'user', content: [new TextBlock('u6')] }),
+    ]
+    const strategy = Offload.summarize(['tool::read'], { model }).when({ utilization: 0.5 })
 
     expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
 

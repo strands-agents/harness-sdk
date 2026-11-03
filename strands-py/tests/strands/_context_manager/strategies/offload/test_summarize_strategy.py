@@ -410,26 +410,46 @@ class TestSummarizeRuns:
     """Tests for summarizing whole messages run by run."""
 
     @pytest.mark.asyncio
-    async def test_summarizes_each_contiguous_run_separately_around_pinned_messages(self, mock_agent):
+    async def test_keeps_a_pinned_message_after_the_summary_of_its_run(self, mock_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6", "a7", "u8")
         messages[3]["metadata"] = {"custom": {"pinned": True}}
         mock_agent.messages = messages
         mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
-        mock_agent.model.stream = unittest.mock.MagicMock(
-            side_effect=[_make_stream_events("late run")(), _make_stream_events("early run")()]
-        )
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        texts = _texts(messages)
-        assert texts[0] == ["task"]
-        assert sorted(texts[1]) == [
-            "[Summarized: 2 messages, ~7 tokens]\n\nearly run",
-            "[Summarized: 2 messages, ~7 tokens]\n\nlate run",
-            "a3",
+        assert mock_agent.model.stream.call_count == 1
+        assert _texts(messages) == [
+            ["task"],
+            ["[Summarized: 4 messages, ~7 tokens]\n\nrun", "a3"],
+            ["u6"],
+            ["a7"],
+            ["u8"],
         ]
-        assert texts[2:] == [["u6"], ["a7"], ["u8"]]
+        assert messages[1]["metadata"]["custom"]["pinned"] is True
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_tool_result_of_a_pinned_tool_use(self, mock_agent):
+        tool_use = ContentBlock(toolUse={"toolUseId": "t1", "name": "lookup", "input": {}})
+        tool_result = ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "r1"}]})
+        messages = [
+            *_turns("task", "a1", "u2"),
+            Message(role="assistant", content=[tool_use], metadata={"custom": {"pinned": True}}),
+            Message(role="user", content=[tool_result]),
+            Message(role="assistant", content=[ContentBlock(text="a5")]),
+            Message(role="user", content=[ContentBlock(text="u6")]),
+        ]
+        mock_agent.messages = messages
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
+        assert messages[1]["content"][1] == tool_use
+        assert messages[2]["content"] == [tool_result]
 
     @pytest.mark.asyncio
     async def test_does_not_summarize_a_run_holding_only_an_earlier_summary(self, mock_agent):
@@ -441,6 +461,36 @@ class TestSummarizeRuns:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
         stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_summarizes_a_run_holding_an_earlier_summary_and_an_image(self, mock_agent):
+        messages = _turns("task", "[Summarized: 3 messages, ~10 tokens]\n\nold", "u2", "a3", "u4")
+        messages[1]["content"].append(ContentBlock(image={"format": "png", "source": {"bytes": b"img"}}))
+        mock_agent.messages = messages
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("again"))
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert _texts(messages)[1][-1].endswith("\n\nagain")
+
+    @pytest.mark.asyncio
+    async def test_summarizes_a_run_that_ends_on_a_user_turn_into_the_next_assistant_message(self, mock_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        mock_agent.messages = messages
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=4)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert _texts(messages) == [
+            ["task"],
+            ["a3", "[Summarized: 2 messages, ~7 tokens]\n\nrun"],
+            ["u4"],
+            ["a5"],
+            ["u6"],
+        ]
 
 
 class TestServerSideCompaction:
@@ -472,16 +522,56 @@ class TestServerSideCompaction:
         assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
 
     @pytest.mark.asyncio
-    async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
+    async def test_compacts_a_pinned_message_one_and_keeps_it_after_the_summary(self, compacting_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[1]["metadata"] = {"custom": {"pinned": True}}
+        task, a1, u2, a3 = messages[:4]
         compacting_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
         assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
 
+        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
+        assert _texts(messages)[1][1] == "a1"
+        assert _texts(messages)[1][0].endswith("\n\ncompacted")
+
+    @pytest.mark.asyncio
+    async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        compacting_agent.messages = messages
+        strategy = Offload.summarize(["tool::lookup"]).when(utilization=0.5, preserve_recent=3)
+        tool_use = ContentBlock(toolUse={"toolUseId": "t1", "name": "lookup", "input": {}})
+        tool_result = ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "r1"}]})
+        messages[3] = Message(role="assistant", content=[tool_use])
+        messages[4] = Message(role="user", content=[tool_result])
+
+        await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+
         compacting_agent.model.summarize.assert_not_awaited()
-        assert any(text.startswith("[Summarized:") for message in _texts(messages) for text in message)
+
+    @pytest.mark.asyncio
+    async def test_compacts_again_after_the_summary_joins_a_pinned_message(self, compacting_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[3]["tracking_id"] = "a3"
+        messages[3]["metadata"] = {"custom": {"pinned": True}}
+        compacting_agent.messages = messages
+        first = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+        await first.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+        assert _texts(messages)[1][1:] == ["a3"]
+        messages.extend(
+            [
+                Message(role="assistant", content=[ContentBlock(text="a7")]),
+                Message(role="user", content=[ContentBlock(text="u8")]),
+            ]
+        )
+        second = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await second.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+
+        assert compacting_agent.model.summarize.await_count == 2
+        texts = _texts(messages)
+        assert texts[1][0].endswith("\n\ncompacted") and texts[1][1:] == ["a3", "a7"]
+        assert [part.get("tracking_id") for part in messages[1]["metadata"]["custom"]["merged_messages"]][1] == "a3"
 
     @pytest.mark.asyncio
     async def test_places_the_summary_ahead_of_the_next_assistant_message(self, compacting_agent):

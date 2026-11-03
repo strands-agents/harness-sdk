@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import TypedDict
 
+from ....agent.conversation_manager.compression.pin_message import _get_tool_use_ids, _has_pinned_flag
 from ....event_loop.streaming import _record_usage
 from ....models._summarize import SummarizeResult, _summarize_with_stream
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
-from ...stash import _format_stash_refs
+from ...stash import MERGED_MESSAGES_KEY, _format_stash_refs
 from ...types import ContextState
 from .base import (
     BaseOffloadStrategy,
@@ -88,15 +89,43 @@ def _opening_run(messages: Messages, runs: list[list[Message]]) -> list[Message]
     return runs[0] if alternates else None
 
 
-def _holds_only_summaries(run: list[Message]) -> bool:
-    """Whether ``run`` holds only earlier summaries, so summarizing it would only restate them.
+def _pieces(message: Message) -> list[Message]:
+    """Split ``message`` into the messages merged into it when one of those is pinned, or return it whole."""
+    parts = message.get("metadata", {}).get("custom", {}).get(MERGED_MESSAGES_KEY)
+    if not parts or not any(_has_pinned_flag(part) for part in parts):
+        return [message]
+    content = message["content"]
+    ends = [part["offset"] for part in parts[1:]] + [len(content)]
+    pieces: list[Message] = []
+    for part, end in zip(parts, ends, strict=True):
+        piece = Message(role=message["role"], content=content[part["offset"] : end])
+        if "tracking_id" in part:
+            piece["tracking_id"] = part["tracking_id"]
+        if part.get("metadata"):
+            piece["metadata"] = part["metadata"]
+        pieces.append(piece)
+    return pieces
 
-    A compacted summary's text is followed by the block only its provider reads, which is not text.
+
+def _split_pinned(run: list[Message]) -> tuple[list[Message], list[Message]]:
+    """Split ``run`` into its pinned messages, with their tool-pair partners, and the rest, both in history order.
+
+    A merged message is split into the messages it combines, so only its pinned ones are kept.
     """
-    blocks = [block for message in run for block in message["content"]]
-    texts = [block["text"] for block in blocks if "text" in block]
-    calls_tools = any("toolUse" in block or "toolResult" in block for block in blocks)
-    return bool(texts) and not calls_tools and all(text.startswith(_SUMMARIZED_PREFIX) for text in texts)
+    pieces = [piece for message in run for piece in _pieces(message) if piece["content"]]
+    pinned_ids = {tool_id for piece in pieces if _has_pinned_flag(piece) for tool_id in _get_tool_use_ids(piece)}
+    kept = [piece for piece in pieces if _has_pinned_flag(piece) or pinned_ids & _get_tool_use_ids(piece)]
+    kept_ids = {id(piece) for piece in kept}
+    return kept, [piece for piece in pieces if id(piece) not in kept_ids]
+
+
+def _holds_only_summaries(run: list[Message]) -> bool:
+    """Whether every block of ``run`` is an earlier summary, so summarizing it would only restate that summary."""
+    return all(
+        "text" in block and block["text"].startswith(_SUMMARIZED_PREFIX)
+        for message in run
+        for block in message["content"]
+    )
 
 
 def _summary_text(result: SummarizeResult | None) -> str:
@@ -123,6 +152,9 @@ def _block_request(block: ContentBlock, message: Message, messages: Messages) ->
 
 class SummarizeStrategy(BaseOffloadStrategy):
     """Summarize strategy — replaces oversized content with LLM-generated summaries."""
+
+    # Pinned messages join a run and are kept after its summary, so the opening run still starts at message 1.
+    _skips_pinned = False
 
     @property
     def name(self) -> str:
@@ -182,27 +214,33 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return acted
 
     async def _summarize_run(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Replace ``run`` with a summary marker; a failure is logged and keeps the run."""
-        if _holds_only_summaries(run):
+        """Replace ``run`` with a summary marker, ahead of the run's pinned messages; a failure keeps the run."""
+        kept, summarized = _split_pinned(run)
+        if not summarized or _holds_only_summaries(summarized):
             return False
         summary = _summary_text(await self._try_summarize(run, model, context.agent, context.invocation_context))
         if not summary:
             return False
         messages = context.messages
-        total_tokens = await model.count_tokens(run)
+        total_tokens = await model.count_tokens(summarized)
         start = next(index for index, message in enumerate(messages) if message is run[0])
-        del messages[start : start + len(run)]
-        _insert_marker(messages, start, _format_summarized(f"{len(run)} messages", total_tokens, summary))
-        logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), total_tokens)
+        marker = _format_summarized(f"{len(summarized)} messages", total_tokens, summary)
+        messages[start : start + len(run)] = kept
+        if kept:
+            messages.insert(start, Message(role="assistant", content=[ContentBlock(text=marker)]))
+        else:
+            _insert_marker(messages, start, marker)
+        logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(summarized), total_tokens)
         return True
 
     async def _compact_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
         """Compact message 0 and the run after it server-side, keeping message 0 in place.
 
-        The summary takes the run's place as an assistant message, ahead of any assistant content that follows,
-        with any block only the provider reads after its text.
+        The summary takes the run's place as an assistant message, followed by the run's pinned messages and ahead of
+        any assistant content that follows.
         """
-        if _holds_only_summaries(run):
+        kept, summarized = _split_pinned(run)
+        if not summarized or _holds_only_summaries(summarized):
             return False
         messages = context.messages
         request = [messages[0], *run]
@@ -210,11 +248,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
         summary = _summary_text(result)
         if not result or not summary:
             return False
-        total_tokens = await model.count_tokens(run)
-        marker = ContentBlock(text=_format_summarized(f"{len(run)} messages", total_tokens, summary))
-        provider_blocks = [block for block in result.content if "text" not in block]
-        messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker, *provider_blocks])]
-        logger.debug("summarized=<%s>, tokens=<%s> | compacted opening messages", len(run), total_tokens)
+        total_tokens = await model.count_tokens(summarized)
+        marker = ContentBlock(text=_format_summarized(f"{len(summarized)} messages", total_tokens, summary))
+        messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker]), *kept]
+        logger.debug("summarized=<%s>, tokens=<%s> | compacted opening messages", len(summarized), total_tokens)
         return True
 
     async def _replace_block(

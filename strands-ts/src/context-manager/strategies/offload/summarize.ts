@@ -14,7 +14,8 @@ import { summarizeWithStream, type SummarizeOptions, type SummarizeResult } from
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import { formatStashRefs } from '../../stash.js'
+import { formatStashRefs, mergedMessages } from '../../stash.js'
+import { hasPinnedFlag } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
@@ -57,6 +58,11 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     this._config = config ?? {}
   }
 
+  // Pinned messages join a run and are kept after its summary, so the opening run still starts at message 1.
+  protected override get _skipsPinned(): boolean {
+    return false
+  }
+
   when(conditions: OffloadConditions): ContextStrategy {
     return new SummarizeStrategy(this._target, this._config, conditions)
   }
@@ -91,39 +97,46 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return acted
   }
 
-  /** Replaces `run` with a summary marker; a failure is logged and keeps the run. */
+  /** Replaces `run` with a summary marker, ahead of the run's pinned messages; a failure is logged and keeps the run. */
   private async _summarizeRun(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    if (holdsOnlySummaries(run)) return false
+    const { kept, summarized } = splitPinned(run)
+    if (summarized.length === 0 || holdsOnlySummaries(summarized)) return false
     const summary = summaryText(await this._trySummarize(run, model, context.agent, context.invocationContext))
     if (!summary) return false
 
     const { messages } = context
-    const totalTokens = await model.countTokens(run)
+    const totalTokens = await model.countTokens(summarized)
     const start = messages.indexOf(run[0]!)
-    messages.splice(start, run.length)
-    insertMarker(messages, start, formatSummarized(`${run.length} messages`, totalTokens, summary))
-    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized message run`)
+    const marker = formatSummarized(`${summarized.length} messages`, totalTokens, summary)
+    if (kept.length > 0) {
+      messages.splice(start, run.length, new Message({ role: 'assistant', content: [new TextBlock(marker)] }), ...kept)
+    } else {
+      messages.splice(start, run.length)
+      insertMarker(messages, start, marker)
+    }
+    logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | summarized message run`)
     return true
   }
 
   /**
    * Compacts message 0 and the run after it server-side, keeping message 0 in place. The summary takes the run's
-   * place as an assistant message, ahead of any assistant content that follows, and the provider sends its block,
-   * which covers message 0, in place of the text.
+   * place as an assistant message, followed by the run's pinned messages and ahead of any assistant content that
+   * follows, and the provider sends its block, which covers message 0, in place of the text.
    */
   private async _compactOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    if (holdsOnlySummaries(run)) return false
+    const { kept, summarized } = splitPinned(run)
+    if (summarized.length === 0 || holdsOnlySummaries(summarized)) return false
     const { messages, agent, invocationContext } = context
     const result = await this._trySummarize([messages[0]!, ...run], model, agent, invocationContext, true)
     const summary = summaryText(result)
     if (!result || !summary) return false
 
-    const totalTokens = await model.countTokens(run)
+    const totalTokens = await model.countTokens(summarized)
     const providerData = providerDataOf(result.content)
-    const text = formatSummarized(`${run.length} messages`, totalTokens, summary)
+    const text = formatSummarized(`${summarized.length} messages`, totalTokens, summary)
     const block = new TextBlock(text, providerData ? { metadata: { providerData } } : undefined)
-    messages.splice(1, run.length, new Message({ role: 'assistant', content: [block] }))
-    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | compacted opening messages`)
+    messages.splice(1, run.length, new Message({ role: 'assistant', content: [block] }), ...kept)
+    logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | compacted opening messages`)
     return true
   }
 
@@ -243,6 +256,38 @@ function openingRun(messages: Message[], runs: Message[][]): Message[] | undefin
   const covered = messages.slice(0, run.length + 1)
   const alternates = covered.every((message, index) => message.role === (index % 2 === 0 ? 'user' : 'assistant'))
   return alternates ? run : undefined
+}
+
+/** Splits `message` into the messages merged into it when one of those is pinned, or returns it whole. */
+function pieces(message: Message): Message[] {
+  const parts = mergedMessages(message)
+  if (!parts.some((part) => part.metadata.custom?.pinned === true)) return [message]
+  return parts.map(
+    (part, index) =>
+      new Message({
+        role: message.role,
+        content: message.content.slice(part.offset, parts[index + 1]?.offset ?? message.content.length),
+        trackingId: part.trackingId,
+        metadata: part.metadata,
+      })
+  )
+}
+
+function toolUseIds(message: Message): string[] {
+  return message.content.flatMap((block) =>
+    block instanceof ToolUseBlock || block instanceof ToolResultBlock ? [block.toolUseId] : []
+  )
+}
+
+/**
+ * Splits `run` into its pinned messages, with their tool-pair partners, and the rest, both in history order. A merged
+ * message is split into the messages it combines, so only its pinned ones are kept.
+ */
+function splitPinned(run: Message[]): { kept: Message[]; summarized: Message[] } {
+  const all = run.flatMap(pieces).filter((piece) => piece.content.length > 0)
+  const pinnedIds = new Set(all.filter(hasPinnedFlag).flatMap(toolUseIds))
+  const isKept = (piece: Message): boolean => hasPinnedFlag(piece) || toolUseIds(piece).some((id) => pinnedIds.has(id))
+  return { kept: all.filter(isKept), summarized: all.filter((piece) => !isKept(piece)) }
 }
 
 /** Whether every block of `run` is an earlier summary, so summarizing it would only restate that summary. */

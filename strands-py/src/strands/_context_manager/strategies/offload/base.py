@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from typing_extensions import TypedDict
 
@@ -320,6 +320,9 @@ class BaseOffloadStrategy(ABC):
         """Strategy name."""
         ...
 
+    _skips_pinned: ClassVar[bool] = True
+    """Whether message-level offload leaves pinned messages and their tool-pair partners out of its selection."""
+
     _target: OffloadTarget | None
     _threshold: int | None
     _utilization_threshold: float | None
@@ -502,14 +505,16 @@ class BaseOffloadStrategy(ABC):
             )
             index_map = {id(msg): i for i, msg in enumerate(messages)}
             candidates = [
-                msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
+                msg
+                for msg in oldest
+                if msg is not messages[0] and not (self._skips_pinned and is_pinned(messages, index_map[id(msg)]))
             ]
         else:
             candidates = [
                 msg
                 for idx, msg in enumerate(messages)
                 if idx > 0
-                and not is_pinned(messages, idx)
+                and not (self._skips_pinned and is_pinned(messages, idx))
                 and _message_matches_target(
                     msg, self._target, tool_name_map, self._include_filter, self._exclude_filter
                 )

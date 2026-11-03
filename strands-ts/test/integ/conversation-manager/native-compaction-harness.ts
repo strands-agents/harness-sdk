@@ -10,7 +10,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
-import { Agent, Offload, configureLogging, tool } from '@strands-agents/sdk'
+import { Agent, Message, Offload, configureLogging, tool } from '@strands-agents/sdk'
 import type { ContextState, ContextStrategy, Logger } from '@strands-agents/sdk'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 
@@ -47,6 +47,8 @@ export interface HarnessOptions {
   thinking: Record<string, unknown>
   /** Model calls (1-based) that a summary pass precedes. */
   passBeforeCalls: number[]
+  /** Index of a message to pin before the first pass, so the summary joins a pinned message. */
+  pinBeforeFirstPass?: number
   maxTokens?: number
 }
 
@@ -125,6 +127,7 @@ export async function runCompactionTask(options: HarnessOptions): Promise<Harnes
     async apply(context: ContextState): Promise<boolean> {
       calls += 1
       if (!options.passBeforeCalls.includes(calls)) return false
+      if (passes === 0 && options.pinBeforeFirstPass !== undefined) pin(context.messages, options.pinBeforeFirstPass)
       const acted = await summarize.apply({ ...context, utilization: 1 })
       if (acted) {
         passes += 1
@@ -202,6 +205,12 @@ function describeMessageOne(
     return providerData ? `${block.type}+${providerData.provider}` : block.type
   })
   return `${message.role}:${blocks.join(',')}`
+}
+
+function pin(messages: Message[], index: number): void {
+  const message = messages[index]!
+  const custom = { ...message.metadata?.custom, pinned: true }
+  messages[index] = new Message({ ...message, metadata: { ...message.metadata, custom } })
 }
 
 function captureWarnings(warnings: string[]): () => void {
