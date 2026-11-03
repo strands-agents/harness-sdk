@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import quote
 
-from ..interrupt import Interrupt, _InterruptState
+from ..interrupt import Interrupt, InterruptException, _InterruptState
 from ..types._events import ToolInterruptEvent, ToolResultEvent
 from ..types._snapshot import Snapshot
 from ..types.event_loop import _LIMIT_STOP_REASONS, _limit_stop_message
@@ -124,12 +124,18 @@ class _AgentToolStreamer:
         tool_use_id: str,
         namespace: str,
         persist_interrupted_turn: bool = True,
+        raise_unfinished: bool = False,
     ) -> None:
-        """Initialize tool-stream state for one child invocation."""
+        """Initialize tool-stream state for one child invocation.
+
+        ``raise_unfinished`` makes ``stream`` and ``resume`` raise interrupts and errors, for ``@tool`` callers that
+        cannot yield a terminal event.
+        """
         self._interrupt_state = interrupt_state
         self._tool_use_id = tool_use_id
         self._prefix = f"{namespace}:{quote(tool_use_id, safe='')}:"
         self._persist_interrupted_turn = persist_interrupted_turn
+        self._raise_unfinished = raise_unfinished
         self.result: Any | None = None
         self.interrupts: list[Interrupt] | None = None
         self.error: str | None = None
@@ -149,12 +155,10 @@ class _AgentToolStreamer:
                 continue
             yield event
 
+        outcome = self._outcome
         if self.result is None:
             self.error = f"{adapter.label} did not produce a result."
-            return
-
-        outcome = self._outcome
-        if isinstance(outcome, list):
+        elif isinstance(outcome, list):
             # Without a parent interrupt state there is nothing to resume against, so ids pass through raw.
             if self._interrupt_state is not None:
                 if self._persist_interrupted_turn:
@@ -166,11 +170,10 @@ class _AgentToolStreamer:
                     for interrupt in outcome
                 ]
             self.interrupts = outcome
-            return
-
-        if self._interrupt_state is not None:
+        else:
             self._clear_interrupted_turn()
-        self.error = outcome
+            self.error = outcome
+        self._raise_if_unfinished()
 
     def terminal_event(
         self,
@@ -218,28 +221,31 @@ class _AgentToolStreamer:
             return None
         assert self._interrupt_state is not None
 
-        if child is None:
-            self._handle_failed_restore(adapter, unavailable_message)
-            return None
         turns = self._interrupt_state.context.get(_INTERRUPTED_TURNS_KEY) or {}
         turn = turns.get(self._tool_use_id)
-        try:
-            snapshot = Snapshot.from_dict(turn) if turn is not None else None
-            awaiting_responses = adapter.restore(child, snapshot)
-        except Exception as error:
-            logger.error(
-                "tool_use_id=<%s>, error=<%s> | failed to restore interrupted sub-agent turn",
-                self._tool_use_id,
-                error,
-            )
+        awaiting_responses = False
+        if child is None:
             self._handle_failed_restore(adapter, unavailable_message)
-            return None
-
-        if turn is not None:
-            self._clear_interrupted_turn()
+        else:
+            try:
+                snapshot = Snapshot.from_dict(turn) if turn is not None else None
+                awaiting_responses = adapter.restore(child, snapshot)
+            except Exception as error:
+                logger.error(
+                    "tool_use_id=<%s>, error=<%s> | failed to restore interrupted sub-agent turn",
+                    self._tool_use_id,
+                    error,
+                )
+                self._handle_failed_restore(adapter, unavailable_message)
+            else:
+                self._clear_interrupted_turn()
+                if not awaiting_responses:
+                    logger.error(
+                        "tool_use_id=<%s> | cannot resume: the sub-agent turn is not available", self._tool_use_id
+                    )
+                    self.error = unavailable_message
+        self._raise_if_unfinished()
         if not awaiting_responses:
-            logger.error("tool_use_id=<%s> | cannot resume: the sub-agent turn is not available", self._tool_use_id)
-            self.error = unavailable_message
             return None
         return [
             {
@@ -251,6 +257,16 @@ class _AgentToolStreamer:
             for response in self._interrupt_state.context.get(_RESPONSES_KEY) or []
             if response["interruptResponse"]["interruptId"].startswith(self._prefix)
         ]
+
+    def _raise_if_unfinished(self) -> None:
+        """Raise the recorded interrupt or error when configured to."""
+        if not self._raise_unfinished:
+            return
+        if self.interrupts:
+            # The decorator surfaces a single interrupt, so the rest are raised on later resumes.
+            raise InterruptException(self.interrupts[0])
+        if self.error is not None:
+            raise RuntimeError(self.error)
 
     def _handle_failed_restore(self, adapter: _ChildAdapter, unavailable_message: str) -> None:
         """Re-raise pending interrupts when the child state cannot be restored."""

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from strands.interrupt import Interrupt, _InterruptState
+from strands.interrupt import Interrupt, InterruptException, _InterruptState
 from strands.multiagent._agent_tool_streamer import (
     _INTERRUPTED_TURNS_KEY,
     _AgentToolStreamer,
@@ -162,6 +162,30 @@ def test_resume_returns_error_when_saved_turn_is_missing_or_unreadable(turn):
 
     assert responses is None
     assert tool_streamer.error == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_raise_unfinished_raises_from_stream_and_resume(alist):
+    child = Mock()
+    child.take_snapshot.return_value = Snapshot(scope="agent", schema_version="1.0", data={}, app_data={})
+    result = Mock(stop_reason="interrupt", interrupts=[Interrupt("approval", "confirm")])
+    parent_state = _InterruptState()
+    tool_streamer = _AgentToolStreamer(
+        interrupt_state=parent_state, tool_use_id=TOOL_USE["toolUseId"], namespace="v1:test", raise_unfinished=True
+    )
+
+    with pytest.raises(InterruptException) as exc_info:
+        await alist(tool_streamer.stream(AGENT_ADAPTER, child, _stream({"result": result})))
+    assert exc_info.value.interrupt == Interrupt("v1:test:t:approval", "confirm")
+
+    parent_state.interrupts = {exc_info.value.interrupt.id: exc_info.value.interrupt}
+    parent_state.activated = True
+    resumed = _AgentToolStreamer(
+        interrupt_state=parent_state, tool_use_id=TOOL_USE["toolUseId"], namespace="v1:test", raise_unfinished=True
+    )
+    child._interrupt_state = SimpleNamespace(activated=False)
+    with pytest.raises(RuntimeError, match="^unavailable$"):
+        resumed.resume(AGENT_ADAPTER, child, "unavailable")
 
 
 @pytest.mark.asyncio

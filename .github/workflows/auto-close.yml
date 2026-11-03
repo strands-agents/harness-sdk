@@ -128,10 +128,11 @@ jobs:
               console.log(`\n📋 Processing #${issue.number}: ${issue.title}`);
               
               try {
-                const { data: events } = await github.rest.issues.listEvents({
+                const events = await github.paginate(github.rest.issues.listEvents, {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: issue.number
+                  issue_number: issue.number,
+                  per_page: 100
                 });
                 
                 const labelEvents = events
@@ -147,11 +148,12 @@ jobs:
                 const lastLabelAdded = new Date(labelEvents[0].created_at);
                 const labelAdder = labelEvents[0].actor.login;
                 
-                const { data: comments } = await github.rest.issues.listComments({
+                const comments = await github.paginate(github.rest.issues.listComments, {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
-                  since: lastLabelAdded.toISOString()
+                  since: lastLabelAdded.toISOString(),
+                  per_page: 100
                 });
                 
                 let hasUnauthorizedComment = false;
