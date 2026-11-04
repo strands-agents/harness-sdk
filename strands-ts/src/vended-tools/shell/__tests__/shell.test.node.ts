@@ -117,15 +117,9 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
       }
     }
 
-    it('defaults to 120 in the schema the model sees', () => {
-      expect(makeShell().toolSpec.inputSchema).toMatchObject({
-        properties: { timeout: { description: 'Timeout in seconds (default: 120).' } },
-      })
-    })
-
-    it('shows a custom default in the schema', () => {
+    it('does not hard-code a default in the schema the model sees', () => {
       expect(makeShell({ defaultTimeout: 300 }).toolSpec.inputSchema).toMatchObject({
-        properties: { timeout: { description: 'Timeout in seconds (default: 300).' } },
+        properties: { timeout: { description: 'Optional per-execution timeout in seconds.' } },
       })
     })
 

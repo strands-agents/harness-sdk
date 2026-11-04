@@ -17,14 +17,10 @@ import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type
 
 const DEFAULT_TIMEOUT = 120
 
-type SandboxShellInputSchema = z.ZodObject<{ command: z.ZodString; timeout: z.ZodOptional<z.ZodNumber> }>
-
-function sandboxShellInputSchema(defaultTimeout: number): SandboxShellInputSchema {
-  return z.object({
-    command: z.string().describe('The shell command to execute.'),
-    timeout: z.number().positive().optional().describe(`Timeout in seconds (default: ${defaultTimeout}).`),
-  })
-}
+const sandboxShellInputSchema = z.object({
+  command: z.string().describe('The shell command to execute.'),
+  timeout: z.number().positive().optional().describe('Optional per-execution timeout in seconds.'),
+})
 
 export interface MakeShellOptions {
   name?: string
@@ -63,7 +59,7 @@ export function makeShell(
   return tool({
     name: options.name ?? 'shell',
     description: options.description ?? SANDBOX_SHELL_DESCRIPTION,
-    inputSchema: (options.inputSchema ?? sandboxShellInputSchema(defaultTimeout)) as SandboxShellInputSchema,
+    inputSchema: (options.inputSchema ?? sandboxShellInputSchema) as typeof sandboxShellInputSchema,
     callback: async (input, context) => {
       if (!context) {
         throw new Error('Tool context is required for shell operations')

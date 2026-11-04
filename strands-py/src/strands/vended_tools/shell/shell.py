@@ -59,7 +59,15 @@ def make_shell(
     if not math.isfinite(default_timeout) or default_timeout <= 0:
         raise ValueError(f"default_timeout must be a positive finite number, got {default_timeout}")
 
+    @tool(name=name, description=description, context="tool_context")
     async def shell_tool(command: str, tool_context: ToolContext, timeout: int = default_timeout) -> ShellOutput:
+        """Executes a shell command and returns its output and exit code.
+
+        Args:
+            command: The shell command to execute.
+            tool_context: Injected by the framework. Not user-facing.
+            timeout: Optional per-execution timeout in seconds.
+        """
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
         try:
             result = await active.execute(command, timeout=timeout)
@@ -73,16 +81,7 @@ def make_shell(
             raise ShellExecutionError(str(e)) from e
         return {"output": result.stdout, "error": result.stderr, "exit_code": result.exit_code}
 
-    # Set before decorating: @tool reads the param descriptions from __doc__, and a closure
-    # variable cannot be interpolated into an annotation under ``from __future__ import annotations``.
-    shell_tool.__doc__ = f"""Executes a shell command and returns its output and exit code.
-
-    Args:
-        command: The shell command to execute.
-        tool_context: Injected by the framework. Not user-facing.
-        timeout: Timeout in seconds (default: {default_timeout}).
-    """
-    return tool(name=name, description=description, context="tool_context")(shell_tool)
+    return shell_tool
 
 
 shell = make_shell()
