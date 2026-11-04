@@ -8,9 +8,11 @@ sourceLinks:
   - path: strands-py/src/strands/models/routing/router.py
   - path: strands-py/src/strands/models/routing/strategy.py
   - path: strands-py/src/strands/models/routing/fallback_strategy.py
+  - path: strands-py/src/strands/models/routing/classifier_strategy.py
   - path: strands-ts/src/models/routing/router.ts
   - path: strands-ts/src/models/routing/strategy.ts
   - path: strands-ts/src/models/routing/fallback-strategy.ts
+  - path: strands-ts/src/models/routing/classifier-strategy.ts
 ---
 
 An agent that serves several tenants (the customers of your application) often needs
@@ -21,8 +23,8 @@ keeps each tenant on the models it has approved. This guide builds all three on 
 
 The examples use Amazon Nova Lite on [Amazon Bedrock](./amazon-bedrock.md) as the small
 model, Claude Sonnet 5 on [Anthropic](./anthropic.md) as the strong model, and
-[OpenAI](./openai.md) as the backup. The OpenAI Decisions API picks between the small and
-the strong model. Configure AWS credentials with Amazon Bedrock access and set
+[OpenAI](./openai.md) as the backup. A classifier on Amazon Bedrock picks between the
+small and the strong model. Configure AWS credentials with Amazon Bedrock access and set
 `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` before running them.
 
 Install the SDK with the providers and tracing this guide uses:
@@ -74,7 +76,7 @@ request. Read the model span when you need to know which model answered. See
 
 ## Describe each candidate for the policy
 
-Give each candidate a description for the decision call and metadata for the tenant
+Give each candidate a description for the classifier and metadata for the tenant
 policy. Here `provider` decides which tenants may use the candidate, and `tier` marks
 the backup so the opening selection never picks it.
 
@@ -126,13 +128,11 @@ fails over to another provider carries the earlier turns and tool calls with it.
 ## Enforce the tenant policy in the routing strategy
 
 Put the policy in a custom routing strategy. The strategy reads the tenant from
-invocation state and keeps only the candidates that tenant may use. On the first
-attempt it asks the
-[OpenAI Decisions API](https://platform.openai.com/docs/guides/decisions) which allowed
-model fits the request. If the decision call fails, it opens on the first allowed
-model, as `ClassifierStrategy` does. After a model failure it asks the fallback strategy
-for the next allowed candidate, backup first, so a hard request never drops to the small
-model. When no candidate qualifies, it raises an error and logs the refusal.
+invocation state and keeps only the candidates that tenant may use. On the first attempt
+it asks a `ClassifierStrategy` to pick the allowed model that fits the request. After a
+model failure it asks `FallbackStrategy` for the next allowed candidate, backup first, so
+a hard request never drops to the small model. When no candidate qualifies, it raises an
+error and logs the refusal.
 
 <Tabs>
 <Tab label="Python">
@@ -141,8 +141,12 @@ import logging
 from dataclasses import replace
 from typing import Any
 
-from openai import AsyncOpenAI
-from strands.models import FallbackStrategy, RoutingCandidate, RoutingContext
+from strands.models import (
+    ClassifierStrategy,
+    FallbackStrategy,
+    RoutingCandidate,
+    RoutingContext,
+)
 
 audit_log = logging.getLogger("tenant_policy")
 
@@ -157,7 +161,8 @@ class TenantPolicyError(Exception):
 
 
 class TenantPolicyStrategy:
-    def __init__(self) -> None:
+    def __init__(self, classifier: ClassifierStrategy) -> None:
+        self._classifier = classifier
         self._fallback = FallbackStrategy()
 
     async def select(
@@ -168,7 +173,8 @@ class TenantPolicyStrategy:
         tenant = context.invocation_state.get("tenant")
         providers = TENANT_PROVIDERS.get(tenant, set())
         allowed = [
-            c for c in context.candidates if c.metadata["provider"] in providers
+            c for c in context.candidates
+            if (c.metadata or {}).get("provider") in providers
         ]
         if not allowed:
             audit_log.warning("tenant=<%s> | no allowed model, refusing call", tenant)
@@ -185,13 +191,10 @@ class TenantPolicyStrategy:
             primaries = [
                 c for c in allowed if c.metadata["tier"] == "primary"
             ] or allowed
-            # The decision call sends the request to OpenAI
-            choice = primaries[0]
-            if len(primaries) > 1 and "openai" in providers:
-                try:
-                    choice = await self._decide(context, primaries)
-                except Exception as error:
-                    audit_log.warning("error=<%s> | decision call failed", error)
+            scoped = replace(context, candidates=primaries)
+            # A declined classification would serve the router's first candidate,
+            # which this tenant may not be allowed to use
+            choice = await self._classifier.select(scoped, **kwargs) or primaries[0]
         audit_log.info(
             "tenant=<%s>, candidate=<%s>, attempt=<%s> | routing decision",
             tenant,
@@ -199,35 +202,6 @@ class TenantPolicyStrategy:
             "retry" if context.attempts else "first",
         )
         return choice
-
-    async def _decide(
-        self,
-        context: RoutingContext,
-        primaries: list[RoutingCandidate],
-    ) -> RoutingCandidate:
-        request = next(
-            "".join(block.get("text", "") for block in message["content"])
-            for message in reversed(context.messages)
-            if message["role"] == "user"
-        )
-        # A client per call: each synchronous agent call runs its own event loop
-        async with AsyncOpenAI() as openai:  # reads OPENAI_API_KEY
-            response = await openai.decisions.create(
-                model="gpt-6-luna",
-                input=request,
-                questions=[{
-                    "type": "choice",
-                    "name": "model",
-                    "instructions": "Which model should handle this request?",
-                    "choices": [
-                        {"value": c.name, "description": c.description}
-                        for c in primaries
-                    ],
-                }],
-            )
-        answer = next((a for a in response.answers if a.name == "model"), None)
-        picked = getattr(answer, "choice", None)
-        return next((c for c in primaries if c.name == picked), primaries[0])
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -241,11 +215,14 @@ class TenantPolicyStrategy:
 
 A `BeforeModelCallEvent` hook looks like the natural place for this check. But the
 router picks the model after that hook runs, so the hook cannot see which candidate
-will serve the call. The strategy can, and the policy then also applies on failover:
-`customer-b` never falls back to Anthropic or OpenAI, even when Amazon Bedrock fails.
+will serve the call. The same holds for a `before_model_call` intervention, which runs
+on that event. The strategy sees the candidates, and the policy then also applies on
+failover: `customer-b` never falls back to Anthropic or OpenAI, even when Amazon Bedrock
+fails.
 
-The decision call sends the request text to OpenAI, so the strategy only makes it for
-tenants that allow OpenAI. `customer-b` has one allowed model and gets it directly.
+The classifier reads every request, so run it on a model that every tenant allows. Here
+that is Claude Haiku on Amazon Bedrock. With one allowed model, such as for `customer-b`,
+`ClassifierStrategy` returns it without a classification call.
 
 ## Run the agent for a tenant
 
@@ -259,7 +236,7 @@ shows each routing decision in the log.
 import logging
 
 from strands import Agent, tool
-from strands.models import ModelRouter
+from strands.models import BedrockModel, ClassifierStrategy, ModelRouter
 
 logging.basicConfig(format="%(message)s")
 logging.getLogger("tenant_policy").setLevel(logging.INFO)
@@ -272,7 +249,15 @@ def lookup_order(order_id: str) -> dict:
     return orders.get(order_id, {"status": "not found"})
 
 
-router = ModelRouter(models=candidates, strategy=TenantPolicyStrategy())
+classifier = ClassifierStrategy(
+    BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        max_tokens=64,
+        streaming=False,
+        temperature=0,
+    )
+)
+router = ModelRouter(models=candidates, strategy=TenantPolicyStrategy(classifier))
 agent = Agent(model=router, tools=[lookup_order])
 
 agent("Where is order A-1001?", invocation_state={"tenant": "customer-a"})

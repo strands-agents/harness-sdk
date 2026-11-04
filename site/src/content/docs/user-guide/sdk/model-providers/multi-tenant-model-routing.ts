@@ -1,6 +1,7 @@
 import {
   Agent,
   BedrockModel,
+  ClassifierStrategy,
   FallbackStrategy,
   ModelRouter,
   RoutingCandidate,
@@ -57,6 +58,8 @@ class TenantPolicyError extends Error {}
 class TenantPolicyStrategy implements RoutingStrategy {
   private readonly fallback = new FallbackStrategy()
 
+  constructor(private readonly classifier: ClassifierStrategy) {}
+
   async select(context: RoutingContext): Promise<RoutingCandidate | undefined> {
     const tenant = String(context.invocationState.tenant ?? 'None')
     const providers = TENANT_PROVIDERS[tenant] ?? []
@@ -80,15 +83,11 @@ class TenantPolicyStrategy implements RoutingStrategy {
     } else {
       const primary = allowed.filter((c) => c.metadata?.tier === 'primary')
       const primaries = primary.length > 0 ? primary : allowed
-      // The decision call sends the request to OpenAI
-      choice = primaries[0]
-      if (primaries.length > 1 && providers.includes('openai')) {
-        try {
-          choice = await this.decide(context, primaries)
-        } catch (error) {
-          console.warn(`error=<${error}> | decision call failed`)
-        }
-      }
+      // A declined classification would serve the router's first candidate,
+      // which this tenant may not be allowed to use
+      choice =
+        (await this.classifier.select({ ...context, candidates: primaries })) ??
+        primaries[0]
     }
     const attempt = context.attempts.length > 0 ? 'retry' : 'first'
     console.info(
@@ -96,46 +95,6 @@ class TenantPolicyStrategy implements RoutingStrategy {
         ' | routing decision'
     )
     return choice
-  }
-
-  private async decide(
-    context: RoutingContext,
-    primaries: RoutingCandidate[]
-  ): Promise<RoutingCandidate> {
-    const lastUser = [...context.messages].reverse().find((m) => m.role === 'user')
-    const request = (lastUser?.content ?? [])
-      .map((block) => (block.type === 'textBlock' ? block.text : ''))
-      .join('')
-    const response = await fetch('https://api.openai.com/v1/decisions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-6-luna',
-        input: request,
-        questions: [
-          {
-            type: 'choice',
-            name: 'model',
-            instructions: 'Which model should handle this request?',
-            choices: primaries.map((c) => ({
-              value: c.name,
-              description: c.description,
-            })),
-          },
-        ],
-      }),
-    })
-    if (!response.ok) {
-      throw new Error(`Decisions API returned ${response.status}`)
-    }
-    const { answers } = (await response.json()) as {
-      answers: { name: string; choice?: string }[]
-    }
-    const picked = answers.find((a) => a.name === 'model')?.choice
-    return primaries.find((c) => c.name === picked) ?? primaries[0]!
   }
 }
 // --8<-- [end:mtr_strategy]
@@ -152,7 +111,16 @@ async function multiTenantAgent() {
         : { status: 'not found' },
   })
 
-  const router = new ModelRouter(candidates, { strategy: new TenantPolicyStrategy() })
+  const classifier = new ClassifierStrategy(
+    new BedrockModel({
+      modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+      maxTokens: 64,
+      temperature: 0,
+    })
+  )
+  const router = new ModelRouter(candidates, {
+    strategy: new TenantPolicyStrategy(classifier),
+  })
   const agent = new Agent({ model: router, tools: [lookupOrder] })
 
   await agent.invoke('Where is order A-1001?', {
