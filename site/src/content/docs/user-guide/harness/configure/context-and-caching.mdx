@@ -90,8 +90,13 @@ How caching reaches the provider depends on the provider:
 
 - On Amazon Bedrock and Anthropic direct, Strands harness configures cache points and cached tool
   definitions.
-- On OpenAI, Google, and bedrock-mantle, caching happens automatically server-side, so
-  there is nothing for Strands harness to configure.
+- On OpenAI and bedrock-mantle, caching happens automatically server-side. GPT-5.6 and later
+  also accept explicit cache points, which keep per-turn reminders out of the cache; the
+  [OpenAI Responses provider](../../../sdk/model-providers/openai-responses/#prompt-caching)
+  places them when it has a cache configuration. Strands harness does not yet pass its cache
+  configuration to OpenAI providers.
+- On Google, caching happens automatically server-side, so there is nothing for Strands
+  harness to configure.
 
 Pass `caching` off to disable what Strands harness configures:
 
