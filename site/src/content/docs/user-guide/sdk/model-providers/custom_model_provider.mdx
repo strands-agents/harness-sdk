@@ -41,7 +41,7 @@ The base class also provides optional methods you can override:
 
 - `count_tokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimate_utilization()`: Compute the ratio of input tokens to `context_window_limit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
-- `summarize()`: Summarize messages into a `SummarizeResult` (summary content and token usage) for the experimental [`ContextManager`](../context-management/). To use your provider's server-side compaction, override it and set `model_info.capabilities.server_side_compaction`; the `ContextManager` then calls your override only for the conversation's opening messages and uses the base implementation for every other summary.
+- `summarize()`: Summarize messages into a `SummarizeResult` (summary content and token usage) for the experimental [`ContextManager`](../context-management/). To use your provider's server-side summaries, override it and set `model_info.capabilities.server_side_summary`; the `ContextManager` then calls your override only for the conversation's opening messages and uses the base implementation for every other summary.
 </Tab>
 <Tab label="TypeScript">
 
@@ -55,7 +55,7 @@ The base class also provides optional methods you can override:
 
 - `countTokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimateUtilization()`: Compute the ratio of input tokens to `contextWindowLimit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
-- `summarize()`: Summarize messages into a `SummarizeResult` (summary content and token usage) for the experimental [`ContextManager`](../context-management/). To use your provider's server-side compaction, override it and set `modelInfo.capabilities.serverSideCompaction`; the `ContextManager` then calls your override only for the conversation's opening messages and uses the base implementation for every other summary.
+- `summarize()`: Summarize messages into a `SummarizeResult` (summary content and token usage) for the experimental [`ContextManager`](../context-management/). To use your provider's server-side summaries, override it and set `modelInfo.capabilities.serverSideSummary`; the `ContextManager` then calls your override only for the conversation's opening messages and uses the base implementation for every other summary.
 </Tab>
 </Tabs>
 

@@ -613,13 +613,15 @@ class AnthropicModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
         """
-        sends_native_blocks = self._sends_native_blocks()
+        # Only a model that declares server_side_summary sends a stored compaction block natively, since the block
+        # needs the compaction beta; any other model sends its text.
+        sends_native_blocks = self.model_info.capabilities.server_side_summary is True
         if sends_native_blocks:
             messages = from_last_native_block(messages)
         elif not self._warned_compaction_sent_as_text and carries_native_block(messages):
             self._warned_compaction_sent_as_text = True
             logger.warning(
-                "model_id=<%s> | history holds a compaction block but server_side_compaction is not set on this model,"
+                "model_id=<%s> | history holds a compaction block but server_side_summary is not set on this model,"
                 " sending its text instead | set the capability on both the agent model and the summarizer model",
                 self.config.get("model_id"),
             )
@@ -676,14 +678,6 @@ class AnthropicModel(Model):
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
         return request
-
-    def _sends_native_blocks(self) -> bool:
-        """Whether requests send a stored compaction block as the block itself, from where it stands.
-
-        Only a model that declares ``server_side_compaction`` does, since the block needs the compaction beta;
-        any other model sends the block's text.
-        """
-        return self.model_info.capabilities.server_side_compaction is True
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
@@ -1032,7 +1026,8 @@ class AnthropicModel(Model):
             Total input token count.
         """
         # The estimate counts what a request sends, which starts at the last native block when one is sent.
-        estimated = from_last_native_block(messages) if self._sends_native_blocks() else messages
+        native = self.model_info.capabilities.server_side_summary is True
+        estimated = from_last_native_block(messages) if native else messages
         if self.config.get("use_native_token_count") is not True:
             return await super().count_tokens(estimated, tool_specs, system_prompt, system_prompt_content)
 
@@ -1251,7 +1246,7 @@ class AnthropicModel(Model):
         """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
 
         Uses beta ``compact-2026-09-04``, sending the live system prompt and tools unchanged, when
-        ``model_info.capabilities.server_side_compaction`` is True; otherwise uses the base
+        ``model_info.capabilities.server_side_summary`` is True; otherwise uses the base
         :meth:`Model.summarize`. ``AnthropicModel`` leaves the capability unknown unless set through the
         ``model_info`` config.
 
@@ -1304,14 +1299,14 @@ class AnthropicModel(Model):
 
         An SDK without ``client.beta.messages.stream`` falls back to the base summarize with a warning.
         """
-        if self.model_info.capabilities.server_side_compaction is not True:
+        if self.model_info.capabilities.server_side_summary is not True:
             return False
         beta_messages = getattr(getattr(self.client, "beta", None), "messages", None)
         if callable(getattr(beta_messages, "stream", None)):
             return True
         # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
         warnings.warn(
-            "server_side_compaction is enabled but the installed anthropic SDK has no client.beta.messages.stream;"
+            "server_side_summary is enabled but the installed anthropic SDK has no client.beta.messages.stream;"
             " summarize falls back to the base summarize. Upgrade anthropic to use on-demand compaction",
             stacklevel=1,
         )

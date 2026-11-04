@@ -41,7 +41,7 @@ function model(wire: AnthropicWire, config: Record<string, unknown> = {}, compac
     client: wire.client(),
     modelId: 'claude-sonnet-5-5',
     maxTokens: 4096,
-    ...(compacts && { modelInfo: { capabilities: { serverSideCompaction: true } } }),
+    ...(compacts && { modelInfo: { capabilities: { serverSideSummary: true } } }),
     ...config,
   })
 }
@@ -88,7 +88,7 @@ describe('AnthropicModel.summarize', () => {
       modelId: 'claude-sonnet-5-5',
       maxTokens: 4096,
       stopSequences: ['STOP'],
-      modelInfo: { capabilities: { serverSideCompaction: true } },
+      modelInfo: { capabilities: { serverSideSummary: true } },
       params: { context_management: { edits: [] }, output_config: { task_budget: { total: 9, remaining: 4 } } },
     }).summarize(body())
     const [compaction] = wire.bodies

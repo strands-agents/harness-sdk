@@ -78,7 +78,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
   /**
    * Summarizes each contiguous run of eligible messages into its own summary. When both the summarizer and the
-   * agent's model have server-side compaction, the run right after message 0 is compacted together with message 0
+   * agent's model have server-side summaries, the run right after message 0 is summarized server-side together with message 0
    * into a message of its own.
    */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
@@ -88,7 +88,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const { messages } = context
     const runs = messageRuns(messages, await this._getEligibleMessages(context))
     // The agent's model sends the stored block natively only when it declares the capability too.
-    const opening = this.compacts(context.agent) ? openingRun(messages, runs) : undefined
+    const opening = this.summarizesServerSide(context.agent) ? openingRun(messages, runs) : undefined
     let acted = false
     // Last run first, so replacing a run leaves the earlier runs' positions unchanged.
     for (const run of runs.reverse()) {
@@ -128,20 +128,22 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Compacts the opening run server-side, pinned messages included; without a summary it gets the base one. A message
-   * the compaction covers can't be kept after its block without breaking the thinking bound to the messages after it,
-   * so pins don't keep messages out of the compaction.
+   * Summarizes the opening run server-side, pinned messages included; without a summary it gets the base one. A
+   * message the server-side summary covers can't be kept after its block without breaking the thinking bound to the
+   * messages after it, so pins don't keep messages out of it.
    */
   private async _summarizeOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    return (await this._compactOpening(context, model, run)) || (await this._summarizeRun(context, model, run))
+    return (
+      (await this._summarizeOpeningServerSide(context, model, run)) || (await this._summarizeRun(context, model, run))
+    )
   }
 
   /**
-   * Compacts message 0 and `run` server-side, keeping message 0 in place. The summary
+   * Summarizes message 0 and `run` server-side, keeping message 0 in place. The summary
    * takes the run's place as an assistant message, ahead of any assistant content that follows, and the provider
    * sends its block, which covers message 0, in place of the text.
    */
-  private async _compactOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
+  private async _summarizeOpeningServerSide(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
     if (holdsOnlySummaries(run)) return false
     const { messages, agent, invocationContext } = context
     const result = await this._trySummarize([messages[0]!, ...run], model, agent, invocationContext, true)
@@ -153,7 +155,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const text = formatSummarized(`${run.length} messages`, totalTokens, summary)
     const block = new TextBlock(text, providerData ? { metadata: { providerData } } : undefined)
     messages.splice(1, run.length, markerMessage([block]))
-    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | compacted opening messages`)
+    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized opening messages server-side`)
     return true
   }
 
@@ -204,7 +206,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
   /**
    * Summarizes `messages` and records the call's usage, or logs a failure and returns null so the pass continues and
-   * keeps them. A model with server-side compaction is called through its `summarize()` only for `opening`
+   * keeps them. A model with server-side summaries is called through its `summarize()` only for `opening`
    * messages; its other summaries use the base implementation.
    */
   private async _trySummarize(
@@ -220,7 +222,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     }
     try {
       const result =
-        opening || !compactsServerSide(model)
+        opening || model.modelInfo?.capabilities?.serverSideSummary !== true
           ? await model.summarize(messages, {
               ...options,
               ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
@@ -250,38 +252,43 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Whether this strategy summarizes runs of messages and its summarizer and the agent's model both have server-side
-   * compaction.
+   * Whether this strategy summarizes runs of messages and its summarizer and the agent's model both summarize
+   * server-side.
    *
    * @internal
    */
-  compacts(agent: LocalAgent): boolean {
+  summarizesServerSide(agent: LocalAgent): boolean {
     const model = this._resolveModel(agent)
-    return this._isMessageLevel && model !== undefined && compactsServerSide(model) && compactsServerSide(agent.model)
+    return (
+      this._isMessageLevel &&
+      model !== undefined &&
+      model.modelInfo?.capabilities?.serverSideSummary === true &&
+      agent.model.modelInfo?.capabilities?.serverSideSummary === true
+    )
   }
 }
 
-type CompactionLimit = 'pinned messages' | 'per-block summarization'
+type SummaryLimit = 'pinned messages' | 'per-block summarization'
 
-const LIMIT_STATEMENTS: Record<CompactionLimit, string> = {
-  'pinned messages': 'pinned messages are compacted like any other message with server-side compaction',
+const LIMIT_STATEMENTS: Record<SummaryLimit, string> = {
+  'pinned messages': 'pinned messages are summarized like any other message by a server-side summary',
   'per-block summarization':
     'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
     ' | thinking from earlier turns will be dropped on the next turns',
 }
 
 /**
- * The features in use that server-side compaction doesn't support, for an agent whose model has it. Per-block
- * summarization with `preserveRecent` rewrites blocks the model has already seen, and pinned messages are compacted
+ * The features in use that a server-side summary doesn't support, for an agent whose model has it. Per-block
+ * summarization with `preserveRecent` rewrites blocks the model has already seen, and pinned messages are summarized
  * like any other message.
  *
  * @internal
  */
-export function serverSideCompactionLimits(agent: LocalAgent, strategies: ContextStrategy[]): CompactionLimit[] {
-  if (!compactsServerSide(agent.model)) return []
+export function serverSideSummaryLimits(agent: LocalAgent, strategies: ContextStrategy[]): SummaryLimit[] {
+  if (agent.model.modelInfo?.capabilities?.serverSideSummary !== true) return []
   const summarizers = strategies.filter((strategy) => strategy instanceof SummarizeStrategy)
-  const features: CompactionLimit[] = []
-  if (summarizers.some((strategy) => strategy.compacts(agent)) && agent.messages.some(hasPinnedFlag)) {
+  const features: SummaryLimit[] = []
+  if (summarizers.some((strategy) => strategy.summarizesServerSide(agent)) && agent.messages.some(hasPinnedFlag)) {
     features.push('pinned messages')
   }
   if (summarizers.some((strategy) => strategy.rewritesSeenBlocks)) features.push('per-block summarization')
@@ -289,20 +296,15 @@ export function serverSideCompactionLimits(agent: LocalAgent, strategies: Contex
 }
 
 /**
- * Logs a warning describing how server-side compaction treats the features in use, if any.
+ * Logs a warning describing how a server-side summary treats the features in use, if any.
  *
  * @internal
  */
-export function warnOnServerSideCompactionLimits(agent: LocalAgent, strategies: ContextStrategy[]): void {
-  const features = serverSideCompactionLimits(agent, strategies)
+export function warnOnServerSideSummaryLimits(agent: LocalAgent, strategies: ContextStrategy[]): void {
+  const features = serverSideSummaryLimits(agent, strategies)
   if (features.length === 0) return
   const statements = features.map((feature) => LIMIT_STATEMENTS[feature])
   logger.warn(`model_id=<${agent.model.modelId}> | ${statements.join(' | ')}`)
-}
-
-/** Whether `model` declares server-side compaction, so its `summarize()` may cover the conversation's opening. */
-function compactsServerSide(model: Model): boolean {
-  return model.modelInfo?.capabilities?.serverSideCompaction === true
 }
 
 /** Splits `selected` and their tool pairs into runs of messages adjacent in `messages`, in history order. */
@@ -324,7 +326,7 @@ function messageRuns(messages: Message[], selected: Message[]): Message[][] {
 }
 
 /**
- * The run right after message 0 that server-side compaction may cover together with message 0: the covered messages
+ * The run right after message 0 that a server-side summary may cover together with message 0: the covered messages
  * start with a user message and alternate roles.
  */
 function openingRun(messages: Message[], runs: Message[][]): Message[] | undefined {

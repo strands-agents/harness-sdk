@@ -19,7 +19,7 @@ from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
 from .strategies.offload import Offload
-from .strategies.offload.summarize import _warn_on_server_side_compaction_limits
+from .strategies.offload.summarize import _warn_on_server_side_summary_limits
 from .strategies.offload.truncate import EmergencyTruncateStrategy
 from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
@@ -226,14 +226,14 @@ class ContextManager(Plugin):
                 except TypeError:
                     init(agent)
 
-        checked_compaction_limits = False
+        checked_summary_limits = False
 
         def _on_before_invocation(event: BeforeInvocationEvent) -> None:
-            nonlocal checked_compaction_limits
+            nonlocal checked_summary_limits
             # Checked on the first invocation, once a session manager has restored the messages.
-            if not checked_compaction_limits:
-                checked_compaction_limits = True
-                _warn_on_server_side_compaction_limits(event.agent, self._strategies)
+            if not checked_summary_limits:
+                checked_summary_limits = True
+                _warn_on_server_side_summary_limits(event.agent, self._strategies)
 
         agent.hooks.add_callback(BeforeInvocationEvent, _on_before_invocation)
 

@@ -633,15 +633,15 @@ class TestContextManagerRequestUsage:
         assert captured[0].invocation_context is None
 
 
-class TestServerSideCompactionLimitsCheck:
-    """Tests for when the context manager checks for features server-side compaction doesn't support."""
+class TestServerSideSummaryLimitsCheck:
+    """Tests for when the context manager checks for features a server-side summary doesn't support."""
 
     def test_checks_once_on_the_first_invocation(self, mock_agent):
         cm = ContextManager()
         cm.init_agent(mock_agent)
 
         with unittest.mock.patch(
-            "strands._context_manager.context_manager._warn_on_server_side_compaction_limits"
+            "strands._context_manager.context_manager._warn_on_server_side_summary_limits"
         ) as warn:
             warn.assert_not_called()
             for _ in range(2):

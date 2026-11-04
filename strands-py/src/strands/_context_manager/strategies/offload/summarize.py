@@ -55,29 +55,24 @@ def _format_summarized(description: str, tokens: int, summary: str | None = None
     return f"{header}\n\n{summary}" if summary else header
 
 
-def _compacts_server_side(model: Model) -> bool:
-    """Whether ``model`` declares server-side compaction, so its ``summarize()`` may cover the opening messages."""
-    return model.model_info.capabilities.server_side_compaction is True
-
-
 _LIMIT_STATEMENTS = {
-    "pinned messages": "pinned messages are compacted like any other message with server-side compaction",
+    "pinned messages": "pinned messages are summarized like any other message by a server-side summary",
     "per-block summarization": "per-block summarization with preserve_recent rewrites blocks the model has already seen"
     " | thinking from earlier turns will be dropped on the next turns",
 }
 
 
-def _server_side_compaction_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> list[str]:
-    """Return the features in use that server-side compaction doesn't support, for an agent whose model has it.
+def _server_side_summary_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> list[str]:
+    """Return the features in use that a server-side summary doesn't support, for an agent whose model has it.
 
     Per-block summarization with ``preserve_recent`` rewrites blocks the model has already seen, and pinned messages are
-    compacted like any other message. Without ``preserve_recent``, a block is rewritten before the model sees it.
+    summarized like any other message. Without ``preserve_recent``, a block is rewritten before the model sees it.
     """
-    if not _compacts_server_side(agent.model):
+    if agent.model.model_info.capabilities.server_side_summary is not True:
         return []
     summarizers = [strategy for strategy in strategies if isinstance(strategy, SummarizeStrategy)]
     features = []
-    if any(strategy._compacts(agent) for strategy in summarizers) and any(
+    if any(strategy._summarizes_server_side(agent) for strategy in summarizers) and any(
         _has_pinned_flag(message) for message in agent.messages
     ):
         features.append("pinned messages")
@@ -86,9 +81,9 @@ def _server_side_compaction_limits(agent: Agent, strategies: Sequence[ContextStr
     return features
 
 
-def _warn_on_server_side_compaction_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> None:
-    """Log a warning describing how server-side compaction treats the features in use, if any."""
-    features = _server_side_compaction_limits(agent, strategies)
+def _warn_on_server_side_summary_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> None:
+    """Log a warning describing how a server-side summary treats the features in use, if any."""
+    features = _server_side_summary_limits(agent, strategies)
     if not features:
         return
     config: Any = agent.model.get_config()
@@ -117,7 +112,7 @@ def _runs(messages: Messages, selected: list[Message]) -> list[list[Message]]:
 
 
 def _opening_run(messages: Messages, runs: list[list[Message]]) -> list[Message] | None:
-    """Return the run right after message 0 that server-side compaction may cover together with message 0.
+    """Return the run right after message 0 that a server-side summary may cover together with message 0.
 
     The covered messages start with a user message and alternate roles.
     """
@@ -242,8 +237,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Summarize each contiguous run of eligible messages into its own summary.
 
-        When both the summarizer and the agent's model have server-side compaction, the run right after message 0 is
-        compacted together with message 0 into a message of its own.
+        When both the summarizer and the agent's model have server-side summaries, the run right after message 0 is
+        summarized server-side together with message 0 into a message of its own.
         """
         model = self._resolve_model(context.agent)
         if not model:
@@ -251,7 +246,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         messages = context.messages
         runs = _runs(messages, await self._get_eligible_messages(context))
         # The agent's model sends the stored block natively only when it declares the capability too.
-        opening = _opening_run(messages, runs) if self._compacts(context.agent) else None
+        opening = _opening_run(messages, runs) if self._summarizes_server_side(context.agent) else None
         acted = False
         # Last run first, so replacing a run leaves the earlier runs' positions unchanged.
         for run in reversed(runs):
@@ -287,15 +282,17 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return True
 
     async def _summarize_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Compact the opening run server-side, pinned messages included; without a summary it gets the base one.
+        """Summarize the opening run server-side, pinned messages included; without a summary it gets the base one.
 
-        A message the compaction covers can't be kept after its block without breaking the thinking bound to the
-        messages after it, so pins don't keep messages out of the compaction.
+        A message the server-side summary covers can't be kept after its block without breaking the thinking bound to
+        the messages after it, so pins don't keep messages out of it.
         """
-        return await self._compact_opening(context, model, run) or await self._summarize_run(context, model, run)
+        return await self._summarize_opening_server_side(context, model, run) or await self._summarize_run(
+            context, model, run
+        )
 
-    async def _compact_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Compact message 0 and ``run`` server-side, keeping message 0 in place.
+    async def _summarize_opening_server_side(self, context: ContextState, model: Model, run: list[Message]) -> bool:
+        """Summarize message 0 and ``run`` server-side, keeping message 0 in place.
 
         The summary takes the run's place as an assistant message, ahead of any assistant content that follows, and
         the provider sends its block, which covers message 0, in place of the text.
@@ -314,7 +311,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if provider_data:
             marker["metadata"] = {"providerData": provider_data}
         messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker])]
-        logger.debug("summarized=<%s>, tokens=<%s> | compacted opening messages", len(run), total_tokens)
+        logger.debug("summarized=<%s>, tokens=<%s> | summarized opening messages server-side", len(run), total_tokens)
         return True
 
     async def _replace_block(
@@ -373,12 +370,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
     ) -> SummarizeResult | None:
         """Summarize ``messages`` and record the call's usage; a failure is logged and returns ``None``.
 
-        A model with server-side compaction is called through its ``summarize()`` only for ``opening`` messages; its
+        A model with server-side summaries is called through its ``summarize()`` only for ``opening`` messages; its
         other summaries use the base implementation.
         """
         instructions = self._config.get("system_prompt")
         try:
-            if opening or not _compacts_server_side(model):
+            if opening or model.model_info.capabilities.server_side_summary is not True:
                 result = await model.summarize(
                     messages,
                     tool_specs=agent.tool_registry.get_all_tool_specs(),
@@ -401,12 +398,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model
 
-    def _compacts(self, agent: Agent) -> bool:
-        """Whether this strategy summarizes message runs and its summarizer and the agent's model compact natively."""
+    def _summarizes_server_side(self, agent: Agent) -> bool:
+        """Whether this strategy summarizes message runs and its summarizer and the agent's model do so server-side."""
         model = self._resolve_model(agent)
         return (
             self._is_message_level
             and model is not None
-            and _compacts_server_side(model)
-            and _compacts_server_side(agent.model)
+            and model.model_info.capabilities.server_side_summary is True
+            and agent.model.model_info.capabilities.server_side_summary is True
         )

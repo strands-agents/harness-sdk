@@ -10,9 +10,9 @@ import logging
 import threading
 from typing import Any
 
+from .._async import _poll_cancel_signal
 from ..types.content import ContentBlock, Message, Messages
 from ..types.event_loop import Usage
-from ._cancellation import _poll_cancel_signal
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { warnOnServerSideCompactionLimits } from '../offload/summarize.js'
+import { warnOnServerSideSummaryLimits } from '../offload/summarize.js'
 import { flattenMessagesToContent } from '../../../models/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -447,13 +447,13 @@ describe('summarizing whole messages', () => {
   })
 })
 
-describe('server-side compaction', () => {
+describe('server-side summary', () => {
   const COMPACTION = { provider: 'test', data: { type: 'compaction', signature: 'opaque' } }
 
-  /** A model with server-side compaction whose override returns a block with provider data. */
-  function compactingModel(): MockMessageModel {
+  /** A model with server-side summaries whose override returns a block with provider data. */
+  function summarizingModel(): MockMessageModel {
     const model = new MockMessageModel()
-    model.updateConfig({ modelInfo: { capabilities: { serverSideCompaction: true } } })
+    model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: true } } })
     vi.spyOn(model, 'summarize').mockResolvedValue({
       content: [new TextBlock('compacted', { metadata: { providerData: COMPACTION } })],
       usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
@@ -461,9 +461,9 @@ describe('server-side compaction', () => {
     return model
   }
 
-  /** A context whose agent model also declares server-side compaction, so it sends the stored block natively. */
+  /** A context whose agent model also declares server-side summaries, so it sends the stored block natively. */
   const nativeContext = (messages: Message[]): ContextState =>
-    makeContext(messages, 0.9, { stream: vi.fn(), modelInfo: { capabilities: { serverSideCompaction: true } } })
+    makeContext(messages, 0.9, { stream: vi.fn(), modelInfo: { capabilities: { serverSideSummary: true } } })
 
   const turns = (...values: string[]): Message[] =>
     values.map(
@@ -471,7 +471,7 @@ describe('server-side compaction', () => {
     )
 
   it('compacts the opening run from message 0, keeping message 0 and placing the summary as its own message', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     const [task, a1, u2, a3] = messages
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
@@ -496,7 +496,7 @@ describe('server-side compaction', () => {
   })
 
   it('compacts a run that ends on a tool result, placing the summary ahead of the next assistant message', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     const messages = [
       ...turns('task'),
       new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'read', toolUseId: 't1', input: {} })] }),
@@ -519,7 +519,7 @@ describe('server-side compaction', () => {
     new Message({ role, content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
 
   it('compacts pinned messages with the rest of the opening run', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     messages[1] = pinned('assistant', 'a1')
     messages[3] = pinned('assistant', 'a3')
@@ -540,7 +540,7 @@ describe('server-side compaction', () => {
   })
 
   it('keeps pinned messages after the base summary when compaction writes none', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     vi.mocked(model.summarize).mockResolvedValueOnce({ content: [] })
     model.addTurn({ type: 'textBlock', text: 'base summary' })
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
@@ -554,7 +554,7 @@ describe('server-side compaction', () => {
   })
 
   it('uses the base summary when the run does not start right after message 0', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     model.addTurn({ type: 'textBlock', text: 'base summary' })
     const messages = [
       ...turns('task', 'a1', 'u2'),
@@ -573,7 +573,7 @@ describe('server-side compaction', () => {
   })
 
   it('gives the opening run the base summary when compaction writes none', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     vi.mocked(model.summarize).mockResolvedValueOnce({ content: [] })
     model.addTurn({ type: 'textBlock', text: 'base summary' })
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
@@ -588,7 +588,7 @@ describe('server-side compaction', () => {
   })
 
   it('does not compact a run holding only the earlier summary again', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
     await strategy.apply(nativeContext(messages))
@@ -599,8 +599,8 @@ describe('server-side compaction', () => {
     expect(model.summarize).not.toHaveBeenCalled()
   })
 
-  it('uses the base summary when only the summarizer declares server-side compaction', async () => {
-    const model = compactingModel()
+  it('uses the base summary when only the summarizer declares server-side summaries', async () => {
+    const model = summarizingModel()
     model.addTurn({ type: 'textBlock', text: 'base summary' })
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
@@ -614,7 +614,7 @@ describe('server-side compaction', () => {
   })
 
   it('summarizes blocks with the base summary, not the override', async () => {
-    const model = compactingModel()
+    const model = summarizingModel()
     model.addTurn({ type: 'textBlock', text: 'block summary' })
     const messages = [makeToolResultMessage('x'.repeat(2500 * 4 + 100))]
     const strategy = Offload.summarize('toolResults', { model })
@@ -626,13 +626,13 @@ describe('server-side compaction', () => {
   })
 })
 
-describe('warnOnServerSideCompactionLimits', () => {
-  const PINNED = 'pinned messages are compacted like any other message with server-side compaction'
+describe('warnOnServerSideSummaryLimits', () => {
+  const PINNED = 'pinned messages are summarized like any other message by a server-side summary'
   const PER_BLOCK =
     'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
     ' | thinking from earlier turns will be dropped on the next turns'
 
-  function compactingAgent(pinned: boolean, modelInfo: object = { capabilities: { serverSideCompaction: true } }) {
+  function summarizingAgent(pinned: boolean, modelInfo: object = { capabilities: { serverSideSummary: true } }) {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({
@@ -674,9 +674,9 @@ describe('warnOnServerSideCompactionLimits', () => {
       statements: `${PINNED} | ${PER_BLOCK}`,
     },
   ])('describes the features in use: $statements', ({ pinned, strategies, statements }) => {
-    const agent = compactingAgent(pinned)
+    const agent = summarizingAgent(pinned)
 
-    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies()))).toEqual([
+    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies()))).toEqual([
       `model_id=<claude-test> | ${statements}`,
     ])
   })
@@ -692,23 +692,23 @@ describe('warnOnServerSideCompactionLimits', () => {
       strategies: () => [Offload.truncate('toolResults').when({ threshold: 2500, preserveRecent: 2 })],
     },
   ])('stays silent with $name', ({ strategies }) => {
-    const agent = compactingAgent(false)
+    const agent = summarizingAgent(false)
 
-    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies()))).toEqual([])
+    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies()))).toEqual([])
   })
 
   it('ignores pins when no summary compacts server-side', () => {
-    const agent = compactingAgent(true)
+    const agent = summarizingAgent(true)
     const summarizer = new MockMessageModel()
     const strategies = [Offload.summarize('*', { model: summarizer }).when({ utilization: 0.5 })]
 
-    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies))).toEqual([])
+    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies))).toEqual([])
   })
 
   it("stays silent when the agent's model does not compact server-side", () => {
-    const agent = compactingAgent(true, {})
+    const agent = summarizingAgent(true, {})
     const strategies = [Offload.summarize('*').when({ threshold: 100, preserveRecent: 2 })]
 
-    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies))).toEqual([])
+    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies))).toEqual([])
   })
 })

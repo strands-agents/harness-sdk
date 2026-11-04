@@ -30,7 +30,7 @@ def _options(**overrides: Any) -> harness.HarnessOptions:
         api_key=os.environ["ANTHROPIC_API_KEY"],
         main_model_id=_MAIN_MODEL_ID,
         summarizer_model_id=_SUMMARIZER_MODEL_ID,
-        server_side_compaction=True,
+        server_side_summary=True,
         thinking=harness.STRICT_THINKING,
         pass_before_calls=harness.PASSES,
     )
@@ -118,7 +118,7 @@ async def test_compacts_a_pinned_message_like_any_other() -> None:
 
 @pytest.mark.asyncio
 async def test_takes_the_client_side_path_when_the_capability_is_unset() -> None:
-    report = await harness.run_compaction_task(_options(server_side_compaction=None, thinking=harness.BASE_THINKING))
+    report = await harness.run_compaction_task(_options(server_side_summary=None, thinking=harness.BASE_THINKING))
     print(f"base control | {harness.describe_report(report)}")
 
     assert report.of_kind("compaction") == []

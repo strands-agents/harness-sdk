@@ -1671,9 +1671,7 @@ class TestCountTokens:
         self, model_with_client, anthropic_client
     ):
         anthropic_client.default_headers = {}
-        model_with_client.update_config(
-            model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True))
-        )
+        model_with_client.update_config(model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)))
         mock_response = unittest.mock.MagicMock()
         mock_response.input_tokens = 10
         anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=mock_response)
@@ -1693,7 +1691,7 @@ class TestCountTokens:
         anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(side_effect=Exception("API error"))
         model_with_client.update_config(
             use_native_token_count=use_native_token_count,
-            model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+            model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
         )
         stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "c"}}}}
         compacted = [{"role": "user", "content": [{"text": "x" * 4000}]}, {"role": "assistant", "content": [stored]}]
@@ -3298,7 +3296,7 @@ class AnthropicWire:
             "http_client": httpx.AsyncClient(transport=httpx.MockTransport(self._handle)),
             **({"default_headers": default_headers} if default_headers else {}),
         }
-        model_info = ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)) if compacts else None
+        model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)) if compacts else None
         return AnthropicModel(
             client_args=client_args,
             model_id="claude-sonnet-5-5",
@@ -3494,7 +3492,7 @@ async def test_summarize_returns_an_empty_summary_when_cancelled(anthropic_clien
     model = AnthropicModel(
         model_id="m1",
         max_tokens=1,
-        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
     )
     cancel_signal = threading.Event()
     asyncio.get_running_loop().call_later(0.01, cancel_signal.set)
@@ -3559,7 +3557,7 @@ def test_format_request_warns_once_when_sending_a_stored_block_as_text(anthropic
 
     warnings_ = [record.getMessage() for record in caplog.records if "compaction block" in record.getMessage()]
     assert len(warnings_) == 1
-    assert "server_side_compaction is not set" in warnings_[0]
+    assert "server_side_summary is not set" in warnings_[0]
 
 
 def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(anthropic_client):
@@ -3569,7 +3567,7 @@ def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(
         max_tokens=1,
         cache_config=CacheConfig(strategy="anthropic"),
         params={"thinking": {"type": "adaptive"}},
-        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
     )
     model._drop_stale_thinking_model_id = "m1"
     messages = [
@@ -3601,7 +3599,7 @@ def test_format_request_sends_a_block_whose_provider_data_is_not_a_block_as_text
     model = AnthropicModel(
         model_id="m1",
         max_tokens=1,
-        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
     )
     stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": "opaque"}}}
     messages = [{"role": "user", "content": [{"text": "first"}]}, {"role": "assistant", "content": [stored]}]
@@ -3621,7 +3619,7 @@ def test_format_request_without_a_stored_block_adds_no_beta_with_the_capability(
     model = AnthropicModel(
         model_id="m1",
         max_tokens=1,
-        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+        model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
     )
 
     tru_request = model.format_request([{"role": "user", "content": [{"text": "a"}]}])

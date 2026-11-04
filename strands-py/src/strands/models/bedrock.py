@@ -21,6 +21,7 @@ from typing_extensions import Unpack, override
 
 from strands.types.media import S3Location, SourceLocation
 
+from .._async import _poll_cancel_signal
 from .._exception_notes import add_exception_note
 from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
@@ -34,7 +35,6 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
-from ._cancellation import _poll_cancel_signal
 from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._model_info import ModelCapabilities, ModelInfo
 from ._native_output import (

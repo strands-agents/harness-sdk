@@ -445,8 +445,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * caller's system prompt and tools are not sent. The summary is empty unless the reply ends its turn or hits a
    * stop sequence.
    *
-   * Providers with server-side compaction override this method and set
-   * `modelInfo.capabilities.serverSideCompaction`. For such a model the context manager calls this method only with
+   * Providers with server-side summaries override this method and set
+   * `modelInfo.capabilities.serverSideSummary`. For such a model the context manager calls this method only with
    * the conversation's opening messages, from message 0, and uses the base implementation for every other summary.
    * A returned block whose `metadata.providerData` names this provider is sent back in place of its text.
    *

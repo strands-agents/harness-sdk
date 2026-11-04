@@ -34,7 +34,7 @@ class SummarizeResult:
 
     Attributes:
         content: The summary, empty when the model wrote none. A block may carry ``metadata.providerData`` that its
-            provider sends in place of the text, such as a server-side compaction block.
+            provider sends in place of the text, such as Anthropic's compaction block.
         usage: Token usage of the summary call, ``None`` when the provider reports none.
     """
 

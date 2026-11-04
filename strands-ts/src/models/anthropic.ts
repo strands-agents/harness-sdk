@@ -564,7 +564,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   /**
    * Summarizes the conversation's opening `messages` with Anthropic on-demand compaction (beta
    * `compact-2026-09-04`), sending the live system prompt and tools unchanged, when
-   * `modelInfo.capabilities.serverSideCompaction` is `true`; otherwise uses the base `Model.summarize()`.
+   * `modelInfo.capabilities.serverSideSummary` is `true`; otherwise uses the base `Model.summarize()`.
    * `AnthropicModel` leaves the capability unknown unless set through the `modelInfo` config.
    *
    * The returned compaction block is stored as a {@link TextBlock} whose `text` is the summary, for other providers,
@@ -578,7 +578,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * @throws ModelThrottledError when the request is throttled
    */
   override async summarize(messages: Message[], options: SummarizeOptions = {}): Promise<SummarizeResult> {
-    if (this.modelInfo.capabilities?.serverSideCompaction !== true) return super.summarize(messages, options)
+    if (this.modelInfo.capabilities?.serverSideSummary !== true) return super.summarize(messages, options)
     try {
       const params = compactionParams(
         this._formatRequest(messages, {
@@ -624,10 +624,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   /**
    * Whether requests send a stored compaction block as the block itself, from where it stands, rather than its text.
-   * Only a model that declares `serverSideCompaction` does, since the block needs the compaction beta.
+   * Only a model that declares `serverSideSummary` does, since the block needs the compaction beta.
    */
   private _sendsNativeBlocks(): boolean {
-    return this.modelInfo.capabilities?.serverSideCompaction === true
+    return this.modelInfo.capabilities?.serverSideSummary === true
   }
 
   private _buildRequestOptions(messages: Message[] = [], compacting = false): Anthropic.RequestOptions | undefined {
@@ -754,7 +754,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     else if (!this._warnedCompactionSentAsText && carriesNativeBlock(messages)) {
       this._warnedCompactionSentAsText = true
       logger.warn(
-        `model_id=<${this._config.modelId}> | history holds a compaction block but serverSideCompaction is not set on this model, sending its text instead | set the capability on both the agent model and the summarizer model`
+        `model_id=<${this._config.modelId}> | history holds a compaction block but serverSideSummary is not set on this model, sending its text instead | set the capability on both the agent model and the summarizer model`
       )
     }
 

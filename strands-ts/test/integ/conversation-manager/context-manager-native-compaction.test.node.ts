@@ -35,7 +35,7 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
       apiKey: apiKey(),
       mainModelId,
       summarizerModelId,
-      serverSideCompaction: true,
+      serverSideSummary: true,
       thinking: STRICT_THINKING,
       passBeforeCalls: PASSES,
     })
@@ -92,7 +92,7 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
       apiKey: apiKey(),
       mainModelId,
       summarizerModelId,
-      serverSideCompaction: true,
+      serverSideSummary: true,
       thinking: STRICT_THINKING,
       passBeforeCalls: PASSES,
       pinBeforeFirstPass: 3,
@@ -119,7 +119,7 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
       apiKey: apiKey(),
       mainModelId,
       summarizerModelId,
-      serverSideCompaction: undefined,
+      serverSideSummary: undefined,
       thinking: { type: 'adaptive' },
       passBeforeCalls: PASSES,
     })

@@ -16,7 +16,7 @@ import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
-import { warnOnServerSideCompactionLimits } from './strategies/offload/summarize.js'
+import { warnOnServerSideSummaryLimits } from './strategies/offload/summarize.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
@@ -154,12 +154,12 @@ export class ContextManager implements Plugin {
       strategy.init?.(agent, this._stash)
     }
 
-    let checkedCompactionLimits = false
+    let checkedSummaryLimits = false
     agent.addHook(BeforeInvocationEvent, (event) => {
       // Checked on the first invocation, once a session manager has restored the messages.
-      if (checkedCompactionLimits) return
-      checkedCompactionLimits = true
-      warnOnServerSideCompactionLimits(event.agent, this._strategies)
+      if (checkedSummaryLimits) return
+      checkedSummaryLimits = true
+      warnOnServerSideSummaryLimits(event.agent, this._strategies)
     })
 
     agent.addHook(BeforeModelCallEvent, async (event) => {

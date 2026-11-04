@@ -416,8 +416,8 @@ class Model(abc.ABC):
         caller's system prompt and tools are not sent. The summary is empty unless the reply ends its turn or hits a
         stop sequence.
 
-        Providers with server-side compaction override this method and set
-        ``model_info.capabilities.server_side_compaction``. For such a model the context manager calls this method
+        Providers with server-side summaries override this method and set
+        ``model_info.capabilities.server_side_summary``. For such a model the context manager calls this method
         only with the conversation's opening messages, from message 0, and uses the base implementation for every
         other summary.
 

@@ -500,9 +500,9 @@ describe('ContextManager', () => {
     })
   })
 
-  describe('server-side compaction limits', () => {
+  describe('server-side summary limits', () => {
     it('checks once, on the first invocation', async () => {
-      const warn = vi.spyOn(summarize, 'warnOnServerSideCompactionLimits').mockImplementation(() => {})
+      const warn = vi.spyOn(summarize, 'warnOnServerSideSummaryLimits').mockImplementation(() => {})
       const agent = makeMockAgent()
       const cm = new ContextManager()
       await cm.initAgent(agent)

@@ -113,12 +113,12 @@ async function promptCaching() {
   // --8<-- [end:prompt_caching]
 }
 
-async function serverSideCompaction() {
-  // --8<-- [start:server_side_compaction]
+async function serverSideSummary() {
+  // --8<-- [start:server_side_summary]
   const model = new AnthropicModel({
     modelId: 'claude-sonnet-5',
     maxTokens: 4096,
-    modelInfo: { capabilities: { serverSideCompaction: true } },
+    modelInfo: { capabilities: { serverSideSummary: true } },
   })
 
   const agent = new Agent({
@@ -127,8 +127,8 @@ async function serverSideCompaction() {
       strategies: [Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })],
     },
   })
-  // --8<-- [end:server_side_compaction]
+  // --8<-- [end:server_side_summary]
   void agent
 }
 
-void serverSideCompaction
+void serverSideSummary

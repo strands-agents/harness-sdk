@@ -8,7 +8,7 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.summarize import _warn_on_server_side_compaction_limits
+from strands._context_manager.strategies.offload.summarize import _warn_on_server_side_summary_limits
 from strands._context_manager.types import ContextState
 from strands.models import ModelCapabilities, ModelInfo, SummarizeResult
 from strands.models.model import Model
@@ -504,12 +504,12 @@ class TestSummarizeRuns:
 _COMPACTION = {"provider": "test", "data": {"type": "compaction", "signature": "opaque"}}
 
 
-class TestServerSideCompaction:
-    """Tests for routing the conversation's opening to a model with server-side compaction."""
+class TestServerSideSummary:
+    """Tests for routing the conversation's opening to a model with server-side summaries."""
 
     @pytest.fixture
-    def compacting_agent(self, mock_agent):
-        mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True))
+    def summarizing_agent(self, mock_agent):
+        mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
         compacted = ContentBlock(text="compacted", metadata={"providerData": _COMPACTION})
         mock_agent.model.summarize = unittest.mock.AsyncMock(
             return_value=SummarizeResult(content=[compacted], usage=None)
@@ -517,16 +517,16 @@ class TestServerSideCompaction:
         return mock_agent
 
     @pytest.mark.asyncio
-    async def test_compacts_the_opening_run_from_message_zero_into_its_own_message(self, compacting_agent):
+    async def test_compacts_the_opening_run_from_message_zero_into_its_own_message(self, summarizing_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         task, a1, u2, a3 = messages[:4]
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
-        compacting_agent.model.summarize.assert_awaited_once()
-        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
+        summarizing_agent.model.summarize.assert_awaited_once()
+        assert summarizing_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
         assert messages[0] is task
         summary = ContentBlock(
             text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
@@ -535,59 +535,59 @@ class TestServerSideCompaction:
         assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
 
     @pytest.mark.asyncio
-    async def test_compacts_pinned_messages_with_the_rest_of_the_opening_run(self, compacting_agent):
+    async def test_compacts_pinned_messages_with_the_rest_of_the_opening_run(self, summarizing_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[1]["metadata"] = {"custom": {"pinned": True}}
         messages[3]["metadata"] = {"custom": {"pinned": True}}
         task, a1, u2, a3 = messages[:4]
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
-        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
+        assert summarizing_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
         summary = ContentBlock(
             text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
         )
         assert messages == [task, Message(role="assistant", content=[summary]), *_turns("u4", "a5", "u6")]
 
     @pytest.mark.asyncio
-    async def test_keeps_pinned_messages_after_the_base_summary_when_compaction_writes_none(self, compacting_agent):
-        compacting_agent.model.summarize.return_value = SummarizeResult(content=[])
+    async def test_keeps_pinned_messages_after_the_base_summary_when_compaction_writes_none(self, summarizing_agent):
+        summarizing_agent.model.summarize.return_value = SummarizeResult(content=[])
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[3]["metadata"] = {"custom": {"pinned": True}}
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
         assert _texts(messages)[1][-1] == "a3"
         assert messages[1]["metadata"]["custom"]["pinned"] is True
 
     @pytest.mark.asyncio
-    async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
+    async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, summarizing_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize(["tool::lookup"]).when(utilization=0.5, preserve_recent=3)
         tool_use = ContentBlock(toolUse={"toolUseId": "t1", "name": "lookup", "input": {}})
         tool_result = ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "r1"}]})
         messages[3] = Message(role="assistant", content=[tool_use])
         messages[4] = Message(role="user", content=[tool_result])
 
-        await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
+        await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9))
 
-        compacting_agent.model.summarize.assert_not_awaited()
+        summarizing_agent.model.summarize.assert_not_awaited()
         assert "providerData" not in json.dumps(messages)
 
     @pytest.mark.asyncio
-    async def test_places_the_summary_ahead_of_the_next_assistant_message(self, compacting_agent):
+    async def test_places_the_summary_ahead_of_the_next_assistant_message(self, summarizing_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=4)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
-        compacting_agent.model.summarize.assert_awaited_once()
+        summarizing_agent.model.summarize.assert_awaited_once()
         assert _texts(messages) == [
             ["task"],
             ["[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", "a3"],
@@ -597,28 +597,28 @@ class TestServerSideCompaction:
         ]
 
     @pytest.mark.asyncio
-    async def test_gives_the_opening_run_the_base_summary_when_compaction_writes_none(self, compacting_agent):
-        compacting_agent.model.summarize.return_value = SummarizeResult(content=[])
+    async def test_gives_the_opening_run_the_base_summary_when_compaction_writes_none(self, summarizing_agent):
+        summarizing_agent.model.summarize.return_value = SummarizeResult(content=[])
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
-        compacting_agent.model.summarize.assert_awaited_once()
+        summarizing_agent.model.summarize.assert_awaited_once()
         assert messages[0]["content"] == [{"text": "task"}]
         assert any("Summary of content." in text for message in _texts(messages) for text in message)
         assert "providerData" not in json.dumps(messages)
 
     @pytest.mark.asyncio
-    async def test_uses_the_base_summary_when_only_the_summarizer_compacts_server_side(self, compacting_agent):
-        summarizer = compacting_agent.model
-        compacting_agent.model = unittest.mock.MagicMock(model_info=ModelInfo())
+    async def test_uses_the_base_summary_when_only_the_summarizer_compacts_server_side(self, summarizing_agent):
+        summarizer = summarizing_agent.model
+        summarizing_agent.model = unittest.mock.MagicMock(model_info=ModelInfo())
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*", {"model": summarizer}).when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
         summarizer.summarize.assert_not_awaited()
         assert messages[0]["content"] == [{"text": "task"}]
@@ -626,21 +626,21 @@ class TestServerSideCompaction:
         assert "providerData" not in json.dumps(messages)
 
     @pytest.mark.asyncio
-    async def test_summarizes_blocks_with_the_base_summary(self, compacting_agent):
+    async def test_summarizes_blocks_with_the_base_summary(self, summarizing_agent):
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
         ]
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(threshold=100)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.5)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.5)) is True
 
-        compacting_agent.model.summarize.assert_not_awaited()
+        summarizing_agent.model.summarize.assert_not_awaited()
         assert "Summary of content." in messages[1]["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_compacts_a_run_that_ends_on_a_tool_result(self, compacting_agent):
+    async def test_compacts_a_run_that_ends_on_a_tool_result(self, summarizing_agent):
         messages: Messages = [Message(role="user", content=[ContentBlock(text="task")])]
         for tool_use_id in ("t1", "t2"):
             messages.append(
@@ -659,12 +659,12 @@ class TestServerSideCompaction:
                     ],
                 )
             )
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
-        compacting_agent.model.summarize.assert_awaited_once()
+        summarizing_agent.model.summarize.assert_awaited_once()
         exp_messages = [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(
@@ -688,9 +688,9 @@ class TestServerSideCompaction:
         assert messages == exp_messages
 
     @pytest.mark.asyncio
-    async def test_copies_the_provider_data_of_the_first_block_that_carries_any(self, compacting_agent):
+    async def test_copies_the_provider_data_of_the_first_block_that_carries_any(self, summarizing_agent):
         other = {"provider": "test", "data": {"type": "other"}}
-        compacting_agent.model.summarize.return_value = SummarizeResult(
+        summarizing_agent.model.summarize.return_value = SummarizeResult(
             content=[
                 ContentBlock(text="plain"),
                 ContentBlock(text="compacted", metadata={"providerData": _COMPACTION}),
@@ -698,10 +698,10 @@ class TestServerSideCompaction:
             ]
         )
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
         assert messages[1]["content"][0] == ContentBlock(
             text="[Summarized: 3 messages, ~5,000 tokens]\n\nplain\ncompacted\nmore",
@@ -709,19 +709,19 @@ class TestServerSideCompaction:
         )
 
     @pytest.mark.asyncio
-    async def test_does_not_compact_a_run_holding_only_the_earlier_summary_again(self, compacting_agent):
+    async def test_does_not_compact_a_run_holding_only_the_earlier_summary_again(self, summarizing_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
-        await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
-        compacting_agent.model.summarize.reset_mock()
+        await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9))
+        summarizing_agent.model.summarize.reset_mock()
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is False
 
-        compacting_agent.model.summarize.assert_not_awaited()
+        summarizing_agent.model.summarize.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_leaves_a_block_with_provider_data_in_place(self, compacting_agent):
+    async def test_leaves_a_block_with_provider_data_in_place(self, summarizing_agent):
         summary = ContentBlock(
             text="[Summarized: 3 messages]\n\n" + "a" * 10000, metadata={"providerData": _COMPACTION}
         )
@@ -729,32 +729,32 @@ class TestServerSideCompaction:
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(role="assistant", content=[summary]),
         ]
-        compacting_agent.messages = messages
+        summarizing_agent.messages = messages
         stream = unittest.mock.MagicMock(side_effect=_make_stream_events("again"))
-        compacting_agent.model.stream = stream
-        compacting_agent.model.count_tokens = unittest.mock.AsyncMock(
+        summarizing_agent.model.stream = stream
+        summarizing_agent.model.count_tokens = unittest.mock.AsyncMock(
             side_effect=lambda turns: sum(len(block.get("text", "")) for turn in turns for block in turn["content"])
         )
         strategy = Offload.summarize("*").when(threshold=100)
 
-        await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.5))
+        await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.5))
 
         stream.assert_not_called()
         assert messages[1]["content"] == [summary]
 
 
-class TestServerSideCompactionLimitsWarning:
-    """Tests for the warning about features server-side compaction doesn't support."""
+class TestServerSideSummaryLimitsWarning:
+    """Tests for the warning about features a server-side summary doesn't support."""
 
-    _PINNED = "pinned messages are compacted like any other message with server-side compaction"
+    _PINNED = "pinned messages are summarized like any other message by a server-side summary"
     _PER_BLOCK = (
         "per-block summarization with preserve_recent rewrites blocks the model has already seen"
         " | thinking from earlier turns will be dropped on the next turns"
     )
 
     @pytest.fixture
-    def compacting_agent(self, mock_agent):
-        mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True))
+    def summarizing_agent(self, mock_agent):
+        mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
         mock_agent.model.get_config = unittest.mock.MagicMock(return_value={"model_id": "claude-test"})
         mock_agent.messages = _turns("task", "a1", "u2")
         return mock_agent
@@ -778,11 +778,11 @@ class TestServerSideCompactionLimitsWarning:
             ),
         ],
     )
-    def test_describes_the_features_in_use(self, compacting_agent, caplog, pinned, strategies, statements):
-        compacting_agent.messages[1]["metadata"] = {"custom": {"pinned": pinned}}
+    def test_describes_the_features_in_use(self, summarizing_agent, caplog, pinned, strategies, statements):
+        summarizing_agent.messages[1]["metadata"] = {"custom": {"pinned": pinned}}
 
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_compaction_limits(compacting_agent, strategies)
+            _warn_on_server_side_summary_limits(summarizing_agent, strategies)
 
         assert self._warnings(caplog) == [f"model_id=<claude-test> | {statements}"]
 
@@ -794,28 +794,28 @@ class TestServerSideCompactionLimitsWarning:
             [Offload.truncate("tool_results").when(threshold=2500, preserve_recent=2)],
         ],
     )
-    def test_stays_silent_without_pins_or_per_block_summarization(self, compacting_agent, caplog, strategies):
+    def test_stays_silent_without_pins_or_per_block_summarization(self, summarizing_agent, caplog, strategies):
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_compaction_limits(compacting_agent, strategies)
+            _warn_on_server_side_summary_limits(summarizing_agent, strategies)
 
         assert self._warnings(caplog) == []
 
-    def test_ignores_pins_when_no_summary_compacts_server_side(self, compacting_agent, caplog):
-        compacting_agent.messages[1]["metadata"] = {"custom": {"pinned": True}}
+    def test_ignores_pins_when_no_summary_compacts_server_side(self, summarizing_agent, caplog):
+        summarizing_agent.messages[1]["metadata"] = {"custom": {"pinned": True}}
         summarizer = unittest.mock.MagicMock(model_info=ModelInfo())
         strategies = [Offload.summarize("*", {"model": summarizer}).when(utilization=0.5)]
 
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_compaction_limits(compacting_agent, strategies)
+            _warn_on_server_side_summary_limits(summarizing_agent, strategies)
 
         assert self._warnings(caplog) == []
 
-    def test_stays_silent_when_the_agent_model_does_not_compact_server_side(self, compacting_agent, caplog):
-        compacting_agent.model.model_info = ModelInfo()
+    def test_stays_silent_when_the_agent_model_does_not_compact_server_side(self, summarizing_agent, caplog):
+        summarizing_agent.model.model_info = ModelInfo()
 
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_compaction_limits(
-                compacting_agent, [Offload.summarize("*").when(threshold=100, preserve_recent=2)]
+            _warn_on_server_side_summary_limits(
+                summarizing_agent, [Offload.summarize("*").when(threshold=100, preserve_recent=2)]
             )
 
         assert self._warnings(caplog) == []

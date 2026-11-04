@@ -13,7 +13,7 @@ import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { logger } from '../../logging/logger.js'
 
 const OPAQUE = 'OPAQUE-PROVIDER-FIELD'
-const COMPACTS = { modelInfo: { capabilities: { serverSideCompaction: true } } }
+const COMPACTS = { modelInfo: { capabilities: { serverSideSummary: true } } }
 
 /** A summary block carrying metadata and provider data for `provider`, after a user turn. */
 function history(provider: string): Message[] {
@@ -126,7 +126,7 @@ describe('provider data on the wire', () => {
       expect(wire.requests[1]!.headers['anthropic-beta']).toBeUndefined()
       const compactionWarnings = warn.mock.calls.filter(([message]) => String(message).includes('compaction block'))
       expect(compactionWarnings).toHaveLength(1)
-      expect(String(compactionWarnings[0]![0])).toContain('serverSideCompaction is not set')
+      expect(String(compactionWarnings[0]![0])).toContain('serverSideSummary is not set')
       warn.mockRestore()
     })
 
@@ -175,7 +175,7 @@ describe('anthropic, for messages before its own block', () => {
   })
 })
 
-describe('anthropic, without server-side compaction', () => {
+describe('anthropic, without server-side summaries', () => {
   it('sends its own block as text, with every message and no compaction beta', async () => {
     const wire = new AnthropicWire().reply({ content: [{ type: 'text', text: 'ok' }] })
     const model = new AnthropicModel({ client: wire.client(), modelId: 'claude-sonnet-4-6', maxTokens: 64 })

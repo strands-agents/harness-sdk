@@ -76,7 +76,7 @@ class HarnessOptions:
         api_key: First-party Anthropic API key.
         main_model_id: Model that runs the task.
         summarizer_model_id: Model the summarize strategy calls.
-        server_side_compaction: ``True`` opts both models into native compaction; ``None`` leaves the capability
+        server_side_summary: ``True`` opts both models into native compaction; ``None`` leaves the capability
             unset (base control).
         thinking: Thinking config of both models; the base control may leave ``block_binding`` to the account.
         pass_before_calls: Model calls (1-based) that a summary pass precedes.
@@ -88,7 +88,7 @@ class HarnessOptions:
     api_key: str
     main_model_id: str
     summarizer_model_id: str
-    server_side_compaction: Literal[True] | None
+    server_side_summary: Literal[True] | None
     thinking: dict[str, Any]
     pass_before_calls: list[int]
     pin_before_first_pass: int | None = None
@@ -234,7 +234,7 @@ class _PlannedSummaryPasses:
 
 
 def _model(options: HarnessOptions, model_id: str, http_client: httpx.AsyncClient) -> AnthropicModel:
-    capabilities = ModelCapabilities(server_side_compaction=options.server_side_compaction)
+    capabilities = ModelCapabilities(server_side_summary=options.server_side_summary)
     return AnthropicModel(
         client_args={
             "api_key": options.api_key,
@@ -426,7 +426,7 @@ def _options_from_environment(api_key: str, native: bool) -> HarnessOptions:
         api_key=api_key,
         main_model_id=os.environ.get("STRANDS_INTEG_MAIN_MODEL_ID", SONNET_5_5),
         summarizer_model_id=os.environ.get("STRANDS_INTEG_SUMMARIZER_MODEL_ID", HAIKU_5_5),
-        server_side_compaction=True if native else None,
+        server_side_summary=True if native else None,
         thinking=STRICT_THINKING if native else BASE_THINKING,
         pass_before_calls=PASSES,
         pin_before_first_pass=int(pin_index) if pin_index else None,
