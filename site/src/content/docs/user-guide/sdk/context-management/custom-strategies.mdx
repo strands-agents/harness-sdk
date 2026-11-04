@@ -117,6 +117,8 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
 
+On a model with server-side compaction, such as [Anthropic](../model-providers/anthropic#server-side-compaction), the conversation's opening messages are compacted by the provider instead.
+
 <Tabs>
 <Tab label="Python">
 

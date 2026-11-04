@@ -6,6 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { Agent } from '@strands-agents/sdk'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+import { Offload } from '@strands-agents/sdk/experimental'
 import { z } from 'zod'
 
 // Basic usage
@@ -111,3 +112,23 @@ async function promptCaching() {
   // { inputTokens: 12, ..., cacheReadInputTokens: 2505 }
   // --8<-- [end:prompt_caching]
 }
+
+async function serverSideCompaction() {
+  // --8<-- [start:server_side_compaction]
+  const model = new AnthropicModel({
+    modelId: 'claude-sonnet-5',
+    maxTokens: 4096,
+    modelInfo: { capabilities: { serverSideCompaction: true } },
+  })
+
+  const agent = new Agent({
+    model,
+    contextManager: {
+      strategies: [Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })],
+    },
+  })
+  // --8<-- [end:server_side_compaction]
+  void agent
+}
+
+void serverSideCompaction

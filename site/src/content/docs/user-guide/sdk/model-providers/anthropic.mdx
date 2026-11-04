@@ -392,6 +392,49 @@ stay at zero, that is the likely cause. See
 [cache limitations](https://docs.claude.com/en/docs/build-with-claude/prompt-caching#cache-limitations)
 for per-model thresholds.
 
+### Server-side compaction
+
+The experimental [`ContextManager`](../context-management/) can summarize a conversation's opening messages with Anthropic's compaction API instead of a client-side summary. The API returns a compaction block, which the SDK stores in the summary message and sends back on later requests. Earlier thinking blocks stay valid because the history before them is never rewritten.
+
+Set <Syntax py="server_side_compaction" ts="serverSideCompaction" /> on the model and add a summarize strategy:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.experimental.context_manager import Offload
+from strands.models import ModelCapabilities, ModelInfo
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="claude-sonnet-5",
+    max_tokens=4096,
+    model_info=ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True)),
+)
+
+agent = Agent(
+    model=model,
+    context_manager={
+        "strategies": [Offload.summarize("*").when(utilization=0.7, preserve_recent=4)],
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/anthropic_imports.ts:server_side_compaction_imports"
+
+--8<-- "user-guide/sdk/model-providers/anthropic.ts:server_side_compaction"
+```
+</Tab>
+</Tabs>
+
+The capability is read in two places: the summarize strategy reads it on the model that summarizes, and the agent's model reads it when it sends the stored block. The summarizer defaults to <Syntax py="agent.aux_model" ts="agent.auxModel" />, which falls back to the agent's model, so one model object covers both. If you set a separate summarizer model, set the capability on both. A model without it sends the summary as plain text and logs a warning.
+
+Only the opening messages are compacted server-side. Summaries of later runs and of individual blocks use the client-side summary.
+
 ### Token Counting
 
 Token counting is used by context management strategies to estimate input tokens before each model call.
