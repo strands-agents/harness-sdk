@@ -39,7 +39,7 @@ import {
   type CacheTTL,
   type StreamOptions,
 } from './model.js'
-import type { ModelInfo } from './model-info.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -166,6 +166,17 @@ export class VercelModel extends Model<VercelModelConfig> {
    */
   override get modelId(): string {
     return this._config.modelId ?? this._provider.modelId
+  }
+
+  /**
+   * Reports OpenAI models on Bedrock as implicitly cached, which a `modelInfo` override still wins over.
+   * The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
+    if (!bedrock || !this.modelId.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
   }
 
   updateConfig(config: VercelModelConfig): void {
@@ -415,9 +426,7 @@ function applyBedrockCache(
 /**
  * Reports whether the wrapped Bedrock model takes cache points. An explicit `'anthropic'` strategy
  * opts in regardless; the default `'auto'` caches when `modelInfo` says `'cachePoints'`, or when the id is
- * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`). OpenAI models
- * never cache under `'auto'`: Converse takes no cache points for them, although the model info lists cache
- * points for the OpenAI-compatible APIs.
+ * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`).
  *
  * @param cacheConfig - The caller's cache configuration
  * @param modelId - The wrapped Bedrock model id, used in the skip warning
@@ -427,13 +436,13 @@ function applyBedrockCache(
 function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, modelInfo: ModelInfo): boolean {
   if ((cacheConfig.strategy ?? 'auto') !== 'auto') return true
 
-  const id = modelId.toLowerCase()
   const promptCaching = modelInfo.capabilities?.promptCaching
   // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
   // keep the historical name test so caching does not turn off until the data catches up.
   const supported =
-    !id.includes('openai.') &&
-    (promptCaching === undefined ? id.includes('claude') || id.includes('anthropic') : promptCaching === 'cachePoints')
+    promptCaching === undefined
+      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
+      : promptCaching === 'cachePoints'
   if (!supported) {
     warnOnce(
       logger,

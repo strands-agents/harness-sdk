@@ -35,6 +35,7 @@ from ..types.exceptions import (
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
 from ._defaults import resolve_config_metadata, resolve_max_tokens
+from ._model_info import ModelCapabilities, ModelInfo
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -374,27 +375,40 @@ class BedrockModel(Model):
         logger.debug("region=<%s> | bedrock client created", self.client.meta.region_name)
 
     @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports OpenAI models as implicitly cached, which a ``model_info`` override still wins over.
+
+        The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches
+        them implicitly and rejects cache points.
+        """
+        if "openai." not in str(self.config.get("model_id", "")).lower():
+            return super().model_info
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
+            self.config.get("model_info"),
+        )
+
+    @property
     def _cache_strategy(self) -> str | None:
         """The effective cache strategy for this request, or None when caching is off or unsupported.
 
         Resolves ``cache_config.strategy``: an explicit strategy is returned as written, while ``"auto"``
         maps to ``"anthropic"`` for models the model info says take cache points, and None for models
         without automatic caching support. For an id the model info does not list at all, Claude/Anthropic
-        ids still map to ``"anthropic"``. OpenAI models map to None: Converse takes no cache points for
-        them, although the model info lists cache points for the OpenAI-compatible APIs.
+        ids still map to ``"anthropic"``.
         """
         cache_config = self.config.get("cache_config")
         if not cache_config:
             return None
         if cache_config.strategy != "auto":
             return cache_config.strategy
-        model_id = str(self.config.get("model_id", "")).lower()
-        if "openai." in model_id:
-            return None
         prompt_caching = self.model_info.capabilities.prompt_caching
         if prompt_caching is None:
             # Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
             # keep the historical name test so caching does not turn off until the data catches up.
+            model_id = str(self.config.get("model_id", "")).lower()
             return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
         return "anthropic" if prompt_caching == "cache_points" else None
 

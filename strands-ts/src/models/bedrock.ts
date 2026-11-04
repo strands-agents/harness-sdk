@@ -61,6 +61,7 @@ import {
   resolveConfigMetadata,
   resolveMaxTokens,
 } from '../models/model.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -524,20 +525,27 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
+   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+  }
+
+  /**
    * Returns the cache strategy for this model based on its model ID.
    * Returns the appropriate cache strategy name, or null if automatic caching is not supported.
-   * OpenAI models return null: Converse takes no cache points for them, although the model info
-   * lists cache points for the OpenAI-compatible APIs.
    *
    * @returns Cache strategy name or null
    */
   private _getCacheStrategy(): 'anthropic' | null {
-    const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
-    if (modelId.includes('openai.')) return null
     const promptCaching = this.modelInfo.capabilities?.promptCaching
     if (promptCaching === undefined) {
       // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
       // keep the historical name test so caching does not turn off until the data catches up.
+      const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
       return modelId.includes('claude') || modelId.includes('anthropic') ? 'anthropic' : null
     }
     return promptCaching === 'cachePoints' ? 'anthropic' : null

@@ -1630,7 +1630,7 @@ describe('VercelModel', () => {
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
       })
 
-      it('under the default auto strategy, skips an OpenAI model although the info lists cache points', async () => {
+      it('under the default auto strategy, reports an OpenAI model as implicitly cached and skips it', async () => {
         const modelId = 'us.openai.gpt-6-luna'
         const { collect, callArgs, model } = setupCaptureTest(
           minimalParts,
@@ -1640,8 +1640,18 @@ describe('VercelModel', () => {
         )
         await collect(userMessages, { systemPrompt: 'be helpful' })
 
-        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
+        const { model } = setupCaptureTest(
+          minimalParts,
+          { modelInfo: { capabilities: { promptCaching: 'cachePoints' } } },
+          'amazon-bedrock',
+          'us.openai.gpt-6-luna'
+        )
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
       })
 
       it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {

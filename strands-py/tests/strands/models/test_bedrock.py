@@ -4362,16 +4362,27 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
 
 
 @pytest.mark.parametrize("model_id", ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol"])
-def test_cache_strategy_auto_is_none_for_openai_models_that_list_cache_points(bedrock_client, model_id):
+def test_model_info_reports_openai_models_as_implicitly_cached(bedrock_client, model_id):
     """The listed cache points are for Bedrock's OpenAI-compatible APIs; Converse takes none for these models."""
     _ = bedrock_client
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities.prompt_caching == "cache_points"
+    assert model.model_info.capabilities.prompt_caching == "auto"
     assert model._cache_strategy is None
     request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}], system_prompt="sys")
     assert "cachePoint" not in str(request)
+
+
+def test_model_info_override_wins_over_openai_implicit_caching(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="us.openai.gpt-6-luna",
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+    )
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
 
 
 def test_cache_strategy_auto_maps_to_anthropic_when_the_model_info_override_says_cache_points(bedrock_client):
