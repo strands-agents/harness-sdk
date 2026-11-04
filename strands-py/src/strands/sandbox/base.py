@@ -146,7 +146,9 @@ class Sandbox(ABC):
             The file contents as raw bytes.
 
         Raises:
-            FileNotFoundError: If the file does not exist or cannot be read.
+            FileNotFoundError: If the file does not exist.
+            IsADirectoryError: If ``path`` is a directory.
+            OSError: If the file cannot be read.
         """
         ...
 

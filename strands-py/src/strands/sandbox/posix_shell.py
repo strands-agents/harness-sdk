@@ -9,6 +9,7 @@ Mirrors ``strands-ts/src/sandbox/posix-shell.ts``.
 """
 
 import base64
+import errno
 import logging
 import shlex
 import uuid
@@ -154,13 +155,20 @@ class PosixShellSandbox(Sandbox, ABC):
             The file contents as raw bytes.
 
         Raises:
-            FileNotFoundError: If the file does not exist or cannot be read.
-            OSError: If the command succeeds but its output is not valid base64
-                (e.g. a shell profile or locale warning prepended text to stdout).
+            SandboxPathNotFoundError: If the file does not exist.
+            IsADirectoryError: If ``path`` is a directory.
+            OSError: If the file cannot be read, or the command succeeds but its output
+                is not valid base64 (e.g. a shell profile or locale warning prepended text to stdout).
         """
-        result = await self.execute(f"base64 < {shlex.quote(path)}")
+        quoted = shlex.quote(path)
+        # Exit 77/78 distinguish a missing path and a directory from base64's own failures (locale-independent).
+        result = await self.execute(f"test -e {quoted} || exit 77; test -d {quoted} && exit 78; base64 < {quoted}")
+        if result.exit_code == 77:
+            raise SandboxPathNotFoundError(path)
+        if result.exit_code == 78:
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
         if result.exit_code != 0:
-            raise FileNotFoundError(result.stderr or f"Failed to read file: {path}")
+            raise OSError(result.stderr or f"Failed to read file: {path}")
         # base64 output is ASCII-safe text; strip whitespace (line wrapping) and decode.
         try:
             # binascii.Error (raised by b64decode on malformed input) subclasses ValueError.

@@ -178,8 +178,15 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       expect(text).toBe(content)
     })
 
-    it('throws on nonexistent file', async () => {
-      await expect(sandbox.readFile('nope.txt')).rejects.toThrow()
+    it('throws SandboxPathNotFoundError on nonexistent file', async () => {
+      await expect(sandbox.readFile('nope.txt')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+    })
+
+    it('throws an is-a-directory error, not SandboxPathNotFoundError, on a directory', async () => {
+      fs.mkdirSync(`${TEST_DIR}/subdir`)
+      const error = await sandbox.readFile('subdir').catch((e: unknown) => e)
+      expect(error).not.toBeInstanceOf(SandboxPathNotFoundError)
+      expect(error).toEqual(new Error('Is a directory: subdir'))
     })
 
     // Contract: on POSIX, `\` in a path is a legal filename character, not a

@@ -75,7 +75,7 @@ export abstract class Sandbox {
    *
    * @param path - Path to the file to read.
    * @returns The file contents as raw bytes.
-   * @throws Error if the file does not exist.
+   * @throws Error if the file does not exist, is a directory, or cannot be read.
    */
   abstract readFile(path: string): Promise<Uint8Array>
 

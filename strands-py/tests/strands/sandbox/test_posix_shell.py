@@ -381,8 +381,26 @@ async def test_empty_content_roundtrip(sandbox):
 
 @pytest.mark.asyncio
 async def test_read_nonexistent_file_raises(sandbox):
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(SandboxPathNotFoundError):
         await sandbox.read_file("nope.txt")
+
+
+@pytest.mark.asyncio
+async def test_read_directory_raises_is_a_directory(sandbox, tmp_path):
+    (tmp_path / "subdir").mkdir()
+    with pytest.raises(IsADirectoryError, match="Is a directory"):
+        await sandbox.read_file("subdir")
+
+
+@pytest.mark.asyncio
+async def test_read_file_other_failure_raises_oserror_not_file_not_found(sandbox, monkeypatch):
+    async def fake_execute(self, command, **kwargs):
+        return ExecutionResult(exit_code=1, stdout="", stderr="base64: read error: Permission denied")
+
+    monkeypatch.setattr(PosixShellSandbox, "execute", fake_execute, raising=True)
+    with pytest.raises(OSError, match="Permission denied") as exc_info:
+        await sandbox.read_file("locked.txt")
+    assert not isinstance(exc_info.value, FileNotFoundError)
 
 
 @pytest.mark.asyncio

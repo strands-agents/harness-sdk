@@ -77,7 +77,15 @@ export abstract class PosixShellSandbox extends Sandbox {
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    const result = await this.execute(`base64 < ${shellQuote(path)}`)
+    const quoted = shellQuote(path)
+    // Exit 77/78 distinguish a missing path and a directory from base64's own failures (locale-independent).
+    const result = await this.execute(`test -e ${quoted} || exit 77; test -d ${quoted} && exit 78; base64 < ${quoted}`)
+    if (result.exitCode === 77) {
+      throw new SandboxPathNotFoundError(path)
+    }
+    if (result.exitCode === 78) {
+      throw new Error(`Is a directory: ${path}`)
+    }
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || `Failed to read file: ${path}`)
     }
