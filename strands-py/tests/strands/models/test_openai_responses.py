@@ -2373,7 +2373,7 @@ def test_format_request_logs_skipped_blocks_once_per_request_with_message_cache_
 
     request = model._format_request(messages)
 
-    assert request["prompt_cache_options"]["mode"] == "explicit"
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by OpenAI Responses" in messages_logged[0]
@@ -2401,7 +2401,8 @@ def test_message_cache_follows_model_info(model_id, prompt_caching, enabled, mes
     model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(), model_info=model_info)
     request = model._format_request(messages)
 
-    assert ("prompt_cache_breakpoint" in request["input"][0]["content"][0]) is enabled
+    checkpoint = {"mode": "explicit"} if enabled else None
+    assert request["input"] == _text_input("test", checkpoint)
     assert request.get("prompt_cache_options") == ({"mode": "explicit"} if enabled else None)
 
 
@@ -2532,7 +2533,7 @@ def test_message_cache_places_checkpoints_without_warnings(cache_config, capture
     request = model._format_request([{"role": "user", "content": [{"text": "durable"}]}])
 
     assert request["prompt_cache_options"] == {"mode": "explicit"}
-    assert request["input"][0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert request["input"] == _text_input("durable", {"mode": "explicit"})
     assert not captured_warnings
 
 
@@ -2580,10 +2581,27 @@ def test_message_cache_retains_stable_prefix_after_user_turn_becomes_history():
         dynamic_trailing_blocks=1,
     )
 
-    assert first["input"][0]["content"][0] == second["input"][0]["content"][0]
-    assert second["input"][1] == {"role": "assistant", "content": "answer"}
-    assert second["input"][2]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
-    assert "prompt_cache_breakpoint" not in second["input"][2]["content"][1]
+    checkpoint = {"mode": "explicit"}
+    assert first["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable one", "prompt_cache_breakpoint": checkpoint},
+                {"type": "input_text", "text": "temporary one"},
+            ],
+        }
+    ]
+    assert second["input"] == [
+        *_text_input("durable one", checkpoint),
+        {"role": "assistant", "content": "answer"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable two", "prompt_cache_breakpoint": checkpoint},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        },
+    ]
 
 
 def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
@@ -2611,22 +2629,28 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
     )
 
     assert first["input"][:3] == second["input"][:3]
-    assert first["input"][0] == {"role": "user", "content": [{"type": "input_text", "text": "durable explanation"}]}
-    assert first["input"][1]["output"] == [{"type": "input_text", "text": '{"value": "一"}'}]
-    assert first["input"][2]["output"] == [
+    assert first["input"] == [
+        *_text_input("durable explanation"),
         {
-            "type": "input_text",
-            "text": "second result",
-            "prompt_cache_breakpoint": {"mode": "explicit"},
-        }
+            "type": "function_call_output",
+            "call_id": "c1",
+            "output": [{"type": "input_text", "text": '{"value": "一"}'}],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "c2",
+            "output": [
+                {"type": "input_text", "text": "second result", "prompt_cache_breakpoint": {"mode": "explicit"}}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "temporary one"},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        },
     ]
-    assert first["input"][3] == {
-        "role": "user",
-        "content": [
-            {"type": "input_text", "text": "temporary one"},
-            {"type": "input_text", "text": "temporary two"},
-        ],
-    }
     assert injected == original
 
 
@@ -2740,25 +2764,38 @@ def test_message_cache_preserves_stateful_response_chaining():
     assert request["store"] is True
     assert request["previous_response_id"] == "previous"
     assert model_state == {"response_id": "previous"}
-    assert request["input"][0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
-    assert "prompt_cache_breakpoint" not in request["input"][0]["content"][1]
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
 
 
 @pytest.mark.parametrize(
-    ("block", "part_type"),
+    ("block", "part"),
     [
-        ({"image": {"format": "png", "source": {"bytes": b"image"}}}, "input_image"),
-        ({"document": {"format": "pdf", "name": "doc", "source": {"bytes": b"pdf"}}}, "input_file"),
+        (
+            {"image": {"format": "png", "source": {"bytes": b"image"}}},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U="},
+        ),
+        (
+            {"document": {"format": "pdf", "name": "doc", "source": {"bytes": b"pdf"}}},
+            {"type": "input_file", "filename": "doc.pdf", "file_data": "data:application/pdf;base64,cGRm"},
+        ),
     ],
 )
-def test_message_cache_marks_durable_media_only_input(block, part_type):
+def test_message_cache_marks_durable_media_only_input(block, part):
     model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
     request = model._format_request([{"role": "user", "content": [block]}])
 
     assert request["prompt_cache_options"] == {"mode": "explicit"}
-    part = request["input"][0]["content"][0]
-    assert part["type"] == part_type
-    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert request["input"] == [
+        {"role": "user", "content": [{**part, "prompt_cache_breakpoint": {"mode": "explicit"}}]}
+    ]
 
 
 def test_message_cache_without_input_parts_preserves_implicit_caching():
@@ -2846,9 +2883,15 @@ async def test_message_cache_works_with_older_client_create_signature(
     )
 
     assert calls[0]["extra_body"] == expected_extra_body
-    content = calls[0]["input"][0]["content"]
-    assert content[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
-    assert "prompt_cache_breakpoint" not in content[1]
+    assert calls[0]["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
     assert model.config["params"] == original
 
 
@@ -2870,7 +2913,7 @@ async def test_message_cache_structured_output_works_with_older_client_parse_sig
 
     assert events[-1]["output"].name == "ok"
     assert calls[0]["extra_body"] == {"prompt_cache_options": {"mode": "explicit"}}
-    assert calls[0]["input"][0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert calls[0]["input"] == _text_input("durable", {"mode": "explicit"})
 
 
 @pytest.mark.parametrize(

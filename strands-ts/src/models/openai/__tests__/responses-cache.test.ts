@@ -37,7 +37,10 @@ describe('Responses durable prompt caching', () => {
   it('checkpoints stable user content before the injected tail without mutating history', () => {
     const messages = [user('question', 'temporary')]
     const before = messages.map((m) => m.toJSON())
-    expect(request(messages, { dynamicTrailingBlocks: 1 })).toMatchObject({
+    expect(request(messages, { dynamicTrailingBlocks: 1 })).toStrictEqual({
+      model: 'gpt-6-sol',
+      stream: true,
+      store: false,
       prompt_cache_options: { mode: 'explicit' },
       input: [
         {
@@ -152,8 +155,13 @@ describe('Responses durable prompt caching', () => {
   it('checkpoints durable image-only input', () => {
     const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
     const req = request([new Message({ role: 'user', content: [image] })])
-    expect(req).toHaveProperty('prompt_cache_options.mode', 'explicit')
-    expect(req).toHaveProperty('input.0.content.0.prompt_cache_breakpoint', marker)
+    expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit' })
+    expect(req).toHaveProperty('input', [
+      {
+        role: 'user',
+        content: [{ type: 'input_image', image_url: 'data:image/png;base64,AQID', prompt_cache_breakpoint: marker }],
+      },
+    ])
   })
 
   it('keeps implicit caching when no durable input part exists', () => {
@@ -186,8 +194,8 @@ describe('Responses durable prompt caching', () => {
 
   it('avoids implicit writes when the only text is a temporary suffix', () => {
     const req = request([user('temporary')], { dynamicTrailingBlocks: 1 })
-    expect(req).toHaveProperty('prompt_cache_options.mode', 'explicit')
-    expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
+    expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit' })
+    expect(req).toHaveProperty('input', textInput('temporary'))
   })
 
   it('retains historical lookup boundaries independently of the provider write limit', () => {
@@ -217,9 +225,14 @@ describe('Responses durable prompt caching', () => {
     ['my-finetune', 'cachePoints', true],
   ])('follows model info for %s (override promptCaching=%s)', (modelId, promptCaching, enabled) => {
     const overrides = { modelId, ...(promptCaching && { modelInfo: { capabilities: { promptCaching } } }) }
-    const req = request([user('question', 'temporary')], { dynamicTrailingBlocks: 1 }, overrides)
-    expect(JSON.stringify(req).includes('prompt_cache_breakpoint')).toBe(enabled)
-    expect(Object.hasOwn(req, 'prompt_cache_options')).toBe(enabled)
+    const req = request([user('question')], undefined, overrides)
+    expect(req).toStrictEqual({
+      model: modelId,
+      input: textInput('question', enabled ? marker : undefined),
+      stream: true,
+      store: false,
+      ...(enabled && { prompt_cache_options: { mode: 'explicit' } }),
+    })
   })
 
   it.each<CacheConfig>([
@@ -230,15 +243,14 @@ describe('Responses durable prompt caching', () => {
     { cacheKey: false },
   ])('places checkpoints with cacheConfig=%j', (cacheConfig) => {
     const req = format({ modelId: 'gpt-6-sol', cacheConfig }, [user('question')])
-    expect(req).toHaveProperty('prompt_cache_options.mode', 'explicit')
-    expect(req).toHaveProperty('input.0.content.0.prompt_cache_breakpoint', marker)
+    expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit' })
+    expect(req).toHaveProperty('input', textInput('question', marker))
   })
 
   it.each([undefined, { messagesTTL: false }])('does not opt in with cacheConfig=%j', (cacheConfig) => {
     const modelConfig: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', ...(cacheConfig ? { cacheConfig } : {}) }
     const req = format(modelConfig, [user('question')])
-    expect(req).not.toHaveProperty('prompt_cache_options')
-    expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
+    expect(req).toStrictEqual({ model: 'gpt-6-sol', input: textInput('question'), stream: true, store: false })
   })
 
   it.each<[CacheConfig, Record<string, unknown>, object, object]>([
