@@ -7,8 +7,8 @@ on:
         description: 'Deploy even if a published release has no changelog entry yet'
         type: boolean
         default: false
-      external_docs_snapshot:
-        description: 'External docs source: latest tracked refs or the committed lock'
+      content_snapshot:
+        description: 'Upstream content: latest refs or CI-pinned baselines'
         type: choice
         options:
           - latest
@@ -35,9 +35,9 @@ jobs:
       - name: Checkout samples snapshot
         uses: actions/checkout@v7
         with:
-          # Resolve main once; the checked-out commit stays immutable for the rest of the job.
+          # Locked mode uses the same Samples baseline as docs CI.
           repository: strands-agents/samples
-          ref: main
+          ref: ${{ inputs.content_snapshot == 'locked' && '6226307ed8f6de1face333d3daec638593aeedf3' || 'main' }}
           path: samples-source
           persist-credentials: false
 
@@ -71,37 +71,30 @@ jobs:
           [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
       - name: Resolve latest external documentation
-        if: ${{ inputs.external_docs_snapshot != 'locked' }}
+        if: ${{ inputs.content_snapshot != 'locked' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run external-docs:update-lock
 
+      - name: Resolve samples revision
+        id: samples_snapshot
+        run: |
+          samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
+          echo "revision=$samples_revision" >> "$GITHUB_OUTPUT"
+
       - name: Record documentation inputs snapshot
         id: content_snapshot
+        env:
+          SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
         run: |
-          external_docs_snapshot="$(
-            node -e '
-              const { products } = require("./external-docs.lock.json")
-              if (!Array.isArray(products) || products.length === 0) {
-                throw new Error("External documentation lock has no products")
-              }
-              for (const { id, revision } of products) {
-                if (typeof id !== "string" || !/^[0-9a-f]{40}$/.test(revision)) {
-                  throw new Error(`${id ?? "unknown"}: lock revision is not a full lowercase commit SHA`)
-                }
-              }
-              process.stdout.write(products.map(({ id, revision }) => `${id}@${revision}`).join(", "))
-            '
-          )"
-          samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
-          if ! [[ "$samples_revision" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::The resolved samples revision is not a full lowercase commit SHA."
-            exit 1
-          fi
-          echo "external_docs_snapshot=$external_docs_snapshot" >> "$GITHUB_OUTPUT"
-          echo "samples_revision=$samples_revision" >> "$GITHUB_OUTPUT"
-          printf 'External documentation snapshot: `%s`\n' "$external_docs_snapshot" >> "$GITHUB_STEP_SUMMARY"
-          printf 'Samples snapshot: `%s`\n' "$samples_revision" >> "$GITHUB_STEP_SUMMARY"
+          content_snapshot="$(node -e '
+            const { products } = require("./external-docs.lock.json")
+            const revisions = products.map(({ id, revision }) => `${id}@${revision}`)
+            revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
+            process.stdout.write(revisions.join(", "))
+          ')"
+          echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
+          printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CMS
         run: npm run cms:build
@@ -119,8 +112,7 @@ jobs:
       - name: Deploy to gh-pages branch
         working-directory: .
         env:
-          EXTERNAL_DOCS_SNAPSHOT: ${{ steps.content_snapshot.outputs.external_docs_snapshot }}
-          SAMPLES_REVISION: ${{ steps.content_snapshot.outputs.samples_revision }}
+          CONTENT_SNAPSHOT: ${{ steps.content_snapshot.outputs.snapshot }}
           SITE_REVISION: ${{ github.sha }}
         run: |
           git config user.name github-actions[bot]
@@ -130,5 +122,5 @@ jobs:
           rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
           cd gh-pages-deploy
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION (external docs $EXTERNAL_DOCS_SNAPSHOT, samples $SAMPLES_REVISION)"
+          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION ($CONTENT_SNAPSHOT)"
           git push origin HEAD:gh-pages
