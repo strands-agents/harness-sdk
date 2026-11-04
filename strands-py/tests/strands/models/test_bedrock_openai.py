@@ -49,7 +49,7 @@ def transport(captured_requests):
 def signing_http_client(monkeypatch, transport):
     """Keep the provider's signing HTTP client, but send its requests to the mock transport."""
     monkeypatch.setattr(
-        openai, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs)
+        openai, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(**{**kwargs, "transport": transport})
     )
 
 
@@ -115,19 +115,44 @@ def test_openai_credentials_in_the_environment_are_not_sent(monkeypatch, boto_se
     assert captured_requests[0].headers["authorization"].startswith("AWS4-HMAC-SHA256 ")
 
 
-def test_api_key_is_sent_instead_of_signing(transport, captured_requests):
+def test_api_key_is_sent_on_every_request(captured_requests):
+    agent = Agent(
+        model=BedrockModel.ChatCompletions(model_id="m", region_name="us-east-1", api_key="bedrock-key"),
+        callback_handler=None,
+    )
+
+    agent("one")
+    agent("two")
+
+    assert [str(request.url) for request in captured_requests] == [
+        "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
+    ] * 2
+    assert {request.headers["authorization"] for request in captured_requests} == {"Bearer bedrock-key"}
+
+
+def test_bedrock_bearer_token_from_the_environment_is_used(monkeypatch, captured_requests):
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bedrock-key")
+
+    Agent(model=BedrockModel.ChatCompletions(model_id="m"), callback_handler=None)("hello")
+
+    assert captured_requests[0].headers["authorization"] == "Bearer env-bedrock-key"
+
+
+def test_openai_organization_and_project_from_the_environment_are_not_sent(
+    monkeypatch, boto_session, captured_requests
+):
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-secret")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-secret")
     model = BedrockModel.ChatCompletions(
-        model_id="m",
-        region_name="us-east-1",
-        api_key="bedrock-key",
-        client_args={"http_client": httpx.AsyncClient(transport=transport)},
+        model_id="m", boto_session=boto_session, client_args={"default_headers": {"X-Trace": "t1"}}
     )
 
     Agent(model=model, callback_handler=None)("hello")
 
-    request = captured_requests[0]
-    assert str(request.url) == "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
-    assert request.headers["authorization"] == "Bearer bedrock-key"
+    headers = captured_requests[0].headers
+    assert "openai-organization" not in headers
+    assert "openai-project" not in headers
+    assert headers["x-trace"] == "t1"
 
 
 @pytest.mark.asyncio
@@ -147,8 +172,10 @@ async def test_responses_requests_are_signed(boto_session, captured_requests):
     ("kwargs", "message"),
     [
         ({"model_id": "arn:aws:bedrock:us-west-2:123456789012:imported-model/abc"}, "imported models"),
-        ({"model_id": "m", "client_args": {"base_url": "https://example.com"}}, "set by this provider"),
-        ({"model_id": "m", "client_args": {"http_client": object()}}, "set by this provider"),
+        ({"model_id": "m", "client_args": {"base_url": "https://example.com"}}, "remove them"),
+        ({"model_id": "m", "client_args": {"http_client": object()}}, "remove them"),
+        ({"model_id": "m", "client": object()}, "not supported by BedrockModel"),
+        ({"model_id": "m", "bedrock_mantle_config": {}}, "not supported by BedrockModel"),
         ({"model_id": "m", "endpoint": "bedrock-agent"}, "unknown Bedrock endpoint"),
         ({"model_id": "m", "region_name": "us-east-1", "boto_session": boto3.Session()}, "Cannot specify both"),
     ],

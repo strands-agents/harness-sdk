@@ -6,7 +6,13 @@ import boto3
 import openai
 from typing_extensions import Unpack, override
 
-from ._bedrock_auth import BedrockSigV4Auth, require_sdk_version
+from ._bedrock_auth import (
+    BedrockApiKeyAuth,
+    BedrockSigV4Auth,
+    bedrock_api_key,
+    check_bedrock_options,
+    require_sdk_version,
+)
 from ._openai_bedrock import BedrockMantleConfig, _resolve_base_url
 from .bedrock import BedrockEndpoint, _resolve_bedrock_region
 from .openai import OpenAIModel
@@ -17,8 +23,7 @@ require_sdk_version("openai", openai.__version__, (2, 31, 0), "BedrockModel.Chat
 
 _ENDPOINTS = ("bedrock-runtime", "bedrock-mantle")
 
-# The OpenAI SDK requires an api_key; with SigV4 the signature replaces the header it produces.
-_SIGV4_PLACEHOLDER_KEY = "bedrock-sigv4"
+_PLACEHOLDER_KEY = "bedrock"
 
 
 class _BedrockOpenAIClient:
@@ -27,7 +32,8 @@ class _BedrockOpenAIClient:
     def __init__(
         self,
         *,
-        model_id: str,
+        owner: str,
+        model_config: dict[str, Any],
         endpoint: BedrockEndpoint,
         region_name: str | None,
         boto_session: boto3.Session | None,
@@ -36,29 +42,28 @@ class _BedrockOpenAIClient:
     ) -> None:
         if endpoint not in _ENDPOINTS:
             raise ValueError(f"endpoint=<{endpoint}> | unknown Bedrock endpoint, use one of {sorted(_ENDPOINTS)}")
-        if ":imported-model/" in model_id:
-            raise ValueError(
-                f"model_id=<{model_id}> | imported models are served only through InvokeModel, "
-                "which the OpenAI-compatible endpoints don't cover"
-            )
-        owned = {"api_key", "base_url"} if api_key else {"api_key", "base_url", "http_client"}
-        if conflicting := owned & set(client_args or {}):
-            raise ValueError(f"client_args=<{sorted(conflicting)}> | set by this provider, remove them")
+        model_id = str(model_config.get("model_id", ""))
+        check_bedrock_options(owner, model_id, model_config, {"client", "bedrock_mantle_config"})
+        if conflicting := {"api_key", "base_url", "http_client"} & set(client_args or {}):
+            raise ValueError(f"client_args=<{sorted(conflicting)}> | set by {owner}, remove them")
 
-        self._session, region = _resolve_bedrock_region(region_name, boto_session)
-        self._region = region
-        self._signed = not api_key
-        base_url = _resolve_base_url(BedrockMantleConfig(endpoint=endpoint), region, model_id)
-        self.client_args = {**(client_args or {}), "api_key": api_key or _SIGV4_PLACEHOLDER_KEY, "base_url": base_url}
+        session, region = _resolve_bedrock_region(region_name, boto_session)
+        api_key = bedrock_api_key(api_key)
+        self._auth = BedrockApiKeyAuth(api_key) if api_key else BedrockSigV4Auth(session, region, openai.OpenAIError)
+        client_args = client_args or {}
+        self.client_args = {
+            **client_args,
+            # The OpenAI SDK adds these from OPENAI_ORG_ID / OPENAI_PROJECT_ID; they're meant for OpenAI, not AWS.
+            "default_headers": {"OpenAI-Organization": openai.Omit(), "OpenAI-Project": openai.Omit()}
+            | dict(client_args.get("default_headers") or {}),
+            # The OpenAI SDK requires an api_key; the auth below replaces the header it produces.
+            "api_key": _PLACEHOLDER_KEY,
+            "base_url": _resolve_base_url(BedrockMantleConfig(endpoint=endpoint), region, model_id),
+        }
 
     def per_request(self, client_args: dict[str, Any]) -> dict[str, Any]:
-        """Add a signing HTTP client; the parent model closes its OpenAI client, and with it this one, per request."""
-        if not self._signed:
-            return client_args
-        http_client = openai.DefaultAsyncHttpxClient(
-            auth=BedrockSigV4Auth(self._session, self._region, openai.OpenAIError)
-        )
-        return {**client_args, "http_client": http_client}
+        """Add an authenticating HTTP client; the parent model closes its OpenAI client, and this one, per request."""
+        return {**client_args, "http_client": openai.DefaultAsyncHttpxClient(auth=self._auth)}
 
 
 class BedrockChatCompletionsModel(OpenAIModel):
@@ -85,17 +90,19 @@ class BedrockChatCompletionsModel(OpenAIModel):
                 ``openai.gpt-oss-120b`` on bedrock-mantle.
             region_name: AWS region. Defaults to the session's region, then ``AWS_REGION``, then us-west-2.
             boto_session: Session whose credentials sign each request. Mutually exclusive with ``region_name``.
-            api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials.
+            api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials. Defaults to
+                ``AWS_BEARER_TOKEN_BEDROCK``.
             client_args: Arguments for the underlying OpenAI client, such as ``timeout`` or ``max_retries``.
-                Base URL and authentication are set by this provider, and ``http_client`` only with ``api_key``.
+                Base URL, authentication, and ``http_client`` are set by this provider.
             **model_config: Configuration options for the OpenAI model.
 
         Raises:
             ValueError: If the endpoint is unknown, both ``region_name`` and ``boto_session`` are given, the model
-                is an imported model, or ``client_args`` sets an argument this provider owns.
+                is an imported model, or ``client_args`` or the model options set something this provider owns.
         """
         self._bedrock = _BedrockOpenAIClient(
-            model_id=str(model_config.get("model_id", "")),
+            owner="BedrockModel.ChatCompletions",
+            model_config=dict(model_config),
             endpoint=endpoint,
             region_name=region_name,
             boto_session=boto_session,
@@ -133,17 +140,19 @@ class BedrockResponsesModel(OpenAIResponsesModel):
                 Not every model serves the Responses API on both; gpt-oss, for example, does only on bedrock-mantle.
             region_name: AWS region. Defaults to the session's region, then ``AWS_REGION``, then us-west-2.
             boto_session: Session whose credentials sign each request. Mutually exclusive with ``region_name``.
-            api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials.
+            api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials. Defaults to
+                ``AWS_BEARER_TOKEN_BEDROCK``.
             client_args: Arguments for the underlying OpenAI client, such as ``timeout`` or ``max_retries``.
-                Base URL and authentication are set by this provider, and ``http_client`` only with ``api_key``.
+                Base URL, authentication, and ``http_client`` are set by this provider.
             **model_config: Configuration options for the OpenAI Responses model.
 
         Raises:
             ValueError: If the endpoint is unknown, both ``region_name`` and ``boto_session`` are given, the model
-                is an imported model, or ``client_args`` sets an argument this provider owns.
+                is an imported model, or ``client_args`` or the model options set something this provider owns.
         """
         self._bedrock = _BedrockOpenAIClient(
-            model_id=str(model_config.get("model_id", "")),
+            owner="BedrockModel.Responses",
+            model_config=dict(model_config),
             endpoint=endpoint,
             region_name=region_name,
             boto_session=boto_session,

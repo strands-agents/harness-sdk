@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 import sys
 import unittest.mock
@@ -10,6 +11,7 @@ from botocore.credentials import Credentials
 
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models._bedrock_auth import BedrockPerLoopTransport
 from strands.models._bedrock_messages import BedrockMessagesModel
 from strands.models.anthropic import AnthropicModel
 
@@ -66,7 +68,7 @@ def transport(responses, captured_requests):
 def signing_http_client(monkeypatch, transport):
     """Keep the provider's signing HTTP client, but send its requests to the mock transport."""
     monkeypatch.setattr(
-        anthropic, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs)
+        anthropic, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(**{**kwargs, "transport": transport})
     )
 
 
@@ -151,11 +153,10 @@ def test_api_key_is_sent_instead_of_signing(captured_requests):
     assert "x-api-key" not in request.headers
 
 
-def test_anthropic_and_aws_credentials_in_the_environment_are_not_sent(monkeypatch, boto_session, captured_requests):
+def test_anthropic_credentials_in_the_environment_are_not_sent(monkeypatch, boto_session, captured_requests):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
     monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Gateway-Auth: gw-secret")
-    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bedrock-key")
     model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=boto_session)
 
     Agent(model=model, callback_handler=None)("hello")
@@ -164,6 +165,48 @@ def test_anthropic_and_aws_credentials_in_the_environment_are_not_sent(monkeypat
     assert "x-api-key" not in headers
     assert "x-gateway-auth" not in headers
     assert headers["authorization"].startswith("AWS4-HMAC-SHA256 ")
+
+
+def test_bedrock_bearer_token_from_the_environment_is_used(monkeypatch, captured_requests):
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bedrock-key")
+
+    Agent(model=BedrockModel.Messages(model_id="m", max_tokens=16), callback_handler=None)("hello")
+
+    assert captured_requests[0].headers["authorization"] == "Bearer env-bedrock-key"
+
+
+def test_imported_models_and_parent_client_option_are_rejected():
+    with pytest.raises(ValueError, match="imported models"):
+        BedrockModel.Messages(model_id="arn:aws:bedrock:us-west-2:123456789012:imported-model/abc", max_tokens=16)
+    with pytest.raises(ValueError, match="not supported by BedrockModel.Messages"):
+        BedrockModel.Messages(model_id="m", max_tokens=16, client=object())  # type: ignore[call-arg]
+
+
+def test_connection_pools_are_per_event_loop():
+    transport = BedrockPerLoopTransport(httpx.Limits())
+
+    async def send():
+        with unittest.mock.patch.object(
+            httpx.AsyncHTTPTransport, "handle_async_request", return_value=httpx.Response(200)
+        ):
+            await transport.handle_async_request(httpx.Request("GET", "https://example.com"))
+        return transport._transports[asyncio.get_running_loop()]
+
+    first = asyncio.run(send())
+    second = asyncio.run(send())
+
+    assert first is not second
+
+
+def test_missing_extra_is_reported_as_an_absent_attribute():
+    code = (
+        "import sys; sys.modules['anthropic'] = None\n"
+        "from strands.models import BedrockModel\n"
+        "assert not hasattr(BedrockModel, 'Messages')\n"
+        'try:\n    BedrockModel.Messages\nexcept AttributeError as e:\n    assert "strands-agents[anthropic]" in str(e)'
+    )
+
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_client_args_are_forwarded(boto_session, captured_requests):

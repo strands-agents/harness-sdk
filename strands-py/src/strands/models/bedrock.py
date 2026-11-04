@@ -231,12 +231,23 @@ def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
 class _LazyModelClass:
     """Resolves a nested ``BedrockModel`` class on first access, so its optional SDK is only imported when used."""
 
-    def __init__(self, module: str, name: str) -> None:
+    def __init__(self, module: str, name: str, extra: str) -> None:
         self._module = module
         self._name = name
+        self._extra = extra
+
+    def __set_name__(self, owner: type, attribute: str) -> None:
+        self._attribute = f"{owner.__name__}.{attribute}"
 
     def __get__(self, instance: object, owner: type) -> Any:
-        return getattr(importlib.import_module(self._module, __package__), self._name)
+        try:
+            module = importlib.import_module(self._module, __package__)
+        except ModuleNotFoundError as error:
+            # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
+            raise AttributeError(
+                f"{self._attribute} requires the '{self._extra}' extra: pip install 'strands-agents[{self._extra}]'"
+            ) from error
+        return getattr(module, self._name)
 
 
 class BedrockModel(Model):
@@ -260,9 +271,9 @@ class BedrockModel(Model):
         from ._bedrock_openai import BedrockChatCompletionsModel as ChatCompletions
         from ._bedrock_openai import BedrockResponsesModel as Responses
     else:
-        Messages = _LazyModelClass("._bedrock_messages", "BedrockMessagesModel")
-        ChatCompletions = _LazyModelClass("._bedrock_openai", "BedrockChatCompletionsModel")
-        Responses = _LazyModelClass("._bedrock_openai", "BedrockResponsesModel")
+        Messages = _LazyModelClass("._bedrock_messages", "BedrockMessagesModel", "anthropic")
+        ChatCompletions = _LazyModelClass("._bedrock_openai", "BedrockChatCompletionsModel", "openai")
+        Responses = _LazyModelClass("._bedrock_openai", "BedrockResponsesModel", "openai")
 
     class BedrockConfig(BaseModelConfig, total=False):
         """Configuration options for Bedrock models.
