@@ -10,7 +10,7 @@ import os
 import threading
 import warnings
 from collections.abc import AsyncGenerator, Callable, Iterable, ValuesView
-from typing import Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
 
 import boto3
 from botocore import UNSIGNED
@@ -47,6 +47,9 @@ from ._strict_schema import ensure_strict_json_schema
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
+
+if TYPE_CHECKING:
+    from ._bedrock_messages import BedrockMessagesModel
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +210,15 @@ def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
     return {**fields, "anthropic_beta": betas, "thinking": thinking}
 
 
+class _BedrockMessagesAttribute:
+    """Resolves ``BedrockModel.Messages`` on first access, so ``anthropic`` is only imported when it is used."""
+
+    def __get__(self, instance: object, owner: type) -> "type[BedrockMessagesModel]":
+        from ._bedrock_messages import BedrockMessagesModel
+
+        return BedrockMessagesModel
+
+
 class BedrockModel(Model):
     """AWS Bedrock model provider implementation.
 
@@ -220,6 +232,11 @@ class BedrockModel(Model):
     """
 
     _supports_structured_output = True
+
+    ConverseStream: ClassVar[type["BedrockModel"]]
+    """This class: the Converse API."""
+    Messages = _BedrockMessagesAttribute()
+    """The Anthropic Messages API on Bedrock; see :class:`~strands.models._bedrock_messages.BedrockMessagesModel`."""
 
     class BedrockConfig(BaseModelConfig, total=False):
         """Configuration options for Bedrock models.
@@ -2020,3 +2037,6 @@ class BedrockModel(Model):
             stacklevel=2,
         )
         return default_model_id
+
+
+BedrockModel.ConverseStream = BedrockModel

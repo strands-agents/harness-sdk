@@ -135,6 +135,8 @@ class AnthropicModel(Model):
         "message_stop",
     }
 
+    _client_class: type[anthropic.AsyncAnthropic] = anthropic.AsyncAnthropic
+
     OVERFLOW_MESSAGES = {
         "prompt is too long:",
         "input is too long",
@@ -192,7 +194,7 @@ class AnthropicModel(Model):
         logger.debug("config=<%s> | initializing", self.config)
 
         client_args = client_args or {}
-        self.client = anthropic.AsyncAnthropic(**client_args)
+        self.client = self._client_class(**client_args)
         self._drop_stale_thinking_model_id: str | None = None
 
     @override
