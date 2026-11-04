@@ -142,8 +142,8 @@ content collection. The first integration publishes the pages selected by Box's 
 
 **Why:** Product documentation changes with its implementation. Keeping the source Markdown
 in the product repository lets one commit update behavior and documentation together. The
-site owns the route prefix, publication status, navigation placement, presentation, and pinned
-revision; the upstream manifest owns each page's route suffix.
+site owns the route prefix, publication status, navigation placement, presentation, tracked ref,
+and committed baseline; the upstream manifest owns each page's route suffix.
 
 #### Upstream contract
 
@@ -164,17 +164,23 @@ a lock-only update cannot promote pages.
 
 `external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
 prefix, sidebar label, and publication status. `external-docs.lock.json` maps product IDs to
-immutable commit SHAs.
+immutable baseline SHAs used by CI, local builds, and the production fallback.
 Ordinary CI and local site builds read the committed SHA, never the moving ref. At the start of a
-manual production deploy, `docs-deploy-github-pages.yml` resolves each tracked ref once and writes
-the result to the job's temporary lock file. The rest of that deploy generates and publishes from
-the same immutable snapshot, and any resulting `gh-pages` commit records the Box and samples
-revisions.
+manual production deploy, `docs-deploy-github-pages.yml` defaults to resolving each tracked ref
+once and writes the result to the job's temporary lock file. The dispatcher can instead select
+`locked` to use the committed baseline when an upstream revision is temporarily incompatible.
+The rest of the deploy generates and publishes from the selected immutable snapshot, and any
+resulting `gh-pages` commit records every external documentation revision plus the samples
+revision.
 Upstream Box commits do not trigger site rebuilds.
 
 The manually dispatched `docs-external-sync.yml` workflow remains available to validate a newer
 snapshot with the same `npm run cms:build` path as docs CI and open or update a draft lock-only PR.
 This refreshes the committed baseline used by CI; it is not required for production deployment.
+Automatic refreshes are intentionally disabled so upstream activity does not create recurring
+lock PRs. There is no fixed refresh cadence: maintainers run the workflow on demand before site
+changes that affect federation compatibility, or when they intentionally want CI and local builds
+to adopt a newer upstream baseline.
 An upstream stable commit may be pinned while the site keeps the pages in preview. A site-side
 promotion fails generation until the upstream status is also `stable`. The workflow summary and PR
 body link to each upstream old-to-new commit comparison.
