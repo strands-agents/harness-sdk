@@ -35,6 +35,9 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
+from . import _bedrock_invoke_model as invoke_model
+from ._anthropic_compaction import from_last_native_block, read_compaction, until_cancelled
+from ._anthropic_messages import RawEventReader, message_to_events
 from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._model_info import ModelCapabilities, ModelInfo
 from ._native_output import (
@@ -45,6 +48,7 @@ from ._native_output import (
     unsupported_mechanisms,
 )
 from ._strict_schema import ensure_strict_json_schema
+from ._summarize import SummarizeResult
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
@@ -1043,6 +1047,240 @@ class BedrockModel(Model):
 
         return cleaned_messages
 
+    def _sends_invoke_model(self) -> bool:
+        """Whether requests go through InvokeModel as Anthropic Messages bodies instead of Converse.
+
+        A model that declares ``server_side_summary`` does, since a stored compaction block has no Converse
+        equivalent and the compaction request itself is an Anthropic body.
+        """
+        return self.model_info.capabilities.server_side_summary is True
+
+    def _invoke_model_body(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt_content: list[SystemContentBlock] | None,
+        tool_choice: ToolChoice | None,
+        dynamic_trailing_blocks: int = 0,
+    ) -> dict[str, Any]:
+        """Build the InvokeModel body, sent from the last compaction block."""
+        caching = self._cache_strategy == "anthropic"
+        cache_config = self.config.get("cache_config") if caching else None
+        inference = {
+            key: self.config[name]  # type: ignore[literal-required]
+            for name, key in (("temperature", "temperature"), ("top_p", "top_p"), ("stop_sequences", "stop_sequences"))
+            if self.config.get(name) is not None
+        }
+        fields = self._get_additional_request_fields(tool_choice).get("additionalModelRequestFields") or {}
+        return invoke_model.build_body(
+            from_last_native_block(messages),
+            tool_specs=tool_specs,
+            system_prompt_content=self._invoke_model_system(system_prompt_content),
+            tool_choice=tool_choice,
+            max_tokens=resolve_max_tokens(self.config, self.config["model_id"]),
+            inference=inference,
+            additional_fields=dict(fields),
+            cache_config=cache_config,
+            tools_cache_ttl=self._invoke_model_tools_cache(),
+            system_cache_ttl=self._invoke_model_system_cache(),
+            dynamic_trailing_blocks=dynamic_trailing_blocks,
+            strict_tools=bool(self.config.get("strict_tools")),
+        )
+
+    def _invoke_model_system(
+        self, system_prompt_content: list[SystemContentBlock] | None
+    ) -> list[SystemContentBlock] | None:
+        if not (cache_prompt := self.config.get("cache_prompt")) or not system_prompt_content:
+            return system_prompt_content
+        return [*system_prompt_content, {"cachePoint": {"type": cast(Any, cache_prompt)}}]
+
+    def _invoke_model_tools_cache(self) -> tuple[bool, str | None]:
+        points = self._build_tools_cache_point()
+        if not points:
+            return False, None
+        return True, points[0]["cachePoint"].get("ttl")
+
+    def _invoke_model_system_cache(self) -> tuple[bool, str | None]:
+        cache_config = self.config.get("cache_config")
+        if self._cache_strategy != "anthropic" or cache_config is None or cache_config.system_prompt_ttl is False:
+            return False, None
+        system_prompt_ttl = cache_config.system_prompt_ttl
+        return True, system_prompt_ttl if isinstance(system_prompt_ttl, str) else cache_config.ttl
+
+    def _invoke(self, body: dict[str, Any], streaming: bool) -> Any:
+        """Send an InvokeModel request, retrying once with drop_block when replayed thinking went stale."""
+        method = self.client.invoke_model_with_response_stream if streaming else self.client.invoke_model
+        kwargs: dict[str, Any] = {"modelId": self.config["model_id"], "contentType": "application/json"}
+        kwargs["accept"] = "application/json"
+        if guardrail_id := self.config.get("guardrail_id"):
+            kwargs["guardrailIdentifier"] = guardrail_id
+            if guardrail_version := self.config.get("guardrail_version"):
+                kwargs["guardrailVersion"] = guardrail_version
+            kwargs["trace"] = (self.config.get("guardrail_trace") or "enabled").upper()
+        try:
+            return method(**kwargs, body=json.dumps(body))
+        except ClientError as error:
+            is_binding_error = error.response.get("Error", {}).get("Code") == "ValidationException" and (
+                is_thinking_binding_error(error)
+            )
+            retry_body = _fields_with_drop_block(body) if is_binding_error else None
+            if retry_body is None:
+                raise
+
+        logger.warning(
+            "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
+            self.config["model_id"],
+        )
+        self._drop_stale_thinking_model_id = self.config["model_id"]
+        return method(**kwargs, body=json.dumps(retry_body))
+
+    def _stream_invoke_model(
+        self,
+        callback: Callable[..., None],
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt_content: list[SystemContentBlock] | None,
+        tool_choice: ToolChoice | None,
+        dynamic_trailing_blocks: int,
+        cancel_signal: threading.Event | None,
+    ) -> None:
+        """Stream a turn through InvokeModel, publishing Strands events through ``callback``."""
+        if self.config.get("guardrail_id"):
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                "guardrail redaction is not applied to requests sent through InvokeModel; the guardrail still runs",
+                stacklevel=1,
+            )
+        body = self._invoke_model_body(
+            messages, tool_specs, system_prompt_content, tool_choice, dynamic_trailing_blocks
+        )
+        logger.debug("model_id=<%s> | invoking model through invoke_model", self.config["model_id"])
+        streaming = self.config.get("streaming", True) is not False
+        response = self._invoke(body, streaming=streaming)
+        reader = RawEventReader()
+        for raw_event in self._invoke_model_raw_events(response, streaming):
+            if cancel_signal is not None and cancel_signal.is_set():
+                # A non-streaming body is already read in full, so only a stream has a transfer to stop.
+                if streaming:
+                    response["body"].close()
+                return
+            for event in reader.read(raw_event):
+                callback(event)
+        for event in reader.finish():
+            callback(event)
+
+    @staticmethod
+    def _invoke_model_raw_events(response: dict[str, Any], streaming: bool) -> Iterable[dict[str, Any]]:
+        """The raw Messages API events of an InvokeModel response, streamed or complete."""
+        if not streaming:
+            return message_to_events(json.loads(response["body"].read()))
+        return (event for event in map(invoke_model.decode_chunk, response["body"]) if event is not None)
+
+    async def _count_invoke_model_tokens(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        system_prompt_content: list[SystemContentBlock] | None,
+    ) -> int:
+        """Count the tokens an InvokeModel request sends, which start at the last compaction block."""
+        sent = from_last_native_block(messages)
+        if self.config.get("use_native_token_count") is not True:
+            return await super().count_tokens(sent, tool_specs, system_prompt, system_prompt_content)
+        if system_prompt and system_prompt_content is None:
+            system_prompt_content = [{"text": system_prompt}]
+        try:
+            body = self._invoke_model_body(messages, tool_specs, system_prompt_content, None)
+            response = await asyncio.to_thread(
+                self.client.count_tokens,
+                modelId=self.config["model_id"],
+                input={"invokeModel": {"body": json.dumps(body)}},
+            )
+            return int(response["inputTokens"])
+        except Exception as error:
+            logger.debug(
+                "model_id=<%s>, error=<%s> | native token counting failed, falling back to estimation",
+                self.config["model_id"],
+                error,
+            )
+            return await super().count_tokens(sent, tool_specs, system_prompt, system_prompt_content)
+
+    @override
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        **kwargs: Any,
+    ) -> SummarizeResult:
+        """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction through InvokeModel.
+
+        Used when ``model_info.capabilities.server_side_summary`` is True, sending the live system prompt and tools;
+        otherwise uses the base :meth:`Model.summarize`. The returned compaction block is stored as a text block
+        whose ``metadata.providerData`` holds the block, which later requests send back exactly as returned.
+
+        Args:
+            messages: The opening messages to summarize, left unmodified.
+            tool_specs: The live conversation's tool specifications.
+            system_prompt: The live conversation's plain string system prompt.
+            system_prompt_content: The live conversation's structured system prompt.
+            instructions: Summarization instructions replacing the API's own prompt.
+            cancel_signal: Event that stops waiting for the in-flight compaction request.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary and the compaction's usage. The summary is empty when the response holds none or the call
+            was cancelled, which leaves the history unchanged.
+
+        Raises:
+            ContextWindowOverflowException: If the request does not fit the context window.
+            ModelThrottledException: If the request is throttled by Bedrock.
+        """
+        if not self._sends_invoke_model():
+            return await super().summarize(
+                messages,
+                tool_specs=tool_specs,
+                system_prompt=system_prompt,
+                system_prompt_content=system_prompt_content,
+                instructions=instructions,
+                cancel_signal=cancel_signal,
+                **kwargs,
+            )
+        if system_prompt and system_prompt_content is None:
+            system_prompt_content = [{"text": system_prompt}]
+        body = invoke_model.compaction_body(
+            self._invoke_model_body(messages, tool_specs, system_prompt_content, None), instructions
+        )
+        compaction = asyncio.ensure_future(asyncio.to_thread(self._compact, body))
+        if await until_cancelled(compaction, cancel_signal):
+            compaction.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+            logger.debug("model_id=<%s> | compaction cancelled", self.config["model_id"])
+            return SummarizeResult(content=[])
+
+        compacted = read_compaction(compaction.result(), self.config["model_id"])
+        if compacted is None:
+            return SummarizeResult(content=[])
+        block, usage = compacted
+        return SummarizeResult(content=[block], usage=usage)
+
+    def _compact(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Send a compaction request and return the response message."""
+        try:
+            response = self._invoke(body, streaming=False)
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code in ("ThrottlingException", "throttlingException"):
+                raise ModelThrottledException(str(error)) from error
+            if any(message in str(error) for message in BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES):
+                raise ContextWindowOverflowException(error) from error
+            raise
+        message: dict[str, Any] = json.loads(response["body"].read())
+        return message
+
     def _converse_structured_output(
         self,
         converse_method: Callable[..., Any],
@@ -1466,6 +1704,9 @@ class BedrockModel(Model):
         Returns:
             Total input token count.
         """
+        if self._sends_invoke_model():
+            return await self._count_invoke_model_tokens(messages, tool_specs, system_prompt, system_prompt_content)
+
         if self.config.get("use_native_token_count") is not True:
             return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
 
@@ -1646,6 +1887,18 @@ class BedrockModel(Model):
             ModelThrottledException: If the model service is throttling requests.
         """
         try:
+            if self._sends_invoke_model():
+                self._stream_invoke_model(
+                    callback,
+                    messages,
+                    tool_specs,
+                    system_prompt_content,
+                    tool_choice,
+                    dynamic_trailing_blocks,
+                    cancel_signal,
+                )
+                return
+
             logger.debug("formatting request")
             request = self.format_request(
                 messages, tool_specs, system_prompt_content, tool_choice, dynamic_trailing_blocks

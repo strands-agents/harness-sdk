@@ -5,8 +5,6 @@
 """
 
 import asyncio
-import base64
-import json
 import logging
 import re
 import threading
@@ -14,7 +12,6 @@ import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
-from urllib.parse import urlparse
 
 import anthropic
 from pydantic import BaseModel
@@ -23,19 +20,10 @@ from typing_extensions import Required, Unpack, override
 from ..event_loop.streaming import process_stream
 from ..tools.structured_output._structured_output_context import json_object_from_message
 from ..tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
-from ..types.citations import (
-    DocumentCharLocationDict,
-    DocumentChunkLocationDict,
-    DocumentPageLocationDict,
-    SearchResultLocationDict,
-    WebLocation,
-    WebLocationDict,
-)
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
-from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
-from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
 from ._anthropic_compaction import (
     COMPACTION_BETA,
     carries_native_block,
@@ -44,6 +32,15 @@ from ._anthropic_compaction import (
     from_last_native_block,
     read_compaction,
     until_cancelled,
+)
+from ._anthropic_messages import (
+    SERVER_TOOL_BLOCK_TYPES,
+    attach_cache_control,
+    format_cache_control,
+    format_citation,
+    format_content_block,
+    format_event,
+    format_tool_choice,
 )
 from ._defaults import resolve_config_metadata
 from ._native_output import (
@@ -66,44 +63,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# Content blocks for tools Anthropic executes server side. They have no toolUse/toolResult equivalent
-# (the agent never runs them), so they are not streamed.
-_SERVER_TOOL_BLOCK_TYPES = frozenset(
-    {
-        "bash_code_execution_tool_result",
-        "code_execution_tool_result",
-        "container_upload",
-        "mcp_tool_result",
-        "mcp_tool_use",
-        "server_tool_use",
-        "text_editor_code_execution_tool_result",
-        "tool_search_tool_result",
-        "web_fetch_tool_result",
-        "web_search_tool_result",
-    }
-)
-
 # Anthropic pauses a long server-side tool turn with stop_reason=pause_turn and expects the paused
 # assistant message to be sent back as-is to resume it. Bounds how many times stream() does so.
 _MAX_PAUSE_TURN_CONTINUATIONS = 10
-
-_IMAGE_MEDIA_TYPES = {
-    "gif": "image/gif",
-    "jpeg": "image/jpeg",
-    "jpg": "image/jpeg",
-    "png": "image/png",
-    "webp": "image/webp",
-}
-
-# Anthropic document sources accept only pdf (base64) and plain text; these formats are delivered as text.
-_TEXT_FILE_FORMATS = frozenset({"csv", "html", "md", "txt"})
-
-# Anthropic accepts ``cache_control`` on these block types only; any other block is rejected.
-# https://docs.claude.com/en/docs/build-with-claude/prompt-caching
-_CACHEABLE_BLOCK_TYPES = frozenset({"document", "image", "text", "tool_result", "tool_use"})
-
-# ``ephemeral`` is the only cache type the Anthropic API supports
-_ANTHROPIC_CACHE_TYPE = "ephemeral"
 
 # The anthropic SDK added the output_config request parameter in 0.77.0, after transform_schema (0.75.0).
 _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (0, 77)
@@ -233,111 +195,8 @@ class AnthropicModel(Model):
         return resolve_config_metadata(self.config, self.config["model_id"])
 
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
-        """Format an Anthropic content block.
-
-        Args:
-            content: Message content.
-
-        Returns:
-            Anthropic formatted content block, or None if Anthropic cannot accept the block.
-
-        Raises:
-            TypeError: If the content block type or document format cannot be converted to an
-                Anthropic-compatible format.
-        """
-        if "document" in content:
-            document_format = content["document"]["format"]
-            if document_format == "pdf":
-                source: dict[str, Any] = {
-                    "data": base64.b64encode(content["document"]["source"]["bytes"]).decode("utf-8"),
-                    "media_type": "application/pdf",
-                    "type": "base64",
-                }
-            elif document_format in _TEXT_FILE_FORMATS:
-                try:
-                    text_data = content["document"]["source"]["bytes"].decode("utf-8")
-                except UnicodeDecodeError as decode_error:
-                    raise TypeError(
-                        f"content_type=<document>, format=<{document_format}> | document is not valid utf-8 text"
-                    ) from decode_error
-                source = {
-                    "data": text_data,
-                    "media_type": "text/plain",
-                    "type": "text",
-                }
-            else:
-                raise TypeError(f"content_type=<document>, format=<{document_format}> | unsupported format")
-
-            return {
-                "source": source,
-                "title": content["document"]["name"],
-                "type": "document",
-            }
-
-        if "image" in content:
-            image_format = content["image"]["format"]
-            if image_format not in _IMAGE_MEDIA_TYPES:
-                raise TypeError(f"content_type=<image>, format=<{image_format}> | unsupported format")
-
-            return {
-                "source": {
-                    "data": base64.b64encode(content["image"]["source"]["bytes"]).decode("utf-8"),
-                    "media_type": _IMAGE_MEDIA_TYPES[image_format],
-                    "type": "base64",
-                },
-                "type": "image",
-            }
-
-        if "reasoningContent" in content:
-            reasoning_text = content["reasoningContent"].get("reasoningText", {})
-            if signature := reasoning_text.get("signature"):
-                return {
-                    "signature": signature,
-                    "thinking": reasoning_text.get("text", ""),
-                    "type": "thinking",
-                }
-
-            if redacted_content := content["reasoningContent"].get("redactedContent"):
-                return {
-                    "data": base64.b64encode(redacted_content).decode("utf-8"),
-                    "type": "redacted_thinking",
-                }
-
-            # Anthropic rejects reasoning text without a signature, which is how other model families emit it.
-            return None
-
-        if "text" in content:
-            return {"text": content["text"], "type": "text"}
-
-        if "citationsContent" in content:
-            text = "".join(c["text"] for c in content["citationsContent"].get("content", []) if "text" in c)
-            return {"text": text, "type": "text"}
-
-        if "toolUse" in content:
-            return {
-                "id": content["toolUse"]["toolUseId"],
-                "input": content["toolUse"]["input"],
-                "name": content["toolUse"]["name"],
-                "type": "tool_use",
-            }
-
-        if "toolResult" in content:
-            formatted_results = [
-                self._format_request_message_content(
-                    {"text": json.dumps(tool_result_content["json"], ensure_ascii=False)}
-                    if "json" in tool_result_content
-                    else cast(ContentBlock, tool_result_content)
-                )
-                for tool_result_content in content["toolResult"]["content"]
-            ]
-            return {
-                "content": [block for block in formatted_results if block is not None],
-                "is_error": content["toolResult"]["status"] == "error",
-                "tool_use_id": content["toolResult"]["toolUseId"],
-                "type": "tool_result",
-            }
-
-        raise TypeError(f"content_type=<{next(iter(content))}> | unsupported type")
+        """Format an Anthropic content block, or None if Anthropic cannot accept the block."""
+        return format_content_block(content)
 
     def _format_request_messages(
         self,
@@ -426,27 +285,8 @@ class AnthropicModel(Model):
     def _attach_cache_control(
         cls, formatted_contents: list[dict[str, Any]], ttl: str | None, skip_trailing: int = 0
     ) -> bool:
-        """Mark the last already-formatted block that the API accepts ``cache_control`` on.
-
-        Scans backwards because the nearest block may be a type the API rejects (a ``thinking`` block,
-        for example) or may have been dropped in translation.
-
-        Args:
-            formatted_contents: Blocks formatted so far for the current message. Mutated in place.
-            ttl: Optional TTL duration carried by the cache point.
-            skip_trailing: Trailing blocks rebuilt every call; the cache point stays ahead of them, since a
-                prefix that changes every call is written every call and never read.
-
-        Returns:
-            True when a block was marked, False when none of the blocks can carry a cache point.
-        """
-        durable = formatted_contents[: len(formatted_contents) - skip_trailing]
-        for block in reversed(durable):
-            if block.get("type") in _CACHEABLE_BLOCK_TYPES:
-                block["cache_control"] = cls._format_cache_control(ttl)
-                return True
-
-        return False
+        """Mark the last already-formatted block that the API accepts ``cache_control`` on."""
+        return attach_cache_control(formatted_contents, ttl, skip_trailing)
 
     def _auto_caching_unsupported(self) -> bool:
         """Whether the default ``"auto"`` strategy must skip caching for this model.
@@ -507,18 +347,8 @@ class AnthropicModel(Model):
 
     @staticmethod
     def _format_cache_control(ttl: str | None) -> dict[str, Any]:
-        """Build an Anthropic ``cache_control`` value.
-
-        Args:
-            ttl: TTL duration (e.g. "5m", "1h"). A falsy value is omitted, leaving the API default.
-
-        Returns:
-            An Anthropic cache_control dict.
-        """
-        cache_control: dict[str, Any] = {"type": _ANTHROPIC_CACHE_TYPE}
-        if ttl:
-            cache_control["ttl"] = ttl
-        return cache_control
+        """Build an Anthropic ``cache_control`` value."""
+        return format_cache_control(ttl)
 
     def _manage_cache_points(self, messages: Messages) -> tuple[Messages, int | None]:
         """Return a copy of messages carrying at most one cache point, and the message that owns it.
@@ -768,75 +598,8 @@ class AnthropicModel(Model):
 
     @staticmethod
     def _format_citation(citation: dict[str, Any]) -> CitationsDelta:
-        """Format an Anthropic citation into a Strands citation delta.
-
-        Args:
-            citation: An Anthropic citation object from a `citations_delta` event.
-
-        Returns:
-            The formatted citation delta.
-        """
-        formatted: CitationsDelta = {}
-
-        if title := citation.get("title") or citation.get("document_title"):
-            formatted["title"] = title
-
-        if cited_text := citation.get("cited_text"):
-            formatted["sourceContent"] = [{"text": cited_text}]
-
-        match citation.get("type"):
-            case "web_search_result_location":
-                url = citation.get("url") or ""
-                web: WebLocation = {"url": url}
-                if domain := urlparse(url).hostname:
-                    web["domain"] = domain
-                web_location: WebLocationDict = {"web": web}
-                formatted["location"] = web_location
-
-            case "search_result_location":
-                search_location: SearchResultLocationDict = {
-                    "searchResultLocation": {
-                        "searchResultIndex": citation.get("search_result_index", 0),
-                        "start": citation.get("start_block_index", 0),
-                        "end": citation.get("end_block_index", 0),
-                    }
-                }
-                formatted["location"] = search_location
-
-            case "char_location":
-                char_location: DocumentCharLocationDict = {
-                    "documentChar": {
-                        "documentIndex": citation.get("document_index", 0),
-                        "start": citation.get("start_char_index", 0),
-                        "end": citation.get("end_char_index", 0),
-                    }
-                }
-                formatted["location"] = char_location
-
-            case "page_location":
-                page_location: DocumentPageLocationDict = {
-                    "documentPage": {
-                        "documentIndex": citation.get("document_index", 0),
-                        "start": citation.get("start_page_number", 0),
-                        "end": citation.get("end_page_number", 0),
-                    }
-                }
-                formatted["location"] = page_location
-
-            case "content_block_location":
-                chunk_location: DocumentChunkLocationDict = {
-                    "documentChunk": {
-                        "documentIndex": citation.get("document_index", 0),
-                        "start": citation.get("start_block_index", 0),
-                        "end": citation.get("end_block_index", 0),
-                    }
-                }
-                formatted["location"] = chunk_location
-
-            case unknown_type:
-                logger.warning("citation_type=<%s> | unsupported citation location | skipping", unknown_type)
-
-        return formatted
+        """Format an Anthropic citation into a Strands citation delta."""
+        return format_citation(citation)
 
     @staticmethod
     def _log_server_tool_block(content_block: Any) -> None:
@@ -853,17 +616,7 @@ class AnthropicModel(Model):
 
     @staticmethod
     def _format_tool_choice(tool_choice: ToolChoice | None) -> dict:
-        if tool_choice is None:
-            return {}
-
-        if "any" in tool_choice:
-            return {"tool_choice": {"type": "any"}}
-        elif "auto" in tool_choice:
-            return {"tool_choice": {"type": "auto"}}
-        elif "tool" in tool_choice:
-            return {"tool_choice": {"type": "tool", "name": cast(ToolChoiceToolDict, tool_choice)["tool"]["name"]}}
-        else:
-            return {}
+        return format_tool_choice(tool_choice)
 
     def format_chunk(self, event: dict[str, Any]) -> StreamEvent:
         """Format the Anthropic response events into standardized message chunks.
@@ -878,130 +631,7 @@ class AnthropicModel(Model):
             RuntimeError: If chunk_type is not recognized.
                 This error should never be encountered as we control chunk_type in the stream method.
         """
-        match event["type"]:
-            case "message_start":
-                return {"messageStart": {"role": "assistant"}}
-
-            case "content_block_start":
-                content = event["content_block"]
-
-                if content["type"] == "tool_use":
-                    return {
-                        "contentBlockStart": {
-                            "contentBlockIndex": event["index"],
-                            "start": {
-                                "toolUse": {
-                                    "name": content["name"],
-                                    "toolUseId": content["id"],
-                                }
-                            },
-                        }
-                    }
-
-                return {"contentBlockStart": {"contentBlockIndex": event["index"], "start": {}}}
-
-            case "content_block_delta":
-                delta = event["delta"]
-
-                match delta["type"]:
-                    case "signature_delta":
-                        return {
-                            "contentBlockDelta": {
-                                "contentBlockIndex": event["index"],
-                                "delta": {
-                                    "reasoningContent": {
-                                        "signature": delta["signature"],
-                                    },
-                                },
-                            },
-                        }
-
-                    case "thinking_delta":
-                        return {
-                            "contentBlockDelta": {
-                                "contentBlockIndex": event["index"],
-                                "delta": {
-                                    "reasoningContent": {
-                                        "text": delta["thinking"],
-                                    },
-                                },
-                            },
-                        }
-
-                    case "input_json_delta":
-                        return {
-                            "contentBlockDelta": {
-                                "contentBlockIndex": event["index"],
-                                "delta": {
-                                    "toolUse": {
-                                        "input": delta["partial_json"],
-                                    },
-                                },
-                            },
-                        }
-
-                    case "text_delta":
-                        return {
-                            "contentBlockDelta": {
-                                "contentBlockIndex": event["index"],
-                                "delta": {
-                                    "text": delta["text"],
-                                },
-                            },
-                        }
-
-                    case "citations_delta":
-                        return {
-                            "contentBlockDelta": {
-                                "contentBlockIndex": event["index"],
-                                "delta": {
-                                    "citation": self._format_citation(delta["citation"]),
-                                },
-                            },
-                        }
-
-                    case _:
-                        raise RuntimeError(
-                            f"event_type=<content_block_delta>, delta_type=<{delta['type']}> | unknown type"
-                        )
-
-            case "content_block_stop":
-                return {"contentBlockStop": {"contentBlockIndex": event["index"]}}
-
-            case "message_stop":
-                message = event["message"]
-
-                return {"messageStop": {"stopReason": message["stop_reason"]}}
-
-            case "metadata":
-                usage = event["usage"]
-                input_tokens = usage["input_tokens"]
-                output_tokens = usage["output_tokens"]
-                cache_read = usage.get("cache_read_input_tokens") or 0
-                cache_write = usage.get("cache_creation_input_tokens") or 0
-                # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
-                # billed total is the sum of all four counters.
-                usage_chunk: Usage = {
-                    "inputTokens": input_tokens,
-                    "outputTokens": output_tokens,
-                    "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
-                }
-                if cache_read:
-                    usage_chunk["cacheReadInputTokens"] = cache_read
-                if cache_write:
-                    usage_chunk["cacheWriteInputTokens"] = cache_write
-
-                return {
-                    "metadata": {
-                        "usage": usage_chunk,
-                        "metrics": {
-                            "latencyMs": 0,  # TODO
-                        },
-                    }
-                }
-
-            case _:
-                raise RuntimeError(f"event_type=<{event['type']} | unknown type")
+        return format_event(event)
 
     @override
     async def count_tokens(
@@ -1128,7 +758,7 @@ class AnthropicModel(Model):
                         if event.type == "message_stop":
                             stop_reason = event.message.stop_reason
                             continue
-                        if event.type == "content_block_start" and event.content_block.type in _SERVER_TOOL_BLOCK_TYPES:
+                        if event.type == "content_block_start" and event.content_block.type in SERVER_TOOL_BLOCK_TYPES:
                             server_tool_block_indexes.add(event.index)
                             self._log_server_tool_block(event.content_block)
                             continue
