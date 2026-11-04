@@ -428,6 +428,10 @@ describe('concurrentInvocationMode', () => {
         .addTurn({ type: 'textBlock', text: 'B' })
         .addTurn({ type: 'textBlock', text: 'C' })
       const agent = new Agent({ model, tools: [gate.tool], printer: false, concurrentInvocationMode: 'queue' })
+      const hookIds: string[] = []
+      agent.addHook(BeforeInvocationEvent, (event) => {
+        hookIds.push(...event.messages.map((message) => message.trackingId))
+      })
 
       const first = agent.invoke('a')
       await gate.started
@@ -445,6 +449,8 @@ describe('concurrentInvocationMode', () => {
         .filter((message) => message.content[0] instanceof TextBlock && ['b', 'c'].includes(message.content[0].text))
         .map((message) => message.trackingId)
       expect(appendedIds).toEqual(queuedIds)
+      // BeforeInvocation hooks see the same ids before the input is appended.
+      expect(hookIds.slice(1)).toEqual(queuedIds)
     })
 
     it('rejects a blank prompt at enqueue time without disturbing the running invocation', async () => {

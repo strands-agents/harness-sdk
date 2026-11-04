@@ -25,6 +25,15 @@ import { exactly, startsWith } from './regex'
  * fallback.
  */
 export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
+  // Box content is owned by the product repository. Preserve its former site
+  // routes until the upstream manifest publishes direct replacements.
+  'docs/user-guide/box': 'docs/user-guide/box/quickstart',
+  'docs/user-guide/box/getting-started': 'docs/user-guide/box/quickstart',
+  'docs/user-guide/box/guides/add-a-tool': 'docs/user-guide/box/guides/add-an-mcp-server',
+  'docs/user-guide/box/guides/grant-files': 'docs/user-guide/box/reference/configuration',
+  'docs/user-guide/box/reference/cli': 'docs/user-guide/box/reference/configuration',
+  'docs/user-guide/box/security/agent-and-tool-containment': 'docs/user-guide/box/security',
+
   // gemini was renamed to google (concepts/ was later consolidated under harness/)
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
 

@@ -2785,6 +2785,8 @@ async def test_add_note_on_validation_exception_throughput(bedrock_client, model
         "too many total text bytes",
         "prompt is too long: 903884 tokens > 200000 maximum",
         "This model's maximum context length is 202752 tokens.",
+        # Nova wording (#5739)
+        "Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.",
     ],
 )
 @pytest.mark.asyncio
@@ -3051,6 +3053,30 @@ def test_explicit_boolean_values_preserved(bedrock_client):
     expected = {"content": [{"text": "Tool output"}], "toolUseId": "tool123", "status": "success"}
     assert tool_result == expected
     assert "status" in tool_result
+
+
+@pytest.mark.parametrize(
+    ("model_id", "exp_status_sent"),
+    [
+        ("us.anthropic.claude-sonnet-4-6", True),
+        ("us.amazon.nova-lite-v1:0", True),
+        ("us.meta.llama4-scout-17b-instruct-v1:0", False),
+        ("us.writer.palmyra-x5-v1:0", False),
+    ],
+)
+def test_format_request_auto_sends_status_only_to_models_that_support_it(bedrock_client, model_id, exp_status_sent):
+    """Guards https://github.com/strands-agents/harness-sdk/issues/5741: Nova supports the status field."""
+    model = BedrockModel(model_id=model_id)
+    messages = [
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "tool123", "status": "error", "content": [{"text": "boom"}]}}],
+        }
+    ]
+
+    tool_result = model.format_request(messages)["messages"][0]["content"][0]["toolResult"]
+
+    assert ("status" in tool_result) is exp_status_sent
 
 
 def test_format_request_filters_sdk_unknown_member_content_blocks(model, model_id, caplog):

@@ -17,7 +17,8 @@ import { TextBlock, GuardContentBlock, CachePointBlock } from '../../types/messa
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
 import { CitationsBlock } from '../../types/citations.js'
 import type { StreamOptions } from '../model.js'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
@@ -1650,6 +1651,23 @@ describe('BedrockModel', () => {
           expected: ContextWindowOverflowError,
         },
         {
+          name: 'ContextWindowOverflowError for Nova input tokens exceeded (#5739)',
+          error: new ValidationException({
+            message:
+              'The model returned the following errors: Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.',
+            $metadata: {},
+          }),
+          expected: ContextWindowOverflowError,
+        },
+        {
+          name: 'ContextWindowOverflowError for OpenAI-style maximum context length (#5739)',
+          error: new ValidationException({
+            message: "The model returned the following errors: This model's maximum context length is 32768 tokens.",
+            $metadata: {},
+          }),
+          expected: ContextWindowOverflowError,
+        },
+        {
           name: 'ValidationException for invalid input',
           error: new ValidationException({ message: 'ValidationException', $metadata: {} }),
           expected: ValidationException,
@@ -1682,6 +1700,33 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5763: after a tool result, Bedrock
+    // can end an empty turn with messageStop and metadata but no messageStart.
+    describe('when Bedrock ends an empty turn without a messageStart', () => {
+      it('aggregates an empty assistant message', async () => {
+        setupMockSend(async function* () {
+          yield { messageStop: { stopReason: 'end_turn' } }
+          yield { metadata: { usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } } }
+        })
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: { usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } },
+          },
+          stopReason: 'endTurn',
+          metadata: { type: 'modelMetadataEvent', usage: { inputTokens: 100, outputTokens: 1, totalTokens: 101 } },
+        })
+      })
+    })
+
     describe('structured output enforcement', () => {
       const forcedRejection = new ValidationException({
         message:
@@ -4968,12 +5013,12 @@ describe('BedrockModel', () => {
           modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
         })
       })
-    })
 
-    describe('when includeToolResultStatus is undefined (default)', () => {
-      it('follows auto logic for non-Claude models', async () => {
+      // https://github.com/strands-agents/harness-sdk/issues/5741
+      it('includes status field for Amazon Nova models', async () => {
         const provider = new BedrockModel({
-          modelId: 'amazon.nova-lite-v1:0',
+          modelId: 'us.amazon.nova-lite-v1:0',
+          includeToolResultStatus: 'auto',
         })
         const messages = [
           new Message({
@@ -4981,7 +5026,7 @@ describe('BedrockModel', () => {
             content: [
               new ToolResultBlock({
                 toolUseId: 'tool-123',
-                status: 'success',
+                status: 'error',
                 content: [new TextBlock('Result')],
               }),
             ],
@@ -4997,6 +5042,7 @@ describe('BedrockModel', () => {
                 {
                   toolResult: {
                     content: [{ text: 'Result' }],
+                    status: 'error',
                     toolUseId: 'tool-123',
                   },
                 },
@@ -5005,9 +5051,50 @@ describe('BedrockModel', () => {
             },
           ],
           toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
-          modelId: 'amazon.nova-lite-v1:0',
+          modelId: 'us.amazon.nova-lite-v1:0',
         })
       })
+    })
+
+    describe('when includeToolResultStatus is undefined (default)', () => {
+      it.each(['us.writer.palmyra-x5-v1:0', 'us.meta.llama4-scout-17b-instruct-v1:0'])(
+        'omits status field for models Bedrock does not document as supporting it (%s)',
+        async (modelId) => {
+          const provider = new BedrockModel({ modelId })
+          const messages = [
+            new Message({
+              role: 'user',
+              content: [
+                new ToolResultBlock({
+                  toolUseId: 'tool-123',
+                  status: 'success',
+                  content: [new TextBlock('Result')],
+                }),
+              ],
+            }),
+          ]
+
+          collectIterator(provider.stream(messages))
+
+          expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+            messages: [
+              {
+                content: [
+                  {
+                    toolResult: {
+                      content: [{ text: 'Result' }],
+                      toolUseId: 'tool-123',
+                    },
+                  },
+                ],
+                role: 'user',
+              },
+            ],
+            toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
+            modelId,
+          })
+        }
+      )
     })
   })
 
