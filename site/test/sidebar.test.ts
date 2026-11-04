@@ -191,6 +191,7 @@ describe('Sidebar Generation from navigation.yml', () => {
     ])
     expect(groups[1]?.items).toEqual([
       { label: 'Persist state across sessions', slug: 'docs/user-guide/sdk/agents/session-management' },
+      { label: 'Migrate repository-based sessions', slug: 'docs/user-guide/sdk/agents/migrate-repository-sessions' },
     ])
     expect(groups[2]?.items).toEqual([
       { label: 'Overview', slug: 'docs/user-guide/sdk/memory/overview' },
