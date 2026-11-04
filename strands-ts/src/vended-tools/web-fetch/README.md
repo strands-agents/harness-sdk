@@ -78,7 +78,7 @@ Throws if `maxBytes` or `maxContentChars` is not a positive number.
 
 ### Modes
 
-**`markdown`** — Fetches the URL and returns the page content as clean markdown directly in the agent's context. HTML is converted with scripts, styles, and noise stripped; other content types are returned as-is.
+**`markdown`** — Fetches the URL and returns the page content as clean markdown directly in the agent's context. HTML is converted with scripts, styles, and noise stripped; other content types are returned as-is, except binary bodies, which come back as a short marker such as `[binary image/png, 48,213 bytes; not shown]`.
 
 **`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. The full page content never enters the main agent's context window — only the analyst's answer is returned.
 

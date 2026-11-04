@@ -9,6 +9,9 @@ import { type MakeWebFetchOptions, WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DES
 
 export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 // 5 MiB
 export const DEFAULT_MAX_CONTENT_CHARS = 50_000
+const BINARY_MAJOR_TYPES = ['image', 'audio', 'video', 'font']
+// Undecodable bytes become U+FFFD; decoded binaries measure ~0.4-0.6 of U+FFFD/NUL chars, mis-declared text far less.
+const BINARY_CHAR_RATIO = 0.3
 
 const _HEADERS = {
   'User-Agent': 'strands-agents-web-fetch/1.0',
@@ -63,7 +66,8 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
       const { url } = input
       const signal = context?.cancelSignal ?? null
 
-      const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
+      const [contentType, raw, marker] = await fetchOnce(url, maxBytes, signal)
+      if (marker) return marker
 
       const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
       let content = isMarkup ? await htmlToMarkdown(raw) : raw
@@ -98,7 +102,8 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
         ...(context?.cancelSignal && { cancelSignal: context.cancelSignal }),
         ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
       }
-      const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
+      const [contentType, raw, marker] = await fetchOnce(url, maxBytes, signal)
+      if (marker) return marker
 
       const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
       let content = isMarkup ? await htmlToMarkdown(raw) : raw
@@ -134,7 +139,12 @@ export const webFetch = makeWebFetch()
 
 // ---- Internals ----
 
-async function fetchOnce(url: string, maxBytes: number, signal: AbortSignal | null): Promise<[string, string]> {
+/** One HTTP GET, resolving to `[contentType, bodyText, binaryMarker]`; `binaryMarker` is set when the body is binary. */
+async function fetchOnce(
+  url: string,
+  maxBytes: number,
+  signal: AbortSignal | null
+): Promise<[string, string, string | undefined]> {
   // Validate scheme before hitting the network
   if (!URL.canParse(url)) {
     throw new Error(`url=<${url}> | fetch failed: invalid URL`)
@@ -162,11 +172,11 @@ async function fetchOnce(url: string, maxBytes: number, signal: AbortSignal | nu
   }
 
   // Stream the body and enforce the size cap on decompressed bytes as they arrive.
+  const contentType = response.headers.get('content-type') ?? ''
   if (!response.body) {
-    return [response.headers.get('content-type') ?? '', '']
+    return [contentType, '', binaryMarker(contentType, '', 0)]
   }
 
-  const contentType = response.headers.get('content-type') ?? ''
   const charset = _parseCharset(contentType)
   const reader = response.body.getReader()
   const decoder = new TextDecoder(charset)
@@ -194,7 +204,21 @@ async function fetchOnce(url: string, maxBytes: number, signal: AbortSignal | nu
     reader.releaseLock()
   }
 
-  return [contentType, chunks.join('')]
+  const text = chunks.join('')
+  return [contentType, text, binaryMarker(contentType, text, total)]
+}
+
+/** Placeholder for a binary media type or a body that decodes mostly to U+FFFD/NUL; `undefined` for text. */
+function binaryMarker(contentType: string, text: string, size: number): string | undefined {
+  const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase()
+  const isBinaryType = BINARY_MAJOR_TYPES.includes(mediaType.split('/')[0] ?? '') && !/\+(xml|json)$/.test(mediaType)
+  let garbage = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code === 0xfffd || code === 0) garbage++
+  }
+  if (!isBinaryType && garbage <= text.length * BINARY_CHAR_RATIO) return undefined
+  return `[binary ${mediaType || 'content'}, ${size.toLocaleString('en-US')} bytes; not shown]`
 }
 
 function _parseCharset(contentType: string): string {
