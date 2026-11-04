@@ -25,16 +25,18 @@ describe('metadataPlacements', () => {
 
   it('shortens the directory before the controls and preserves the final directory name', () => {
     const current = metadataSnapshot('Claude Opus 4.6', `/Users/gsird/${'workspace/'.repeat(15)}harness-sdk`)
-    const placements = metadataPlacements(current, 80)
+    const placements = metadataPlacements(current, 100)
     expect(placements[0]!.text).toContain('Claude Opus 4.6 • High • Ask')
     expect(placements.find(({ target }) => target === 'cwd')!.text).toMatch(/….*harness-sdk$/u)
-    expect(placements.at(-1)!.text).toBe('/settings')
+    expect(placements.at(-1)!.text).toBe('/voice  /settings')
   })
 
   it('preserves effort and settings when the model must be shortened', () => {
-    const placements = metadataPlacements(metadataSnapshot('large model '.repeat(20), '/work'), 40)
+    const current = metadataSnapshot('large model '.repeat(20), '/work')
+    const placements = metadataPlacements(current, 40)
     expect(placements[0]!.text).toContain('… • High • Ask')
-    expect(placements.at(-1)!.text).toBe('/settings')
+    expect(placements.at(-1)!.text).toBe('/voice  /settings')
+    expect(metadataPlacements(current, 18).at(-1)!.text).toBe('/settings')
   })
 
   it('labels bypass and custom permission modes beside effort', () => {
@@ -50,6 +52,7 @@ describe('metadataPlacements', () => {
     const wide = metadataPlacements(current, 100, '0.2.1').at(-1)!
     expect(wide.actions).toEqual([
       { target: 'update', text: '↑ Update 0.2.1' },
+      { target: 'voice', text: '/voice' },
       { target: 'settings', text: '/settings' },
     ])
 
@@ -67,7 +70,7 @@ describe('metadataPlacements', () => {
     const cwd = `/用户/${'👨‍👩‍👧‍👦e\u0301📁/'.repeat(20)}`
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     const allowed = new Set(
-      [...segmenter.segment(`${model}${cwd} • HighAsk…/settings░—`)].map(({ segment }) => segment)
+      [...segmenter.segment(`${model}${cwd} • HighAsk…/voice/settings░—`)].map(({ segment }) => segment)
     )
     let offset = 0
     let previousEnd: number | undefined

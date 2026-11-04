@@ -915,7 +915,8 @@ export function ChatApp({
       const panelHit = panelElement.current ? elementContainsMouse(panelElement.current, mouse) : false
       const metadataTarget = panelHit ? undefined : elementAtMouse(metadataElements, mouse)
       const footerTarget = panelHit ? undefined : elementAtMouse(footerElements, mouse)
-      const footerAction = !snapshot.panel || footerTarget === 'settings' ? footerTarget : undefined
+      const footerAction =
+        !snapshot.panel || footerTarget === 'settings' || footerTarget === 'voice' ? footerTarget : undefined
       const jumpToBottomHit =
         !snapshot.panel && viewPropsRef.current.transcriptScroll > 0 && jumpToBottomElement.current
           ? elementContainsMouse(jumpToBottomElement.current, mouse)

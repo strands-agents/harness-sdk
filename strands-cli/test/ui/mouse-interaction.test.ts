@@ -10,6 +10,7 @@ import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { type ChatPermissionRequest, type ChatTask } from '../../src/agent/types.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
+import { PythonVoiceSession } from '../../src/agent/voice.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentSkillsRuntime } from '../../src/agent/skills.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -125,7 +126,7 @@ describe('TUI mouse input', () => {
     expect(controller.getSnapshot().panel?.kind).toBe('config')
   })
 
-  it('activates model and permission metadata and the Settings button from direct clicks', async () => {
+  it('activates model and permission metadata and the Voice and Settings buttons from direct clicks', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 16)
     const frame = captureFrame(output)
@@ -150,7 +151,9 @@ describe('TUI mouse input', () => {
       runtime: { version: '1.2.3', model: 'bedrock/test', cwd: '/work' },
     })
     await controller.submit('measure context')
-    const instance = render(createElement(ChatApp, { controller }), {
+    const voice = new PythonVoiceSession()
+    const manager = new ConversationManager(controller, { voice, fork: async () => controller })
+    const instance = render(createElement(ChatApp, { controller: manager }), {
       stdin: input,
       stdout: output,
       stderr: ttyOutput(80, 16),
@@ -158,30 +161,43 @@ describe('TUI mouse input', () => {
       patchConsole: false,
       interactive: true,
     })
-    await instance.waitUntilRenderFlush()
+    try {
+      await instance.waitUntilRenderFlush()
 
-    const contextTarget = findText(frame(), '/settings')
-    const modelTarget = findText(frame(), 'bedrock/test')
-    const permissionTarget = findText(frame(), 'Ask')
+      const settingsTarget = findText(frame(), '/settings')
+      const voiceTarget = findText(frame(), '/voice')
+      const modelTarget = findText(frame(), 'bedrock/test')
+      const permissionTarget = findText(frame(), 'Ask')
+      expect(voiceTarget.row).toBe(settingsTarget.row)
+      expect(voiceTarget.column).toBeLessThan(settingsTarget.column)
 
-    input.write(mouseInputSequence(0, contextTarget.column, contextTarget.row, 'M'))
-    input.write(mouseInputSequence(3, contextTarget.column, contextTarget.row, 'm'))
+      input.write(mouseInputSequence(0, settingsTarget.column, settingsTarget.row, 'M'))
+      input.write(mouseInputSequence(3, settingsTarget.column, settingsTarget.row, 'm'))
 
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('settings'))
+      await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('settings'))
+      await instance.waitUntilRenderFlush()
+      input.write(mouseInputSequence(0, voiceTarget.column, voiceTarget.row, 'M'))
+      input.write(mouseInputSequence(3, voiceTarget.column, voiceTarget.row, 'm'))
+      await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('voice'))
+      expect(voice.getSnapshot().status).toBe('off')
 
-    controller.dismissPanel()
-    await instance.waitUntilRenderFlush()
-    input.write(mouseInputSequence(0, modelTarget.column, modelTarget.row, 'M'))
-    input.write(mouseInputSequence(3, modelTarget.column, modelTarget.row, 'm'))
+      manager.dismissPanel()
+      controller.dismissPanel()
+      await instance.waitUntilRenderFlush()
+      input.write(mouseInputSequence(0, modelTarget.column, modelTarget.row, 'M'))
+      input.write(mouseInputSequence(3, modelTarget.column, modelTarget.row, 'm'))
 
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('models'))
+      await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('models'))
 
-    controller.dismissPanel()
-    await instance.waitUntilRenderFlush()
-    input.write(mouseInputSequence(0, permissionTarget.column, permissionTarget.row, 'M'))
-    input.write(mouseInputSequence(3, permissionTarget.column, permissionTarget.row, 'm'))
+      manager.dismissPanel()
+      await instance.waitUntilRenderFlush()
+      input.write(mouseInputSequence(0, permissionTarget.column, permissionTarget.row, 'M'))
+      input.write(mouseInputSequence(3, permissionTarget.column, permissionTarget.row, 'm'))
 
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permissions'))
+      await vi.waitFor(() => expect(manager.getSnapshot().panel?.kind).toBe('permissions'))
+    } finally {
+      await manager.dispose()
+    }
   })
 
   it('opens and edits settings while preserving a pending tool approval', async () => {
