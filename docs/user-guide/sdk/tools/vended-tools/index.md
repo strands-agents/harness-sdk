@@ -191,7 +191,7 @@ Tool names are stable and will not change. In minor versions, a tool’s descrip
 ## See also
 
 -   [Custom Tools](/docs/user-guide/sdk/tools/custom-tools/index.md): build your own tools
--   [Community Tools Package](/docs/user-guide/sdk/tools/community-tools-package/index.md): Python tools package with 30+ tools
+-   [Migrate from the community tools package](/docs/user-guide/migrate/strands-agents-tools/index.md): replace each deprecated `strands-agents-tools` tool
 -   [Session Management](/docs/user-guide/sdk/agents/session-management/index.md): persist agent state including notebooks
 -   [Interrupts](/docs/user-guide/sdk/interrupts/index.md): implement approval workflows for sensitive operations
 -   [Hooks](/docs/user-guide/sdk/agents/hooks/index.md): intercept and customize tool execution
@@ -201,10 +201,10 @@ Tool names are stable and will not change. In minor versions, a tool’s descrip
 - [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) (1 shared tag)
 - [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) (1 shared tag)
 - [Bash / shell](/docs/user-guide/sdk/tools/vended-tools/shell/index.md) (1 shared tag)
-- [Community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md) (1 shared tag)
 - [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) (1 shared tag)
 - [Edit](/docs/user-guide/sdk/tools/vended-tools/edit/index.md) (1 shared tag)
 - [File editor](/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md) (1 shared tag)
 - [Graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) (1 shared tag)
 - [Handoff to User](/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/index.md) (1 shared tag)
 - [HTTP request](/docs/user-guide/sdk/tools/vended-tools/http-request/index.md) (1 shared tag)
+- [MCP Router](/docs/user-guide/sdk/tools/vended-tools/mcp-router/index.md) (1 shared tag)

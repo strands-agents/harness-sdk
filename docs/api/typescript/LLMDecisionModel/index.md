@@ -1,4 +1,4 @@
-Defined in: [src/decisions/llm-decision-model.ts:68](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L68)
+Defined in: [src/decisions/llm-decision-model.ts:75](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L75)
 
 Adapter that turns any [Model](/docs/api/typescript/Model/index.md) into a [DecisionModel](/docs/api/typescript/DecisionModel/index.md).
 
@@ -37,7 +37,7 @@ const result = await decision.ask('The fruit is an apple', {
 new LLMDecisionModel(options?): LLMDecisionModel;
 ```
 
-Defined in: [src/decisions/llm-decision-model.ts:78](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L78)
+Defined in: [src/decisions/llm-decision-model.ts:85](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L85)
 
 Create an LLM-backed decision model.
 
@@ -71,7 +71,7 @@ ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/decision-model.ts:34](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L34)
+Defined in: [src/decisions/decision-model.ts:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts#L35)
 
 Ask one or more closed questions over the given state.
 
@@ -87,7 +87,7 @@ Ask one or more closed questions over the given state.
 | --- | --- | --- |
 | `state` | [`DecisionInput`](/docs/api/typescript/DecisionInput/index.md) | A plain string, a one-shot content list, or a message history. |
 | `questions` | `Q` | Map of identifier → question. The returned `answers` object is keyed off this same map and statically narrowed per question. |
-| `options?` | [`AskOptions`](/docs/api/typescript/AskOptions/index.md) | Per-call options, such as the request to add the decision’s usage to. |
+| `options?` | [`AskOptions`](/docs/api/typescript/AskOptions/index.md) | Per-call options, such as the request to add the decision’s usage to, or a `cancelSignal` that aborts the underlying call. |
 
 #### Returns
 
@@ -112,12 +112,16 @@ TypeError if `options.invocationContext` was not created by the SDK.
 ### \_ask()
 
 ```ts
-protected _ask<Q>(state, questions): Promise<DecisionResult<Q>>;
+protected _ask<Q>(
+   state,
+   questions,
+   options
+): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/llm-decision-model.ts:86](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L86)
+Defined in: [src/decisions/llm-decision-model.ts:93](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts#L93)
 
-Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider.
+Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 
 #### Type Parameters
 
@@ -131,6 +135,7 @@ Implementation-specific decision logic. Must return a complete [DecisionResult](
 | --- | --- |
 | `state` | [`DecisionInput`](/docs/api/typescript/DecisionInput/index.md) |
 | `questions` | `Q` |
+| `options` | [`DecisionCallOptions`](/docs/api/typescript/DecisionCallOptions/index.md) |
 
 #### Returns
 

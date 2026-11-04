@@ -1,4 +1,4 @@
-Defined in: [src/hooks/events.ts:665](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L665)
+Defined in: [src/hooks/events.ts:672](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L672)
 
 Event triggered when a tool execution completes. Wraps the tool result block after a tool finishes execution.
 
@@ -14,7 +14,7 @@ Event triggered when a tool execution completes. Wraps the tool result block aft
 new ToolResultEvent(data): ToolResultEvent;
 ```
 
-Defined in: [src/hooks/events.ts:671](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L671)
+Defined in: [src/hooks/events.ts:678](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L678)
 
 #### Parameters
 
@@ -54,7 +54,7 @@ The request this event belongs to (`undefined` outside one); pass it to [InvokeO
 readonly type: "toolResultEvent";
 ```
 
-Defined in: [src/hooks/events.ts:666](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L666)
+Defined in: [src/hooks/events.ts:673](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L673)
 
 ---
 
@@ -64,7 +64,7 @@ Defined in: [src/hooks/events.ts:666](https://github.com/strands-agents/harness-
 readonly agent: LocalAgent;
 ```
 
-Defined in: [src/hooks/events.ts:667](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L667)
+Defined in: [src/hooks/events.ts:674](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L674)
 
 ---
 
@@ -74,7 +74,7 @@ Defined in: [src/hooks/events.ts:667](https://github.com/strands-agents/harness-
 readonly result: ToolResultBlock;
 ```
 
-Defined in: [src/hooks/events.ts:668](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L668)
+Defined in: [src/hooks/events.ts:675](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L675)
 
 ---
 
@@ -84,7 +84,7 @@ Defined in: [src/hooks/events.ts:668](https://github.com/strands-agents/harness-
 readonly invocationState: InvocationState;
 ```
 
-Defined in: [src/hooks/events.ts:669](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L669)
+Defined in: [src/hooks/events.ts:676](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L676)
 
 ## Methods
 
@@ -94,7 +94,7 @@ Defined in: [src/hooks/events.ts:669](https://github.com/strands-agents/harness-
 toJSON(): Pick<ToolResultEvent, "type" | "result">;
 ```
 
-Defined in: [src/hooks/events.ts:684](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L684)
+Defined in: [src/hooks/events.ts:691](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L691)
 
 Serializes for wire transport, excluding the agent reference and invocationState. Called automatically by JSON.stringify().
 

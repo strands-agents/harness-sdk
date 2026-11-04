@@ -7,7 +7,7 @@ Amazon SageMaker model provider.
 class UsageMetadata()
 ```
 
-Defined in: [src/strands/models/sagemaker.py:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L33)
+Defined in: [src/strands/models/sagemaker.py:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L35)
 
 Usage metadata for the model.
 
@@ -25,7 +25,7 @@ Usage metadata for the model.
 class FunctionCall()
 ```
 
-Defined in: [src/strands/models/sagemaker.py:50](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L50)
+Defined in: [src/strands/models/sagemaker.py:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L52)
 
 Function call for the model.
 
@@ -40,7 +40,7 @@ Function call for the model.
 def __init__(**kwargs: dict[str, str])
 ```
 
-Defined in: [src/strands/models/sagemaker.py:61](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L61)
+Defined in: [src/strands/models/sagemaker.py:63](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L63)
 
 Initialize function call.
 
@@ -55,7 +55,7 @@ Initialize function call.
 class ToolCall()
 ```
 
-Defined in: [src/strands/models/sagemaker.py:72](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L72)
+Defined in: [src/strands/models/sagemaker.py:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L74)
 
 Tool call for the model object.
 
@@ -71,7 +71,7 @@ Tool call for the model object.
 def __init__(**kwargs: dict)
 ```
 
-Defined in: [src/strands/models/sagemaker.py:85](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L85)
+Defined in: [src/strands/models/sagemaker.py:87](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L87)
 
 Initialize tool call object.
 
@@ -85,7 +85,7 @@ Initialize tool call object.
 class SageMakerAIModel(OpenAIModel)
 ```
 
-Defined in: [src/strands/models/sagemaker.py:173](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L173)
+Defined in: [src/strands/models/sagemaker.py:190](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L190)
 
 Amazon SageMaker model provider implementation.
 
@@ -99,7 +99,7 @@ type: ignore\[assignment\]
 class SageMakerAIPayloadSchema(TypedDict)
 ```
 
-Defined in: [src/strands/models/sagemaker.py:178](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L178)
+Defined in: [src/strands/models/sagemaker.py:195](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L195)
 
 Payload schema for the Amazon SageMaker AI model.
 
@@ -120,7 +120,7 @@ Payload schema for the Amazon SageMaker AI model.
 class SageMakerAIEndpointConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/sagemaker.py:201](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L201)
+Defined in: [src/strands/models/sagemaker.py:218](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L218)
 
 Configuration options for SageMaker models.
 
@@ -144,7 +144,7 @@ def __init__(endpoint_config: SageMakerAIEndpointConfig,
              boto_client_config: BotocoreConfig | None = None)
 ```
 
-Defined in: [src/strands/models/sagemaker.py:220](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L220)
+Defined in: [src/strands/models/sagemaker.py:237](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L237)
 
 Initialize provider instance.
 
@@ -163,7 +163,7 @@ def update_config(**endpoint_config: Unpack[SageMakerAIEndpointConfig]
                   ) -> None
 ```
 
-Defined in: [src/strands/models/sagemaker.py:265](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L265)
+Defined in: [src/strands/models/sagemaker.py:282](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L282)
 
 Update the Amazon SageMaker model configuration with the provided arguments.
 
@@ -178,7 +178,7 @@ Update the Amazon SageMaker model configuration with the provided arguments.
 def get_config() -> "SageMakerAIModel.SageMakerAIEndpointConfig"
 ```
 
-Defined in: [src/strands/models/sagemaker.py:275](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L275)
+Defined in: [src/strands/models/sagemaker.py:292](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L292)
 
 Get the Amazon SageMaker model configuration.
 
@@ -197,7 +197,7 @@ def format_request(messages: Messages,
                    **kwargs: Any) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/sagemaker.py:284](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L284)
+Defined in: [src/strands/models/sagemaker.py:301](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L301)
 
 Format an Amazon SageMaker chat streaming request.
 
@@ -225,7 +225,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/sagemaker.py:414](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L414)
+Defined in: [src/strands/models/sagemaker.py:431](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L431)
 
 Stream conversation with the SageMaker model.
 
@@ -241,6 +241,10 @@ Stream conversation with the SageMaker model.
 
 Formatted message chunks from the model.
 
+**Raises**:
+
+-   `ModelThrottledException` - If the model container responds with HTTP 429.
+
 #### format\_request\_tool\_message
 
 ```python
@@ -250,7 +254,7 @@ def format_request_tool_message(cls, tool_result: ToolResult,
                                 **kwargs: Any) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/sagemaker.py:618](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L618)
+Defined in: [src/strands/models/sagemaker.py:640](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L640)
 
 Format a SageMaker compatible tool message.
 
@@ -272,7 +276,7 @@ def format_request_message_content(cls, content: ContentBlock,
                                    **kwargs: Any) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/sagemaker.py:649](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L649)
+Defined in: [src/strands/models/sagemaker.py:671](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L671)
 
 Format a content block.
 
@@ -300,7 +304,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/sagemaker.py:686](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L686)
+Defined in: [src/strands/models/sagemaker.py:708](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/sagemaker.py#L708)
 
 Get structured output from the model.
 
@@ -314,3 +318,7 @@ Get structured output from the model.
 **Yields**:
 
 Model events with the last being the structured output.
+
+**Raises**:
+
+-   `ModelThrottledException` - If the model container responds with HTTP 429.

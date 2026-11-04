@@ -1,4 +1,4 @@
-Defined in: [src/decisions/types.ts:49](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L49)
+Defined in: [src/decisions/types.ts:55](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L55)
 
 A single question posed to a [DecisionModel](/docs/api/typescript/DecisionModel/index.md).
 
@@ -18,7 +18,7 @@ A single question posed to a [DecisionModel](/docs/api/typescript/DecisionModel/
 question: string;
 ```
 
-Defined in: [src/decisions/types.ts:51](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L51)
+Defined in: [src/decisions/types.ts:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L57)
 
 The question posed to the model, in natural language.
 
@@ -30,7 +30,7 @@ The question posed to the model, in natural language.
 choices: C;
 ```
 
-Defined in: [src/decisions/types.ts:53](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L53)
+Defined in: [src/decisions/types.ts:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L59)
 
 Answer shape: `'boolean'` or a non-empty readonly tuple of string literals.
 
@@ -46,7 +46,7 @@ uncertainty?:
 };
 ```
 
-Defined in: [src/decisions/types.ts:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L62)
+Defined in: [src/decisions/types.ts:68](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L68)
 
 Uncertainty configuration for this question.
 

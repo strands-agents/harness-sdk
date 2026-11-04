@@ -1,4 +1,4 @@
-Defined in: [src/hooks/events.ts:777](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L777)
+Defined in: [src/hooks/events.ts:784](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L784)
 
 Event triggered before executing tools. Fired when the model returns tool use blocks that need to be executed. Hook callbacks can set [cancel](#cancel) to prevent all tools from executing.
 
@@ -18,7 +18,7 @@ Event triggered before executing tools. Fired when the model returns tool use bl
 new BeforeToolsEvent(data): BeforeToolsEvent;
 ```
 
-Defined in: [src/hooks/events.ts:790](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L790)
+Defined in: [src/hooks/events.ts:797](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L797)
 
 #### Parameters
 
@@ -58,7 +58,7 @@ The request this event belongs to (`undefined` outside one); pass it to [InvokeO
 readonly type: "beforeToolsEvent";
 ```
 
-Defined in: [src/hooks/events.ts:778](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L778)
+Defined in: [src/hooks/events.ts:785](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L785)
 
 ---
 
@@ -68,7 +68,7 @@ Defined in: [src/hooks/events.ts:778](https://github.com/strands-agents/harness-
 readonly agent: LocalAgent;
 ```
 
-Defined in: [src/hooks/events.ts:779](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L779)
+Defined in: [src/hooks/events.ts:786](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L786)
 
 ---
 
@@ -78,7 +78,7 @@ Defined in: [src/hooks/events.ts:779](https://github.com/strands-agents/harness-
 readonly message: Message;
 ```
 
-Defined in: [src/hooks/events.ts:780](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L780)
+Defined in: [src/hooks/events.ts:787](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L787)
 
 ---
 
@@ -88,7 +88,7 @@ Defined in: [src/hooks/events.ts:780](https://github.com/strands-agents/harness-
 readonly invocationState: InvocationState;
 ```
 
-Defined in: [src/hooks/events.ts:781](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L781)
+Defined in: [src/hooks/events.ts:788](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L788)
 
 ---
 
@@ -98,7 +98,7 @@ Defined in: [src/hooks/events.ts:781](https://github.com/strands-agents/harness-
 cancel: string | boolean = false;
 ```
 
-Defined in: [src/hooks/events.ts:788](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L788)
+Defined in: [src/hooks/events.ts:795](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L795)
 
 Set by hook callbacks to cancel all tool calls. When set to `true`, a default cancel message is used. When set to a string, that string is used as the tool result error message.
 
@@ -110,7 +110,7 @@ Set by hook callbacks to cancel all tool calls. When set to `true`, a default ca
 interrupt<T>(params): T;
 ```
 
-Defined in: [src/hooks/events.ts:805](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L805)
+Defined in: [src/hooks/events.ts:812](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L812)
 
 Raises an interrupt for human-in-the-loop workflows. If a response is available (from a previous resume), returns it immediately. Otherwise, throws an InterruptError to halt agent execution.
 
@@ -144,7 +144,7 @@ The user’s response when resuming from an interrupt
 toJSON(): Pick<BeforeToolsEvent, "type" | "message">;
 ```
 
-Defined in: [src/hooks/events.ts:813](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L813)
+Defined in: [src/hooks/events.ts:820](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L820)
 
 Serializes for wire transport, excluding the agent reference, invocationState, and mutable cancel flag. Called automatically by JSON.stringify().
 

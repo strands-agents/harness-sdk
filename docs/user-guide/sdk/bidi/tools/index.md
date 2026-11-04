@@ -73,13 +73,13 @@ See the [quickstart](/docs/user-guide/sdk/bidi/quickstart/index.md#end-the-conve
 - [BidiAgent](/docs/user-guide/sdk/bidi/agent/index.md) (1 shared tag)
 - [Bidirectional Streaming](/docs/user-guide/sdk/bidi/index.md) (1 shared tag)
 - [Bidirectional Streaming Models](/docs/user-guide/sdk/bidi/models/index.md) (1 shared tag)
-- [Creating a Custom Model Provider](/docs/user-guide/sdk/model-providers/custom_model_provider/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidi/models/google/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidi/io/index.md) (1 shared tag)
 - [Input Content](/docs/user-guide/sdk/bidi/content/index.md) (1 shared tag)
 - [Interrupts](/docs/user-guide/sdk/bidi/interrupts/index.md) (1 shared tag)
 - [OpenAI Live](/docs/user-guide/sdk/bidi/models/openai/live/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidi/models/openai/realtime/index.md) (1 shared tag)
+- [Stream Events](/docs/user-guide/sdk/bidi/events/index.md) (1 shared tag)
 
 
 ## Implementation

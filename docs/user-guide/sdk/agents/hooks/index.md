@@ -373,6 +373,53 @@ class ToolInterceptor implements Plugin {
 ```
 (( /tab "TypeScript" ))
 
+### Invocation Message Modification
+
+To sanitize input before it enters conversation history, modify the `messages` property on `BeforeInvocationEvent`. The SDK normalizes the current invocation input before the event runs. Changes made by the hook become the input appended to history and sent to the model.
+
+(( tab "Python" ))
+```python
+from strands import Agent
+from strands.hooks import BeforeInvocationEvent
+
+agent = Agent()
+
+def redact_input(event: BeforeInvocationEvent) -> None:
+    if not event.messages:
+        return
+
+    event.messages[-1]["content"] = [{"text": "[REDACTED]"}]
+
+agent.add_hook(redact_input, BeforeInvocationEvent)
+agent("Contact me at user@example.com")
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent, BeforeInvocationEvent, TextBlock } from '@strands-agents/sdk'
+
+const agent = new Agent()
+
+agent.addHook(BeforeInvocationEvent, (event) => {
+  const latestMessage = event.messages.at(-1)
+  if (latestMessage?.role !== 'user') return
+
+  latestMessage.content.splice(
+    0,
+    latestMessage.content.length,
+    new TextBlock('[REDACTED]')
+  )
+})
+
+await agent.invoke('Contact me at user@example.com')
+```
+
+The live event exposes `messages`, but `toJSON()` omits them.
+(( /tab "TypeScript" ))
+
+Assign a new collection to `event.messages` to replace the input. Assign an empty collection to remove the input from the invocation.
+
 ### Result Modification
 
 Modify tool results after execution:

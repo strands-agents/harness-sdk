@@ -87,6 +87,9 @@ All events extend `HookableEvent`, making them both streamable via `agent.stream
 Most event properties are read-only to prevent unintended modifications. However, certain properties can be modified to influence agent behavior:
 
 (( tab "Python" ))
+-   [`BeforeInvocationEvent`](/docs/api/python/strands.hooks.events#BeforeInvocationEvent)
+    
+    -   `messages` - Mutable. Inspect, modify, replace, or remove the normalized input messages before they enter conversation history. `None` when fired from `structured_output`. See [Modify invocation messages](/docs/user-guide/sdk/agents/hooks/index.md#invocation-message-modification).
 -   [`AfterModelCallEvent`](/docs/api/python/strands.hooks.events#AfterModelCallEvent)
     
     -   `retry` - Request a retry of the model invocation. See [Model Call Retry](/docs/user-guide/sdk/agents/hooks/index.md#model-call-retry).
@@ -112,8 +115,9 @@ Most event properties are read-only to prevent unintended modifications. However
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
--   `BeforeInvocationEvent`
+-   [`BeforeInvocationEvent`](/docs/api/typescript/BeforeInvocationEvent/index.md)
     
+    -   `messages` - Mutable. Inspect, modify, replace, or remove the normalized input messages before they enter conversation history. See [Modify invocation messages](/docs/user-guide/sdk/agents/hooks/index.md#invocation-message-modification).
     -   `cancel` - Cancel the agent invocation with a message.
 -   `BeforeModelCallEvent`
     

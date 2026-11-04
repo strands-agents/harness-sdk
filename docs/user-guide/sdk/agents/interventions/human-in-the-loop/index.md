@@ -1,4 +1,4 @@
-Pause the agent before it acts and let a person approve, edit, or reject a tool call. The `HumanInTheLoop` intervention handler adds this oversight without custom interrupt logic: pass it to `interventions` and choose how to collect the human’s response.
+Pause the agent before it acts and let a person approve, edit, or reject a tool call. The `HumanInTheLoop` intervention handler adds this oversight without custom interrupt logic: pass it to `interventions` and choose how to collect the human’s response. For a worked example, see [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md).
 
 ## How It Works
 
@@ -210,6 +210,84 @@ await agent.invoke('Read config.json then delete /tmp/old-logs')
 ```
 (( /tab "TypeScript" ))
 
+To classify with a System One model, pass it as the classifier. A System One model is a small decision model that picks between options instead of generating text, so it responds faster and costs less per tool call than the LLM judge. It answers one yes/no question per tool call, judged against the same risk criteria as the built-in classifier. An uncertain answer requires approval and shows its reason in the prompt. TypeScript ships `TypeSafeDecisionModel`, which calls TypeSafe’s hosted Jev model. In Python, subclass `DecisionModel` to wrap one, such as a local [Strands Decider](https://github.com/strands-labs/strands-decider) server:
+
+(( tab "Python" ))
+```python
+import asyncio
+import json
+import urllib.request
+
+from strands.decisions import DecisionMetadata, DecisionModel, DecisionResult
+
+class StrandsDecider(DecisionModel):
+    """Asks yes/no questions of a `strands-decider serve` server."""
+
+    def __init__(self, url="http://localhost:8000/v1/systemone"):
+        self.url = url
+
+    def _post(self, body):
+        request = urllib.request.Request(
+            self.url,
+            data=json.dumps(body).encode(),
+            headers={"content-type": "application/json"},
+        )
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read())
+
+    async def _ask(self, state, questions, **kwargs):
+        wire = {
+            qid: {"type": "noul", "instructions": q["question"]}
+            for qid, q in questions.items()
+        }
+        reply = await asyncio.to_thread(
+            self._post, {"state": state, "questions": wire}
+        )
+        return DecisionResult(
+            # "noul" is the model's probability that the answer is yes
+            answers={qid: a["noul"] >= 0.5 for qid, a in reply["answers"].items()},
+            metadata=DecisionMetadata(latency_ms=int(reply["latency_ms"])),
+        )
+
+agent = Agent(
+    tools=[read_file, delete_files],
+    interventions=[
+        HumanInTheLoop(
+            allowed_tools=["read_file"],
+            classifier=StrandsDecider(),
+        ),
+    ],
+)
+
+agent("Read config.json then delete /tmp/old-logs")
+# delete_files: decision model evaluates -> risky -> prompts human
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent, tool, TypeSafeDecisionModel } from '@strands-agents/sdk'
+import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
+import { z } from 'zod'
+
+const agent = new Agent({
+  tools: [readFile, deleteFiles],
+  interventions: [
+    new HumanInTheLoop({
+      allowedTools: ['read_file'],
+      // Reads the API key from TYPESAFE_API_KEY
+      classifier: new TypeSafeDecisionModel(),
+    }),
+  ],
+})
+
+await agent.invoke('Read config.json then delete /tmp/old-logs')
+// delete_files: decision model evaluates -> risky -> prompts human
+```
+(( /tab "TypeScript" ))
+
+A small model can rate more risky calls safe than an LLM judge, so check its answers on your own tool calls before relying on it, and negate tools that must always ask.
+
 You can customize the classifier’s system prompt or model, or provide your own classification function:
 
 (( tab "Python" ))
@@ -221,6 +299,9 @@ agent = Agent(
         HumanInTheLoop(
             classifier=LLMClassifierConfig(
                 system_prompt="Only flag destructive operations.",
+                model=BedrockModel(
+                    model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                ),
             ),
         ),
     ],
@@ -247,7 +328,7 @@ agent = Agent(
 
 (( tab "TypeScript" ))
 ```typescript
-import { Agent, tool } from '@strands-agents/sdk'
+import { Agent, BedrockModel, tool } from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 
@@ -258,6 +339,9 @@ const agent = new Agent({
     new HumanInTheLoop({
       classifier: {
         systemPrompt: 'Only flag destructive operations.',
+        model: new BedrockModel({
+          modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        }),
       },
     }),
   ],
@@ -283,7 +367,7 @@ const agentCustom = new Agent({
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `allowed_tools``allowedTools` | `list[str]``string[]` | `None``undefined` | Tools that bypass approval. Supports `"*"` (all) and `"!tool_name"` (negation). |
-| `classifier` | `bool, LLMClassifierConfig, or callable``boolean, LlmClassifierConfig, or function` | `None``undefined` | LLM risk classifier. `True` for built-in defaults, config object for custom prompt/model, or a custom function. |
+| `classifier` | `bool, LLMClassifierConfig, DecisionModel, or callable``boolean, LlmClassifierConfig, DecisionModel, or function` | `None``undefined` | Risk classifier. `True``true` for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
 | `enable_trust``enableTrust` | `bool``boolean` | `False``false` | When enabled, trust responses are remembered for the session. |
 | `evaluate_trust``evaluateTrust` | Function | Accepts `"t"` or `"trust"` | Custom validator for trust responses. Only evaluated when trust is enabled. |
 | `evaluate` | Function | Accepts `True, "y", or "yes"``true, 'y', or 'yes'` | Custom validator for approval responses. |
@@ -452,6 +536,7 @@ Use `HumanInTheLoop` when you want tool-level approval gating with minimal code:
 
 ## Related pages
 
+- [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md) (2 shared tags)
 - [Cedar Authorization](/docs/user-guide/sdk/agents/interventions/cedar-authorization/index.md) (2 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (2 shared tags)
 - [Creating a Custom Model Provider](/docs/user-guide/sdk/model-providers/custom_model_provider/index.md) (1 shared tag)
@@ -461,7 +546,6 @@ Use `HumanInTheLoop` when you want tool-level approval gating with minimal code:
 - [Available Sandboxes](/docs/user-guide/sdk/sandbox/available-sandboxes/index.md) (1 shared tag)
 - [Building a Custom Sandbox](/docs/user-guide/sdk/sandbox/custom-sandbox/index.md) (1 shared tag)
 - [Sandbox](/docs/user-guide/sdk/sandbox/index.md) (1 shared tag)
-- [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -470,8 +554,10 @@ Use `HumanInTheLoop` when you want tool-level approval gating with minimal code:
 
 - [harness-sdk/strands-py/src/strands/vended_interventions/hitl/hitl.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/hitl.py)
 - [harness-sdk/strands-py/src/strands/vended_interventions/hitl/classifier.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/hitl/classifier.py)
+- [harness-sdk/strands-py/src/strands/decisions/llm_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/vended-interventions/hitl/hitl.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-interventions/hitl/hitl.ts)
 - [harness-sdk/strands-ts/src/vended-interventions/hitl/classifier.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-interventions/hitl/classifier.ts)
+- [harness-sdk/strands-ts/src/decisions/llm-decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/llm-decision-model.ts)

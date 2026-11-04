@@ -1,4 +1,4 @@
-Defined in: [src/hooks/events.ts:698](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L698)
+Defined in: [src/hooks/events.ts:705](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L705)
 
 Event triggered for each streaming progress event from a tool during execution. Wraps a [ToolStreamEvent](/docs/api/typescript/ToolStreamEvent/index.md) with invocation context, keeping the tool authoring interface unchanged — tools construct `ToolStreamEvent` without knowledge of agents or hooks, and the agent layer wraps them at the boundary.
 
@@ -16,7 +16,7 @@ Consistent with [ModelStreamUpdateEvent](/docs/api/typescript/ModelStreamUpdateE
 new ToolStreamUpdateEvent(data): ToolStreamUpdateEvent;
 ```
 
-Defined in: [src/hooks/events.ts:704](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L704)
+Defined in: [src/hooks/events.ts:711](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L711)
 
 #### Parameters
 
@@ -56,7 +56,7 @@ The request this event belongs to (`undefined` outside one); pass it to [InvokeO
 readonly type: "toolStreamUpdateEvent";
 ```
 
-Defined in: [src/hooks/events.ts:699](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L699)
+Defined in: [src/hooks/events.ts:706](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L706)
 
 ---
 
@@ -66,7 +66,7 @@ Defined in: [src/hooks/events.ts:699](https://github.com/strands-agents/harness-
 readonly agent: LocalAgent;
 ```
 
-Defined in: [src/hooks/events.ts:700](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L700)
+Defined in: [src/hooks/events.ts:707](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L707)
 
 ---
 
@@ -76,7 +76,7 @@ Defined in: [src/hooks/events.ts:700](https://github.com/strands-agents/harness-
 readonly event: ToolStreamEvent;
 ```
 
-Defined in: [src/hooks/events.ts:701](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L701)
+Defined in: [src/hooks/events.ts:708](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L708)
 
 ---
 
@@ -86,7 +86,7 @@ Defined in: [src/hooks/events.ts:701](https://github.com/strands-agents/harness-
 readonly invocationState: InvocationState;
 ```
 
-Defined in: [src/hooks/events.ts:702](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L702)
+Defined in: [src/hooks/events.ts:709](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L709)
 
 ## Methods
 
@@ -96,7 +96,7 @@ Defined in: [src/hooks/events.ts:702](https://github.com/strands-agents/harness-
 toJSON(): Pick<ToolStreamUpdateEvent, "type" | "event">;
 ```
 
-Defined in: [src/hooks/events.ts:717](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L717)
+Defined in: [src/hooks/events.ts:724](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L724)
 
 Serializes for wire transport, excluding the agent reference and invocationState. Called automatically by JSON.stringify().
 

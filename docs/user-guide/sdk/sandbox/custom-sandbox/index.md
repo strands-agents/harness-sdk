@@ -154,7 +154,7 @@ A container running as root with the host filesystem mounted is not a boundary, 
 - [Tools](/docs/user-guide/sdk/bidi/tools/index.md) (1 shared tag)
 - [Middleware](/docs/user-guide/sdk/agents/middleware/index.md) (1 shared tag)
 - [Tool Executors](/docs/user-guide/sdk/tools/executors/index.md) (1 shared tag)
+- [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md) (1 shared tag)
 - [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md) (1 shared tag)
 - [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
 - [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (1 shared tag)
-- [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) (1 shared tag)

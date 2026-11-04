@@ -1,18 +1,20 @@
-Defined in: [src/models/routing/classifier-strategy.ts:107](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts#L107)
+Defined in: [src/models/routing/classifier-strategy.ts:140](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts#L140)
 
-Choose a candidate by applying a configurable policy with a classifier model.
+Choose a candidate by applying a configurable routing policy with a classifier model.
 
-Classification adds one call to the explicitly configured model. Candidate declaration order does not inform classification. Candidate names, descriptions, metadata, the latest request, and textual parent-agent instructions may cross the classifier provider boundary and must not contain secrets. Structured parent-system-prompt blocks such as cache points are omitted because the classifier receives rebuilt, bounded context rather than the original prompt.
+The classifier is asked one closed question that carries the SDK’s fixed routing rules followed by the routing policy. A [DecisionModel](/docs/api/typescript/DecisionModel/index.md), such as a System One provider, can be passed in place of a model.
 
-Classification failures warn and decline selection, so [ModelRouter](/docs/api/typescript/ModelRouter/index.md) serves candidate zero. If the selected candidate later fails, this strategy declines further selection and lets the original model error surface without switching. Nested routers are treated as opaque candidates using only their wrapper evidence.
+Each candidate is offered under a positional key (`c0`, `c1`, …); names, descriptions, and metadata travel only as evidence in the routing context, so optional or arbitrary names never become answer values. The routing context is a bounded projection of the latest request, the parent agent’s textual instructions, and candidate evidence; it crosses the classifier provider boundary and must not contain secrets.
+
+Selection runs only before the first model call. A single candidate is returned without asking. The classifier must commit to a key. Classification failures, unknown keys, and timeouts warn and decline selection, so [ModelRouter](/docs/api/typescript/ModelRouter/index.md) serves candidate zero. After an attempt this strategy declines, so a failure of the selected candidate surfaces without switching. Nested routers are treated as opaque candidates using only their wrapper evidence.
 
 ## Example
 
 ```typescript
 const router = new ModelRouter(
   [
-    new RoutingCandidate({ model: fast, name: 'routine', metadata: { supportsToolUse: true } }),
-    new RoutingCandidate({ model: strong, name: 'complex' }),
+    new RoutingCandidate({ model: fast, name: 'routine', description: 'Short factual requests' }),
+    new RoutingCandidate({ model: strong, name: 'complex', description: 'Multi-step design work' }),
   ],
   { strategy: new ClassifierStrategy(classifierModel) }
 )
@@ -31,7 +33,7 @@ const agent = new Agent({ model: router })
 new ClassifierStrategy(model, options?): ClassifierStrategy;
 ```
 
-Defined in: [src/models/routing/classifier-strategy.ts:123](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts#L123)
+Defined in: [src/models/routing/classifier-strategy.ts:156](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts#L156)
 
 Create a classifier strategy.
 
@@ -39,7 +41,7 @@ Create a classifier strategy.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `model` | [`Model`](/docs/api/typescript/Model/index.md) | Model used for classification; it must honor forced tool selection (`toolChoice`), since a provider that ignores it fails classification silently and every selection falls back to candidate zero |
+| `model` | | [`Model`](/docs/api/typescript/Model/index.md)<[`BaseModelConfig`](/docs/api/typescript/BaseModelConfig/index.md)\> | [`DecisionModel`](/docs/api/typescript/DecisionModel/index.md) | Model or DecisionModel used for classification; a Model must honor forced tool selection (`toolChoice`), since a provider that ignores it fails classification and every selection falls back to candidate zero |
 | `options?` | [`ClassifierStrategyOptions`](/docs/api/typescript/ClassifierStrategyOptions/index.md) | Routing policy, timeout, and character budgets |
 
 #### Returns
@@ -48,11 +50,11 @@ Create a classifier strategy.
 
 #### Throws
 
-TypeError if `model` is not a Model
+TypeError if `model` is not a Model or DecisionModel
 
 #### Throws
 
-Error if `timeoutMs` is not finite and greater than zero or a character limit is not a positive integer
+Error if both `routingPolicy` and `systemPrompt` are set, `timeoutMs` is not finite, greater than zero, and at most 2147483647, or a character limit is not a positive integer
 
 ## Methods
 
@@ -62,9 +64,9 @@ Error if `timeoutMs` is not finite and greater than zero or a character limit is
 select(context): Promise<RoutingCandidate>;
 ```
 
-Defined in: [src/models/routing/classifier-strategy.ts:154](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts#L154)
+Defined in: [src/models/routing/classifier-strategy.ts:181](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts#L181)
 
-Select one opening candidate, declining on classification or serving-time failure.
+Select one opening candidate, declining on a decision failure.
 
 #### Parameters
 
@@ -76,7 +78,7 @@ Select one opening candidate, declining on classification or serving-time failur
 
 `Promise`<[`RoutingCandidate`](/docs/api/typescript/RoutingCandidate/index.md)\>
 
-The classified candidate, or `undefined` to decline
+The chosen candidate, or `undefined` to decline
 
 #### Throws
 

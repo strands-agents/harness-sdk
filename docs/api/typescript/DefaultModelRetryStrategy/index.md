@@ -2,7 +2,7 @@ Defined in: [src/retry/default-model-retry-strategy.ts:65](https://github.com/st
 
 Retries failed model calls classified by the SDK as retryable.
 
-Today, only [ModelThrottledError](/docs/api/typescript/ModelThrottledError/index.md) is treated as retryable — subclass and override [isRetryable](#isretryable) to expand or narrow that set without reimplementing the rest of the retry policy.
+[ModelThrottledError](/docs/api/typescript/ModelThrottledError/index.md) and [ModelNetworkError](/docs/api/typescript/ModelNetworkError/index.md) are treated as retryable — subclass and override [isRetryable](#isretryable) to expand or narrow that set without reimplementing the rest of the retry policy.
 
 State is per retry budget: timing state resets in [onFirstModelAttempt](#onfirstmodelattempt), which the base class calls when `event.attemptCount === 1`. A new turn and a router candidate switch each start a fresh budget. The attempt counter itself is owned by the agent loop and read from [AfterModelCallEvent.attemptCount](/docs/api/typescript/AfterModelCallEvent/index.md#attemptcount).
 
@@ -73,7 +73,7 @@ protected isRetryable(error): boolean;
 
 Defined in: [src/retry/default-model-retry-strategy.ts:89](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/retry/default-model-retry-strategy.ts#L89)
 
-Whether `error` should be retried. Override to extend or narrow the retryable set (e.g. to also retry transient 5xx errors).
+Whether `error` should be retried. Override to extend or narrow the retryable set.
 
 #### Parameters
 

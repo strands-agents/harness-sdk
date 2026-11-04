@@ -1,4 +1,4 @@
-Defined in: [src/models/bedrock.ts:374](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L374)
+Defined in: [src/models/bedrock.ts:377](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L377)
 
 Options for creating a BedrockModel instance.
 
@@ -14,7 +14,7 @@ Options for creating a BedrockModel instance.
 maxTokens?: number;
 ```
 
-Defined in: [src/models/bedrock.ts:273](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L273)
+Defined in: [src/models/bedrock.ts:276](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L276)
 
 Maximum number of tokens to generate in the response.
 
@@ -38,7 +38,7 @@ the model’s `maxOutputTokens` from the model info when known; otherwise `maxTo
 temperature?: number;
 ```
 
-Defined in: [src/models/bedrock.ts:280](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L280)
+Defined in: [src/models/bedrock.ts:283](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L283)
 
 Controls randomness in generation.
 
@@ -58,7 +58,7 @@ Controls randomness in generation.
 topP?: number;
 ```
 
-Defined in: [src/models/bedrock.ts:287](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L287)
+Defined in: [src/models/bedrock.ts:290](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L290)
 
 Controls diversity via nucleus sampling.
 
@@ -78,7 +78,7 @@ Controls diversity via nucleus sampling.
 stopSequences?: string[];
 ```
 
-Defined in: [src/models/bedrock.ts:292](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L292)
+Defined in: [src/models/bedrock.ts:295](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L295)
 
 Array of sequences that will stop generation when encountered.
 
@@ -94,7 +94,7 @@ Array of sequences that will stop generation when encountered.
 cacheConfig?: CacheConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:299](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L299)
+Defined in: [src/models/bedrock.ts:302](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L302)
 
 Configuration for prompt caching.
 
@@ -114,7 +114,7 @@ Configuration for prompt caching.
 additionalRequestFields?: JSONValue;
 ```
 
-Defined in: [src/models/bedrock.ts:304](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L304)
+Defined in: [src/models/bedrock.ts:307](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L307)
 
 Additional fields to include in the Bedrock request.
 
@@ -130,7 +130,7 @@ Additional fields to include in the Bedrock request.
 additionalResponseFieldPaths?: string[];
 ```
 
-Defined in: [src/models/bedrock.ts:309](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L309)
+Defined in: [src/models/bedrock.ts:312](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L312)
 
 Additional response field paths to extract from the Bedrock response.
 
@@ -146,7 +146,7 @@ Additional response field paths to extract from the Bedrock response.
 additionalArgs?: JSONValue;
 ```
 
-Defined in: [src/models/bedrock.ts:315](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L315)
+Defined in: [src/models/bedrock.ts:318](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L318)
 
 Additional arguments to pass through to the Bedrock Converse API.
 
@@ -166,7 +166,7 @@ Additional arguments to pass through to the Bedrock Converse API.
 stream?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:325](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L325)
+Defined in: [src/models/bedrock.ts:328](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L328)
 
 Whether or not to stream responses from the model.
 
@@ -189,7 +189,7 @@ This will use the ConverseStream API instead of the Converse API.
 includeToolResultStatus?: boolean | "auto";
 ```
 
-Defined in: [src/models/bedrock.ts:333](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L333)
+Defined in: [src/models/bedrock.ts:336](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L336)
 
 Flag to include status field in tool results.
 
@@ -209,7 +209,7 @@ Flag to include status field in tool results.
 guardrailConfig?: BedrockGuardrailConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:339](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L339)
+Defined in: [src/models/bedrock.ts:342](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L342)
 
 Guardrail configuration for content filtering and safety controls.
 
@@ -229,7 +229,7 @@ Guardrail configuration for content filtering and safety controls.
 useNativeTokenCount?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:350](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L350)
+Defined in: [src/models/bedrock.ts:353](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L353)
 
 Whether to use the native Bedrock CountTokens API.
 
@@ -253,7 +253,7 @@ false
 strictTools?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:368](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L368)
+Defined in: [src/models/bedrock.ts:371](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L371)
 
 Constrain the model to emit tool names and inputs that conform to each tool’s schema.
 
@@ -282,7 +282,7 @@ false
 region?: string;
 ```
 
-Defined in: [src/models/bedrock.ts:378](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L378)
+Defined in: [src/models/bedrock.ts:381](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L381)
 
 AWS region to use for the Bedrock service.
 
@@ -294,7 +294,7 @@ AWS region to use for the Bedrock service.
 clientConfig?: BedrockRuntimeClientConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:383](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L383)
+Defined in: [src/models/bedrock.ts:386](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L386)
 
 Configuration for the Bedrock Runtime client.
 
@@ -306,7 +306,7 @@ Configuration for the Bedrock Runtime client.
 requestTimeout?: number;
 ```
 
-Defined in: [src/models/bedrock.ts:394](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L394)
+Defined in: [src/models/bedrock.ts:397](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L397)
 
 Milliseconds of stream inactivity before a Bedrock request is aborted.
 
@@ -326,7 +326,7 @@ Applies to the default request handler and takes precedence over `clientConfig.r
 apiKey?: string;
 ```
 
-Defined in: [src/models/bedrock.ts:401](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L401)
+Defined in: [src/models/bedrock.ts:404](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L404)
 
 Amazon Bedrock API key for bearer token authentication. When provided, requests use the API key instead of SigV4 signing.
 

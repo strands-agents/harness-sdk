@@ -205,7 +205,7 @@ The table below compares feature availability between the Python and TypeScript 
 |  | [Additional providers](/docs/user-guide/sdk/model-providers/index.md) | 5+ | 1+ |
 | **Tools** | [Custom function tools](/docs/user-guide/sdk/tools/custom-tools/index.md) | ✅ | ✅ |
 |  | [MCP (Model Context Protocol)](/docs/user-guide/sdk/tools/mcp-tools/index.md) | ✅ | ✅ |
-|  | [Built-in tools](/docs/user-guide/sdk/tools/community-tools-package/index.md) | 30+ via community package | 4 built-in |
+|  | [Vended tools](/docs/user-guide/sdk/tools/vended-tools/index.md) | ✅ | ✅ |
 | **Conversation** | [Null manager](/docs/user-guide/sdk/agents/conversation-management/index.md) | ✅ | ✅ |
 |  | [Sliding window manager](/docs/user-guide/sdk/agents/conversation-management/index.md) | ✅ | ✅ |
 |  | [Summarizing manager](/docs/user-guide/sdk/agents/conversation-management/index.md) | ✅ | ✅ |
@@ -225,7 +225,6 @@ The table below compares feature availability between the Python and TypeScript 
 
 - [Choosing an Agent Foundation](/docs/user-guide/migrate/choosing-an-agent-foundation/index.md) (1 shared tag)
 - [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
-- [Strands Box quickstart](/docs/user-guide/box/quickstart/index.md) (1 shared tag)
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)
 - [TypeScript Quickstart](/docs/user-guide/sdk/quickstart/typescript/index.md) (1 shared tag)

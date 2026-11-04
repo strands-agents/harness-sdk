@@ -2,7 +2,7 @@
 type AnswerOf<Q> = Q extends Question<"boolean"> ? boolean | Uncertain : Q extends Question<infer S> ? S[number] | Uncertain : boolean | string | Uncertain;
 ```
 
-Defined in: [src/decisions/types.ts:89](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L89)
+Defined in: [src/decisions/types.ts:95](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L95)
 
 Statically narrows each question’s answer type from its `choices`.
 

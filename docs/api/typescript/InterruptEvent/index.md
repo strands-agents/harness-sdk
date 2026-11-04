@@ -1,4 +1,4 @@
-Defined in: [src/hooks/events.ts:753](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L753)
+Defined in: [src/hooks/events.ts:760](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L760)
 
 Event emitted when an interrupt is raised during agent execution. The `interrupt.source` field discriminates between tool-callback and hook-callback origins. One event fires per unanswered interrupt at the moment the agent stops to wait for responses.
 
@@ -14,7 +14,7 @@ Event emitted when an interrupt is raised during agent execution. The `interrupt
 new InterruptEvent(data): InterruptEvent;
 ```
 
-Defined in: [src/hooks/events.ts:759](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L759)
+Defined in: [src/hooks/events.ts:766](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L766)
 
 #### Parameters
 
@@ -54,7 +54,7 @@ The request this event belongs to (`undefined` outside one); pass it to [InvokeO
 readonly type: "interruptEvent";
 ```
 
-Defined in: [src/hooks/events.ts:754](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L754)
+Defined in: [src/hooks/events.ts:761](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L761)
 
 ---
 
@@ -64,7 +64,7 @@ Defined in: [src/hooks/events.ts:754](https://github.com/strands-agents/harness-
 readonly agent: LocalAgent;
 ```
 
-Defined in: [src/hooks/events.ts:755](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L755)
+Defined in: [src/hooks/events.ts:762](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L762)
 
 ---
 
@@ -74,7 +74,7 @@ Defined in: [src/hooks/events.ts:755](https://github.com/strands-agents/harness-
 readonly interrupt: Interrupt;
 ```
 
-Defined in: [src/hooks/events.ts:756](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L756)
+Defined in: [src/hooks/events.ts:763](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L763)
 
 ---
 
@@ -84,7 +84,7 @@ Defined in: [src/hooks/events.ts:756](https://github.com/strands-agents/harness-
 readonly invocationState: InvocationState;
 ```
 
-Defined in: [src/hooks/events.ts:757](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L757)
+Defined in: [src/hooks/events.ts:764](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L764)
 
 ## Methods
 
@@ -102,7 +102,7 @@ toJSON(): Pick<InterruptEvent, "type"> & {
 };
 ```
 
-Defined in: [src/hooks/events.ts:767](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L767)
+Defined in: [src/hooks/events.ts:774](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L774)
 
 Serializes for wire transport, excluding agent and invocationState.
 

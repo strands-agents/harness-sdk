@@ -13,6 +13,7 @@ This class serves as the common base type for errors that originate from model p
 -   [`ContextWindowOverflowError`](/docs/api/typescript/ContextWindowOverflowError/index.md)
 -   [`MaxTokensError`](/docs/api/typescript/MaxTokensError/index.md)
 -   [`ModelThrottledError`](/docs/api/typescript/ModelThrottledError/index.md)
+-   [`ModelNetworkError`](/docs/api/typescript/ModelNetworkError/index.md)
 
 ## Constructors
 

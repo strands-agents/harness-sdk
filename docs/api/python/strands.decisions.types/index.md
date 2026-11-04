@@ -76,9 +76,15 @@ Defined in: [src/strands/decisions/types.py:70](https://github.com/strands-agent
 
 Per-call metadata recorded by a decision model implementation.
 
+The `provider_name`, `model_id`, `probabilities`, and `confidence` fields are populated only by implementations that report them (e.g. System One models); they are `None` for implementations that do not, such as `LLMDecisionModel`.
+
 **Attributes**:
 
 -   `latency_ms` - Time spent in the underlying model call, in milliseconds.
+-   `provider_name` - Provider that served the decision, when API-backed.
+-   `model_id` - Provider-reported model identifier that served the decision.
+-   `probabilities` - Per-question probability distributions, keyed first by question id and then by answer value. Boolean questions key by `"true"` / `"false"`; choice questions key by each choice string.
+-   `confidence` - Per-question confidence values in `[0.0, 1.0]`, keyed by question id.
 
 ## DecisionResult
 
@@ -87,7 +93,7 @@ Per-call metadata recorded by a decision model implementation.
 class DecisionResult()
 ```
 
-Defined in: [src/strands/decisions/types.py:81](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/types.py#L81)
+Defined in: [src/strands/decisions/types.py:95](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/types.py#L95)
 
 Result returned by `DecisionModel.ask`, keyed by the same identifiers as the question map.
 

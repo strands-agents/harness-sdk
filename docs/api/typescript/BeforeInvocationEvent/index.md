@@ -14,13 +14,13 @@ Event triggered at the beginning of a new agent request. Fired before any model 
 new BeforeInvocationEvent(data): BeforeInvocationEvent;
 ```
 
-Defined in: [src/hooks/events.ts:171](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L171)
+Defined in: [src/hooks/events.ts:177](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L177)
 
 #### Parameters
 
 | Parameter | Type |
 | --- | --- |
-| `data` | { `agent`: `LocalAgent`; `invocationState`: [`InvocationState`](/docs/api/typescript/InvocationState/index.md); } & `HookableEventData` |
+| `data` | { `agent`: `LocalAgent`; `invocationState`: [`InvocationState`](/docs/api/typescript/InvocationState/index.md); `messages?`: [`Message`](/docs/api/typescript/Message/index.md)\[\]; } & `HookableEventData` |
 
 #### Returns
 
@@ -78,13 +78,25 @@ Defined in: [src/hooks/events.ts:162](https://github.com/strands-agents/harness-
 
 ---
 
+### messages
+
+```ts
+messages: Message[];
+```
+
+Defined in: [src/hooks/events.ts:168](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L168)
+
+Input messages for this invocation. Hook callbacks may mutate this array or replace it before processing.
+
+---
+
 ### cancel
 
 ```ts
 cancel: string | boolean = false;
 ```
 
-Defined in: [src/hooks/events.ts:169](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L169)
+Defined in: [src/hooks/events.ts:175](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L175)
 
 Set by hook callbacks to cancel this invocation. When set to `true`, a default cancel message is used. When set to a string, that string is used as the assistant response message.
 
@@ -96,9 +108,9 @@ Set by hook callbacks to cancel this invocation. When set to `true`, a default c
 toJSON(): Pick<BeforeInvocationEvent, "type">;
 ```
 
-Defined in: [src/hooks/events.ts:181](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L181)
+Defined in: [src/hooks/events.ts:188](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L188)
 
-Serializes for wire transport, excluding the agent reference and invocationState. Called automatically by JSON.stringify().
+Serializes for wire transport, excluding the agent reference, invocationState, and messages. Called automatically by JSON.stringify().
 
 #### Returns
 

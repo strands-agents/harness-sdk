@@ -20,9 +20,12 @@
     -   [Models](/docs/api/python/strands.bidi.models)
     -   [Types](/docs/api/python/strands.bidi.types)
 -   **Decisions**
+    -   [Overview](/docs/api/python/strands.decisions)
     -   [Decision Model](/docs/api/python/strands.decisions.decision_model)
+    -   [Decisions Api Decision Model](/docs/api/python/strands.decisions.decisions_api_decision_model)
     -   [Llm Decision Model](/docs/api/python/strands.decisions.llm_decision_model)
     -   [Types](/docs/api/python/strands.decisions.types)
+    -   [Typesafe Decision Model](/docs/api/python/strands.decisions.typesafe_decision_model)
 -   **Event Loop**
     -   [Event Loop](/docs/api/python/strands.event_loop.event_loop)
     -   [Streaming](/docs/api/python/strands.event_loop.streaming)
@@ -100,12 +103,16 @@
     -   [Session Repository](/docs/api/python/strands.session.session_repository)
     -   [Snapshot Session Manager](/docs/api/python/strands.session.snapshot_session_manager)
 -   **Storage**
+    -   **Embeddings**
+        -   [Bedrock](/docs/api/python/strands.storage.embeddings.bedrock)
+        -   [Embedder](/docs/api/python/strands.storage.embeddings.embedder)
     -   [In Memory Storage](/docs/api/python/strands.storage.in_memory_storage)
     -   [Local File Storage](/docs/api/python/strands.storage.local_file_storage)
     -   [S3 Storage](/docs/api/python/strands.storage.s3_storage)
     -   **Search**
         -   [Bm25](/docs/api/python/strands.storage.search.bm25)
         -   [Keyword](/docs/api/python/strands.storage.search.keyword)
+        -   [S3 Vector](/docs/api/python/strands.storage.search.s3_vector)
         -   [Types](/docs/api/python/strands.storage.search.types)
     -   [Storage](/docs/api/python/strands.storage.storage)
 -   **Telemetry**

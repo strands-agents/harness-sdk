@@ -568,7 +568,7 @@ The direct tool result or task handle returned by the server.
 getTask(taskId, options?): Promise<McpGetTaskResult>;
 ```
 
-Defined in: [src/mcp/client.ts:959](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L959)
+Defined in: [src/mcp/client.ts:960](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L960)
 
 Retrieves the current state of a SEP-2663 task.
 
@@ -597,7 +597,7 @@ updateTask(
 ): Promise<McpUpdateTaskResult>;
 ```
 
-Defined in: [src/mcp/client.ts:980](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L980)
+Defined in: [src/mcp/client.ts:982](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L982)
 
 Supplies one or more responses to outstanding task input requests.
 
@@ -625,7 +625,7 @@ The server’s validated acknowledgement.
 cancelTask(taskId, options?): Promise<McpCancelTaskResult>;
 ```
 
-Defined in: [src/mcp/client.ts:1009](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L1009)
+Defined in: [src/mcp/client.ts:1012](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L1012)
 
 Requests cooperative cancellation of a SEP-2663 task.
 

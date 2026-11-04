@@ -2,6 +2,6 @@
 type McpConnectionState = "disconnected" | "connected" | "failed";
 ```
 
-Defined in: [src/mcp/client.ts:86](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L86)
+Defined in: [src/mcp/client.ts:69](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L69)
 
 Connection state of an MCP client.

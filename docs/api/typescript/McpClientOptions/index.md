@@ -14,7 +14,7 @@ Behavioral options shared by all MCP client configurations.
 applicationName?: string;
 ```
 
-Defined in: [src/mcp/client.ts:81](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L81)
+Defined in: [src/mcp/client.ts:64](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L64)
 
 #### Inherited from
 
@@ -28,7 +28,7 @@ Defined in: [src/mcp/client.ts:81](https://github.com/strands-agents/harness-sdk
 applicationVersion?: string;
 ```
 
-Defined in: [src/mcp/client.ts:82](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L82)
+Defined in: [src/mcp/client.ts:65](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L65)
 
 #### Inherited from
 

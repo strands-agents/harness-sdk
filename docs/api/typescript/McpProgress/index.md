@@ -1,4 +1,4 @@
-Defined in: [src/mcp/client.ts:89](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L89)
+Defined in: [src/mcp/client.ts:72](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L72)
 
 A progress update reported by an MCP server during a tool call.
 
@@ -10,7 +10,7 @@ A progress update reported by an MCP server during a tool call.
 progress: number;
 ```
 
-Defined in: [src/mcp/client.ts:91](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L91)
+Defined in: [src/mcp/client.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L74)
 
 Amount of work completed so far. Increases even when the total is unknown.
 
@@ -22,7 +22,7 @@ Amount of work completed so far. Increases even when the total is unknown.
 total?: number;
 ```
 
-Defined in: [src/mcp/client.ts:94](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L94)
+Defined in: [src/mcp/client.ts:77](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L77)
 
 Total amount of work, when the server reports one.
 
@@ -34,6 +34,6 @@ Total amount of work, when the server reports one.
 message?: string;
 ```
 
-Defined in: [src/mcp/client.ts:97](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L97)
+Defined in: [src/mcp/client.ts:80](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L80)
 
 Human-readable description of the current progress, when the server provides one.

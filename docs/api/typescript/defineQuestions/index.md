@@ -2,7 +2,7 @@
 function defineQuestions<Q>(questions): Q;
 ```
 
-Defined in: [src/decisions/types.ts:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L33)
+Defined in: [src/decisions/types.ts:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts#L39)
 
 Identity helper that preserves the literal types of an inline question map when it’s stored in a variable before being passed to [DecisionModel.ask](/docs/api/typescript/DecisionModel/index.md#ask).
 

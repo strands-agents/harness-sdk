@@ -245,6 +245,8 @@ console.log(`Cache read tokens: ${cacheReadTokens}`)
 ```
 (( /tab "TypeScript" ))
 
+`messages_ttl``messagesTTL` controls this cache point: set it to `False` (`false`) to turn it off, or to a TTL string such as `"5m"` to set its duration. Left unset, it takes the duration from `ttl`.
+
 > **Note**: Cache misses occur if you intentionally modify past conversation context (e.g., summarization or editing previous messages).
 
 **Option B: Manual Cache Points**

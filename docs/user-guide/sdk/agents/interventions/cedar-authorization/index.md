@@ -732,6 +732,7 @@ For the full policy language grammar, operators, and built-in functions, see the
 
 ## Related pages
 
+- [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md) (2 shared tags)
 - [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md) (2 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (2 shared tags)
 - [Creating a Custom Model Provider](/docs/user-guide/sdk/model-providers/custom_model_provider/index.md) (1 shared tag)
@@ -741,7 +742,6 @@ For the full policy language grammar, operators, and built-in functions, see the
 - [Red teaming](/docs/user-guide/evals-sdk/red-teaming/index.md) (1 shared tag)
 - [Refusal evaluator](/docs/user-guide/evals-sdk/evaluators/refusal_evaluator/index.md) (1 shared tag)
 - [Responsible AI](/docs/user-guide/sdk/safety-security/responsible-ai/index.md) (1 shared tag)
-- [Scoring attacks](/docs/user-guide/evals-sdk/red-teaming/evaluators/index.md) (1 shared tag)
 
 
 ## Implementation

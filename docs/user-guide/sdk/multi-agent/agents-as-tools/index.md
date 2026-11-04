@@ -490,7 +490,7 @@ You can also use remote agents as tools through the [Agent-to-Agent (A2A) protoc
 For complete implementations of this pattern, see the following examples:
 
 (( tab "Python" ))
-The [Teacher’s Assistant](/examples/index.md) example demonstrates an orchestrator agent that routes student queries to specialized agents for math, English, language translation, computer science, and general knowledge.
+The [sample guides](/examples/index.md) include a Teacher’s Assistant example that demonstrates an orchestrator agent routing student queries to specialized agents for math, English, language translation, computer science, and general knowledge.
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))

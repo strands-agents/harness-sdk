@@ -18,7 +18,7 @@ All tools, whether custom, community-provided, or included in the Strands tools 
 
 [Vended tools](vended-tools/index.md)Ready-made tools included in the SDK for files, HTTP, notebooks, and shell.
 
-[Community tools package](community-tools-package/index.md)Migration guidance from the former community tools package.
+[Community tools package](../../migrate/strands-agents-tools/index.md)Migration guidance from the former community tools package.
 
 [Tool executors](executors/index.md)Control whether multiple tool calls run concurrently or in sequence.
 
@@ -67,7 +67,7 @@ The agent reads the tool’s description and decides when to call it. From here 
 
 New to tools? Start with [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) to see how tools load onto an agent and the two ways to call them, then [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) to build your own.
 
-Bringing in tools that already exist? Reach for [vended tools](/docs/user-guide/sdk/tools/vended-tools/index.md) or the [community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md), or connect an [MCP server](/docs/user-guide/sdk/tools/mcp-tools/index.md). When a model returns several tool calls at once, [tool executors](/docs/user-guide/sdk/tools/executors/index.md) decide whether they run concurrently or in order.
+Bringing in tools that already exist? Reach for [vended tools](/docs/user-guide/sdk/tools/vended-tools/index.md) or connect an [MCP server](/docs/user-guide/sdk/tools/mcp-tools/index.md). Still on the deprecated community tools package? See [Migrate from the community tools package](/docs/user-guide/migrate/strands-agents-tools/index.md). When a model returns several tool calls at once, [tool executors](/docs/user-guide/sdk/tools/executors/index.md) decide whether they run concurrently or in order.
 
 ## Related pages
 
@@ -76,11 +76,11 @@ Bringing in tools that already exist? Reach for [vended tools](/docs/user-guide/
 - [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) (1 shared tag)
 - [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) (1 shared tag)
 - [Bash / shell](/docs/user-guide/sdk/tools/vended-tools/shell/index.md) (1 shared tag)
-- [Community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md) (1 shared tag)
 - [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) (1 shared tag)
 - [Edit](/docs/user-guide/sdk/tools/vended-tools/edit/index.md) (1 shared tag)
 - [File editor](/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md) (1 shared tag)
 - [Graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) (1 shared tag)
+- [Handoff to User](/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/index.md) (1 shared tag)
 
 
 ## Implementation

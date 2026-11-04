@@ -931,7 +931,7 @@ for await (const event of agent.stream('Hello')) {
 asTool(options?): Tool;
 ```
 
-Defined in: [src/agent/agent.ts:1535](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts#L1535)
+Defined in: [src/agent/agent.ts:1555](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts#L1555)
 
 Returns a [Tool](/docs/api/typescript/Tool/index.md) that wraps this agent, allowing it to be used as a tool by another agent.
 
@@ -971,7 +971,7 @@ const writer = new Agent({ tools: [researcher] })
 takeSnapshot(options): Snapshot;
 ```
 
-Defined in: [src/agent/agent.ts:1569](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts#L1569)
+Defined in: [src/agent/agent.ts:1589](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts#L1589)
 
 Captures a point-in-time snapshot of the agent’s current state.
 
@@ -1027,7 +1027,7 @@ const withMeta = agent.takeSnapshot({ preset: 'session', appData: { userId: 'u-1
 loadSnapshot(snapshot): void;
 ```
 
-Defined in: [src/agent/agent.ts:1598](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts#L1598)
+Defined in: [src/agent/agent.ts:1618](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts#L1618)
 
 Restores agent state from a previously captured snapshot.
 

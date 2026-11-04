@@ -525,11 +525,11 @@ Interventions return typed actions that the framework interprets. This enables:
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (3 shared tags)
 - [Interrupts](/docs/user-guide/sdk/interrupts/index.md) (3 shared tags)
 - [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md) (3 shared tags)
+- [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md) (2 shared tags)
 - [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md) (2 shared tags)
 - [Build a custom plugin](/docs/user-guide/sdk/plugins/custom-plugins/index.md) (2 shared tags)
 - [Plugins](/docs/user-guide/sdk/plugins/index.md) (2 shared tags)
 - [Middleware](/docs/user-guide/sdk/agents/middleware/index.md) (2 shared tags)
-- [Tool Executors](/docs/user-guide/sdk/tools/executors/index.md) (2 shared tags)
 
 
 ## Implementation

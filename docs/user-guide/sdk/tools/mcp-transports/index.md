@@ -226,11 +226,11 @@ const agentSse = new Agent({
 - [A2A Client](/docs/user-guide/sdk/tools/vended-tools/a2a-client/index.md) (1 shared tag)
 - [Attach and invoke tools](/docs/user-guide/sdk/tools/using-tools/index.md) (1 shared tag)
 - [Bash / shell](/docs/user-guide/sdk/tools/vended-tools/shell/index.md) (1 shared tag)
-- [Community tools package](/docs/user-guide/sdk/tools/community-tools-package/index.md) (1 shared tag)
 - [Create custom tools](/docs/user-guide/sdk/tools/custom-tools/index.md) (1 shared tag)
 - [Edit](/docs/user-guide/sdk/tools/vended-tools/edit/index.md) (1 shared tag)
 - [File editor](/docs/user-guide/sdk/tools/vended-tools/file-editor/index.md) (1 shared tag)
 - [Graph](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) (1 shared tag)
+- [Handoff to User](/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/index.md) (1 shared tag)
 
 
 ## Implementation

@@ -1,4 +1,4 @@
-Defined in: [src/hooks/events.ts:823](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L823)
+Defined in: [src/hooks/events.ts:830](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L830)
 
 Event triggered after all tools complete execution. Fired after tool results are collected and ready to be added to conversation. Uses reverse callback ordering for proper cleanup semantics.
 
@@ -14,7 +14,7 @@ Event triggered after all tools complete execution. Fired after tool results are
 new AfterToolsEvent(data): AfterToolsEvent;
 ```
 
-Defined in: [src/hooks/events.ts:844](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L844)
+Defined in: [src/hooks/events.ts:851](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L851)
 
 #### Parameters
 
@@ -54,7 +54,7 @@ The request this event belongs to (`undefined` outside one); pass it to [InvokeO
 readonly type: "afterToolsEvent";
 ```
 
-Defined in: [src/hooks/events.ts:824](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L824)
+Defined in: [src/hooks/events.ts:831](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L831)
 
 ---
 
@@ -64,7 +64,7 @@ Defined in: [src/hooks/events.ts:824](https://github.com/strands-agents/harness-
 readonly agent: LocalAgent;
 ```
 
-Defined in: [src/hooks/events.ts:825](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L825)
+Defined in: [src/hooks/events.ts:832](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L832)
 
 ---
 
@@ -74,7 +74,7 @@ Defined in: [src/hooks/events.ts:825](https://github.com/strands-agents/harness-
 readonly message: Message;
 ```
 
-Defined in: [src/hooks/events.ts:826](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L826)
+Defined in: [src/hooks/events.ts:833](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L833)
 
 ---
 
@@ -84,7 +84,7 @@ Defined in: [src/hooks/events.ts:826](https://github.com/strands-agents/harness-
 readonly invocationState: InvocationState;
 ```
 
-Defined in: [src/hooks/events.ts:827](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L827)
+Defined in: [src/hooks/events.ts:834](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L834)
 
 ---
 
@@ -94,7 +94,7 @@ Defined in: [src/hooks/events.ts:827](https://github.com/strands-agents/harness-
 endTurn: string | boolean | ContentBlock[] = false;
 ```
 
-Defined in: [src/hooks/events.ts:842](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L842)
+Defined in: [src/hooks/events.ts:849](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L849)
 
 When set to `true`, the agent loop halts after this tool batch completes without calling the model again and a default message (`"Turn ended early by hook after tool execution"`) is appended as the final assistant message. When set to a string, that string is used instead of the default — the string becomes literal assistant content (a `TextBlock`), not a reason or label. When set to a `ContentBlock[]`, those blocks become the final assistant message content directly (shallow-copied). Contrast with [cancel](/docs/api/typescript/BeforeToolCallEvent/index.md#cancel) fields on other events, where the string is a cancellation reason.
 
@@ -108,7 +108,7 @@ In all cases `stopReason` on the returned `AgentResult` is `'endTurn'`.
 toJSON(): Pick<AfterToolsEvent, "type" | "message">;
 ```
 
-Defined in: [src/hooks/events.ts:860](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L860)
+Defined in: [src/hooks/events.ts:867](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/hooks/events.ts#L867)
 
 Serializes for wire transport, excluding the agent reference, invocationState, and mutable endTurn field. Called automatically by JSON.stringify().
 
