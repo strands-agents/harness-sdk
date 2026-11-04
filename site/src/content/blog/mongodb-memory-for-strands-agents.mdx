@@ -19,42 +19,34 @@ draft: true
 The longer you work with an agent, the less you should have to repeat.
 
 Decisions and lessons from previous tasks should carry forward. Work in progress
-should survive a restart. Saving the conversation history is a start, but agents
-also need to extract useful knowledge and find it when it matters.
+should survive a restart. Persisting conversation history helps with the
+restart. Finding relevant knowledge from an earlier task requires searchable
+long-term memory.
 
 The MongoDB team built `strands-mongodb`, a Python integration that adds
-persistent sessions and searchable long-term memory to Strands Agents. Both
-backends can use the same MongoDB deployment.
+persistent sessions and searchable long-term memory to Strands Agents.
 
 ## Why two backends?
 
-To resume a conversation, Strands loads its saved state by session ID. A new
-task needs a different operation: searching for relevant facts from earlier
-work.
+Suppose an agent learns that a project's integration tests use a separate
+database. If the process restarts, the agent should return to the same
+conversation. When a new conversation turns to test setup, the agent should
+still recall the database requirement.
 
-The integration connects to two Strands interfaces that handle those jobs:
+Strands handles those jobs through separate interfaces:
 
 | Job | MongoDB backend | How the agent uses it |
 | --- | --- | --- |
 | Resume a conversation | `MongoDBStorage`, used by `SnapshotSessionManager` | Loads saved session state using a session ID. |
 | Recall knowledge across conversations | `MongoDBMemoryStore`, used by `MemoryManager` | Searches stored facts within a scope, such as a project or user. |
 
-Suppose an agent learns that a project's integration tests use a separate
-database. Session storage preserves the conversation in which that came up.
-Long-term memory can retain the database requirement as a fact and retrieve it
-when the agent works on another test in a later session.
-
-Session management keeps the current conversation available after a restart.
-Long-term memory carries knowledge across conversations, and semantic search
-finds that knowledge by meaning.
-
-Use either backend independently or point both at the same MongoDB deployment.
+Use either backend on its own, or point both at the same MongoDB deployment.
 
 ## Getting started
 
-The [MongoDB integration guide](/docs/integrations/integrations/mongodb/) now
-includes installation, Atlas setup, credentials, and a cross-session recall
-test. After completing that setup, save this example as `mongodb_memory.py`:
+The [MongoDB integration guide](/docs/integrations/integrations/mongodb/) covers
+installation, Atlas setup, credentials, and a cross-session recall test.
+Complete that setup, then save this example as `mongodb_memory.py`:
 
 ```python
 """Persist Strands sessions and long-term memory in MongoDB."""
@@ -123,33 +115,33 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-The first run stores the project's test requirements under `project-123` and
-saves the conversation as `conversation-001`. The integration guide shows how
-to start a new session with the same memory scope and verify that the agent
-recalls the separate-database requirement without receiving the original
-message again.
+Run the example once with its default values. It saves the conversation as
+`conversation-001` and stores the project's test requirements under
+`project-123`.
+
+To test long-term recall, start a new session while keeping the same memory
+scope, then ask what test setup the project requires. The new conversation never
+receives the original message, but the answer should still mention the separate
+database. The integration guide includes the command.
 
 ## Search and memory controls
 
-- **Vector, full-text, and hybrid search.** Retrieve memories by meaning, match
-  specific terms, or combine both approaches on a supported deployment.
-- **Automated embedding.** A compatible Atlas deployment can generate
-  embeddings for stored memories and queries, removing the need for embedding
-  code in your agent.
-- **Scoped retrieval.** Scope memories by user or project. The integration
-  applies this filter; your application still owns authorization.
-- **Deduplication and expiration.** Repeated writes of identical content are
-  deduplicated within a scope and store. Set `ttl_seconds` when memories should
-  expire.
+Vector search retrieves memories by meaning, while full-text search matches
+specific terms. On supported deployments, hybrid search combines both. A
+compatible Atlas deployment can generate embeddings for stored memories and
+queries, so the agent does not need separate embedding code.
 
-The snippet selects vector search explicitly. If you use an automatic search
-mode that can fall back to text search, check the active mode when testing
-semantic recall.
+Memory scopes limit retrieval to a user or project, while authorization remains
+the application's responsibility. Repeated writes of identical content are
+deduplicated within a store and scope. Set `ttl_seconds` when memories should
+expire.
 
-Thanks to the MongoDB team for building this integration and contributing it to
-the Strands ecosystem.
+The snippet selects vector search explicitly. Automatic mode can fall back to
+text search, so check the active mode before testing semantic recall.
 
-Get started with the
-[MongoDB integration guide](/docs/integrations/integrations/mongodb/), then join
-us in the [Strands Discord](https://discord.gg/strands) to ask questions, share
-what you are building, and help shape what comes next.
+Thanks to the MongoDB team for building the integration.
+
+Start with the
+[MongoDB integration guide](/docs/integrations/integrations/mongodb/). If you
+have questions or want to share what you are building, join us in the
+[Strands Discord](https://discord.gg/strands).
