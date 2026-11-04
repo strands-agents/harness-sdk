@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { DocumentBlock, ImageBlock } from '@strands-agents/sdk'
-import type { Agent, ToolContext } from '@strands-agents/sdk'
+import type { Agent, DocumentFormat, ImageFormat, ToolContext } from '@strands-agents/sdk'
 
 import { createHarness } from '../../src/agent.js'
 import { edit, makeRead, read, write } from '../../src/tools/file-tools.js'
-import { crc32 } from '../../src/tools/media-validation.js'
+import { jsCrc32 } from '../../src/tools/media-validation.js'
 
 const bytesOf = (...parts: (Uint8Array | number[] | string)[]): Uint8Array =>
   new Uint8Array(Buffer.concat(parts.map((p) => (typeof p === 'string' ? Buffer.from(p, 'latin1') : Buffer.from(p)))))
@@ -17,12 +17,22 @@ const b64 = (text: string): Uint8Array => new Uint8Array(Buffer.from(text, 'base
 const flip = (data: Uint8Array, at: number, count = 1): Uint8Array =>
   data.map((byte, i) => (i >= at && i < at + count ? byte ^ 0x55 : byte))
 
+/** Bit-at-a-time CRC-32, independent of the table-driven one under test. */
+function referenceCrc32(data: Uint8Array): number {
+  let crc = ~0
+  for (const byte of data) {
+    crc ^= byte
+    for (let k = 0; k < 8; k++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1))
+  }
+  return ~crc >>> 0
+}
+
 function pngChunk(kind: string, body: Uint8Array | number[]): Uint8Array {
   const typed = bytesOf(kind, body)
   const header = Buffer.alloc(4)
   header.writeUInt32BE(typed.length - 4)
   const crc = Buffer.alloc(4)
-  crc.writeUInt32BE(crc32(typed))
+  crc.writeUInt32BE(referenceCrc32(typed))
   return bytesOf(header, typed, crc)
 }
 
@@ -33,20 +43,50 @@ function png({ pixels = new Uint8Array(14), interlace = 0, beforeIdat = new Uint
   return bytesOf(signature, ihdr, beforeIdat, pngChunk('IDAT', deflateSync(pixels)), pngChunk('IEND', []))
 }
 
-/** A minimal compound file: header, one FAT sector, one directory sector naming `stream`. */
-function ole(stream: string): Uint8Array {
-  const file = Buffer.alloc(1536)
-  Buffer.from('d0cf11e0a1b11ae1', 'hex').copy(file)
-  file.writeUInt16LE(9, 30)
-  file.writeUInt32LE(1, 44)
-  file.writeUInt32LE(1, 48)
-  file.fill(0xff, 76, 512)
-  file.writeUInt32LE(0, 76)
-  file.fill(0xff, 512, 1024)
-  file.writeUInt32LE(0xfffffffd, 512)
-  file.writeUInt32LE(0xfffffffe, 516)
-  Buffer.from(stream, 'utf16le').copy(file, 1024)
-  return new Uint8Array(file)
+const NOSTREAM = 0xffffffff
+
+function oleEntry(name: string, kind: number, right = NOSTREAM, child = NOSTREAM): Buffer {
+  const entry = Buffer.alloc(128)
+  const length = entry.write(`${name}\0`, 'utf16le')
+  entry.writeUInt16LE(length, 64)
+  entry.writeUInt8(kind, 66)
+  entry.writeUInt8(1, 67)
+  entry.writeUInt32LE(NOSTREAM, 68)
+  entry.writeUInt32LE(right, 72)
+  entry.writeUInt32LE(child, 76)
+  return entry
+}
+
+/** A minimal compound file: `streams` in the root, `embedded` in a sub-storage, `text` in a data sector. */
+function ole(streams: string[], { embedded = [] as string[], text = '' } = {}): Uint8Array {
+  const sibling = (i: number, count: number, first: number): number => (i + 1 < count ? first + i + 1 : NOSTREAM)
+  const root = [...streams, ...(embedded.length ? ['MBD0001'] : [])]
+  const entries = [
+    oleEntry('Root Entry', 5, NOSTREAM, 1),
+    ...root.map((name, i) => oleEntry(name, 2, sibling(i, root.length, 1))),
+  ]
+  if (embedded.length) {
+    entries[entries.length - 1] = oleEntry('MBD0001', 1, NOSTREAM, entries.length)
+    const first = entries.length
+    entries.push(...embedded.map((name, i) => oleEntry(name, 2, sibling(i, embedded.length, first))))
+  }
+  if (entries.length > 4) throw new Error('one directory sector holds four entries')
+  const header = Buffer.alloc(512)
+  Buffer.from('d0cf11e0a1b11ae1', 'hex').copy(header)
+  header.writeUInt16LE(9, 30)
+  header.writeUInt32LE(1, 44)
+  header.writeUInt32LE(1, 48)
+  header.fill(0xff, 76)
+  header.writeUInt32LE(0, 76)
+  const fat = Buffer.alloc(512, 0xff)
+  fat.writeUInt32LE(0xfffffffd, 0)
+  fat.writeUInt32LE(0xfffffffe, 4)
+  fat.writeUInt32LE(0xfffffffe, 8)
+  const directory = Buffer.alloc(512)
+  Buffer.concat(entries).copy(directory)
+  const body = text ? Buffer.alloc(512) : Buffer.alloc(0)
+  body.write(text, 'utf16le')
+  return new Uint8Array(Buffer.concat([header, fat, directory, body]))
 }
 
 const PNG = png()
@@ -65,8 +105,34 @@ const JPEG = bytesOf(
 )
 const GIF = b64('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==')
 const WEBP = b64('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==')
-const PDF = bytesOf(
-  '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\nstartxref\n9\n%%EOF\n'
+/** A one-revision PDF with an exact cross-reference table. */
+function pdf(...objects: string[]): Uint8Array {
+  let out = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((body, i) => {
+    offsets.push(out.length)
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`
+  })
+  const xref = out.length
+  const rows = offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${rows}`
+  return bytesOf(`${out}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
+}
+
+// A one-page PDF that Bedrock renders.
+const PDF = pdf(
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+  '<< /Length 35 >>\nstream\nBT /F1 18 Tf 20 100 Td (Hello) Tj ET\nendstream',
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+)
+// A linearized PDF cut off after its first-page trailer.
+const PDF_LINEARIZED_CUT = bytesOf(
+  '%PDF-1.7\n%',
+  [0xe2, 0xe3, 0xcf, 0xd3],
+  '\n1 0 obj\n<< /Linearized 1 >>\nendobj\ntrailer\n<< /Root 2 0 R >>\nstartxref\n0\n%%EOF\n',
+  '2 0 obj\n<< /Type /Catalog'
 )
 const HTML = '<!DOCTYPE html>\n<html><title>404 Not Found</title>\n<h1>Not Found</h1></html>\n'
 // Zips holding [Content_Types].xml plus word/document.xml or xl/workbook.xml (and one without the former).
@@ -90,8 +156,8 @@ const DOCX_HUGE_ENTRY = bytesOf(
   [0xf0, 0xff, 0xff, 0xff],
   DOCX.subarray(DOCX_DIR + 28)
 )
-const DOC = ole('WordDocument')
-const XLS = ole('Workbook')
+const DOC = ole(['WordDocument'])
+const XLS = ole(['Workbook'])
 // Some writers mark unused FAT entries ENDOFCHAIN instead of FREE; Bedrock still accepts the file.
 const DOC_STALE_FAT = bytesOf(DOC.subarray(0, 532), [0xfe, 0xff, 0xff, 0xff], DOC.subarray(536))
 
@@ -286,64 +352,135 @@ describe('read media capability', () => {
 })
 
 describe('read media validation', () => {
-  it.each([
-    ['pic.png', PNG.subarray(0, PNG.length / 2)],
-    ['pic.png', PNG.subarray(0, -12)],
-    ['pic.png', flip(PNG, PNG_IDAT)],
-    ['pic.png', png({ pixels: new Uint8Array(7) })],
-    ['pic.png', png({ pixels: new Uint8Array(14), interlace: 1 })],
-    ['pic.png', bytesOf(PNG.subarray(0, PNG_IDAT - 8), pngChunk('IDAT', bytesOf('not deflate')), pngChunk('IEND', []))],
-    ['pic.jpg', JPEG.subarray(0, Buffer.from(JPEG).indexOf(Buffer.from([0xff, 0xda])))],
-    ['pic.gif', GIF.subarray(0, 30)],
-    ['pic.gif', GIF.subarray(0, 19)],
-    ['pic.webp', WEBP.subarray(0, 24)],
-    ['report.pdf', bytesOf('%PDF-1.4\n%', [0xe2, 0xe3, 0xcf, 0xd3], '\n1 0 obj\n<< /Type /Catalog >>\n')],
-    ['report.docx', DOCX.subarray(0, DOCX.length / 2)],
-    ['report.docx', bytesOf(DOCX.subarray(0, 4), DOCX.subarray(9))],
-    ['report.docx', flip(DOCX, DOCX_PART, 20)],
-    ['report.docx', ZIP_WITHOUT_CONTENT_TYPES],
-    ['report.docx', XLSX],
-    ['report.xls', DOC],
-    ['report.doc', DOC.subarray(0, -512)],
-  ])('rejects a truncated, corrupt, or mislabeled media file (%s #%#)', async (name, bytes) => {
-    // Each of these fails the Bedrock request as a media block, and the history with it.
-    const path = join(dir, name)
-    writeFileSync(path, bytes)
-    const message = new RegExp(`its ${bytes.length} bytes are not a valid \\w+ (image|document): \\w`)
-    await expect(read.invoke({ path }, ctx())).rejects.toThrow(message)
-    await expect(makeRead({ media: false }).invoke({ path }, ctx())).rejects.toThrow('are not a valid')
+  it('computes CRC-32 without native zlib.crc32', () => {
+    expect(jsCrc32(new Uint8Array(Buffer.from('123456789')))).toBe(0xcbf43926)
+    const data = new Uint8Array(4096).map((_, i) => (i * 31) ^ (i >> 3))
+    expect(jsCrc32(data)).toBe(referenceCrc32(data))
   })
 
   it.each([
-    ['pic.png', bytesOf(PNG, 'trailing junk')],
-    ['pic.png', png({ beforeIdat: bytesOf([0, 0, 0, 2], 'tEXtab', [0, 0, 0, 0]) })],
-    ['pic.png', png({ pixels: new Uint8Array(15), interlace: 1 })],
-    ['pic.jpg', JPEG.subarray(0, -2)],
-    ['pic.jpg', bytesOf(JPEG.subarray(0, 20), new Uint8Array(1000).fill(0xff), JPEG.subarray(20))],
+    ['pic.png', PNG.subarray(0, PNG.length / 2), 'a valid png image: it is truncated'],
+    ['pic.png', PNG.subarray(0, -12), 'a valid png image: it is truncated'],
+    ['pic.png', flip(PNG, PNG_IDAT), 'a valid png image: a chunk checksum does not match'],
+    ['pic.png', png({ pixels: new Uint8Array(7) }), 'a valid png image: its image data is incomplete'],
+    ['pic.png', png({ pixels: new Uint8Array(14), interlace: 1 }), 'a valid png image: its image data is incomplete'],
+    [
+      'pic.png',
+      bytesOf(PNG.subarray(0, PNG_IDAT - 8), pngChunk('IDAT', bytesOf('not deflate')), pngChunk('IEND', [])),
+      'a valid png image: its image data is corrupt',
+    ],
+    [
+      'pic.png',
+      bytesOf(
+        PNG.subarray(0, PNG_IDAT - 8),
+        pngChunk('IDAT', deflateSync(new Uint8Array(14)).subarray(0, -6)),
+        pngChunk('IEND', [])
+      ),
+      'a valid png image: its image data is incomplete',
+    ],
+    [
+      'pic.png',
+      bytesOf(PNG.subarray(0, PNG_IDAT - 8), pngChunk('IEND', [])),
+      'a valid png image: its image data is incomplete',
+    ],
+    [
+      'pic.jpg',
+      JPEG.subarray(0, Buffer.from(JPEG).indexOf(Buffer.from([0xff, 0xda]))),
+      'a valid jpeg image: it has no image data',
+    ],
+    ['pic.gif', GIF.subarray(0, 30), 'a valid gif image: it is truncated'],
+    ['pic.gif', GIF.subarray(0, 19), 'a valid gif image: it has no image data'],
+    ['pic.webp', WEBP.subarray(0, 24), 'a valid webp image: it is truncated'],
+    [
+      'report.pdf',
+      bytesOf('%PDF-1.4\n%', [0xe2, 0xe3, 0xcf, 0xd3], '\n1 0 obj\n<< /Type /Catalog >>\n'),
+      'a valid pdf document: it does not end with a cross-reference trailer, so it is likely truncated',
+    ],
+    [
+      'report.pdf',
+      PDF_LINEARIZED_CUT,
+      'a valid pdf document: it does not end with a cross-reference trailer, so it is likely truncated',
+    ],
+    [
+      'report.docx',
+      DOCX.subarray(0, DOCX.length / 2),
+      'a valid docx document: its zip archive is corrupt or truncated',
+    ],
+    [
+      'report.docx',
+      bytesOf(DOCX.subarray(0, 4), DOCX.subarray(9)),
+      'a valid docx document: its zip archive is corrupt or truncated',
+    ],
+    ['report.docx', flip(DOCX, DOCX_PART, 20), 'a valid docx document: its zip archive is corrupt or truncated'],
+    ['report.docx', ZIP_WITHOUT_CONTENT_TYPES, 'a valid docx document: it is a zip archive, not an Office document'],
+    ['report.docx', XLSX, 'a valid docx document: it is an Excel file'],
+    ['report.xls', DOC, 'a valid xls document: it is a Word file'],
+    ['report.doc', DOC.subarray(0, -512), 'a valid doc document: it is truncated'],
+    // Bedrock names a compound file by its root streams: an embedded object or body text does not count.
+    ['report.xls', ole(['WordDocument'], { embedded: ['Workbook'] }), 'a valid xls document: it is a Word file'],
+    ['report.doc', ole(['Workbook'], { embedded: ['WordDocument'] }), 'a valid doc document: it is an Excel file'],
+    [
+      'report.xls',
+      ole(['WordDocument'], { text: 'My favourite Book is Dune' }),
+      'a valid xls document: it is a Word file',
+    ],
+    ['report.doc', ole(['worddocument']), 'a valid doc document: it is not Word or Excel'],
+  ])('rejects a truncated, corrupt, or mislabeled media file (%s #%#)', async (name, bytes, reason) => {
+    // Each of these fails the Bedrock request as a media block, and the history with it.
+    const path = join(dir, name)
+    writeFileSync(path, bytes)
+    const message = `its ${bytes.length} bytes are not ${reason}. `
+    await expect(read.invoke({ path }, ctx())).rejects.toThrow(message)
+    await expect(makeRead({ media: false }).invoke({ path }, ctx())).rejects.toThrow(message)
+  })
+
+  it.each([
+    ['pic.png', bytesOf(PNG, 'trailing junk'), 'png'],
+    ['pic.png', png({ beforeIdat: bytesOf([0, 0, 0, 2], 'tEXtab', [0, 0, 0, 0]) }), 'png'],
+    ['pic.png', png({ pixels: new Uint8Array(15), interlace: 1 }), 'png'],
+    ['pic.jpg', JPEG.subarray(0, -2), 'jpeg'],
+    ['pic.jpg', bytesOf(JPEG.subarray(0, 20), new Uint8Array(1000).fill(0xff), JPEG.subarray(20)), 'jpeg'],
     // Past the inflate budget, so the cut-off checksum at its end is never reached.
-    ['pic.png', PNG_BOMB],
-    ['pic.gif', GIF.subarray(0, -1)],
-    ['pic.webp', bytesOf(WEBP, 'trailing junk')],
-    ['report.pdf', bytesOf('junk\n', PDF.subarray(0, Buffer.from(PDF).indexOf('%%EOF')))],
-    ['report.docx', DOCX],
-    ['report.doc', DOCX],
-    ['report.xlsx', XLSX],
-    ['report.xls', XLSX],
-    ['report.doc', DOC],
-    ['report.xls', XLS],
-    ['report.docx', DOC],
-    ['report.xls', ole('WORKBOOK')],
-    ['report.xls', ole('Workbook\0WordDocument')],
-    ['report.doc', ole('Workbook\0WordDocument')],
-    ['report.doc', DOC_STALE_FAT],
-    ['report.docx', DOCX_HUGE_ENTRY],
-  ])('returns media that Bedrock accepts (%s #%#)', async (name, bytes) => {
+    ['pic.png', PNG_BOMB, 'png'],
+    ['pic.gif', GIF.subarray(0, -1), 'gif'],
+    ['pic.webp', bytesOf(WEBP, 'trailing junk'), 'webp'],
+    ['report.pdf', bytesOf('junk\n', PDF.subarray(0, Buffer.from(PDF).indexOf('%%EOF'))), 'pdf'],
+    [
+      'report.pdf',
+      bytesOf(
+        Buffer.from(PDF)
+          .toString('latin1')
+          .replace(/startxref\n\d+/, 'startxref\n0')
+      ),
+      'pdf',
+    ],
+    ['report.docx', DOCX, 'docx'],
+    ['report.doc', DOCX, 'doc'],
+    ['report.xlsx', XLSX, 'xlsx'],
+    ['report.xls', XLSX, 'xls'],
+    ['report.doc', DOC, 'doc'],
+    ['report.xls', XLS, 'xls'],
+    ['report.docx', DOC, 'docx'],
+    ['report.xls', ole(['WORKBOOK']), 'xls'],
+    ['report.xls', ole(['Book']), 'xls'],
+    ['report.xls', ole(['Workbook'], { embedded: ['WordDocument'] }), 'xls'],
+    ['report.doc', ole(['WordDocument'], { embedded: ['Workbook'] }), 'doc'],
+    ['report.doc', ole(['WordDocument'], { text: 'My favourite Book is Dune' }), 'doc'],
+    ['report.doc', DOC_STALE_FAT, 'doc'],
+    ['report.docx', DOCX_HUGE_ENTRY, 'docx'],
+  ])('returns media that Bedrock accepts (%s #%#)', async (name, bytes, format) => {
     // Imperfect but renderable files (as observed against Bedrock) stay media blocks.
     const path = join(dir, name)
     writeFileSync(path, bytes)
-    const out = (await read.invoke({ path }, ctx())) as ImageBlock | DocumentBlock
-    expect(out).toBeInstanceOf(name.startsWith('pic') ? ImageBlock : DocumentBlock)
-    expect(new Uint8Array((out.source as { bytes: Uint8Array }).bytes)).toEqual(bytes)
+    const out = await read.invoke({ path }, ctx())
+    const expected = name.startsWith('pic')
+      ? new ImageBlock({ format: format as ImageFormat, source: { bytes: Buffer.from(bytes) } })
+      : new DocumentBlock({
+          name: name.replace('.', ' '),
+          format: format as DocumentFormat,
+          source: { bytes: Buffer.from(bytes) },
+        })
+    expect(out).toEqual(expected)
   })
 
   it.each([true, false])('shows text saved under a media extension as text (media: %s)', async (media) => {
@@ -372,7 +509,7 @@ describe('read media validation', () => {
     expect(result.status).toBe('error')
     expect(result.content).toHaveLength(1)
     expect((result.content[0] as { text?: string }).text).toContain(
-      'not a valid pdf document: it has no cross-reference trailer'
+      'not a valid pdf document: it does not end with a cross-reference trailer'
     )
   })
 })

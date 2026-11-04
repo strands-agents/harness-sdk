@@ -15,13 +15,14 @@ import zipfile
 import zlib
 
 _TRUNCATED = "it is truncated"
+_PDF_TRUNCATED = "it does not end with a cross-reference trailer, so it is likely truncated"
 # Deep checks stop after inflating this much, so a compression bomb costs bounded time and memory; what is
 # left is accepted on structure alone, as before these checks existed.
 _INFLATE_BUDGET = 64 << 20
 _NOT_FILL = re.compile(rb"[^\xff]")
 _OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
 _OLE_SPECIAL = 0xFFFFFFFA
-_OLE_STREAMS = {"Word": ("WordDocument",), "Excel": ("Workbook", "WORKBOOK", "Book")}
+_OLE_EXCEL_STREAMS = {"Workbook", "WORKBOOK", "Book"}
 _DOCUMENT_FAMILY = {"doc": "Word", "docx": "Word", "xls": "Excel", "xlsx": "Excel"}
 
 
@@ -37,7 +38,7 @@ def document_problem(data: bytes, document_format: str) -> str | None:
     if data.startswith(b"PK\x03\x04"):
         family, problem = _ooxml_family(data)
     elif data.startswith(_OLE_SIGNATURE):
-        family, problem = _ole_family(data, _DOCUMENT_FAMILY[document_format])
+        family, problem = _ole_family(data)
     else:
         return "it is not a Word or Excel file"
     if problem is None and family != _DOCUMENT_FAMILY[document_format]:
@@ -46,7 +47,7 @@ def document_problem(data: bytes, document_format: str) -> str | None:
 
 
 def _png_problem(data: bytes) -> str | None:
-    pos, inflater, inflated, expected = 8, zlib.decompressobj(), 0, 0
+    pos, idat, expected = 8, [], 0
     while pos + 12 <= len(data):
         (length,) = struct.unpack_from(">I", data, pos)
         kind, body = data[pos + 4 : pos + 8], data[pos + 8 : pos + 8 + length]
@@ -59,19 +60,26 @@ def _png_problem(data: bytes) -> str | None:
         # Bedrock tolerates a bad checksum on an ancillary chunk (lowercase first letter), like libpng.
         if not kind[0] & 0x20 and zlib.crc32(kind + body) != struct.unpack_from(">I", data, pos + 8 + length)[0]:
             return "a chunk checksum does not match"
-        try:
-            while kind == b"IDAT" and not inflater.eof and inflated <= _INFLATE_BUDGET:
-                out = inflater.decompress(body, 1 << 20)
-                inflated, body = inflated + len(out), inflater.unconsumed_tail
-                if not body and len(out) < 1 << 20:
-                    break
-        except zlib.error:
-            return "its image data is corrupt"
+        if kind == b"IDAT":
+            idat.append(body)
         if kind == b"IEND":
-            complete = inflated > _INFLATE_BUDGET or (inflater.eof and inflated >= expected)
-            return None if complete else "its image data is incomplete"
+            return _png_data_problem(b"".join(idat), expected)
         pos += 12 + length
     return _TRUNCATED
+
+
+def _png_data_problem(stream: bytes, expected: int) -> str | None:
+    inflater, inflated = zlib.decompressobj(), 0
+    try:
+        while not inflater.eof and inflated <= _INFLATE_BUDGET:
+            out = inflater.decompress(stream, 1 << 20)
+            inflated, stream = inflated + len(out), inflater.unconsumed_tail
+            if len(out) < 1 << 20:
+                break
+    except zlib.error:
+        return "its image data is corrupt"
+    complete = inflated > _INFLATE_BUDGET or (inflater.eof and inflated >= expected)
+    return None if complete else "its image data is incomplete"
 
 
 def _png_pixel_bytes(ihdr: bytes) -> int | None:
@@ -157,13 +165,15 @@ def _webp_problem(data: bytes) -> str | None:
 
 
 def _pdf_problem(data: bytes) -> str | None:
-    # Readers allow junk before the header and after the trailer; a truncated PDF loses its trailer.
+    # Readers allow junk before the header and after the trailer. A truncated PDF loses its final trailer; a
+    # linearized one still has its first-page trailer near the start, so the last trailer must follow every object.
     start = data.find(b"%PDF-", 0, 1024)
     if start < 0:
         return "it has no %PDF- header"
-    return (
-        None if data.find(b"startxref", start) >= 0 else "it has no cross-reference trailer, so it is likely truncated"
-    )
+    trailer = data.rfind(b"startxref")
+    if trailer > start and trailer > data.rfind(b"obj"):
+        return None
+    return _PDF_TRUNCATED
 
 
 def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
@@ -186,7 +196,7 @@ def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
     return ("Excel", None) if any(name.startswith("xl/") for name in names) else (None, None)
 
 
-def _ole_family(data: bytes, wanted: str) -> tuple[str | None, str | None]:
+def _ole_family(data: bytes) -> tuple[str | None, str | None]:
     if len(data) < 512:
         return None, _TRUNCATED
     shift = struct.unpack_from("<H", data, 30)[0]
@@ -196,13 +206,37 @@ def _ole_family(data: bytes, wanted: str) -> tuple[str | None, str | None]:
     sectors = -(-len(data) // sector) - 1
     fat_count = struct.unpack_from("<I", data, 44)[0]
     fat_sectors = struct.unpack_from("<109I", data, 76)[:fat_count]
-    if any(s >= sectors for s in (*fat_sectors, struct.unpack_from("<I", data, 48)[0])):
+    directory = struct.unpack_from("<I", data, 48)[0]
+    if any(s >= sectors for s in (*fat_sectors, directory)):
         return None, _TRUNCATED
+    fat_bytes = b"".join(data[(s + 1) * sector : (s + 2) * sector] for s in fat_sectors)
+    fat = struct.unpack(f"<{len(fat_bytes) // 4}I", fat_bytes[: len(fat_bytes) // 4 * 4])
     # A truncated file still has FAT chains pointing at sectors past its end.
-    fat = b"".join(data[(s + 1) * sector : (s + 2) * sector] for s in fat_sectors)
-    for (following,) in struct.iter_unpack("<I", fat[: len(fat) // 4 * 4]):
-        if sectors <= following < _OLE_SPECIAL:
-            return None, _TRUNCATED
-    # Prefer the expected family: an .xls may embed a Word document, and vice versa.
-    found = [family for family, names in _OLE_STREAMS.items() if any(n.encode("utf-16-le") in data for n in names)]
-    return (wanted if wanted in found else next(iter(found), None)), None
+    if any(sectors <= following < _OLE_SPECIAL for following in fat):
+        return None, _TRUNCATED
+    # Like Bedrock, look only at the root storage (embedded objects live below it), and Excel wins.
+    names = _ole_root_names(data, sector, fat, directory)
+    if names & _OLE_EXCEL_STREAMS:
+        return "Excel", None
+    return ("Word" if "WordDocument" in names else None), None
+
+
+def _ole_root_names(data: bytes, sector: int, fat: tuple[int, ...], directory: int) -> set[str]:
+    chain: dict[int, None] = {}
+    while directory < len(fat) and directory not in chain:
+        chain[directory] = None
+        directory = fat[directory]
+    entries = b"".join(data[(s + 1) * sector : (s + 2) * sector] for s in chain)
+    count = len(entries) // 128
+    # The root's children form a binary tree of sibling links, starting at the root entry's child.
+    names, seen, pending = set(), set(), [struct.unpack_from("<I", entries, 76)[0]] if count else []
+    while pending:
+        index = pending.pop()
+        if index >= count or index in seen:
+            continue
+        seen.add(index)
+        entry = entries[index * 128 : (index + 1) * 128]
+        length = min(struct.unpack_from("<H", entry, 64)[0], 64)
+        names.add(entry[: max(length - 2, 0)].decode("utf-16-le", "replace"))
+        pending += struct.unpack_from("<II", entry, 68)
+    return names

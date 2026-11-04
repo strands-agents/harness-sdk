@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 import struct
 import zipfile
 import zlib
@@ -34,7 +35,33 @@ _JPEG = (
 )
 _GIF = base64.b64decode("R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==")
 _WEBP = base64.b64decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
-_PDF = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\nstartxref\n9\n%%EOF\n"
+
+
+def _pdf(*objects):
+    """A one-revision PDF with an exact cross-reference table."""
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    xref, size = len(out), len(objects) + 1
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % size + b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (size, xref)
+
+
+# A one-page PDF that Bedrock renders.
+_PDF = _pdf(
+    b"<< /Type /Catalog /Pages 2 0 R >>",
+    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    b"<< /Length 35 >>\nstream\nBT /F1 18 Tf 20 100 Td (Hello) Tj ET\nendstream",
+    b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+)
+# A linearized PDF cut off after its first-page trailer.
+_PDF_LINEARIZED_CUT = (
+    b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Linearized 1 >>\nendobj\n"
+    b"trailer\n<< /Root 2 0 R >>\nstartxref\n0\n%%EOF\n"
+    b"2 0 obj\n<< /Type /Catalog"
+)
 _HTML = b"<!DOCTYPE html>\n<html><title>404 Not Found</title>\n<h1>Not Found</h1></html>\n"
 
 
@@ -47,14 +74,36 @@ def _ooxml(part, content_types=True):
     return buffer.getvalue()
 
 
-def _ole(stream):
-    """A minimal compound file: header, one FAT sector, one directory sector naming ``stream``."""
+_NOSTREAM = 0xFFFFFFFF
+
+
+def _ole_entry(name, kind, right=_NOSTREAM, child=_NOSTREAM):
+    encoded = name.encode("utf-16-le") + b"\x00\x00"
+    return (
+        encoded.ljust(64, b"\x00") + struct.pack("<HBBIII", len(encoded), kind, 1, _NOSTREAM, right, child) + bytes(48)
+    )
+
+
+def _ole(*streams, embedded=(), text=""):
+    """A minimal compound file: ``streams`` in the root, ``embedded`` in a sub-storage, ``text`` in a data sector."""
+    root = [*streams, *(["MBD0001"] if embedded else [])]
+    entries = [_ole_entry("Root Entry", 5, child=1)]
+    entries += [_ole_entry(name, 2, right=i + 2 if i + 1 < len(root) else _NOSTREAM) for i, name in enumerate(root)]
+    if embedded:
+        entries[-1] = _ole_entry("MBD0001", 1, child=len(entries))
+        first = len(entries)
+        entries += [
+            _ole_entry(n, 2, right=first + i + 1 if i + 1 < len(embedded) else _NOSTREAM)
+            for i, n in enumerate(embedded)
+        ]
+    assert len(entries) <= 4, "one directory sector holds four entries"
     header = bytearray(512)
     header[:8] = bytes.fromhex("d0cf11e0a1b11ae1")
     struct.pack_into("<HxxxxxxxxxxxxII", header, 30, 9, 1, 1)
     struct.pack_into("<109I", header, 76, 0, *[0xFFFFFFFF] * 108)
-    fat = struct.pack("<128I", 0xFFFFFFFD, 0xFFFFFFFE, *[0xFFFFFFFF] * 126)
-    return bytes(header) + fat + stream.encode("utf-16-le").ljust(512, b"\x00")
+    fat = struct.pack("<128I", 0xFFFFFFFD, 0xFFFFFFFE, 0xFFFFFFFE, *[0xFFFFFFFF] * 125)
+    body = text.encode("utf-16-le").ljust(512, b"\x00") if text else b""
+    return bytes(header) + fat + b"".join(entries).ljust(512, b"\x00") + body
 
 
 _DOCX, _XLSX = _ooxml("word/document.xml"), _ooxml("xl/workbook.xml")
@@ -260,77 +309,142 @@ _DOCX_HUGE_ENTRY = (
 
 
 @pytest.mark.parametrize(
-    ("name", "data"),
+    ("name", "data", "reason"),
     [
-        ("pic.png", _PNG[: len(_PNG) // 2]),
-        ("pic.png", _PNG[:-12]),
-        ("pic.png", _PNG[:_PNG_IDAT] + bytes([_PNG[_PNG_IDAT] ^ 0xFF]) + _PNG[_PNG_IDAT + 1 :]),
-        ("pic.png", _png(pixels=bytes(7))),
-        ("pic.png", _png(pixels=bytes(14), interlace=1)),
-        ("pic.png", _PNG[: _PNG_IDAT - 8] + _png_chunk(b"IDAT", b"not deflate") + _png_chunk(b"IEND", b"")),
-        ("pic.jpg", _JPEG[: _JPEG.index(b"\xff\xda")]),
-        ("pic.gif", _GIF[:30]),
-        ("pic.gif", _GIF[:19]),
-        ("pic.webp", _WEBP[:24]),
-        ("report.pdf", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\n"),
-        ("report.docx", _DOCX[: len(_DOCX) // 2]),
-        ("report.docx", _DOCX[:4] + _DOCX[9:]),
+        ("pic.png", _PNG[: len(_PNG) // 2], "a valid png image: it is truncated"),
+        ("pic.png", _PNG[:-12], "a valid png image: it is truncated"),
+        (
+            "pic.png",
+            _PNG[:_PNG_IDAT] + bytes([_PNG[_PNG_IDAT] ^ 0xFF]) + _PNG[_PNG_IDAT + 1 :],
+            "a valid png image: a chunk checksum does not match",
+        ),
+        ("pic.png", _png(pixels=bytes(7)), "a valid png image: its image data is incomplete"),
+        ("pic.png", _png(pixels=bytes(14), interlace=1), "a valid png image: its image data is incomplete"),
+        (
+            "pic.png",
+            _PNG[: _PNG_IDAT - 8] + _png_chunk(b"IDAT", b"not deflate") + _png_chunk(b"IEND", b""),
+            "a valid png image: its image data is corrupt",
+        ),
+        (
+            "pic.png",
+            _PNG[: _PNG_IDAT - 8] + _png_chunk(b"IDAT", zlib.compress(bytes(14))[:-6]) + _png_chunk(b"IEND", b""),
+            "a valid png image: its image data is incomplete",
+        ),
+        (
+            "pic.png",
+            _PNG[: _PNG_IDAT - 8] + _png_chunk(b"IEND", b""),
+            "a valid png image: its image data is incomplete",
+        ),
+        ("pic.jpg", _JPEG[: _JPEG.index(b"\xff\xda")], "a valid jpeg image: it has no image data"),
+        ("pic.gif", _GIF[:30], "a valid gif image: it is truncated"),
+        ("pic.gif", _GIF[:19], "a valid gif image: it has no image data"),
+        ("pic.webp", _WEBP[:24], "a valid webp image: it is truncated"),
+        (
+            "report.pdf",
+            b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\n",
+            "a valid pdf document: it does not end with a cross-reference trailer, so it is likely truncated",
+        ),
+        (
+            "report.pdf",
+            _PDF_LINEARIZED_CUT,
+            "a valid pdf document: it does not end with a cross-reference trailer, so it is likely truncated",
+        ),
+        ("report.docx", _DOCX[: len(_DOCX) // 2], "a valid docx document: its zip archive is corrupt or truncated"),
+        ("report.docx", _DOCX[:4] + _DOCX[9:], "a valid docx document: its zip archive is corrupt or truncated"),
         (
             "report.docx",
             _DOCX[:_DOCX_PART]
             + bytes(b ^ 0x55 for b in _DOCX[_DOCX_PART : _DOCX_PART + 20])
             + _DOCX[_DOCX_PART + 20 :],
+            "a valid docx document: its zip archive is corrupt or truncated",
         ),
-        ("report.docx", _ooxml("word/document.xml", content_types=False)),
-        ("report.docx", _XLSX),
-        ("report.xls", _DOC),
-        ("report.doc", _DOC[:-512]),
+        (
+            "report.docx",
+            _ooxml("word/document.xml", content_types=False),
+            "a valid docx document: it is a zip archive, not an Office document",
+        ),
+        ("report.docx", _XLSX, "a valid docx document: it is an Excel file"),
+        ("report.xls", _DOC, "a valid xls document: it is a Word file"),
+        ("report.doc", _DOC[:-512], "a valid doc document: it is truncated"),
+        # Bedrock names a compound file by its root streams: an embedded object or body text does not count.
+        ("report.xls", _ole("WordDocument", embedded=("Workbook",)), "a valid xls document: it is a Word file"),
+        ("report.doc", _ole("Workbook", embedded=("WordDocument",)), "a valid doc document: it is an Excel file"),
+        (
+            "report.xls",
+            _ole("WordDocument", text="My favourite Book is Dune"),
+            "a valid xls document: it is a Word file",
+        ),
+        ("report.doc", _ole("worddocument"), "a valid doc document: it is not Word or Excel"),
     ],
 )
-async def test_read_rejects_a_truncated_corrupt_or_mislabeled_media_file(ctx, tmp_path, name, data):
+async def test_read_rejects_a_truncated_corrupt_or_mislabeled_media_file(ctx, tmp_path, name, data, reason):
     # Each of these fails the Bedrock request as a media block, and the history with it.
     path = tmp_path / name
     path.write_bytes(data)
-    with pytest.raises(ValueError, match=rf"its {len(data)} bytes are not a valid \w+ (image|document): \w"):
+    message = re.escape(f"its {len(data)} bytes are not {reason}. ")
+    with pytest.raises(ValueError, match=message):
         await read._tool_func(path=str(path), tool_context=ctx)
-    with pytest.raises(ValueError, match="are not a valid"):
+    with pytest.raises(ValueError, match=message):
         await make_read(media=False)._tool_func(path=str(path), tool_context=ctx)
 
 
 @pytest.mark.parametrize(
-    ("name", "data", "kind"),
+    ("name", "data", "block"),
     [
-        ("pic.png", _PNG + b"trailing junk", "image"),
-        ("pic.png", _png(before_idat=struct.pack(">I", 2) + b"tEXt" + b"ab" + bytes(4)), "image"),
-        ("pic.png", _png(pixels=bytes(15), interlace=1), "image"),
-        ("pic.jpg", _JPEG[:-2], "image"),
-        ("pic.jpg", _JPEG[:20] + b"\xff" * 1000 + _JPEG[20:], "image"),
+        ("pic.png", _PNG + b"trailing junk", {"image": {"format": "png"}}),
+        ("pic.png", _png(before_idat=struct.pack(">I", 2) + b"tEXt" + b"ab" + bytes(4)), {"image": {"format": "png"}}),
+        ("pic.png", _png(pixels=bytes(15), interlace=1), {"image": {"format": "png"}}),
+        ("pic.jpg", _JPEG[:-2], {"image": {"format": "jpeg"}}),
+        ("pic.jpg", _JPEG[:20] + b"\xff" * 1000 + _JPEG[20:], {"image": {"format": "jpeg"}}),
         # Past the inflate budget, so the cut-off checksum at its end is never reached.
-        ("pic.png", _PNG_BOMB, "image"),
-        ("pic.gif", _GIF[:-1], "image"),
-        ("pic.webp", _WEBP + b"trailing junk", "image"),
-        ("report.pdf", b"junk\n" + _PDF[: _PDF.index(b"%%EOF")], "document"),
-        ("report.docx", _DOCX, "document"),
-        ("report.doc", _DOCX, "document"),
-        ("report.xlsx", _XLSX, "document"),
-        ("report.xls", _XLSX, "document"),
-        ("report.doc", _DOC, "document"),
-        ("report.xls", _XLS, "document"),
-        ("report.docx", _DOC, "document"),
-        ("report.xls", _ole("WORKBOOK"), "document"),
-        ("report.xls", _ole("Workbook\x00WordDocument"), "document"),
-        ("report.doc", _ole("Workbook\x00WordDocument"), "document"),
-        ("report.doc", _DOC_STALE_FAT, "document"),
-        ("report.docx", _DOCX_HUGE_ENTRY, "document"),
+        ("pic.png", _PNG_BOMB, {"image": {"format": "png"}}),
+        ("pic.gif", _GIF[:-1], {"image": {"format": "gif"}}),
+        ("pic.webp", _WEBP + b"trailing junk", {"image": {"format": "webp"}}),
+        ("report.pdf", b"junk\n" + _PDF[: _PDF.index(b"%%EOF")], {"document": {"format": "pdf", "name": "report pdf"}}),
+        (
+            "report.pdf",
+            re.sub(rb"startxref\n\d+", b"startxref\n0", _PDF),
+            {"document": {"format": "pdf", "name": "report pdf"}},
+        ),
+        ("report.docx", _DOCX, {"document": {"format": "docx", "name": "report docx"}}),
+        ("report.doc", _DOCX, {"document": {"format": "doc", "name": "report doc"}}),
+        ("report.xlsx", _XLSX, {"document": {"format": "xlsx", "name": "report xlsx"}}),
+        ("report.xls", _XLSX, {"document": {"format": "xls", "name": "report xls"}}),
+        ("report.doc", _DOC, {"document": {"format": "doc", "name": "report doc"}}),
+        ("report.xls", _XLS, {"document": {"format": "xls", "name": "report xls"}}),
+        ("report.docx", _DOC, {"document": {"format": "docx", "name": "report docx"}}),
+        ("report.xls", _ole("WORKBOOK"), {"document": {"format": "xls", "name": "report xls"}}),
+        ("report.xls", _ole("Book"), {"document": {"format": "xls", "name": "report xls"}}),
+        (
+            "report.xls",
+            _ole("Workbook", embedded=("WordDocument",)),
+            {"document": {"format": "xls", "name": "report xls"}},
+        ),
+        (
+            "report.doc",
+            _ole("WordDocument", embedded=("Workbook",)),
+            {"document": {"format": "doc", "name": "report doc"}},
+        ),
+        (
+            "report.doc",
+            _ole("WordDocument", text="My favourite Book is Dune"),
+            {"document": {"format": "doc", "name": "report doc"}},
+        ),
+        ("report.doc", _DOC_STALE_FAT, {"document": {"format": "doc", "name": "report doc"}}),
+        ("report.docx", _DOCX_HUGE_ENTRY, {"document": {"format": "docx", "name": "report docx"}}),
     ],
 )
-async def test_read_returns_media_that_bedrock_accepts(ctx, tmp_path, name, data, kind):
+async def test_read_returns_media_that_bedrock_accepts(ctx, tmp_path, name, data, block):
     # Imperfect but renderable files (as observed against Bedrock) stay media blocks.
     path = tmp_path / name
     path.write_bytes(data)
     result = await read._tool_func(path=str(path), tool_context=ctx)
-    assert result["status"] == "success"
-    assert result["content"][0][kind]["source"]["bytes"] == data
+    [(kind, fields)] = block.items()
+    assert result == {
+        "toolUseId": "t1",
+        "status": "success",
+        "content": [{kind: {**fields, "source": {"bytes": data}}}],
+    }
 
 
 @pytest.mark.parametrize("media", [True, False])
@@ -360,4 +474,4 @@ async def test_read_surfaces_an_invalid_document_as_an_error_tool_result(ctx, tm
     result = events[-1].tool_result
     assert result["status"] == "error"
     assert [next(iter(c)) for c in result["content"]] == ["text"]
-    assert "not a valid pdf document: it has no cross-reference trailer" in result["content"][0]["text"]
+    assert "not a valid pdf document: it does not end with a cross-reference trailer" in result["content"][0]["text"]

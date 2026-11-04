@@ -77,6 +77,42 @@ def _media_placeholder(path: str, kind: str, media_format: str, size: int) -> st
     )
 
 
+def _check_media(extension: str, data: bytes) -> tuple[str, str, str, str | None]:
+    """The block kind and format for ``data``, what it should be, and why it is not (``None`` if it is)."""
+    if extension in _DOCUMENT_FORMATS:
+        return "document", extension, f"a valid {extension} document", document_problem(data, extension)
+    image_format = _sniff_image_format(data)
+    if image_format is None:
+        return "image", extension, "a png, jpeg, gif, or webp image", ""
+    return "image", image_format, f"a valid {image_format} image", image_problem(data, image_format)
+
+
+def _media_result(
+    path: str, kind: str, media_format: str, data: bytes, media: bool, tool_use_id: str
+) -> ToolResult | str:
+    if not media:
+        return _media_placeholder(path, kind.capitalize(), media_format, len(data))
+    block = {"format": media_format, "source": {"bytes": data}}
+    if kind == "document":
+        block["name"] = _document_name(path)
+    return {"toolUseId": tool_use_id, "status": "success", "content": [{kind: block}]}
+
+
+def _invalid_media_as_text(path: str, extension: str, data: bytes, expected: str, problem: str) -> tuple[str, str]:
+    # Sending it as media would fail the request and every later one, so show text or raise instead.
+    reason = f": {problem}" if problem else ""
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError:
+        content = ""
+    if not content or "\x00" in content:
+        raise ValueError(
+            f"{path} has a .{extension} extension but its {len(data)} bytes are not {expected}{reason}. "
+            "Identify it with `file`."
+        )
+    return f"[{path} is not {expected}{reason}. Showing it as text.]\n", content
+
+
 def make_read(media: bool = True):
     """Build the ``read`` tool.
 
@@ -105,38 +141,10 @@ def make_read(media: bool = True):
         note = ""
         if extension in _IMAGE_EXTENSIONS or extension in _DOCUMENT_FORMATS:
             data = await tool_context.agent.sandbox.read_file(path)
-            if extension in _IMAGE_EXTENSIONS:
-                kind, media_format = "Image", _sniff_image_format(data)
-                expected = f"a valid {media_format} image" if media_format else "a png, jpeg, gif, or webp image"
-                problem = image_problem(data, media_format) if media_format else ""
-            else:
-                kind, media_format = "Document", extension
-                expected, problem = f"a valid {extension} document", document_problem(data, extension)
-
+            kind, media_format, expected, problem = _check_media(extension, data)
             if problem is None:
-                if not media:
-                    return _media_placeholder(path, kind, media_format, len(data))
-                block = {"format": media_format, "source": {"bytes": data}}
-                if kind == "Document":
-                    block["name"] = _document_name(path)
-                return {
-                    "toolUseId": tool_context.tool_use["toolUseId"],
-                    "status": "success",
-                    "content": [{kind.lower(): block}],
-                }
-
-            # Sending it as media would fail the request and every later one, so show text or raise instead.
-            reason = f": {problem}" if problem else ""
-            try:
-                content = data.decode("utf-8")
-            except UnicodeDecodeError:
-                content = ""
-            if not content or "\x00" in content:
-                raise ValueError(
-                    f"{path} has a .{extension} extension but its {len(data)} bytes are not {expected}{reason}. "
-                    "Identify it with `file`."
-                )
-            note = f"[{path} is not {expected}{reason}. Showing it as text.]\n"
+                return _media_result(path, kind, media_format, data, media, tool_context.tool_use["toolUseId"])
+            note, content = _invalid_media_as_text(path, extension, data, expected, problem)
         else:
             content = await tool_context.agent.sandbox.read_text(path)
 

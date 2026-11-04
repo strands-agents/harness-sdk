@@ -13,16 +13,14 @@ import * as zlib from 'node:zlib'
 import type { ImageFormat } from '@strands-agents/sdk'
 
 const TRUNCATED = 'it is truncated'
+const PDF_TRUNCATED = 'it does not end with a cross-reference trailer, so it is likely truncated'
 // Deep checks stop after inflating this much, so a compression bomb costs bounded time and memory; what is
 // left is accepted on structure alone, as before these checks existed.
 const INFLATE_BUDGET = 64 << 20
 const ZIP_CORRUPT = 'its zip archive is corrupt or truncated'
 const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
 const OLE_SPECIAL = 0xfffffffa
-const OLE_STREAMS: [Family, string[]][] = [
-  ['Word', ['WordDocument']],
-  ['Excel', ['Workbook', 'WORKBOOK', 'Book']],
-]
+const OLE_EXCEL_STREAMS = ['Workbook', 'WORKBOOK', 'Book']
 const DOCUMENT_FAMILY: Record<string, Family> = { doc: 'Word', docx: 'Word', xls: 'Excel', xlsx: 'Excel' }
 
 type Family = 'Word' | 'Excel'
@@ -41,7 +39,7 @@ export function documentProblem(data: Uint8Array, format: string): string | unde
   let family: Family | undefined
   let problem: string | undefined
   if (startsWithBytes(data, [0x50, 0x4b, 0x03, 0x04])) [family, problem] = ooxmlFamily(data)
-  else if (startsWithBytes(data, OLE_SIGNATURE)) [family, problem] = oleFamily(data, DOCUMENT_FAMILY[format]!)
+  else if (startsWithBytes(data, OLE_SIGNATURE)) [family, problem] = oleFamily(data)
   else return 'it is not a Word or Excel file'
   if (problem === undefined && family !== DOCUMENT_FAMILY[format]) {
     problem = family ? `it is ${family === 'Excel' ? 'an' : 'a'} ${family} file` : 'it is not Word or Excel'
@@ -68,9 +66,10 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
 })
 
 // zlib.crc32 is native from Node 22.2; the package still supports 22.0.
-export const crc32 = 'crc32' in zlib ? (data: Uint8Array): number => zlib.crc32(data) : jsCrc32
+const crc32 = 'crc32' in zlib ? (data: Uint8Array): number => zlib.crc32(data) : jsCrc32
 
-function jsCrc32(data: Uint8Array): number {
+/** @internal Exported for tests: CI's Node always has zlib.crc32, so this fallback would otherwise go unrun. */
+export function jsCrc32(data: Uint8Array): number {
   let crc = 0xffffffff
   for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
@@ -96,18 +95,21 @@ function pngProblem(data: Uint8Array): string | undefined {
       return 'a chunk checksum does not match'
     }
     if (kind === 'IDAT') idat.push(typeAndBody.subarray(4))
-    if (kind === 'IEND') {
-      try {
-        const inflated = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: INFLATE_BUDGET })
-        return inflated.length >= expected ? undefined : 'its image data is incomplete'
-      } catch (error) {
-        if ((error as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE') return undefined
-        return 'its image data is corrupt or incomplete'
-      }
-    }
+    if (kind === 'IEND') return pngDataProblem(Buffer.concat(idat), expected)
     pos += 12 + length
   }
   return TRUNCATED
+}
+
+function pngDataProblem(stream: Uint8Array, expected: number): string | undefined {
+  try {
+    const inflated = zlib.inflateSync(stream, { maxOutputLength: INFLATE_BUDGET })
+    return inflated.length >= expected ? undefined : 'its image data is incomplete'
+  } catch (error) {
+    const code = (error as { code?: string }).code
+    if (code === 'ERR_BUFFER_TOO_LARGE') return undefined
+    return code === 'Z_DATA_ERROR' ? 'its image data is corrupt' : 'its image data is incomplete'
+  }
 }
 
 function pngPixelBytes(ihdr: DataView): number | undefined {
@@ -206,11 +208,13 @@ function webpProblem(data: Uint8Array): string | undefined {
 }
 
 function pdfProblem(data: Uint8Array): string | undefined {
-  // Readers allow junk before the header and after the trailer; a truncated PDF loses its trailer.
-  const text = ascii(data)
-  const start = text.slice(0, 1024).indexOf('%PDF-')
+  // Readers allow junk before the header and after the trailer. A truncated PDF loses its final trailer; a
+  // linearized one still has its first-page trailer near the start, so the last trailer must follow every object.
+  const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+  const start = buffer.subarray(0, 1024).indexOf('%PDF-')
   if (start < 0) return 'it has no %PDF- header'
-  return text.includes('startxref', start) ? undefined : 'it has no cross-reference trailer, so it is likely truncated'
+  const trailer = buffer.lastIndexOf('startxref')
+  return trailer > start && trailer > buffer.lastIndexOf('obj') ? undefined : PDF_TRUNCATED
 }
 
 function ooxmlFamily(data: Uint8Array): FamilyResult {
@@ -222,38 +226,52 @@ function ooxmlFamily(data: Uint8Array): FamilyResult {
   let budget = INFLATE_BUDGET
   let pos = dv.getUint32(eocd + 16, true)
   for (let entry = dv.getUint16(eocd + 10, true); entry > 0; entry--) {
-    if (pos + 46 > data.length || dv.getUint32(pos, true) !== 0x02014b50) return [undefined, ZIP_CORRUPT]
-    const method = dv.getUint16(pos + 10, true)
-    const [crc, compressed, size] = [
-      dv.getUint32(pos + 16, true),
-      dv.getUint32(pos + 20, true),
-      dv.getUint32(pos + 24, true),
-    ]
-    const nameLength = dv.getUint16(pos + 28, true)
-    const local = dv.getUint32(pos + 42, true)
-    if (local + 30 > data.length || dv.getUint32(local, true) !== 0x04034b50) return [undefined, ZIP_CORRUPT]
-    const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true)
-    if (start + compressed > data.length) return [undefined, ZIP_CORRUPT]
-    if (method !== 0 && method !== 8) return [undefined, ZIP_CORRUPT]
-    const body = data.subarray(start, start + compressed)
-    if (size <= budget) {
-      budget -= size
-      try {
-        const content = method === 0 ? body : zlib.inflateRawSync(body, { maxOutputLength: Math.max(size, 1) })
-        if (content.length !== size || crc32(content) !== crc) return [undefined, ZIP_CORRUPT]
-      } catch {
-        return [undefined, ZIP_CORRUPT]
-      }
-    }
-    names.push(Buffer.from(data.subarray(pos + 46, pos + 46 + nameLength)).toString('utf8'))
-    pos += 46 + nameLength + dv.getUint16(pos + 30, true) + dv.getUint16(pos + 32, true)
+    const parsed = zipEntry(data, dv, pos, budget)
+    if (!parsed) return [undefined, ZIP_CORRUPT]
+    names.push(parsed.name)
+    budget -= parsed.inflated
+    pos = parsed.next
   }
   if (!names.includes('[Content_Types].xml')) return [undefined, 'it is a zip archive, not an Office document']
   if (names.some((name) => name.startsWith('word/'))) return ['Word', undefined]
   return [names.some((name) => name.startsWith('xl/')) ? 'Excel' : undefined, undefined]
 }
 
-function oleFamily(data: Uint8Array, wanted: Family): FamilyResult {
+interface ZipEntry {
+  name: string
+  /** Offset of the next central-directory entry. */
+  next: number
+  /** Bytes inflated to check the CRC; 0 when the entry is past the budget and taken on structure alone. */
+  inflated: number
+}
+
+/** The central-directory entry at `pos`, or `undefined` if it or its local entry is corrupt. */
+function zipEntry(data: Uint8Array, dv: DataView, pos: number, budget: number): ZipEntry | undefined {
+  if (pos + 46 > data.length || dv.getUint32(pos, true) !== 0x02014b50) return undefined
+  const method = dv.getUint16(pos + 10, true)
+  const [crc, compressed, size] = [
+    dv.getUint32(pos + 16, true),
+    dv.getUint32(pos + 20, true),
+    dv.getUint32(pos + 24, true),
+  ]
+  const nameLength = dv.getUint16(pos + 28, true)
+  const local = dv.getUint32(pos + 42, true)
+  if (local + 30 > data.length || dv.getUint32(local, true) !== 0x04034b50) return undefined
+  const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true)
+  if (start + compressed > data.length || (method !== 0 && method !== 8)) return undefined
+  const name = Buffer.from(data.subarray(pos + 46, pos + 46 + nameLength)).toString('utf8')
+  const next = pos + 46 + nameLength + dv.getUint16(pos + 30, true) + dv.getUint16(pos + 32, true)
+  if (size > budget) return { name, next, inflated: 0 }
+  const body = data.subarray(start, start + compressed)
+  try {
+    const content = method === 0 ? body : zlib.inflateRawSync(body, { maxOutputLength: Math.max(size, 1) })
+    return content.length === size && crc32(content) === crc ? { name, next, inflated: size } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function oleFamily(data: Uint8Array): FamilyResult {
   if (data.length < 512) return [undefined, TRUNCATED]
   const dv = view(data)
   const shift = dv.getUint16(30, true)
@@ -263,19 +281,35 @@ function oleFamily(data: Uint8Array, wanted: Family): FamilyResult {
   const fatSectors = Array.from({ length: Math.min(dv.getUint32(44, true), 109) }, (_, i) =>
     dv.getUint32(76 + 4 * i, true)
   )
-  if ([...fatSectors, dv.getUint32(48, true)].some((s) => s >= sectors)) return [undefined, TRUNCATED]
+  const directory = dv.getUint32(48, true)
+  if ([...fatSectors, directory].some((s) => s >= sectors)) return [undefined, TRUNCATED]
+  const fatBytes = Buffer.concat(fatSectors.map((s) => data.subarray((s + 1) * sector, (s + 2) * sector)))
+  const fat = Array.from({ length: Math.floor(fatBytes.length / 4) }, (_, i) => fatBytes.readUInt32LE(4 * i))
   // A truncated file still has FAT chains pointing at sectors past its end.
-  for (const s of fatSectors) {
-    const fat = view(data.subarray((s + 1) * sector, (s + 2) * sector))
-    for (let offset = 0; offset + 4 <= fat.byteLength; offset += 4) {
-      const following = fat.getUint32(offset, true)
-      if (following >= sectors && following < OLE_SPECIAL) return [undefined, TRUNCATED]
-    }
+  if (fat.some((following) => following >= sectors && following < OLE_SPECIAL)) return [undefined, TRUNCATED]
+  // Like Bedrock, look only at the root storage (embedded objects live below it), and Excel wins.
+  const names = oleRootNames(data, sector, fat, directory)
+  if (OLE_EXCEL_STREAMS.some((name) => names.has(name))) return ['Excel', undefined]
+  return [names.has('WordDocument') ? 'Word' : undefined, undefined]
+}
+
+function oleRootNames(data: Uint8Array, sector: number, fat: number[], directory: number): Set<string> {
+  const chain = new Set<number>()
+  for (let s = directory; s < fat.length && !chain.has(s); s = fat[s]!) chain.add(s)
+  const entries = Buffer.concat([...chain].map((s) => data.subarray((s + 1) * sector, (s + 2) * sector)))
+  const count = Math.floor(entries.length / 128)
+  // The root's children form a binary tree of sibling links, starting at the root entry's child.
+  const names = new Set<string>()
+  const seen = new Set<number>()
+  const pending = count ? [entries.readUInt32LE(76)] : []
+  while (pending.length) {
+    const index = pending.pop()!
+    if (index >= count || seen.has(index)) continue
+    seen.add(index)
+    const entry = entries.subarray(index * 128, (index + 1) * 128)
+    const length = Math.min(entry.readUInt16LE(64), 64)
+    names.add(entry.subarray(0, Math.max(length - 2, 0)).toString('utf16le'))
+    pending.push(entry.readUInt32LE(68), entry.readUInt32LE(72))
   }
-  // Prefer the expected family: an .xls may embed a Word document, and vice versa.
-  const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-  const found = OLE_STREAMS.filter(([, names]) => names.some((n) => buffer.includes(Buffer.from(n, 'utf16le')))).map(
-    ([family]) => family
-  )
-  return [found.includes(wanted) ? wanted : found[0], undefined]
+  return names
 }

@@ -108,6 +108,54 @@ const READ_DESCRIPTION =
 type ReadInput = z.infer<typeof READ_SCHEMA>
 type ReadOutput = string | ImageBlock | DocumentBlock
 
+interface MediaCheck {
+  kind: 'Image' | 'Document'
+  format: string
+  /** What the file should be, for the message when it is not. */
+  expected: string
+  /** Why the file is not usable as media; `undefined` when it is, `''` when there is nothing to add. */
+  problem: string | undefined
+}
+
+function checkMedia(ext: string, bytes: Uint8Array): MediaCheck {
+  if (DOCUMENT_FORMATS.includes(ext)) {
+    return { kind: 'Document', format: ext, expected: `a valid ${ext} document`, problem: documentProblem(bytes, ext) }
+  }
+  const format = sniffImageFormat(bytes)
+  if (!format) return { kind: 'Image', format: ext, expected: 'a png, jpeg, gif, or webp image', problem: '' }
+  return { kind: 'Image', format, expected: `a valid ${format} image`, problem: imageProblem(bytes, format) }
+}
+
+function mediaResult(path: string, check: MediaCheck, bytes: Uint8Array, media: boolean): ReadOutput {
+  if (!media) return mediaPlaceholder(path, check.kind, check.format, bytes.length)
+  if (check.kind === 'Image') return new ImageBlock({ format: check.format as ImageFormat, source: { bytes } })
+  return new DocumentBlock({ name: documentName(path), format: check.format as DocumentFormat, source: { bytes } })
+}
+
+function invalidMediaAsText(
+  path: string,
+  ext: string,
+  bytes: Uint8Array,
+  expected: string,
+  problem: string
+): [string, string] {
+  // Sending it as media would fail the request and every later one, so show text or throw instead.
+  const reason = problem ? `: ${problem}` : ''
+  let content = ''
+  try {
+    content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch {
+    // Not UTF-8: falls through to the error below.
+  }
+  if (!content || content.includes('\0')) {
+    throw new Error(
+      `${path} has a .${ext} extension but its ${bytes.length} bytes are not ${expected}${reason}. ` +
+        'Identify it with `file`.'
+    )
+  }
+  return [`[${path} is not ${expected}${reason}. Showing it as text.]\n`, content]
+}
+
 function readCallback(media: boolean): (input: ReadInput, context?: ToolContext) => Promise<ReadOutput> {
   return async (input: ReadInput, context?: ToolContext): Promise<ReadOutput> => {
     if (!context) throw new Error('Tool context is required for read.')
@@ -118,43 +166,9 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
     let content: string
     if (IMAGE_EXTENSIONS.includes(ext) || DOCUMENT_FORMATS.includes(ext)) {
       const bytes = await context.agent.sandbox.readFile(input.path)
-      const isImage = IMAGE_EXTENSIONS.includes(ext)
-      const imageFormat = isImage ? sniffImageFormat(bytes) : undefined
-      let expected: string
-      let problem: string | undefined
-      if (!isImage) {
-        expected = `a valid ${ext} document`
-        problem = documentProblem(bytes, ext)
-      } else if (imageFormat) {
-        expected = `a valid ${imageFormat} image`
-        problem = imageProblem(bytes, imageFormat)
-      } else {
-        expected = 'a png, jpeg, gif, or webp image'
-        problem = ''
-      }
-
-      if (problem === undefined) {
-        if (!media) {
-          return mediaPlaceholder(input.path, isImage ? 'Image' : 'Document', imageFormat ?? ext, bytes.length)
-        }
-        if (imageFormat) return new ImageBlock({ format: imageFormat, source: { bytes } })
-        return new DocumentBlock({ name: documentName(input.path), format: ext as DocumentFormat, source: { bytes } })
-      }
-
-      // Sending it as media would fail the request and every later one, so show text or throw instead.
-      const reason = problem ? `: ${problem}` : ''
-      try {
-        content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
-      } catch {
-        content = ''
-      }
-      if (!content || content.includes('\0')) {
-        throw new Error(
-          `${input.path} has a .${ext} extension but its ${bytes.length} bytes are not ${expected}${reason}. ` +
-            'Identify it with `file`.'
-        )
-      }
-      note = `[${input.path} is not ${expected}${reason}. Showing it as text.]\n`
+      const check = checkMedia(ext, bytes)
+      if (check.problem === undefined) return mediaResult(input.path, check, bytes, media)
+      ;[note, content] = invalidMediaAsText(input.path, ext, bytes, check.expected, check.problem)
     } else {
       content = await context.agent.sandbox.readText(input.path)
     }
