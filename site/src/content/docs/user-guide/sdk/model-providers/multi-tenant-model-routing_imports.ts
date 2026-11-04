@@ -29,16 +29,6 @@ import {
 } from '@strands-agents/sdk'
 // --8<-- [end:mtr_decider_imports]
 
-// --8<-- [start:mtr_openai_decisions_imports]
-import {
-  DecisionModel,
-  Uncertain,
-  type DecisionInput,
-  type DecisionResult,
-  type Question,
-} from '@strands-agents/sdk'
-// --8<-- [end:mtr_openai_decisions_imports]
-
 // --8<-- [start:mtr_swap_imports]
 import { BedrockModel, LLMDecisionModel } from '@strands-agents/sdk'
 // --8<-- [end:mtr_swap_imports]

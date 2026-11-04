@@ -7,7 +7,6 @@ import {
   ModelRouter,
   RoutingCandidate,
   tool,
-  Uncertain,
   type DecisionInput,
   type DecisionResult,
   type Question,
@@ -85,7 +84,8 @@ class TenantPolicyStrategy implements RoutingStrategy {
 
     let choice: RoutingCandidate | undefined
     if (context.attempts.length > 0) {
-      // Fail over to the backup first, so a hard request never drops to the small model
+      // Try the backup before the small model, so a hard request stays on a capable
+      // model while one is available
       const backups = allowed.filter((c) => c.metadata?.tier === 'backup')
       const others = allowed.filter((c) => c.metadata?.tier !== 'backup')
       choice = await this.fallback.select({
@@ -96,7 +96,10 @@ class TenantPolicyStrategy implements RoutingStrategy {
       const primary = allowed.filter((c) => c.metadata?.tier === 'primary')
       const primaries = primary.length > 0 ? primary : allowed
       choice = primaries[0]
-      if (primaries.length > 1 && this.mayDecide(providers)) {
+      // The decision model reads the request, so its provider must be allowed
+      const mayDecide =
+        this.decisionsProvider === undefined || providers.includes(this.decisionsProvider)
+      if (primaries.length > 1 && mayDecide) {
         try {
           choice = await this.decide(context, primaries)
         } catch (error) {
@@ -110,13 +113,6 @@ class TenantPolicyStrategy implements RoutingStrategy {
         ' | routing decision'
     )
     return choice
-  }
-
-  // The decision model reads the request, so it must be a provider the tenant allows
-  private mayDecide(providers: string[]): boolean {
-    return (
-      this.decisionsProvider === undefined || providers.includes(this.decisionsProvider)
-    )
   }
 
   private async decide(
@@ -201,79 +197,12 @@ class StrandsDecider extends DecisionModel {
 }
 // --8<-- [end:mtr_decider]
 
-// --8<-- [start:mtr_openai_decisions]
-class OpenAIDecisionModel extends DecisionModel {
-  constructor(private readonly modelId = 'gpt-6-luna') {
-    super()
-  }
-
-  protected async _ask<const Q extends Record<string, Question>>(
-    state: DecisionInput,
-    questions: Q
-  ): Promise<DecisionResult<Q>> {
-    if (Object.values(questions).some((q) => q.choices === 'boolean')) {
-      throw new Error('OpenAIDecisionModel answers choice questions only')
-    }
-    const started = Date.now()
-    const response = await fetch('https://api.openai.com/v1/decisions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.modelId,
-        input: state,
-        questions: Object.entries(questions).map(([id, q]) => ({
-          type: 'choice',
-          name: id,
-          instructions: q.question,
-          choices: [...q.choices].map((value) => ({ value })),
-        })),
-      }),
-      signal: AbortSignal.timeout(30_000),
-    })
-    if (!response.ok) throw new Error(`Decisions API returned ${response.status}`)
-    const reply = (await response.json()) as {
-      answers: { name: string; type: string; choice?: string }[]
-      usage: { input_tokens: number; output_tokens: number; total_tokens: number }
-    }
-    const answers: Record<string, string | Uncertain> = {}
-    for (const answer of reply.answers) {
-      const question = questions[answer.name]!
-      if (
-        answer.type === 'choice' &&
-        [...question.choices].includes(answer.choice ?? '')
-      ) {
-        answers[answer.name] = answer.choice!
-      } else if (question.uncertainty !== false) {
-        answers[answer.name] = new Uncertain()
-      } else {
-        throw new Error(`question id=<${answer.name}> | no valid answer`)
-      }
-    }
-    return {
-      answers: answers as DecisionResult<Q>['answers'],
-      metadata: { latencyMs: Date.now() - started },
-      usage: {
-        inputTokens: reply.usage.input_tokens,
-        outputTokens: reply.usage.output_tokens,
-        totalTokens: reply.usage.total_tokens,
-      },
-    }
-  }
-}
-// --8<-- [end:mtr_openai_decisions]
-
 function multiTenantSwap() {
   // --8<-- [start:mtr_swap]
   // Strands Decider, on your machine
   let strategy = new TenantPolicyStrategy(new StrandsDecider())
 
-  // OpenAI Decisions API
-  strategy = new TenantPolicyStrategy(new OpenAIDecisionModel(), 'openai')
-
-  // Any Strands model, through the decision model the SDK ships
+  // Any Strands model provider, here Claude Haiku on Amazon Bedrock
   const haiku = new BedrockModel({
     modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   })

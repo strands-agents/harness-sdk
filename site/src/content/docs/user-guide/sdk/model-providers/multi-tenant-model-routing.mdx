@@ -17,8 +17,8 @@ sourceLinks:
 
 An agent that serves several tenants (the customers of your application) often needs
 three things from its models at once. It needs a small model for easy requests and a
-stronger one for hard requests, a backup provider when a model fails, and a rule that
-keeps each tenant on the models it has approved. This guide builds all three on one
+stronger one for hard ones. It needs a backup provider when a model fails, and a rule
+that keeps each tenant on the models it has approved. This guide builds all three on one
 [model router](./model-routing.md), with one tool set and one tracing configuration.
 
 The examples use Amazon Nova Lite on [Amazon Bedrock](./amazon-bedrock.md) as the small
@@ -51,9 +51,8 @@ npm install @strands-agents/sdk @anthropic-ai/sdk openai zod \
 ## Configure tracing once
 
 Configure tracing before you create the agent. Every model call becomes a span that
-records the model that served it in `gen_ai.request.model`, and every routing decision
-becomes a `decision` span, so one configuration covers every candidate the router picks
-and every choice it makes.
+records the model that served it in `gen_ai.request.model`. Each call to the decision
+model becomes a `decision` span. One configuration covers both.
 
 <Tabs>
 <Tab label="Python">
@@ -132,12 +131,10 @@ fails over to another provider carries the earlier turns and tool calls with it.
 Put the policy in a custom routing strategy. The strategy reads the tenant from
 invocation state and keeps only the candidates that tenant may use. On the first attempt
 it asks a decision model which allowed candidate fits the request. After a model
-failure it asks `FallbackStrategy` for the next allowed candidate, backup first, so a
-hard request never drops to the small model. When no candidate qualifies, it raises an
-error and logs the refusal.
-
-The decision model is any Strands `DecisionModel`. The strategy only calls its `ask`
-method, so you choose the implementation in one line (see the next section).
+failure it asks `FallbackStrategy` for the next allowed candidate, and it tries the
+backup before the small model. When no candidate qualifies, it raises an
+error and logs the refusal. The decision model is any Strands `DecisionModel`, so
+the next section swaps it in one line.
 
 <Tabs>
 <Tab label="Python">
@@ -188,8 +185,8 @@ class TenantPolicyStrategy:
             raise TenantPolicyError(f"tenant {tenant!r} has no allowed model")
 
         if context.attempts:
-            # Fail over to the backup first, so a hard request never drops to the
-            # small model
+            # Try the backup before the small model, so a hard request stays on a
+            # capable model while one is available
             backups = [c for c in allowed if (c.metadata or {}).get("tier") == "backup"]
             others = [c for c in allowed if (c.metadata or {}).get("tier") != "backup"]
             scoped = replace(context, candidates=backups + others)
@@ -199,7 +196,9 @@ class TenantPolicyStrategy:
                 c for c in allowed if (c.metadata or {}).get("tier") == "primary"
             ] or allowed
             choice = primaries[0]
-            if len(primaries) > 1 and self._may_decide(providers):
+            # The decision model reads the request, so its provider must be allowed
+            may_decide = self._decisions_provider in (None, *providers)
+            if len(primaries) > 1 and may_decide:
                 try:
                     choice = await self._decide(context, primaries)
                 except Exception as error:
@@ -211,10 +210,6 @@ class TenantPolicyStrategy:
             "retry" if context.attempts else "first",
         )
         return choice
-
-    def _may_decide(self, providers: set[str]) -> bool:
-        # The decision model reads the request, so it must be a provider the tenant allows
-        return self._decisions_provider in (None, *providers)
 
     async def _decide(
         self,
@@ -261,21 +256,17 @@ class TenantPolicyStrategy:
 
 A `BeforeModelCallEvent` hook looks like the natural place for this check. But the
 router picks the model after that hook runs, so the hook cannot see which candidate
-will serve the call. The same holds for a `before_model_call` intervention, which runs
+will serve the call. The same holds for a
+<Syntax py="before_model_call" ts="beforeModelCall" /> intervention, which runs
 on that event. The strategy sees the candidates, and the policy then also applies on
 failover: `customer-b` never falls back to Anthropic or OpenAI, even when Amazon Bedrock
-fails.
-
-The decision model reads every request, so the strategy only asks it for tenants that
-allow its provider. A decision model on your own infrastructure, like Strands Decider,
-can serve every tenant. With one allowed model, such as for `customer-b`, the strategy
-skips the decision.
+fails. With one allowed model, as for `customer-b`, the strategy skips the decision.
 
 ## Choose the decision model
 
 [Strands Decider](https://github.com/strands-labs/strands-decider) is an open-source
 decision model that picks between options instead of generating text, so it answers
-faster and costs less than an LLM judge. Run it as a local server, which loads the model
+faster than an LLM. Run it as a local server, which loads the model
 weights on first start:
 
 ```bash
@@ -284,7 +275,8 @@ strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
 ```
 
 Then wrap the server as a Strands `DecisionModel` by implementing `_ask`. The base class
-traces each call as a `decision` span and adds its usage to the request.
+traces each call as a `decision` span. Because the strategy passes the request's
+invocation context, the base class also adds the decision's usage to the request.
 
 <Tabs>
 <Tab label="Python">
@@ -340,7 +332,7 @@ class StrandsDecider(DecisionModel):
         return DecisionResult(
             # The server always picks one of the question's choices
             answers={qid: reply["answers"][qid]["choice"] for qid in questions},
-            metadata=DecisionMetadata(latency_ms=int(reply["latency_ms"])),
+            metadata=DecisionMetadata(latency_ms=round(reply["latency_ms"])),
             usage={
                 "inputTokens": usage["input_tokens"],
                 "outputTokens": usage["output_tokens"],
@@ -358,94 +350,11 @@ class StrandsDecider(DecisionModel):
 </Tab>
 </Tabs>
 
-This implementation answers choice questions with at least two options, which is what
-the strategy asks. The server runs on your machine, so the request never leaves your
-infrastructure.
+The server runs on your machine, so the request never leaves your infrastructure.
 
-Wrap the [OpenAI Decisions API](https://platform.openai.com/docs/guides/decisions) the
-same way to route with OpenAI's hosted decision model.
-
-<Tabs>
-<Tab label="Python">
-```python
-import time
-from typing import Any
-
-from openai import AsyncOpenAI  # a version that includes client.decisions
-from strands.decisions import (
-    DecisionInput,
-    DecisionMetadata,
-    DecisionModel,
-    DecisionResult,
-    Question,
-    Uncertain,
-)
-from strands.types.exceptions import StructuredOutputException
-
-
-class OpenAIDecisionModel(DecisionModel):
-    def __init__(self, model_id: str = "gpt-6-luna") -> None:
-        super().__init__()
-        self._model_id = model_id
-
-    async def _ask(
-        self,
-        state: DecisionInput,
-        questions: dict[str, Question],
-        **kwargs: Any,
-    ) -> DecisionResult:
-        if any(q["choices"] == "boolean" for q in questions.values()):
-            raise ValueError("OpenAIDecisionModel answers choice questions only")
-        started = time.perf_counter()
-        # A client per call: each synchronous agent call runs its own event loop
-        async with AsyncOpenAI(timeout=30) as openai:  # reads OPENAI_API_KEY
-            response = await openai.decisions.create(
-                model=self._model_id,
-                input=state,
-                questions=[
-                    {
-                        "type": "choice",
-                        "name": question_id,
-                        "instructions": question["question"],
-                        "choices": [{"value": c} for c in question["choices"]],
-                    }
-                    for question_id, question in questions.items()
-                ],
-            )
-        answers: dict[str, str | bool | Uncertain] = {}
-        for answer in response.answers:
-            question = questions[answer.name]
-            if answer.type == "choice" and answer.choice in question["choices"]:
-                answers[answer.name] = answer.choice
-            elif question.get("uncertainty", True) is not False:
-                answers[answer.name] = Uncertain()
-            else:
-                raise StructuredOutputException(
-                    f"question id=<{answer.name}> | no valid answer"
-                )
-        return DecisionResult(
-            answers=answers,
-            metadata=DecisionMetadata(
-                latency_ms=int((time.perf_counter() - started) * 1000)
-            ),
-            usage={
-                "inputTokens": response.usage.input_tokens,
-                "outputTokens": response.usage.output_tokens,
-                "totalTokens": response.usage.total_tokens,
-            },
-        )
-```
-</Tab>
-<Tab label="TypeScript">
-```typescript
---8<-- "user-guide/sdk/model-providers/multi-tenant-model-routing_imports.ts:mtr_openai_decisions_imports"
-
---8<-- "user-guide/sdk/model-providers/multi-tenant-model-routing.ts:mtr_openai_decisions"
-```
-</Tab>
-</Tabs>
-
-To switch decision models, change only the line that creates the strategy:
+To use another decision model or model provider, change only the decision model you
+pass to the strategy. For example, `LLMDecisionModel`, which the SDK ships, answers with
+any Strands model provider:
 
 <Tabs>
 <Tab label="Python">
@@ -456,10 +365,7 @@ from strands.models import BedrockModel
 # Strands Decider, on your machine
 strategy = TenantPolicyStrategy(StrandsDecider())
 
-# OpenAI Decisions API
-strategy = TenantPolicyStrategy(OpenAIDecisionModel(), decisions_provider="openai")
-
-# Any Strands model, through the decision model the SDK ships
+# Any Strands model provider, here Claude Haiku on Amazon Bedrock
 haiku = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
 strategy = TenantPolicyStrategy(LLMDecisionModel(haiku), decisions_provider="bedrock")
 ```
@@ -473,7 +379,8 @@ strategy = TenantPolicyStrategy(LLMDecisionModel(haiku), decisions_provider="bed
 </Tab>
 </Tabs>
 
-`decisions_provider` names the provider that receives the request, so the strategy only
+<Syntax py="decisions_provider" ts="decisionsProvider" /> names the provider that
+receives the request, so the strategy only
 asks the decision model for tenants that allow it. A decision model on your own
 infrastructure, such as Strands Decider, needs no provider.
 
@@ -518,23 +425,20 @@ agent("Where is order A-1001?", invocation_state={"tenant": "customer-a"})
 </Tab>
 </Tabs>
 
-A typical log shows:
+A tenant with no policy, such as `unknown-customer`, gets `TenantPolicyError` before any
+model runs.
+
+Typical output:
 
 ```text
 tenant=<customer-a>, candidate=<fast>, attempt=<first> | routing decision
-```
-
-A tenant with no policy, such as `unknown-customer`, gets `TenantPolicyError` before any
-model runs, and the log records the refusal:
-
-```text
 tenant=<unknown-customer> | no allowed model, refusing call
 ```
 
-A model fails when its call raises an error instead of returning a response: the
-provider is down or times out, the account is throttled after the agent's retries, or
-the credentials or model access are invalid. The router reacts only to these errors, not
-to the content of a response.
+A model fails when its call raises an error instead of returning a response. Typical
+causes are a provider that is down or times out, throttling after the agent's retries,
+and invalid credentials or model access. The router reacts only to these errors, not to
+the content of a response.
 
 When a model fails, the router asks the strategy again with the failed attempt. If Claude
 Sonnet 5 fails on a hard request, `customer-a` moves to the OpenAI backup, not to Nova
