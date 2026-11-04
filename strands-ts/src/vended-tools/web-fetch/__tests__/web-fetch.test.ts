@@ -255,7 +255,7 @@ describe('webFetch tool', () => {
   })
 
   describe('binary content', () => {
-    // PNG signature + every byte value 188 times: 48,136 bytes, about half undecodable as UTF-8
+    // PNG signature + every byte value 188 times: 48,136 bytes, NULs and about half undecodable as UTF-8
     const binaryBody = new Uint8Array([
       0x89,
       0x50,
@@ -272,9 +272,23 @@ describe('webFetch tool', () => {
 
     it.each([
       ['image/png', binaryBody, '[binary image/png, 48,136 bytes; not shown]'],
-      ['Audio/MPEG; foo=bar', new TextEncoder().encode('ID3'), '[binary audio/mpeg, 3 bytes; not shown]'],
+      [
+        'Audio/MPEG; foo=bar',
+        new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0]),
+        '[binary audio/mpeg, 10 bytes; not shown]',
+      ],
       ['application/octet-stream', binaryBody, '[binary application/octet-stream, 48,136 bytes; not shown]'],
-      ['text/html; charset=utf-8', binaryBody, '[binary text/html, 48,136 bytes; not shown]'],
+      [
+        'application/pdf; charset=iso-8859-1',
+        new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0, 0xe2, 0xe3]),
+        '[binary application/pdf, 12 bytes; not shown]',
+      ],
+      ['text/html; charset=utf-8', binaryBody, '[undecodable text/html, 48,136 bytes; not shown]'],
+      [
+        'text/plain',
+        new Uint8Array([...Array(6).fill(0x61), ...Array(4).fill(0xff)]),
+        '[undecodable text/plain, 10 bytes; not shown]',
+      ],
       [null, new Uint8Array([0, 1, 0, 2]), '[binary content, 4 bytes; not shown]'],
     ])('%s body returns a marker', async (contentType, body, expected) => {
       mockFetch(body, { contentType })
@@ -284,13 +298,22 @@ describe('webFetch tool', () => {
 
     it.each([
       ['application/octet-stream', new TextEncoder().encode('plain notes'), 'plain notes'],
+      ['audio/mpegurl', new TextEncoder().encode('#EXTM3U\nsegment1.ts\n'), '#EXTM3U\nsegment1.ts\n'],
       [
         'text/plain',
         new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x20, ...Array(20).fill(0x61)]),
         'caf\ufffd ' + 'a'.repeat(20),
       ],
-      ['image/svg+xml', new TextEncoder().encode('<svg/>'), 'md:<svg/>'],
-      ['image/vnd.foo+json; charset=utf-8', new TextEncoder().encode('{}'), '{}'],
+      [
+        'text/plain',
+        new Uint8Array([...Array(7).fill(0x61), ...Array(3).fill(0xff)]),
+        'a'.repeat(7) + '\ufffd'.repeat(3),
+      ],
+      [
+        'text/plain',
+        new Uint8Array([...Array(30).fill(0xff), ...new TextEncoder().encode('\u{1f600}'.repeat(35))]),
+        '\ufffd'.repeat(30) + '\u{1f600}'.repeat(35),
+      ],
     ])('%s text body is returned as text', async (contentType, body, expected) => {
       mockFetch(body, { contentType })
       const result = await makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/file' })

@@ -45,9 +45,8 @@ _HEADERS = {
 
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
 _DEFAULT_MAX_CONTENT_CHARS = 50_000
-_BINARY_MAJOR_TYPES = ("image", "audio", "video", "font")
-# Undecodable bytes become U+FFFD; decoded binaries measure ~0.4-0.6 of U+FFFD/NUL chars, mis-declared text far less.
-_BINARY_CHAR_RATIO = 0.3
+# Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.45.
+_UNDECODABLE_RATIO = 0.3
 
 _ANALYST_PROMPT = (
     "You answer a request about a single fetched web page. Use only the provided "
@@ -96,8 +95,8 @@ def make_web_fetch(
           the main agent's context.
         - ``markdown``: HTML converted to clean markdown; other content
           types returned as-is.
-        In both modes a binary body is replaced by a short marker such as
-        ``[binary image/png, 48,213 bytes; not shown]``.
+        In both modes a body that contains NUL or mostly fails to decode is replaced
+        by a short marker such as ``[binary image/png, 48,213 bytes; not shown]``.
     """
     if max_bytes <= 0:
         raise ValueError(f"max_bytes must be positive, got {max_bytes}")
@@ -274,13 +273,12 @@ async def _fetch_once(
 
 
 def _binary_marker(content_type: str, text: str, size: int) -> str | None:
-    """Return a placeholder when the body is a binary media type or decodes mostly to U+FFFD/NUL, else ``None``."""
-    media_type = content_type.split(";")[0].strip().lower()
-    is_binary_type = media_type.split("/")[0] in _BINARY_MAJOR_TYPES and not media_type.endswith(("+xml", "+json"))
-    garbage = text.count("\ufffd") + text.count("\x00")
-    if not is_binary_type and garbage <= len(text) * _BINARY_CHAR_RATIO:
+    """Return a placeholder when the body contains NUL or largely fails to decode, else ``None``."""
+    if "\x00" not in text and text.count("\ufffd") <= size * _UNDECODABLE_RATIO:
         return None
-    return f"[binary {media_type or 'content'}, {size:,} bytes; not shown]"
+    media_type = content_type.split(";")[0].strip().lower()
+    kind = "undecodable" if media_type.startswith("text/") else "binary"
+    return f"[{kind} {media_type or 'content'}, {size:,} bytes; not shown]"
 
 
 def _parse_charset(content_type: str) -> str:

@@ -9,9 +9,8 @@ import { type MakeWebFetchOptions, WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DES
 
 export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 // 5 MiB
 export const DEFAULT_MAX_CONTENT_CHARS = 50_000
-const BINARY_MAJOR_TYPES = ['image', 'audio', 'video', 'font']
-// Undecodable bytes become U+FFFD; decoded binaries measure ~0.4-0.6 of U+FFFD/NUL chars, mis-declared text far less.
-const BINARY_CHAR_RATIO = 0.3
+// Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.45.
+const UNDECODABLE_RATIO = 0.3
 
 const _HEADERS = {
   'User-Agent': 'strands-agents-web-fetch/1.0',
@@ -208,17 +207,16 @@ async function fetchOnce(
   return [contentType, text, binaryMarker(contentType, text, total)]
 }
 
-/** Placeholder for a binary media type or a body that decodes mostly to U+FFFD/NUL; `undefined` for text. */
+/** Placeholder when the body contains NUL or largely fails to decode; `undefined` for text. */
 function binaryMarker(contentType: string, text: string, size: number): string | undefined {
-  const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase()
-  const isBinaryType = BINARY_MAJOR_TYPES.includes(mediaType.split('/')[0] ?? '') && !/\+(xml|json)$/.test(mediaType)
-  let garbage = 0
+  let replaced = 0
   for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i)
-    if (code === 0xfffd || code === 0) garbage++
+    if (text.charCodeAt(i) === 0xfffd) replaced++
   }
-  if (!isBinaryType && garbage <= text.length * BINARY_CHAR_RATIO) return undefined
-  return `[binary ${mediaType || 'content'}, ${size.toLocaleString('en-US')} bytes; not shown]`
+  if (!text.includes('\u0000') && replaced <= size * UNDECODABLE_RATIO) return undefined
+  const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase()
+  const kind = mediaType.startsWith('text/') ? 'undecodable' : 'binary'
+  return `[${kind} ${mediaType || 'content'}, ${size.toLocaleString('en-US')} bytes; not shown]`
 }
 
 function _parseCharset(contentType: string): string {
