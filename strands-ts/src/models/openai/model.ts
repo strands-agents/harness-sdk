@@ -256,7 +256,13 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private async *_streamResponses(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
       const stateful = this.stateful
-      const request = formatResponsesRequest(this._config as OpenAIResponsesConfig, messages, options, stateful)
+      const request = formatResponsesRequest(
+        this._config as OpenAIResponsesConfig,
+        messages,
+        options,
+        stateful,
+        this.modelInfo
+      )
       const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
       const state = createResponsesStreamState()
