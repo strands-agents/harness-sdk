@@ -116,7 +116,8 @@ async def migrate_session(session_id: str, *, agent_id: str = "default") -> None
     )
 
     # Stateful models restore only model state, so check it as well.
-    if not agent.messages and not agent.state.get() and not agent._model_state:
+    restored = agent.take_snapshot(preset="session").data
+    if not (restored["messages"] or restored["state"] or restored["model_state"]):
         raise ValueError(
             f"no source data found for session={session_id!r} agent={agent_id!r}"
         )
