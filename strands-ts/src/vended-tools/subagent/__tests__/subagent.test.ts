@@ -58,6 +58,8 @@ class FakeChild {
     cancelSignal: AbortSignal
     invocationContext?: InvocationContext
   }[] = []
+  /** Mirrors Agent.cancelSignal: aborted only by an immediate cancel. */
+  cancelSignal: AbortSignal = new AbortController().signal
   private readonly _results: (AgentResult | undefined)[]
 
   constructor(...results: (AgentResult | undefined)[]) {
@@ -67,11 +69,14 @@ class FakeChild {
   async *stream(
     prompt: InvokeArgs,
     options: { invocationState: InvocationState; cancelSignal: AbortSignal; invocationContext?: InvocationContext }
-  ): AsyncGenerator<{ type: string }, AgentResult | undefined, undefined> {
+  ): AsyncGenerator<{ type: string; result?: AgentResult }, AgentResult | undefined, undefined> {
     this.prompts.push(prompt)
     this.calls.push(options)
+    const result = this._results.shift()
     yield { type: 'modelStreamUpdateEvent' }
-    return this._results.shift()
+    yield result !== undefined ? { type: 'agentResultEvent', result } : { type: 'agentResultEvent' }
+    this.cancelSignal = new AbortController().signal // mirrors stream()'s finally
+    return result
   }
 
   asAgent(): Agent {
@@ -307,7 +312,10 @@ describe('subagent tool', () => {
       )
       expect(specs[0]!.name).toBe('subagent')
       expect(specs[0]!.instructions).toBe(GENERALIST.instructions)
-      expect(items.map((item) => item.data)).toEqual([{ type: 'modelStreamUpdateEvent' }])
+      expect(items.map((item) => item.data)).toEqual([
+        { type: 'modelStreamUpdateEvent' },
+        { type: 'agentResultEvent', result: expect.anything() },
+      ])
     })
 
     it('passes a copy of the invocation state and the tool cancel signal to the child', async () => {
@@ -556,7 +564,6 @@ describe('subagent tool', () => {
     })
 
     it.each([
-      ['a cancelled child', fakeResult('', 'cancelled'), 'Subagent cancelled'],
       ['a missing child result', undefined, 'Subagent did not produce a result.'],
       ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
     ])('turns %s into an error result', async (_, childResult, message) => {
@@ -566,6 +573,28 @@ describe('subagent tool', () => {
 
       expect(result).toEqual(
         new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock(message)] })
+      )
+    })
+
+    it('turns an immediately cancelled child into an error result', async () => {
+      const child = new FakeChild(fakeResult('', 'cancelled'))
+      child.cancelSignal = AbortSignal.abort()
+      const { builder } = capturingBuilder(child)
+
+      const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('Subagent cancelled')] })
+      )
+    })
+
+    it('treats a child that ended via a deferred cancel (stop tool) as a success', async () => {
+      const { builder } = capturingBuilder(new FakeChild(fakeResult('summary', 'cancelled')))
+
+      const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('summary')] })
       )
     })
   })

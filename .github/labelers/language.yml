@@ -3,9 +3,11 @@
 # Use max_labels: 1 since most issues target one language.
 
 instructions: |
-  This is a monorepo with Python and TypeScript SDKs.
-  Look for language-specific keywords: Python paths (strands-py/, .py files, pip, pyproject.toml),
-  TypeScript paths (strands-ts/, .ts files, npm, package.json).
+  This is a monorepo with Python and TypeScript SDKs, Python and TypeScript harness packages, a TypeScript CLI, and a Python MCP server.
+  Look for language-specific keywords: Python paths (strands-py/, harness-py/, strands-mcp/, .py files, pip, pyproject.toml, strands-agents, strands-harness),
+  TypeScript paths (strands-ts/, harness-ts/, strands-cli/, .ts files, npm, package.json, @strands-agents/sdk, @strands-agents/harness, @strands-agents/cli).
+  Issues about the strands CLI are typescript.
+  For [PORT] issues, label the target SDK language (the one the work is being ported into), not the source.
   If the issue clearly targets both languages equally, prefer the language where the bug or feature originates.
   If the issue is language-agnostic or unclear, do not assign a label.
   Issues about general agent behavior, documentation content, or feature requests without language-specific file paths or package managers should not receive a language label.
@@ -16,8 +18,8 @@ field:
 
 labels:
   python:
-    description: "Issue relates to the Python SDK (strands-py/, .py files, pip, pyproject.toml)"
+    description: "Issue relates to the Python SDK, Python harness, or strands-mcp (strands-py/, harness-py/, strands-mcp/, .py files, pip, pyproject.toml)"
     option: Python
   typescript:
-    description: "Issue relates to the TypeScript SDK (strands-ts/, .ts files, npm, package.json)"
+    description: "Issue relates to the TypeScript SDK, TypeScript harness, or strands CLI (strands-ts/, harness-ts/, strands-cli/, .ts files, npm, package.json)"
     option: TypeScript

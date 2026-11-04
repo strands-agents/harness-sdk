@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { Agent } from '../agent.js'
 import {
   createAuxiliaryInvocationContext,
@@ -215,6 +216,26 @@ describe('Agent request-wide limits', () => {
     expect(result.stopReason).toBe('limitTurns')
     expect(model.callCount).toBe(1)
     expect(enclosing.usage).toEqual({ turnsTaken: 1, inputTokens: 1, outputTokens: 2, totalTokens: 3 })
+  })
+
+  it("counts a nested invoke's structured output failures toward the request", async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'strands_structured_output', toolUseId: 'tu-1', input: {} })
+      .addTurn({ type: 'toolUseBlock', name: 'strands_structured_output', toolUseId: 'tu-2', input: {} })
+    const agent = new Agent({ model, structuredOutputSchema: z.object({ value: z.number() }), printer: false })
+    const request = new InvocationContextImpl({ structuredOutputAttempts: 1 })
+
+    const result = await agent.invoke('go', { invocationContext: request, limits: { structuredOutputAttempts: 5 } })
+
+    expect({
+      stopReason: result.stopReason,
+      modelCalls: model.callCount,
+      requestFailures: request.structuredOutputFailures,
+    }).toEqual({
+      stopReason: 'limitStructuredOutputAttempts',
+      modelCalls: 1,
+      requestFailures: 1,
+    })
   })
 
   it('folds an auxiliary call into the request total without limiting it', async () => {

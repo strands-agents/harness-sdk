@@ -171,6 +171,8 @@ print(f"Cache read tokens: {response2.metrics.accumulated_usage.get('cacheReadIn
 </Tab>
 </Tabs>
 
+<Syntax py="messages_ttl" ts="messagesTTL" /> controls this cache point: set it to `False` (`false`) to turn it off, or to a TTL string such as `"5m"` to set its duration. Left unset, it takes the duration from `ttl`.
+
 > **Note**: Cache misses occur if you intentionally modify past conversation context (e.g., summarization or editing previous messages).
 
 **Option B: Manual Cache Points**

@@ -13,7 +13,14 @@ import { Model } from '../models/model.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool } from '../tools/structured-output-tool.js'
 import { Message, TextBlock, type ContentBlock, type ToolUseBlock } from '../types/messages.js'
 import { DecisionModel, uncertaintyAllowed } from './decision-model.js'
-import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
+import {
+  Uncertain,
+  type AnswerOf,
+  type DecisionCallOptions,
+  type DecisionInput,
+  type DecisionResult,
+  type Question,
+} from './types.js'
 
 /** Reserved option value used to signal uncertainty on the wire. */
 const UNCERTAIN_LITERAL = 'uncertain'
@@ -85,7 +92,8 @@ export class LLMDecisionModel extends DecisionModel {
 
   protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q
+    questions: Q,
+    options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
     const schema = buildAnswerSchema(questions)
     const tool = new StructuredOutputTool(schema)
@@ -97,6 +105,7 @@ export class LLMDecisionModel extends DecisionModel {
       systemPrompt,
       toolSpecs: [tool.toolSpec],
       toolChoice: { tool: { name: tool.name } },
+      ...(options.cancelSignal !== undefined && { cancelSignal: options.cancelSignal }),
     })
 
     let iteration = await stream.next()
@@ -143,16 +152,19 @@ export class LLMDecisionModel extends DecisionModel {
 
 function buildAnswerSchema<const Q extends Record<string, Question>>(
   questions: Q
-): z.ZodObject<Record<string, z.ZodObject<{ answer: z.ZodEnum; reason: z.ZodOptional<z.ZodString> }>>> {
-  const shape: Record<string, z.ZodObject<{ answer: z.ZodEnum; reason: z.ZodOptional<z.ZodString> }>> = {}
+): z.ZodObject<Record<string, z.ZodObject>> {
+  const shape: Record<string, z.ZodObject> = {}
   for (const [id, question] of Object.entries(questions)) {
-    const literals = answerLiterals(question, uncertaintyAllowed(question))
-    shape[id] = z
-      .object({
-        answer: z.enum(literals as [string, ...string[]]),
-        reason: z.string().optional().describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
-      })
-      .describe(question.question)
+    const allowUncertain = uncertaintyAllowed(question)
+    const answer = z.enum(answerLiterals(question, allowUncertain) as [string, ...string[]])
+    // A reason is only ever surfaced on Uncertain, so questions that cannot be uncertain do not offer one.
+    const entry = allowUncertain
+      ? z.object({
+          answer,
+          reason: z.string().optional().describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
+        })
+      : z.object({ answer })
+    shape[id] = entry.describe(question.question)
   }
   return z.object(shape).describe('Answer for each question in the input decision set.')
 }

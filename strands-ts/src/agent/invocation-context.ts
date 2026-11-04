@@ -47,6 +47,8 @@ export class InvocationContextImpl implements InvocationContext {
   /** Turns and token usage counted under this instance; see {@link recordTurn} and {@link recordUsage}. */
   readonly usage: InvocationContextUsage = { turnsTaken: 0, ...createEmptyUsage() }
 
+  private _structuredOutputFailures = 0
+
   /**
    * @param limits - Limits checked against this instance's usage; `undefined` for none
    * @param _parent - The parent instance, which also receives this one's usage, if any
@@ -57,6 +59,11 @@ export class InvocationContextImpl implements InvocationContext {
     private readonly _parent?: InvocationContextImpl,
     private readonly _auxiliary = false
   ) {}
+
+  /** Failed structured output attempts counted under this instance; see {@link recordStructuredOutputFailure}. */
+  get structuredOutputFailures(): number {
+    return this._structuredOutputFailures
+  }
 
   /** The parent whose limits also apply to this instance, if any. */
   get limitingParent(): InvocationContextImpl | undefined {
@@ -77,6 +84,22 @@ export class InvocationContextImpl implements InvocationContext {
   recordTurn(): void {
     this.usage.turnsTaken += 1
     this.limitingParent?.recordTurn()
+  }
+
+  /** Counts one failed structured output attempt here and in every parent whose limits apply to this instance. */
+  recordStructuredOutputFailure(): void {
+    this._structuredOutputFailures += 1
+    this.limitingParent?.recordStructuredOutputFailure()
+  }
+
+  /**
+   * Whether this instance or a parent whose limits apply to it sets the limit named `key`.
+   *
+   * @param key - The limit to look for
+   * @returns `true` if the limit applies to this instance
+   */
+  hasLimit(key: keyof InvokeLimits): boolean {
+    return this.limits?.[key] !== undefined || (this.limitingParent?.hasLimit(key) ?? false)
   }
 }
 
@@ -146,7 +169,8 @@ export function createAuxiliaryInvocationContext(parent: InvocationContext | und
 /**
  * Returns the stop reason for the first limit reached, checking this instance's
  * own limits first and then each parent's, or `undefined` if none is reached.
- * Within one instance the order is turns, then totalTokens, then outputTokens.
+ * Within one instance the order is turns, then totalTokens, then outputTokens, then
+ * structuredOutputAttempts.
  *
  * @param invocationContext - The state to check
  * @returns The limit stop reason, or `undefined` while no limit is reached
@@ -170,6 +194,12 @@ function reachedOwnLimit(invocationContext: InvocationContextImpl): StopReason |
   }
   if (limits.outputTokens !== undefined && outputTokens >= limits.outputTokens) {
     return 'limitOutputTokens'
+  }
+  if (
+    limits.structuredOutputAttempts !== undefined &&
+    invocationContext.structuredOutputFailures >= limits.structuredOutputAttempts
+  ) {
+    return 'limitStructuredOutputAttempts'
   }
   return undefined
 }

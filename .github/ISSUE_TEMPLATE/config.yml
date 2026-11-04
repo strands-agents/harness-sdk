@@ -1,9 +1,14 @@
 blank_issues_enabled: false
 contact_links:
   - name: Strands Agents SDK Support
-    # Only one repo has Discussions enabled; point users there.
     url: https://github.com/strands-agents/harness-sdk/discussions
     about: Please ask and answer questions here
   - name: Strands Agents SDK Documentation
     url: https://strandsagents.com
     about: Visit our documentation for help
+  - name: Strands Box Support
+    url: https://github.com/strands-agents/box/discussions
+    about: Ask and answer questions about Strands Box
+  - name: Strands Box
+    url: https://github.com/strands-agents/box
+    about: Source code, issues, and docs for Strands Box

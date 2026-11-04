@@ -158,6 +158,16 @@ describe('NotASandboxLocalEnvironment', () => {
     it('throws when reading a nonexistent file', async () => {
       await expect(sandbox.readFile(path.join(TEST_DIR, 'nope.txt'))).rejects.toThrow()
     })
+
+    // Contract: on POSIX, `\` in a path is a legal filename character, not a
+    // separator. Containment logic in tools above the sandbox relies on this.
+    it.skipIf(WINDOWS)('treats a backslash in a filename as a literal character', async () => {
+      const file = path.join(TEST_DIR, 'weird\\name.txt')
+      await sandbox.writeText(file, 'ok')
+      expect(await sandbox.readText(file)).toBe('ok')
+      const entries = await sandbox.listFiles(TEST_DIR)
+      expect(entries.some((entry) => entry.name === 'weird\\name.txt')).toBe(true)
+    })
   })
 
   describe('removeFile', () => {
