@@ -621,8 +621,8 @@ class AnthropicModel(Model):
         elif not self._warned_compaction_sent_as_text and carries_native_block(messages):
             self._warned_compaction_sent_as_text = True
             logger.warning(
-                "model_id=<%s> | history holds a compaction block but server_side_summary is not set on this model,"
-                " sending its text instead | set the capability on both the agent model and the summarizer model",
+                "model_id=<%s> | history holds a compaction block from a server-side summary"
+                " but server_side_summary is off for this model | sending the summary's text instead",
                 self.config.get("model_id"),
             )
         messages, cache_target_idx = self._manage_cache_points(messages)

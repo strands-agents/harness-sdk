@@ -3557,7 +3557,7 @@ def test_format_request_warns_once_when_sending_a_stored_block_as_text(anthropic
 
     warnings_ = [record.getMessage() for record in caplog.records if "compaction block" in record.getMessage()]
     assert len(warnings_) == 1
-    assert "server_side_summary is not set" in warnings_[0]
+    assert "server_side_summary is off for this model" in warnings_[0]
 
 
 def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(anthropic_client):

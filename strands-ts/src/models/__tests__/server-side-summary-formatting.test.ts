@@ -123,7 +123,7 @@ describe('server-side summaries on the wire', () => {
       expect(wire.requests[1]!.headers['anthropic-beta']).toBeUndefined()
       const compactionWarnings = warn.mock.calls.filter(([message]) => String(message).includes('compaction block'))
       expect(compactionWarnings).toHaveLength(1)
-      expect(String(compactionWarnings[0]![0])).toContain('serverSideSummary is not set')
+      expect(String(compactionWarnings[0]![0])).toContain('serverSideSummary is off for this model')
       warn.mockRestore()
     })
 

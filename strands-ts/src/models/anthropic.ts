@@ -755,7 +755,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     else if (!this._warnedCompactionSentAsText && carriesNativeBlock(messages)) {
       this._warnedCompactionSentAsText = true
       logger.warn(
-        `model_id=<${this._config.modelId}> | history holds a compaction block but serverSideSummary is not set on this model, sending its text instead | set the capability on both the agent model and the summarizer model`
+        `model_id=<${this._config.modelId}> | history holds a compaction block from a server-side summary` +
+          " but serverSideSummary is off for this model | sending the summary's text instead"
       )
     }
 
