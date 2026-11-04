@@ -167,17 +167,41 @@ def test_update_config_re_resolves_the_default_max_tokens(anthropic_client, mess
     assert model.format_request(messages)["max_tokens"] == 32_000
 
 
-def test_update_config_raises_and_leaves_the_config_unchanged_when_the_new_model_has_no_max_tokens(
-    anthropic_client, messages
-):
+@pytest.mark.parametrize(
+    ("model_config", "match"),
+    [
+        ({"model_id": "unknown-model"}, "max_tokens is required"),
+        ({"max_tokens": None}, r"max_tokens=<None>"),
+    ],
+)
+def test_update_config_raises_and_leaves_the_config_unchanged(anthropic_client, messages, model_config, match):
     _ = anthropic_client
-    model = AnthropicModel(model_id="claude-sonnet-4-6")
+    model = AnthropicModel(model_id="claude-sonnet-4-6", params={"temperature": 0.5})
+    exp_config = model.get_config()
+    exp_request = model.format_request(messages)
 
-    with pytest.raises(ValueError, match="max_tokens is required"):
-        model.update_config(model_id="unknown-model")
+    with pytest.raises(ValueError, match=match):
+        model.update_config(**model_config)
 
-    assert model.get_config()["model_id"] == "claude-sonnet-4-6"
-    assert model.format_request(messages)["max_tokens"] == 128_000
+    assert model.get_config() == exp_config
+    assert model.format_request(messages) == exp_request
+
+
+def test__init__uses_params_max_tokens_when_the_model_info_has_no_output_limit(anthropic_client, messages):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="unknown-model", params={"max_tokens": 1000})
+
+    assert model.get_config()["max_tokens"] == 1000
+    assert model.format_request(messages)["max_tokens"] == 1000
+
+
+@pytest.mark.parametrize("model_config", [{}, {"max_tokens": 500}, {"max_tokens": None}])
+def test_get_config_reports_params_max_tokens_since_it_is_what_is_sent(anthropic_client, messages, model_config):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="claude-sonnet-4-6", params={"max_tokens": 1000}, **model_config)
+
+    assert model.get_config()["max_tokens"] == 1000
+    assert model.format_request(messages)["max_tokens"] == 1000
 
 
 def test_update_config(model, model_id):

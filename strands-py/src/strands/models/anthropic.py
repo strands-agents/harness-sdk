@@ -34,8 +34,7 @@ from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
-from ._defaults import resolve_config_metadata
-from ._model_info import ModelInfo, lookup_model_info
+from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -227,38 +226,41 @@ class AnthropicModel(Model):
     def get_config(self) -> AnthropicConfig:
         """Get the Anthropic model configuration, with ``max_tokens`` resolved when it was not set.
 
+        Passing the result back to ``update_config`` pins ``max_tokens`` to the resolved value, so it no longer
+        follows ``model_id`` changes.
+
         Returns:
             The Anthropic model configuration.
         """
         config = resolve_config_metadata(self.config, self.config["model_id"])
-        if "max_tokens" in config:
-            return config
         return {**config, "max_tokens": self._resolve_max_tokens(self.config)}
 
     @staticmethod
     def _resolve_max_tokens(config: AnthropicConfig) -> int:
-        """The ``max_tokens`` to send: the configured value, else the model info's output limit.
+        """The ``max_tokens`` to send: ``params["max_tokens"]``, else configured, else the model info's limit.
 
-        Reads the model info layers directly because ``Model.model_info`` reads ``get_config()``.
+        ``params`` comes first because ``format_request`` spreads it last, so it is what goes on the wire.
 
         Raises:
             ValueError: If max_tokens is neither configured nor known from the model info.
         """
-        if "max_tokens" in config:
-            if config["max_tokens"] is None:
-                raise ValueError(
-                    "max_tokens=<None> | the Anthropic API requires max_tokens | omit the key to use the model's "
-                    "output limit from the model info"
-                )
-            return config["max_tokens"]
+        params_max_tokens = (config.get("params") or {}).get("max_tokens")
+        if params_max_tokens is not None:
+            return cast(int, params_max_tokens)
 
-        info = ModelInfo.merge(lookup_model_info(config["model_id"]), config.get("model_info"))
-        if info.limits.max_output_tokens is None:
+        if "max_tokens" in config and config["max_tokens"] is None:
+            raise ValueError(
+                "max_tokens=<None> | the Anthropic API requires max_tokens | omit the key to use the model's "
+                "output limit from the model info"
+            )
+
+        max_tokens = resolve_max_tokens(config, config["model_id"])
+        if max_tokens is None:
             raise ValueError(
                 f"model_id=<{config['model_id']}> | max_tokens is required | the model info has no output token "
                 "limit for this model, set max_tokens explicitly"
             )
-        return info.limits.max_output_tokens
+        return max_tokens
 
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.
