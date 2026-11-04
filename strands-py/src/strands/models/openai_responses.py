@@ -681,13 +681,16 @@ class OpenAIResponsesModel(Model):
         """Send wire fields newer than the minimum supported OpenAI client through ``extra_body``.
 
         ``prompt_cache_options`` is a named kwarg only in recent clients; older supported clients
-        reject it on ``create`` and ``parse``. A caller-supplied ``extra_body`` keeps final precedence.
+        reject it on ``create`` and ``parse``. Keys in a caller-supplied ``extra_body.prompt_cache_options``
+        win, while keys it leaves unset (such as ``mode``) keep the SDK default.
         """
         if "prompt_cache_options" in request:
-            request["extra_body"] = {
-                "prompt_cache_options": request.pop("prompt_cache_options"),
-                **(request.get("extra_body") or {}),
+            extra_body = dict(request.get("extra_body") or {})
+            extra_body["prompt_cache_options"] = {
+                **request.pop("prompt_cache_options"),
+                **extra_body.get("prompt_cache_options", {}),
             }
+            request["extra_body"] = extra_body
 
     @classmethod
     def _format_cacheable_request_messages(

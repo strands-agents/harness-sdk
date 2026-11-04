@@ -2733,8 +2733,18 @@ def test_message_cache_leaves_native_input_override_under_caller_control():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("extra_body", [{}, {"other": True}, {"prompt_cache_options": {"mode": "implicit"}}])
-async def test_message_cache_works_with_older_client_create_signature(openai_client, alist, extra_body):
+@pytest.mark.parametrize(
+    ("extra_body", "expected_extra_body"),
+    [
+        ({}, {"prompt_cache_options": {"mode": "explicit"}}),
+        ({"other": True}, {"prompt_cache_options": {"mode": "explicit"}, "other": True}),
+        ({"prompt_cache_options": {"mode": "implicit"}}, {"prompt_cache_options": {"mode": "implicit"}}),
+        ({"prompt_cache_options": {"ttl": "12h"}}, {"prompt_cache_options": {"mode": "explicit", "ttl": "12h"}}),
+    ],
+)
+async def test_message_cache_works_with_older_client_create_signature(
+    openai_client, alist, extra_body, expected_extra_body
+):
     params = {"extra_body": extra_body}
     original = copy.deepcopy(params)
     calls = []
@@ -2756,7 +2766,7 @@ async def test_message_cache_works_with_older_client_create_signature(openai_cli
         )
     )
 
-    assert calls[0]["extra_body"] == {"prompt_cache_options": {"mode": "explicit"}, **extra_body}
+    assert calls[0]["extra_body"] == expected_extra_body
     content = calls[0]["input"][0]["content"]
     assert content[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
     assert "prompt_cache_breakpoint" not in content[1]
