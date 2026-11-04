@@ -1,6 +1,5 @@
 """Tests for the SummarizeStrategy."""
 
-import copy
 import functools
 import json
 import logging
@@ -9,6 +8,7 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.strategies.offload import Offload
+from strands._context_manager.strategies.offload.summarize import _warn_on_server_side_compaction_limits
 from strands._context_manager.types import ContextState
 from strands.models import ModelCapabilities, ModelInfo, SummarizeResult
 from strands.models.model import Model
@@ -535,98 +535,34 @@ class TestServerSideCompaction:
         assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
 
     @pytest.mark.asyncio
-    async def test_leaves_the_opening_run_in_place_when_message_one_is_pinned(self, compacting_agent):
+    async def test_compacts_pinned_messages_with_the_rest_of_the_opening_run(self, compacting_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[1]["metadata"] = {"custom": {"pinned": True}}
-        before = copy.deepcopy(messages)
-        compacting_agent.messages = messages
-        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
-
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
-
-        compacting_agent.model.summarize.assert_not_awaited()
-        assert messages == before
-
-    @pytest.mark.asyncio
-    async def test_compacts_the_opening_run_up_to_a_pinned_message(self, compacting_agent):
-        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[3]["metadata"] = {"custom": {"pinned": True}}
-        task, a1, u2 = messages[:3]
+        task, a1, u2, a3 = messages[:4]
         compacting_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
         assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
 
-        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2]
+        assert compacting_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
         summary = ContentBlock(
-            text="[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
+            text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
         )
-        assert messages == [
-            task,
-            Message(
-                role="assistant",
-                content=[summary, ContentBlock(text="a3")],
-                metadata={
-                    "custom": {
-                        "pinned": True,
-                        "merged_messages": [
-                            {"offset": 0, "metadata": {}},
-                            {"offset": 1, "metadata": {"custom": {"pinned": True}}},
-                        ],
-                    }
-                },
-            ),
-            *_turns("u4", "a5", "u6"),
-        ]
+        assert messages == [task, Message(role="assistant", content=[summary]), *_turns("u4", "a5", "u6")]
 
     @pytest.mark.asyncio
-    async def test_does_not_compact_past_a_pinned_message_on_a_later_pass(self, compacting_agent):
+    async def test_keeps_pinned_messages_after_the_base_summary_when_compaction_writes_none(self, compacting_agent):
+        compacting_agent.model.summarize.return_value = SummarizeResult(content=[])
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[3]["metadata"] = {"custom": {"pinned": True}}
         compacting_agent.messages = messages
-        first = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
-        await first.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9))
-        messages.extend(
-            [
-                Message(role="assistant", content=[ContentBlock(text="a7")]),
-                Message(role="user", content=[ContentBlock(text="u8")]),
-            ]
-        )
-        before = copy.deepcopy(messages)
-        second = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
-
-        assert await second.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
-
-        assert compacting_agent.model.summarize.await_count == 1
-        assert messages == before
-
-    @pytest.mark.asyncio
-    async def test_stops_the_compaction_before_a_tool_use_whose_result_is_left_out(self, compacting_agent):
-        tool_use = ContentBlock(toolUse={"toolUseId": "t1", "name": "lookup", "input": {}})
-        tool_result = ContentBlock(toolResult={"toolUseId": "t1", "status": "success", "content": [{"text": "r1"}]})
-        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
-        messages[1] = Message(role="assistant", content=[tool_use])
-        # A merged message whose pinned part keeps it, with the tool result beside it, out of the compaction.
-        messages[2] = Message(
-            role="user",
-            content=[tool_result, ContentBlock(text="pin")],
-            metadata={
-                "custom": {
-                    "merged_messages": [
-                        {"offset": 0, "metadata": {}},
-                        {"offset": 1, "metadata": {"custom": {"pinned": True}}},
-                    ]
-                }
-            },
-        )
-        before = copy.deepcopy(messages)
-        compacting_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
-        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is False
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
 
-        compacting_agent.model.summarize.assert_not_awaited()
-        assert messages == before
+        assert _texts(messages)[1][-1] == "a3"
+        assert messages[1]["metadata"]["custom"]["pinned"] is True
 
     @pytest.mark.asyncio
     async def test_uses_the_base_summary_when_the_run_does_not_start_after_message_zero(self, compacting_agent):
@@ -805,3 +741,81 @@ class TestServerSideCompaction:
 
         stream.assert_not_called()
         assert messages[1]["content"] == [summary]
+
+
+class TestServerSideCompactionLimitsWarning:
+    """Tests for the warning about features server-side compaction doesn't support."""
+
+    _PINNED = "pinned messages are compacted like any other message with server-side compaction"
+    _PER_BLOCK = (
+        "per-block summarization with preserve_recent rewrites blocks the model has already seen"
+        " | thinking from earlier turns will be dropped on the next turns"
+    )
+
+    @pytest.fixture
+    def compacting_agent(self, mock_agent):
+        mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_compaction=True))
+        mock_agent.model.get_config = unittest.mock.MagicMock(return_value={"model_id": "claude-test"})
+        mock_agent.messages = _turns("task", "a1", "u2")
+        return mock_agent
+
+    @staticmethod
+    def _warnings(caplog) -> list[str]:
+        return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+
+    @pytest.mark.parametrize(
+        ("pinned", "strategies", "statements"),
+        [
+            (True, [Offload.summarize("*").when(utilization=0.5)], _PINNED),
+            (False, [Offload.summarize("tool_results").when(threshold=100, preserve_recent=2)], _PER_BLOCK),
+            (
+                True,
+                [
+                    Offload.summarize("*").when(utilization=0.5),
+                    Offload.summarize("*").when(threshold=100, preserve_recent=2),
+                ],
+                f"{_PINNED} | {_PER_BLOCK}",
+            ),
+        ],
+    )
+    def test_describes_the_features_in_use(self, compacting_agent, caplog, pinned, strategies, statements):
+        compacting_agent.messages[1]["metadata"] = {"custom": {"pinned": pinned}}
+
+        with caplog.at_level(logging.WARNING):
+            _warn_on_server_side_compaction_limits(compacting_agent, strategies)
+
+        assert self._warnings(caplog) == [f"model_id=<claude-test> | {statements}"]
+
+    @pytest.mark.parametrize(
+        "strategies",
+        [
+            [Offload.summarize("*").when(utilization=0.5)],
+            [Offload.summarize("tool_results").when(threshold=100)],
+            [Offload.truncate("tool_results").when(threshold=2500, preserve_recent=2)],
+        ],
+    )
+    def test_stays_silent_without_pins_or_per_block_summarization(self, compacting_agent, caplog, strategies):
+        with caplog.at_level(logging.WARNING):
+            _warn_on_server_side_compaction_limits(compacting_agent, strategies)
+
+        assert self._warnings(caplog) == []
+
+    def test_ignores_pins_when_no_summary_compacts_server_side(self, compacting_agent, caplog):
+        compacting_agent.messages[1]["metadata"] = {"custom": {"pinned": True}}
+        summarizer = unittest.mock.MagicMock(model_info=ModelInfo())
+        strategies = [Offload.summarize("*", {"model": summarizer}).when(utilization=0.5)]
+
+        with caplog.at_level(logging.WARNING):
+            _warn_on_server_side_compaction_limits(compacting_agent, strategies)
+
+        assert self._warnings(caplog) == []
+
+    def test_stays_silent_when_the_agent_model_does_not_compact_server_side(self, compacting_agent, caplog):
+        compacting_agent.model.model_info = ModelInfo()
+
+        with caplog.at_level(logging.WARNING):
+            _warn_on_server_side_compaction_limits(
+                compacting_agent, [Offload.summarize("*").when(threshold=100, preserve_recent=2)]
+            )
+
+        assert self._warnings(caplog) == []

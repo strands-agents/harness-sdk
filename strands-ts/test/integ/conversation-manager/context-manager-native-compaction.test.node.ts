@@ -87,7 +87,7 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
     expect(report.usage.totalTokens).toBeGreaterThan(0)
   })
 
-  it('compacts up to a pinned message and never past it', async () => {
+  it('compacts a pinned message like any other', async () => {
     const report = await runCompactionTask({
       apiKey: apiKey(),
       mainModelId,
@@ -101,11 +101,10 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
 
     expect(report.exchanges.map((exchange) => exchange.status).filter((status) => status !== 200)).toStrictEqual([])
     expect(report.dropBlockWarnings).toStrictEqual([])
-    // The first pass compacts the messages before the pinned tool use; the second can't compact past it.
-    expect(ofKind(report.exchanges, 'compaction')).toHaveLength(1)
+    // Every pass compacts natively, the pinned tool use included.
+    expect(ofKind(report.exchanges, 'compaction')).toHaveLength(PASSES.length)
     expect(ofKind(report.exchanges, 'summarizer')).toHaveLength(0)
-    // The pinned tool use follows the summary in message 1, where it stood after the covered messages.
-    expect(report.messageOneAfter).toMatch(/^assistant:textBlock\+anthropic,.*toolUseBlock/)
+    expect(report.messageOneAfter).toMatch(/^assistant:textBlock\+anthropic/)
     const conversations = ofKind(report.exchanges, 'conversation')
     const returnedThinking = new Set(conversations.flatMap((exchange) => exchange.returnedThinking))
     expect(conversations.flatMap((exchange) => exchange.sentThinking).every((sent) => returnedThinking.has(sent))).toBe(

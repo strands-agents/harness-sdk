@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
     from ....models.model import Model
+    from ...types import ContextStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,43 @@ def _format_summarized(description: str, tokens: int, summary: str | None = None
 def _compacts_server_side(model: Model) -> bool:
     """Whether ``model`` declares server-side compaction, so its ``summarize()`` may cover the opening messages."""
     return model.model_info.capabilities.server_side_compaction is True
+
+
+_LIMIT_STATEMENTS = {
+    "pinned messages": "pinned messages are compacted like any other message with server-side compaction",
+    "per-block summarization": "per-block summarization with preserve_recent rewrites blocks the model has already seen"
+    " | thinking from earlier turns will be dropped on the next turns",
+}
+
+
+def _server_side_compaction_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> list[str]:
+    """Return the features in use that server-side compaction doesn't support, for an agent whose model has it.
+
+    Per-block summarization with ``preserve_recent`` rewrites blocks the model has already seen, and pinned messages are
+    compacted like any other message. Without ``preserve_recent``, a block is rewritten before the model sees it.
+    """
+    if not _compacts_server_side(agent.model):
+        return []
+    summarizers = [strategy for strategy in strategies if isinstance(strategy, SummarizeStrategy)]
+    features = []
+    if any(strategy._compacts(agent) for strategy in summarizers) and any(
+        _has_pinned_flag(message) for message in agent.messages
+    ):
+        features.append("pinned messages")
+    if any(not strategy._is_message_level and strategy._preserve_recent > 0 for strategy in summarizers):
+        features.append("per-block summarization")
+    return features
+
+
+def _warn_on_server_side_compaction_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> None:
+    """Log a warning describing how server-side compaction treats the features in use, if any."""
+    features = _server_side_compaction_limits(agent, strategies)
+    if not features:
+        return
+    config: Any = agent.model.get_config()
+    model_id = config.get("model_id") if isinstance(config, dict) else None
+    statements = [_LIMIT_STATEMENTS[feature] for feature in features]
+    logger.warning("model_id=<%s> | %s", model_id, " | ".join(statements))
 
 
 def _runs(messages: Messages, selected: list[Message]) -> list[list[Message]]:
@@ -117,27 +156,6 @@ def _split_pinned(run: list[Message]) -> tuple[list[Message], list[Message]]:
     kept = [piece for piece in pieces if _has_pinned_flag(piece) or pinned_ids & _get_tool_use_ids(piece)]
     kept_ids = {id(piece) for piece in kept}
     return kept, [piece for piece in pieces if id(piece) not in kept_ids]
-
-
-def _unpinned_prefix(run: list[Message]) -> list[Message]:
-    """Return the messages of ``run`` before its first pinned message, its tool-pair partner, or a split tool pair.
-
-    Server-side compaction covers a contiguous start of the conversation, and a message it covers can't be kept after
-    its block without breaking the thinking bound to the messages after it.
-    """
-    pieces = [_pieces(message) for message in run]
-    pinned_ids = {
-        tool_id for parts in pieces for part in parts if _has_pinned_flag(part) for tool_id in _get_tool_use_ids(part)
-    }
-    holds_pinned = [
-        any(_has_pinned_flag(part) or pinned_ids & _get_tool_use_ids(part) for part in parts) for parts in pieces
-    ]
-    end = holds_pinned.index(True) if True in holds_pinned else len(run)
-    left_out_ids = {tool_id for message in run[end:] for tool_id in _get_tool_use_ids(message)}
-    while end > 0 and _get_tool_use_ids(run[end - 1]) & left_out_ids:
-        end -= 1
-        left_out_ids |= _get_tool_use_ids(run[end])
-    return run[:end]
 
 
 def _holds_only_summaries(run: list[Message]) -> bool:
@@ -233,8 +251,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         messages = context.messages
         runs = _runs(messages, await self._get_eligible_messages(context))
         # The agent's model sends the stored block natively only when it declares the capability too.
-        native = _compacts_server_side(model) and _compacts_server_side(context.agent.model)
-        opening = _opening_run(messages, runs) if native else None
+        opening = _opening_run(messages, runs) if self._compacts(context.agent) else None
         acted = False
         # Last run first, so replacing a run leaves the earlier runs' positions unchanged.
         for run in reversed(runs):
@@ -270,18 +287,15 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return True
 
     async def _summarize_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Compact the opening run server-side up to its first pinned message.
+        """Compact the opening run server-side, pinned messages included; without a summary it gets the base one.
 
-        A pinned message and the rest of the run after it stay in place. A run without pinned messages whose
-        compaction writes no summary gets the base summary instead.
+        A message the compaction covers can't be kept after its block without breaking the thinking bound to the
+        messages after it, so pins don't keep messages out of the compaction.
         """
-        prefix = _unpinned_prefix(run)
-        if len(prefix) == len(run):
-            return await self._compact_opening(context, model, run) or await self._summarize_run(context, model, run)
-        return bool(prefix) and await self._compact_opening(context, model, prefix)
+        return await self._compact_opening(context, model, run) or await self._summarize_run(context, model, run)
 
     async def _compact_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Compact message 0 and ``run``, which holds no pinned message, server-side, keeping message 0 in place.
+        """Compact message 0 and ``run`` server-side, keeping message 0 in place.
 
         The summary takes the run's place as an assistant message, ahead of any assistant content that follows, and
         the provider sends its block, which covers message 0, in place of the text.
@@ -386,3 +400,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model
+
+    def _compacts(self, agent: Agent) -> bool:
+        """Whether this strategy summarizes message runs and its summarizer and the agent's model compact natively."""
+        model = self._resolve_model(agent)
+        return (
+            self._is_message_level
+            and model is not None
+            and _compacts_server_side(model)
+            and _compacts_server_side(agent.model)
+        )

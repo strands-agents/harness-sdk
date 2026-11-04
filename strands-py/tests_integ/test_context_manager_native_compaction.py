@@ -7,7 +7,6 @@ Bounded: one task of 7 tool turns and 2 forced summary passes per run, three run
 
 import dataclasses
 import os
-import re
 from typing import Any
 
 import pytest
@@ -102,16 +101,14 @@ async def test_compacts_every_pass_replays_each_block_unchanged_and_keeps_tail_t
 
 
 @pytest.mark.asyncio
-async def test_compacts_up_to_a_pinned_message_and_never_past_it() -> None:
+async def test_compacts_a_pinned_message_like_any_other() -> None:
     report = await harness.run_compaction_task(_options(pin_before_first_pass=3))
     print(f"native pinned run | {harness.describe_report(report)}")
 
     _assert_first_attempts_succeeded(report)
-    # The first pass compacts the messages before the pinned tool use; the second can't compact past it.
-    assert len(report.of_kind("compaction")) == 1
-    assert report.of_kind("summarizer") == []
-    # The pinned tool use follows the summary in message 1, where it stood after the covered messages.
-    assert re.match(r"^assistant:text\+anthropic,.*toolUse", report.message_one_after)
+    # Every pass compacts natively, the pinned tool use included.
+    _assert_every_pass_compacted_natively(report)
+    assert report.message_one_after.startswith("assistant:text+anthropic")
     conversations = report.of_kind("conversation")
     returned_thinking = {signature for exchange in conversations for signature in exchange.returned_thinking}
     assert all(sent in returned_thinking for exchange in conversations for sent in exchange.sent_thinking)

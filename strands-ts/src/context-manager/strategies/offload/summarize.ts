@@ -88,8 +88,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const { messages } = context
     const runs = messageRuns(messages, await this._getEligibleMessages(context))
     // The agent's model sends the stored block natively only when it declares the capability too.
-    const native = compactsServerSide(model) && compactsServerSide(context.agent.model)
-    const opening = native ? openingRun(messages, runs) : undefined
+    const opening = this.compacts(context.agent) ? openingRun(messages, runs) : undefined
     let acted = false
     // Last run first, so replacing a run leaves the earlier runs' positions unchanged.
     for (const run of runs.reverse()) {
@@ -129,20 +128,16 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Compacts the opening run server-side up to its first pinned message. A pinned message and the rest of the run
-   * after it stay in place. A run without pinned messages whose compaction writes no summary gets the base summary
-   * instead.
+   * Compacts the opening run server-side, pinned messages included; without a summary it gets the base one. A message
+   * the compaction covers can't be kept after its block without breaking the thinking bound to the messages after it,
+   * so pins don't keep messages out of the compaction.
    */
   private async _summarizeOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    const prefix = unpinnedPrefix(run)
-    if (prefix.length === run.length) {
-      return (await this._compactOpening(context, model, run)) || (await this._summarizeRun(context, model, run))
-    }
-    return prefix.length > 0 && (await this._compactOpening(context, model, prefix))
+    return (await this._compactOpening(context, model, run)) || (await this._summarizeRun(context, model, run))
   }
 
   /**
-   * Compacts message 0 and `run`, which holds no pinned message, server-side, keeping message 0 in place. The summary
+   * Compacts message 0 and `run` server-side, keeping message 0 in place. The summary
    * takes the run's place as an assistant message, ahead of any assistant content that follows, and the provider
    * sends its block, which covers message 0, in place of the text.
    */
@@ -243,6 +238,66 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   private _resolveModel(agent: LocalAgent): Model | undefined {
     return this._config.model ?? agent.auxModel
   }
+
+  /**
+   * Whether this strategy summarizes blocks of older messages the model has already seen. Without `preserveRecent`, a
+   * per-block strategy rewrites each block before the model sees it.
+   *
+   * @internal
+   */
+  get rewritesSeenBlocks(): boolean {
+    return !this._isMessageLevel && this._preserveRecent > 0
+  }
+
+  /**
+   * Whether this strategy summarizes runs of messages and its summarizer and the agent's model both have server-side
+   * compaction.
+   *
+   * @internal
+   */
+  compacts(agent: LocalAgent): boolean {
+    const model = this._resolveModel(agent)
+    return this._isMessageLevel && model !== undefined && compactsServerSide(model) && compactsServerSide(agent.model)
+  }
+}
+
+type CompactionLimit = 'pinned messages' | 'per-block summarization'
+
+const LIMIT_STATEMENTS: Record<CompactionLimit, string> = {
+  'pinned messages': 'pinned messages are compacted like any other message with server-side compaction',
+  'per-block summarization':
+    'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
+    ' | thinking from earlier turns will be dropped on the next turns',
+}
+
+/**
+ * The features in use that server-side compaction doesn't support, for an agent whose model has it. Per-block
+ * summarization with `preserveRecent` rewrites blocks the model has already seen, and pinned messages are compacted
+ * like any other message.
+ *
+ * @internal
+ */
+export function serverSideCompactionLimits(agent: LocalAgent, strategies: ContextStrategy[]): CompactionLimit[] {
+  if (!compactsServerSide(agent.model)) return []
+  const summarizers = strategies.filter((strategy) => strategy instanceof SummarizeStrategy)
+  const features: CompactionLimit[] = []
+  if (summarizers.some((strategy) => strategy.compacts(agent)) && agent.messages.some(hasPinnedFlag)) {
+    features.push('pinned messages')
+  }
+  if (summarizers.some((strategy) => strategy.rewritesSeenBlocks)) features.push('per-block summarization')
+  return features
+}
+
+/**
+ * Logs a warning describing how server-side compaction treats the features in use, if any.
+ *
+ * @internal
+ */
+export function warnOnServerSideCompactionLimits(agent: LocalAgent, strategies: ContextStrategy[]): void {
+  const features = serverSideCompactionLimits(agent, strategies)
+  if (features.length === 0) return
+  const statements = features.map((feature) => LIMIT_STATEMENTS[feature])
+  logger.warn(`model_id=<${agent.model.modelId}> | ${statements.join(' | ')}`)
 }
 
 /** Whether `model` declares server-side compaction, so its `summarize()` may cover the conversation's opening. */
@@ -310,26 +365,6 @@ function splitPinned(run: Message[]): { kept: Message[]; summarized: Message[] }
   const pinnedIds = new Set(all.filter(hasPinnedFlag).flatMap(toolUseIds))
   const isKept = (piece: Message): boolean => hasPinnedFlag(piece) || toolUseIds(piece).some((id) => pinnedIds.has(id))
   return { kept: all.filter(isKept), summarized: all.filter((piece) => !isKept(piece)) }
-}
-
-/**
- * The messages of `run` before its first pinned message, its tool-pair partner, or a split tool pair. Server-side
- * compaction covers a contiguous start of the conversation, and a message it covers can't be kept after its block
- * without breaking the thinking bound to the messages after it.
- */
-function unpinnedPrefix(run: Message[]): Message[] {
-  const parts = run.map(pieces)
-  const pinnedIds = new Set(parts.flat().filter(hasPinnedFlag).flatMap(toolUseIds))
-  const holdsPinned = (piece: Message): boolean =>
-    hasPinnedFlag(piece) || toolUseIds(piece).some((id) => pinnedIds.has(id))
-  let end = parts.findIndex((messageParts) => messageParts.some(holdsPinned))
-  if (end < 0) end = run.length
-  const leftOutIds = new Set(run.slice(end).flatMap(toolUseIds))
-  while (end > 0 && toolUseIds(run[end - 1]!).some((id) => leftOutIds.has(id))) {
-    end -= 1
-    for (const id of toolUseIds(run[end]!)) leftOutIds.add(id)
-  }
-  return run.slice(0, end)
 }
 
 /** Whether every block of `run` is an earlier summary, so summarizing it would only restate that summary. */

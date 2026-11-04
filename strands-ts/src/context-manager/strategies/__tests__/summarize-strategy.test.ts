@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
+import { warnOnServerSideCompactionLimits } from '../offload/summarize.js'
 import { flattenMessagesToContent } from '../../../models/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -517,87 +518,39 @@ describe('server-side compaction', () => {
   const pinned = (role: 'user' | 'assistant', text: string): Message =>
     new Message({ role, content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
 
-  it('leaves the opening run in place when message 1 is pinned', async () => {
+  it('compacts pinned messages with the rest of the opening run', async () => {
     const model = compactingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     messages[1] = pinned('assistant', 'a1')
-    const before = messages.map((message) => message.toJSON())
-    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
-
-    expect(await strategy.apply(nativeContext(messages))).toBe(false)
-
-    expect(model.summarize).not.toHaveBeenCalled()
-    expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
-  })
-
-  it('compacts the opening run up to a pinned message', async () => {
-    const model = compactingModel()
-    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
-    const a3 = pinned('assistant', 'a3')
-    messages[3] = a3
-    const [task, a1, u2] = messages
+    messages[3] = pinned('assistant', 'a3')
+    const [task, a1, u2, a3] = messages
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
     expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
-    expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2])
+    expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2, a3])
     expect(messages[0]).toBe(task)
     expect(messages[1]!.content).toStrictEqual([
-      new TextBlock(`[Summarized: 2 messages, ~${await model.countTokens([a1!, u2!])} tokens]\n\ncompacted`, {
+      new TextBlock(`[Summarized: 3 messages, ~${await model.countTokens([a1!, u2!, a3!])} tokens]\n\ncompacted`, {
         metadata: { providerData: COMPACTION },
       }),
-      new TextBlock('a3'),
     ])
-    expect(messages[1]!.trackingId).toBe(a3.trackingId)
+    expect(messages[1]!.metadata?.custom?.pinned).toBeUndefined()
     expect(messages.slice(2).map((message) => (message.content[0] as TextBlock).text)).toEqual(['u4', 'a5', 'u6'])
   })
 
-  it('does not compact past a pinned message on a later pass', async () => {
+  it('keeps pinned messages after the base summary when compaction writes none', async () => {
     const model = compactingModel()
+    vi.mocked(model.summarize).mockResolvedValueOnce({ content: [] })
+    model.addTurn({ type: 'textBlock', text: 'base summary' })
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     messages[3] = pinned('assistant', 'a3')
-    await Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 }).apply(nativeContext(messages))
-    messages.push(
-      new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
-      new Message({ role: 'user', content: [new TextBlock('u8')] })
-    )
-    const before = messages.map((message) => message.toJSON())
-    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
-
-    expect(await strategy.apply(nativeContext(messages))).toBe(false)
-
-    expect(model.summarize).toHaveBeenCalledOnce()
-    expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
-  })
-
-  it('stops the compaction before a tool use whose result is left out', async () => {
-    const model = compactingModel()
-    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
-    messages[1] = new Message({
-      role: 'assistant',
-      content: [new ToolUseBlock({ name: 'read', toolUseId: 't1', input: {} })],
-    })
-    // A merged message whose pinned part keeps it, with the tool result beside it, out of the compaction.
-    const result = makeToolResultMessage('one', 't1')
-    messages[2] = new Message({
-      role: 'user',
-      content: [...result.content, new TextBlock('pin')],
-      metadata: {
-        custom: {
-          mergedMessages: [
-            { offset: 0, metadata: {} },
-            { offset: 1, metadata: { custom: { pinned: true } } },
-          ],
-        },
-      },
-    })
-    const before = messages.map((message) => message.toJSON())
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
-    expect(await strategy.apply(nativeContext(messages))).toBe(false)
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
-    expect(model.summarize).not.toHaveBeenCalled()
-    expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
+    expect(messages[1]!.content.at(-1)).toStrictEqual(new TextBlock('a3'))
+    expect(messages[1]!.metadata?.custom?.pinned).toBe(true)
   })
 
   it('uses the base summary when the run does not start right after message 0', async () => {
@@ -670,5 +623,92 @@ describe('server-side compaction', () => {
 
     expect(model.summarize).not.toHaveBeenCalled()
     expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toContain('block summary')
+  })
+})
+
+describe('warnOnServerSideCompactionLimits', () => {
+  const PINNED = 'pinned messages are compacted like any other message with server-side compaction'
+  const PER_BLOCK =
+    'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
+    ' | thinking from earlier turns will be dropped on the next turns'
+
+  function compactingAgent(pinned: boolean, modelInfo: object = { capabilities: { serverSideCompaction: true } }) {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('a1')],
+        ...(pinned && { metadata: { custom: { pinned: true } } }),
+      }),
+    ]
+    return createMockAgent({ messages, extra: { model: { modelId: 'claude-test', modelInfo } } as Partial<Agent> })
+  }
+
+  function warnings(run: () => void): string[] {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    try {
+      run()
+      return warnSpy.mock.calls.map((call) => String(call[0]))
+    } finally {
+      warnSpy.mockRestore()
+    }
+  }
+
+  it.each([
+    {
+      pinned: true,
+      strategies: () => [Offload.summarize('*').when({ utilization: 0.5 })],
+      statements: PINNED,
+    },
+    {
+      pinned: false,
+      strategies: () => [Offload.summarize('toolResults').when({ threshold: 100, preserveRecent: 2 })],
+      statements: PER_BLOCK,
+    },
+    {
+      pinned: true,
+      strategies: () => [
+        Offload.summarize('*').when({ utilization: 0.5 }),
+        Offload.summarize('*').when({ threshold: 100, preserveRecent: 2 }),
+      ],
+      statements: `${PINNED} | ${PER_BLOCK}`,
+    },
+  ])('describes the features in use: $statements', ({ pinned, strategies, statements }) => {
+    const agent = compactingAgent(pinned)
+
+    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies()))).toEqual([
+      `model_id=<claude-test> | ${statements}`,
+    ])
+  })
+
+  it.each([
+    { name: 'a run summary without pins', strategies: () => [Offload.summarize('*').when({ utilization: 0.5 })] },
+    {
+      name: 'per-block summarization without preserveRecent',
+      strategies: () => [Offload.summarize('toolResults').when({ threshold: 100 })],
+    },
+    {
+      name: 'per-block truncation',
+      strategies: () => [Offload.truncate('toolResults').when({ threshold: 2500, preserveRecent: 2 })],
+    },
+  ])('stays silent with $name', ({ strategies }) => {
+    const agent = compactingAgent(false)
+
+    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies()))).toEqual([])
+  })
+
+  it('ignores pins when no summary compacts server-side', () => {
+    const agent = compactingAgent(true)
+    const summarizer = new MockMessageModel()
+    const strategies = [Offload.summarize('*', { model: summarizer }).when({ utilization: 0.5 })]
+
+    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies))).toEqual([])
+  })
+
+  it("stays silent when the agent's model does not compact server-side", () => {
+    const agent = compactingAgent(true, {})
+    const strategies = [Offload.summarize('*').when({ threshold: 100, preserveRecent: 2 })]
+
+    expect(warnings(() => warnOnServerSideCompactionLimits(agent, strategies))).toEqual([])
   })
 })

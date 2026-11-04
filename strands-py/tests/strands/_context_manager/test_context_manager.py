@@ -9,7 +9,7 @@ from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
-from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.hooks.events import AfterModelCallEvent, BeforeInvocationEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
@@ -631,3 +631,20 @@ class TestContextManagerRequestUsage:
         )
 
         assert captured[0].invocation_context is None
+
+
+class TestServerSideCompactionLimitsCheck:
+    """Tests for when the context manager checks for features server-side compaction doesn't support."""
+
+    def test_checks_once_on_the_first_invocation(self, mock_agent):
+        cm = ContextManager()
+        cm.init_agent(mock_agent)
+
+        with unittest.mock.patch(
+            "strands._context_manager.context_manager._warn_on_server_side_compaction_limits"
+        ) as warn:
+            warn.assert_not_called()
+            for _ in range(2):
+                mock_agent.hooks.invoke_callbacks(BeforeInvocationEvent(agent=mock_agent, invocation_state={}))
+
+        warn.assert_called_once_with(mock_agent, cm._strategies)
