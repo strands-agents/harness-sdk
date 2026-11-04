@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type OpenAI from 'openai'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
 import { formatResponsesRequest } from '../responses-adapter.js'
@@ -13,7 +14,7 @@ const user = (...texts: string[]): Message => new Message({ role: 'user', conten
 
 /** Formats a request with the model info the provider resolves for `modelConfig`. */
 function format(modelConfig: OpenAIResponsesConfig, messages: Message[], options?: StreamOptions): object {
-  const { modelInfo } = new OpenAIModel({ ...modelConfig, api: 'responses', apiKey: 'sk-test' })
+  const { modelInfo } = new OpenAIModel({ ...modelConfig, api: 'responses', client: {} as OpenAI })
   return formatResponsesRequest(modelConfig, messages, options, false, modelInfo)
 }
 
