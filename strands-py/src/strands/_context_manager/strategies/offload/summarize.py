@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
-from ....agent.conversation_manager.compression.pin_message import _get_tool_use_ids, _has_pinned_flag
+from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag
 from ....event_loop.streaming import _record_usage
 from ....models._summarize import _SUMMARIZED_PREFIX, SummarizeResult, _format_summarized, _summarize_with_stream
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
-from ...stash import MERGED_MESSAGES_KEY, _format_stash_refs
+from ...stash import _format_stash_refs
 from ...types import ContextState
 from .base import (
     BaseOffloadStrategy,
@@ -23,6 +23,7 @@ from .base import (
     _collect_removable_with_pair,
     _insert_marker,
     _repair_alternation,
+    _splice_with_pairs,
 )
 
 if TYPE_CHECKING:
@@ -115,36 +116,6 @@ def _opening_run(messages: Messages, runs: list[list[Message]]) -> list[Message]
     return runs[0] if alternates else None
 
 
-def _pieces(message: Message) -> list[Message]:
-    """Split ``message`` into the messages merged into it when one of those is pinned, or return it whole."""
-    parts = message.get("metadata", {}).get("custom", {}).get(MERGED_MESSAGES_KEY)
-    if not parts or not any(_has_pinned_flag(part) for part in parts):
-        return [message]
-    content = message["content"]
-    ends = [part["offset"] for part in parts[1:]] + [len(content)]
-    pieces: list[Message] = []
-    for part, end in zip(parts, ends, strict=True):
-        piece = Message(role=message["role"], content=content[part["offset"] : end])
-        if "tracking_id" in part:
-            piece["tracking_id"] = part["tracking_id"]
-        if part.get("metadata"):
-            piece["metadata"] = part["metadata"]
-        pieces.append(piece)
-    return pieces
-
-
-def _split_pinned(run: list[Message]) -> tuple[list[Message], list[Message]]:
-    """Split ``run`` into its pinned messages, with their tool-pair partners, and the rest, both in history order.
-
-    A merged message is split into the messages it combines, so only its pinned ones are kept.
-    """
-    pieces = [piece for message in run for piece in _pieces(message) if piece["content"]]
-    pinned_ids = {tool_id for piece in pieces if _has_pinned_flag(piece) for tool_id in _get_tool_use_ids(piece)}
-    kept = [piece for piece in pieces if _has_pinned_flag(piece) or pinned_ids & _get_tool_use_ids(piece)]
-    kept_ids = {id(piece) for piece in kept}
-    return kept, [piece for piece in pieces if id(piece) not in kept_ids]
-
-
 def _holds_only_summaries(run: list[Message]) -> bool:
     """Whether every block of ``run`` is an earlier summary, so summarizing it would only restate that summary."""
     return all(
@@ -187,9 +158,6 @@ def _block_request(block: ContentBlock, message: Message, messages: Messages) ->
 class SummarizeStrategy(BaseOffloadStrategy):
     """Summarize strategy — replaces oversized content with LLM-generated summaries."""
 
-    # Pinned messages join a run and are kept after its summary, so the opening run still starts at message 1.
-    _skips_pinned = False
-
     @property
     def name(self) -> str:
         """Strategy name."""
@@ -226,64 +194,62 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return await super().apply(context)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Summarize each contiguous run of eligible messages into its own summary.
+        """Summarize the eligible messages other than pinned ones into one summary, leaving pinned messages in place.
 
-        When both the summarizer and the agent's model have server-side summaries, the run right after message 0 is
-        summarized server-side together with message 0 into a message of its own.
+        When both the summarizer and the agent's model have server-side summaries, the run right after message 0,
+        pinned messages included, is summarized server-side together with message 0 into a message of its own first.
         """
         model = self._resolve_model(context.agent)
         if not model:
             return False
         messages = context.messages
-        runs = _runs(messages, await self._get_eligible_messages(context))
-        # The agent's model sends the stored block natively only when it declares the capability too.
-        opening = _opening_run(messages, runs) if self._summarizes_server_side(context.agent) else None
+        unpinned = await self._get_eligible_messages(context)
         acted = False
-        # Last run first, so replacing a run leaves the earlier runs' positions unchanged.
-        for run in reversed(runs):
-            summarize = self._summarize_opening if run is opening else self._summarize_run
-            acted = await summarize(context, model, run) or acted
+        if self._summarizes_server_side(context.agent):
+            selected = await self._get_eligible_messages(context, skip_pinned=False)
+            opening = _opening_run(messages, _runs(messages, selected))
+            if opening and await self._summarize_opening_server_side(context, model, opening):
+                covered = {id(message) for message in opening}
+                unpinned = [message for message in unpinned if id(message) not in covered]
+                acted = True
+        acted = await self._summarize_client_side(context, model, unpinned) or acted
         if acted:
             _repair_alternation(messages)
         return acted
 
-    async def _summarize_run(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Replace ``run`` with a summary marker; a failure is logged and keeps the run.
+    async def _summarize_client_side(self, context: ContextState, model: Model, selected: list[Message]) -> bool:
+        """Replace ``selected`` and their tool pairs with one summary marker; a failure is logged and keeps them.
 
-        The marker joins the assistant message before the gap, or leads the run's pinned messages and any assistant
-        message after it.
+        The marker joins the assistant message before the earliest removed message, or becomes its own message there,
+        which leads any assistant content after it once alternation is repaired.
         """
-        kept, summarized = _split_pinned(run)
+        messages = context.messages
+        index_of = {id(message): index for index, message in enumerate(messages)}
+        removable = {
+            id(partner)
+            for message in selected
+            if id(message) in index_of
+            for partner in _collect_removable_with_pair(messages, index_of[id(message)])
+        }
+        summarized = [message for message in messages if id(message) in removable]
         if not summarized or _holds_only_summaries(summarized):
             return False
-        summary = _summary_text(await self._try_summarize(run, model, context.agent, context.invocation_context))
+        result = await self._try_summarize(summarized, model, context.agent, context.invocation_context)
+        summary = _summary_text(result)
         if not summary:
             return False
-        messages = context.messages
         total_tokens = await model.count_tokens(summarized)
-        start = next(index for index, message in enumerate(messages) if message is run[0])
-        marker = _format_summarized(f"{len(summarized)} messages", total_tokens, summary)
-        messages[start : start + len(run)] = kept
-        if not kept and start > 1 and messages[start - 1]["role"] == "assistant":
+        removed, start = _splice_with_pairs(messages, summarized)
+        marker = _format_summarized(f"{removed} messages", total_tokens, summary)
+        if start > 1 and messages[start - 1]["role"] == "assistant":
             _insert_marker(messages, start, marker)
         else:
-            # Its own message, so it leads any assistant content after the gap once alternation is repaired.
             messages.insert(start, Message(role="assistant", content=[ContentBlock(text=marker)]))
-        logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(summarized), total_tokens)
+        logger.debug("summarized=<%s>, tokens=<%s> | summarized messages", removed, total_tokens)
         return True
 
-    async def _summarize_opening(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Summarize the opening run server-side, pinned messages included; without a summary it gets the base one.
-
-        A message the server-side summary covers can't be kept after its block without breaking the thinking bound to
-        the messages after it, so pins don't keep messages out of it.
-        """
-        return await self._summarize_opening_server_side(context, model, run) or await self._summarize_run(
-            context, model, run
-        )
-
     async def _summarize_opening_server_side(self, context: ContextState, model: Model, run: list[Message]) -> bool:
-        """Summarize message 0 and ``run`` server-side, keeping message 0 in place.
+        """Summarize message 0 and ``run``, pinned messages included, server-side, keeping message 0 in place.
 
         The summary takes the run's place as an assistant message, ahead of any assistant content that follows, and
         the provider sends its block, which covers message 0, in place of the text. A server-side summary is kept

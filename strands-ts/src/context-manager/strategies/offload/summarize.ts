@@ -20,7 +20,7 @@ import {
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import { formatStashRefs, mergedMessages } from '../../stash.js'
+import { formatStashRefs } from '../../stash.js'
 import { hasPinnedFlag } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
@@ -28,6 +28,7 @@ import {
   insertMarker,
   markerMessage,
   repairAlternation,
+  spliceWithPairs,
   type OffloadConditions,
   type OffloadTarget,
 } from './base.js'
@@ -55,11 +56,6 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     this._config = config ?? {}
   }
 
-  // Pinned messages join a run and are kept after its summary, so the opening run still starts at message 1.
-  protected override get _skipsPinned(): boolean {
-    return false
-  }
-
   when(conditions: OffloadConditions): ContextStrategy {
     return new SummarizeStrategy(this._target, this._config, conditions)
   }
@@ -73,69 +69,64 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Summarizes each contiguous run of eligible messages into its own summary. When both the summarizer and the
-   * agent's model have server-side summaries, the run right after message 0 is summarized server-side together with message 0
-   * into a message of its own.
+   * Summarizes the eligible messages other than pinned ones into one summary, leaving pinned messages in place. When
+   * both the summarizer and the agent's model have server-side summaries, the run right after message 0, pinned
+   * messages included, is summarized server-side together with message 0 into a message of its own first.
    */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const model = this._resolveModel(context.agent)
     if (!model) return false
 
     const { messages } = context
-    const runs = messageRuns(messages, await this._getEligibleMessages(context))
-    // The agent's model sends the stored block natively only when it declares the capability too.
-    const opening = this.summarizesServerSide(context.agent) ? openingRun(messages, runs) : undefined
+    let unpinned = await this._getEligibleMessages(context)
     let acted = false
-    // Last run first, so replacing a run leaves the earlier runs' positions unchanged.
-    for (const run of runs.reverse()) {
-      const summarized =
-        run === opening
-          ? await this._summarizeOpening(context, model, run)
-          : await this._summarizeRun(context, model, run)
-      if (summarized) acted = true
+    if (this.summarizesServerSide(context.agent)) {
+      const selected = await this._getEligibleMessages(context, false)
+      const opening = openingRun(messages, messageRuns(messages, selected))
+      if (opening && (await this._summarizeOpeningServerSide(context, model, opening))) {
+        const covered = new Set(opening)
+        unpinned = unpinned.filter((message) => !covered.has(message))
+        acted = true
+      }
     }
+    if (await this._summarizeClientSide(context, model, unpinned)) acted = true
     if (acted) repairAlternation(messages)
     return acted
   }
 
   /**
-   * Replaces `run` with a summary marker; a failure is logged and keeps the run. The marker joins the assistant
-   * message before the gap, or leads the run's pinned messages and any assistant message after it.
+   * Replaces `selected` and their tool pairs with one summary marker; a failure is logged and keeps them. The marker
+   * joins the assistant message before the earliest removed message, or becomes its own message there, which leads
+   * any assistant content after it once alternation is repaired.
    */
-  private async _summarizeRun(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    const { kept, summarized } = splitPinned(run)
+  private async _summarizeClientSide(context: ContextState, model: Model, selected: Message[]): Promise<boolean> {
+    const { messages, agent, invocationContext } = context
+    const removable = new Set<Message>()
+    for (const message of selected) {
+      const index = messages.indexOf(message)
+      if (index === -1) continue
+      for (const partner of collectRemovableWithPair(messages, index)) removable.add(partner)
+    }
+    const summarized = messages.filter((message) => removable.has(message))
     if (summarized.length === 0 || holdsOnlySummaries(summarized)) return false
-    const summary = summaryText(await this._trySummarize(run, model, context.agent, context.invocationContext))
+    const summary = summaryText(await this._trySummarize(summarized, model, agent, invocationContext))
     if (!summary) return false
 
-    const { messages } = context
     const totalTokens = await model.countTokens(summarized)
-    const start = messages.indexOf(run[0]!)
-    const marker = formatSummarized(`${summarized.length} messages`, totalTokens, summary)
-    messages.splice(start, run.length, ...kept)
-    if (kept.length === 0 && start > 1 && messages[start - 1]!.role === 'assistant') {
+    const { removed, lowestIndex: start } = spliceWithPairs(messages, summarized)
+    const marker = formatSummarized(`${removed} messages`, totalTokens, summary)
+    if (start > 1 && messages[start - 1]!.role === 'assistant') {
       insertMarker(messages, start, marker)
     } else {
       // Its own message, so it leads any assistant content after the gap once alternation is repaired.
       messages.splice(start, 0, markerMessage([new TextBlock(marker)]))
     }
-    logger.debug(`summarized=<${summarized.length}>, tokens=<${totalTokens}> | summarized message run`)
+    logger.debug(`summarized=<${removed}>, tokens=<${totalTokens}> | summarized messages`)
     return true
   }
 
   /**
-   * Summarizes the opening run server-side, pinned messages included; without a summary it gets the base one. A
-   * message the server-side summary covers can't be kept after its block without breaking the thinking bound to the
-   * messages after it, so pins don't keep messages out of it.
-   */
-  private async _summarizeOpening(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    return (
-      (await this._summarizeOpeningServerSide(context, model, run)) || (await this._summarizeRun(context, model, run))
-    )
-  }
-
-  /**
-   * Summarizes message 0 and `run` server-side, keeping message 0 in place. The summary
+   * Summarizes message 0 and `run`, pinned messages included, server-side, keeping message 0 in place. The summary
    * takes the run's place as an assistant message, ahead of any assistant content that follows, and the provider
    * sends its block, which covers message 0, in place of the text. A server-side summary is kept verbatim, since the
    * provider reads it back from the marker.
@@ -333,38 +324,6 @@ function openingRun(messages: Message[], runs: Message[][]): Message[] | undefin
   const covered = messages.slice(0, run.length + 1)
   const alternates = covered.every((message, index) => message.role === (index % 2 === 0 ? 'user' : 'assistant'))
   return alternates ? run : undefined
-}
-
-/** Splits `message` into the messages merged into it when one of those is pinned, or returns it whole. */
-function pieces(message: Message): Message[] {
-  const parts = mergedMessages(message)
-  if (!parts.some((part) => part.metadata.custom?.pinned === true)) return [message]
-  return parts.map(
-    (part, index) =>
-      new Message({
-        role: message.role,
-        content: message.content.slice(part.offset, parts[index + 1]?.offset ?? message.content.length),
-        trackingId: part.trackingId,
-        metadata: part.metadata,
-      })
-  )
-}
-
-function toolUseIds(message: Message): string[] {
-  return message.content.flatMap((block) =>
-    block instanceof ToolUseBlock || block instanceof ToolResultBlock ? [block.toolUseId] : []
-  )
-}
-
-/**
- * Splits `run` into its pinned messages, with their tool-pair partners, and the rest, both in history order. A merged
- * message is split into the messages it combines, so only its pinned ones are kept.
- */
-function splitPinned(run: Message[]): { kept: Message[]; summarized: Message[] } {
-  const all = run.flatMap(pieces).filter((piece) => piece.content.length > 0)
-  const pinnedIds = new Set(all.filter(hasPinnedFlag).flatMap(toolUseIds))
-  const isKept = (piece: Message): boolean => hasPinnedFlag(piece) || toolUseIds(piece).some((id) => pinnedIds.has(id))
-  return { kept: all.filter(isKept), summarized: all.filter((piece) => !isKept(piece)) }
 }
 
 /** Whether every block of `run` is an earlier summary, so summarizing it would only restate that summary. */

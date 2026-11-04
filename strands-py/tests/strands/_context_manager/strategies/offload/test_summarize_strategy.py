@@ -408,8 +408,39 @@ def _texts(messages: Messages) -> list[list[str]]:
     return [[block.get("text", "") for block in message["content"]] for message in messages]
 
 
-class TestSummarizeRuns:
-    """Tests for summarizing whole messages run by run."""
+class TestSummarizeMessages:
+    """Tests for summarizing whole messages into one summary."""
+
+    @pytest.mark.asyncio
+    async def test_leaves_a_pinned_message_out_of_the_summary_and_in_place(self, mock_agent):
+        messages = _turns("task", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+        messages[4]["metadata"] = {"custom": {"pinned": True}}
+        mock_agent.messages = messages
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.stream.call_count == 1
+        request = str(mock_agent.model.stream.call_args.args[0])
+        assert "m1" in request and "m6" in request and "m4" not in request
+        assert _texts(messages) == [["task"], ["[Summarized: 5 messages, ~7 tokens]\n\nrun"], ["m4"], ["m7"], ["m8"]]
+        assert messages[2]["metadata"]["custom"]["pinned"] is True
+
+    @pytest.mark.asyncio
+    async def test_summarizes_the_messages_after_a_pinned_message_one(self, mock_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[1]["metadata"] = {"custom": {"pinned": True}}
+        mock_agent.messages = messages
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=7)
+        mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("run"))
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert _texts(messages) == [["task"], ["a1", "[Summarized: 3 messages, ~7 tokens]\n\nrun", "a5"], ["u6"]]
+        assert messages[1]["metadata"]["custom"]["pinned"] is True
 
     @pytest.mark.asyncio
     async def test_keeps_a_pinned_message_after_the_summary_of_its_run(self, mock_agent):

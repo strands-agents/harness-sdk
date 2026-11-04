@@ -370,6 +370,45 @@ describe('summarizing whole messages', () => {
       (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
     )
 
+  const pinnedTurn = (role: 'user' | 'assistant', text: string): Message =>
+    new Message({ role, content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
+
+  const textsOf = (messages: Message[]): string[][] =>
+    messages.map((message) => message.content.map((block) => (block as TextBlock).text))
+
+  it('leaves a pinned message out of the summary and in place', async () => {
+    summarizeContent.mockClear().mockResolvedValueOnce('run')
+    const messages = turns('task', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8')
+    messages[4] = pinnedTurn('user', 'm4')
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 2 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(summarizeContent).toHaveBeenCalledOnce()
+    const request = JSON.stringify(summarizeContent.mock.calls[0]![0])
+    expect(request).toContain('m1')
+    expect(request).toContain('m6')
+    expect(request).not.toContain('m4')
+    const texts = textsOf(messages)
+    expect(texts[1]).toEqual([expect.stringMatching(/^\[Summarized: 5 messages, ~\d+ tokens\]\n\nrun$/)])
+    expect(texts.slice(2)).toEqual([['m4'], ['m7'], ['m8']])
+    expect(messages[2]!.metadata?.custom?.pinned).toBe(true)
+  })
+
+  it('summarizes the messages after a pinned message 1', async () => {
+    summarizeContent.mockClear().mockResolvedValueOnce('run')
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    messages[1] = pinnedTurn('assistant', 'a1')
+    const strategy = Offload.summarize('*').when({ utilization: 0.5, preserveRecent: 2 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    const texts = textsOf(messages)
+    expect(texts[1]).toEqual(['a1', expect.stringMatching(/^\[Summarized: 3 messages, ~\d+ tokens\]\n\nrun$/), 'a5'])
+    expect(texts.slice(2)).toEqual([['u6']])
+    expect(messages[1]!.metadata?.custom?.pinned).toBe(true)
+  })
+
   it('keeps a pinned message after the summary of its run', async () => {
     summarizeContent.mockClear().mockResolvedValueOnce('run')
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6', 'a7', 'u8')

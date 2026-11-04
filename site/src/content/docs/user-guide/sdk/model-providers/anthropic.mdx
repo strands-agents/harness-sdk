@@ -442,7 +442,7 @@ A server-side summary keeps earlier thinking valid. In exchange, it supports les
 | | Client-side summary | Server-side summary |
 |---|---|---|
 | Messages it summarizes | Any run of eligible messages | Only the run right after message 0, summarized together with message 0. Later runs use the client-side summary. |
-| Pinned messages | Kept, and placed right after the summary | Summarized like any other message. Only <Syntax py="preserve_recent" ts="preserveRecent" /> keeps messages out. |
+| Pinned messages | Left out of the summary and kept in place | Summarized like any other message. Only <Syntax py="preserve_recent" ts="preserveRecent" /> keeps messages out. |
 | Per-block summarization (a `threshold` without `utilization`) | Supported | Uses the client-side summary. Without <Syntax py="preserve_recent" ts="preserveRecent" />, each block is rewritten before the model sees it and thinking is kept. With it, older blocks the model has already seen are rewritten in place and earlier thinking is dropped. |
 | Earlier thinking blocks | Dropped on the next turns, because the history before them changed | Kept |
 | Models | Any | Agent model and summarizer model must both declare the capability |

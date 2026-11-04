@@ -370,11 +370,6 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
 
-  /** Whether message-level offload leaves pinned messages and their tool-pair partners out of its selection. */
-  protected get _skipsPinned(): boolean {
-    return true
-  }
-
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     if (Array.isArray(target) && target.length === 0) {
       throw new Error('Empty array target matches nothing — provide at least one target')
@@ -519,8 +514,11 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Collect eligible messages for message-level operations, respecting preserveRecent, head-pin, and threshold. */
-  protected async _getEligibleMessages(context: ContextState): Promise<Message[]> {
+  /**
+   * Collect eligible messages for message-level operations, respecting preserveRecent, head-pin, and threshold, and
+   * leaving pinned messages and their tool-pair partners out unless `skipPinned` is false.
+   */
+  protected async _getEligibleMessages(context: ContextState, skipPinned = true): Promise<Message[]> {
     const { messages, agent } = context
     const toolNameMap = buildToolNameMap(messages)
 
@@ -535,13 +533,13 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
         this._excludeFilter
       ).filter((message) => {
         const index = messages.indexOf(message)
-        return index > 0 && !(this._skipsPinned && isPinned(messages, index))
+        return index > 0 && !(skipPinned && isPinned(messages, index))
       })
     } else {
       candidates = messages.filter(
         (message, index) =>
           index > 0 &&
-          !(this._skipsPinned && isPinned(messages, index)) &&
+          !(skipPinned && isPinned(messages, index)) &&
           messageMatchesTarget(message, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
       )
     }
