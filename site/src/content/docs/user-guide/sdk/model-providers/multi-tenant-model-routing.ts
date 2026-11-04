@@ -62,12 +62,7 @@ class TenantPolicyError extends Error {}
 class TenantPolicyStrategy implements RoutingStrategy {
   private readonly fallback = new FallbackStrategy()
 
-  constructor(
-    private readonly decisions: DecisionModel,
-    // Where the decision model sends the request, or undefined when it runs on your
-    // own infrastructure
-    private readonly decisionsProvider?: string
-  ) {}
+  constructor(private readonly decisions: DecisionModel) {}
 
   async select(context: RoutingContext): Promise<RoutingCandidate | undefined> {
     const tenant = String(context.invocationState.tenant ?? 'None')
@@ -94,12 +89,11 @@ class TenantPolicyStrategy implements RoutingStrategy {
       })
     } else {
       const primary = allowed.filter((c) => c.metadata?.tier === 'primary')
+      // A tenant that allows only the backup opens on it
       const primaries = primary.length > 0 ? primary : allowed
       choice = primaries[0]
-      // The decision model reads the request, so its provider must be allowed
-      const mayDecide =
-        this.decisionsProvider === undefined || providers.includes(this.decisionsProvider)
-      if (primaries.length > 1 && mayDecide) {
+      // One allowed model needs no decision
+      if (primaries.length > 1) {
         try {
           choice = await this.decide(context, primaries)
         } catch (error) {
@@ -199,14 +193,10 @@ class StrandsDecider extends DecisionModel {
 
 function multiTenantSwap() {
   // --8<-- [start:mtr_swap]
-  // Strands Decider, on your machine
-  let strategy = new TenantPolicyStrategy(new StrandsDecider())
-
-  // Any Strands model provider, here Claude Haiku on Amazon Bedrock
   const haiku = new BedrockModel({
     modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   })
-  strategy = new TenantPolicyStrategy(new LLMDecisionModel({ model: haiku }), 'bedrock')
+  const strategy = new TenantPolicyStrategy(new LLMDecisionModel({ model: haiku }))
   // --8<-- [end:mtr_swap]
   return strategy
 }

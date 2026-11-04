@@ -160,13 +160,8 @@ class TenantPolicyError(Exception):
 
 
 class TenantPolicyStrategy:
-    def __init__(
-        self, decisions: DecisionModel, *, decisions_provider: str | None = None
-    ) -> None:
-        # decisions_provider: where the decision model sends the request, or None
-        # when it runs on your own infrastructure
+    def __init__(self, decisions: DecisionModel) -> None:
         self._decisions = decisions
-        self._decisions_provider = decisions_provider
         self._fallback = FallbackStrategy()
 
     async def select(
@@ -192,13 +187,13 @@ class TenantPolicyStrategy:
             scoped = replace(context, candidates=backups + others)
             choice = await self._fallback.select(scoped, **kwargs)
         else:
+            # A tenant that allows only the backup opens on it
             primaries = [
                 c for c in allowed if (c.metadata or {}).get("tier") == "primary"
             ] or allowed
             choice = primaries[0]
-            # The decision model reads the request, so its provider must be allowed
-            may_decide = self._decisions_provider in (None, *providers)
-            if len(primaries) > 1 and may_decide:
+            # One allowed model needs no decision
+            if len(primaries) > 1:
                 try:
                     choice = await self._decide(context, primaries)
                 except Exception as error:
@@ -299,7 +294,6 @@ class StrandsDecider(DecisionModel):
     """Asks choice questions of a `strands-decider serve` server."""
 
     def __init__(self, url: str = "http://localhost:8000/v1/systemone") -> None:
-        super().__init__()
         self.url = url
 
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -354,7 +348,7 @@ The server runs on your machine, so the request never leaves your infrastructure
 
 To use another decision model or model provider, change only the decision model you
 pass to the strategy. For example, `LLMDecisionModel`, which the SDK ships, answers with
-any Strands model provider:
+any Strands model provider in place of `StrandsDecider()`:
 
 <Tabs>
 <Tab label="Python">
@@ -362,12 +356,8 @@ any Strands model provider:
 from strands.decisions import LLMDecisionModel
 from strands.models import BedrockModel
 
-# Strands Decider, on your machine
-strategy = TenantPolicyStrategy(StrandsDecider())
-
-# Any Strands model provider, here Claude Haiku on Amazon Bedrock
 haiku = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
-strategy = TenantPolicyStrategy(LLMDecisionModel(haiku), decisions_provider="bedrock")
+strategy = TenantPolicyStrategy(LLMDecisionModel(haiku))
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -379,10 +369,9 @@ strategy = TenantPolicyStrategy(LLMDecisionModel(haiku), decisions_provider="bed
 </Tab>
 </Tabs>
 
-<Syntax py="decisions_provider" ts="decisionsProvider" /> names the provider that
-receives the request, so the strategy only
-asks the decision model for tenants that allow it. A decision model on your own
-infrastructure, such as Strands Decider, needs no provider.
+The decision model reads every request, so run it where every tenant allows. That is
+your own infrastructure, like Strands Decider, or a provider all tenants approve, like
+Amazon Bedrock in this example.
 
 ## Run the agent for a tenant
 
