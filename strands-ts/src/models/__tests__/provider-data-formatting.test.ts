@@ -52,7 +52,7 @@ describe('provider data on the wire', () => {
     })
 
     it('openai responses', () => {
-      expectPlainText(formatResponsesRequest({ modelId: 'gpt-test' }, history('anthropic'), undefined, false))
+      expectPlainText(formatResponsesRequest({ modelId: 'gpt-test' }, history('anthropic'), undefined, false, {}))
     })
 
     it('vercel', async () => {
