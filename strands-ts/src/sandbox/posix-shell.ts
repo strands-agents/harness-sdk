@@ -78,10 +78,12 @@ export abstract class PosixShellSandbox extends Sandbox {
 
   async readFile(path: string): Promise<Uint8Array> {
     const quoted = shellQuote(path)
-    // Locale-independent exit codes: 77 = missing, 78 = directory, 79 = permission denied (an unsearchable
-    // parent also makes `test -e` false). The braces keep a backend's `cd ... &&` prefix out of the `||`.
+    // Locale-independent exit codes: 77 = missing, 78 = directory, 79 = permission denied. `test -e` is also
+    // false under an unsearchable ancestor, so check the deepest existing one. The braces keep a backend's
+    // `cd ... &&` prefix out of the `||`.
     const result = await this.execute(
-      `{ test -e ${quoted} || { parent=$(dirname -- ${quoted}); test -d "$parent" && ! test -x "$parent" && exit 79; exit 77; }; ` +
+      `{ test -e ${quoted} || { p=${quoted}; while p=$(dirname -- "$p"); ! test -d "$p"; do :; done; ` +
+        `test -x "$p" || exit 79; exit 77; }; ` +
         `test -d ${quoted} && exit 78; test -r ${quoted} || exit 79; base64 < ${quoted}; }`
     )
     if (result.exitCode === 77) {

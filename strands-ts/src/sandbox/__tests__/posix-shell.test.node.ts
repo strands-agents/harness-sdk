@@ -207,6 +207,24 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       }
     )
 
+    it.skipIf(process.getuid?.() === 0)('throws EACCES for a file under an unsearchable ancestor', async () => {
+      fs.mkdirSync(`${TEST_DIR}/locked/inner`, { recursive: true })
+      fs.writeFileSync(`${TEST_DIR}/locked/inner/secret.txt`, 'x')
+      fs.chmodSync(`${TEST_DIR}/locked`, 0o600)
+      try {
+        await expect(sandbox.readFile('locked/inner/secret.txt')).rejects.toMatchObject({ code: 'EACCES' })
+      } finally {
+        fs.chmodSync(`${TEST_DIR}/locked`, 0o700)
+      }
+    })
+
+    it('throws SandboxPathNotFoundError when an ancestor is missing or a file', async () => {
+      fs.writeFileSync(`${TEST_DIR}/file.txt`, 'x')
+      for (const path of ['missing/a/b.txt', 'file.txt/b.txt', `${TEST_DIR}/missing/b.txt`]) {
+        await expect(sandbox.readFile(path)).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+      }
+    })
+
     it.skipIf(process.getuid?.() === 0)('throws EACCES for an unreadable file', async () => {
       fs.writeFileSync(`${TEST_DIR}/secret.txt`, 'x')
       fs.chmodSync(`${TEST_DIR}/secret.txt`, 0o200)
