@@ -7,6 +7,7 @@ Bounded: one task of 7 tool turns and 2 forced summary passes per run, three run
 
 import dataclasses
 import os
+import re
 from typing import Any
 
 import pytest
@@ -101,18 +102,15 @@ async def test_compacts_every_pass_replays_each_block_unchanged_and_keeps_tail_t
 
 
 @pytest.mark.asyncio
-async def test_compacts_a_pinned_message_like_any_other() -> None:
-    report = await harness.run_compaction_task(_options(pin_before_first_pass=3))
+async def test_keeps_a_pinned_message_after_the_server_side_summary() -> None:
+    # The pinned message after the summary block invalidates the kept thinking, which the default binding drops.
+    report = await harness.run_compaction_task(_options(pin_before_first_pass=3, thinking=harness.BASE_THINKING))
     print(f"native pinned run | {harness.describe_report(report)}")
 
-    _assert_first_attempts_succeeded(report)
-    # Every pass compacts natively, the pinned tool use included.
+    assert [exchange.status for exchange in report.exchanges if exchange.status != 200] == []
     _assert_every_pass_compacted_natively(report)
-    assert report.message_one_after.startswith("assistant:text+anthropic")
-    conversations = report.of_kind("conversation")
-    returned_thinking = {signature for exchange in conversations for signature in exchange.returned_thinking}
-    assert all(sent in returned_thinking for exchange in conversations for sent in exchange.sent_thinking)
-    assert [entry for exchange in conversations for entry in exchange.input_transformations or []] == []
+    # The pinned tool use follows the summary in message 1.
+    assert re.match(r"^assistant:text\+anthropic,.*toolUse", report.message_one_after)
     _assert_task_finished(report)
 
 

@@ -580,25 +580,64 @@ describe('server-side summary', () => {
   const pinned = (role: 'user' | 'assistant', text: string): Message =>
     new Message({ role, content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
 
-  it('compacts pinned messages with the rest of the opening run', async () => {
+  const textsOf = (messages: Message[]): string[][] =>
+    messages.map((message) => message.content.map((block) => (block as TextBlock).text))
+
+  it('keeps pinned messages after the server-side summary', async () => {
+    const model = summarizingModel()
+    const messages = turns('task', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8')
+    const m4 = pinned('user', 'm4')
+    messages[4] = m4
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
+
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
+
+    const sent = vi.mocked(model.summarize).mock.calls[0]![0]
+    expect(textsOf(sent)).toEqual([['task'], ['m1'], ['m2'], ['m3'], ['m4'], ['m5'], ['m6']])
+    expect(textsOf(messages.slice(1, 2))).toEqual([
+      [expect.stringMatching(/^\[Summarized: 5 messages, ~\d+ tokens\]\n\ncompacted$/)],
+    ])
+    expect((messages[1]!.content[0] as TextBlock).metadata?.serverSideSummary).toEqual(COMPACTION)
+    expect(messages[2]).toBe(m4)
+    expect(textsOf(messages.slice(3))).toEqual([['m7'], ['m8']])
+  })
+
+  it('summarizes server-side when message 1 is pinned', async () => {
     const model = summarizingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     messages[1] = pinned('assistant', 'a1')
-    messages[3] = pinned('assistant', 'a3')
-    const [task, a1, u2, a3] = messages
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
     expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
-    expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2, a3])
-    expect(messages[0]).toBe(task)
-    expect(messages[1]!.content).toStrictEqual([
-      new TextBlock(`[Summarized: 3 messages, ~${await model.countTokens([a1!, u2!, a3!])} tokens]\n\ncompacted`, {
-        metadata: { serverSideSummary: COMPACTION },
-      }),
+    const texts = textsOf(messages)
+    expect(texts[1]).toEqual([expect.stringMatching(/^\[Summarized: 2 messages, ~\d+ tokens\]\n\ncompacted$/), 'a1'])
+    expect(texts.slice(2)).toEqual([['u4'], ['a5'], ['u6']])
+    expect((messages[1]!.content[0] as TextBlock).metadata?.serverSideSummary).toEqual(COMPACTION)
+    expect(messages[1]!.metadata?.custom?.pinned).toBe(true)
+  })
+
+  it('keeps a pinned message without the earlier summary merged into it', async () => {
+    const model = summarizingModel()
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    messages[1] = pinned('assistant', 'a1')
+    await Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 }).apply(nativeContext(messages))
+    messages.push(
+      new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
+      new Message({ role: 'user', content: [new TextBlock('u8')] })
+    )
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
+
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
+
+    expect(model.summarize).toHaveBeenCalledTimes(2)
+    const texts = textsOf(messages)
+    expect(texts[1]).toEqual([
+      expect.stringMatching(/^\[Summarized: 3 messages, ~\d+ tokens\]\n\ncompacted$/),
+      'a1',
+      'a7',
     ])
-    expect(messages[1]!.metadata?.custom?.pinned).toBeUndefined()
-    expect(messages.slice(2).map((message) => (message.content[0] as TextBlock).text)).toEqual(['u4', 'a5', 'u6'])
+    expect(texts.slice(2)).toEqual([['u8']])
   })
 
   it('keeps pinned messages after the base summary when compaction writes none', async () => {
@@ -689,10 +728,11 @@ describe('server-side summary', () => {
 })
 
 describe('warnOnServerSideSummaryLimits', () => {
-  const PINNED = 'pinned messages are summarized like any other message by a server-side summary'
-  const PER_BLOCK =
-    'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
-    ' | thinking from earlier turns will be dropped on the next turns'
+  const PINNED =
+    'pinned messages are kept after a server-side summary' +
+    ' | thinking in the messages kept after the summary will be dropped'
+  const PER_BLOCK = 'per-block summarization with preserveRecent rewrites blocks the model has already seen'
+  const THINKING = 'thinking from earlier turns will be dropped on the next turns'
 
   function summarizingAgent(pinned: boolean, modelInfo: object = { capabilities: { serverSideSummary: true } }) {
     const messages = [
@@ -725,7 +765,7 @@ describe('warnOnServerSideSummaryLimits', () => {
     {
       pinned: false,
       strategies: () => [Offload.summarize('toolResults').when({ threshold: 100, preserveRecent: 2 })],
-      statements: PER_BLOCK,
+      statements: `${PER_BLOCK} | ${THINKING}`,
     },
     {
       pinned: true,
@@ -733,7 +773,7 @@ describe('warnOnServerSideSummaryLimits', () => {
         Offload.summarize('*').when({ utilization: 0.5 }),
         Offload.summarize('*').when({ threshold: 100, preserveRecent: 2 }),
       ],
-      statements: `${PINNED} | ${PER_BLOCK}`,
+      statements: `${PINNED} | ${PER_BLOCK} | ${THINKING}`,
     },
   ])('describes the features in use: $statements', ({ pinned, strategies, statements }) => {
     const agent = summarizingAgent(pinned)

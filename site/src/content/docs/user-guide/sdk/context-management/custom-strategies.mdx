@@ -117,7 +117,7 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
 
-On a model with server-side summaries, such as [Anthropic](../model-providers/anthropic#server-side-summaries), the provider summarizes the conversation's opening messages instead, pinned messages included. See its [limitations](../model-providers/anthropic#limitations-compared-to-the-client-side-summary).
+On a model with server-side summaries, such as [Anthropic](../model-providers/anthropic#server-side-summaries), the provider summarizes the conversation's opening messages instead, and pinned messages are kept after the summary at the cost of earlier thinking. See its [limitations](../model-providers/anthropic#limitations-compared-to-the-client-side-summary).
 
 <Tabs>
 <Tab label="Python">
@@ -346,4 +346,4 @@ agent = Agent(
 
 Every strategy pipeline ends with an emergency truncation strategy, appended automatically. It fires only when the context window is still overflowing after all user strategies have run. When it fires, it drops the oldest 20% of non-head messages.
 
-Emergency truncation intentionally ignores pinned messages so an all-pinned overflow is still recoverable. Regular strategies respect pins, except [server-side summaries](../model-providers/anthropic#server-side-summaries).
+Emergency truncation intentionally ignores pinned messages so an all-pinned overflow is still recoverable. Regular strategies respect pins.

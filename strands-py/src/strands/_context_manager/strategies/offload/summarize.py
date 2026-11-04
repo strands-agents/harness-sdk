@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
-from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag
+from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
 from ....event_loop.streaming import _record_usage
 from ....models._summarize import _SUMMARIZED_PREFIX, SummarizeResult, _format_summarized, _summarize_with_stream
 from ....types.content import ContentBlock, Message, Messages
@@ -49,7 +49,8 @@ class SummarizeConfig(TypedDict, total=False):
 
 
 _LIMIT_STATEMENTS = {
-    "pinned messages": "pinned messages are summarized like any other message by a server-side summary",
+    "pinned messages": "pinned messages are kept after a server-side summary"
+    " | thinking in the messages kept after the summary will be dropped",
     "per-block summarization": "per-block summarization with preserve_recent rewrites blocks the model has already seen"
     " | thinking from earlier turns will be dropped on the next turns",
 }
@@ -58,8 +59,9 @@ _LIMIT_STATEMENTS = {
 def _server_side_summary_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> list[str]:
     """Return the features in use that a server-side summary doesn't support, for an agent whose model has it.
 
-    Per-block summarization with ``preserve_recent`` rewrites blocks the model has already seen, and pinned messages are
-    summarized like any other message. Without ``preserve_recent``, a block is rewritten before the model sees it.
+    Per-block summarization with ``preserve_recent`` rewrites blocks the model has already seen, and pinned messages
+    kept after a server-side summary sit between its block and the messages it keeps. Without ``preserve_recent``, a
+    block is rewritten before the model sees it.
     """
     if agent.model.model_info.capabilities.server_side_summary is not True:
         return []
@@ -123,6 +125,16 @@ def _holds_only_summaries(run: list[Message]) -> bool:
         for message in run
         for block in message["content"]
     )
+
+
+def _without_summaries(message: Message) -> Message | None:
+    """Return ``message`` without the earlier summaries merged into it, or None when nothing else is left."""
+    content = [
+        block for block in message["content"] if not ("text" in block and block["text"].startswith(_SUMMARIZED_PREFIX))
+    ]
+    if len(content) == len(message["content"]):
+        return message
+    return {**message, "content": content} if content else None
 
 
 def _summary_text(result: SummarizeResult | None) -> str:
@@ -197,7 +209,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Summarize the eligible messages other than pinned ones into one summary, leaving pinned messages in place.
 
         When both the summarizer and the agent's model have server-side summaries, the run right after message 0,
-        pinned messages included, is summarized server-side together with message 0 into a message of its own first.
+        pinned messages included, is summarized server-side together with message 0 first, and its pinned messages
+        are kept after the summary.
         """
         model = self._resolve_model(context.agent)
         if not model:
@@ -251,25 +264,35 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _summarize_opening_server_side(self, context: ContextState, model: Model, run: list[Message]) -> bool:
         """Summarize message 0 and ``run``, pinned messages included, server-side, keeping message 0 in place.
 
-        The summary takes the run's place as an assistant message, ahead of any assistant content that follows, and
-        the provider sends its block, which covers message 0, in place of the text. A server-side summary is kept
-        verbatim, since the provider reads it back from the marker.
+        The summary takes the run's place as an assistant message, followed by the run's pinned messages and their
+        tool-pair partners, without earlier summaries merged into them. The provider sends its block, which covers
+        message 0, in place of the text; a server-side summary is kept verbatim, since the provider reads it back
+        from the marker. Pinned messages kept after the block invalidate the thinking in the messages after them.
         """
-        if _holds_only_summaries(run):
-            return False
         messages = context.messages
+        start = next(index for index, message in enumerate(messages) if message is run[0])
+        pinned_ids = {id(message) for offset, message in enumerate(run) if is_pinned(messages, start + offset)}
+        replaced = [message for message in run if id(message) not in pinned_ids]
+        if not replaced or _holds_only_summaries(replaced):
+            return False
         request = [messages[0], *run]
         result = await self._try_summarize(request, model, context.agent, context.invocation_context, opening=True)
         server_side = _server_side_summary_of(result)
         summary = server_side["text"] if server_side else _summary_text(result)
         if not result or not summary:
             return False
-        total_tokens = await model.count_tokens(run)
-        marker = ContentBlock(text=_format_summarized(f"{len(run)} messages", total_tokens, summary))
+        total_tokens = await model.count_tokens(replaced)
+        marker = ContentBlock(text=_format_summarized(f"{len(replaced)} messages", total_tokens, summary))
         if server_side:
             marker["metadata"] = {"serverSideSummary": server_side["metadata"]["serverSideSummary"]}
-        messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker])]
-        logger.debug("summarized=<%s>, tokens=<%s> | summarized opening messages server-side", len(run), total_tokens)
+        kept = [kept for message in run if id(message) in pinned_ids and (kept := _without_summaries(message))]
+        messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker]), *kept]
+        logger.debug(
+            "summarized=<%s>, kept=<%s>, tokens=<%s> | summarized opening messages server-side",
+            len(replaced),
+            len(kept),
+            total_tokens,
+        )
         return True
 
     async def _replace_block(

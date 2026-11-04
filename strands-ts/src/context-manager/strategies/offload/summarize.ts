@@ -21,7 +21,7 @@ import { unwrapInvocationContext, type InvocationContext } from '../../../agent/
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import { formatStashRefs } from '../../stash.js'
-import { hasPinnedFlag } from '../../../conversation-manager/compression/pin-message.js'
+import { hasPinnedFlag, isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
@@ -71,7 +71,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   /**
    * Summarizes the eligible messages other than pinned ones into one summary, leaving pinned messages in place. When
    * both the summarizer and the agent's model have server-side summaries, the run right after message 0, pinned
-   * messages included, is summarized server-side together with message 0 into a message of its own first.
+   * messages included, is summarized server-side together with message 0 first, and its pinned messages are kept after
+   * the summary.
    */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const model = this._resolveModel(context.agent)
@@ -127,24 +128,31 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
   /**
    * Summarizes message 0 and `run`, pinned messages included, server-side, keeping message 0 in place. The summary
-   * takes the run's place as an assistant message, ahead of any assistant content that follows, and the provider
-   * sends its block, which covers message 0, in place of the text. A server-side summary is kept verbatim, since the
-   * provider reads it back from the marker.
+   * takes the run's place as an assistant message, followed by the run's pinned messages and their tool-pair partners,
+   * without earlier summaries merged into them. The provider sends its block, which covers message 0, in place of the
+   * text; a server-side summary is kept verbatim, since the provider reads it back from the marker. Pinned messages
+   * kept after the block invalidate the thinking in the messages after them.
    */
   private async _summarizeOpeningServerSide(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
-    if (holdsOnlySummaries(run)) return false
     const { messages, agent, invocationContext } = context
+    const start = messages.indexOf(run[0]!)
+    const pinned = new Set(run.filter((_, offset) => isPinned(messages, start + offset)))
+    const replaced = run.filter((message) => !pinned.has(message))
+    if (replaced.length === 0 || holdsOnlySummaries(replaced)) return false
     const result = await this._trySummarize([messages[0]!, ...run], model, agent, invocationContext, true)
     const serverSide = serverSideSummaryOf(result)
     const summary = serverSide?.text ?? summaryText(result)
     if (!result || !summary) return false
 
-    const totalTokens = await model.countTokens(run)
-    const text = formatSummarized(`${run.length} messages`, totalTokens, summary)
+    const totalTokens = await model.countTokens(replaced)
+    const text = formatSummarized(`${replaced.length} messages`, totalTokens, summary)
     const serverSideSummary = serverSide?.metadata?.serverSideSummary
     const block = new TextBlock(text, serverSideSummary ? { metadata: { serverSideSummary } } : undefined)
-    messages.splice(1, run.length, markerMessage([block]))
-    logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized opening messages server-side`)
+    const kept = run.flatMap((message) => (pinned.has(message) ? withoutSummaries(message) : []))
+    messages.splice(1, run.length, markerMessage([block]), ...kept)
+    logger.debug(
+      `summarized=<${replaced.length}>, kept=<${kept.length}>, tokens=<${totalTokens}> | summarized opening messages server-side`
+    )
     return true
   }
 
@@ -260,7 +268,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 type SummaryLimit = 'pinned messages' | 'per-block summarization'
 
 const LIMIT_STATEMENTS: Record<SummaryLimit, string> = {
-  'pinned messages': 'pinned messages are summarized like any other message by a server-side summary',
+  'pinned messages':
+    'pinned messages are kept after a server-side summary' +
+    ' | thinking in the messages kept after the summary will be dropped',
   'per-block summarization':
     'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
     ' | thinking from earlier turns will be dropped on the next turns',
@@ -268,8 +278,9 @@ const LIMIT_STATEMENTS: Record<SummaryLimit, string> = {
 
 /**
  * The features in use that a server-side summary doesn't support, for an agent whose model has it. Per-block
- * summarization with `preserveRecent` rewrites blocks the model has already seen, and pinned messages are summarized
- * like any other message.
+ * summarization with `preserveRecent` rewrites blocks the model has already seen, and pinned messages kept after a
+ * server-side summary sit between its block and the messages it keeps. Without `preserveRecent`, a block is rewritten
+ * before the model sees it.
  *
  * @internal
  */
@@ -324,6 +335,23 @@ function openingRun(messages: Message[], runs: Message[][]): Message[] | undefin
   const covered = messages.slice(0, run.length + 1)
   const alternates = covered.every((message, index) => message.role === (index % 2 === 0 ? 'user' : 'assistant'))
   return alternates ? run : undefined
+}
+
+/** `message` without the earlier summaries merged into it, or nothing when nothing else is left. */
+function withoutSummaries(message: Message): Message[] {
+  const content = message.content.filter(
+    (block) => !(block instanceof TextBlock && block.text.startsWith(SUMMARIZED_PREFIX))
+  )
+  if (content.length === message.content.length) return [message]
+  if (content.length === 0) return []
+  return [
+    new Message({
+      role: message.role,
+      content,
+      ...(message.trackingId !== undefined && { trackingId: message.trackingId }),
+      ...(message.metadata !== undefined && { metadata: message.metadata }),
+    }),
+  ]
 }
 
 /** Whether every block of `run` is an earlier summary, so summarizing it would only restate that summary. */

@@ -566,21 +566,64 @@ class TestServerSideSummary:
         assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
 
     @pytest.mark.asyncio
-    async def test_compacts_pinned_messages_with_the_rest_of_the_opening_run(self, summarizing_agent):
+    async def test_keeps_pinned_messages_after_the_server_side_summary(self, summarizing_agent):
+        messages = _turns("task", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+        messages[4]["metadata"] = {"custom": {"pinned": True}}
+        task, pinned, m7, m8 = messages[0], messages[4], messages[7], messages[8]
+        summarizing_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
+
+        sent = summarizing_agent.model.summarize.await_args.args[0]
+        assert [message["content"][0]["text"] for message in sent] == ["task", "m1", "m2", "m3", "m4", "m5", "m6"]
+        summary = ContentBlock(
+            text="[Summarized: 5 messages, ~5,000 tokens]\n\ncompacted", metadata={"serverSideSummary": _COMPACTION}
+        )
+        assert messages == [task, Message(role="assistant", content=[summary]), pinned, m7, m8]
+
+    @pytest.mark.asyncio
+    async def test_summarizes_server_side_when_message_one_is_pinned(self, summarizing_agent):
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
         messages[1]["metadata"] = {"custom": {"pinned": True}}
-        messages[3]["metadata"] = {"custom": {"pinned": True}}
-        task, a1, u2, a3 = messages[:4]
         summarizing_agent.messages = messages
         strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
 
         assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
-        assert summarizing_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
-        summary = ContentBlock(
-            text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"serverSideSummary": _COMPACTION}
+        assert _texts(messages) == [
+            ["task"],
+            ["[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted", "a1"],
+            ["u4"],
+            ["a5"],
+            ["u6"],
+        ]
+        assert messages[1]["content"][0]["metadata"] == {"serverSideSummary": _COMPACTION}
+        assert messages[1]["metadata"]["custom"]["pinned"] is True
+
+    @pytest.mark.asyncio
+    async def test_keeps_a_pinned_message_without_the_earlier_summary_merged_into_it(self, summarizing_agent):
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        messages[1]["metadata"] = {"custom": {"pinned": True}}
+        summarizing_agent.messages = messages
+        first = Offload.summarize("*").when(utilization=0.5, preserve_recent=3)
+        await first.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9))
+        messages.extend(
+            [
+                Message(role="assistant", content=[ContentBlock(text="a7")]),
+                Message(role="user", content=[ContentBlock(text="u8")]),
+            ]
         )
-        assert messages == [task, Message(role="assistant", content=[summary]), *_turns("u4", "a5", "u6")]
+        second = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
+        assert await second.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
+
+        assert summarizing_agent.model.summarize.await_count == 2
+        assert _texts(messages) == [
+            ["task"],
+            ["[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", "a1", "a7"],
+            ["u8"],
+        ]
 
     @pytest.mark.asyncio
     async def test_keeps_pinned_messages_after_the_base_summary_when_compaction_writes_none(self, summarizing_agent):
@@ -777,11 +820,12 @@ class TestServerSideSummary:
 class TestServerSideSummaryLimitsWarning:
     """Tests for the warning about features a server-side summary doesn't support."""
 
-    _PINNED = "pinned messages are summarized like any other message by a server-side summary"
-    _PER_BLOCK = (
-        "per-block summarization with preserve_recent rewrites blocks the model has already seen"
-        " | thinking from earlier turns will be dropped on the next turns"
+    _PINNED = (
+        "pinned messages are kept after a server-side summary"
+        " | thinking in the messages kept after the summary will be dropped"
     )
+    _THINKING = "thinking from earlier turns will be dropped on the next turns"
+    _PER_BLOCK = "per-block summarization with preserve_recent rewrites blocks the model has already seen"
 
     @pytest.fixture
     def summarizing_agent(self, mock_agent):
@@ -798,14 +842,18 @@ class TestServerSideSummaryLimitsWarning:
         ("pinned", "strategies", "statements"),
         [
             (True, [Offload.summarize("*").when(utilization=0.5)], _PINNED),
-            (False, [Offload.summarize("tool_results").when(threshold=100, preserve_recent=2)], _PER_BLOCK),
+            (
+                False,
+                [Offload.summarize("tool_results").when(threshold=100, preserve_recent=2)],
+                f"{_PER_BLOCK} | {_THINKING}",
+            ),
             (
                 True,
                 [
                     Offload.summarize("*").when(utilization=0.5),
                     Offload.summarize("*").when(threshold=100, preserve_recent=2),
                 ],
-                f"{_PINNED} | {_PER_BLOCK}",
+                f"{_PINNED} | {_PER_BLOCK} | {_THINKING}",
             ),
         ],
     )
