@@ -430,6 +430,12 @@ agent = Agent(
 
 For another Claude model that supports compaction, set the capability yourself with <Syntax py="model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))" ts="modelInfo: { capabilities: { serverSideSummary: true } }" />. Set it to <Syntax py="False" ts="false" /> to use the client-side summary instead.
 
+`BedrockModel` always reports the capability as off, because the Bedrock Converse API does not support compaction, so Claude models on Bedrock use the client-side summary. If you set it on a `BedrockModel`, the model logs this warning:
+
+```
+model_id=<global.anthropic.claude-sonnet-5-5> | server-side summaries are not supported through the bedrock converse api | using client-side summaries instead
+```
+
 The agent's model must declare the capability. If summaries use a different model, through <Syntax py="agent.aux_model" ts="agent.auxModel" /> or the strategy's `model`, that model must declare it too. Otherwise the strategy uses the client-side summary.
 
 #### Limitations compared to the client-side summary
@@ -450,17 +456,16 @@ A pinned message kept after the compaction block invalidates the thinking in the
 
 #### Warnings
 
-On the agent's first invocation, the context manager checks for features that server-side summaries handle differently. It logs one warning if the agent's model declares the capability and either:
+A summarize strategy logs a warning the first time it uses a feature that server-side summaries handle differently:
 
-- the agent's messages already hold a pinned message, for example from `messages` passed to the agent or a restored session, and a summarize strategy would summarize server-side, or
-- a summarize strategy summarizes per block with <Syntax py="preserve_recent" ts="preserveRecent" /> set.
+- a server-side summary keeps pinned messages after it, or
+- a per-block summary with <Syntax py="preserve_recent" ts="preserveRecent" /> rewrites a block while the agent's model declares the capability.
 
-The warning describes only the features in use. TypeScript writes `preserveRecent`:
+Each strategy logs each warning once. TypeScript writes `preserveRecent`:
 
 ```
 model_id=<claude-sonnet-5> | pinned messages are kept after a server-side summary | thinking in the messages kept after the summary will be dropped
 model_id=<claude-sonnet-5> | per-block summarization with preserve_recent rewrites blocks the model has already seen | thinking from earlier turns will be dropped on the next turns
-model_id=<claude-sonnet-5> | pinned messages are kept after a server-side summary | thinking in the messages kept after the summary will be dropped | per-block summarization with preserve_recent rewrites blocks the model has already seen | thinking from earlier turns will be dropped on the next turns
 ```
 
 A client-side summary, or a per-block rewrite of a block the model has already seen, changes the history before earlier thinking blocks. If the API rejects the next request for that, the model retries it with the stale thinking blocks dropped, logs this warning, and keeps dropping them on every later request:
