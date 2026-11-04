@@ -1,0 +1,14 @@
+---
+import { Aside } from '@astrojs/starlight/components'
+
+interface Props {
+  product: string
+}
+
+const { product } = Astro.props
+---
+
+<Aside type="caution" title="Documentation preview">
+  This page is generated from the {product} repository. Its content may change while the upstream
+  documentation manifest remains in preview.
+</Aside>

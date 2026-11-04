@@ -15,7 +15,7 @@ import { getCollection } from 'astro:content'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
 
 export const getStaticPaths: GetStaticPaths = async () => {
-  const docs = await getCollection('docs', ({ data }) => !data.draft)
+  const docs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
   return docs.map((entry) => ({
     params: { slug: entry.id },
     props: { entry },
