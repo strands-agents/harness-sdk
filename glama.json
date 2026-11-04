@@ -1,4 +1,25 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "maintainers": ["yonib05"]
+  "maintainers": [
+    "yonib05",
+    "arielnabavian",
+    "gautamsirdeshmukh",
+    "JackYPCOnline",
+    "jimbrub",
+    "leonhuang29",
+    "liramon2",
+    "lizradway",
+    "mehtarac",
+    "mkmeral",
+    "morganwilliscloud",
+    "nhungbi",
+    "nicolas-m-romero",
+    "notowen333",
+    "opieter-aws",
+    "pgrayy",
+    "poshinchen",
+    "tmoreton",
+    "Unshure",
+    "zastrowm"
+  ]
 }
