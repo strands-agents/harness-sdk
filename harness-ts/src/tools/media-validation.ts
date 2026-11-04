@@ -16,8 +16,11 @@ import type { ImageFormat } from '@strands-agents/sdk'
 const TRUNCATED = 'it is truncated'
 const ZIP_CORRUPT = 'its zip archive is corrupt or truncated'
 const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
-const OLE_FREE = 0xffffffff
 const OLE_SPECIAL = 0xfffffffa
+const OLE_STREAMS: [Family, string[]][] = [
+  ['Word', ['WordDocument']],
+  ['Excel', ['Workbook', 'WORKBOOK', 'Book']],
+]
 const DOCUMENT_FAMILY: Record<string, Family> = { doc: 'Word', docx: 'Word', xls: 'Excel', xlsx: 'Excel' }
 
 type Family = 'Word' | 'Excel'
@@ -36,7 +39,7 @@ export function documentProblem(data: Uint8Array, format: string): string | unde
   let family: Family | undefined
   let problem: string | undefined
   if (startsWithBytes(data, [0x50, 0x4b, 0x03, 0x04])) [family, problem] = ooxmlFamily(data)
-  else if (startsWithBytes(data, OLE_SIGNATURE)) [family, problem] = oleFamily(data)
+  else if (startsWithBytes(data, OLE_SIGNATURE)) [family, problem] = oleFamily(data, DOCUMENT_FAMILY[format]!)
   else return 'it is not a Word or Excel file'
   if (problem === undefined && family !== DOCUMENT_FAMILY[format]) {
     problem = family ? `it is ${family === 'Excel' ? 'an' : 'a'} ${family} file` : 'it is not Word or Excel'
@@ -241,29 +244,29 @@ function ooxmlFamily(data: Uint8Array): FamilyResult {
   return [names.some((name) => name.startsWith('xl/')) ? 'Excel' : undefined, undefined]
 }
 
-function oleFamily(data: Uint8Array): FamilyResult {
+function oleFamily(data: Uint8Array, wanted: Family): FamilyResult {
   if (data.length < 512) return [undefined, TRUNCATED]
   const dv = view(data)
-  const sector = 1 << dv.getUint16(30, true)
-  if (sector !== 512 && sector !== 4096) return [undefined, 'its header is malformed']
+  const shift = dv.getUint16(30, true)
+  if (shift !== 9 && shift !== 12) return [undefined, 'its header is malformed']
+  const sector = 1 << shift
   const sectors = Math.ceil(data.length / sector) - 1
   const fatSectors = Array.from({ length: Math.min(dv.getUint32(44, true), 109) }, (_, i) =>
     dv.getUint32(76 + 4 * i, true)
   )
-  if (fatSectors.some((s) => s >= sectors)) return [undefined, TRUNCATED]
-  // A truncated file still has FAT entries for (or pointing at) sectors past its end.
-  let index = 0
+  if ([...fatSectors, dv.getUint32(48, true)].some((s) => s >= sectors)) return [undefined, TRUNCATED]
+  // A truncated file still has FAT chains pointing at sectors past its end.
   for (const s of fatSectors) {
-    const fat = data.subarray((s + 1) * sector, (s + 2) * sector)
-    for (let offset = 0; offset + 4 <= fat.length; offset += 4, index++) {
-      const following = view(fat).getUint32(offset, true)
-      if (following !== OLE_FREE && (index >= sectors || (following >= sectors && following < OLE_SPECIAL))) {
-        return [undefined, TRUNCATED]
-      }
+    const fat = view(data.subarray((s + 1) * sector, (s + 2) * sector))
+    for (let offset = 0; offset + 4 <= fat.byteLength; offset += 4) {
+      const following = fat.getUint32(offset, true)
+      if (following >= sectors && following < OLE_SPECIAL) return [undefined, TRUNCATED]
     }
   }
+  // Prefer the expected family: an .xls may embed a Word document, and vice versa.
   const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-  if (buffer.includes(Buffer.from('WordDocument', 'utf16le'))) return ['Word', undefined]
-  const excel = buffer.includes(Buffer.from('Workbook', 'utf16le')) || buffer.includes(Buffer.from('Book', 'utf16le'))
-  return [excel ? 'Excel' : undefined, undefined]
+  const found = OLE_STREAMS.filter(([, names]) => names.some((n) => buffer.includes(Buffer.from(n, 'utf16le')))).map(
+    ([family]) => family
+  )
+  return [found.includes(wanted) ? wanted : found[0], undefined]
 }

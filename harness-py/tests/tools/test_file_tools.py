@@ -59,6 +59,8 @@ def _ole(stream):
 
 _DOCX, _XLSX = _ooxml("word/document.xml"), _ooxml("xl/workbook.xml")
 _DOC, _XLS = _ole("WordDocument"), _ole("Workbook")
+# Some writers mark unused FAT entries ENDOFCHAIN instead of FREE; Bedrock still accepts the file.
+_DOC_STALE_FAT = _DOC[:532] + struct.pack("<I", 0xFFFFFFFE) + _DOC[536:]
 
 
 @pytest.fixture
@@ -265,6 +267,7 @@ _DOCX_PART = _DOCX.index(b"word/document.xml") + len("word/document.xml")
         ("pic.webp", _WEBP[:24]),
         ("report.pdf", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\n"),
         ("report.docx", _DOCX[: len(_DOCX) // 2]),
+        ("report.docx", _DOCX[:4] + _DOCX[9:]),
         (
             "report.docx",
             _DOCX[:_DOCX_PART]
@@ -304,6 +307,10 @@ async def test_read_rejects_a_truncated_corrupt_or_mislabeled_media_file(ctx, tm
         ("report.doc", _DOC, "document"),
         ("report.xls", _XLS, "document"),
         ("report.docx", _DOC, "document"),
+        ("report.xls", _ole("WORKBOOK"), "document"),
+        ("report.xls", _ole("Workbook\x00WordDocument"), "document"),
+        ("report.doc", _ole("Workbook\x00WordDocument"), "document"),
+        ("report.doc", _DOC_STALE_FAT, "document"),
     ],
 )
 async def test_read_returns_media_that_bedrock_accepts(ctx, tmp_path, name, data, kind):

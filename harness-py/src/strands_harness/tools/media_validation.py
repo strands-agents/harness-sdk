@@ -15,7 +15,8 @@ import zlib
 
 _TRUNCATED = "it is truncated"
 _OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
-_OLE_FREE, _OLE_SPECIAL = 0xFFFFFFFF, 0xFFFFFFFA
+_OLE_SPECIAL = 0xFFFFFFFA
+_OLE_STREAMS = {"Word": ("WordDocument",), "Excel": ("Workbook", "WORKBOOK", "Book")}
 _DOCUMENT_FAMILY = {"doc": "Word", "docx": "Word", "xls": "Excel", "xlsx": "Excel"}
 
 
@@ -31,7 +32,7 @@ def document_problem(data: bytes, document_format: str) -> str | None:
     if data.startswith(b"PK\x03\x04"):
         family, problem = _ooxml_family(data)
     elif data.startswith(_OLE_SIGNATURE):
-        family, problem = _ole_family(data)
+        family, problem = _ole_family(data, _DOCUMENT_FAMILY[document_format])
     else:
         return "it is not a Word or Excel file"
     if problem is None and family != _DOCUMENT_FAMILY[document_format]:
@@ -159,7 +160,7 @@ def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             names, corrupt = archive.namelist(), archive.testzip() is not None
-    except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError):
+    except Exception:  # zipfile raises a wide, undocumented range on damaged archives
         names, corrupt = [], True
     if corrupt:
         return None, "its zip archive is corrupt or truncated"
@@ -170,24 +171,23 @@ def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
     return ("Excel", None) if any(name.startswith("xl/") for name in names) else (None, None)
 
 
-def _ole_family(data: bytes) -> tuple[str | None, str | None]:
+def _ole_family(data: bytes, wanted: str) -> tuple[str | None, str | None]:
     if len(data) < 512:
         return None, _TRUNCATED
-    sector = 1 << struct.unpack_from("<H", data, 30)[0]
-    if sector not in (512, 4096):
+    shift = struct.unpack_from("<H", data, 30)[0]
+    if shift not in (9, 12):
         return None, "its header is malformed"
+    sector = 1 << shift
     sectors = -(-len(data) // sector) - 1
     fat_count = struct.unpack_from("<I", data, 44)[0]
     fat_sectors = struct.unpack_from("<109I", data, 76)[:fat_count]
-    if any(s >= sectors for s in fat_sectors):
+    if any(s >= sectors for s in (*fat_sectors, struct.unpack_from("<I", data, 48)[0])):
         return None, _TRUNCATED
-    # A truncated file still has FAT entries for (or pointing at) sectors past its end.
+    # A truncated file still has FAT chains pointing at sectors past its end.
     fat = b"".join(data[(s + 1) * sector : (s + 2) * sector] for s in fat_sectors)
-    for index, (following,) in enumerate(struct.iter_unpack("<I", fat[: len(fat) // 4 * 4])):
-        if following != _OLE_FREE and (index >= sectors or sectors <= following < _OLE_SPECIAL):
+    for (following,) in struct.iter_unpack("<I", fat[: len(fat) // 4 * 4]):
+        if sectors <= following < _OLE_SPECIAL:
             return None, _TRUNCATED
-    if "WordDocument".encode("utf-16-le") in data:
-        return "Word", None
-    if "Workbook".encode("utf-16-le") in data or "Book".encode("utf-16-le") in data:
-        return "Excel", None
-    return None, None
+    # Prefer the expected family: an .xls may embed a Word document, and vice versa.
+    found = [family for family, names in _OLE_STREAMS.items() if any(n.encode("utf-16-le") in data for n in names)]
+    return (wanted if wanted in found else next(iter(found), None)), None

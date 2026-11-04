@@ -77,6 +77,8 @@ const ZIP_WITHOUT_CONTENT_TYPES = b64(
 const DOCX_PART = Buffer.from(DOCX).indexOf('word/document.xml') + 'word/document.xml'.length
 const DOC = ole('WordDocument')
 const XLS = ole('Workbook')
+// Some writers mark unused FAT entries ENDOFCHAIN instead of FREE; Bedrock still accepts the file.
+const DOC_STALE_FAT = bytesOf(DOC.subarray(0, 532), [0xfe, 0xff, 0xff, 0xff], DOC.subarray(536))
 
 let agent: Agent
 let dir: string
@@ -282,6 +284,7 @@ describe('read media validation', () => {
     ['pic.webp', WEBP.subarray(0, 24)],
     ['report.pdf', bytesOf('%PDF-1.4\n%', [0xe2, 0xe3, 0xcf, 0xd3], '\n1 0 obj\n<< /Type /Catalog >>\n')],
     ['report.docx', DOCX.subarray(0, DOCX.length / 2)],
+    ['report.docx', bytesOf(DOCX.subarray(0, 4), DOCX.subarray(9))],
     ['report.docx', flip(DOCX, DOCX_PART, 20)],
     ['report.docx', ZIP_WITHOUT_CONTENT_TYPES],
     ['report.docx', XLSX],
@@ -311,6 +314,10 @@ describe('read media validation', () => {
     ['report.doc', DOC],
     ['report.xls', XLS],
     ['report.docx', DOC],
+    ['report.xls', ole('WORKBOOK')],
+    ['report.xls', ole('Workbook\0WordDocument')],
+    ['report.doc', ole('Workbook\0WordDocument')],
+    ['report.doc', DOC_STALE_FAT],
   ])('returns media that Bedrock accepts (%s #%#)', async (name, bytes) => {
     // Imperfect but renderable files (as observed against Bedrock) stay media blocks.
     const path = join(dir, name)
