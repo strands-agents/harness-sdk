@@ -18,7 +18,7 @@ import { TextDecoder } from 'node:util'
 import { Agent, type Model, type Sandbox, tool, type Tool } from '@strands-agents/sdk'
 import { z } from 'zod'
 
-import { SHELL_PROBE, shellOf } from '../sandbox-shell.js'
+import { SHELL_PROBE, shellOf } from '../sandbox.js'
 import type { WebFetchTransport } from '../types/agent.js'
 
 /** @internal Re-exported for tests. */

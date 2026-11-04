@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { createHarness } from '../../src/agent.js'
-import { SHELL_PROBE } from '../../src/sandbox-shell.js'
+import { SHELL_PROBE } from '../../src/sandbox.js'
 import {
   EnvironmentContext,
   type EnvironmentMemo,

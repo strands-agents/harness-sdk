@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExecutionResult, Sandbox } from '@strands-agents/sdk'
 
-import { SHELL_PROBE, shellOf } from '../src/sandbox-shell.js'
+import { SHELL_PROBE, shellOf } from '../src/sandbox.js'
 
 function sandboxAnswering(
   ...results: Array<Pick<ExecutionResult, 'exitCode' | 'stdout'>>

@@ -1,7 +1,9 @@
 /**
- * Which shell dialect a sandbox runs commands in. The Sandbox contract names none, so the only check that
- * holds for every sandbox is to ask: PowerShell prints its edition (`Desktop` or `Core`), `sh` expands the
- * unset variable to an empty line. Probed once per sandbox.
+ * Sandbox helpers shared by the harness tools and plugins. Internal: not exported from the package barrel.
+ *
+ * `shellOf` tells which shell dialect a sandbox runs commands in. The Sandbox contract names none, so it
+ * asks: PowerShell prints its edition (`Desktop` or `Core`), `sh` expands the unset variable to an empty
+ * line. Probed once per sandbox.
  */
 
 import type { Sandbox } from '@strands-agents/sdk'

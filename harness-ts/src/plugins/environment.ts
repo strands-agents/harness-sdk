@@ -19,7 +19,7 @@
 import { type LocalAgent, type Plugin, type Sandbox } from '@strands-agents/sdk'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins/context-injector'
 
-import { type SandboxShell, shellOf } from '../sandbox-shell.js'
+import { type SandboxShell, shellOf } from '../sandbox.js'
 
 const DEFAULT_NAME = 'strands:environment'
 

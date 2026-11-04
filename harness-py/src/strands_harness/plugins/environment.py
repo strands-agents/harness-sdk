@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from strands.plugins import Plugin
 from strands.vended_plugins.context_injector import ContextInjector, InjectionContext
 
-from strands_harness.sandbox_shell import SandboxShell, shell_of
+from strands_harness.sandbox import _SandboxShell, _shell_of
 
 if TYPE_CHECKING:
     from strands import Agent
@@ -97,7 +97,7 @@ async def _render(agent: Agent, memo: dict[str, Any]) -> str | None:
 
 async def _gather(
     agent: Agent,
-) -> tuple[str | None, str | None, SandboxShell | None, str | None, list[str], list[str]]:
+) -> tuple[str | None, str | None, _SandboxShell | None, str | None, list[str], list[str]]:
     """The one-time, memoized part: platform, working directory, cwd ``AGENTS.md``, and nearby links.
 
     Platform and cwd are read from the sandbox (via ``uname`` and ``$PWD``), not the host process, so they
@@ -111,7 +111,7 @@ async def _gather(
         return None, None, None, None, [], []
     # ``uname`` does not exist in PowerShell, so a PowerShell sandbox is reported as Windows from the shell probe.
     try:
-        shell: SandboxShell | None = await shell_of(sandbox)
+        shell: _SandboxShell | None = await _shell_of(sandbox)
     except Exception:
         shell = None
     platform = "Windows" if shell == "powershell" else await _probe(sandbox, "uname -s")

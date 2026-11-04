@@ -28,7 +28,7 @@ from strands.sandbox import Sandbox
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 
-from strands_harness.sandbox_shell import shell_of as _shell
+from strands_harness.sandbox import _shell_of
 from strands_harness.types.agent import WebFetchTransport
 
 _USER_AGENT = "strands-harness/1.0"
@@ -130,7 +130,7 @@ def _to_text(data: bytes, content_type: str, resolved_url: str, url: str) -> tup
 
 async def _fetch_curl(sandbox: Sandbox, url: str) -> tuple[str, str]:
     """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails."""
-    command = _powershell_curl_command(url) if await _shell(sandbox) == "powershell" else _curl_command(url)
+    command = _powershell_curl_command(url) if await _shell_of(sandbox) == "powershell" else _curl_command(url)
     result = await sandbox.execute(command, timeout=_TIMEOUT + 5)
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")

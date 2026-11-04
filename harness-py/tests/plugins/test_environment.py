@@ -7,7 +7,7 @@ from strands.sandbox.types import ExecutionResult, FileInfo
 from strands_harness import create_harness
 from strands_harness.plugins import EnvironmentContext
 from strands_harness.plugins import environment as env
-from strands_harness.sandbox_shell import SHELL_PROBE
+from strands_harness.sandbox import _SHELL_PROBE
 
 
 class _FakeSandbox:
@@ -33,7 +33,7 @@ class _FakeSandbox:
     async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
         if self._cwd is None:
             raise RuntimeError("no shell")
-        if command == SHELL_PROBE:
+        if command == _SHELL_PROBE:
             return ExecutionResult(exit_code=0, stdout="\n", stderr="")
         out = "Linux" if command.startswith("uname") else self._cwd
         return ExecutionResult(exit_code=0, stdout=f"{out}\n", stderr="")
@@ -43,7 +43,7 @@ class _PowerShellSandbox(_FakeSandbox):
     """The SDK's local sandbox on Windows: commands run in PowerShell, which has no ``uname``."""
 
     async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
-        if command == SHELL_PROBE:
+        if command == _SHELL_PROBE:
             return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
         if command.startswith("uname"):
             return ExecutionResult(exit_code=1, stdout="", stderr="The term 'uname' is not recognized")
