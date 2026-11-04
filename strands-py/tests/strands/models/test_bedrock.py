@@ -4661,6 +4661,43 @@ def test_inject_cache_point_applies_configured_ttl_to_an_honored_point(bedrock_c
     assert tru_point == exp_point
 
 
+def test_messages_ttl_false_disables_the_message_cache_point(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig(messages_ttl=False)
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["messages"] == [{"role": "user", "content": [{"text": "hi"}]}]
+
+
+def test_messages_ttl_string_sets_the_message_cache_point_ttl(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        cache_config=CacheConfig(ttl="1h", messages_ttl="5m", system_prompt_ttl=False),
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["messages"] == [
+        {"role": "user", "content": [{"text": "hi"}, {"cachePoint": {"type": "default", "ttl": "5m"}}]}
+    ]
+
+
+def test_inject_cache_point_applies_messages_ttl_to_an_honored_point(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(cache_config=CacheConfig(strategy="anthropic", ttl="1h", messages_ttl="5m"))
+    cleaned_messages = [
+        {"role": "user", "content": [{"text": "ask"}, {"cachePoint": {"type": "default"}}, {"text": "per-call"}]}
+    ]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"][1] == {"cachePoint": {"type": "default", "ttl": "5m"}}
+
+
 def test_inject_cache_point_normalizes_the_ttl_of_a_relocated_point(bedrock_client):
     """The relocation path must normalize too: a caller TTL there is just as capable of a rejection."""
     _ = bedrock_client
