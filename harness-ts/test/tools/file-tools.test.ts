@@ -45,32 +45,23 @@ function png({ pixels = new Uint8Array(14), interlace = 0, beforeIdat = new Uint
 
 const NOSTREAM = 0xffffffff
 
-function oleEntry(name: string, kind: number, right = NOSTREAM, child = NOSTREAM): Buffer {
+function oleEntry(name: string, kind = 2, { left = NOSTREAM, right = NOSTREAM, child = NOSTREAM } = {}): Buffer {
   const entry = Buffer.alloc(128)
   const length = entry.write(`${name}\0`, 'utf16le')
   entry.writeUInt16LE(length, 64)
   entry.writeUInt8(kind, 66)
   entry.writeUInt8(1, 67)
-  entry.writeUInt32LE(NOSTREAM, 68)
+  entry.writeUInt32LE(left, 68)
   entry.writeUInt32LE(right, 72)
   entry.writeUInt32LE(child, 76)
   return entry
 }
 
-/** A minimal compound file: `streams` in the root, `embedded` in a sub-storage, `text` in a data sector. */
-function ole(streams: string[], { embedded = [] as string[], text = '' } = {}): Uint8Array {
-  const sibling = (i: number, count: number, first: number): number => (i + 1 < count ? first + i + 1 : NOSTREAM)
-  const root = [...streams, ...(embedded.length ? ['MBD0001'] : [])]
-  const entries = [
-    oleEntry('Root Entry', 5, NOSTREAM, 1),
-    ...root.map((name, i) => oleEntry(name, 2, sibling(i, root.length, 1))),
-  ]
-  if (embedded.length) {
-    entries[entries.length - 1] = oleEntry('MBD0001', 1, NOSTREAM, entries.length)
-    const first = entries.length
-    entries.push(...embedded.map((name, i) => oleEntry(name, 2, sibling(i, embedded.length, first))))
-  }
-  if (entries.length > 4) throw new Error('one directory sector holds four entries')
+/** A compound file: one FAT sector, `entries` chained across directory sectors, `text` in a data sector. */
+function oleFile(entries: Buffer[], text = ''): Uint8Array {
+  const directory = Buffer.concat(entries)
+  const sectors = Math.ceil(directory.length / 512)
+  const fat = [0xfffffffd, ...Array.from({ length: sectors - 1 }, (_, i) => i + 2), 0xfffffffe, 0xfffffffe]
   const header = Buffer.alloc(512)
   Buffer.from('d0cf11e0a1b11ae1', 'hex').copy(header)
   header.writeUInt16LE(9, 30)
@@ -78,15 +69,27 @@ function ole(streams: string[], { embedded = [] as string[], text = '' } = {}): 
   header.writeUInt32LE(1, 48)
   header.fill(0xff, 76)
   header.writeUInt32LE(0, 76)
-  const fat = Buffer.alloc(512, 0xff)
-  fat.writeUInt32LE(0xfffffffd, 0)
-  fat.writeUInt32LE(0xfffffffe, 4)
-  fat.writeUInt32LE(0xfffffffe, 8)
-  const directory = Buffer.alloc(512)
-  Buffer.concat(entries).copy(directory)
+  const fatSector = Buffer.alloc(512, 0xff)
+  fat.forEach((next, i) => fatSector.writeUInt32LE(next, 4 * i))
   const body = text ? Buffer.alloc(512) : Buffer.alloc(0)
   body.write(text, 'utf16le')
-  return new Uint8Array(Buffer.concat([header, fat, directory, body]))
+  return new Uint8Array(
+    Buffer.concat([header, fatSector, directory, Buffer.alloc(sectors * 512 - directory.length), body])
+  )
+}
+
+/** A compound file with `streams` in the root and `embedded` in a sub-storage, both right-sibling chains. */
+function ole(streams: string[], { embedded = [] as string[], text = '' } = {}): Uint8Array {
+  const chain = (names: string[], first: number): Buffer[] =>
+    names.map((name, i) => oleEntry(name, 2, { right: i + 1 < names.length ? first + i + 1 : NOSTREAM }))
+  const root = [...streams, ...(embedded.length ? ['MBD0001'] : [])]
+  const entries = [oleEntry('Root Entry', 5, { child: 1 }), ...chain(root, 1)]
+  if (embedded.length) {
+    const first = entries.length
+    entries[first - 1] = oleEntry('MBD0001', 1, { child: first })
+    entries.push(...chain(embedded, first))
+  }
+  return oleFile(entries, text)
 }
 
 const PNG = png()
@@ -425,6 +428,18 @@ describe('read media validation', () => {
       'a valid xls document: it is a Word file',
     ],
     ['report.doc', ole(['worddocument']), 'a valid doc document: it is not Word or Excel'],
+    ['report.doc', ole(['WordDocument', 'Workbook']), 'a valid doc document: it is an Excel file'],
+    // WordDocument reached only through a left sibling link, or only in the second directory sector.
+    [
+      'report.xls',
+      oleFile([oleEntry('Root Entry', 5, { child: 1 }), oleEntry('Data', 2, { left: 2 }), oleEntry('WordDocument')]),
+      'a valid xls document: it is a Word file',
+    ],
+    [
+      'report.xls',
+      ole(['\x01CompObj', '\x05SummaryInformation', '1Table', 'Data', 'WordDocument']),
+      'a valid xls document: it is a Word file',
+    ],
   ])('rejects a truncated, corrupt, or mislabeled media file (%s #%#)', async (name, bytes, reason) => {
     // Each of these fails the Bedrock request as a media block, and the history with it.
     const path = join(dir, name)
@@ -467,6 +482,14 @@ describe('read media validation', () => {
     ['report.doc', ole(['WordDocument'], { embedded: ['Workbook'] }), 'doc'],
     ['report.doc', ole(['WordDocument'], { text: 'My favourite Book is Dune' }), 'doc'],
     ['report.doc', DOC_STALE_FAT, 'doc'],
+    ['report.xls', ole(['WordDocument', 'Workbook']), 'xls'],
+    // A sibling link back to itself must not loop.
+    [
+      'report.doc',
+      oleFile([oleEntry('Root Entry', 5, { child: 1 }), oleEntry('WordDocument', 2, { right: 1 })]),
+      'doc',
+    ],
+    ['report.pdf', bytesOf(PDF, '\n% generated by obj-tool\n', new Uint8Array(100), 'binobjdata'), 'pdf'],
     ['report.docx', DOCX_HUGE_ENTRY, 'docx'],
   ])('returns media that Bedrock accepts (%s #%#)', async (name, bytes, format) => {
     // Imperfect but renderable files (as observed against Bedrock) stay media blocks.

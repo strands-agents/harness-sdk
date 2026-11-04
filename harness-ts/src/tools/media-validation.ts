@@ -13,6 +13,7 @@ import * as zlib from 'node:zlib'
 import type { ImageFormat } from '@strands-agents/sdk'
 
 const TRUNCATED = 'it is truncated'
+const PDF_OBJECT = /\d+\s+\d+\s+obj\b/
 const PDF_TRUNCATED = 'it does not end with a cross-reference trailer, so it is likely truncated'
 // Deep checks stop after inflating this much, so a compression bomb costs bounded time and memory; what is
 // left is accepted on structure alone, as before these checks existed.
@@ -68,7 +69,7 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
 // zlib.crc32 is native from Node 22.2; the package still supports 22.0.
 const crc32 = 'crc32' in zlib ? (data: Uint8Array): number => zlib.crc32(data) : jsCrc32
 
-/** @internal Exported for tests: CI's Node always has zlib.crc32, so this fallback would otherwise go unrun. */
+/** @internal Exported for tests. */
 export function jsCrc32(data: Uint8Array): number {
   let crc = 0xffffffff
   for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8)
@@ -108,7 +109,7 @@ function pngDataProblem(stream: Uint8Array, expected: number): string | undefine
   } catch (error) {
     const code = (error as { code?: string }).code
     if (code === 'ERR_BUFFER_TOO_LARGE') return undefined
-    return code === 'Z_DATA_ERROR' ? 'its image data is corrupt' : 'its image data is incomplete'
+    return code === 'Z_BUF_ERROR' ? 'its image data is incomplete' : 'its image data is corrupt'
   }
 }
 
@@ -209,12 +210,15 @@ function webpProblem(data: Uint8Array): string | undefined {
 
 function pdfProblem(data: Uint8Array): string | undefined {
   // Readers allow junk before the header and after the trailer. A truncated PDF loses its final trailer; a
-  // linearized one still has its first-page trailer near the start, so the last trailer must follow every object.
+  // linearized one still has its first-page trailer near the start, so no object may follow the last trailer.
   const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
   const start = buffer.subarray(0, 1024).indexOf('%PDF-')
   if (start < 0) return 'it has no %PDF- header'
   const trailer = buffer.lastIndexOf('startxref')
-  return trailer > start && trailer > buffer.lastIndexOf('obj') ? undefined : PDF_TRUNCATED
+  if (trailer <= start) return PDF_TRUNCATED
+  // Decode the tail only when it might hold an object, so a usual read copies nothing.
+  if (buffer.indexOf('obj', trailer) < 0) return undefined
+  return PDF_OBJECT.test(buffer.subarray(trailer).toString('latin1')) ? PDF_TRUNCATED : undefined
 }
 
 function ooxmlFamily(data: Uint8Array): FamilyResult {
@@ -308,7 +312,7 @@ function oleRootNames(data: Uint8Array, sector: number, fat: number[], directory
     seen.add(index)
     const entry = entries.subarray(index * 128, (index + 1) * 128)
     const length = Math.min(entry.readUInt16LE(64), 64)
-    names.add(entry.subarray(0, Math.max(length - 2, 0)).toString('utf16le'))
+    names.add(entry.subarray(0, Math.max(length - 2, 0) & ~1).toString('utf16le'))
     pending.push(entry.readUInt32LE(68), entry.readUInt32LE(72))
   }
   return names

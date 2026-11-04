@@ -20,6 +20,7 @@ _PDF_TRUNCATED = "it does not end with a cross-reference trailer, so it is likel
 # left is accepted on structure alone, as before these checks existed.
 _INFLATE_BUDGET = 64 << 20
 _NOT_FILL = re.compile(rb"[^\xff]")
+_PDF_OBJECT = re.compile(rb"\d+\s+\d+\s+obj\b")
 _OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
 _OLE_SPECIAL = 0xFFFFFFFA
 _OLE_EXCEL_STREAMS = {"Workbook", "WORKBOOK", "Book"}
@@ -166,14 +167,12 @@ def _webp_problem(data: bytes) -> str | None:
 
 def _pdf_problem(data: bytes) -> str | None:
     # Readers allow junk before the header and after the trailer. A truncated PDF loses its final trailer; a
-    # linearized one still has its first-page trailer near the start, so the last trailer must follow every object.
+    # linearized one still has its first-page trailer near the start, so no object may follow the last trailer.
     start = data.find(b"%PDF-", 0, 1024)
     if start < 0:
         return "it has no %PDF- header"
     trailer = data.rfind(b"startxref")
-    if trailer > start and trailer > data.rfind(b"obj"):
-        return None
-    return _PDF_TRUNCATED
+    return None if trailer > start and not _PDF_OBJECT.search(data, trailer) else _PDF_TRUNCATED
 
 
 def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
@@ -229,7 +228,8 @@ def _ole_root_names(data: bytes, sector: int, fat: tuple[int, ...], directory: i
     entries = b"".join(data[(s + 1) * sector : (s + 2) * sector] for s in chain)
     count = len(entries) // 128
     # The root's children form a binary tree of sibling links, starting at the root entry's child.
-    names, seen, pending = set(), set(), [struct.unpack_from("<I", entries, 76)[0]] if count else []
+    names, seen = set(), set()
+    pending = [struct.unpack_from("<I", entries, 76)[0]] if count else []
     while pending:
         index = pending.pop()
         if index >= count or index in seen:
@@ -237,6 +237,6 @@ def _ole_root_names(data: bytes, sector: int, fat: tuple[int, ...], directory: i
         seen.add(index)
         entry = entries[index * 128 : (index + 1) * 128]
         length = min(struct.unpack_from("<H", entry, 64)[0], 64)
-        names.add(entry[: max(length - 2, 0)].decode("utf-16-le", "replace"))
+        names.add(entry[: max(length - 2, 0) & ~1].decode("utf-16-le", "replace"))
         pending += struct.unpack_from("<II", entry, 68)
     return names
