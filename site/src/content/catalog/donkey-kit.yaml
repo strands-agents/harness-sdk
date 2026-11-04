@@ -1,0 +1,9 @@
+name: Donkey Development Kit
+description: Governs Strands model calls and MCP tool calls through a MuleSoft Omni Gateway, with typed policy refusals and approval-gated tools.
+integrationType: integration
+languages:
+  python:
+    package: donkey-kit[strands]
+github: https://github.com/Donkey-Development-Kit/donkey-development-kit
+docsUrl: https://docs.donkey-kit.dev/frameworks/strands
+addedDate: 2026-11-04
