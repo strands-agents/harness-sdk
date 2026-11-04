@@ -91,6 +91,23 @@ def test_anthropic_direct_no_caching_when_off():
     assert "cache_tools" not in model.config
 
 
+@pytest.mark.parametrize(
+    ("spec", "model_id", "search_tool"),
+    [
+        ("openai/gpt-5.6-sol", "gpt-5.6-sol", {"type": "web_search"}),
+        ("bedrock-mantle/openai.gpt-6-luna", "openai.gpt-6-luna", {"type": "web_search", "external_web_access": True}),
+    ],
+)
+@pytest.mark.parametrize("caching", [True, False])
+def test_openai_responses_caching_preserves_reasoning_and_search(spec, model_id, search_tool, caching):
+    model = resolve(spec, effort="high", web_search=True, caching=caching)
+    assert model.config == {
+        "model_id": model_id,
+        **({"cache_config": CacheConfig(strategy="auto")} if caching else {}),
+        "params": {"reasoning": {"effort": "high"}, "tools": [search_tool]},
+    }
+
+
 def test_explicit_caching_on_supported_provider_builds():
     model = resolve("openai/gpt-5.6-sol", caching=True, caching_explicit=True)
     assert model is not None
