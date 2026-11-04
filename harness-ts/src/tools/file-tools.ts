@@ -7,10 +7,13 @@
  */
 
 import { posix, win32 } from 'node:path'
+import { TextDecoder } from 'node:util'
 
 import { DocumentBlock, ImageBlock, tool } from '@strands-agents/sdk'
 import type { DocumentFormat, ImageFormat, ToolContext } from '@strands-agents/sdk'
 import { z } from 'zod'
+
+import { documentProblem, imageProblem } from './media-validation.js'
 
 const READ_DEFAULT_LIMIT = 2000
 
@@ -111,40 +114,60 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
     validatePath(input.path)
     const ext = extension(input.path)
 
-    if (IMAGE_EXTENSIONS.includes(ext)) {
+    let note = ''
+    let content: string
+    if (IMAGE_EXTENSIONS.includes(ext) || DOCUMENT_FORMATS.includes(ext)) {
       const bytes = await context.agent.sandbox.readFile(input.path)
-      const imageFormat = sniffImageFormat(bytes)
-      if (!imageFormat) {
+      const isImage = IMAGE_EXTENSIONS.includes(ext)
+      const imageFormat = isImage ? sniffImageFormat(bytes) : undefined
+      let expected: string
+      let problem: string | undefined
+      if (!isImage) {
+        expected = `a valid ${ext} document`
+        problem = documentProblem(bytes, ext)
+      } else if (imageFormat) {
+        expected = `a valid ${imageFormat} image`
+        problem = await imageProblem(bytes, imageFormat)
+      } else {
+        expected = 'a png, jpeg, gif, or webp image'
+        problem = ''
+      }
+
+      if (problem === undefined) {
+        if (!media) {
+          return mediaPlaceholder(input.path, isImage ? 'Image' : 'Document', imageFormat ?? ext, bytes.length)
+        }
+        if (imageFormat) return new ImageBlock({ format: imageFormat, source: { bytes } })
+        return new DocumentBlock({ name: documentName(input.path), format: ext as DocumentFormat, source: { bytes } })
+      }
+
+      // Sending it as media would fail the request and every later one, so show text or throw instead.
+      const reason = problem ? `: ${problem}` : ''
+      try {
+        content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      } catch {
+        content = ''
+      }
+      if (!content || content.includes('\0')) {
         throw new Error(
-          `${input.path} has a .${ext} extension but its ${bytes.length} bytes are not a png, jpeg, gif, or webp ` +
-            'image. Identify it with `file`; if it is text, read it with `cat`.'
+          `${input.path} has a .${ext} extension but its ${bytes.length} bytes are not ${expected}${reason}. ` +
+            'Identify it with `file`.'
         )
       }
-      if (!media) {
-        return mediaPlaceholder(input.path, 'Image', imageFormat, bytes.length)
-      }
-      return new ImageBlock({ format: imageFormat, source: { bytes } })
+      note = `[${input.path} is not ${expected}${reason}. Showing it as text.]\n`
+    } else {
+      content = await context.agent.sandbox.readText(input.path)
     }
-
-    if (DOCUMENT_FORMATS.includes(ext)) {
-      const bytes = await context.agent.sandbox.readFile(input.path)
-      if (!media) {
-        return mediaPlaceholder(input.path, 'Document', ext, bytes.length)
-      }
-      return new DocumentBlock({ name: documentName(input.path), format: ext as DocumentFormat, source: { bytes } })
-    }
-
-    const content = await context.agent.sandbox.readText(input.path)
 
     const lines = content.split('\n')
     const start = Math.max(0, input.offset ? input.offset - 1 : 0)
     const count = input.limit ?? READ_DEFAULT_LIMIT
     const window = lines.slice(start, start + count)
     if (window.length === 0) {
-      return `[File has ${lines.length} lines; offset ${input.offset} is past the end.]`
+      return `${note}[File has ${lines.length} lines; offset ${input.offset} is past the end.]`
     }
 
-    let numbered = numberLines(window.join('\n'), start + 1)
+    let numbered = note + numberLines(window.join('\n'), start + 1)
     if (start > 0 || start + count < lines.length) {
       const shownEnd = start + window.length
       numbered += `\n[Showing lines ${start + 1}-${shownEnd} of ${lines.length}. Use offset/limit to read more.]`

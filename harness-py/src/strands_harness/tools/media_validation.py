@@ -158,11 +158,11 @@ def _pdf_problem(data: bytes) -> str | None:
 def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names = archive.namelist()
-            if archive.testzip() is not None:
-                return None, "an archive entry is corrupt"
+            names, corrupt = archive.namelist(), archive.testzip() is not None
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError):
-        return None, "its zip structure is corrupt or truncated"
+        names, corrupt = [], True
+    if corrupt:
+        return None, "its zip archive is corrupt or truncated"
     if "[Content_Types].xml" not in names:
         return None, "it is a zip archive, not an Office document"
     if any(name.startswith("word/") for name in names):
