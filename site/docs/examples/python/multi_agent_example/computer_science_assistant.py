@@ -37,16 +37,16 @@ Focus on providing clear, practical explanations that demonstrate concepts with 
 def computer_science_assistant(query: str) -> str:
     """
     Process and respond to computer science and programming-related questions using a specialized agent with code execution capabilities.
-    
+
     Args:
         query: The user's computer science or programming question
-        
+
     Returns:
         A detailed response addressing computer science concepts or code execution results
     """
     # Format the query for the computer science agent with clear instructions
     formatted_query = f"Please address this computer science or programming question. When appropriate, provide executable code examples and explain the concepts thoroughly: {query}"
-    
+
     try:
         print("Routed to Computer Science Assistant")
         # Create the computer science agent with relevant tools
@@ -59,7 +59,7 @@ def computer_science_assistant(query: str) -> str:
 
         if len(text_response) > 0:
             return text_response
-        
+
         return "I apologize, but I couldn't process your computer science question. Please try rephrasing or providing more specific details about what you're trying to learn or accomplish."
     except Exception as e:
         # Return specific error message for computer science processing

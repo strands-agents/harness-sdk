@@ -15,30 +15,36 @@ telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
 memory_exporter = telemetry.in_memory_exporter
 tool_simulator = ToolSimulator()
 
+
 # Define tool's output schema
 class HVACMode(str, Enum):
     """HVAC operating modes."""
+
     HEAT = "heat"
     COOL = "cool"
     AUTO = "auto"
     OFF = "off"
 
+
 class HVACControllerResponse(BaseModel):
     """Response model for HVAC controller operations."""
+
     temperature: float = Field(..., description="Target temperature in Fahrenheit")
     mode: HVACMode = Field(..., description="HVAC mode")
     status: str = Field(default="success", description="Operation status")
     message: str = Field(default="", description="Additional status message")
 
+
 # Register HVAC controller tool for simulation
 @tool_simulator.tool(
     share_state_id="room_environment",
     initial_state_description="Room environment: temperature 68°F, humidity 45%, HVAC off",
-    output_schema=HVACControllerResponse
+    output_schema=HVACControllerResponse,
 )
 def hvac_controller(temperature: float, mode: str) -> dict[str, Any]:
     """Control home heating/cooling system that affects room temperature and humidity."""
     pass
+
 
 # Define a task function
 def user_task_function(case: Case) -> dict:
@@ -74,6 +80,7 @@ def user_task_function(case: Case) -> dict:
 
     return {"output": str(agent_response), "trajectory": session}
 
+
 # Create test cases
 test_cases = [
     Case(
@@ -88,6 +95,7 @@ evaluators = [GoalSuccessRateEvaluator()]
 
 # Create an experiment
 experiment = Experiment[str, str](cases=test_cases, evaluators=evaluators)
+
 
 # Run evaluations
 async def main():

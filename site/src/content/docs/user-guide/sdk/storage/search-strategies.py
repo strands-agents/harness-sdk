@@ -1,15 +1,12 @@
 """Search strategies documentation code examples."""
 
-
 # --8<-- [start:keyword_search]
 from strands.storage import LocalFileStorage
 from strands.storage.search import KeywordSearchStrategy
 
 strategy = KeywordSearchStrategy()
 storage = LocalFileStorage("./my-data/")
-results = await strategy.search(
-    storage, "dark mode toggle"
-)
+results = await strategy.search(storage, "dark mode toggle")
 # --8<-- [end:keyword_search]
 
 
@@ -18,9 +15,7 @@ from strands.storage import LocalFileStorage
 from strands.storage.search import Bm25SearchStrategy
 
 strategy = Bm25SearchStrategy()
-storage = LocalFileStorage(
-    "./memory/", search_strategy=strategy
-)
+storage = LocalFileStorage("./memory/", search_strategy=strategy)
 
 await storage.write(
     "auth.md",
@@ -53,14 +48,10 @@ from strands.storage.search import StorageSearchResult
 class PhraseSearchStrategy:
     """Rank entries by how often the exact query phrase appears."""
 
-    async def index(
-        self, storage: Storage, key: str, data: bytes, **kwargs: Any
-    ) -> None:
+    async def index(self, storage: Storage, key: str, data: bytes, **kwargs: Any) -> None:
         pass  # Searches on the fly, so there is nothing to index.
 
-    async def search(
-        self, storage: Storage, query: str, **kwargs: Any
-    ) -> list[StorageSearchResult]:
+    async def search(self, storage: Storage, query: str, **kwargs: Any) -> list[StorageSearchResult]:
         phrase = query.strip().lower()
         if not phrase:
             return []
@@ -72,9 +63,7 @@ class PhraseSearchStrategy:
             text = data.decode("utf-8", errors="replace")
             count = text.lower().count(phrase)
             if count:
-                results.append(
-                    StorageSearchResult(key=key, score=count, data=data)
-                )
+                results.append(StorageSearchResult(key=key, score=count, data=data))
         results.sort(key=lambda result: result.score, reverse=True)
         return results
 

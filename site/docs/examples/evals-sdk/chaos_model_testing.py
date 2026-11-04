@@ -53,10 +53,10 @@ effect_maps = {
 @eval_task(TracedHandler())
 def travel_agent_task(case: ChaosCase):
     """Run the travel assistant with a single user query."""
-    logger.info(f"\n{'─'*60}")
+    logger.info(f"\n{'─' * 60}")
     logger.info(f" Case: {case.name}")
     logger.info(f" User: {case.input}")
-    logger.info(f"{'─'*60}")
+    logger.info(f"{'─' * 60}")
     return Agent(
         system_prompt=(
             "You are a travel planning assistant. Answer the user's question "
@@ -73,7 +73,7 @@ test_cases = [
     Case(
         name="trip_planning",
         input="What is the best way to travel from SFO to JFK on May 20? Summarize your recommendation.",
- expected_assertion="The agent should provide a travel recommendation for getting from SFO to JFK and summarize it.",
+        expected_assertion="The agent should provide a travel recommendation for getting from SFO to JFK and summarize it.",
     ),
 ]
 

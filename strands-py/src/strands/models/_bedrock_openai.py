@@ -91,7 +91,7 @@ class BedrockChatCompletionsModel(OpenAIModel):
             region_name: AWS region. Defaults to the session's region, then ``AWS_REGION``, then us-west-2.
             boto_session: Session whose credentials sign each request. Mutually exclusive with ``region_name``.
             api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials. Defaults to
-                ``AWS_BEARER_TOKEN_BEDROCK``.
+                ``AWS_BEARER_TOKEN_BEDROCK``, which then takes precedence over ``boto_session``, as in botocore.
             client_args: Arguments for the underlying OpenAI client, such as ``timeout`` or ``max_retries``.
                 Base URL, authentication, and ``http_client`` are set by this provider.
             **model_config: Configuration options for the OpenAI model.
@@ -141,7 +141,7 @@ class BedrockResponsesModel(OpenAIResponsesModel):
             region_name: AWS region. Defaults to the session's region, then ``AWS_REGION``, then us-west-2.
             boto_session: Session whose credentials sign each request. Mutually exclusive with ``region_name``.
             api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials. Defaults to
-                ``AWS_BEARER_TOKEN_BEDROCK``.
+                ``AWS_BEARER_TOKEN_BEDROCK``, which then takes precedence over ``boto_session``, as in botocore.
             client_args: Arguments for the underlying OpenAI client, such as ``timeout`` or ``max_retries``.
                 Base URL, authentication, and ``http_client`` are set by this provider.
             **model_config: Configuration options for the OpenAI Responses model.

@@ -115,11 +115,11 @@ if __name__ == "__main__":
 
             # Call the weather agent
             response = weather_agent(user_input)
-            
+
             # If using in conversational context, the response is already displayed
             # This is just for demonstration purposes
             print(str(response))
-                        
+
         except KeyboardInterrupt:
             print("\n\nExecution interrupted. Exiting...")
             break

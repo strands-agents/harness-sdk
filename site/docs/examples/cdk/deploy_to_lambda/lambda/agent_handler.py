@@ -22,11 +22,12 @@ When displaying responses:
 Always explain the weather conditions clearly and provide context for the forecast.
 """
 
+
 def handler(event: Dict[str, Any], _context) -> str:
     weather_agent = Agent(
         system_prompt=WEATHER_SYSTEM_PROMPT,
         tools=[http_request],
     )
 
-    response = weather_agent(event.get('prompt'))
+    response = weather_agent(event.get("prompt"))
     return str(response)

@@ -243,6 +243,8 @@ class _LazyModelClass:
         try:
             module = importlib.import_module(self._module, __package__)
         except ModuleNotFoundError as error:
+            if error.name != self._extra:
+                raise
             # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
             raise AttributeError(
                 f"{self._attribute} requires the '{self._extra}' extra: pip install 'strands-agents[{self._extra}]'"

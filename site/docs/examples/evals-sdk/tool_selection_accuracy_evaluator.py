@@ -12,6 +12,7 @@ from strands_evals.telemetry import StrandsEvalsTelemetry
 telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
 memory_exporter = telemetry.in_memory_exporter
 
+
 # 1. Define a task function
 def user_task_function(case: Case) -> dict:
     agent = Agent(
@@ -26,6 +27,7 @@ def user_task_function(case: Case) -> dict:
     mapper = StrandsInMemorySessionMapper()
     session = mapper.map_to_session(finished_spans, session_id=case.session_id)
     return {"output": str(agent_response), "trajectory": session}
+
 
 # 2. Create test cases
 test_cases = [
@@ -46,6 +48,7 @@ evaluators = [ToolSelectionAccuracyEvaluator()]
 
 # 4. Create an experiment
 experiment = Experiment[str, str](cases=test_cases, evaluators=evaluators)
+
 
 # 5. Run evaluations
 async def main():

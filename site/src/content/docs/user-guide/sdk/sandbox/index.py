@@ -17,7 +17,6 @@ agent("List all files inside the current directory")
 # --8<-- [end:basic_usage]
 
 
-
 # --8<-- [start:programmatic_access]
 async def main():
     agent = Agent(sandbox=DockerSandbox("my-container-id"))
@@ -116,7 +115,11 @@ class FirecrackerSandbox(PosixShellSandbox):
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         proc = await asyncio.create_subprocess_exec(
-            "fc-exec", self.vm_id, "sh", "-c", command,
+            "fc-exec",
+            self.vm_id,
+            "sh",
+            "-c",
+            command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -130,6 +133,8 @@ class FirecrackerSandbox(PosixShellSandbox):
             stdout=stdout.decode(),
             stderr=stderr.decode(),
         )
+
+
 # --8<-- [end:custom_sandbox]
 
 
@@ -172,4 +177,6 @@ def get_tools(self) -> list[AgentTool]:
         make_file_editor(sandbox=self, name="sandbox_file_editor"),
         make_shell(sandbox=self, name="sandbox_shell"),
     ]
+
+
 # --8<-- [end:vend_tools]

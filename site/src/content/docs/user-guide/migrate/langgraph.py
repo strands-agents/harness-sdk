@@ -50,9 +50,7 @@ def run_case(case_id: str, prompt: str):
     builder.set_max_node_executions(10)
 
     # case_id is the session id: an interrupted graph resumes from it on the next call
-    builder.set_session_manager(
-        FileSessionManager(session_id=case_id, storage_dir="./cases/")
-    )
+    builder.set_session_manager(FileSessionManager(session_id=case_id, storage_dir="./cases/"))
     # The task text is what the model sees, so the case id is prefixed onto it.
     return builder.build()(f"Case {case_id}: {prompt}")
 

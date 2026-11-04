@@ -1,6 +1,8 @@
 import asyncio
+import http.server
 import subprocess
 import sys
+import threading
 import unittest.mock
 
 import anthropic
@@ -182,20 +184,51 @@ def test_imported_models_and_parent_client_option_are_rejected():
         BedrockModel.Messages(model_id="m", max_tokens=16, client=object())  # type: ignore[call-arg]
 
 
-def test_connection_pools_are_per_event_loop():
+def test_connection_pools_are_per_event_loop_and_released_with_the_loop():
     transport = BedrockPerLoopTransport(httpx.Limits())
+    pools = []
 
     async def send():
-        with unittest.mock.patch.object(
-            httpx.AsyncHTTPTransport, "handle_async_request", return_value=httpx.Response(200)
-        ):
+        with unittest.mock.patch.object(httpx.AsyncClient, "send", return_value=httpx.Response(200)):
             await transport.handle_async_request(httpx.Request("GET", "https://example.com"))
-        return transport._transports[asyncio.get_running_loop()]
+        pools.append(transport._clients[asyncio.get_running_loop()])
 
-    first = asyncio.run(send())
-    second = asyncio.run(send())
+    for _ in range(5):
+        asyncio.run(send())
 
-    assert first is not second
+    assert len({id(pool) for pool in pools}) == 5
+    assert len(transport._clients) == 1
+
+
+def test_proxy_environment_variables_apply(monkeypatch):
+    seen = []
+
+    class Proxy(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv("HTTP_PROXY", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    transport = BedrockPerLoopTransport(httpx.Limits())
+
+    async def get():
+        async with httpx.AsyncClient(transport=transport) as client:
+            return (await client.get("http://bedrock.invalid/path")).status_code
+
+    try:
+        assert asyncio.run(get()) == 200
+    finally:
+        server.shutdown()
+    assert seen == ["http://bedrock.invalid/path"]
 
 
 def test_missing_extra_is_reported_as_an_absent_attribute():

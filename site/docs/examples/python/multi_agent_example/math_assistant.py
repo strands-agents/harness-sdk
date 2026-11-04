@@ -31,16 +31,18 @@ Focus on clarity and systematic problem-solving while ensuring students understa
 def math_assistant(query: str) -> str:
     """
     Process and respond to math-related queries using a specialized math agent.
-    
+
     Args:
         query: A mathematical question or problem from the user
-        
+
     Returns:
         A detailed mathematical answer with explanations and steps
     """
     # Format the query for the math agent with clear instructions
-    formatted_query = f"Please solve the following mathematical problem, showing all steps and explaining concepts clearly: {query}"
-    
+    formatted_query = (
+        f"Please solve the following mathematical problem, showing all steps and explaining concepts clearly: {query}"
+    )
+
     try:
         print("Routed to Math Assistant")
         # Create the math agent with a shell for verifiable calculations.

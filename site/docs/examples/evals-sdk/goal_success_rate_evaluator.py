@@ -11,6 +11,7 @@ from strands_evals.telemetry import StrandsEvalsTelemetry
 telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
 memory_exporter = telemetry.in_memory_exporter
 
+
 # 1. Define a task function
 def user_task_function(case: Case) -> dict:
     agent = Agent(
@@ -38,6 +39,7 @@ evaluators = [GoalSuccessRateEvaluator()]
 
 # 4. Create a experiment
 experiment = Experiment[str, str](cases=test_cases, evaluators=evaluators)
+
 
 # 5. Run evaluations
 async def main():

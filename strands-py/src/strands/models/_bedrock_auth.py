@@ -3,7 +3,6 @@
 import asyncio
 import os
 import re
-import weakref
 from collections.abc import AsyncGenerator, Generator, Mapping
 from typing import Any
 
@@ -81,28 +80,30 @@ class BedrockPerLoopTransport(httpx.AsyncBaseTransport):
     """Keeps a connection pool per event loop; a pooled connection can't be reused from another loop.
 
     Synchronous ``Agent`` calls each run in a new event loop, so one long-lived client would otherwise send each
-    later call on a dead connection first and retry it.
+    later call on a dead connection first and retry it. Each pool is an ``httpx.AsyncClient``, so proxy environment
+    variables still apply.
     """
 
     def __init__(self, limits: httpx.Limits) -> None:
         self._limits = limits
-        self._transports: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncHTTPTransport] = (
-            weakref.WeakKeyDictionary()
-        )
+        self._clients: dict[asyncio.AbstractEventLoop, httpx.AsyncClient] = {}
 
     @override
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         loop = asyncio.get_running_loop()
-        transport = self._transports.get(loop)
-        if transport is None:
-            transport = self._transports[loop] = httpx.AsyncHTTPTransport(limits=self._limits)
-        return await transport.handle_async_request(request)
+        client = self._clients.get(loop)
+        if client is None:
+            # A finished loop's pool can't be used or closed from this loop; dropping it lets its sockets be freed.
+            self._clients = {other: pool for other, pool in self._clients.items() if not other.is_closed()}
+            client = self._clients[loop] = httpx.AsyncClient(limits=self._limits)
+        return await client.send(request, stream=True)
 
     @override
     async def aclose(self) -> None:
-        transport = self._transports.pop(asyncio.get_running_loop(), None)
-        if transport is not None:
-            await transport.aclose()
+        client = self._clients.pop(asyncio.get_running_loop(), None)
+        self._clients.clear()
+        if client is not None:
+            await client.aclose()
 
 
 def bedrock_api_key(api_key: str | None) -> str | None:

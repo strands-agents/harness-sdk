@@ -1,6 +1,5 @@
 """Storage documentation code examples."""
 
-
 # --8<-- [start:agent_level]
 from strands import Agent
 from strands.session import SnapshotSessionManager
@@ -23,9 +22,7 @@ from strands.storage import InMemoryStorage, S3Storage
 from strands.vended_plugins.context_offloader import ContextOffloader
 
 agent = Agent(
-    session_manager=SnapshotSessionManager(
-        "my-session", storage=S3Storage("my-bucket")
-    ),
+    session_manager=SnapshotSessionManager("my-session", storage=S3Storage("my-bucket")),
     plugins=[ContextOffloader(storage=InMemoryStorage())],
 )
 # --8<-- [end:per_plugin]

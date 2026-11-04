@@ -11,6 +11,7 @@ from strands_evals.telemetry import StrandsEvalsTelemetry
 telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
 memory_exporter = telemetry.in_memory_exporter
 
+
 async def async_example():
     """
     Demonstrates running evaluations asynchronously with run_evaluations_async.
