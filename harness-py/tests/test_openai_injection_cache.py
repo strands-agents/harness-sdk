@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from strands import tool
+from strands.memory import MemoryEntry
 from strands.models import CacheConfig, openai_responses
 
 from strands_harness import create_harness
@@ -32,6 +33,24 @@ def _input_text_blocks(request):
         for block in item.get("content", item.get("output", []))
         if isinstance(block, dict) and block.get("type") == "input_text"
     ]
+
+
+MEMORY = "Offline memory: releases ship on Thursdays."
+
+
+class _FixedMemory:
+    name = "memory"
+    description = None
+    max_search_results = None
+    writable = False
+    extraction = None
+
+    async def search(self, query, options=None):
+        return [MemoryEntry(content=MEMORY)]
+
+
+def _is_temporary(block):
+    return "<system-reminder>" in block["text"] or "<memory>" in block["text"]
 
 
 @pytest.fixture
@@ -95,7 +114,7 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
     agent = create_harness(
         model=model,
         session=False,
-        memory=False,
+        memory={"stores": [_FixedMemory()]},
         skills=False,
         builtin_tools=[],
         builtin_plugins=["environment", "todos"],
@@ -125,14 +144,17 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
         assert request["store"] is False
         assert "previous_response_id" not in request
         assert request["prompt_cache_options"]["mode"] == "explicit"
-        assert {spec["name"] for spec in request["tools"]} == {"read_status", "todo_write"}
+        assert {spec["name"] for spec in request["tools"]} == {"read_status", "todo_write", "search_memory"}
 
     # Every invocation gets fresh environment/todo context; only todos resurface on
     # the tool-result continuation because environment's trigger is userTurn.
     for request_index, label_index in enumerate([0, 1, 1, 2]):
         request = requests[request_index]
         blocks = _input_text_blocks(request)
-        reminders = [block for block in blocks if "<system-reminder>" in block["text"]]
+        reminders = [block for block in blocks if _is_temporary(block)]
+        memories = [block for block in reminders if MEMORY in block["text"]]
+        # Memory, like environment, is injected on user turns only, never on the tool continuation.
+        assert len(memories) == (0 if request_index == 2 else 1)
         todo_reminders = [block for block in reminders if "Your current todo list:" in block["text"]]
         assert len(todo_reminders) == 1
         assert todo_labels[label_index] in todo_reminders[0]["text"]
@@ -160,9 +182,7 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
     for previous, current in zip(requests[:-1], requests[1:], strict=True):
         stable_prefix = deepcopy(previous["input"])
         if stable_prefix[-1].get("role") == "user":
-            stable_prefix[-1]["content"] = [
-                block for block in stable_prefix[-1]["content"] if "<system-reminder>" not in block.get("text", "")
-            ]
+            stable_prefix[-1]["content"] = [block for block in stable_prefix[-1]["content"] if not _is_temporary(block)]
             if not stable_prefix[-1]["content"]:
                 stable_prefix.pop()
         assert current["input"][: len(stable_prefix)] == stable_prefix
@@ -186,6 +206,8 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
         for transient in [
             "<system-reminder>",
             "<environment>",
+            "<memory>",
+            MEMORY,
             project_context,
             *todo_labels,
             "prompt_cache_breakpoint",

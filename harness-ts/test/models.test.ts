@@ -599,11 +599,12 @@ describe('resolveModel', () => {
     'configures $spec caching=$caching without changing reasoning or search',
     async ({ spec, modelId, searchTool, caching }) => {
       const model = await resolve(spec, 'high', true, caching)
-      expect(model.getConfig()).toStrictEqual({
+      // contextWindowLimit comes from the SDK's model info, not the harness.
+      const { contextWindowLimit: _, ...config } = model.getConfig()
+      expect(config).toStrictEqual({
         modelId,
         ...(caching ? { cacheConfig: { strategy: 'auto' } } : {}),
         params: { reasoning: { effort: 'high' }, tools: [searchTool] },
-        contextWindowLimit: expect.any(Number),
       })
     }
   )

@@ -10,6 +10,8 @@ import type { TodoItem } from '../src/plugins/todos.js'
 
 const marker = { mode: 'explicit' }
 const projectDoc = 'Offline cache regression project instructions.'
+const memoryEntry = 'Offline memory: releases ship on Thursdays.'
+const memoryStore = { name: 'memory', writable: false, search: async () => [{ content: memoryEntry }] }
 
 function todos(content: string): TodoItem[] {
   return [{ content, activeForm: content, status: 'in_progress' }]
@@ -110,7 +112,7 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
           systemPrompt: 'Keep this system prompt stable.',
           builtinTools: [],
           builtinPlugins: ['todos', 'environment'],
-          memory: false,
+          memory: { stores: [memoryStore] },
           skills: false,
           session: false,
           contextManager: false,
@@ -126,7 +128,12 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
         await agent.invoke('First question')
         expect(requests).toHaveLength(1)
         expect(requests[0]?.input).toEqual([
-          userInput('First question', temporaryText(firstTodos[0]!.content), temporaryText('Date: 2030-01-01')),
+          userInput(
+            'First question',
+            temporaryText(firstTodos[0]!.content),
+            temporaryText('Date: 2030-01-01'),
+            temporaryText(memoryEntry)
+          ),
         ])
         expect(JSON.stringify(requests[0]?.input)).toContain(projectDoc)
         expect(JSON.stringify(requests[0]?.input)).toContain('Working directory: ')
@@ -143,7 +150,12 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
         expect(requests[1]?.input).toEqual([
           userInput('First question'),
           { role: 'assistant', content: 'First answer' },
-          userInput('Second question', temporaryText(secondTodos[0]!.content), temporaryText('Date: 2030-01-02')),
+          userInput(
+            'Second question',
+            temporaryText(secondTodos[0]!.content),
+            temporaryText('Date: 2030-01-02'),
+            temporaryText(memoryEntry)
+          ),
         ])
         const toolCall = {
           type: 'function_call',
@@ -185,7 +197,12 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
           toolCall,
           toolOutput,
           { role: 'assistant', content: 'Second answer' },
-          userInput('Third question', temporaryText(thirdTodos[0]!.content), temporaryText('Date: 2030-01-03')),
+          userInput(
+            'Third question',
+            temporaryText(thirdTodos[0]!.content),
+            temporaryText('Date: 2030-01-03'),
+            temporaryText(memoryEntry)
+          ),
         ])
         const latestInput = JSON.stringify(requests[3]?.input)
         expect(latestInput).not.toContain(firstTodos[0]!.content)
@@ -197,7 +214,14 @@ describe('OpenAI and Bedrock Mantle harness prompt caching (offline)', () => {
         expect(history.slice(0, firstHistory.length)).toEqual(firstHistory)
         expect(history).toHaveLength(8)
         const durableHistory = JSON.stringify(history)
-        for (const temporary of ['<system-reminder>', '<environment>', projectDoc, 'prompt_cache_breakpoint']) {
+        for (const temporary of [
+          '<system-reminder>',
+          '<environment>',
+          '<memory>',
+          memoryEntry,
+          projectDoc,
+          'prompt_cache_breakpoint',
+        ]) {
           expect(durableHistory).not.toContain(temporary)
         }
         // The tool's arguments/result are durable; externally seeded todo reminders are not.
