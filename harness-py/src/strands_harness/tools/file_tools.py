@@ -14,6 +14,8 @@ import re
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext, ToolResult
 
+from .media_validation import document_problem, image_problem
+
 _READ_DEFAULT_LIMIT = 2000
 
 # Media formats the SDK accepts in tool results, selected by file extension because the sandbox seam
@@ -100,44 +102,52 @@ def make_read(media: bool = True):
         _validate_path(path)
         extension = _extension(path)
 
-        if extension in _IMAGE_EXTENSIONS:
+        note = ""
+        if extension in _IMAGE_EXTENSIONS or extension in _DOCUMENT_FORMATS:
             data = await tool_context.agent.sandbox.read_file(path)
-            image_format = _sniff_image_format(data)
-            if image_format is None:
+            if extension in _IMAGE_EXTENSIONS:
+                kind, media_format = "Image", _sniff_image_format(data)
+                expected = f"a valid {media_format} image" if media_format else "a png, jpeg, gif, or webp image"
+                problem = image_problem(data, media_format) if media_format else ""
+            else:
+                kind, media_format = "Document", extension
+                expected, problem = f"a valid {extension} document", document_problem(data, extension)
+
+            if problem is None:
+                if not media:
+                    return _media_placeholder(path, kind, media_format, len(data))
+                block = {"format": media_format, "source": {"bytes": data}}
+                if kind == "Document":
+                    block["name"] = _document_name(path)
+                return {
+                    "toolUseId": tool_context.tool_use["toolUseId"],
+                    "status": "success",
+                    "content": [{kind.lower(): block}],
+                }
+
+            # Sending it as media would fail the request and every later one, so show text or raise instead.
+            reason = f": {problem}" if problem else ""
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                content = ""
+            if not content or "\x00" in content:
                 raise ValueError(
-                    f"{path} has a .{extension} extension but its {len(data)} bytes are not a png, jpeg, gif, or webp "
-                    f"image. Identify it with `file`; if it is text, read it with `cat`."
+                    f"{path} has a .{extension} extension but its {len(data)} bytes are not {expected}{reason}. "
+                    "Identify it with `file`."
                 )
-            if not media:
-                return _media_placeholder(path, "Image", image_format, len(data))
-            return {
-                "toolUseId": tool_context.tool_use["toolUseId"],
-                "status": "success",
-                "content": [{"image": {"format": image_format, "source": {"bytes": data}}}],
-            }
-
-        if extension in _DOCUMENT_FORMATS:
-            data = await tool_context.agent.sandbox.read_file(path)
-            if not media:
-                return _media_placeholder(path, "Document", extension, len(data))
-            return {
-                "toolUseId": tool_context.tool_use["toolUseId"],
-                "status": "success",
-                "content": [
-                    {"document": {"format": extension, "name": _document_name(path), "source": {"bytes": data}}}
-                ],
-            }
-
-        content = await tool_context.agent.sandbox.read_text(path)
+            note = f"[{path} is not {expected}{reason}. Showing it as text.]\n"
+        else:
+            content = await tool_context.agent.sandbox.read_text(path)
 
         lines = content.split("\n")
         start = max(0, (offset - 1) if offset else 0)
         count = limit if limit is not None else _READ_DEFAULT_LIMIT
         window = lines[start : start + count]
         if not window:
-            return f"[File has {len(lines)} lines; offset {offset} is past the end.]"
+            return f"{note}[File has {len(lines)} lines; offset {offset} is past the end.]"
 
-        numbered = _number_lines("\n".join(window), start + 1)
+        numbered = note + _number_lines("\n".join(window), start + 1)
         if start > 0 or start + count < len(lines):
             shown_end = start + len(window)
             numbered += f"\n[Showing lines {start + 1}-{shown_end} of {len(lines)}. Use offset/limit to read more.]"
