@@ -127,6 +127,7 @@ def test_api_key_is_sent_instead_of_signing(captured_requests):
 def test_anthropic_credentials_in_the_environment_are_not_sent(monkeypatch, boto_session, captured_requests):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+    monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Gateway-Auth: gw-secret")
     model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=boto_session)
     _serve(model, captured_requests)
 
@@ -135,6 +136,29 @@ def test_anthropic_credentials_in_the_environment_are_not_sent(monkeypatch, boto
     headers = captured_requests[0].headers
     assert "x-api-key" not in headers
     assert "anthropic-token" not in headers["authorization"]
+    assert "x-gateway-auth" not in headers
+
+
+def test_client_args_are_forwarded(boto_session, captured_requests):
+    model = BedrockModel.Messages(
+        model_id="m",
+        max_tokens=16,
+        boto_session=boto_session,
+        client_args={"timeout": 12.5, "default_headers": {"X-Trace": "t1"}},
+    )
+    _serve(model, captured_requests)
+
+    Agent(model=model, callback_handler=None)("hello")
+
+    assert model.client.timeout == 12.5
+    assert captured_requests[0].headers["x-trace"] == "t1"
+    assert "x-trace" in captured_requests[0].headers["authorization"]
+
+
+@pytest.mark.parametrize("owned", ["base_url", "api_key", "auth_token"])
+def test_client_args_cannot_override_bedrock_settings(owned):
+    with pytest.raises(ValueError, match="set by BedrockModel.Messages"):
+        BedrockModel.Messages(model_id="m", max_tokens=16, client_args={owned: "x"})
 
 
 @pytest.mark.parametrize(

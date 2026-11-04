@@ -238,7 +238,10 @@ class BedrockModel(Model):
 
     ConverseStream: ClassVar[type["BedrockModel"]]
     """This class: the Converse API."""
-    Messages = _BedrockMessagesAttribute()
+    if TYPE_CHECKING:
+        from ._bedrock_messages import BedrockMessagesModel as Messages
+    else:
+        Messages = _BedrockMessagesAttribute()
     """The Anthropic Messages API on Bedrock; see :class:`~strands.models._bedrock_messages.BedrockMessagesModel`."""
 
     class BedrockConfig(BaseModelConfig, total=False):
