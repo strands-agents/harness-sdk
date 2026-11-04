@@ -32,9 +32,7 @@ class _BedrockAnthropicClient(anthropic.AsyncAnthropic):
     credentials (assumed roles, SSO) keep working for the life of the agent.
     """
 
-    def __init__(
-        self, *, base_url: str, region: str, boto_session: boto3.Session, api_key: str | None = None
-    ) -> None:
+    def __init__(self, *, base_url: str, region: str, boto_session: boto3.Session, api_key: str | None = None) -> None:
         # The placeholder keeps the SDK from reading Anthropic credentials from the environment; auth_headers
         # below decides what is actually sent.
         super().__init__(api_key=api_key or "sigv4", base_url=base_url)
@@ -72,8 +70,6 @@ class BedrockMessagesModel(AnthropicModel):
     Use it as ``BedrockModel.Messages`` for Anthropic features that the Converse API does not offer. Model settings
     are those of :class:`~strands.models.anthropic.AnthropicModel`.
     """
-
-    _client_class = _BedrockAnthropicClient
 
     def __init__(
         self,
@@ -115,3 +111,7 @@ class BedrockMessagesModel(AnthropicModel):
         }
         super().__init__(client_args=client_args, **model_config)
         logger.debug("endpoint=<%s>, region=<%s> | bedrock messages client created", endpoint, region)
+
+    @override
+    def _create_client(self, client_args: dict[str, Any]) -> anthropic.AsyncAnthropic:
+        return _BedrockAnthropicClient(**client_args)

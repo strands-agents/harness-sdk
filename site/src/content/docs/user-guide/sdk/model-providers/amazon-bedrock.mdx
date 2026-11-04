@@ -783,6 +783,38 @@ const model = new BedrockModel({
 </Tab>
 </Tabs>
 
+### Anthropic Messages API
+
+Some Claude features, such as compaction and mid-conversation system messages, are available on Bedrock through the Anthropic Messages API but not through Converse. `BedrockModel.Messages` sends requests to that API instead. It takes the same settings as the [Anthropic provider](./anthropic) and authenticates with your AWS credentials:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+model = BedrockModel.Messages(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    max_tokens=4096,
+    region_name="us-west-2",
+)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+`BedrockModel.Messages` is not yet available in TypeScript.
+</Tab>
+</Tabs>
+
+Each request is signed with the current credentials of `boto_session` (or the default credential chain), so refreshable credentials keep working. Pass `api_key` to use an Amazon Bedrock API key instead. Set `endpoint="bedrock-mantle"` to use the Mantle endpoint; model ids differ between endpoints (for example `anthropic.claude-haiku-4-5` on Mantle). Guardrails and the other Converse-only options on this page don't apply. `BedrockModel.ConverseStream` is another name for `BedrockModel`.
+
+Requires the `anthropic` extra: `pip install 'strands-agents[anthropic]'`.
+
 ### OpenAI-Compatible Endpoints (Mantle)
 
 Mantle is not a separate service or model catalog: it is Amazon Bedrock's second

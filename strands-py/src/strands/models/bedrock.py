@@ -26,7 +26,10 @@ from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
 from ..tools.structured_output._structured_output_context import json_object_from_message
-from ..types.content import CachePoint, ContentBlock, Messages, ReasoningContentBlock, SystemContentBlock
+
+# Aliased because ``BedrockModel.Messages`` would shadow the type inside the class body.
+from ..types.content import CachePoint, ContentBlock, ReasoningContentBlock, SystemContentBlock
+from ..types.content import Messages as MessageList
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -458,7 +461,7 @@ class BedrockModel(Model):
 
     def format_request(
         self,
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
@@ -919,7 +922,7 @@ class BedrockModel(Model):
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
 
-    def _find_last_user_text_message_index(self, messages: Messages) -> int | None:
+    def _find_last_user_text_message_index(self, messages: MessageList) -> int | None:
         """Find the index of the last user message containing text or image content.
 
         This is used for guardrail_latest_message to ensure that guardContent wrapping
@@ -959,7 +962,7 @@ class BedrockModel(Model):
             return True
         return signed
 
-    def _format_bedrock_messages(self, messages: Messages, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
+    def _format_bedrock_messages(self, messages: MessageList, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
         """Format messages for Bedrock API compatibility.
 
         This function ensures messages conform to Bedrock's expected format by:
@@ -1475,7 +1478,7 @@ class BedrockModel(Model):
     @override
     async def count_tokens(
         self,
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
@@ -1557,7 +1560,7 @@ class BedrockModel(Model):
     @override
     async def stream(
         self,
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt: str | None = None,
         *,
@@ -1644,7 +1647,7 @@ class BedrockModel(Model):
     def _stream(
         self,
         callback: Callable[..., None],
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
@@ -1936,7 +1939,7 @@ class BedrockModel(Model):
     async def structured_output(
         self,
         output_model: type[T],
-        prompt: Messages,
+        prompt: MessageList,
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, T | Any], None]:
