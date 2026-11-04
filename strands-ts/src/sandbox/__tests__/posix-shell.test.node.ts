@@ -179,18 +179,20 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
     })
 
     it('throws SandboxPathNotFoundError on nonexistent file', async () => {
-      await expect(sandbox.readFile('nope.txt')).rejects.toBeInstanceOf(SandboxPathNotFoundError)
+      const error = await sandbox.readFile('nope.txt').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(SandboxPathNotFoundError)
+      expect(error).toMatchObject({ message: 'Path not found: nope.txt', code: 'ENOENT' })
     })
 
     it('throws an is-a-directory error, not SandboxPathNotFoundError, on a directory', async () => {
       fs.mkdirSync(`${TEST_DIR}/subdir`)
       const error = await sandbox.readFile('subdir').catch((e: unknown) => e)
       expect(error).not.toBeInstanceOf(SandboxPathNotFoundError)
-      expect(error).toEqual(new Error('Is a directory: subdir'))
+      expect(error).toEqual(Object.assign(new Error('Is a directory: subdir'), { code: 'EISDIR' }))
     })
 
     it.skipIf(process.getuid?.() === 0)(
-      'does not report a file under an unsearchable directory as missing',
+      'throws EACCES, not SandboxPathNotFoundError, for a file under an unsearchable directory',
       async () => {
         fs.mkdirSync(`${TEST_DIR}/locked`)
         fs.writeFileSync(`${TEST_DIR}/locked/secret.txt`, 'x')
@@ -198,12 +200,23 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
         try {
           const error = await sandbox.readFile('locked/secret.txt').catch((e: unknown) => e)
           expect(error).not.toBeInstanceOf(SandboxPathNotFoundError)
-          expect((error as Error).message).toMatch(/Permission denied/)
+          expect(error).toEqual(Object.assign(new Error('Permission denied: locked/secret.txt'), { code: 'EACCES' }))
         } finally {
           fs.chmodSync(`${TEST_DIR}/locked`, 0o700)
         }
       }
     )
+
+    it.skipIf(process.getuid?.() === 0)('throws EACCES for an unreadable file', async () => {
+      fs.writeFileSync(`${TEST_DIR}/secret.txt`, 'x')
+      fs.chmodSync(`${TEST_DIR}/secret.txt`, 0o200)
+      try {
+        const error = await sandbox.readFile('secret.txt').catch((e: unknown) => e)
+        expect(error).toEqual(Object.assign(new Error('Permission denied: secret.txt'), { code: 'EACCES' }))
+      } finally {
+        fs.chmodSync(`${TEST_DIR}/secret.txt`, 0o600)
+      }
+    })
 
     it('does not report a failed cd as a missing file', async () => {
       fs.writeFileSync(`${TEST_DIR}/real.txt`, 'x')

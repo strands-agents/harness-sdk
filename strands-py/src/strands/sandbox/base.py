@@ -148,7 +148,8 @@ class Sandbox(ABC):
         Raises:
             FileNotFoundError: If the file does not exist.
             IsADirectoryError: If ``path`` is a directory.
-            OSError: If the file cannot be read.
+            PermissionError: If the file is not accessible.
+            OSError: If the file cannot be read for another reason.
         """
         ...
 

@@ -32,10 +32,14 @@ export class SandboxAbortError extends Error {
 }
 
 /**
- * Thrown by {@link Sandbox.listFiles} and {@link Sandbox.readFile} when the path does not exist, distinguishing
+ * Thrown by {@link Sandbox.listFiles} and `PosixShellSandbox.readFile` when the path does not exist, distinguishing
  * genuine absence from permission or transport failures (which throw plain errors).
+ *
+ * `code` is `'ENOENT'`, so checks written for Node fs errors also match it.
  */
 export class SandboxPathNotFoundError extends Error {
+  readonly code = 'ENOENT'
+
   constructor(path: string) {
     super(`Path not found: ${path}`)
     this.name = 'SandboxPathNotFoundError'

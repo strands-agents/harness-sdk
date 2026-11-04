@@ -78,17 +78,21 @@ export abstract class PosixShellSandbox extends Sandbox {
 
   async readFile(path: string): Promise<Uint8Array> {
     const quoted = shellQuote(path)
-    // Exit 77 = missing (not when the parent is unsearchable: that is EACCES), 78 = directory; locale-independent.
-    // The braces keep a backend's `cd ... &&` prefix out of the `||`.
+    // Locale-independent exit codes: 77 = missing, 78 = directory, 79 = permission denied (an unsearchable
+    // parent also makes `test -e` false). The braces keep a backend's `cd ... &&` prefix out of the `||`.
     const result = await this.execute(
-      `{ test -e ${quoted} || { parent=$(dirname -- ${quoted}); test -d "$parent" && ! test -x "$parent" || exit 77; }; ` +
-        `test -d ${quoted} && exit 78; base64 < ${quoted}; }`
+      `{ test -e ${quoted} || { parent=$(dirname -- ${quoted}); test -d "$parent" && ! test -x "$parent" && exit 79; exit 77; }; ` +
+        `test -d ${quoted} && exit 78; test -r ${quoted} || exit 79; base64 < ${quoted}; }`
     )
     if (result.exitCode === 77) {
       throw new SandboxPathNotFoundError(path)
     }
+    // Node-style `code`s match the errors NotASandboxLocalEnvironment surfaces from fs.
     if (result.exitCode === 78) {
-      throw new Error(`Is a directory: ${path}`)
+      throw Object.assign(new Error(`Is a directory: ${path}`), { code: 'EISDIR' })
+    }
+    if (result.exitCode === 79) {
+      throw Object.assign(new Error(`Permission denied: ${path}`), { code: 'EACCES' })
     }
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || `Failed to read file: ${path}`)

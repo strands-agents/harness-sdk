@@ -12,6 +12,7 @@ Windows.
 """
 
 import asyncio
+import errno
 import os
 import shlex
 import sys
@@ -388,23 +389,42 @@ async def test_read_nonexistent_file_raises(sandbox):
 @pytest.mark.asyncio
 async def test_read_directory_raises_is_a_directory(sandbox, tmp_path):
     (tmp_path / "subdir").mkdir()
-    with pytest.raises(IsADirectoryError, match="Is a directory"):
+    with pytest.raises(IsADirectoryError) as exc_info:
         await sandbox.read_file("subdir")
+    assert (exc_info.value.errno, exc_info.value.filename, str(exc_info.value)) == (
+        errno.EISDIR,
+        "subdir",
+        "[Errno 21] Is a directory: 'subdir'",
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses directory permissions")
-async def test_read_file_under_unsearchable_directory_is_not_reported_missing(sandbox, tmp_path):
+async def test_read_file_under_unsearchable_directory_raises_permission_error(sandbox, tmp_path):
     locked = tmp_path / "locked"
     locked.mkdir()
     (locked / "secret.txt").write_text("x")
     locked.chmod(0o600)
     try:
-        with pytest.raises(OSError, match="Permission denied") as exc_info:
+        with pytest.raises(PermissionError) as exc_info:
             await sandbox.read_file("locked/secret.txt")
-        assert not isinstance(exc_info.value, FileNotFoundError)
+        assert str(exc_info.value) == "[Errno 13] Permission denied: 'locked/secret.txt'"
     finally:
         locked.chmod(0o700)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses file permissions")
+async def test_read_unreadable_file_raises_permission_error(sandbox, tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("x")
+    secret.chmod(0o200)
+    try:
+        with pytest.raises(PermissionError) as exc_info:
+            await sandbox.read_file("secret.txt")
+        assert (exc_info.value.errno, exc_info.value.filename) == (errno.EACCES, "secret.txt")
+    finally:
+        secret.chmod(0o600)
 
 
 @pytest.mark.asyncio

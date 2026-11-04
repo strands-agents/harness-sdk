@@ -157,20 +157,23 @@ class PosixShellSandbox(Sandbox, ABC):
         Raises:
             SandboxPathNotFoundError: If the file does not exist.
             IsADirectoryError: If ``path`` is a directory.
-            OSError: If the file cannot be read, or the command succeeds but its output
+            PermissionError: If the file or its parent directory is not accessible.
+            OSError: If the file cannot be read for another reason, or the command succeeds but its output
                 is not valid base64 (e.g. a shell profile or locale warning prepended text to stdout).
         """
         quoted = shlex.quote(path)
-        # Exit 77 = missing (not when the parent is unsearchable: that is EACCES), 78 = directory; locale-independent.
-        # The braces keep a backend's `cd ... &&` prefix out of the `||`.
+        # Locale-independent exit codes: 77 = missing, 78 = directory, 79 = permission denied (an unsearchable
+        # parent also makes `test -e` false). The braces keep a backend's `cd ... &&` prefix out of the `||`.
         result = await self.execute(
             f'{{ test -e {quoted} || {{ parent=$(dirname -- {quoted}); test -d "$parent" && ! test -x "$parent" '
-            f"|| exit 77; }}; test -d {quoted} && exit 78; base64 < {quoted}; }}"
+            f"&& exit 79; exit 77; }}; test -d {quoted} && exit 78; test -r {quoted} || exit 79; base64 < {quoted}; }}"
         )
         if result.exit_code == 77:
             raise SandboxPathNotFoundError(path)
         if result.exit_code == 78:
             raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
+        if result.exit_code == 79:
+            raise PermissionError(errno.EACCES, "Permission denied", path)
         if result.exit_code != 0:
             raise OSError(result.stderr or f"Failed to read file: {path}")
         # base64 output is ASCII-safe text; strip whitespace (line wrapping) and decode.
