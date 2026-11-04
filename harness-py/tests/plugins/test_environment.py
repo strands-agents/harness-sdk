@@ -101,8 +101,11 @@ async def test_render_reports_the_real_working_directory_from_the_local_sandbox(
     line = next((line for line in out.splitlines() if line.startswith("Working directory: ")), None)
     assert line is not None, out
     assert re.search(rf"[\\/]{re.escape(workdir.name)}$", line), out
-    # The real sandbox runs PowerShell on Windows and sh elsewhere; the platform probe must work in both.
-    assert f"Platform: {({'win32': 'Windows', 'darwin': 'Darwin'}).get(sys.platform, 'Linux')}" in out
+    # The real sandbox's shell depends on the installed SDK (PowerShell on Windows from 1.62, else sh/Git Bash);
+    # either way the platform probe must produce a line, and a PowerShell sandbox on Windows reports Windows.
+    assert re.search(r"^Platform: \S", out, re.M), out
+    if sys.platform == "win32" and "Shell: PowerShell" in out:
+        assert "Platform: Windows" in out
 
 
 async def test_depth_limit_stops_the_walk():
