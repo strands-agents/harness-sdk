@@ -47,7 +47,7 @@ function model(wire: AnthropicWire, config: Record<string, unknown> = {}, compac
     client: wire.client(),
     modelId: 'claude-sonnet-5-5',
     maxTokens: 4096,
-    ...(compacts && { modelInfo: { capabilities: { serverSideSummary: true } } }),
+    modelInfo: { capabilities: { serverSideSummary: compacts } },
     ...config,
   })
 }
@@ -61,7 +61,7 @@ function canonical(value: unknown): string {
 }
 
 describe('AnthropicModel.summarize', () => {
-  it('uses the base summary when the capability is not set, as before', async () => {
+  it('uses the base summary when the capability is off', async () => {
     const wire = new AnthropicWire().reply(SUMMARY_TEXT)
     const result = await model(wire, {}, false).summarize(body(), { systemPrompt: SYSTEM, toolSpecs: TOOLS })
     expect(wire.bodies[0]).not.toHaveProperty('compaction')

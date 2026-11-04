@@ -41,8 +41,11 @@ export interface HarnessOptions {
   apiKey: string
   mainModelId: string
   summarizerModelId: string
-  /** `true` opts both models into native compaction; `undefined` leaves the capability unset (base control). */
-  serverSideSummary: true | undefined
+  /**
+   * Set on both models; `false` turns server-side summaries off (base control) and `undefined` leaves the shared model
+   * info's value.
+   */
+  serverSideSummary: boolean | undefined
   /** Thinking config of both models; the base control may leave `block_binding` to the account. */
   thinking: Record<string, unknown>
   /** Model calls (1-based) that a summary pass precedes. */
@@ -99,7 +102,9 @@ export async function runCompactionTask(options: HarnessOptions): Promise<Harnes
     maxTokens,
     params: { thinking: options.thinking },
     betas: [BINDING_BETA],
-    ...(options.serverSideSummary && { modelInfo: { capabilities: { serverSideSummary: true } } }),
+    ...(options.serverSideSummary !== undefined && {
+      modelInfo: { capabilities: { serverSideSummary: options.serverSideSummary } },
+    }),
   })
   const summarizer = new AnthropicModel({
     client,
@@ -107,7 +112,9 @@ export async function runCompactionTask(options: HarnessOptions): Promise<Harnes
     maxTokens,
     params: { thinking: options.thinking },
     betas: [BINDING_BETA],
-    ...(options.serverSideSummary && { modelInfo: { capabilities: { serverSideSummary: true } } }),
+    ...(options.serverSideSummary !== undefined && {
+      modelInfo: { capabilities: { serverSideSummary: options.serverSideSummary } },
+    }),
   })
 
   const readStep = tool({

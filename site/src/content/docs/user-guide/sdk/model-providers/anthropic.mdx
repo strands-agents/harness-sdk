@@ -398,7 +398,7 @@ for per-model thresholds.
 
 The experimental [`ContextManager`](../context-management/) can summarize a conversation's opening messages with Anthropic's compaction API instead of a client-side summary. The API returns a compaction block, which the SDK stores in the summary message and sends back on later requests. Earlier thinking blocks stay valid because the history before them is never rewritten.
 
-Set <Syntax py="server_side_summary" ts="serverSideSummary" /> on the model and add a summarize strategy:
+Claude Haiku 5.5, Sonnet 5.5, Opus 5.5 and Fable 5.1 declare <Syntax py="server_side_summary" ts="serverSideSummary" /> in the SDK's model info, so a summarize strategy is all they need:
 
 <Tabs>
 <Tab label="Python">
@@ -406,14 +406,9 @@ Set <Syntax py="server_side_summary" ts="serverSideSummary" /> on the model and 
 ```python
 from strands import Agent
 from strands.experimental.context_manager import Offload
-from strands.models import ModelCapabilities, ModelInfo
 from strands.models.anthropic import AnthropicModel
 
-model = AnthropicModel(
-    model_id="claude-sonnet-5",
-    max_tokens=4096,
-    model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
-)
+model = AnthropicModel(model_id="claude-sonnet-5-5", max_tokens=4096)
 
 agent = Agent(
     model=model,
@@ -432,6 +427,8 @@ agent = Agent(
 ```
 </Tab>
 </Tabs>
+
+For another Claude model that supports compaction, set the capability yourself with <Syntax py="model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))" ts="modelInfo: { capabilities: { serverSideSummary: true } }" />. Set it to <Syntax py="False" ts="false" /> to use the client-side summary instead.
 
 The agent's model must declare the capability. If summaries use a different model, through <Syntax py="agent.aux_model" ts="agent.auxModel" /> or the strategy's `model`, that model must declare it too. Otherwise the strategy uses the client-side summary.
 

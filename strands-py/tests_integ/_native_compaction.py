@@ -76,8 +76,8 @@ class HarnessOptions:
         api_key: First-party Anthropic API key.
         main_model_id: Model that runs the task.
         summarizer_model_id: Model the summarize strategy calls.
-        server_side_summary: ``True`` opts both models into native compaction; ``None`` leaves the capability
-            unset (base control).
+        server_side_summary: Set on both models; ``False`` turns server-side summaries off (base control) and
+            ``None`` leaves the shared model info's value.
         thinking: Thinking config of both models; the base control may leave ``block_binding`` to the account.
         pass_before_calls: Model calls (1-based) that a summary pass precedes.
         pin_before_first_pass: Index of a message to pin before the first pass, so the summary joins a pinned
@@ -88,7 +88,7 @@ class HarnessOptions:
     api_key: str
     main_model_id: str
     summarizer_model_id: str
-    server_side_summary: Literal[True] | None
+    server_side_summary: bool | None
     thinking: dict[str, Any]
     pass_before_calls: list[int]
     pin_before_first_pass: int | None = None
@@ -426,7 +426,7 @@ def _options_from_environment(api_key: str, native: bool) -> HarnessOptions:
         api_key=api_key,
         main_model_id=os.environ.get("STRANDS_INTEG_MAIN_MODEL_ID", SONNET_5_5),
         summarizer_model_id=os.environ.get("STRANDS_INTEG_SUMMARIZER_MODEL_ID", HAIKU_5_5),
-        server_side_summary=True if native else None,
+        server_side_summary=native,
         thinking=STRICT_THINKING if native else BASE_THINKING,
         pass_before_calls=PASSES,
         pin_before_first_pass=int(pin_index) if pin_index else None,

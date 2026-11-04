@@ -108,12 +108,12 @@ describe.skipIf(skip)('native compaction on preserved-thinking models (live)', (
     expect(report.finalText).toContain(`DONE ${EXPECTED_SUM}`)
   })
 
-  it('takes the client-side path when the capability is unset (control)', async () => {
+  it('takes the client-side path when the capability is off (control)', async () => {
     const report = await runCompactionTask({
       apiKey: apiKey(),
       mainModelId,
       summarizerModelId,
-      serverSideSummary: undefined,
+      serverSideSummary: false,
       thinking: { type: 'adaptive' },
       passBeforeCalls: PASSES,
     })

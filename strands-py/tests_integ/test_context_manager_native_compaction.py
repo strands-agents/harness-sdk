@@ -115,8 +115,8 @@ async def test_keeps_a_pinned_message_after_the_server_side_summary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_takes_the_client_side_path_when_the_capability_is_unset() -> None:
-    report = await harness.run_compaction_task(_options(server_side_summary=None, thinking=harness.BASE_THINKING))
+async def test_takes_the_client_side_path_when_the_capability_is_off() -> None:
+    report = await harness.run_compaction_task(_options(server_side_summary=False, thinking=harness.BASE_THINKING))
     print(f"base control | {harness.describe_report(report)}")
 
     assert report.of_kind("compaction") == []

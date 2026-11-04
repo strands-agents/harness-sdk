@@ -3296,12 +3296,12 @@ class AnthropicWire:
             "http_client": httpx.AsyncClient(transport=httpx.MockTransport(self._handle)),
             **({"default_headers": default_headers} if default_headers else {}),
         }
-        model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)) if compacts else None
+        model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=compacts))
         return AnthropicModel(
             client_args=client_args,
             model_id="claude-sonnet-5-5",
             max_tokens=4096,
-            **({"model_info": model_info} if model_info else {}),
+            model_info=model_info,
             **config,
         )
 

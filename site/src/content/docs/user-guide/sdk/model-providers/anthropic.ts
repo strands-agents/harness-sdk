@@ -115,11 +115,7 @@ async function promptCaching() {
 
 async function serverSideSummary() {
   // --8<-- [start:server_side_summary]
-  const model = new AnthropicModel({
-    modelId: 'claude-sonnet-5',
-    maxTokens: 4096,
-    modelInfo: { capabilities: { serverSideSummary: true } },
-  })
+  const model = new AnthropicModel({ modelId: 'claude-sonnet-5-5', maxTokens: 4096 })
 
   const agent = new Agent({
     model,

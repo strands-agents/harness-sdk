@@ -25,7 +25,7 @@ const report = await runCompactionTask({
   apiKey,
   mainModelId: process.env.STRANDS_INTEG_MAIN_MODEL_ID ?? SONNET_5_5,
   summarizerModelId: process.env.STRANDS_INTEG_SUMMARIZER_MODEL_ID ?? HAIKU_5_5,
-  serverSideSummary: native ? true : undefined,
+  serverSideSummary: native,
   thinking: native ? STRICT_THINKING : { type: 'adaptive' },
   passBeforeCalls: [4, 7],
   ...(process.env.STRANDS_INTEG_PIN_INDEX && { pinBeforeFirstPass: Number(process.env.STRANDS_INTEG_PIN_INDEX) }),
