@@ -138,6 +138,8 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
     assert client.responses.create.await_count == 4
     assert [len(history) for history in histories_after_invocation] == [2, 6, 8]
     assert agent.model.stateful is False
+    # The system prompt starts the cached prefix, so per-turn context must never reach it.
+    assert len({request["instructions"] for request in requests}) == 1
     for request in requests:
         assert request["model"] == model_id
         assert request["stream"] is True

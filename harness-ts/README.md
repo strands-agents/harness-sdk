@@ -348,7 +348,7 @@ await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search 
 earlier turns) are cached where the provider supports it, so you're not billed to reprocess them
 on every turn. The harness configures Amazon Bedrock and Anthropic direct with automatic cache points covering
 messages and tools, and OpenAI and Bedrock Mantle with the SDK cache config (a per-session cache key,
-plus cache points on GPT-5.6 and later); Google and LiteLLM cache server-side on their own, so
+plus cache points on GPT-5.6+ models listed in the SDK model info); Google and LiteLLM cache server-side on their own, so
 there's nothing to configure or turn off. The only targets that can't cache are `ollama` and a
 pre-built `Model` instance (its provider is unknown): there the default is a no-op with a logged
 warning, but asking for caching explicitly (`caching: 'auto'` / `true`) throws for an unsupported
