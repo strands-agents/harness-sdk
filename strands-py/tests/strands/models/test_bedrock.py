@@ -389,6 +389,28 @@ def test__init__auto_populates_context_window_limit_default_model(bedrock_client
     assert model.get_config().get("context_window_limit") == 1_000_000
 
 
+@pytest.mark.parametrize("model_id", ["global.anthropic.claude-sonnet-5-5", "us.anthropic.claude-haiku-5-5"])
+def test_model_info_turns_server_side_summaries_off(bedrock_client, model_id):
+    _ = bedrock_client
+
+    assert BedrockModel(model_id=model_id).model_info.capabilities.server_side_summary is False
+
+
+def test_warns_that_server_side_summaries_are_not_supported_when_the_config_asks_for_them(bedrock_client, caplog):
+    _ = bedrock_client
+
+    with caplog.at_level(logging.WARNING):
+        model = BedrockModel(
+            model_id="m1", model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
+        )
+
+    assert model.model_info.capabilities.server_side_summary is False
+    assert (
+        "model_id=<m1> | server-side summaries are not supported through the bedrock converse api"
+        " | using client-side summaries instead"
+    ) in caplog.messages
+
+
 def test__init__auto_populates_context_window_limit_from_the_model_info_override(bedrock_client):
     _ = bedrock_client
 
@@ -4327,7 +4349,7 @@ def test_model_info_treats_a_non_string_model_id_as_unknown(bedrock_client):
     model = BedrockModel(model_id=None)
 
     assert "context_window_limit" not in model.get_config()
-    assert model.model_info == ModelInfo()
+    assert model.model_info == ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
     assert model.stateful is False
 
 
@@ -4347,7 +4369,7 @@ def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_mode
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities == ModelCapabilities()
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
     assert model._cache_strategy == "anthropic"
 
 
@@ -4359,7 +4381,7 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
         cache_config=CacheConfig(strategy="auto"),
     )
 
-    assert model.model_info.capabilities == ModelCapabilities()
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
     assert model._cache_strategy is None
 
 

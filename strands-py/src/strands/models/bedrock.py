@@ -370,15 +370,17 @@ class BedrockModel(Model):
         """Reports OpenAI models as implicitly cached, which a ``model_info`` override still wins over.
 
         The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches
-        them implicitly and rejects cache points.
+        them implicitly and rejects cache points. Server-side summaries are always off, since Converse
+        does not support them.
         """
-        if "openai." not in str(self.config.get("model_id", "")).lower():
-            return super().model_info
-        return ModelInfo.merge(
-            super().model_info,
-            ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
-            self.config.get("model_info"),
-        )
+        info = super().model_info
+        if "openai." in str(self.config.get("model_id", "")).lower():
+            info = ModelInfo.merge(
+                info,
+                ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
+                self.config.get("model_info"),
+            )
+        return ModelInfo.merge(info, ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)))
 
     @property
     def _cache_strategy(self) -> str | None:
@@ -413,6 +415,13 @@ class BedrockModel(Model):
         # __init__ delegates here, so the caller sits at stacklevel 4 on the constructor path.
         _warn_on_deprecated_cache_tools(model_config, stacklevel=4)
         self.config.update(model_config)
+        model_info = model_config.get("model_info")
+        if model_info is not None and model_info.capabilities.server_side_summary is True:
+            logger.warning(
+                "model_id=<%s> | server-side summaries are not supported through the bedrock converse api"
+                " | using client-side summaries instead",
+                self.config.get("model_id"),
+            )
 
     @override
     def get_config(self) -> BedrockConfig:

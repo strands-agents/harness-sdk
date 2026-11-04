@@ -404,6 +404,15 @@ export interface BedrockModelOptions extends BedrockModelConfig {
   apiKey?: string
 }
 
+/** Warns when the config asks for server-side summaries, which the Converse API does not support. */
+function warnOnServerSideSummary(modelConfig: BedrockModelConfig, modelId: string | undefined): void {
+  if (modelConfig.modelInfo?.capabilities?.serverSideSummary !== true) return
+  logger.warn(
+    `model_id=<${modelId}> | server-side summaries are not supported through the bedrock converse api` +
+      ' | using client-side summaries instead'
+  )
+}
+
 /**
  * AWS Bedrock model provider implementation.
  *
@@ -493,6 +502,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (modelConfig.modelId === undefined) {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.bedrock.modelId))
     }
+    warnOnServerSideSummary(modelConfig, this._config.modelId)
 
     // Warn only when the value comes from the shared model info, not when the user pinned it through `modelInfo`.
     const maxTokens = this.getConfig().maxTokens
@@ -529,11 +539,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   /**
    * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
    * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
-   * implicitly and rejects cache points.
+   * implicitly and rejects cache points. Server-side summaries are always off, since Converse does
+   * not support them.
    */
   override get modelInfo(): ModelInfo {
-    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
-    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+    const info = this.modelId?.toLowerCase().includes('openai.')
+      ? mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+      : super.modelInfo
+    return mergeModelInfo(info, { capabilities: { serverSideSummary: false } })
   }
 
   /**
@@ -652,6 +665,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    */
   updateConfig(modelConfig: BedrockModelConfig): void {
     this._config = { ...this._config, ...modelConfig }
+    warnOnServerSideSummary(modelConfig, this._config.modelId)
   }
 
   /**

@@ -414,6 +414,28 @@ describe('BedrockModel', () => {
       })
     })
 
+    it.each(['global.anthropic.claude-sonnet-5-5', 'us.anthropic.claude-haiku-5-5'])(
+      'turns server-side summaries off: %s',
+      (modelId) => {
+        expect(new BedrockModel({ modelId }).modelInfo.capabilities?.serverSideSummary).toBe(false)
+      }
+    )
+
+    it('warns that server-side summaries are not supported when the config asks for them', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      try {
+        const provider = new BedrockModel({ modelId: 'm1', modelInfo: { capabilities: { serverSideSummary: true } } })
+
+        expect(provider.modelInfo.capabilities?.serverSideSummary).toBe(false)
+        expect(warn).toHaveBeenCalledWith(
+          'model_id=<m1> | server-side summaries are not supported through the bedrock converse api' +
+            ' | using client-side summaries instead'
+        )
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
     it('auto-populates contextWindowLimit from the modelInfo override over the shared value', () => {
       const provider = new BedrockModel({
         modelId: 'anthropic.claude-sonnet-4-6',
