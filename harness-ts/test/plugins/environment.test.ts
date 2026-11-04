@@ -129,10 +129,13 @@ describe('EnvironmentContext', () => {
       expect(line, out).toBeDefined()
       const name = basename(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       expect(line, out).toMatch(new RegExp(`[\\\\/]${name}$`))
-      // The real sandbox's shell depends on the installed SDK (PowerShell on Windows from 1.22, else sh/Git Bash);
-      // either way the platform probe must produce a line, and a PowerShell sandbox on Windows reports Windows.
-      expect(out).toMatch(/^Platform: \S/m)
-      if (process.platform === 'win32' && out.includes('Shell: PowerShell')) expect(out).toContain('Platform: Windows')
+      // On Windows the shell depends on the installed SDK: PowerShell from 1.22, Git Bash (MINGW64_NT) before it.
+      const platform = /^Platform: (.+)$/m.exec(out)?.[1]
+      if (process.platform === 'win32') {
+        expect(platform).toMatch(out.includes('Shell: PowerShell') ? /^Windows$/ : /^(MINGW|MSYS|CYGWIN)/)
+      } else {
+        expect(platform).toBe(process.platform === 'darwin' ? 'Darwin' : 'Linux')
+      }
     } finally {
       process.chdir(cwd)
       rmSync(dir, { recursive: true, force: true })
