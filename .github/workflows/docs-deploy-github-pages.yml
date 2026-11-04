@@ -62,6 +62,20 @@ jobs:
           fi
           [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
+      - name: Resolve external documentation snapshot
+        id: external_docs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npm run external-docs:update-lock
+          revision="$(node -p "require('./external-docs.lock.json').products.find(({ id }) => id === 'strands-box')?.revision ?? ''")"
+          if ! [[ "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The resolved Box documentation revision is not a full lowercase commit SHA."
+            exit 1
+          fi
+          echo "box_revision=$revision" >> "$GITHUB_OUTPUT"
+          printf 'Box documentation snapshot: `%s`\n' "$revision" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build CMS
         run: npm run cms:build
         env:
@@ -77,6 +91,9 @@ jobs:
 
       - name: Deploy to gh-pages branch
         working-directory: .
+        env:
+          BOX_DOCS_REVISION: ${{ steps.external_docs.outputs.box_revision }}
+          SITE_REVISION: ${{ github.sha }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -85,5 +102,5 @@ jobs:
           rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
           cd gh-pages-deploy
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from ${{ github.sha }}"
+          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION (Box docs $BOX_DOCS_REVISION)"
           git push origin HEAD:gh-pages

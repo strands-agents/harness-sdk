@@ -159,12 +159,18 @@ a lock-only update cannot promote pages.
 `external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
 prefix, sidebar label, and publication status. `external-docs.lock.json` maps product IDs to
 immutable commit SHAs.
-Site builds read the SHA, never the moving ref. The scheduled
-`docs-external-sync.yml` workflow resolves each tracked ref, validates and builds the imported
-pages with the same `npm run cms:build` path as docs CI, then opens or updates a draft lock-only PR
-when a compatible SHA changes. An upstream stable commit may be pinned while the site keeps the
-pages in preview. A site-side promotion fails generation until the upstream status is also
-`stable`. The workflow summary and PR body link to each upstream old-to-new commit comparison.
+Ordinary CI and local site builds read the committed SHA, never the moving ref. At the start of a
+manual production deploy, `docs-deploy-github-pages.yml` resolves each tracked ref once and writes
+the result to the job's temporary lock file. The rest of that deploy generates and publishes from
+the same immutable snapshot, and any resulting `gh-pages` commit records the Box revision.
+Upstream Box commits do not trigger site rebuilds.
+
+The manually dispatched `docs-external-sync.yml` workflow remains available to validate a newer
+snapshot with the same `npm run cms:build` path as docs CI and open or update a draft lock-only PR.
+This refreshes the committed baseline used by CI; it is not required for production deployment.
+An upstream stable commit may be pinned while the site keeps the pages in preview. A site-side
+promotion fails generation until the upstream status is also `stable`. The workflow summary and PR
+body link to each upstream old-to-new commit comparison.
 
 #### Generated layout
 
