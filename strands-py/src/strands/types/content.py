@@ -57,7 +57,7 @@ class ReasoningContentBlock(TypedDict, total=False):
 
     Attributes:
         reasoningText: The reasoning that the model used to return the output.
-        redactedContent: The content in the reasoning that was signature by the model provider for safety reasons.
+        redactedContent: The content in the reasoning that was encrypted by the model provider for safety reasons.
     """
 
     reasoningText: ReasoningTextBlock
