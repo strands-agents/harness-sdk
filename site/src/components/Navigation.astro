@@ -1173,6 +1173,14 @@ const learnCategories = [
       inerted.forEach((el) => (el.inert = true));
     };
 
+    const positionMobileMenu = () => {
+      if (!navInner) return;
+      // Include the homepage announcement offset, but reserve the full bar
+      // height while a hidden header is sliding back into view.
+      const bottom = Math.max(navInner.getBoundingClientRect().bottom, navInner.offsetHeight);
+      mobileMenu.style.top = `${bottom}px`;
+    };
+
     const setMenuOpen = (open: boolean) => {
       mobileMenu.classList.toggle('is-open', open);
       setPageInert(open);
@@ -1182,11 +1190,14 @@ const learnCategories = [
       // not the page behind it (the menu can overflow the viewport).
       document.body.style.overflow = open ? 'hidden' : '';
       if (open) {
-        // Pin the fixed overlay directly below the header. Its height, not its
-        // rect, so a header still sliding back in doesn't skew the position.
-        const bottom = navInner?.offsetHeight ?? 0;
-        mobileMenu.style.top = `${bottom}px`;
+        window.addEventListener('resize', positionMobileMenu);
+        // Focus-driven scrolling can still move the page with body overflow hidden.
+        window.addEventListener('scroll', positionMobileMenu, { passive: true });
+        positionMobileMenu();
         revealCurrent();
+      } else {
+        window.removeEventListener('resize', positionMobileMenu);
+        window.removeEventListener('scroll', positionMobileMenu);
       }
     };
 
