@@ -19,11 +19,6 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import {
-  TURN_SCOPED_SYSTEM_BETA,
-  hasTurnScopedSystemMessage,
-  turnScopedSystemMessage,
-} from './turn-scoped-system-messages.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -70,6 +65,19 @@ const MAX_PAUSE_TURN_CONTINUATIONS = 10
  */
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
+/**
+ * Beta that lets a mid-conversation system message carry `clear_at`.
+ *
+ * @see https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+ */
+const TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
+
+/** A system message cleared at the next user message. The SDK types lack `clear_at`. */
+interface TurnScopedSystemMessage extends Anthropic.MessageParam {
+  role: 'system'
+  content: Anthropic.TextBlockParam[]
+  clear_at: 'next_user_message'
+}
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
 // API version 2026-10-21 removed the sampling params and rejects document blocks in assistant messages.
@@ -603,7 +611,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _buildRequestOptions(request: Anthropic.MessageStreamParams): Anthropic.RequestOptions | undefined {
     const required = [
       ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
-      ...(hasTurnScopedSystemMessage(request.messages) ? [TURN_SCOPED_SYSTEM_BETA] : []),
+      ...(request.messages.some((message) => 'clear_at' in message) ? [TURN_SCOPED_SYSTEM_BETA] : []),
     ]
     let betas = this._config.betas ?? []
     // Request headers replace client headers of the same name, so betas set on the client are carried over.
@@ -1233,4 +1241,20 @@ function requestMessages(
     if (!systemMessage || message.role !== 'user' || kept[index + 1]?.message.role === 'user') return [message]
     return [message, systemMessage]
   })
+}
+
+/**
+ * The message's injected text as a system message the model reads only until a later user message exists. Once
+ * cleared, it stays in the request but renders nothing, so the history before every later assistant turn is sent
+ * unchanged. Never carries `cache_control`: a cleared message is not part of any cache key.
+ *
+ * @param message - A message of the conversation
+ * @returns The system message, or `undefined` when the message has no injected text
+ */
+function turnScopedSystemMessage(message: Message): TurnScopedSystemMessage | undefined {
+  const content = message.content.flatMap((block): Anthropic.TextBlockParam[] =>
+    block.type === 'injectedBlock' ? [{ type: 'text', text: block.injected.text }] : []
+  )
+  if (content.length === 0) return undefined
+  return { role: 'system', content, clear_at: 'next_user_message' }
 }
