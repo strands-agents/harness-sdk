@@ -64,7 +64,7 @@ from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E40
 from ._defaults import resolve_config_metadata  # noqa: E402
 from ._model_info import ModelCapabilities, ModelInfo  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
-from ._openai_cache import apply_cache_config  # noqa: E402
+from ._openai_cache import CACHE_LIFETIMES, apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
 from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
@@ -156,12 +156,14 @@ class OpenAIResponsesModel(Model):
                 When True, count_tokens() calls the OpenAI API for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
             cache_config: Prompt-caching configuration. OpenAI routes cache reads on
-                ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` only when it names
-                an OpenAI retention value. On models whose ``model_info`` says they take cache points
-                (GPT-5.6 and later), message checkpoints keep per-call injected content out of the
-                cache; ``strategy="auto"`` or ``"anthropic"`` places them and ``messages_ttl=False``
-                disables them. ``tools_ttl`` and ``system_prompt_ttl`` have no effect. An explicit
-                ``prompt_cache_key``/``prompt_cache_retention`` in ``params`` takes precedence.
+                ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` when it names an
+                OpenAI retention value (``prompt_cache_retention``). On models whose ``model_info`` says
+                they take cache points (GPT-5.6 and later), message checkpoints keep per-call injected
+                content out of the cache; ``strategy="auto"`` or ``"anthropic"`` places them and
+                ``messages_ttl=False`` disables them. There, a ``"30m"``/``"12h"`` ``messages_ttl`` sets
+                each checkpoint's ``ttl`` and such a ``ttl`` sets ``prompt_cache_options.ttl``.
+                ``tools_ttl`` and ``system_prompt_ttl`` have no effect. Native caching fields in
+                ``params`` take precedence.
         """
 
         model_id: str
@@ -605,7 +607,9 @@ class OpenAIResponsesModel(Model):
             and "input" not in cast(dict[str, Any], self.config.get("params", {}))
         )
         input_items, explicit_cache = (
-            self._format_cacheable_request_messages(messages, dynamic_trailing_blocks)
+            self._format_cacheable_request_messages(
+                messages, dynamic_trailing_blocks, cast(CacheConfig, cache_config).messages_ttl
+            )
             if cache_messages
             else (self._format_request_messages(messages), False)
         )
@@ -694,17 +698,21 @@ class OpenAIResponsesModel(Model):
 
     @classmethod
     def _format_cacheable_request_messages(
-        cls, messages: Messages, dynamic_trailing_blocks: int
+        cls, messages: Messages, dynamic_trailing_blocks: int, messages_ttl: bool | str | None = None
     ) -> tuple[list[dict[str, Any]], bool]:
         """Format messages with a cache checkpoint on the last input part of each durable user message.
 
         The final user message's last ``dynamic_trailing_blocks`` blocks are temporary: they go after the
         checkpoint and after any tool outputs, so a changing injection never shifts the cached prefix.
+        A ``messages_ttl`` naming a cache lifetime becomes each checkpoint's ``ttl``.
 
         Returns:
             The input items, and whether the request should default ``prompt_cache_options.mode`` to explicit.
             Without a checkpoint or a temporary suffix, implicit caching stays so the request still caches.
         """
+        checkpoint = (
+            {"mode": "explicit", "ttl": messages_ttl} if messages_ttl in CACHE_LIFETIMES else {"mode": "explicit"}
+        )
         input_items: list[dict[str, Any]] = []
         has_checkpoints = False
         skipped: Counter[str] = Counter()
@@ -720,7 +728,7 @@ class OpenAIResponsesModel(Model):
             if part is not None:
                 # Mark every durable user message, not just the latest: the provider bounds lookups and
                 # writes itself, and earlier markers keep the previous request's cache entry reachable.
-                part["prompt_cache_breakpoint"] = {"mode": "explicit"}
+                part["prompt_cache_breakpoint"] = dict(checkpoint)
                 has_checkpoints = True
             if dynamic_count:
                 tail = cls._format_request_messages(

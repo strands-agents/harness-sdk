@@ -32,7 +32,7 @@ import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
-import { applyCacheConfig } from './cache.js'
+import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 import type { ModelInfo } from '../model-info.js'
 
@@ -41,7 +41,7 @@ export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 /** Input content types that accept `prompt_cache_breakpoint` (gpt-5.6+). */
 const CACHEABLE_INPUT_TYPES = new Set(['input_text', 'input_image', 'input_file'])
 
-type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit' } }
+type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit'; ttl?: string } }
 
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
 
@@ -71,7 +71,7 @@ export function formatResponsesRequest(
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
   const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
   const { input, explicitCache } = cacheMessages
-    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks)
+    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
     : { input: formatResponsesMessages(messages), explicitCache: false }
 
   // User `params` are spread first so provider-managed fields (asserted
@@ -155,13 +155,16 @@ export function formatResponsesRequest(
  *
  * The final user message's last `dynamicTrailingBlocks` blocks are temporary: they go after the
  * checkpoint and after any tool outputs, so a changing injection never shifts the cached prefix.
- * `explicitCache` reports whether the request should default `prompt_cache_options.mode` to explicit;
- * without a checkpoint or a temporary suffix, implicit caching stays so the request still caches.
+ * A `messagesTTL` naming a cache lifetime becomes each checkpoint's `ttl`. `explicitCache` reports
+ * whether the request should default `prompt_cache_options.mode` to explicit; without a checkpoint or
+ * a temporary suffix, implicit caching stays so the request still caches.
  */
 function formatCacheableResponsesMessages(
   messages: Message[],
-  dynamicTrailingBlocks = 0
+  dynamicTrailingBlocks = 0,
+  messagesTTL?: boolean | string
 ): { input: ResponseInputItem[]; explicitCache: boolean } {
+  const ttl = typeof messagesTTL === 'string' && CACHE_LIFETIMES.has(messagesTTL) ? { ttl: messagesTTL } : {}
   const input: ResponseInputItem[] = []
   let hasCheckpoints = false
   for (const [index, { role, content }] of messages.entries()) {
@@ -173,7 +176,7 @@ function formatCacheableResponsesMessages(
     if (part) {
       // Mark every durable user message, not just the latest: the provider bounds lookups and
       // writes itself, and earlier markers keep the previous request's cache entry reachable.
-      part.prompt_cache_breakpoint = { mode: 'explicit' }
+      part.prompt_cache_breakpoint = { mode: 'explicit', ...ttl }
       hasCheckpoints = true
     }
     if (dynamicCount > 0) {

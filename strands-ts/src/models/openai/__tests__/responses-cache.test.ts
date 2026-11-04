@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type OpenAI from 'openai'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { ImageBlock } from '../../../types/media.js'
@@ -7,6 +7,7 @@ import { OpenAIModel } from '../model.js'
 import type { OpenAIResponsesConfig } from '../types.js'
 import type { CacheConfig, StreamOptions } from '../../model.js'
 import type { ModelInfo } from '../../model-info.js'
+import { logger } from '../../../logging/logger.js'
 
 const marker = { mode: 'explicit' }
 const config: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', cacheConfig: {} }
@@ -24,6 +25,12 @@ function request(messages: Message[], options?: StreamOptions, overrides?: OpenA
 
 function input(messages: Message[], options?: StreamOptions): unknown {
   return (request(messages, options) as { input: unknown }).input
+}
+
+/** Expected input for a one-text user message, with `checkpoint` as its breakpoint when given. */
+function textInput(text: string, checkpoint?: object): unknown[] {
+  const part = { type: 'input_text', text, ...(checkpoint && { prompt_cache_breakpoint: checkpoint }) }
+  return [{ role: 'user', content: [part] }]
 }
 
 describe('Responses durable prompt caching', () => {
@@ -232,6 +239,57 @@ describe('Responses durable prompt caching', () => {
     const req = format(modelConfig, [user('question')])
     expect(req).not.toHaveProperty('prompt_cache_options')
     expect(JSON.stringify(req)).not.toContain('prompt_cache_breakpoint')
+  })
+
+  it.each<[CacheConfig, Record<string, unknown>, object, object]>([
+    [{ messagesTTL: '12h' }, {}, { mode: 'explicit', ttl: '12h' }, { mode: 'explicit' }],
+    [{ ttl: '12h' }, {}, marker, { mode: 'explicit', ttl: '12h' }],
+    [{ ttl: '12h', messagesTTL: '30m' }, {}, { mode: 'explicit', ttl: '30m' }, { mode: 'explicit', ttl: '12h' }],
+    // A caller-supplied lifetime wins over the configured one.
+    [{ ttl: '12h' }, { prompt_cache_options: { ttl: '30m' } }, marker, { mode: 'explicit', ttl: '30m' }],
+  ])('maps cache lifetimes for cacheConfig=%j params=%j', (cacheConfig, params, checkpoint, options) => {
+    const warnSpy = vi.spyOn(logger, 'warn')
+    const req = format({ modelId: 'gpt-6-sol', cacheConfig, params }, [user('question')])
+    expect(req).toStrictEqual({
+      model: 'gpt-6-sol',
+      input: textInput('question', checkpoint),
+      stream: true,
+      store: false,
+      prompt_cache_options: options,
+    })
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('applies a cache lifetime ttl without checkpoints', () => {
+    const req = format({ modelId: 'gpt-6-sol', cacheConfig: { ttl: '12h', messagesTTL: false } }, [user('question')])
+    expect(req).toStrictEqual({
+      model: 'gpt-6-sol',
+      input: textInput('question'),
+      stream: true,
+      store: false,
+      prompt_cache_options: { ttl: '12h' },
+    })
+  })
+
+  it('ignores an invalid messagesTTL and warns', () => {
+    const warnSpy = vi.spyOn(logger, 'warn')
+    const req = format({ modelId: 'gpt-6-sol', cacheConfig: { messagesTTL: '1h' } }, [user('question')])
+    expect(req).toHaveProperty('input', textInput('question', marker))
+    expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit' })
+    expect(warnSpy).toHaveBeenCalledWith(
+      'messages_ttl=<1h> | cacheConfig.messagesTTL is not an openai cache lifetime, ignoring'
+    )
+  })
+
+  it('keeps a retention literal ttl on models that take cache points', () => {
+    const req = format({ modelId: 'gpt-6-sol', cacheConfig: { ttl: '24h' } }, [user('question')])
+    expect(req).toHaveProperty('prompt_cache_retention', '24h')
+    expect(req).toHaveProperty('prompt_cache_options', { mode: 'explicit' })
+  })
+
+  it('does not map cache lifetimes on models without cache points', () => {
+    const req = format({ modelId: 'gpt-5.5', cacheConfig: { ttl: '12h', messagesTTL: '12h' } }, [user('question')])
+    expect(req).toStrictEqual({ model: 'gpt-5.5', input: textInput('question'), stream: true, store: false })
   })
 
   it.each([{ mode: 'implicit', ttl: '30m' }, { mode: 'explicit' }, { ttl: '30m' }])(

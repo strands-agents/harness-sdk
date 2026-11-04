@@ -2438,6 +2438,85 @@ def test_message_cache_preserves_native_options(options, messages):
     assert model.config["params"] == original
 
 
+def _text_input(text, checkpoint=None):
+    """Expected input for a one-text user message, with ``checkpoint`` as its breakpoint when given."""
+    part = {"type": "input_text", "text": text}
+    if checkpoint is not None:
+        part["prompt_cache_breakpoint"] = checkpoint
+    return [{"role": "user", "content": [part]}]
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "params", "checkpoint", "options"),
+    [
+        (CacheConfig(messages_ttl="12h"), {}, {"mode": "explicit", "ttl": "12h"}, {"mode": "explicit"}),
+        (CacheConfig(ttl="12h"), {}, {"mode": "explicit"}, {"mode": "explicit", "ttl": "12h"}),
+        (
+            CacheConfig(ttl="12h", messages_ttl="30m"),
+            {},
+            {"mode": "explicit", "ttl": "30m"},
+            {"mode": "explicit", "ttl": "12h"},
+        ),
+        # A caller-supplied lifetime wins over the configured one.
+        (
+            CacheConfig(ttl="12h"),
+            {"prompt_cache_options": {"ttl": "30m"}},
+            {"mode": "explicit"},
+            {"mode": "explicit", "ttl": "30m"},
+        ),
+    ],
+)
+def test_message_cache_maps_cache_lifetimes(cache_config, params, checkpoint, options, messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config, params=params)
+    request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test", checkpoint)
+    assert request["prompt_cache_options"] == options
+    assert "prompt_cache_retention" not in request
+    assert not captured_warnings
+
+
+def test_message_cache_lifetime_ttl_applies_without_checkpoints(messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(ttl="12h", messages_ttl=False))
+    request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test")
+    assert request["prompt_cache_options"] == {"ttl": "12h"}
+    assert not captured_warnings
+
+
+def test_message_cache_ignores_and_warns_on_invalid_messages_ttl(messages):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(messages_ttl="1h"))
+
+    with pytest.warns(UserWarning, match="not an openai cache lifetime"):
+        request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test", {"mode": "explicit"})
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+
+
+def test_message_cache_keeps_retention_literal_ttl(messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(ttl="24h"))
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_retention"] == "24h"
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert not captured_warnings
+
+
+def test_cache_lifetime_ttl_is_ignored_and_warned_without_cache_points(messages):
+    model = OpenAIResponsesModel(model_id="gpt-5.5", cache_config=CacheConfig(ttl="12h", messages_ttl="12h"))
+
+    with pytest.warns(UserWarning, match="not an openai retention value") as record:
+        request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test")
+    assert "prompt_cache_options" not in request
+    assert "prompt_cache_retention" not in request
+    # Without cache points, messages_ttl is reported as having no effect.
+    assert any("messages_ttl" in str(warning.message) for warning in record)
+
+
 @pytest.mark.parametrize(
     "cache_config",
     [

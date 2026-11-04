@@ -18,13 +18,21 @@ const RETENTION_LITERALS = ['in_memory', '24h'] as const
 type RetentionLiteral = (typeof RETENTION_LITERALS)[number]
 
 /**
+ * Minimum cache lifetimes that `prompt_cache_options.ttl` and `prompt_cache_breakpoint.ttl` accept on
+ * models that take cache points (GPT-5.6 and later); older models use `prompt_cache_retention` instead.
+ *
+ * @internal
+ */
+export const CACHE_LIFETIMES: ReadonlySet<string> = new Set(['30m', '12h'])
+
+/**
  * The `CacheConfig`-derived fields both OpenAI request shapes share.
  */
 interface CacheableRequest {
   prompt_cache_key?: string
-  // Deprecated in openai 6.45.0 in favor of prompt_cache_options.ttl, whose only accepted value today
-  // is '30m' — so '24h'/'in_memory' remain expressible only through this field.
   prompt_cache_retention?: RetentionLiteral | null
+  // Not yet in the openai typings; written only for models that take cache points.
+  prompt_cache_options?: Record<string, unknown>
 }
 
 /**
@@ -120,9 +128,10 @@ export function warnUnsupportedRetention(ttl: string): void {
  * Maps a `CacheConfig` onto an OpenAI request in place.
  *
  * An explicit value already present in `request` (carried in from the user's `params`) always wins;
- * this fills in only what `params` did not set. A `ttl` that is not an OpenAI retention literal is
- * ignored, and the placement fields (`strategy`, `toolsTTL`, `systemPromptTTL`, `messagesTTL`) have no
- * effect here.
+ * this fills in only what `params` did not set. On models that take cache points, a `ttl` naming a
+ * cache lifetime (`'30m'`/`'12h'`) becomes the default `prompt_cache_options.ttl`; otherwise a `ttl`
+ * naming a retention literal maps to `prompt_cache_retention`. Any other `ttl`, and a `messagesTTL`
+ * string that is not a cache lifetime, is ignored with a one-time warning.
  *
  * The prompt-cache routing key resolves as: the configured `cacheKey` wins when set to a string,
  * `false` opts out; otherwise it falls back to `strands-<sessionId>` when the agent carries a
@@ -146,8 +155,18 @@ export function applyCacheConfig(
     request.prompt_cache_key = openaiCache.cacheKey
   }
 
-  if (request.prompt_cache_retention === undefined) {
+  if (supportsMessageCaching && cacheConfig.ttl !== undefined && CACHE_LIFETIMES.has(cacheConfig.ttl)) {
+    request.prompt_cache_options = { ttl: cacheConfig.ttl, ...request.prompt_cache_options }
+  } else if (request.prompt_cache_retention === undefined) {
     if (openaiCache.retention !== undefined) request.prompt_cache_retention = openaiCache.retention
     else if (cacheConfig.ttl !== undefined) warnUnsupportedRetention(cacheConfig.ttl)
+  }
+
+  const { messagesTTL } = cacheConfig
+  if (supportsMessageCaching && typeof messagesTTL === 'string' && !CACHE_LIFETIMES.has(messagesTTL)) {
+    warnOnce(
+      logger,
+      `messages_ttl=<${messagesTTL}> | cacheConfig.messagesTTL is not an openai cache lifetime, ignoring`
+    )
   }
 }

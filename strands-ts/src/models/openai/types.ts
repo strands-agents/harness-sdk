@@ -56,9 +56,9 @@ interface OpenAIBaseConfig extends BaseModelConfig {
   /**
    * Prompt-caching configuration. On the Responses API, models whose `modelInfo` says they take cache
    * points (GPT-5.6 and later) cache durable conversation prefixes before temporary context;
-   * `messagesTTL: false` disables that placement. Duration strings do not set Responses checkpoint
-   * TTLs; use `params.prompt_cache_options.ttl`. Older models and Chat Completions use implicit
-   * caching. `cacheKey` maps to `prompt_cache_key`, and retention
+   * `messagesTTL: false` disables that placement. There, a `'30m'`/`'12h'` `messagesTTL` sets each
+   * checkpoint's `ttl` and such a `ttl` sets `prompt_cache_options.ttl`. Older models and Chat
+   * Completions use implicit caching. `cacheKey` maps to `prompt_cache_key`, and retention
    * literals map to `prompt_cache_retention`. Native caching fields in `params` take precedence.
    * Checkpoints do not remove injected content retained by stateful server-side conversations.
    */
