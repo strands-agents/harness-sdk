@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { Agent } from '../agent.js'
 import { AfterInvocationEvent, BeforeInvocationEvent, InterruptEvent } from '../../hooks/index.js'
+import { AgentStreamStage } from '../../middleware/index.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { tool } from '../../tools/tool-factory.js'
 import { CheckpointError, ConcurrentInvocationError, PendingInvocationCancelledError } from '../../errors.js'
 import { Message, TextBlock, type MessageData } from '../../types/messages.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
-import type { InvokeArgs } from '../../types/agent.js'
+import { AgentResult, type InvokeArgs } from '../../types/agent.js'
 
 /**
  * A tool whose callback suspends until `release()` is called, so tests can hold an
@@ -451,6 +452,47 @@ describe('concurrentInvocationMode', () => {
       expect(appendedIds).toEqual(queuedIds)
       // BeforeInvocation hooks see the same ids before the input is appended.
       expect(hookIds.slice(1)).toEqual(queuedIds)
+    })
+
+    it("a queued call's trackingIds do not leak into a resume pass when middleware short-circuits", async () => {
+      const gate = createGate()
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'gate', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'A' })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      const agent = new Agent({ model, tools: [gate.tool], printer: false, concurrentInvocationMode: 'queue' })
+      // 'b' is answered by middleware without reaching the agent loop, so its input is never appended.
+      agent.addMiddleware(AgentStreamStage, async function* (context, next) {
+        if (context.args !== 'b') return yield* next(context)
+        const lastMessage = new Message({ role: 'assistant', content: [new TextBlock('cached')] })
+        return { result: new AgentResult({ stopReason: 'endTurn', lastMessage, invocationState: {} }) }
+      })
+      let resumed = false
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (
+          event.result?.lastMessage.content[0] instanceof TextBlock &&
+          event.result.lastMessage.content[0].text === 'cached' &&
+          !resumed
+        ) {
+          resumed = true
+          event.resume = 'resume-input'
+        }
+      })
+
+      const first = agent.invoke('a')
+      await gate.started
+      const second = agent.invoke('b')
+      await until(() => agent.pendingInvocations.length === 1, 'b queued')
+      const queuedId = agent.pendingInvocations[0]!.messages[0]!.trackingId
+      gate.release()
+      await Promise.all([first, second])
+
+      const resumeInput = agent.messages.find(
+        (message) => message.content[0] instanceof TextBlock && message.content[0].text === 'resume-input'
+      )
+      expect(resumed).toBe(true)
+      expect(resumeInput).toBeDefined()
+      expect(resumeInput!.trackingId).not.toBe(queuedId)
     })
 
     it('rejects a blank prompt at enqueue time without disturbing the running invocation', async () => {

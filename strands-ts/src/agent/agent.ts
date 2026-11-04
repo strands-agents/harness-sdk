@@ -1054,8 +1054,9 @@ export class Agent implements LocalAgent, InvokableAgent {
 
   /**
    * Gives a queued call's input messages the trackingIds `pendingInvocations` showed for them,
-   * so a queued message keeps its identity when it lands in the transcript. The ids are cleared
-   * once the input is appended; a middleware that changed the number of messages gets fresh ids.
+   * so a queued message keeps its identity when it lands in the transcript. Ids are matched by
+   * position and cleared when the pass ends; a middleware that changed the number of messages
+   * gets fresh ids, and one that reorders them is not reconciled.
    */
   private _withQueuedTrackingIds(messages: Message[]): Message[] {
     const queuedIds = this._queuedInputTrackingIds
@@ -1527,6 +1528,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         } catch (error) {
           caughtError = error as Error
         } finally {
+          // Queued ids belong to this pass's input only, even if middleware skipped the append.
+          this._queuedInputTrackingIds = undefined
           // AfterInvocationEvent always fires — even on error or consumer break. Outside middleware.
           // Invoke hooks (so .resume can be set) but don't yield in finally (yields in finally
           // suspend the generator on consumer break instead of completing cleanup).

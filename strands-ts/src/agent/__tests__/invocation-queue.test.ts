@@ -159,4 +159,27 @@ describe('InvocationQueue', () => {
     queue.handoff()
     await cancel
   })
+
+  it('handoffResume splices the first queued resume out of order and leaves the rest in place', async () => {
+    const queue = new InvocationQueue()
+    expect(queue.handoffResume()).toBe(false)
+    const order: string[] = []
+    const plain = queue.wait({ mode: 'queue', messages: [], resumesInterrupt: false }).then(() => order.push('plain'))
+    const resume = queue.wait({ mode: 'queue', messages: [], resumesInterrupt: true }).then(() => order.push('resume'))
+    const urgent = queue
+      .wait({ mode: 'stopPrevious', messages: [], resumesInterrupt: false })
+      .then(() => order.push('urgent'))
+
+    expect(queue.handoffResume()).toBe(true)
+    await resume
+    expect(queue.handoffResume()).toBe(false)
+    expect(queue.list().map((entry) => entry.mode)).toEqual(['stopPrevious', 'queue'])
+    expect(queue.hasStopRequest()).toBe(true)
+
+    queue.handoff()
+    await urgent
+    queue.handoff()
+    await plain
+    expect(order).toEqual(['resume', 'urgent', 'plain'])
+  })
 })
