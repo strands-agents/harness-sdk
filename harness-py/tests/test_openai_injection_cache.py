@@ -64,7 +64,8 @@ def client(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    # boto3 reads AWS_DEFAULT_REGION (not AWS_REGION) when Mantle resolves its region.
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     client = AsyncMock()
     client_cls = MagicMock()
     client_cls.return_value.__aenter__.return_value = client
