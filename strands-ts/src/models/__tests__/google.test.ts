@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
+import { ApiError, GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
 import { ContextWindowOverflowError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
@@ -577,6 +577,44 @@ describe('GoogleModel', () => {
       })
 
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelNetworkError)
+    })
+
+    // #5744
+    const midStreamMessage =
+      'got status: RESOURCE_EXHAUSTED. {"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}'
+    it.each([
+      [
+        'an ApiError with a non-JSON body wrapped by @google/genai',
+        new ApiError({
+          message: JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } }),
+          status: 429,
+        }),
+      ],
+      ['a mid-stream ApiError', new ApiError({ message: midStreamMessage, status: 429 })],
+      [
+        'a mid-stream ApiError from another @google/genai module copy',
+        Object.assign(new Error(midStreamMessage), { name: 'ApiError', status: 429 }),
+      ],
+      [
+        'an error whose JSON message carries code 429',
+        new Error(JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } })),
+      ],
+    ])('throws ModelThrottledError for HTTP 429 from %s', async (_, error) => {
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw error
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toMatchObject({
+        name: 'ModelThrottledError',
+        cause: error,
+      })
     })
 
     it('rethrows unrecognized errors', async () => {
