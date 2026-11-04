@@ -58,9 +58,13 @@ class FakeSandbox {
 
 /** The SDK's local sandbox on Windows: commands run in PowerShell, which has no `uname`. */
 class PowerShellSandbox extends FakeSandbox {
+  platform = 'Windows'
   override async execute(command: string): Promise<ExecutionResult> {
     if (command === SHELL_PROBE) {
       return { type: 'executionResult', exitCode: 0, stdout: 'Desktop\r\n', stderr: '', outputFiles: [] }
+    }
+    if (command.startsWith('if ($IsLinux')) {
+      return { type: 'executionResult', exitCode: 0, stdout: `${this.platform}\r\n`, stderr: '', outputFiles: [] }
     }
     if (command.startsWith('uname')) {
       return {
@@ -125,6 +129,10 @@ describe('EnvironmentContext', () => {
       expect(line, out).toBeDefined()
       const name = basename(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       expect(line, out).toMatch(new RegExp(`[\\\\/]${name}$`))
+      // The real sandbox runs PowerShell on Windows and sh elsewhere; the platform probe must work in both.
+      expect(out).toContain(
+        `Platform: ${{ win32: 'Windows', darwin: 'Darwin', linux: 'Linux' }[process.platform as string]}`
+      )
     } finally {
       process.chdir(cwd)
       rmSync(dir, { recursive: true, force: true })
@@ -158,6 +166,14 @@ describe('EnvironmentContext', () => {
     expect(out).toContain('Platform: Windows')
     expect(out).toContain('Shell: PowerShell')
     expect(out).toContain('Working directory: C:\\Users\\me\\proj')
+  })
+
+  it('asks a pwsh sandbox for its platform instead of assuming Windows', async () => {
+    const sandbox = new PowerShellSandbox({}, { '.': [] }, '/work')
+    sandbox.platform = 'Linux'
+    const out = await renderEnvironment(fakeAgent(sandbox), {})
+    expect(out).toContain('Platform: Linux')
+    expect(out).toContain('Shell: PowerShell')
   })
 
   it('adds no shell line for an sh sandbox', async () => {

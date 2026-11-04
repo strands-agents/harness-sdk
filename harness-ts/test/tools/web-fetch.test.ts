@@ -23,7 +23,8 @@ vi.mock('@strands-agents/sdk', async (importActual) => {
   return { ...actual, Agent: FakeAgent }
 })
 
-const { makeWebFetch, SHELL_PROBE, shellOf } = await import('../../src/tools/web-fetch.js')
+const { makeWebFetch } = await import('../../src/tools/web-fetch.js')
+const { SHELL_PROBE, shellOf } = await import('../../src/sandbox.js')
 // The mock above swaps Agent for a fake; the end-to-end test needs a real agent's host sandbox.
 const { Agent: RealAgent } = await vi.importActual<typeof import('@strands-agents/sdk')>('@strands-agents/sdk')
 

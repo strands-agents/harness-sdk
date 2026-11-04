@@ -37,6 +37,9 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'target', '__pycache
 // Filenames collected during discovery and surfaced as nearby links.
 const DISCOVERED_FILES = ['AGENTS.md', 'README.md']
 
+// Platform probe for a PowerShell sandbox: `$IsLinux`/`$IsMacOS` are unset ($null) on Windows PowerShell 5.1.
+const PWSH_PLATFORM_PROBE = "if ($IsLinux -or $IsMacOS) { uname -s } else { 'Windows' }"
+
 interface Gathered {
   platform: string | undefined
   cwd: string | undefined
@@ -131,9 +134,9 @@ async function gather(agent: LocalAgent): Promise<Gathered> {
   }
   // Platform and cwd are read from the sandbox (via `uname` and `$PWD`), not the host process, so they
   // describe where the agent actually runs — a Docker or SSH sandbox, not the machine hosting it.
-  // `uname` does not exist in PowerShell, so a PowerShell sandbox is reported as Windows from the shell probe.
+  // `uname` does not exist in Windows PowerShell; pwsh 7 also runs on Linux and macOS, where it does.
   const shell = await shellOf(sandbox).catch(() => undefined)
-  const platform = shell === 'powershell' ? 'Windows' : await probe(sandbox, 'uname -s')
+  const platform = await probe(sandbox, shell === 'powershell' ? PWSH_PLATFORM_PROBE : 'uname -s')
   // `echo "$PWD"` prints a bare path in both sh and PowerShell; PowerShell's `pwd` prints a table.
   const cwd = await probe(sandbox, 'echo "$PWD"')
   const agentsMd = await readText(sandbox, 'AGENTS.md')

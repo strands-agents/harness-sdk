@@ -1,6 +1,7 @@
 """Tests for the EnvironmentContext plugin: what it injects and how it reads the sandbox."""
 
 import re
+import sys
 
 from strands.sandbox.types import ExecutionResult, FileInfo
 
@@ -42,9 +43,13 @@ class _FakeSandbox:
 class _PowerShellSandbox(_FakeSandbox):
     """The SDK's local sandbox on Windows: commands run in PowerShell, which has no ``uname``."""
 
+    platform = "Windows"
+
     async def execute(self, command: str, **kwargs: object) -> ExecutionResult:
         if command == _SHELL_PROBE:
             return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
+        if command.startswith("if ($IsLinux"):
+            return ExecutionResult(exit_code=0, stdout=f"{self.platform}\r\n", stderr="")
         if command.startswith("uname"):
             return ExecutionResult(exit_code=1, stdout="", stderr="The term 'uname' is not recognized")
         return ExecutionResult(exit_code=0, stdout=f"{self._cwd}\r\n", stderr="")
@@ -96,6 +101,8 @@ async def test_render_reports_the_real_working_directory_from_the_local_sandbox(
     line = next((line for line in out.splitlines() if line.startswith("Working directory: ")), None)
     assert line is not None, out
     assert re.search(rf"[\\/]{re.escape(workdir.name)}$", line), out
+    # The real sandbox runs PowerShell on Windows and sh elsewhere; the platform probe must work in both.
+    assert f"Platform: {({'win32': 'Windows', 'darwin': 'Darwin'}).get(sys.platform, 'Linux')}" in out
 
 
 async def test_depth_limit_stops_the_walk():
@@ -126,6 +133,14 @@ async def test_powershell_sandbox_reports_windows_and_the_shell():
     assert "Platform: Windows" in out
     assert "Shell: PowerShell" in out
     assert "Working directory: C:\\Users\\me\\proj" in out
+
+
+async def test_pwsh_sandbox_is_asked_for_its_platform_instead_of_assuming_windows():
+    sandbox = _PowerShellSandbox({}, {".": []}, cwd="/work")
+    sandbox.platform = "Linux"
+    out = await env._render(_FakeAgent(sandbox), {})
+    assert "Platform: Linux" in out
+    assert "Shell: PowerShell" in out
 
 
 async def test_sh_sandbox_adds_no_shell_line():

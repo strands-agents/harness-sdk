@@ -41,6 +41,9 @@ _SKIP_DIRS = frozenset({"node_modules", "dist", "build", "target", "__pycache__"
 # Filenames collected during discovery and surfaced as nearby links.
 _DISCOVERED_FILES = ("AGENTS.md", "README.md")
 
+# Platform probe for a PowerShell sandbox: ``$IsLinux``/``$IsMacOS`` are unset ($null) on Windows PowerShell 5.1.
+_PWSH_PLATFORM_PROBE = "if ($IsLinux -or $IsMacOS) { uname -s } else { 'Windows' }"
+
 
 class EnvironmentContext(Plugin):
     """Injects working-environment and project-doc context before each user turn.
@@ -109,12 +112,12 @@ async def _gather(
         # Defensive: normally a default local sandbox is present, but if the getter has none to fall
         # back to, still surface the date block without probing the environment.
         return None, None, None, None, [], []
-    # ``uname`` does not exist in PowerShell, so a PowerShell sandbox is reported as Windows from the shell probe.
+    # ``uname`` does not exist in Windows PowerShell; pwsh 7 also runs on Linux and macOS, where it does.
     try:
         shell: _SandboxShell | None = await _shell_of(sandbox)
     except Exception:
         shell = None
-    platform = "Windows" if shell == "powershell" else await _probe(sandbox, "uname -s")
+    platform = await _probe(sandbox, _PWSH_PLATFORM_PROBE if shell == "powershell" else "uname -s")
     # ``echo "$PWD"`` prints a bare path in both sh and PowerShell; PowerShell's ``pwd`` prints a table.
     cwd = await _probe(sandbox, 'echo "$PWD"')
     agents_md = await _read_text(sandbox, "AGENTS.md")

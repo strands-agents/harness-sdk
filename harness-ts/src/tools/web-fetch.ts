@@ -18,11 +18,8 @@ import { TextDecoder } from 'node:util'
 import { Agent, type Model, type Sandbox, tool, type Tool } from '@strands-agents/sdk'
 import { z } from 'zod'
 
-import { SHELL_PROBE, shellOf } from '../sandbox.js'
+import { shellOf } from '../sandbox.js'
 import type { WebFetchTransport } from '../types/agent.js'
-
-/** @internal Re-exported for tests. */
-export { SHELL_PROBE, shellOf }
 
 const USER_AGENT = 'strands-harness/1.0'
 const TIMEOUT_SECONDS = 30
