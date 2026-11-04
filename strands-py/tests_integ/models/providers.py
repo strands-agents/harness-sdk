@@ -84,7 +84,7 @@ bedrock_messages = ProviderInfo(
 )
 bedrock_chat_completions = ProviderInfo(
     id="bedrock_chat_completions",
-    factory=lambda: BedrockModel.ChatCompletions(model_id="openai.gpt-oss-120b-1:0"),
+    factory=lambda: BedrockModel.ChatCompletions(model_id="us.openai.gpt-5.5"),
 )
 cohere = ProviderInfo(
     id="cohere",
