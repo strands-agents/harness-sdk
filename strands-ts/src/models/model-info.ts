@@ -32,8 +32,8 @@ export interface ModelCapabilities {
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
   /**
-   * Whether the model summarizes history server-side through `Model.summarize`. The summarize strategy reads it on the
-   * summarizer model, and the provider reads it on the model that sends the stored summary, so set it on both.
+   * Whether the model summarizes history server-side through `Model.summarize`. The summarize strategy compacts
+   * server-side only when both the agent's model and its summarizer model declare it.
    */
   readonly serverSideCompaction?: boolean | undefined
 }

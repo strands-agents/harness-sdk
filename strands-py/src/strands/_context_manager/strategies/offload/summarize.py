@@ -224,15 +224,17 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Summarize each contiguous run of eligible messages into its own summary.
 
-        For a model with server-side compaction, the run right after message 0 is compacted together with message 0
-        into a message of its own.
+        When both the summarizer and the agent's model have server-side compaction, the run right after message 0 is
+        compacted together with message 0 into a message of its own.
         """
         model = self._resolve_model(context.agent)
         if not model:
             return False
         messages = context.messages
         runs = _runs(messages, await self._get_eligible_messages(context))
-        opening = _opening_run(messages, runs) if _compacts_server_side(model) else None
+        # The agent's model sends the stored block natively only when it declares the capability too.
+        native = _compacts_server_side(model) and _compacts_server_side(context.agent.model)
+        opening = _opening_run(messages, runs) if native else None
         acted = False
         # Last run first, so replacing a run leaves the earlier runs' positions unchanged.
         for run in reversed(runs):

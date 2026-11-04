@@ -460,6 +460,10 @@ describe('server-side compaction', () => {
     return model
   }
 
+  /** A context whose agent model also declares server-side compaction, so it sends the stored block natively. */
+  const nativeContext = (messages: Message[]): ContextState =>
+    makeContext(messages, 0.9, { stream: vi.fn(), modelInfo: { capabilities: { serverSideCompaction: true } } })
+
   const turns = (...values: string[]): Message[] =>
     values.map(
       (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
@@ -472,7 +476,7 @@ describe('server-side compaction', () => {
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
     const invocationContext = new InvocationContextImpl({})
 
-    expect(await strategy.apply({ ...makeContext(messages, 0.9, { stream: vi.fn() }), invocationContext })).toBe(true)
+    expect(await strategy.apply({ ...nativeContext(messages), invocationContext })).toBe(true)
 
     expect(model.summarize).toHaveBeenCalledOnce()
     expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2, a3])
@@ -501,7 +505,7 @@ describe('server-side compaction', () => {
     ]
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
     expect(model.summarize).toHaveBeenCalledOnce()
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
@@ -520,7 +524,7 @@ describe('server-side compaction', () => {
     const before = messages.map((message) => message.toJSON())
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
+    expect(await strategy.apply(nativeContext(messages))).toBe(false)
 
     expect(model.summarize).not.toHaveBeenCalled()
     expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
@@ -534,7 +538,7 @@ describe('server-side compaction', () => {
     const [task, a1, u2] = messages
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
     expect(vi.mocked(model.summarize).mock.calls[0]![0]).toEqual([task, a1, u2])
     expect(messages[0]).toBe(task)
@@ -552,9 +556,7 @@ describe('server-side compaction', () => {
     const model = compactingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     messages[3] = pinned('assistant', 'a3')
-    await Offload.summarize('*', { model })
-      .when({ utilization: 0.5, preserveRecent: 3 })
-      .apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+    await Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 }).apply(nativeContext(messages))
     messages.push(
       new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
       new Message({ role: 'user', content: [new TextBlock('u8')] })
@@ -562,7 +564,7 @@ describe('server-side compaction', () => {
     const before = messages.map((message) => message.toJSON())
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 2 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
+    expect(await strategy.apply(nativeContext(messages))).toBe(false)
 
     expect(model.summarize).toHaveBeenCalledOnce()
     expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
@@ -592,7 +594,7 @@ describe('server-side compaction', () => {
     const before = messages.map((message) => message.toJSON())
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
+    expect(await strategy.apply(nativeContext(messages))).toBe(false)
 
     expect(model.summarize).not.toHaveBeenCalled()
     expect(messages.map((message) => message.toJSON())).toStrictEqual(before)
@@ -610,7 +612,7 @@ describe('server-side compaction', () => {
     ]
     const strategy = Offload.summarize(['tool::read'], { model }).when({ utilization: 0.5 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
     expect(model.summarize).not.toHaveBeenCalled()
     expect(JSON.stringify(messages)).toContain('base summary')
@@ -624,7 +626,7 @@ describe('server-side compaction', () => {
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
     expect(model.summarize).toHaveBeenCalledOnce()
     expect(messages[0]!.content).toEqual([new TextBlock('task')])
@@ -636,12 +638,26 @@ describe('server-side compaction', () => {
     const model = compactingModel()
     const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
     const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
-    await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
+    await strategy.apply(nativeContext(messages))
     vi.mocked(model.summarize).mockClear()
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(false)
+    expect(await strategy.apply(nativeContext(messages))).toBe(false)
 
     expect(model.summarize).not.toHaveBeenCalled()
+  })
+
+  it('uses the base summary when only the summarizer declares server-side compaction', async () => {
+    const model = compactingModel()
+    model.addTurn({ type: 'textBlock', text: 'base summary' })
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+
+    expect(model.summarize).not.toHaveBeenCalled()
+    expect(messages[0]!.content).toEqual([new TextBlock('task')])
+    expect(JSON.stringify(messages)).toContain('base summary')
+    expect(JSON.stringify(messages)).not.toContain('providerData')
   })
 
   it('summarizes blocks with the base summary, not the override', async () => {
@@ -650,7 +666,7 @@ describe('server-side compaction', () => {
     const messages = [makeToolResultMessage('x'.repeat(2500 * 4 + 100))]
     const strategy = Offload.summarize('toolResults', { model })
 
-    expect(await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))).toBe(true)
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
 
     expect(model.summarize).not.toHaveBeenCalled()
     expect(((messages[0]!.content[0] as ToolResultBlock).content[0] as TextBlock).text).toContain('block summary')

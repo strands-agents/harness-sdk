@@ -675,6 +675,21 @@ class TestServerSideCompaction:
         assert "providerData" not in json.dumps(messages)
 
     @pytest.mark.asyncio
+    async def test_uses_the_base_summary_when_only_the_summarizer_compacts_server_side(self, compacting_agent):
+        summarizer = compacting_agent.model
+        compacting_agent.model = unittest.mock.MagicMock(model_info=ModelInfo())
+        messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
+        compacting_agent.messages = messages
+        strategy = Offload.summarize("*", {"model": summarizer}).when(utilization=0.5, preserve_recent=3)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=compacting_agent, utilization=0.9)) is True
+
+        summarizer.summarize.assert_not_awaited()
+        assert messages[0]["content"] == [{"text": "task"}]
+        assert any("Summary of content." in text for message in _texts(messages) for text in message)
+        assert "providerData" not in json.dumps(messages)
+
+    @pytest.mark.asyncio
     async def test_summarizes_blocks_with_the_base_summary(self, compacting_agent):
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),

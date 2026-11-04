@@ -77,8 +77,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   /**
-   * Summarizes each contiguous run of eligible messages into its own summary. For a model with server-side
-   * compaction, the run right after message 0 is compacted together with message 0 into a message of its own.
+   * Summarizes each contiguous run of eligible messages into its own summary. When both the summarizer and the
+   * agent's model have server-side compaction, the run right after message 0 is compacted together with message 0
+   * into a message of its own.
    */
   protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
     const model = this._resolveModel(context.agent)
@@ -86,7 +87,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const { messages } = context
     const runs = messageRuns(messages, await this._getEligibleMessages(context))
-    const opening = compactsServerSide(model) ? openingRun(messages, runs) : undefined
+    // The agent's model sends the stored block natively only when it declares the capability too.
+    const native = compactsServerSide(model) && compactsServerSide(context.agent.model)
+    const opening = native ? openingRun(messages, runs) : undefined
     let acted = false
     // Last run first, so replacing a run leaves the earlier runs' positions unchanged.
     for (const run of runs.reverse()) {
