@@ -36,7 +36,7 @@ export interface TurnScopedSystemMessage extends Anthropic.MessageParam {
  */
 export function turnScopedSystemMessage(message: Message): TurnScopedSystemMessage | undefined {
   const content = message.content.flatMap((block): Anthropic.TextBlockParam[] =>
-    block.type === 'injectedBlock' && block.injected.text ? [{ type: 'text', text: block.injected.text }] : []
+    block.type === 'injectedBlock' ? [{ type: 'text', text: block.injected.text }] : []
   )
   if (content.length === 0) return undefined
   return { role: 'system', content, clear_at: 'next_user_message' }

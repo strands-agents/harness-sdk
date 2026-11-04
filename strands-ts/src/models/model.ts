@@ -383,10 +383,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * Whether this provider sends an `InjectedBlock` as a temporary message, one the model reads only until the next
-   * user message. When `true`, the agent passes injected blocks to the provider as they are stored and the provider
-   * formats them. Otherwise the agent sends only the latest user message's injected text, as text. A provider that
-   * can send them overrides this, usually from `modelInfo.capabilities.temporaryMessages`.
+   * Whether this provider sends an `InjectedBlock` as a message the model reads only until the next user message.
+   * When `true`, the provider receives injected blocks as stored and formats them; otherwise it receives the latest
+   * user message's injected text as text. A provider that can send them overrides this.
    *
    * @experimental
    * @returns `false` unless the provider overrides it

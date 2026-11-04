@@ -41,9 +41,9 @@ export interface ContextInjectorConfig {
  * Before each model call, the plugin asks {@link ContextInjectorConfig.renderContent} for text, gated by
  * {@link ContextInjectorConfig.trigger}, and writes it into the latest user message as an
  * `InjectedBlock`. The block stays in the conversation and the session. When the model's provider sends
- * temporary messages (`AnthropicModel`, on Claude models that accept turn-scoped system messages), the model
- * receives each block as a system message it reads only until the next user message, so the stored history is
- * sent unchanged on every call. Every other model receives only the latest user message's blocks, as text.
+ * temporary messages (`AnthropicModel` on supported Claude models), the model receives each block as a system
+ * message it reads only until the next user message, so the stored history is sent unchanged on every call. Every
+ * other model receives only the latest user message's blocks, as text.
  *
  * @example
  * ```typescript
@@ -62,18 +62,18 @@ export interface ContextInjectorConfig {
  */
 export class ContextInjector implements Plugin {
   readonly name: string
-
   private readonly _config: ContextInjectorConfig
+  private readonly _trigger: (context: InjectionContext) => boolean
 
   constructor(config: ContextInjectorConfig) {
     this.name = config.name ?? 'strands:context-injector'
     this._config = config
+    this._trigger = resolveTrigger(config.trigger)
   }
 
   initAgent(agent: LocalAgent): void {
-    const trigger = resolveTrigger(this._config.trigger)
     // Runs after the SDK's other hooks, so the write lands in any user message they added.
-    agent.addHook(BeforeModelCallEvent, (event) => this._inject(event, trigger), { order: HookOrder.SDK_LAST })
+    agent.addHook(BeforeModelCallEvent, (event) => this._inject(event), { order: HookOrder.SDK_LAST })
   }
 
   /**
@@ -82,7 +82,7 @@ export class ContextInjector implements Plugin {
    * structured output call or a resume sends the same request again, also after a session restore. Anything
    * that skips leaves the conversation unchanged so the model call proceeds (fail open).
    */
-  private async _inject(event: BeforeModelCallEvent, trigger: (context: InjectionContext) => boolean): Promise<void> {
+  private async _inject(event: BeforeModelCallEvent): Promise<void> {
     const messages = event.agent.messages
     const latest = messages.at(-1)
     if (event.cancel || latest?.role !== 'user' || latest.content.some((block) => this._wrote(block))) return
@@ -91,7 +91,7 @@ export class ContextInjector implements Plugin {
       appState: event.agent.appState,
       agent: event.agent,
     }
-    if (!trigger(context)) return
+    if (!this._trigger(context)) return
     const text = await this._render(context)
     if (!text?.trim()) return
     messages[messages.length - 1] = new Message({

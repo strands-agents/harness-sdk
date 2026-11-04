@@ -279,7 +279,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Injected text goes to the models that accept them as turn-scoped system messages. */
+  /** Sends injected text as turn-scoped system messages to the models that accept them. */
   override get sendsTemporaryMessages(): boolean {
     return this.modelInfo.capabilities?.temporaryMessages === true
   }
@@ -1083,10 +1083,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       }
 
       case 'cachePointBlock':
-        return undefined
-
-      case 'injectedBlock':
-        // Sent after its message as a turn-scoped system message, or as text by ModelProxy.
         return undefined
 
       default:

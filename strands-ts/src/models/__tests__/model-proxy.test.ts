@@ -5,14 +5,7 @@ import { type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import { logger } from '../../logging/logger.js'
-import { warnOnce } from '../../logging/warn-once.js'
 import { InjectedBlock, Message, TextBlock, ToolResultBlock, type ContentBlock } from '../../types/messages.js'
-
-// warnOnce logs each message once per process, so a real call can't be asserted in more than one test.
-vi.mock('../../logging/warn-once.js', () => ({
-  warnOnce: vi.fn(),
-}))
 
 function userMessage(text: string): Message {
   return new Message({ role: 'user', content: [new TextBlock(text)] })
@@ -174,28 +167,6 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('separates text that follows an injected block, without changing how the block is sent', async () => {
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [
-            new TextBlock('Refactor.'),
-            new InjectedBlock({ text: 'reminder', source: 'test' }),
-            new TextBlock('Also the docs.'),
-          ],
-          trackingId: 'msg-1',
-        }),
-      ]
-
-      expect(await sent(messages)).toEqual([
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new TextBlock('\n\nreminder'), new TextBlock('\n\nAlso the docs.')],
-          trackingId: 'msg-1',
-        }),
-      ])
-    })
-
     it('leaves out the injected blocks of earlier user messages', async () => {
       const answer = new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' })
       const latest = userMessage('Now the docs.')
@@ -308,8 +279,7 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('leaves out an injected block outside a user message, with a warning', async () => {
-      vi.mocked(warnOnce).mockClear()
+    it('leaves out an injected block outside a user message', async () => {
       const prompt = userMessage('go')
       const messages = [
         prompt,
@@ -323,9 +293,6 @@ describe('ModelProxy', () => {
       expect(await sent(messages)).toEqual([
         prompt,
         new Message({ role: 'assistant', content: [new TextBlock('Hi'), new TextBlock('Bye')], trackingId: 'msg-2' }),
-      ])
-      expect(vi.mocked(warnOnce).mock.calls).toEqual([
-        [logger, 'role=<assistant> | injected block outside a user message | skipping it'],
       ])
     })
 

@@ -1,6 +1,4 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
-import { logger } from '../logging/logger.js'
-import { warnOnce } from '../logging/warn-once.js'
 import { Message, TextBlock, type ContentBlock } from '../types/messages.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
@@ -92,21 +90,14 @@ interface RenderedMessages {
  * injected blocks become text blocks in their place, and every other injected block is left out. Messages
  * without an injected block are returned as they are, and the input is never changed.
  *
- * Some providers join adjacent text blocks, so the injected text is kept apart from the text
- * around it. The separator always goes on the later of the two blocks: a block is sent the same
- * way however much content is added after it.
- *
  * @param messages - The messages of a model call
  * @returns The messages to send, and how many trailing blocks the cache point must stay ahead of
  */
 function renderInjectedBlocks(messages: Message[]): RenderedMessages {
-  const latestUser = lastIndexOfRole(messages, 'user')
+  const latestUser = latestUserIndex(messages)
   let dynamicTrailingBlocks = 0
   const rendered = messages.map((message, index) => {
     if (!hasInjectedBlock(message)) return message
-    if (message.role !== 'user') {
-      warnOnce(logger, `role=<${message.role}> | injected block outside a user message | skipping it`)
-    }
     const content = index === latestUser ? withInjectedText(message.content) : withoutInjectedBlocks(message.content)
     if (index === latestUser) {
       dynamicTrailingBlocks = message.content.length - message.content.findIndex(isInjectedBlock)
@@ -121,30 +112,25 @@ function renderInjectedBlocks(messages: Message[]): RenderedMessages {
   return { messages: rendered, dynamicTrailingBlocks }
 }
 
-/** The content with each injected block as a text block in its place. */
+/**
+ * The content with each injected block as a text block in its place. Some providers join adjacent text blocks, so
+ * injected text after other content starts with a blank line.
+ */
 function withInjectedText(content: ContentBlock[]): ContentBlock[] {
-  const result: ContentBlock[] = []
-  let previous: ContentBlock | undefined
-  for (const block of content) {
-    if (block.type === 'injectedBlock') {
-      if (block.injected.text) result.push(withSeparator(block.injected.text, result.length > 0))
-    } else if (block.type === 'textBlock' && previous?.type === 'injectedBlock') {
-      result.push(withSeparator(block.text, true))
-    } else {
-      result.push(block)
-    }
-    previous = block
-  }
-  return result
+  return content.map((block, index) => {
+    if (block.type !== 'injectedBlock') return block
+    const { text } = block.injected
+    return new TextBlock(index > 0 && !text.startsWith('\n') ? `\n\n${text}` : text)
+  })
 }
 
 function withoutInjectedBlocks(content: ContentBlock[]): ContentBlock[] {
   return content.filter((block) => !isInjectedBlock(block))
 }
 
-function lastIndexOfRole(messages: Message[], role: Message['role']): number {
+function latestUserIndex(messages: Message[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]!.role === role) return index
+    if (messages[index]!.role === 'user') return index
   }
   return -1
 }
@@ -155,9 +141,4 @@ function hasInjectedBlock(message: Message): boolean {
 
 function isInjectedBlock(block: ContentBlock): boolean {
   return block.type === 'injectedBlock'
-}
-
-/** A text block with `"\n\n"` in front of the text when something comes before it, unless it starts with a newline. */
-function withSeparator(text: string, afterContent: boolean): TextBlock {
-  return new TextBlock(afterContent && !text.startsWith('\n') ? `\n\n${text}` : text)
 }

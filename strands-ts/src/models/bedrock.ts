@@ -1646,7 +1646,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       }
 
       case 'injectedBlock':
-        // Skipped. ModelProxy sends the latest ones as text, so only a call that bypasses it gets here.
+        // ModelProxy turns the ones Bedrock should see into text.
         return undefined
     }
   }
