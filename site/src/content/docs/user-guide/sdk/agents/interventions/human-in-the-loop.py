@@ -213,8 +213,13 @@ def classifier_decision_model_example():
                 return json.loads(response.read())
 
         async def _ask(self, state, questions, **kwargs):
-            wire = {qid: {"type": "noul", "instructions": q["question"]} for qid, q in questions.items()}
-            reply = await asyncio.to_thread(self._post, {"state": state, "questions": wire})
+            wire = {
+                qid: {"type": "noul", "instructions": q["question"]}
+                for qid, q in questions.items()
+            }
+            reply = await asyncio.to_thread(
+                self._post, {"state": state, "questions": wire}
+            )
             return DecisionResult(
                 # "noul" is the model's probability that the answer is yes
                 answers={qid: a["noul"] >= 0.5 for qid, a in reply["answers"].items()},

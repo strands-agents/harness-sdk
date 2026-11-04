@@ -34,16 +34,16 @@ def general_assistant(query: str) -> str:
     """
     Handle general knowledge queries that fall outside specialized domains.
     Provides concise, accurate responses to non-specialized questions.
-
+    
     Args:
         query: The user's general knowledge question
-
+        
     Returns:
         A concise response to the general knowledge query
     """
     # Format the query for the agent
     formatted_query = f"Answer this general knowledge question concisely, remembering to start by acknowledging that you are not an expert in this specific area: {query}"
-
+    
     try:
         print("Routed to General Assistant")
         general_agent = Agent(
@@ -55,7 +55,7 @@ def general_assistant(query: str) -> str:
 
         if len(text_response) > 0:
             return text_response
-
+        
         return "Sorry, I couldn't provide an answer to your question."
     except Exception as e:
         # Return error message

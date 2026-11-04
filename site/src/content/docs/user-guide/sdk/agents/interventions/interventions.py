@@ -47,7 +47,9 @@ def basic_usage_example():
         def before_tool_call(self, event: BeforeToolCallEvent):
             if event.tool_use["name"] in self.blocked_tools:
                 name = event.tool_use["name"]
-                return Deny(reason=f"Tool '{name}' is not allowed")
+                return Deny(
+                    reason=f"Tool '{name}' is not allowed"
+                )
             return Proceed()
 
     agent = Agent(
@@ -70,12 +72,8 @@ def basic_usage_example():
 def action_types_example():
     # --8<-- [start:action_types]
     from strands.interventions import (
-        Confirm,
-        Deny,
-        Guide,
-        InterventionHandler,
-        Proceed,
-        Transform,
+        Confirm, Deny, Guide, InterventionHandler,
+        Proceed, Transform,
     )
 
     # Deny: block tool calls that access production resources
@@ -106,7 +104,7 @@ def action_types_example():
         def before_tool_call(self, event: BeforeToolCallEvent):
             if event.tool_use["name"] == "delete_file":
                 tool_input = event.tool_use.get("input", {})
-                return Confirm(prompt=f'Approve deleting "{tool_input.get("path")}"?')
+                return Confirm(prompt=f"Approve deleting \"{tool_input.get('path')}\"?")
             return Proceed()
 
     # Transform: redact PII from outgoing email bodies
@@ -121,7 +119,9 @@ def action_types_example():
                     tool_input = e.tool_use.get("input", {})
                     body = tool_input.get("body", "")
                     ssn_pattern = r"\b\d{3}-\d{2}-\d{4}\b"
-                    tool_input["body"] = re.sub(ssn_pattern, "[REDACTED]", body)
+                    tool_input["body"] = re.sub(
+                        ssn_pattern, "[REDACTED]", body
+                    )
 
                 return Transform(apply=redact)
             return Proceed()
@@ -163,8 +163,8 @@ def short_circuiting_example():
     agent = Agent(
         tools=[search],
         interventions=[
-            RateLimiter(),  # Evaluates first
-            ToneSteering(),  # Skipped if RateLimiter denies
+            RateLimiter(),    # Evaluates first
+            ToneSteering(),   # Skipped if RateLimiter denies
         ],
     )
     # --8<-- [end:short_circuiting]
@@ -236,7 +236,9 @@ def confirm_example():
 
         def before_tool_call(self, event: BeforeToolCallEvent):
             if event.tool_use["name"] in ("delete_file", "send_email"):
-                return Confirm(prompt=f"Allow {event.tool_use['name']}?")
+                return Confirm(
+                    prompt=f"Allow {event.tool_use['name']}?"
+                )
             return Proceed()
 
     # Preemptive approval: agent doesn't pause

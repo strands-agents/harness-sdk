@@ -10,7 +10,6 @@ from strands_evals.telemetry import StrandsEvalsTelemetry
 telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
 memory_exporter = telemetry.in_memory_exporter
 
-
 # 1. Define a task function
 def task_function(case: Case) -> dict:
     # Create simulator
@@ -39,7 +38,6 @@ def task_function(case: Case) -> dict:
     session = mapper.map_to_session(finished_spans, session_id=case.session_id)
 
     return {"output": agent_message, "trajectory": session}
-
 
 # 2. Create test cases
 test_cases = [

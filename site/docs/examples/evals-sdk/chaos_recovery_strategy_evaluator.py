@@ -15,18 +15,15 @@ logger = logging.getLogger(__name__)
 
 tool_simulator = ToolSimulator()
 
-
 class FlightSearchResponse(BaseModel):
     flights: list[dict[str, Any]] = Field(default_factory=list)
     total_results: int = Field(default=0)
     status: str = Field(default="success")
 
-
 class HotelSearchResponse(BaseModel):
     hotels: list[dict[str, Any]] = Field(default_factory=list)
     total_results: int = Field(default=0)
     status: str = Field(default="success")
-
 
 class BookFlightResponse(BaseModel):
     booking_id: str = Field(default="")
@@ -34,24 +31,20 @@ class BookFlightResponse(BaseModel):
     status: str = Field(default="success")
     message: str = Field(default="")
 
-
 @tool_simulator.tool(output_schema=FlightSearchResponse)
 def search_flights(origin: str, destination: str, date: str) -> dict[str, Any]:
     """Search for available flights between two cities on a given date."""
     pass
-
 
 @tool_simulator.tool(output_schema=HotelSearchResponse)
 def search_hotels(city: str, check_in: str, check_out: str) -> dict[str, Any]:
     """Search for available hotels in a city for given dates."""
     pass
 
-
 @tool_simulator.tool(output_schema=BookFlightResponse)
 def book_flight(flight_id: str) -> dict[str, Any]:
     """Book a specific flight by its flight ID."""
     pass
-
 
 chaos_plugin = ChaosPlugin()
 
@@ -80,14 +73,13 @@ _search_flights_tool = tool_simulator.get_tool("search_flights")
 _search_hotels_tool = tool_simulator.get_tool("search_hotels")
 _book_tool = tool_simulator.get_tool("book_flight")
 
-
 @eval_task(TracedHandler())
 def travel_agent_task(case: ChaosCase):
     """Run the travel agent under chaos and return output + trajectory."""
-    logger.info(f"\n{'─' * 60}")
+    logger.info(f"\n{'─'*60}")
     logger.info(f"  Case: {case.name}")
     logger.info(f"  User: {case.input}")
-    logger.info(f"{'─' * 60}")
+    logger.info(f"{'─'*60}")
 
     return Agent(
         system_prompt=(
@@ -105,16 +97,13 @@ def travel_agent_task(case: ChaosCase):
         trace_attributes={"gen_ai.conversation.id": case.session_id, "session.id": case.session_id},
     )
 
-
 experiment = ChaosExperiment(
     cases=chaos_cases,
     evaluators=[RecoveryStrategyEvaluator()],
 )
 
-
 async def main():
     report = await experiment.run_evaluations_async(task=travel_agent_task, max_workers=10)
     report.run_display()
-
 
 asyncio.run(main())

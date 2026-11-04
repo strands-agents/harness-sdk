@@ -88,11 +88,9 @@ from strands.interrupt import Interrupt
 from strands.multiagent import GraphBuilder, Status
 from strands.types.tools import ToolContext
 
-
 @tool(context=True)
 def approval_tool(tool_context: ToolContext) -> str:
     return tool_context.interrupt("approval", reason="Needs human approval")
-
 
 agent = Agent(name="reviewer", tools=[approval_tool])
 
@@ -105,7 +103,10 @@ graph = outer_graph.build()
 result = graph("Review this document")
 
 while result.status == Status.INTERRUPTED:
-    responses = [{"interruptResponse": {"interruptId": i.id, "response": "Approved"}} for i in result.interrupts]
+    responses = [
+        {"interruptResponse": {"interruptId": i.id, "response": "Approved"}}
+        for i in result.interrupts
+    ]
     result = graph(responses)
 ```
 
@@ -118,29 +119,25 @@ from strands import Agent
 
 agent = Agent()
 
-response = agent(
-    [
+response = agent([{
+    "role": "user",
+    "content": [
+        {"text": "Summarize this document:"},
         {
-            "role": "user",
-            "content": [
-                {"text": "Summarize this document:"},
-                {
-                    "document": {
-                        "format": "pdf",
-                        "name": "report",
-                        "source": {
-                            "location": {
-                                "type": "s3",
-                                "uri": "s3://my-bucket/documents/report.pdf",
-                                "bucketOwner": "123456789012",  # optional, for cross-account
-                            }
-                        },
+            "document": {
+                "format": "pdf",
+                "name": "report",
+                "source": {
+                    "location": {
+                        "type": "s3",
+                        "uri": "s3://my-bucket/documents/report.pdf",
+                        "bucketOwner": "123456789012"  # optional, for cross-account
                     }
-                },
-            ],
+                }
+            }
         }
     ]
-)
+}])
 ```
 
 ### Configurable Structured Output Prompt - [PR#1627](https://github.com/strands-agents/sdk-python/pull/1627)
@@ -151,19 +148,20 @@ The prompt message the agent uses to request structured output formatting is now
 from strands import Agent
 from pydantic import BaseModel
 
-
 class UserInfo(BaseModel):
     name: str
     age: int
 
-
 # Custom prompt avoids triggering Bedrock Guardrails prompt attack filter
-agent = Agent(structured_output_model=UserInfo, structured_output_prompt="Please use the output tool now.")
+agent = Agent(
+    structured_output_model=UserInfo,
+    structured_output_prompt="Please use the output tool now."
+)
 
 # Or override per invocation
 result = agent(
     "Extract user info from: John is 30 years old",
-    structured_output_prompt="Format the response using the output tool.",
+    structured_output_prompt="Format the response using the output tool."
 )
 ```
 

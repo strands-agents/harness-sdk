@@ -18,7 +18,6 @@ ClaudeAgentSDKInstrumentor().instrument()
 # Import after instrument() so the instrumentor patches the SDK before its symbols are bound.
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query  # noqa: E402
 
-
 async def run_commit_agent(diff: str) -> str:
     options = ClaudeAgentOptions(
         allowed_tools=["Bash"],

@@ -32,16 +32,16 @@ Maintain accuracy while ensuring translations are natural and contextually appro
 def language_assistant(query: str) -> str:
     """
     Process and respond to language translation and foreign language learning queries.
-
+    
     Args:
         query: A request for translation or language learning assistance
-
+        
     Returns:
         A translated text or language learning guidance with explanations
     """
     # Format the query with specific guidance for the language assistant
     formatted_query = f"Please address this translation or language learning request, providing cultural context and explanations where helpful: {query}"
-
+    
     try:
         print("Routed to Language Assistant")
         language_agent = Agent(

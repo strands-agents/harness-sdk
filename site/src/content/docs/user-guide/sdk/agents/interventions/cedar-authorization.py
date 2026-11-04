@@ -44,7 +44,10 @@ def basic_example():
         return f"Deleted {record_id}"
 
     cedar = CedarAuthorization(
-        policies=('permit(principal, action == Action::"search", resource);'),
+        policies=(
+            'permit(principal, action == Action::"search",'
+            " resource);"
+        ),
     )
 
     agent = Agent(
@@ -52,7 +55,9 @@ def basic_example():
         interventions=[cedar],
     )
 
-    agent("Search for quarterly reports then delete record 42")
+    agent(
+        "Search for quarterly reports then delete record 42"
+    )
     # search is permitted; delete_record is denied
     # (no matching permit)
     # --8<-- [end:basic_example]
@@ -87,9 +92,15 @@ def role_based_example():
           )
           when { context.session.role == "analyst" };
         """,
-        principal_resolver=lambda state: {"type": "User", "id": state["user_id"]} if state.get("user_id") else None,
+        principal_resolver=lambda state: (
+            {"type": "User", "id": state["user_id"]}
+            if state.get("user_id")
+            else None
+        ),
         context_enricher=lambda ctx: {
-            "role": ctx["invocation_state"].get("role", "none"),
+            "role": ctx["invocation_state"].get(
+                "role", "none"
+            ),
         },
     )
 
@@ -174,7 +185,9 @@ def schema_validation_example():
         "name": "search",
         "inputSchema": {
             "type": "object",
-            "properties": {"query": {"type": "string"}},
+            "properties": {
+                "query": {"type": "string"}
+            },
         },
     }
 
@@ -182,7 +195,9 @@ def schema_validation_example():
         "name": "delete_record",
         "inputSchema": {
             "type": "object",
-            "properties": {"record_id": {"type": "string"}},
+            "properties": {
+                "record_id": {"type": "string"}
+            },
         },
     }
 
@@ -203,7 +218,9 @@ def schema_validation_example():
         """,
         tools=[search_def, delete_def],
         context_enricher=lambda ctx: {
-            "role": ctx["invocation_state"].get("role", "none"),
+            "role": ctx["invocation_state"].get(
+                "role", "none"
+            ),
         },
     )
 
@@ -244,7 +261,9 @@ def env_gating_example():
           };
         """,
         context_enricher=lambda ctx: {
-            "environment": ctx["invocation_state"].get("environment", "unknown"),
+            "environment": ctx["invocation_state"].get(
+                "environment", "unknown"
+            ),
         },
     )
 

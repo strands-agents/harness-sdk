@@ -68,13 +68,13 @@ if __name__ == "__main__":
                 break
 
             response = teacher_agent(
-                user_input,
+                user_input, 
             )
-
+            
             # Extract and print only the relevant content from the specialized agent's response
             content = str(response)
             print(content)
-
+            
         except KeyboardInterrupt:
             print("\n\nExecution interrupted. Exiting...")
             break
