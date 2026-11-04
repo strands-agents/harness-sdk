@@ -3,6 +3,16 @@ import { readFileSync } from 'node:fs'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
+function configuredPathWithBase(value: string): string {
+  const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
+  const normalizedValue = value.startsWith('/') ? value : `/${value}`
+  return `${base}${normalizedValue}`
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 describe('homepage machine-readable metadata', () => {
   const homepageHtml = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
   const homepage = parse(homepageHtml)
@@ -15,15 +25,17 @@ describe('homepage machine-readable metadata', () => {
 
   it('loads the decorative halftone as an external asset', () => {
     const maskStyle = homepage.querySelector('.banner__halftone-mask')?.getAttribute('style')
+    const maskUrl = maskStyle?.match(/--halftone-mask: url\("([^"]+)"\)/)?.[1]
 
-    expect(maskStyle).toMatch(/--halftone-mask: url\("\/_astro\/halftone\.[^"]+\.svg"\)/)
+    const assetPrefix = escapeRegExp(configuredPathWithBase('/_astro/halftone.'))
+    expect(maskUrl).toMatch(new RegExp(`^${assetPrefix}[^/]+\\.svg$`))
     expect(homepage.querySelector('.banner__halftone svg')).toBeNull()
   })
 
   it('advertises the Markdown homepage', () => {
     const alternate = homepage.querySelector('link[rel="alternate"][type="text/markdown"]')
 
-    expect(alternate?.getAttribute('href')).toBe('/index.md')
+    expect(alternate?.getAttribute('href')).toBe(configuredPathWithBase('/index.md'))
   })
 
   it('includes the shared base schemas as JSON-LD', () => {

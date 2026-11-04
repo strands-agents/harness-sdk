@@ -1,0 +1,16 @@
+---
+sdk: harness
+language: python
+version: "0.3.4"
+tag: harness-python/v0.3.4
+date: 2026-11-04
+releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.3.4
+packageUrl: https://pypi.org/project/strands-harness/0.3.4/
+entries:
+  - { type: other, breaking: false, scope: site, areas: [community], title: "load samples in documentation previews", pr: 5725, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5725", commit: "1c6e8a8", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/1c6e8a8", author: tmoreton }
+  - { type: feat, breaking: false, scope: site, areas: [], title: "render samples as documentation guides", pr: 5337, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5337", commit: "713bee3", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/713bee3", author: tmoreton }
+  - { type: feat, breaking: false, scope: site, areas: [], title: "add a product-aware docs footer and last-updated dates", pr: 5432, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5432", commit: "027cc15", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/027cc15", author: tmoreton }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "link box discussions and the box repo from the issue chooser", pr: 5729, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5729", commit: "9b55109", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/9b55109", author: yonib05 }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "bump astral-sh/setup-uv from 10.3.2 to 10.3.3", pr: 5717, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5717", commit: "21c87a6", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/21c87a6", author: "dependabot[bot]" }
+  - { type: feat, breaking: false, scope: site, areas: [], title: "import versioned external docs", pr: 5666, prUrl: "https://github.com/strands-agents/harness-sdk/pull/5666", commit: "e4a0ee2", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/e4a0ee2", author: tmoreton }
+---

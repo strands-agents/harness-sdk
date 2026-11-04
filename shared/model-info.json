@@ -330,21 +330,33 @@
     "gpt-6-astra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-6.1-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "openai.gpt-6.1-sol": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-6.1-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "openai.gpt-6.1-terra": {
@@ -355,31 +367,49 @@
     "gpt-6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-6-luna": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-5.6": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-5.6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-5.6-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "gpt-5.6-luna": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints"
       }
     },
     "openai.gpt-5.6-cyber": {

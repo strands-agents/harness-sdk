@@ -248,6 +248,39 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect(captured[0]?.body['model']).toBe('pinned-model')
     })
 
+    it('passes the cancel signal to fetch and sets none without one', async () => {
+      const fetch = fakeFetch(responseBody({ q: { type: 'noul', noul: 1 } }))
+      const decision = create({ apiKey: 'test-key', fetch })
+      const controller = new AbortController()
+
+      await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }, { cancelSignal: controller.signal })
+      await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      const inits = vi.mocked(fetch).mock.calls.map(([, init]) => init)
+      expect(inits[0]?.signal).toBe(controller.signal)
+      expect(inits[1]).not.toHaveProperty('signal')
+    })
+
+    it('rejects with ModelError when the cancel signal aborts the request', async () => {
+      const controller = new AbortController()
+      const fetch = vi.fn(
+        (_input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+          })
+      ) as typeof globalThis.fetch
+      const decision = create({ apiKey: 'test-key', fetch })
+
+      const pending = decision.ask(
+        'state',
+        { q: { question: 'ok?', choices: 'boolean' } },
+        { cancelSignal: controller.signal }
+      )
+      controller.abort()
+
+      await expect(pending).rejects.toBeInstanceOf(ModelError)
+    })
+
     it.each([429, 529])('maps HTTP %s to ModelThrottledError with the HTTP failure as cause', async (status) => {
       const decision = create({
         apiKey: 'test-key',

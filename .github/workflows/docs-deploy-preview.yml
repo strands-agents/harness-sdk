@@ -51,7 +51,7 @@ jobs:
       # Derived paths (defined once, used everywhere)
       BUILD_OUTPUT_DIR: site/dist
       S3_PATH: pr-cms-${{ github.event.pull_request.number }}
-      PREVIEW_URL: https://${{ secrets.CLOUDFRONT_DOMAIN }}/pr-cms-${{ github.event.pull_request.number }}/docs/user-guide/quickstart/overview/
+      PREVIEW_URL: https://${{ secrets.CLOUDFRONT_DOMAIN }}/pr-cms-${{ github.event.pull_request.number }}/
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     defaults:
@@ -63,8 +63,17 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ env.PR_HEAD_SHA }}
+          fetch-depth: 0
           persist-credentials: false
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
+
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          # Intentionally unpinned: each site build imports the latest samples default branch.
+          repository: strands-agents/samples
+          path: samples-source
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -79,6 +88,8 @@ jobs:
       - name: Build CMS
         env:
           ASTRO_BASE_PATH: /${{ env.S3_PATH }}/
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
         run: npm run cms:build
 
       - name: Configure AWS credentials
@@ -93,6 +104,7 @@ jobs:
         working-directory: .
         run: |
           aws s3 sync ${{ env.BUILD_OUTPUT_DIR }}/ s3://${{ env.S3_BUCKET }}/${{ env.S3_PATH }}/ \
+            --delete \
             --cache-control "public, max-age=3600"
 
       - name: Invalidate CloudFront cache for PR preview
@@ -157,7 +169,7 @@ jobs:
               return `- [${label}](${baseUrl}${urlPath})`;
             });
 
-            const fallbackUrl = `${baseUrl}/docs/user-guide/quickstart/overview/`;
+            const fallbackUrl = `${baseUrl}/`;
 
             // Find existing bot comment
             const comments = await github.rest.issues.listComments({

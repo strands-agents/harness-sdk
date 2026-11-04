@@ -59,7 +59,9 @@ import {
   type StreamOptions,
   resolveCacheSection,
   resolveConfigMetadata,
+  resolveMaxTokens,
 } from '../models/model.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -81,7 +83,7 @@ import {
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { z } from 'zod'
-import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
+import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 
@@ -93,11 +95,11 @@ const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 /**
- * Models that require the status field in tool results.
- * According to AWS Bedrock API documentation, the status field is only supported by Anthropic Claude models.
+ * Models Bedrock documents as supporting the status field in tool results. Deliberately an allow-list:
+ * undocumented models may accept it (Llama 4) or reject it with a ValidationException (Writer).
  * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
  */
-const MODELS_INCLUDE_STATUS = ['anthropic.claude']
+const MODELS_INCLUDE_STATUS = ['amazon.nova', 'anthropic.claude']
 
 /**
  * Models that reject any reasoning text block replayed in history
@@ -131,6 +133,8 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
   'input length and `max_tokens` exceed context limit',
   'too many total text bytes',
   'prompt is too long',
+  "This model's maximum context length is",
+  'Input Tokens Exceeded',
 ]
 
 /**
@@ -265,6 +269,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens to generate in the response.
    *
+   * @defaultValue the model's `maxOutputTokens` from the model info when known; otherwise `maxTokens` is not
+   * sent and Bedrock's per-model default applies.
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InferenceConfiguration.html
    */
   maxTokens?: number
@@ -488,6 +494,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.bedrock.modelId))
     }
 
+    // Warn only when the value comes from the shared model info, not when the user pinned it through `modelInfo`.
+    const maxTokens = this.getConfig().maxTokens
+    if (
+      modelConfig.maxTokens === undefined &&
+      modelConfig.modelInfo?.limits?.maxOutputTokens === undefined &&
+      maxTokens !== undefined
+    ) {
+      warnOnce(logger, defaultMaxTokensWarningMessage(maxTokens))
+    }
+
     // Build user agent string (extend if provided, otherwise use SDK identifier)
     const customUserAgent = clientConfig?.customUserAgent
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
@@ -511,13 +527,30 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
+   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+  }
+
+  /**
    * Returns the cache strategy for this model based on its model ID.
    * Returns the appropriate cache strategy name, or null if automatic caching is not supported.
    *
    * @returns Cache strategy name or null
    */
   private _getCacheStrategy(): 'anthropic' | null {
-    return this.modelInfo.capabilities?.promptCaching === 'cachePoints' ? 'anthropic' : null
+    const promptCaching = this.modelInfo.capabilities?.promptCaching
+    if (promptCaching === undefined) {
+      // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+      // keep the historical name test so caching does not turn off until the data catches up.
+      const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+      return modelId.includes('claude') || modelId.includes('anthropic') ? 'anthropic' : null
+    }
+    return promptCaching === 'cachePoints' ? 'anthropic' : null
   }
 
   /**
@@ -633,7 +666,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * ```
    */
   getConfig(): BedrockModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    const config = resolveConfigMetadata(this._config, modelId)
+    const maxTokens = resolveMaxTokens(this._config, modelId)
+    return maxTokens === undefined || config.maxTokens !== undefined ? config : { ...config, maxTokens }
   }
 
   /**
@@ -981,7 +1017,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
-    if (this._config.maxTokens !== undefined) inferenceConfig.maxTokens = this._config.maxTokens
+    const maxTokens = this.getConfig().maxTokens
+    if (maxTokens !== undefined) inferenceConfig.maxTokens = maxTokens
     if (this._config.temperature !== undefined) inferenceConfig.temperature = this._config.temperature
     if (this._config.topP !== undefined) inferenceConfig.topP = this._config.topP
     if (this._config.stopSequences !== undefined) inferenceConfig.stopSequences = this._config.stopSequences

@@ -142,3 +142,28 @@ import { OpenAIModel } from '@strands-agents/sdk/models/openai'
   // The model remembers "Alice" via server-side state
   // --8<-- [end:stateful]
 }
+
+// Prompt caching
+{
+  // --8<-- [start:prompt_caching]
+  const model = new OpenAIModel({
+    modelId: 'gpt-6-sol',
+    apiKey: '<KEY>',
+    cacheConfig: { messagesTTL: '12h' },
+  })
+  // --8<-- [end:prompt_caching]
+  void model
+}
+
+// Prompt caching through an unrecognized alias
+{
+  // --8<-- [start:prompt_caching_alias]
+  const model = new OpenAIModel({
+    modelId: 'my-proxy-alias',
+    apiKey: '<KEY>',
+    cacheConfig: {},
+    modelInfo: { capabilities: { promptCaching: 'cachePoints' } },
+  })
+  // --8<-- [end:prompt_caching_alias]
+  void model
+}

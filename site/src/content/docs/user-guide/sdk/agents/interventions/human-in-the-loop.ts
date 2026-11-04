@@ -1,5 +1,11 @@
 // @ts-nocheck
-import { Agent, tool, InterruptResponseContent } from '@strands-agents/sdk'
+import {
+  Agent,
+  BedrockModel,
+  tool,
+  InterruptResponseContent,
+  TypeSafeDecisionModel,
+} from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 
@@ -199,6 +205,24 @@ async function classifierExample() {
   // --8<-- [end:classifier]
 }
 
+async function classifierDecisionModelExample() {
+  // --8<-- [start:classifier_decision_model]
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [
+      new HumanInTheLoop({
+        allowedTools: ['read_file'],
+        // Reads the API key from TYPESAFE_API_KEY
+        classifier: new TypeSafeDecisionModel(),
+      }),
+    ],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // delete_files: decision model evaluates -> risky -> prompts human
+  // --8<-- [end:classifier_decision_model]
+}
+
 async function classifierCustomExample() {
   // --8<-- [start:classifier_custom]
   // Custom system prompt and model
@@ -208,6 +232,9 @@ async function classifierCustomExample() {
       new HumanInTheLoop({
         classifier: {
           systemPrompt: 'Only flag destructive operations.',
+          model: new BedrockModel({
+            modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+          }),
         },
       }),
     ],
@@ -238,6 +265,7 @@ void allowedToolsExample
 void trustModeExample
 void customEvaluateExample
 void classifierExample
+void classifierDecisionModelExample
 void classifierCustomExample
 
 declare function askUserViaSlack(prompt: string): Promise<string>
