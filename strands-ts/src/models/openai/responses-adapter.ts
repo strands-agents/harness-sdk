@@ -537,6 +537,8 @@ export function mapResponsesEventToSDK(
       }
       if (resp.incomplete_details?.reason === 'max_output_tokens') {
         state.stopReason = 'maxTokens'
+      } else if (resp.incomplete_details?.reason === 'content_filter') {
+        state.stopReason = 'contentFiltered'
       }
       break
     }
@@ -591,8 +593,9 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
     events.push({ type: 'modelContentBlockStopEvent' })
   }
 
+  // A function call in flight at max_output_tokens has truncated arguments, so maxTokens wins.
   let stopReason = state.stopReason
-  if (state.toolCalls.size > 0) {
+  if (state.toolCalls.size > 0 && stopReason !== 'maxTokens') {
     stopReason = 'toolUse'
   }
 
