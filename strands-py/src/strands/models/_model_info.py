@@ -36,7 +36,8 @@ class ModelCapabilities:
         native_structured_output: Whether the provider can make the model's text output conform to a
             JSON schema.
         server_side_compaction: Whether the model summarizes history server-side through
-            :meth:`strands.models.Model.summarize`; the summarize strategy reads it.
+            :meth:`strands.models.Model.summarize`. The summarize strategy reads it on the summarizer model, and
+            the provider reads it on the model that sends the stored summary, so set it on both.
     """
 
     stateful: bool | None = None

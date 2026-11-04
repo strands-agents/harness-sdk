@@ -10,6 +10,7 @@ import { Message, TextBlock } from '../../types/messages.js'
 import type { ProviderData } from '../../types/messages.js'
 import { AnthropicWire } from '../../__fixtures__/anthropic-wire.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { logger } from '../../logging/logger.js'
 
 const OPAQUE = 'OPAQUE-PROVIDER-FIELD'
 const COMPACTS = { modelInfo: { capabilities: { serverSideCompaction: true } } }
@@ -111,6 +112,22 @@ describe('provider data on the wire', () => {
       })
       await collectIterator(model.stream(history('anthropic')))
       expect(wire.requests[0]!.headers['anthropic-beta']).toBe('other-beta,compact-2026-09-04')
+    })
+
+    it('sends it as text, warning once, when the sending model lacks the capability', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const wire = new AnthropicWire()
+        .reply({ content: [{ type: 'text', text: 'ok' }] })
+        .reply({ content: [{ type: 'text', text: 'ok' }] })
+      const model = new AnthropicModel({ client: wire.client(), modelId: 'claude-sonnet-4-6', maxTokens: 64 })
+      await collectIterator(model.stream(history('anthropic')))
+      await collectIterator(model.stream(history('anthropic')))
+      expectPlainText(wire.bodies[1])
+      expect(wire.requests[1]!.headers['anthropic-beta']).toBeUndefined()
+      const compactionWarnings = warn.mock.calls.filter(([message]) => String(message).includes('compaction block'))
+      expect(compactionWarnings).toHaveLength(1)
+      expect(String(compactionWarnings[0]![0])).toContain('serverSideCompaction is not set')
+      warn.mockRestore()
     })
 
     it('counts tokens natively with the compaction beta', async () => {

@@ -206,6 +206,7 @@ class AnthropicModel(Model):
         client_args = client_args or {}
         self.client = anthropic.AsyncAnthropic(**client_args)
         self._drop_stale_thinking_model_id: str | None = None
+        self._warned_compaction_sent_as_text = False
 
     @override
     def update_config(self, **model_config: Unpack[AnthropicConfig]) -> None:  # type: ignore[override]
@@ -616,6 +617,13 @@ class AnthropicModel(Model):
         sends_native_blocks = self._sends_native_blocks()
         if sends_native_blocks:
             messages = from_last_native_block(messages)
+        elif not self._warned_compaction_sent_as_text and carries_native_block(messages):
+            self._warned_compaction_sent_as_text = True
+            logger.warning(
+                "model_id=<%s> | history holds a compaction block but server_side_compaction is not set on this model,"
+                " sending its text instead | set the capability on both the agent model and the summarizer model",
+                self.config.get("model_id"),
+            )
         messages, cache_target_idx = self._manage_cache_points(messages)
 
         tools: list[dict[str, Any]] = [

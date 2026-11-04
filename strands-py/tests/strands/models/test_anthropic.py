@@ -3534,6 +3534,20 @@ def test_format_request_sends_a_stored_block_as_text_without_the_capability(anth
     assert "extra_headers" not in tru_request
 
 
+def test_format_request_warns_once_when_sending_a_stored_block_as_text(anthropic_client, caplog):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+    messages = [{"role": "assistant", "content": [STORED_COMPACTION]}, {"role": "user", "content": [{"text": "next"}]}]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.anthropic"):
+        model.format_request(messages)
+        model.format_request(messages)
+
+    warnings_ = [record.getMessage() for record in caplog.records if "compaction block" in record.getMessage()]
+    assert len(warnings_) == 1
+    assert "server_side_compaction is not set" in warnings_[0]
+
+
 def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(anthropic_client):
     anthropic_client.default_headers = {}
     model = AnthropicModel(

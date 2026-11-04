@@ -31,7 +31,10 @@ export interface ModelCapabilities {
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
-  /** Whether the model summarizes history server-side through `Model.summarize`; the summarize strategy reads it. */
+  /**
+   * Whether the model summarizes history server-side through `Model.summarize`. The summarize strategy reads it on the
+   * summarizer model, and the provider reads it on the model that sends the stored summary, so set it on both.
+   */
   readonly serverSideCompaction?: boolean | undefined
 }
 

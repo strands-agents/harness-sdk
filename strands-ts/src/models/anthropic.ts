@@ -235,6 +235,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
   private _client: Anthropic
   private _dropStaleThinkingModelId: string | undefined
+  private _warnedCompactionSentAsText = false
   private _clientBetas: string[]
 
   constructor(options?: AnthropicModelOptions) {
@@ -750,6 +751,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
     if (this._sendsNativeBlocks()) messages = fromLastNativeBlock(messages)
+    else if (!this._warnedCompactionSentAsText && carriesNativeBlock(messages)) {
+      this._warnedCompactionSentAsText = true
+      logger.warn(
+        `model_id=<${this._config.modelId}> | history holds a compaction block but serverSideCompaction is not set on this model, sending its text instead | set the capability on both the agent model and the summarizer model`
+      )
+    }
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
