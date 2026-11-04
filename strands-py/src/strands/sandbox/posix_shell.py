@@ -161,8 +161,12 @@ class PosixShellSandbox(Sandbox, ABC):
                 is not valid base64 (e.g. a shell profile or locale warning prepended text to stdout).
         """
         quoted = shlex.quote(path)
-        # Exit 77/78 distinguish a missing path and a directory from base64's own failures (locale-independent).
-        result = await self.execute(f"test -e {quoted} || exit 77; test -d {quoted} && exit 78; base64 < {quoted}")
+        # Exit 77 = missing (not when the parent is unsearchable: that is EACCES), 78 = directory; locale-independent.
+        # The braces keep a backend's `cd ... &&` prefix out of the `||`.
+        result = await self.execute(
+            f'{{ test -e {quoted} || {{ parent=$(dirname -- {quoted}); test -d "$parent" && ! test -x "$parent" '
+            f"|| exit 77; }}; test -d {quoted} && exit 78; base64 < {quoted}; }}"
+        )
         if result.exit_code == 77:
             raise SandboxPathNotFoundError(path)
         if result.exit_code == 78:

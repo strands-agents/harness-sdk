@@ -189,6 +189,28 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       expect(error).toEqual(new Error('Is a directory: subdir'))
     })
 
+    it.skipIf(process.getuid?.() === 0)(
+      'does not report a file under an unsearchable directory as missing',
+      async () => {
+        fs.mkdirSync(`${TEST_DIR}/locked`)
+        fs.writeFileSync(`${TEST_DIR}/locked/secret.txt`, 'x')
+        fs.chmodSync(`${TEST_DIR}/locked`, 0o600)
+        try {
+          const error = await sandbox.readFile('locked/secret.txt').catch((e: unknown) => e)
+          expect(error).not.toBeInstanceOf(SandboxPathNotFoundError)
+          expect((error as Error).message).toMatch(/Permission denied/)
+        } finally {
+          fs.chmodSync(`${TEST_DIR}/locked`, 0o700)
+        }
+      }
+    )
+
+    it('does not report a failed cd as a missing file', async () => {
+      fs.writeFileSync(`${TEST_DIR}/real.txt`, 'x')
+      const badCwd = new TestSandbox(`${TEST_DIR}/missing-workdir`)
+      await expect(badCwd.readFile(`${TEST_DIR}/real.txt`)).rejects.not.toBeInstanceOf(SandboxPathNotFoundError)
+    })
+
     // Contract: on POSIX, `\` in a path is a legal filename character, not a
     // separator. Containment logic in tools above the sandbox relies on this.
     it('treats a backslash in a filename as a literal character', async () => {

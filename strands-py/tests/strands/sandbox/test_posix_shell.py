@@ -393,6 +393,30 @@ async def test_read_directory_raises_is_a_directory(sandbox, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_read_file_under_unsearchable_directory_is_not_reported_missing(sandbox, tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("x")
+    locked.chmod(0o600)
+    try:
+        with pytest.raises(OSError, match="Permission denied") as exc_info:
+            await sandbox.read_file("locked/secret.txt")
+        assert not isinstance(exc_info.value, FileNotFoundError)
+    finally:
+        locked.chmod(0o700)
+
+
+@pytest.mark.asyncio
+async def test_read_file_failed_cd_is_not_reported_missing(tmp_path):
+    (tmp_path / "real.txt").write_text("x")
+    sandbox = _ShellTestSandbox(str(tmp_path / "missing-workdir"))
+    with pytest.raises(OSError) as exc_info:
+        await sandbox.read_file(str(tmp_path / "real.txt"))
+    assert not isinstance(exc_info.value, FileNotFoundError)
+
+
+@pytest.mark.asyncio
 async def test_read_file_other_failure_raises_oserror_not_file_not_found(sandbox, monkeypatch):
     async def fake_execute(self, command, **kwargs):
         return ExecutionResult(exit_code=1, stdout="", stderr="base64: read error: Permission denied")

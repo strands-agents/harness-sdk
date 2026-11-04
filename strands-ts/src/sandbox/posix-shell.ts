@@ -78,8 +78,12 @@ export abstract class PosixShellSandbox extends Sandbox {
 
   async readFile(path: string): Promise<Uint8Array> {
     const quoted = shellQuote(path)
-    // Exit 77/78 distinguish a missing path and a directory from base64's own failures (locale-independent).
-    const result = await this.execute(`test -e ${quoted} || exit 77; test -d ${quoted} && exit 78; base64 < ${quoted}`)
+    // Exit 77 = missing (not when the parent is unsearchable: that is EACCES), 78 = directory; locale-independent.
+    // The braces keep a backend's `cd ... &&` prefix out of the `||`.
+    const result = await this.execute(
+      `{ test -e ${quoted} || { parent=$(dirname -- ${quoted}); test -d "$parent" && ! test -x "$parent" || exit 77; }; ` +
+        `test -d ${quoted} && exit 78; base64 < ${quoted}; }`
+    )
     if (result.exitCode === 77) {
       throw new SandboxPathNotFoundError(path)
     }

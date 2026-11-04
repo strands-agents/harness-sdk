@@ -32,7 +32,7 @@ export class SandboxAbortError extends Error {
 }
 
 /**
- * Thrown by {@link Sandbox.listFiles} when the path does not exist, distinguishing
+ * Thrown by {@link Sandbox.listFiles} and {@link Sandbox.readFile} when the path does not exist, distinguishing
  * genuine absence from permission or transport failures (which throw plain errors).
  */
 export class SandboxPathNotFoundError extends Error {

@@ -26,7 +26,7 @@ class SandboxTimeoutError(TimeoutError):
 
 
 class SandboxPathNotFoundError(FileNotFoundError):
-    """Raised by :meth:`~strands.sandbox.base.Sandbox.list_files` when the path does not exist.
+    """Raised by ``list_files`` and ``read_file`` when the path does not exist.
 
     Distinguishes genuine absence (a missing path, or a file where a directory
     was expected) from permission or transport failures, which raise plain
