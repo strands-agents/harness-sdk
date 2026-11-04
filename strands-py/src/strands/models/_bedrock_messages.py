@@ -1,76 +1,41 @@
 """The Anthropic Messages API served by Amazon Bedrock, exposed as ``BedrockModel.Messages``."""
 
-import asyncio
 import logging
-import os
-from typing import Any, Literal
+from typing import Any
 
 import anthropic
 import boto3
-import httpx
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
 from typing_extensions import Unpack, override
 
-from ._validation import validate_region
+from ._bedrock_sigv4 import BedrockSigV4Auth
 from .anthropic import AnthropicModel
-from .bedrock import DEFAULT_BEDROCK_REGION
+from .bedrock import BedrockEndpoint, _resolve_bedrock_region
+
+try:
+    from anthropic import AsyncAnthropicBedrockMantle, DefaultAsyncHttpxClient
+except ImportError as error:  # pragma: no cover - depends on the installed anthropic version
+    raise ImportError(
+        "BedrockModel.Messages requires anthropic>=0.91.0. Install it with: pip install -U 'strands-agents[anthropic]'"
+    ) from error
 
 logger = logging.getLogger(__name__)
-
-BedrockEndpoint = Literal["bedrock-runtime", "bedrock-mantle"]
-
-_BEDROCK_CLIENT_ARGS = {"base_url", "api_key", "auth_token"}
 
 _BASE_URLS: dict[str, str] = {
     "bedrock-runtime": "https://bedrock-runtime.{region}.amazonaws.com/anthropic",
     "bedrock-mantle": "https://bedrock-mantle.{region}.api.aws/anthropic",
 }
 
-
-class _BedrockAnthropicClient(anthropic.AsyncAnthropic):
-    """Anthropic client that authenticates to Bedrock with a Bedrock API key or SigV4.
-
-    Without an API key, each request is signed with the session's current credentials, so refreshable
-    credentials (assumed roles, SSO) keep working for the life of the agent.
-    """
-
-    def __init__(
-        self, *, region: str, boto_session: boto3.Session, api_key: str | None = None, **client_args: Any
-    ) -> None:
-        # The placeholder keeps the SDK from reading Anthropic credentials from the environment; auth_headers
-        # below decides what is actually sent.
-        super().__init__(api_key=api_key or "sigv4", **client_args)
-        # Drop headers the SDK reads from ANTHROPIC_CUSTOM_HEADERS; they are meant for Anthropic, not AWS.
-        self._custom_headers = dict(client_args.get("default_headers") or {})
-        self._bedrock_api_key = api_key
-        self._region = region
-        self._boto_session = boto_session
-
-    @property
-    @override
-    def auth_headers(self) -> dict[str, str]:
-        return {"X-Api-Key": self._bedrock_api_key} if self._bedrock_api_key else {}
-
-    @override
-    def _validate_headers(self, headers: Any, custom_headers: Any) -> None:
-        return None
-
-    @override
-    async def _prepare_request(self, request: httpx.Request) -> None:
-        if not self._bedrock_api_key:
-            # Resolving or refreshing credentials can block on network calls (IMDS, STS).
-            await asyncio.to_thread(self._sign, request)
-
-    def _sign(self, request: httpx.Request) -> None:
-        credentials = self._boto_session.get_credentials()
-        if credentials is None:
-            raise RuntimeError("Could not resolve AWS credentials for Amazon Bedrock from the boto3 session.")
-
-        headers = {key: value for key, value in request.headers.items() if key.lower() != "connection"}
-        signed = AWSRequest(method=request.method, url=str(request.url), headers=headers, data=request.read())
-        SigV4Auth(credentials.get_frozen_credentials(), "bedrock", self._region).add_auth(signed)
-        request.headers.update(dict(signed.headers))
+# Set by this provider; the Bedrock client's own AWS options would bypass the session-based signing.
+_OWNED_CLIENT_ARGS = {
+    "api_key",
+    "aws_access_key",
+    "aws_profile",
+    "aws_region",
+    "aws_secret_key",
+    "aws_session_token",
+    "base_url",
+    "skip_auth",
+}
 
 
 class BedrockMessagesModel(AnthropicModel):
@@ -99,35 +64,38 @@ class BedrockMessagesModel(AnthropicModel):
             region_name: AWS region. Defaults to the session's region, then ``AWS_REGION``, then us-west-2.
             boto_session: Session whose credentials sign each request. Mutually exclusive with ``region_name``.
             api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials.
-            client_args: Arguments for the underlying Anthropic client, such as ``timeout``, ``max_retries``, or
-                ``http_client``. ``base_url``, ``api_key``, and ``auth_token`` are set by this provider.
+            client_args: Arguments for the underlying Anthropic client, such as ``timeout`` or ``max_retries``.
+                Base URL and authentication are set by this provider, and ``http_client`` only with ``api_key``.
             **model_config: Configuration options for the Anthropic model.
 
         Raises:
             ValueError: If both ``region_name`` and ``boto_session`` are given, ``endpoint`` is unknown, or
                 ``client_args`` sets an argument this provider owns.
         """
-        if region_name and boto_session:
-            raise ValueError("Cannot specify both `region_name` and `boto_session`.")
         if endpoint not in _BASE_URLS:
             raise ValueError(f"endpoint=<{endpoint}> | unknown Bedrock endpoint, use one of {sorted(_BASE_URLS)}")
-        if owned := _BEDROCK_CLIENT_ARGS & set(client_args or {}):
-            raise ValueError(f"client_args=<{sorted(owned)}> | set by BedrockModel.Messages, remove them")
+        owned = _OWNED_CLIENT_ARGS if api_key else _OWNED_CLIENT_ARGS | {"http_client"}
+        if conflicting := owned & set(client_args or {}):
+            raise ValueError(f"client_args=<{sorted(conflicting)}> | set by BedrockModel.Messages, remove them")
 
-        session = boto_session or boto3.Session()
-        region = validate_region(
-            region_name or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+        session, region = _resolve_bedrock_region(region_name, boto_session)
+        auth: dict[str, Any] = (
+            {"api_key": api_key}
+            if api_key
+            else {"skip_auth": True, "http_client": DefaultAsyncHttpxClient(auth=BedrockSigV4Auth(session, region))}
         )
-        client_args = {
-            **(client_args or {}),
-            "base_url": _BASE_URLS[endpoint].format(region=region),
-            "region": region,
-            "boto_session": session,
-            "api_key": api_key,
-        }
-        super().__init__(client_args=client_args, **model_config)
+        super().__init__(
+            client_args={
+                **(client_args or {}),
+                **auth,
+                "base_url": _BASE_URLS[endpoint].format(region=region),
+                "aws_region": region,
+            },
+            **model_config,
+        )
         logger.debug("endpoint=<%s>, region=<%s> | bedrock messages client created", endpoint, region)
 
     @override
     def _create_client(self, client_args: dict[str, Any]) -> anthropic.AsyncAnthropic:
-        return _BedrockAnthropicClient(**client_args)
+        # The Bedrock client speaks the same Messages API as AsyncAnthropic, which AnthropicModel is typed against.
+        return AsyncAnthropicBedrockMantle(**client_args)  # type: ignore[return-value]

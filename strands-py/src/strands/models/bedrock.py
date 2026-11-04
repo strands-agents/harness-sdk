@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -48,11 +49,8 @@ from ._native_output import (
 )
 from ._strict_schema import ensure_strict_json_schema
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
-from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
+from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys, validate_region
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
-
-if TYPE_CHECKING:
-    from ._bedrock_messages import BedrockMessagesModel
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +58,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_BEDROCK_MODEL_ID = "global.anthropic.claude-sonnet-4-6"
 _DEFAULT_BEDROCK_MODEL_ID = "{}.anthropic.claude-sonnet-4-6"
 DEFAULT_BEDROCK_REGION = "us-west-2"
+
+BedrockEndpoint = Literal["bedrock-runtime", "bedrock-mantle"]
+"""The Bedrock endpoint families that serve the Messages, Chat Completions, and Responses APIs."""
+
+
+def _resolve_bedrock_region(region_name: str | None, boto_session: boto3.Session | None) -> tuple[boto3.Session, str]:
+    """Resolve the session and region the way ``BedrockModel`` does, validating the region for URL use.
+
+    Raises:
+        ValueError: If both are given, or the resolved region is malformed.
+    """
+    if region_name and boto_session:
+        raise ValueError("Cannot specify both `region_name` and `boto_session`.")
+    session = boto_session or boto3.Session()
+    region = region_name or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+    return session, validate_region(region)
+
 
 _BEDROCK_VIDEO_FORMAT_ALIASES = {
     "3gp": "three_gp",
@@ -213,13 +228,15 @@ def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
     return {**fields, "anthropic_beta": betas, "thinking": thinking}
 
 
-class _BedrockMessagesAttribute:
-    """Resolves ``BedrockModel.Messages`` on first access, so ``anthropic`` is only imported when it is used."""
+class _LazyModelClass:
+    """Resolves a nested ``BedrockModel`` class on first access, so its optional SDK is only imported when used."""
 
-    def __get__(self, instance: object, owner: type) -> "type[BedrockMessagesModel]":
-        from ._bedrock_messages import BedrockMessagesModel
+    def __init__(self, module: str, name: str) -> None:
+        self._module = module
+        self._name = name
 
-        return BedrockMessagesModel
+    def __get__(self, instance: object, owner: type) -> Any:
+        return getattr(importlib.import_module(self._module, __package__), self._name)
 
 
 class BedrockModel(Model):
@@ -240,9 +257,12 @@ class BedrockModel(Model):
     """This class: the Converse API."""
     if TYPE_CHECKING:
         from ._bedrock_messages import BedrockMessagesModel as Messages
+        from ._bedrock_openai import BedrockChatCompletionsModel as ChatCompletions
+        from ._bedrock_openai import BedrockResponsesModel as Responses
     else:
-        Messages = _BedrockMessagesAttribute()
-    """The Anthropic Messages API on Bedrock; see :class:`~strands.models._bedrock_messages.BedrockMessagesModel`."""
+        Messages = _LazyModelClass("._bedrock_messages", "BedrockMessagesModel")
+        ChatCompletions = _LazyModelClass("._bedrock_openai", "BedrockChatCompletionsModel")
+        Responses = _LazyModelClass("._bedrock_openai", "BedrockResponsesModel")
 
     class BedrockConfig(BaseModelConfig, total=False):
         """Configuration options for Bedrock models.
