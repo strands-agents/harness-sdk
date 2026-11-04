@@ -163,6 +163,11 @@ class CacheConfig:
             the same static system prefix hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
             A hand-placed system cache point is honored rather than doubled.
+        messages_ttl: Cache the conversation prefix, placing a cache point on durable user content. A TTL
+            string sets this section's own duration; True or None derives it from ``ttl``; False disables
+            the message cache point. Mirrors the TypeScript ``messagesTTL``. Read by ``BedrockModel``,
+            ``AnthropicModel`` and, on models that take cache points, ``OpenAIResponsesModel``, which
+            accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
         cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
             cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
             a session manager, so repeat runs of a session share a cache prefix with no key management.
@@ -180,6 +185,14 @@ class CacheConfig:
     system_prompt_ttl: bool | str = True
     cache_key: str | Literal[False] | None = None
     tools_ttl: bool | str | None = None
+    messages_ttl: bool | str | None = None
+
+
+def _messages_cache_ttl(cache_config: CacheConfig | None) -> str | None:
+    """TTL for the message cache point: a ``messages_ttl`` string, else ``cache_config.ttl``."""
+    if cache_config is None:
+        return None
+    return cache_config.messages_ttl if isinstance(cache_config.messages_ttl, str) else cache_config.ttl
 
 
 @dataclass
