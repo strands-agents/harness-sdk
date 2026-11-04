@@ -127,7 +127,7 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
         problem = documentProblem(bytes, ext)
       } else if (imageFormat) {
         expected = `a valid ${imageFormat} image`
-        problem = await imageProblem(bytes, imageFormat)
+        problem = imageProblem(bytes, imageFormat)
       } else {
         expected = 'a png, jpeg, gif, or webp image'
         problem = ''
@@ -144,7 +144,7 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
       // Sending it as media would fail the request and every later one, so show text or throw instead.
       const reason = problem ? `: ${problem}` : ''
       try {
-        content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+        content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
       } catch {
         content = ''
       }

@@ -9,11 +9,16 @@ missing ``%%EOF`` still renders there, so they pass here. Each returns ``None`` 
 from __future__ import annotations
 
 import io
+import re
 import struct
 import zipfile
 import zlib
 
 _TRUNCATED = "it is truncated"
+# Deep checks stop after inflating this much, so a compression bomb costs bounded time and memory; what is
+# left is accepted on structure alone, as before these checks existed.
+_INFLATE_BUDGET = 64 << 20
+_NOT_FILL = re.compile(rb"[^\xff]")
 _OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
 _OLE_SPECIAL = 0xFFFFFFFA
 _OLE_STREAMS = {"Word": ("WordDocument",), "Excel": ("Workbook", "WORKBOOK", "Book")}
@@ -55,7 +60,7 @@ def _png_problem(data: bytes) -> str | None:
         if not kind[0] & 0x20 and zlib.crc32(kind + body) != struct.unpack_from(">I", data, pos + 8 + length)[0]:
             return "a chunk checksum does not match"
         try:
-            while kind == b"IDAT" and not inflater.eof:
+            while kind == b"IDAT" and not inflater.eof and inflated <= _INFLATE_BUDGET:
                 out = inflater.decompress(body, 1 << 20)
                 inflated, body = inflated + len(out), inflater.unconsumed_tail
                 if not body and len(out) < 1 << 20:
@@ -63,7 +68,8 @@ def _png_problem(data: bytes) -> str | None:
         except zlib.error:
             return "its image data is corrupt"
         if kind == b"IEND":
-            return None if inflater.eof and inflated >= expected else "its image data is incomplete"
+            complete = inflated > _INFLATE_BUDGET or (inflater.eof and inflated >= expected)
+            return None if complete else "its image data is incomplete"
         pos += 12 + length
     return _TRUNCATED
 
@@ -89,8 +95,12 @@ def _jpeg_problem(data: bytes) -> str | None:
         if data[pos] != 0xFF:
             return "its marker segments are malformed"
         marker = data[pos + 1]
-        if marker == 0xFF or marker == 0x01 or 0xD0 <= marker <= 0xD8:
-            pos += 1 if marker == 0xFF else 2
+        if marker == 0xFF:
+            fill = _NOT_FILL.search(data, pos + 1)
+            pos = (fill.start() if fill else len(data)) - 1
+            continue
+        if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+            pos += 2
             continue
         if marker == 0xD9:
             break
@@ -159,10 +169,15 @@ def _pdf_problem(data: bytes) -> str | None:
 def _ooxml_family(data: bytes) -> tuple[str | None, str | None]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names, corrupt = archive.namelist(), archive.testzip() is not None
+            names, budget = archive.namelist(), _INFLATE_BUDGET
+            for info in archive.infolist():
+                if info.file_size > budget:
+                    continue
+                budget -= info.file_size
+                with archive.open(info) as entry:  # reading to the end checks the entry's CRC
+                    while entry.read(1 << 20):
+                        pass
     except Exception:  # zipfile raises a wide, undocumented range on damaged archives
-        names, corrupt = [], True
-    if corrupt:
         return None, "its zip archive is corrupt or truncated"
     if "[Content_Types].xml" not in names:
         return None, "it is a zip archive, not an Office document"

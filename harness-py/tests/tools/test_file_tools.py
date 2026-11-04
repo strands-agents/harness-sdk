@@ -249,7 +249,14 @@ async def test_media_off_leaves_text_reads_untouched(ctx, tmp_path):
 
 
 _PNG_IDAT = _PNG.index(b"IDAT") + 4
+_PNG_BOMB = _PNG[: _PNG_IDAT - 8] + _png_chunk(b"IDAT", zlib.compress(bytes(65 << 20))[:-4]) + _png_chunk(b"IEND", b"")
 _DOCX_PART = _DOCX.index(b"word/document.xml") + len("word/document.xml")
+# word/document.xml's central-directory entry, claiming 4 GB with a wrong CRC: past the inflate budget,
+# so it is accepted on structure alone instead of being inflated.
+_DOCX_DIR = _DOCX.rindex(b"PK\x01\x02")
+_DOCX_HUGE_ENTRY = (
+    _DOCX[: _DOCX_DIR + 16] + bytes(4) + _DOCX[_DOCX_DIR + 20 : _DOCX_DIR + 24] + struct.pack("<I", 0xFFFFFFF0)
+) + _DOCX[_DOCX_DIR + 28 :]
 
 
 @pytest.mark.parametrize(
@@ -297,6 +304,9 @@ async def test_read_rejects_a_truncated_corrupt_or_mislabeled_media_file(ctx, tm
         ("pic.png", _png(before_idat=struct.pack(">I", 2) + b"tEXt" + b"ab" + bytes(4)), "image"),
         ("pic.png", _png(pixels=bytes(15), interlace=1), "image"),
         ("pic.jpg", _JPEG[:-2], "image"),
+        ("pic.jpg", _JPEG[:20] + b"\xff" * 1000 + _JPEG[20:], "image"),
+        # Past the inflate budget, so the cut-off checksum at its end is never reached.
+        ("pic.png", _PNG_BOMB, "image"),
         ("pic.gif", _GIF[:-1], "image"),
         ("pic.webp", _WEBP + b"trailing junk", "image"),
         ("report.pdf", b"junk\n" + _PDF[: _PDF.index(b"%%EOF")], "document"),
@@ -311,6 +321,7 @@ async def test_read_rejects_a_truncated_corrupt_or_mislabeled_media_file(ctx, tm
         ("report.xls", _ole("Workbook\x00WordDocument"), "document"),
         ("report.doc", _ole("Workbook\x00WordDocument"), "document"),
         ("report.doc", _DOC_STALE_FAT, "document"),
+        ("report.docx", _DOCX_HUGE_ENTRY, "document"),
     ],
 )
 async def test_read_returns_media_that_bedrock_accepts(ctx, tmp_path, name, data, kind):

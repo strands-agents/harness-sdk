@@ -8,12 +8,14 @@
  */
 
 import { Buffer } from 'node:buffer'
-import { Readable } from 'node:stream'
-import { createInflate, inflateRawSync } from 'node:zlib'
+import * as zlib from 'node:zlib'
 
 import type { ImageFormat } from '@strands-agents/sdk'
 
 const TRUNCATED = 'it is truncated'
+// Deep checks stop after inflating this much, so a compression bomb costs bounded time and memory; what is
+// left is accepted on structure alone, as before these checks existed.
+const INFLATE_BUDGET = 64 << 20
 const ZIP_CORRUPT = 'its zip archive is corrupt or truncated'
 const OLE_SIGNATURE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
 const OLE_SPECIAL = 0xfffffffa
@@ -27,7 +29,7 @@ type Family = 'Word' | 'Excel'
 type FamilyResult = [Family | undefined, string | undefined]
 
 /** Why `data` (whose signature already matched `format`) is not a usable image, if it is not. */
-export async function imageProblem(data: Uint8Array, format: ImageFormat): Promise<string | undefined> {
+export function imageProblem(data: Uint8Array, format: ImageFormat): string | undefined {
   if (format === 'png') return pngProblem(data)
   if (format === 'jpeg') return jpegProblem(data)
   return format === 'gif' ? gifProblem(data) : webpProblem(data)
@@ -65,13 +67,16 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   return c >>> 0
 })
 
-export function crc32(data: Uint8Array): number {
+// zlib.crc32 is native from Node 22.2; the package still supports 22.0.
+export const crc32 = 'crc32' in zlib ? (data: Uint8Array): number => zlib.crc32(data) : jsCrc32
+
+function jsCrc32(data: Uint8Array): number {
   let crc = 0xffffffff
   for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
 }
 
-async function pngProblem(data: Uint8Array): Promise<string | undefined> {
+function pngProblem(data: Uint8Array): string | undefined {
   const dv = view(data)
   const idat: Uint8Array[] = []
   let pos = 8
@@ -92,13 +97,13 @@ async function pngProblem(data: Uint8Array): Promise<string | undefined> {
     }
     if (kind === 'IDAT') idat.push(typeAndBody.subarray(4))
     if (kind === 'IEND') {
-      let inflated = 0
       try {
-        for await (const out of Readable.from(idat).pipe(createInflate())) inflated += (out as Buffer).length
-      } catch {
+        const inflated = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: INFLATE_BUDGET })
+        return inflated.length >= expected ? undefined : 'its image data is incomplete'
+      } catch (error) {
+        if ((error as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE') return undefined
         return 'its image data is corrupt or incomplete'
       }
-      return inflated >= expected ? undefined : 'its image data is incomplete'
     }
     pos += 12 + length
   }
@@ -214,6 +219,7 @@ function ooxmlFamily(data: Uint8Array): FamilyResult {
   while (eocd >= Math.max(0, data.length - 65557) && dv.getUint32(eocd, true) !== 0x06054b50) eocd--
   if (eocd < 0 || eocd < data.length - 65557) return [undefined, ZIP_CORRUPT]
   const names: string[] = []
+  let budget = INFLATE_BUDGET
   let pos = dv.getUint32(eocd + 16, true)
   for (let entry = dv.getUint16(eocd + 10, true); entry > 0; entry--) {
     if (pos + 46 > data.length || dv.getUint32(pos, true) !== 0x02014b50) return [undefined, ZIP_CORRUPT]
@@ -230,11 +236,14 @@ function ooxmlFamily(data: Uint8Array): FamilyResult {
     if (start + compressed > data.length) return [undefined, ZIP_CORRUPT]
     if (method !== 0 && method !== 8) return [undefined, ZIP_CORRUPT]
     const body = data.subarray(start, start + compressed)
-    try {
-      const content = method === 0 ? body : inflateRawSync(body, { maxOutputLength: Math.max(size, 1) })
-      if (content.length !== size || crc32(content) !== crc) return [undefined, ZIP_CORRUPT]
-    } catch {
-      return [undefined, ZIP_CORRUPT]
+    if (size <= budget) {
+      budget -= size
+      try {
+        const content = method === 0 ? body : zlib.inflateRawSync(body, { maxOutputLength: Math.max(size, 1) })
+        if (content.length !== size || crc32(content) !== crc) return [undefined, ZIP_CORRUPT]
+      } catch {
+        return [undefined, ZIP_CORRUPT]
+      }
     }
     names.push(Buffer.from(data.subarray(pos + 46, pos + 46 + nameLength)).toString('utf8'))
     pos += 46 + nameLength + dv.getUint16(pos + 30, true) + dv.getUint16(pos + 32, true)

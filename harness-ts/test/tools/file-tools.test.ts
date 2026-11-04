@@ -51,6 +51,11 @@ function ole(stream: string): Uint8Array {
 
 const PNG = png()
 const PNG_IDAT = Buffer.from(PNG).indexOf('IDAT') + 4
+const PNG_BOMB = bytesOf(
+  PNG.subarray(0, PNG_IDAT - 8),
+  pngChunk('IDAT', deflateSync(new Uint8Array(65 << 20)).subarray(0, -4)),
+  pngChunk('IEND', [])
+)
 const JPEG = bytesOf(
   [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10],
   'JFIF',
@@ -75,6 +80,16 @@ const ZIP_WITHOUT_CONTENT_TYPES = b64(
   'UEsDBBQAAAAIAAAAIVzpif49EwAAAN0AAAARAAAAd29yZC9kb2N1bWVudC54bWyzSclPLs1NzSuxqxgmwEYf7iUAUEsBAhQDFAAAAAgAAAAhXOmJ/j0TAAAA3QAAABEAAAAAAAAAAAAAAIABAAAAAHdvcmQvZG9jdW1lbnQueG1sUEsFBgAAAAABAAEAPwAAAEIAAAAAAA=='
 )
 const DOCX_PART = Buffer.from(DOCX).indexOf('word/document.xml') + 'word/document.xml'.length
+// word/document.xml's central-directory entry, claiming 4 GB with a wrong CRC: past the inflate budget,
+// so it is accepted on structure alone instead of being inflated.
+const DOCX_DIR = Buffer.from(DOCX).lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
+const DOCX_HUGE_ENTRY = bytesOf(
+  DOCX.subarray(0, DOCX_DIR + 16),
+  [0, 0, 0, 0],
+  DOCX.subarray(DOCX_DIR + 20, DOCX_DIR + 24),
+  [0xf0, 0xff, 0xff, 0xff],
+  DOCX.subarray(DOCX_DIR + 28)
+)
 const DOC = ole('WordDocument')
 const XLS = ole('Workbook')
 // Some writers mark unused FAT entries ENDOFCHAIN instead of FREE; Bedrock still accepts the file.
@@ -304,6 +319,9 @@ describe('read media validation', () => {
     ['pic.png', png({ beforeIdat: bytesOf([0, 0, 0, 2], 'tEXtab', [0, 0, 0, 0]) })],
     ['pic.png', png({ pixels: new Uint8Array(15), interlace: 1 })],
     ['pic.jpg', JPEG.subarray(0, -2)],
+    ['pic.jpg', bytesOf(JPEG.subarray(0, 20), new Uint8Array(1000).fill(0xff), JPEG.subarray(20))],
+    // Past the inflate budget, so the cut-off checksum at its end is never reached.
+    ['pic.png', PNG_BOMB],
     ['pic.gif', GIF.subarray(0, -1)],
     ['pic.webp', bytesOf(WEBP, 'trailing junk')],
     ['report.pdf', bytesOf('junk\n', PDF.subarray(0, Buffer.from(PDF).indexOf('%%EOF')))],
@@ -318,6 +336,7 @@ describe('read media validation', () => {
     ['report.xls', ole('Workbook\0WordDocument')],
     ['report.doc', ole('Workbook\0WordDocument')],
     ['report.doc', DOC_STALE_FAT],
+    ['report.docx', DOCX_HUGE_ENTRY],
   ])('returns media that Bedrock accepts (%s #%#)', async (name, bytes) => {
     // Imperfect but renderable files (as observed against Bedrock) stay media blocks.
     const path = join(dir, name)
