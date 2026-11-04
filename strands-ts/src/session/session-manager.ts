@@ -280,7 +280,15 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   /** Restores session state on agent initialization. */
   private async _onAgentInitialized(event: InitializedEvent): Promise<void> {
     const hadMessages = event.agent.messages.length > 0
+    // The session restores the conversation, not the agent's configuration: a
+    // system prompt given to the constructor is the one the caller wants now,
+    // and must not be replaced by the prompt saved on the session's first turn.
+    const configuredSystemPrompt = event.agent.systemPrompt
     const restored = await this.restoreSnapshot({ target: event.agent })
+
+    if (restored && configuredSystemPrompt !== undefined) {
+      event.agent.systemPrompt = configuredSystemPrompt
+    }
 
     if (restored && hadMessages) {
       logger.warn(

@@ -271,6 +271,50 @@ describe('SessionManager', () => {
       expect(mockAgent.messages).toEqual(snapshot.data.messages)
     })
 
+    it('keeps the system prompt passed to the constructor over the saved one', async () => {
+      const firstTurnAgent = createMockAgent('test-agent')
+      firstTurnAgent.systemPrompt = 'prompt v1'
+      firstTurnAgent.messages.push(MOCK_MESSAGE)
+      await storage.saveSnapshot({
+        location: { sessionId: 'test-session', scope: 'agent', scopeId: 'test-agent' },
+        snapshotId: 'latest',
+        isLatest: true,
+        snapshot: firstTurnAgent.takeSnapshot({ preset: 'session' }),
+      })
+
+      sessionManager = new SessionManager({
+        sessionId: 'test-session',
+        storage: { snapshot: storage },
+      })
+      mockAgent.systemPrompt = 'prompt v2'
+
+      await initPluginAndInvokeHook(sessionManager, new InitializedEvent(createMockEvent(mockAgent)))
+
+      expect(mockAgent.systemPrompt).toBe('prompt v2')
+      expect(mockAgent.messages).toHaveLength(1)
+    })
+
+    it('restores the saved system prompt when the constructor set none', async () => {
+      const firstTurnAgent = createMockAgent('test-agent')
+      firstTurnAgent.systemPrompt = 'prompt v1'
+      await storage.saveSnapshot({
+        location: { sessionId: 'test-session', scope: 'agent', scopeId: 'test-agent' },
+        snapshotId: 'latest',
+        isLatest: true,
+        snapshot: firstTurnAgent.takeSnapshot({ preset: 'session' }),
+      })
+
+      sessionManager = new SessionManager({
+        sessionId: 'test-session',
+        storage: { snapshot: storage },
+      })
+      delete (mockAgent as { systemPrompt?: unknown }).systemPrompt
+
+      await initPluginAndInvokeHook(sessionManager, new InitializedEvent(createMockEvent(mockAgent)))
+
+      expect(mockAgent.systemPrompt).toBe('prompt v1')
+    })
+
     it('handles missing snapshot gracefully', async () => {
       sessionManager = new SessionManager({
         sessionId: 'new-session',
