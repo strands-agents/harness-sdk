@@ -1,7 +1,7 @@
 /**
  * Turn-scoped system messages: injected text sent as a system message the model reads only until a later user
- * message exists. Once cleared, the message stays in the request but renders nothing, so a history that keeps it
- * is sent unchanged on every request.
+ * message exists. Once cleared, the message stays in the request but renders nothing, so the history before every
+ * later assistant turn is sent unchanged.
  *
  * @see https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
  */
@@ -36,7 +36,7 @@ export interface TurnScopedSystemMessage extends Anthropic.MessageParam {
  */
 export function turnScopedSystemMessage(message: Message): TurnScopedSystemMessage | undefined {
   const content = message.content.flatMap((block): Anthropic.TextBlockParam[] =>
-    block.type === 'injectedBlock' ? [{ type: 'text', text: block.injected.text }] : []
+    block.type === 'injectedBlock' && block.injected.text ? [{ type: 'text', text: block.injected.text }] : []
   )
   if (content.length === 0) return undefined
   return { role: 'system', content, clear_at: 'next_user_message' }

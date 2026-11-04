@@ -216,7 +216,7 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('keeps the cache point ahead of the latest injected text', async () => {
+    it('keeps the cache point ahead of the latest injected text, also when an assistant message follows', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       const streamSpy = vi.spyOn(model, 'stream')
       const messages = [
@@ -229,15 +229,45 @@ describe('ModelProxy', () => {
           ],
         }),
       ]
+      const proxy = new ModelProxy(model)
 
-      await drain(new ModelProxy(model).streamAggregated(messages, { dynamicTrailingBlocks: 1 }))
+      await drain(proxy.streamAggregated(messages, { dynamicTrailingBlocks: 1 }))
+      await drain(
+        proxy.streamAggregated([...messages, new Message({ role: 'assistant', content: [new TextBlock('Sure')] })])
+      )
 
-      expect(streamSpy.mock.calls[0]![1]).toStrictEqual({ dynamicTrailingBlocks: 2 })
+      expect(streamSpy.mock.calls.map((call) => call[1])).toStrictEqual([
+        { dynamicTrailingBlocks: 2 },
+        { dynamicTrailingBlocks: 2 },
+      ])
     })
 
-    it('passes injected blocks through to a model with temporary messages', async () => {
+    it('sends text to a provider that does not send temporary messages, whatever its model info says', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       model.updateConfig({ modelInfo: { capabilities: { temporaryMessages: true } } })
+      const streamSpy = vi.spyOn(model, 'stream')
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'reminder', source: 'test' })],
+          trackingId: 'msg-1',
+        }),
+      ]
+
+      await drain(new ModelProxy(model).streamAggregated(messages))
+
+      expect(streamSpy.mock.calls[0]![0]).toEqual([
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new TextBlock('\n\nreminder')],
+          trackingId: 'msg-1',
+        }),
+      ])
+    })
+
+    it('passes injected blocks through to a provider that sends temporary messages', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      vi.spyOn(model, 'sendsTemporaryMessages', 'get').mockReturnValue(true)
       const streamSpy = vi.spyOn(model, 'stream')
       const messages = [
         new Message({

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { BeforeModelCallEvent, InvokeModelStage } from '@strands-agents/sdk'
 import type { Agent, Plugin, ToolContext } from '@strands-agents/sdk'
 import type { InjectionContext } from '@strands-agents/sdk/vended-plugins/context-injector'
 
@@ -97,5 +98,6 @@ describe('Todos', () => {
     }
     new Todos().initAgent(stub as unknown as LocalAgent)
     expect(added).toHaveLength(1)
+    expect([InvokeModelStage.Input, BeforeModelCallEvent]).toContain(added[0])
   })
 })

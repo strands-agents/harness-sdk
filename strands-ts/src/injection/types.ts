@@ -64,16 +64,3 @@ export interface InjectionMiddlewareOptions {
    */
   renderContent: (context: InjectionContext) => Promise<string | undefined>
 }
-
-/**
- * Options for `addInjection`: {@link InjectionMiddlewareOptions} plus the writer's name.
- *
- * @internal Engine options. Consumers configure injection via `ContextInjectorConfig`, not this type.
- */
-export interface InjectionOptions extends InjectionMiddlewareOptions {
-  /**
-   * Name of the component that writes the text, stored as the `InjectedBlock`'s `source`. The check that keeps a
-   * retry from writing again matches on it, so it must be stable and unique per writer.
-   */
-  source: string
-}

@@ -1315,12 +1315,11 @@ describe('info', () => {
     expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
   })
 
-  it('leaves temporaryMessages unknown unless the provider sends temporary messages', () => {
+  it('does not send temporary messages, even for a model that accepts them', () => {
     const provider = new TestModelProvider()
     provider.updateConfig({ modelId: 'us.anthropic.claude-opus-5-5' })
-    expect(provider.modelInfo.capabilities?.temporaryMessages).toBeUndefined()
-    provider.updateConfig({ modelInfo: { capabilities: { temporaryMessages: true } } })
     expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(true)
+    expect(provider.sendsTemporaryMessages).toBe(false)
   })
 
   it('lets a provider put its facts over the shared model info, with the user override over both', () => {

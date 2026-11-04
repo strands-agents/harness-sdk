@@ -19,7 +19,6 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import {
   TURN_SCOPED_SYSTEM_BETA,
   hasTurnScopedSystemMessage,
@@ -280,13 +279,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /**
-   * Adds `temporaryMessages` from the shared model info: this provider sends injected text as turn-scoped system
-   * messages to the models that accept them.
-   */
-  override get modelInfo(): ModelInfo {
-    const temporaryMessages = lookupModelInfo(this.modelId ?? '').capabilities?.temporaryMessages
-    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
+  /** Injected text goes to the models that accept them as turn-scoped system messages. */
+  override get sendsTemporaryMessages(): boolean {
+    return this.modelInfo.capabilities?.temporaryMessages === true
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -913,7 +908,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    return requestMessages(messages, formatted, this.modelInfo.capabilities?.temporaryMessages === true)
+    return requestMessages(messages, formatted, this.sendsTemporaryMessages)
   }
 
   private _isCacheableBlock(
@@ -1224,7 +1219,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
  *
  * @param messages - The messages of the request
  * @param formatted - The formatted messages, one per message
- * @param temporaryMessages - Whether the model accepts turn-scoped system messages
+ * @param temporaryMessages - Whether to send injected text as turn-scoped system messages
  * @returns The messages to send
  */
 function requestMessages(

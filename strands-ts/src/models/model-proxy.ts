@@ -13,7 +13,7 @@ import type { ModelStreamEvent } from './streaming.js'
  * added only when the call returns normally and the provider reported it; a thrown error
  * passes through and adds nothing.
  *
- * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is set as it is
+ * An `InjectedBlock` reaches a provider whose {@link Model.sendsTemporaryMessages} is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
  * of the earlier ones.
@@ -64,7 +64,7 @@ export class ModelProxy {
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
-    if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
+    if (!messages.some(hasInjectedBlock) || this._model.sendsTemporaryMessages) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
     return renderInjectedBlocks(messages)
@@ -83,7 +83,7 @@ export class ModelProxy {
 interface RenderedMessages {
   /** The messages to send. */
   messages: Message[]
-  /** Trailing blocks of the last message, from its first injected block on, that the next call sends differently. */
+  /** Trailing blocks of the latest user message, from its first injected block on, that the next call drops. */
   dynamicTrailingBlocks: number
 }
 
@@ -108,7 +108,7 @@ function renderInjectedBlocks(messages: Message[]): RenderedMessages {
       warnOnce(logger, `role=<${message.role}> | injected block outside a user message | skipping it`)
     }
     const content = index === latestUser ? withInjectedText(message.content) : withoutInjectedBlocks(message.content)
-    if (index === latestUser && index === messages.length - 1) {
+    if (index === latestUser) {
       dynamicTrailingBlocks = message.content.length - message.content.findIndex(isInjectedBlock)
     }
     return new Message({
@@ -127,7 +127,7 @@ function withInjectedText(content: ContentBlock[]): ContentBlock[] {
   let previous: ContentBlock | undefined
   for (const block of content) {
     if (block.type === 'injectedBlock') {
-      result.push(withSeparator(block.injected.text, result.length > 0))
+      if (block.injected.text) result.push(withSeparator(block.injected.text, result.length > 0))
     } else if (block.type === 'textBlock' && previous?.type === 'injectedBlock') {
       result.push(withSeparator(block.text, true))
     } else {

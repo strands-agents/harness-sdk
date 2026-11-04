@@ -1003,22 +1003,20 @@ export interface InjectedBlockData {
   text: string
 
   /**
-   * Name of the component that added the text, such as `strands:memory-manager`.
+   * Name of the component that added the text, such as a `ContextInjector`'s name.
    */
   source: string
 }
 
 /**
- * Text the app adds to a user turn, such as a reminder or recalled memories, kept apart from the user's own words.
- * Use it instead of a {@link TextBlock} when the text comes from the app, not the user. It belongs in a user
- * message, after the existing content. In any other message it is left out, with a warning.
+ * Text the app adds to a user turn, such as a reminder, kept apart from the user's own words so readers of
+ * `agent.messages` can skip it. `ContextInjector` writes its text as injected blocks. It belongs in a user message,
+ * after the existing content; in any other message it is left out.
  *
- * `ContextInjector` and `MemoryManager` write their text as injected blocks, so code that should only see the
- * user's own words can skip them.
- *
- * It stays in the message like any other content, so every later request sends that message the same way.
- * The agent sends it to the model as plain text in that message. A direct call to a model, such as `model.stream()`,
- * leaves it out.
+ * When the model's provider sends temporary messages (see `Model.sendsTemporaryMessages`), the provider sends it as
+ * a system message the model reads only until the next user message, which the model ranks above the user. Every
+ * other model receives only the latest user message's injected text, as plain text. Keep content from outside the
+ * conversation, such as tool output or retrieved documents, out of it.
  *
  * The text is kept under `injected`, the same shape as the saved data, so an InjectedBlock is never read as a
  * {@link TextBlock}.
