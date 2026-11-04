@@ -6,11 +6,14 @@ import boto3
 import openai
 from typing_extensions import Unpack, override
 
-from ._bedrock_sigv4 import BedrockSigV4Auth
+from ._bedrock_auth import BedrockSigV4Auth, require_sdk_version
 from ._openai_bedrock import BedrockMantleConfig, _resolve_base_url
 from .bedrock import BedrockEndpoint, _resolve_bedrock_region
 from .openai import OpenAIModel
 from .openai_responses import OpenAIResponsesModel
+
+# 2.31.0 is the first release that passes errors raised while signing through instead of retrying them.
+require_sdk_version("openai", openai.__version__, (2, 31, 0), "BedrockModel.ChatCompletions and .Responses", "openai")
 
 _ENDPOINTS = ("bedrock-runtime", "bedrock-mantle")
 
@@ -52,7 +55,9 @@ class _BedrockOpenAIClient:
         """Add a signing HTTP client; the parent model closes its OpenAI client, and with it this one, per request."""
         if not self._signed:
             return client_args
-        http_client = openai.DefaultAsyncHttpxClient(auth=BedrockSigV4Auth(self._session, self._region))
+        http_client = openai.DefaultAsyncHttpxClient(
+            auth=BedrockSigV4Auth(self._session, self._region, openai.OpenAIError)
+        )
         return {**client_args, "http_client": http_client}
 
 

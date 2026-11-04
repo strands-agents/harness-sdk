@@ -82,6 +82,10 @@ bedrock_messages = ProviderInfo(
     id="bedrock_messages",
     factory=lambda: BedrockModel.Messages(model_id="global.anthropic.claude-sonnet-4-6", max_tokens=4096),
 )
+bedrock_chat_completions = ProviderInfo(
+    id="bedrock_chat_completions",
+    factory=lambda: BedrockModel.ChatCompletions(model_id="openai.gpt-oss-120b-1:0"),
+)
 cohere = ProviderInfo(
     id="cohere",
     environment_variable="COHERE_API_KEY",
@@ -182,6 +186,7 @@ all_providers = [
     for provider in [
         bedrock,
         bedrock_messages,
+        bedrock_chat_completions,
         anthropic,
         cohere,
         gemini,

@@ -2,6 +2,7 @@ import subprocess
 import sys
 import unittest.mock
 
+import anthropic
 import boto3
 import httpx
 import pytest
@@ -39,18 +40,34 @@ def boto_session():
 
 
 @pytest.fixture
+def responses():
+    """Status codes to answer with, in order; a canned streaming reply once they run out."""
+    return []
+
+
+@pytest.fixture
 def captured_requests():
     return []
 
 
-def _serve(model, captured_requests):
-    """Route the model's HTTP calls to a canned streaming response, recording each request."""
-
+@pytest.fixture
+def transport(responses, captured_requests):
     def handler(request):
         captured_requests.append(request)
+        status = responses.pop(0) if responses else 200
+        if status != 200:
+            return httpx.Response(status, json={"type": "error", "error": {"type": "overloaded_error", "message": "x"}})
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=SSE_TEXT_RESPONSE)
 
-    model.client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return httpx.MockTransport(handler)
+
+
+@pytest.fixture(autouse=True)
+def signing_http_client(monkeypatch, transport):
+    """Keep the provider's signing HTTP client, but send its requests to the mock transport."""
+    monkeypatch.setattr(
+        anthropic, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs)
+    )
 
 
 def test_nested_names():
@@ -59,8 +76,8 @@ def test_nested_names():
     assert BedrockModel.ConverseStream is BedrockModel
 
 
-def test_importing_bedrock_does_not_import_anthropic():
-    code = "import sys, strands.models.bedrock; assert 'anthropic' not in sys.modules"
+def test_importing_bedrock_does_not_import_provider_sdks():
+    code = "import sys, strands.models.bedrock; assert not {'anthropic', 'openai'} & set(sys.modules)"
 
     subprocess.run([sys.executable, "-c", code], check=True)
 
@@ -76,7 +93,6 @@ def test_agent_call_is_sigv4_signed_for_endpoint(endpoint, expected_url, boto_se
     model = BedrockModel.Messages(
         model_id="anthropic.claude-haiku-4-5", max_tokens=16, endpoint=endpoint, boto_session=boto_session
     )
-    _serve(model, captured_requests)
 
     result = Agent(model=model, callback_handler=None)("hello")
 
@@ -91,9 +107,7 @@ def test_agent_call_is_sigv4_signed_for_endpoint(endpoint, expected_url, boto_se
 def test_each_request_is_signed_with_the_sessions_current_credentials(captured_requests):
     session = unittest.mock.Mock(spec=boto3.Session, region_name="us-west-2")
     session.get_credentials.side_effect = [Credentials("AKIDFIRST", "s1"), Credentials("AKIDSECOND", "s2")]
-    model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=session)
-    _serve(model, captured_requests)
-    agent = Agent(model=model, callback_handler=None)
+    agent = Agent(model=BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=session), callback_handler=None)
 
     agent("one")
     agent("two")
@@ -102,41 +116,54 @@ def test_each_request_is_signed_with_the_sessions_current_credentials(captured_r
     assert "Credential=AKIDSECOND/" in captured_requests[1].headers["authorization"]
 
 
-def test_missing_credentials_raise(captured_requests):
+def test_retried_requests_are_signed_again(boto_session, responses, captured_requests):
+    responses.append(529)
+    model = BedrockModel.Messages(
+        model_id="m", max_tokens=16, boto_session=boto_session, client_args={"max_retries": 1}
+    )
+
+    with unittest.mock.patch("anthropic._base_client.AsyncAPIClient._calculate_retry_timeout", return_value=0):
+        Agent(model=model, callback_handler=None)("hello")
+
+    first, retry = captured_requests
+    assert first.headers["x-stainless-retry-count"] != retry.headers["x-stainless-retry-count"]
+    assert first.headers["authorization"] != retry.headers["authorization"]
+    assert "x-stainless-retry-count" in retry.headers["authorization"]
+
+
+def test_missing_credentials_raise():
     session = unittest.mock.Mock(spec=boto3.Session, region_name="us-west-2")
     session.get_credentials.return_value = None
     model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=session)
-    _serve(model, captured_requests)
 
-    with pytest.raises(RuntimeError, match="Could not resolve AWS credentials"):
+    with pytest.raises(anthropic.AnthropicError, match="Could not resolve AWS credentials"):
         Agent(model=model, callback_handler=None)("hello")
 
 
 def test_api_key_is_sent_instead_of_signing(captured_requests):
     model = BedrockModel.Messages(model_id="m", max_tokens=16, region_name="us-east-1", api_key="bedrock-key")
-    _serve(model, captured_requests)
 
     Agent(model=model, callback_handler=None)("hello")
 
     request = captured_requests[0]
     assert str(request.url) == "https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1/messages"
-    assert request.headers["x-api-key"] == "bedrock-key"
-    assert "authorization" not in request.headers
+    assert request.headers["authorization"] == "Bearer bedrock-key"
+    assert "x-api-key" not in request.headers
 
 
-def test_anthropic_credentials_in_the_environment_are_not_sent(monkeypatch, boto_session, captured_requests):
+def test_anthropic_and_aws_credentials_in_the_environment_are_not_sent(monkeypatch, boto_session, captured_requests):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
     monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Gateway-Auth: gw-secret")
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bedrock-key")
     model = BedrockModel.Messages(model_id="m", max_tokens=16, boto_session=boto_session)
-    _serve(model, captured_requests)
 
     Agent(model=model, callback_handler=None)("hello")
 
     headers = captured_requests[0].headers
     assert "x-api-key" not in headers
-    assert "anthropic-token" not in headers["authorization"]
     assert "x-gateway-auth" not in headers
+    assert headers["authorization"].startswith("AWS4-HMAC-SHA256 ")
 
 
 def test_client_args_are_forwarded(boto_session, captured_requests):
@@ -146,7 +173,6 @@ def test_client_args_are_forwarded(boto_session, captured_requests):
         boto_session=boto_session,
         client_args={"timeout": 12.5, "default_headers": {"X-Trace": "t1"}},
     )
-    _serve(model, captured_requests)
 
     Agent(model=model, callback_handler=None)("hello")
 
@@ -155,7 +181,7 @@ def test_client_args_are_forwarded(boto_session, captured_requests):
     assert "x-trace" in captured_requests[0].headers["authorization"]
 
 
-@pytest.mark.parametrize("owned", ["base_url", "api_key", "auth_token"])
+@pytest.mark.parametrize("owned", ["base_url", "api_key", "skip_auth", "aws_profile", "http_client"])
 def test_client_args_cannot_override_bedrock_settings(owned):
     with pytest.raises(ValueError, match="set by BedrockModel.Messages"):
         BedrockModel.Messages(model_id="m", max_tokens=16, client_args={owned: "x"})

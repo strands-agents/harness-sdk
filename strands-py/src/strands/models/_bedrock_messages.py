@@ -7,16 +7,12 @@ import anthropic
 import boto3
 from typing_extensions import Unpack, override
 
-from ._bedrock_sigv4 import BedrockSigV4Auth
+from ._bedrock_auth import BedrockApiKeyAuth, BedrockSigV4Auth, require_sdk_version
 from .anthropic import AnthropicModel
 from .bedrock import BedrockEndpoint, _resolve_bedrock_region
 
-try:
-    from anthropic import AsyncAnthropicBedrockMantle, DefaultAsyncHttpxClient
-except ImportError as error:  # pragma: no cover - depends on the installed anthropic version
-    raise ImportError(
-        "BedrockModel.Messages requires anthropic>=0.91.0. Install it with: pip install -U 'strands-agents[anthropic]'"
-    ) from error
+# 0.98.0 is the first release with the Bedrock client's skip_auth that also passes signing errors through.
+require_sdk_version("anthropic", anthropic.__version__, (0, 98, 0), "BedrockModel.Messages", "anthropic")
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +30,7 @@ _OWNED_CLIENT_ARGS = {
     "aws_secret_key",
     "aws_session_token",
     "base_url",
+    "http_client",
     "skip_auth",
 }
 
@@ -65,7 +62,7 @@ class BedrockMessagesModel(AnthropicModel):
             boto_session: Session whose credentials sign each request. Mutually exclusive with ``region_name``.
             api_key: Amazon Bedrock API key, sent instead of signing requests with AWS credentials.
             client_args: Arguments for the underlying Anthropic client, such as ``timeout`` or ``max_retries``.
-                Base URL and authentication are set by this provider, and ``http_client`` only with ``api_key``.
+                Base URL, authentication, and ``http_client`` are set by this provider.
             **model_config: Configuration options for the Anthropic model.
 
         Raises:
@@ -74,20 +71,16 @@ class BedrockMessagesModel(AnthropicModel):
         """
         if endpoint not in _BASE_URLS:
             raise ValueError(f"endpoint=<{endpoint}> | unknown Bedrock endpoint, use one of {sorted(_BASE_URLS)}")
-        owned = _OWNED_CLIENT_ARGS if api_key else _OWNED_CLIENT_ARGS | {"http_client"}
-        if conflicting := owned & set(client_args or {}):
+        if conflicting := _OWNED_CLIENT_ARGS & set(client_args or {}):
             raise ValueError(f"client_args=<{sorted(conflicting)}> | set by BedrockModel.Messages, remove them")
 
         session, region = _resolve_bedrock_region(region_name, boto_session)
-        auth: dict[str, Any] = (
-            {"api_key": api_key}
-            if api_key
-            else {"skip_auth": True, "http_client": DefaultAsyncHttpxClient(auth=BedrockSigV4Auth(session, region))}
-        )
+        auth = BedrockApiKeyAuth(api_key) if api_key else BedrockSigV4Auth(session, region, anthropic.AnthropicError)
         super().__init__(
             client_args={
                 **(client_args or {}),
-                **auth,
+                "skip_auth": True,
+                "http_client": anthropic.DefaultAsyncHttpxClient(auth=auth),
                 "base_url": _BASE_URLS[endpoint].format(region=region),
                 "aws_region": region,
             },
@@ -98,4 +91,4 @@ class BedrockMessagesModel(AnthropicModel):
     @override
     def _create_client(self, client_args: dict[str, Any]) -> anthropic.AsyncAnthropic:
         # The Bedrock client speaks the same Messages API as AsyncAnthropic, which AnthropicModel is typed against.
-        return AsyncAnthropicBedrockMantle(**client_args)  # type: ignore[return-value]
+        return anthropic.AsyncAnthropicBedrockMantle(**client_args)  # type: ignore[return-value]
