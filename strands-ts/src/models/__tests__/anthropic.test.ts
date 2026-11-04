@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
+import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
@@ -1444,6 +1445,21 @@ describe('AnthropicModel', () => {
 
         expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'first' }] }])
         expect(captured.options).toBeUndefined()
+      })
+
+      it('leaves cleared injected blocks out of the token estimate', async () => {
+        const proxy = new ModelProxy(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5' }))
+        const conversation = (first: Message): Message[] => [
+          first,
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+        const withEarlier = conversation(
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('x'.repeat(400))] })
+        )
+        const withoutEarlier = conversation(new Message({ role: 'user', content: [new TextBlock('first')] }))
+
+        expect(await proxy.countTokens(withEarlier)).toBe(await proxy.countTokens(withoutEarlier))
       })
 
       it('counts the system message natively, with the beta', async () => {

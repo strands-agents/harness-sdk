@@ -51,14 +51,20 @@ export class ModelProxy {
   }
 
   /**
-   * Delegates to the wrapped model's `countTokens` with the messages {@link streamAggregated} would send.
+   * Delegates to the wrapped model's `countTokens` with the injected blocks the model reads: for a provider that
+   * sends temporary messages, those of the latest user message as stored (the API has cleared the earlier ones);
+   * for every other provider, the text {@link streamAggregated} sends.
    *
    * @param messages - The messages to count
    * @param options - Optional system prompt and tool specs to count with them
    * @returns The wrapped model's count
    */
   countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    return this._model.countTokens(this._prepare(messages).messages, options)
+    const counted =
+      messages.some(hasInjectedBlock) && this._model.sendsTemporaryMessages
+        ? withoutClearedInjectedBlocks(messages)
+        : this._prepare(messages).messages
+    return this._model.countTokens(counted, options)
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
@@ -102,14 +108,28 @@ function renderInjectedBlocks(messages: Message[]): RenderedMessages {
     if (index === latestUser) {
       dynamicTrailingBlocks = message.content.length - message.content.findIndex(isInjectedBlock)
     }
-    return new Message({
-      role: message.role,
-      content,
-      trackingId: message.trackingId,
-      ...(message.metadata !== undefined && { metadata: message.metadata }),
-    })
+    return withContent(message, content)
   })
   return { messages: rendered, dynamicTrailingBlocks }
+}
+
+/** The messages without the injected blocks before the latest user message. */
+function withoutClearedInjectedBlocks(messages: Message[]): Message[] {
+  const latestUser = latestUserIndex(messages)
+  return messages.map((message, index) =>
+    index === latestUser || !hasInjectedBlock(message)
+      ? message
+      : withContent(message, withoutInjectedBlocks(message.content))
+  )
+}
+
+function withContent(message: Message, content: ContentBlock[]): Message {
+  return new Message({
+    role: message.role,
+    content,
+    trackingId: message.trackingId,
+    ...(message.metadata !== undefined && { metadata: message.metadata }),
+  })
 }
 
 /**
