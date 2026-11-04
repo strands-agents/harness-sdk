@@ -339,15 +339,19 @@ Events use the dictionary-based [StreamEvent](@api/python/strands.types.streamin
 }
 ```
 * [`metadata`](@api/python/strands.types.streaming#MetadataEvent): Event representing the metadata of the response. This contains the input, output, and total token count, along with the latency of the request.
+
+  Report token counts the way your provider's API reports them. Whether `inputTokens`
+  includes cached tokens depends on the provider; see
+  [Metrics](../observability-evaluation/metrics.mdx#overview).
 ```python
 {
     "metrics": {
         "latencyMs": 123 # Latency of the model request in milliseconds.
     },
     "usage": {
-        "inputTokens": 234, # Number of tokens sent in the request to the model.
+        "inputTokens": 234, # Number of input tokens, as your provider counts them.
         "outputTokens": 234, # Number of tokens that the model generated for the request.
-        "totalTokens": 468 # Total number of tokens (input + output).
+        "totalTokens": 468 # Total number of tokens, as your provider counts them.
     }
 }
 ```
@@ -433,6 +437,10 @@ const messageStop: ModelMessageStopEventData = {
 ```
 
 * `ModelMetadataEvent`: Provides usage and metrics information
+
+  Report token counts the way your provider's API reports them. Whether `inputTokens`
+  includes cached tokens depends on the provider; see
+  [Metrics](../observability-evaluation/metrics.mdx#overview).
 ```typescript
 const metadata: ModelMetadataEventData = {
   type: 'modelMetadataEvent',

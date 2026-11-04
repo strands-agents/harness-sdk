@@ -63,6 +63,15 @@ The `metrics` property on `AgentResult` is an instance of `AgentMetrics` that ho
 </Tab>
 </Tabs>
 
+:::caution[Input tokens and cached tokens]
+Token counts follow your model provider's own convention, and providers differ on whether
+`inputTokens` includes cached tokens. Some count cache reads and writes inside
+`inputTokens`; others count them only in `cacheReadInputTokens` and
+`cacheWriteInputTokens`. Check your model provider's documentation before you combine
+these fields, for example to compute total input tokens or cost. Adding the cache fields
+to an `inputTokens` that already includes them counts cached tokens twice.
+:::
+
 ## Agent Loop Metrics
 
 <Tabs>

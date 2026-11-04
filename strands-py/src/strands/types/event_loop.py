@@ -8,12 +8,19 @@ from typing_extensions import Required, TypedDict
 class Usage(TypedDict, total=False):
     """Token usage information for model interactions.
 
+    Token counts follow the model provider's own convention, and providers differ on whether
+    ``inputTokens`` includes cached tokens. Some count cache reads and writes inside ``inputTokens``;
+    others count them only in ``cacheReadInputTokens`` and ``cacheWriteInputTokens``. Check your model
+    provider's documentation before combining these fields: adding the cache fields to an
+    ``inputTokens`` that already includes them counts cached tokens twice.
+
     Attributes:
-        inputTokens: Number of tokens sent in the request to the model.
+        inputTokens: Number of input tokens, as the model provider counts them. May or may not include
+            cached tokens, depending on the provider.
         outputTokens: Number of tokens that the model generated for the request.
-        totalTokens: Total number of tokens (input + output).
-        cacheReadInputTokens: Number of tokens read from cache (optional).
-        cacheWriteInputTokens: Number of tokens written to cache (optional).
+        totalTokens: Total number of tokens, as the model provider counts them.
+        cacheReadInputTokens: Number of input tokens read from cache (optional).
+        cacheWriteInputTokens: Number of input tokens written to cache (optional).
     """
 
     inputTokens: Required[int]

@@ -489,10 +489,16 @@ export interface CitationsDelta {
 /**
  * Token usage statistics for a model invocation.
  * Tracks input, output, and total tokens, plus cache-related metrics.
+ *
+ * Token counts follow the model provider's own convention, and providers differ on whether
+ * `inputTokens` includes cached tokens. Some count cache reads and writes inside `inputTokens`;
+ * others count them only in `cacheReadInputTokens` and `cacheWriteInputTokens`. Check your model
+ * provider's documentation before combining these fields: adding the cache fields to an
+ * `inputTokens` that already includes them counts cached tokens twice.
  */
 export interface Usage {
   /**
-   * Number of tokens in the input (prompt).
+   * Number of input tokens, as the model provider counts them (may or may not include cached tokens).
    */
   inputTokens: number
 
@@ -502,7 +508,7 @@ export interface Usage {
   outputTokens: number
 
   /**
-   * Total number of tokens (input + output).
+   * Total number of tokens, as the model provider counts them.
    */
   totalTokens: number
 
