@@ -80,9 +80,9 @@ export class ModelProxy {
 
 interface RenderedMessages {
   /** The messages to send. */
-  messages: Message[]
+  readonly messages: Message[]
   /** Trailing blocks of the latest user message, from its first injected block on, that the next call drops. */
-  dynamicTrailingBlocks: number
+  readonly dynamicTrailingBlocks: number
 }
 
 /**
