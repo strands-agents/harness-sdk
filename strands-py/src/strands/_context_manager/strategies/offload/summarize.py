@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
-from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
+from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
 from ....models._summarize import _SUMMARIZED_PREFIX, SummarizeResult, _format_summarized, _summarize_with_stream
 from ....types.content import ContentBlock, Message, Messages
@@ -30,7 +29,6 @@ if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
     from ....models.model import Model
-    from ...types import ContextStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -48,43 +46,12 @@ class SummarizeConfig(TypedDict, total=False):
     system_prompt: str
 
 
-_LIMIT_STATEMENTS = {
+_LIMIT_WARNINGS = {
     "pinned messages": "pinned messages are kept after a server-side summary"
     " | thinking in the messages kept after the summary will be dropped",
     "per-block summarization": "per-block summarization with preserve_recent rewrites blocks the model has already seen"
     " | thinking from earlier turns will be dropped on the next turns",
 }
-
-
-def _server_side_summary_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> list[str]:
-    """Return the features in use that a server-side summary doesn't support, for an agent whose model has it.
-
-    Per-block summarization with ``preserve_recent`` rewrites blocks the model has already seen, and pinned messages
-    kept after a server-side summary sit between its block and the messages it keeps. Without ``preserve_recent``, a
-    block is rewritten before the model sees it.
-    """
-    if agent.model.model_info.capabilities.server_side_summary is not True:
-        return []
-    summarizers = [strategy for strategy in strategies if isinstance(strategy, SummarizeStrategy)]
-    features = []
-    if any(strategy._summarizes_server_side(agent) for strategy in summarizers) and any(
-        _has_pinned_flag(message) for message in agent.messages
-    ):
-        features.append("pinned messages")
-    if any(not strategy._is_message_level and strategy._preserve_recent > 0 for strategy in summarizers):
-        features.append("per-block summarization")
-    return features
-
-
-def _warn_on_server_side_summary_limits(agent: Agent, strategies: Sequence[ContextStrategy]) -> None:
-    """Log a warning describing how a server-side summary treats the features in use, if any."""
-    features = _server_side_summary_limits(agent, strategies)
-    if not features:
-        return
-    config: Any = agent.model.get_config()
-    model_id = config.get("model_id") if isinstance(config, dict) else None
-    statements = [_LIMIT_STATEMENTS[feature] for feature in features]
-    logger.warning("model_id=<%s> | %s", model_id, " | ".join(statements))
 
 
 def _runs(messages: Messages, selected: list[Message]) -> list[list[Message]]:
@@ -183,6 +150,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
     ) -> None:
         super().__init__(target, conditions)
         self._config: SummarizeConfig = config or {}
+        self._warned: set[str] = set()
 
     def when(
         self,
@@ -287,6 +255,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
             marker["metadata"] = {"serverSideSummary": server_side["metadata"]["serverSideSummary"]}
         kept = [kept for message in run if id(message) in pinned_ids and (kept := _without_summaries(message))]
         messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker]), *kept]
+        if kept:
+            self._warn_once(context.agent, "pinned messages")
         logger.debug(
             "summarized=<%s>, kept=<%s>, tokens=<%s> | summarized opening messages server-side",
             len(replaced),
@@ -307,6 +277,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         model = self._resolve_model(agent)
         if not model:
             return None
+        if self._preserve_recent > 0 and agent.model.model_info.capabilities.server_side_summary is True:
+            self._warn_once(agent, "per-block summarization")
 
         refs = _format_stash_refs(stash_refs)
         summarizable = "toolResult" in block or "text" in block or "image" in block or "document" in block
@@ -375,6 +347,15 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if result.usage:
             _record_usage(invocation_context, result.usage)
         return result
+
+    def _warn_once(self, agent: Agent, feature: str) -> None:
+        """Log, once per strategy, how a server-side summary treats ``feature``."""
+        if feature in self._warned:
+            return
+        self._warned.add(feature)
+        config: Any = agent.model.get_config()
+        model_id = config.get("model_id") if isinstance(config, dict) else None
+        logger.warning("model_id=<%s> | %s", model_id, _LIMIT_WARNINGS[feature])
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.aux_model

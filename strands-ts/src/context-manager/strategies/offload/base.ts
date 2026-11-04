@@ -13,11 +13,10 @@ import {
   ReasoningBlock,
 } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
-import type { JSONValue } from '../../../types/json.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import { MERGED_MESSAGES_KEY, mergedMessages, type MergedMessage, type Stash } from '../../stash.js'
+import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { hasPinnedFlag, isPinned } from '../../../conversation-manager/compression/pin-message.js'
 
@@ -289,36 +288,26 @@ export function repairAlternation(messages: Message[]): void {
 }
 
 /**
- * Returns `prev` with `current`'s content appended, losing neither message's tracking id or metadata.
+ * Returns `prev` with `current`'s content appended.
  *
- * `metadata.custom.mergedMessages` lists every message the merge combines, in content order, with its tracking id,
- * metadata and the offset its content starts at, so stash refs to each one's blocks still resolve. The merge keeps
- * `prev`'s tracking id and custom metadata, or `current`'s when `prev` is a marker; its usage and metrics are
- * `current`'s, the latest response it holds. It is pinned when either message is.
+ * The merge keeps `prev`'s tracking id and custom metadata, or `current`'s when `prev` is a marker; its usage and
+ * metrics are `current`'s, the latest response it holds. It is pinned when either message is.
  */
 function mergeMessages(prev: Message, current: Message): Message {
-  const parts = [...mergedParts(prev, 0), ...mergedParts(current, prev.content.length)]
   const lead = markers.has(prev) ? current : prev
   const custom = {
     ...lead.metadata?.custom,
-    [MERGED_MESSAGES_KEY]: parts as unknown as JSONValue,
     ...(hasPinnedFlag(prev) || hasPinnedFlag(current) ? { pinned: true } : {}),
   }
+  const { custom: _, ...metadata } = current.metadata ?? {}
   const merged = new Message({
     role: prev.role,
     content: [...prev.content, ...current.content],
     trackingId: lead.trackingId,
-    metadata: { ...current.metadata, custom },
+    metadata: Object.keys(custom).length > 0 ? { ...metadata, custom } : metadata,
   })
   if (markers.has(prev) && markers.has(current)) markers.add(merged)
   return merged
-}
-
-/** Returns the messages `message` combines, at their offsets in a merge where its content starts at `offset`. */
-function mergedParts(message: Message, offset: number): MergedMessage[] {
-  const parts = mergedMessages(message)
-  if (parts.length > 0) return parts.map((part) => ({ ...part, offset: part.offset + offset }))
-  return [{ trackingId: message.trackingId, offset, metadata: message.metadata ?? {} }]
 }
 
 /**

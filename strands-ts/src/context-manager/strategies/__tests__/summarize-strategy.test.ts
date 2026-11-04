@@ -1,13 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { warnOnServerSideSummaryLimits } from '../offload/summarize.js'
 import { flattenMessagesToContent } from '../../../models/summarize.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
-import { mergedMessages } from '../../stash.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -450,7 +448,6 @@ describe('summarizing whole messages', () => {
       ['a5'],
       ['u6'],
     ])
-    expect(mergedMessages(messages[1]!).find((part) => part.trackingId === a3.trackingId)?.offset).toBe(1)
     expect(messages[1]!.trackingId).toBe(a3.trackingId)
     expect(messages[1]!.metadata?.custom?.source).toBe('planner')
   })
@@ -727,90 +724,92 @@ describe('server-side summary', () => {
   })
 })
 
-describe('warnOnServerSideSummaryLimits', () => {
+describe('server-side summary warnings', () => {
   const PINNED =
-    'pinned messages are kept after a server-side summary' +
+    'model_id=<claude-test> | pinned messages are kept after a server-side summary' +
     ' | thinking in the messages kept after the summary will be dropped'
-  const PER_BLOCK = 'per-block summarization with preserveRecent rewrites blocks the model has already seen'
-  const THINKING = 'thinking from earlier turns will be dropped on the next turns'
+  const PER_BLOCK =
+    'model_id=<claude-test> | per-block summarization with preserveRecent rewrites blocks the model has already seen' +
+    ' | thinking from earlier turns will be dropped on the next turns'
 
-  function summarizingAgent(pinned: boolean, modelInfo: object = { capabilities: { serverSideSummary: true } }) {
-    const messages = [
-      new Message({ role: 'user', content: [new TextBlock('task')] }),
-      new Message({
-        role: 'assistant',
-        content: [new TextBlock('a1')],
-        ...(pinned && { metadata: { custom: { pinned: true } } }),
-      }),
-    ]
-    return createMockAgent({ messages, extra: { model: { modelId: 'claude-test', modelInfo } } as Partial<Agent> })
+  function summarizingModel(): MockMessageModel {
+    const model = new MockMessageModel()
+    model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: true } } })
+    vi.spyOn(model, 'summarize').mockResolvedValue({
+      content: [new TextBlock('compacted', { metadata: { serverSideSummary: { provider: 'test', signature: 's' } } })],
+    })
+    return model
   }
 
-  function warnings(run: () => void): string[] {
+  const context = (messages: Message[], modelInfo: object = { capabilities: { serverSideSummary: true } }) =>
+    makeContext(messages, 0.9, { stream: vi.fn(), modelId: 'claude-test', modelInfo })
+
+  const opening = (pinned: boolean): Message[] => {
+    const messages = ['task', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6'].map(
+      (text, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(text)] })
+    )
+    if (pinned) {
+      messages[2] = new Message({
+        role: 'user',
+        content: [new TextBlock('m2')],
+        metadata: { custom: { pinned: true } },
+      })
+    }
+    return messages
+  }
+
+  const seenBlocks = (): Message[] => [
+    new Message({ role: 'user', content: [new TextBlock('task')] }),
+    makeToolResultMessage('x'.repeat(2500 * 4 + 100), 't1'),
+    makeToolResultMessage('y'.repeat(2500 * 4 + 100), 't2'),
+    makeToolResultMessage('z'.repeat(2500 * 4 + 100), 't3'),
+  ]
+
+  async function warnings(run: () => Promise<unknown>): Promise<string[]> {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     try {
-      run()
+      await run()
       return warnSpy.mock.calls.map((call) => String(call[0]))
     } finally {
       warnSpy.mockRestore()
     }
   }
 
-  it.each([
-    {
-      pinned: true,
-      strategies: () => [Offload.summarize('*').when({ utilization: 0.5 })],
-      statements: PINNED,
-    },
-    {
-      pinned: false,
-      strategies: () => [Offload.summarize('toolResults').when({ threshold: 100, preserveRecent: 2 })],
-      statements: `${PER_BLOCK} | ${THINKING}`,
-    },
-    {
-      pinned: true,
-      strategies: () => [
-        Offload.summarize('*').when({ utilization: 0.5 }),
-        Offload.summarize('*').when({ threshold: 100, preserveRecent: 2 }),
-      ],
-      statements: `${PINNED} | ${PER_BLOCK} | ${THINKING}`,
-    },
-  ])('describes the features in use: $statements', ({ pinned, strategies, statements }) => {
-    const agent = summarizingAgent(pinned)
+  it('warns once when a server-side summary keeps pinned messages', async () => {
+    const strategy = Offload.summarize('*', { model: summarizingModel() }).when({
+      utilization: 0.5,
+      preserveRecent: 2,
+    })
 
-    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies()))).toEqual([
-      `model_id=<claude-test> | ${statements}`,
-    ])
+    const logged = await warnings(async () => {
+      for (let i = 0; i < 2; i++) expect(await strategy.apply(context(opening(true)))).toBe(true)
+    })
+
+    expect(logged).toEqual([PINNED])
   })
 
-  it.each([
-    { name: 'a run summary without pins', strategies: () => [Offload.summarize('*').when({ utilization: 0.5 })] },
-    {
-      name: 'per-block summarization without preserveRecent',
-      strategies: () => [Offload.summarize('toolResults').when({ threshold: 100 })],
-    },
-    {
-      name: 'per-block truncation',
-      strategies: () => [Offload.truncate('toolResults').when({ threshold: 2500, preserveRecent: 2 })],
-    },
-  ])('stays silent with $name', ({ strategies }) => {
-    const agent = summarizingAgent(false)
+  it('stays silent when a server-side summary keeps no pinned messages', async () => {
+    const strategy = Offload.summarize('*', { model: summarizingModel() }).when({
+      utilization: 0.5,
+      preserveRecent: 2,
+    })
 
-    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies()))).toEqual([])
+    expect(await warnings(() => strategy.apply(context(opening(false))))).toEqual([])
   })
 
-  it('ignores pins when no summary compacts server-side', () => {
-    const agent = summarizingAgent(true)
-    const summarizer = new MockMessageModel()
-    const strategies = [Offload.summarize('*', { model: summarizer }).when({ utilization: 0.5 })]
+  it('warns once when per-block summarization rewrites seen blocks', async () => {
+    const model = new MockMessageModel()
+    model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
+    const strategy = Offload.summarize('toolResults', { model }).when({ threshold: 100, preserveRecent: 1 })
 
-    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies))).toEqual([])
+    expect(await warnings(() => strategy.apply(context(seenBlocks())))).toEqual([PER_BLOCK])
   })
 
-  it("stays silent when the agent's model does not compact server-side", () => {
-    const agent = summarizingAgent(true, {})
-    const strategies = [Offload.summarize('*').when({ threshold: 100, preserveRecent: 2 })]
+  it("stays silent on per-block summarization when the agent's model has no server-side summary", async () => {
+    const model = new MockMessageModel()
+    model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
+    const strategy = Offload.summarize('toolResults', { model }).when({ threshold: 100, preserveRecent: 1 })
 
-    expect(warnings(() => warnOnServerSideSummaryLimits(agent, strategies))).toEqual([])
+    expect(await warnings(() => strategy.apply(context(seenBlocks(), {})))).toEqual([])
   })
 })

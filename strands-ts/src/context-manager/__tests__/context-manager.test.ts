@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
-import { AfterModelCallEvent, BeforeInvocationEvent, BeforeModelCallEvent } from '../../hooks/events.js'
-import * as summarize from '../strategies/offload/summarize.js'
+import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
@@ -497,23 +496,6 @@ describe('ContextManager', () => {
       await invokeTrackedHook(agent, event)
 
       expect(receivedUtilization).toBe(0.5)
-    })
-  })
-
-  describe('server-side summary limits', () => {
-    it('checks once, on the first invocation', async () => {
-      const warn = vi.spyOn(summarize, 'warnOnServerSideSummaryLimits').mockImplementation(() => {})
-      const agent = makeMockAgent()
-      const cm = new ContextManager()
-      await cm.initAgent(agent)
-
-      expect(warn).not.toHaveBeenCalled()
-      for (let i = 0; i < 2; i++)
-        await invokeTrackedHook(agent, new BeforeInvocationEvent({ agent, invocationState: {} }))
-
-      expect(warn).toHaveBeenCalledOnce()
-      expect(warn.mock.calls[0]![0]).toBe(agent)
-      warn.mockRestore()
     })
   })
 })

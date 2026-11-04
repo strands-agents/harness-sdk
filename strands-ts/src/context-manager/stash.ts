@@ -10,7 +10,6 @@
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
 import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock } from '../types/messages.js'
-import type { MessageMetadata } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
@@ -27,30 +26,6 @@ function decode(bytes: Uint8Array): unknown {
 }
 
 const STASH_REFS_SUFFIX = / \[refs?: [^\]]+\]$/
-
-/** `metadata.custom` key listing the messages merged into a message, in content order. */
-export const MERGED_MESSAGES_KEY = 'mergedMessages'
-
-/** A message merged into another: its tracking id and metadata, and the offset its content starts at. */
-export interface MergedMessage {
-  trackingId: string
-  offset: number
-  metadata: MessageMetadata
-}
-
-/** Returns the messages merged into `message`, in content order. */
-export function mergedMessages(message: Message): MergedMessage[] {
-  return (message.metadata?.custom?.[MERGED_MESSAGES_KEY] as MergedMessage[] | undefined) ?? []
-}
-
-/** Returns the stash key of a non-tool-result block: its tracking id and index in the message it arrived in. */
-function blockKey(message: Message, blockIndex: number): string {
-  const origin = mergedMessages(message)
-    .filter((entry) => entry.offset <= blockIndex)
-    .at(-1)
-  if (!origin) return `${message.trackingId}_${blockIndex}`
-  return `${origin.trackingId}_${blockIndex - origin.offset}`
-}
 
 /**
  * Whether a block's text ends with a {@link formatStashRefs} token, marking it as an offload replacement.
@@ -119,10 +94,7 @@ export class Stash {
    * @returns Reference key for retrieval
    */
   async store(id: string, blockIndex: number, data: Uint8Array): Promise<string> {
-    return this._write(`${id}_${blockIndex}`, data)
-  }
-
-  private async _write(key: string, data: Uint8Array): Promise<string> {
+    const key = `${id}_${blockIndex}`
     await this._storage.write(key, data)
     return key
   }
@@ -143,7 +115,7 @@ export class Stash {
     if (block instanceof ToolResultBlock) {
       return Array.from({ length: block.content.length }, (_, index) => `${block.toolUseId}_${index}`)
     }
-    return [blockKey(message, blockIndex)]
+    return [`${message.trackingId}_${blockIndex}`]
   }
 
   /**
@@ -167,7 +139,7 @@ export class Stash {
         continue
       } else {
         try {
-          await this._write(blockKey(message, blockIndex), encode(block.toJSON()))
+          await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
         } catch (error) {
           logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
         }

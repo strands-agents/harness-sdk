@@ -10,7 +10,7 @@ import warnings
 from typing import TYPE_CHECKING, Literal
 
 from ..agent.invocation_context import _create_auxiliary_invocation_context
-from ..hooks.events import AfterModelCallEvent, BeforeInvocationEvent, BeforeModelCallEvent, MessageAddedEvent
+from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
@@ -19,7 +19,6 @@ from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
 from .strategies.offload import Offload
-from .strategies.offload.summarize import _warn_on_server_side_summary_limits
 from .strategies.offload.truncate import EmergencyTruncateStrategy
 from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
@@ -225,17 +224,6 @@ class ContextManager(Plugin):
                     init(agent, stash=self._stash)
                 except TypeError:
                     init(agent)
-
-        checked_summary_limits = False
-
-        def _on_before_invocation(event: BeforeInvocationEvent) -> None:
-            nonlocal checked_summary_limits
-            # Checked on the first invocation, once a session manager has restored the messages.
-            if not checked_summary_limits:
-                checked_summary_limits = True
-                _warn_on_server_side_summary_limits(event.agent, self._strategies)
-
-        agent.hooks.add_callback(BeforeInvocationEvent, _on_before_invocation)
 
         async def _on_before_model_call(event: BeforeModelCallEvent) -> None:
             await self._run_strategies(

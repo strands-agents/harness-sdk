@@ -922,7 +922,7 @@ describe('repairAlternation', () => {
   const user = (trackingId: string, metadata?: Message['metadata']): Message =>
     new Message({ role: 'user', content: [new TextBlock(trackingId)], trackingId, ...(metadata && { metadata }) })
 
-  it("keeps both messages' tracking ids and metadata", () => {
+  it("keeps the earlier message's tracking id and custom metadata", () => {
     const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 }
     const prevMetadata = { usage, custom: { source: 'a' } }
     const currentMetadata = { custom: { pinned: true, note: 'b' } }
@@ -936,16 +936,7 @@ describe('repairAlternation', () => {
 
     expect(messages[0]!.trackingId).toBe('p')
     expect(messages[0]!.content).toEqual([new TextBlock('p'), new TextBlock('c')])
-    expect(messages[0]!.metadata).toEqual({
-      custom: {
-        source: 'a',
-        pinned: true,
-        mergedMessages: [
-          { trackingId: 'p', offset: 0, metadata: prevMetadata },
-          { trackingId: 'c', offset: 1, metadata: currentMetadata },
-        ],
-      },
-    })
+    expect(messages[0]!.metadata).toEqual({ custom: { source: 'a', pinned: true } })
   })
 
   it('takes usage from the later message so the estimate counts its content', () => {
@@ -958,23 +949,5 @@ describe('repairAlternation', () => {
     repairAlternation(messages)
 
     expect(messages[1]!.metadata!.usage).toEqual(newer)
-  })
-
-  it('records messages merged into either side at their offsets in the merge', () => {
-    const first = [user('p'), user('q')]
-    const second = [user('c'), user('d')]
-    repairAlternation(first)
-    repairAlternation(second)
-    const messages = [...first, ...second]
-
-    repairAlternation(messages)
-
-    const merged = messages[0]!.metadata!.custom!.mergedMessages as { trackingId: string; offset: number }[]
-    expect(merged.map(({ trackingId, offset }) => [trackingId, offset])).toEqual([
-      ['p', 0],
-      ['q', 1],
-      ['c', 2],
-      ['d', 3],
-    ])
   })
 })

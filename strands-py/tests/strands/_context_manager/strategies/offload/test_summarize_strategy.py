@@ -8,7 +8,6 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.summarize import _warn_on_server_side_summary_limits
 from strands._context_manager.types import ContextState
 from strands.models import ModelCapabilities, ModelInfo, SummarizeResult
 from strands.models.model import Model
@@ -541,6 +540,7 @@ class TestServerSideSummary:
     @pytest.fixture
     def summarizing_agent(self, mock_agent):
         mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
+        mock_agent.model.get_config = unittest.mock.MagicMock(return_value={"model_id": "claude-test"})
         compacted = ContentBlock(text="compacted", metadata={"serverSideSummary": _COMPACTION})
         mock_agent.model.summarize = unittest.mock.AsyncMock(
             return_value=SummarizeResult(content=[compacted], usage=None)
@@ -750,9 +750,6 @@ class TestServerSideSummary:
                     ),
                     ContentBlock(toolUse={"toolUseId": "t2", "name": "read", "input": {}}),
                 ],
-                metadata={
-                    "custom": {"merged_messages": [{"offset": 0, "metadata": {}}, {"offset": 1, "metadata": {}}]}
-                },
             ),
             Message(
                 role="user",
@@ -821,80 +818,85 @@ class TestServerSideSummaryLimitsWarning:
     """Tests for the warning about features a server-side summary doesn't support."""
 
     _PINNED = (
-        "pinned messages are kept after a server-side summary"
+        "model_id=<claude-test> | pinned messages are kept after a server-side summary"
         " | thinking in the messages kept after the summary will be dropped"
     )
-    _THINKING = "thinking from earlier turns will be dropped on the next turns"
-    _PER_BLOCK = "per-block summarization with preserve_recent rewrites blocks the model has already seen"
+    _PER_BLOCK = (
+        "model_id=<claude-test> | per-block summarization with preserve_recent rewrites blocks the model has already"
+        " seen | thinking from earlier turns will be dropped on the next turns"
+    )
 
     @pytest.fixture
     def summarizing_agent(self, mock_agent):
         mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
         mock_agent.model.get_config = unittest.mock.MagicMock(return_value={"model_id": "claude-test"})
-        mock_agent.messages = _turns("task", "a1", "u2")
+        compacted = ContentBlock(text="compacted", metadata={"serverSideSummary": _COMPACTION})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(
+            return_value=SummarizeResult(content=[compacted], usage=None)
+        )
         return mock_agent
 
     @staticmethod
     def _warnings(caplog) -> list[str]:
         return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
 
-    @pytest.mark.parametrize(
-        ("pinned", "strategies", "statements"),
-        [
-            (True, [Offload.summarize("*").when(utilization=0.5)], _PINNED),
-            (
-                False,
-                [Offload.summarize("tool_results").when(threshold=100, preserve_recent=2)],
-                f"{_PER_BLOCK} | {_THINKING}",
-            ),
-            (
-                True,
-                [
-                    Offload.summarize("*").when(utilization=0.5),
-                    Offload.summarize("*").when(threshold=100, preserve_recent=2),
-                ],
-                f"{_PINNED} | {_PER_BLOCK} | {_THINKING}",
-            ),
-        ],
-    )
-    def test_describes_the_features_in_use(self, summarizing_agent, caplog, pinned, strategies, statements):
-        summarizing_agent.messages[1]["metadata"] = {"custom": {"pinned": pinned}}
+    @staticmethod
+    async def _summarize_opening(strategy, agent, pinned: bool) -> None:
+        messages = _turns("task", "m1", "m2", "m3", "m4", "m5", "m6")
+        messages[2]["metadata"] = {"custom": {"pinned": pinned}}
+        agent.messages = messages
+        assert await strategy.apply(ContextState(messages=messages, agent=agent, utilization=0.9)) is True
+
+    @staticmethod
+    def _seen_blocks() -> Messages:
+        return [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="a" * 10000)]),
+            Message(role="user", content=[ContentBlock(text="b" * 10000)]),
+            Message(role="assistant", content=[ContentBlock(text="c")]),
+            Message(role="user", content=[ContentBlock(text="d")]),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_warns_once_when_a_server_side_summary_keeps_pinned_messages(self, summarizing_agent, caplog):
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
 
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_summary_limits(summarizing_agent, strategies)
+            for _ in range(2):
+                await self._summarize_opening(strategy, summarizing_agent, pinned=True)
 
-        assert self._warnings(caplog) == [f"model_id=<claude-test> | {statements}"]
+        assert self._warnings(caplog) == [self._PINNED]
 
-    @pytest.mark.parametrize(
-        "strategies",
-        [
-            [Offload.summarize("*").when(utilization=0.5)],
-            [Offload.summarize("tool_results").when(threshold=100)],
-            [Offload.truncate("tool_results").when(threshold=2500, preserve_recent=2)],
-        ],
-    )
-    def test_stays_silent_without_pins_or_per_block_summarization(self, summarizing_agent, caplog, strategies):
+    @pytest.mark.asyncio
+    async def test_stays_silent_when_a_server_side_summary_keeps_no_pinned_messages(self, summarizing_agent, caplog):
+        strategy = Offload.summarize("*").when(utilization=0.5, preserve_recent=2)
+
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_summary_limits(summarizing_agent, strategies)
+            await self._summarize_opening(strategy, summarizing_agent, pinned=False)
 
         assert self._warnings(caplog) == []
 
-    def test_ignores_pins_when_no_summary_compacts_server_side(self, summarizing_agent, caplog):
-        summarizing_agent.messages[1]["metadata"] = {"custom": {"pinned": True}}
-        summarizer = unittest.mock.MagicMock(model_info=ModelInfo())
-        strategies = [Offload.summarize("*", {"model": summarizer}).when(utilization=0.5)]
+    @pytest.mark.asyncio
+    async def test_warns_once_when_per_block_summarization_rewrites_seen_blocks(self, summarizing_agent, caplog):
+        messages = self._seen_blocks()
+        summarizing_agent.messages = messages
+        strategy = Offload.summarize("*").when(threshold=100, preserve_recent=2)
 
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_summary_limits(summarizing_agent, strategies)
+            assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.5))
 
-        assert self._warnings(caplog) == []
+        assert self._warnings(caplog) == [self._PER_BLOCK]
 
-    def test_stays_silent_when_the_agent_model_does_not_compact_server_side(self, summarizing_agent, caplog):
+    @pytest.mark.asyncio
+    async def test_stays_silent_on_per_block_summarization_when_the_agent_model_has_no_server_side_summary(
+        self, summarizing_agent, caplog
+    ):
         summarizing_agent.model.model_info = ModelInfo()
+        messages = self._seen_blocks()
+        summarizing_agent.messages = messages
+        strategy = Offload.summarize("*").when(threshold=100, preserve_recent=2)
 
         with caplog.at_level(logging.WARNING):
-            _warn_on_server_side_summary_limits(
-                summarizing_agent, [Offload.summarize("*").when(threshold=100, preserve_recent=2)]
-            )
+            assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.5))
 
         assert self._warnings(caplog) == []

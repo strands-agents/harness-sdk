@@ -8,7 +8,7 @@ import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
 import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
-import { AfterModelCallEvent, BeforeInvocationEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
+import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
@@ -16,7 +16,6 @@ import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
-import { warnOnServerSideSummaryLimits } from './strategies/offload/summarize.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
@@ -153,14 +152,6 @@ export class ContextManager implements Plugin {
     for (const strategy of this._strategies) {
       strategy.init?.(agent, this._stash)
     }
-
-    let checkedSummaryLimits = false
-    agent.addHook(BeforeInvocationEvent, (event) => {
-      // Checked on the first invocation, once a session manager has restored the messages.
-      if (checkedSummaryLimits) return
-      checkedSummaryLimits = true
-      warnOnServerSideSummaryLimits(event.agent, this._strategies)
-    })
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)

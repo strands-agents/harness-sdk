@@ -21,7 +21,7 @@ import { unwrapInvocationContext, type InvocationContext } from '../../../agent/
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import { formatStashRefs } from '../../stash.js'
-import { hasPinnedFlag, isPinned } from '../../../conversation-manager/compression/pin-message.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
@@ -46,10 +46,22 @@ export interface SummarizeConfig {
   systemPrompt?: string
 }
 
+type SummaryLimit = 'pinned messages' | 'per-block summarization'
+
+const LIMIT_STATEMENTS: Record<SummaryLimit, string> = {
+  'pinned messages':
+    'pinned messages are kept after a server-side summary' +
+    ' | thinking in the messages kept after the summary will be dropped',
+  'per-block summarization':
+    'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
+    ' | thinking from earlier turns will be dropped on the next turns',
+}
+
 export class SummarizeStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:summarize'
 
   private readonly _config: SummarizeConfig
+  private readonly _warned = new Set<SummaryLimit>()
 
   constructor(target?: OffloadTarget, config?: SummarizeConfig, conditions?: OffloadConditions) {
     super(target, conditions)
@@ -150,6 +162,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const block = new TextBlock(text, serverSideSummary ? { metadata: { serverSideSummary } } : undefined)
     const kept = run.flatMap((message) => (pinned.has(message) ? withoutSummaries(message) : []))
     messages.splice(1, run.length, markerMessage([block]), ...kept)
+    if (kept.length > 0) this._warnOnce(agent, 'pinned messages')
     logger.debug(
       `summarized=<${replaced.length}>, kept=<${kept.length}>, tokens=<${totalTokens}> | summarized opening messages server-side`
     )
@@ -166,6 +179,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   ): Promise<ContentBlock | null> {
     const model = this._resolveModel(agent)
     if (!model) return null
+    if (this._preserveRecent > 0 && agent.model.modelInfo?.capabilities?.serverSideSummary === true) {
+      this._warnOnce(agent, 'per-block summarization')
+    }
 
     const refs = formatStashRefs(stashRefs)
     const summarizable =
@@ -238,14 +254,11 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return this._config.model ?? agent.auxModel
   }
 
-  /**
-   * Whether this strategy summarizes blocks of older messages the model has already seen. Without `preserveRecent`, a
-   * per-block strategy rewrites each block before the model sees it.
-   *
-   * @internal
-   */
-  get rewritesSeenBlocks(): boolean {
-    return !this._isMessageLevel && this._preserveRecent > 0
+  /** Logs, once per strategy, how a server-side summary treats `feature`. */
+  private _warnOnce(agent: LocalAgent, feature: SummaryLimit): void {
+    if (this._warned.has(feature)) return
+    this._warned.add(feature)
+    logger.warn(`model_id=<${agent.model.modelId}> | ${LIMIT_STATEMENTS[feature]}`)
   }
 
   /**
@@ -263,48 +276,6 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       agent.model.modelInfo?.capabilities?.serverSideSummary === true
     )
   }
-}
-
-type SummaryLimit = 'pinned messages' | 'per-block summarization'
-
-const LIMIT_STATEMENTS: Record<SummaryLimit, string> = {
-  'pinned messages':
-    'pinned messages are kept after a server-side summary' +
-    ' | thinking in the messages kept after the summary will be dropped',
-  'per-block summarization':
-    'per-block summarization with preserveRecent rewrites blocks the model has already seen' +
-    ' | thinking from earlier turns will be dropped on the next turns',
-}
-
-/**
- * The features in use that a server-side summary doesn't support, for an agent whose model has it. Per-block
- * summarization with `preserveRecent` rewrites blocks the model has already seen, and pinned messages kept after a
- * server-side summary sit between its block and the messages it keeps. Without `preserveRecent`, a block is rewritten
- * before the model sees it.
- *
- * @internal
- */
-export function serverSideSummaryLimits(agent: LocalAgent, strategies: ContextStrategy[]): SummaryLimit[] {
-  if (agent.model.modelInfo?.capabilities?.serverSideSummary !== true) return []
-  const summarizers = strategies.filter((strategy) => strategy instanceof SummarizeStrategy)
-  const features: SummaryLimit[] = []
-  if (summarizers.some((strategy) => strategy.summarizesServerSide(agent)) && agent.messages.some(hasPinnedFlag)) {
-    features.push('pinned messages')
-  }
-  if (summarizers.some((strategy) => strategy.rewritesSeenBlocks)) features.push('per-block summarization')
-  return features
-}
-
-/**
- * Logs a warning describing how a server-side summary treats the features in use, if any.
- *
- * @internal
- */
-export function warnOnServerSideSummaryLimits(agent: LocalAgent, strategies: ContextStrategy[]): void {
-  const features = serverSideSummaryLimits(agent, strategies)
-  if (features.length === 0) return
-  const statements = features.map((feature) => LIMIT_STATEMENTS[feature])
-  logger.warn(`model_id=<${agent.model.modelId}> | ${statements.join(' | ')}`)
 }
 
 /** Splits `selected` and their tool pairs into runs of messages adjacent in `messages`, in history order. */
