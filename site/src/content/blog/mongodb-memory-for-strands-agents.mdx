@@ -1,0 +1,155 @@
+---
+title: "MongoDB memory for Strands Agents"
+date: 2026-11-04
+description: "Use MongoDB to persist Strands Agent sessions and store searchable long-term memory across conversations."
+authors:
+  - tim-moreton
+  - strands-team
+tags:
+  - Open Source
+  - Announcement
+  - Memory
+  - Integrations
+draft: true
+---
+
+{/* Publication blocker: verify the strands-mongodb package, API, and Atlas
+    index behavior against a public release before publishing this post. */}
+
+The longer you work with an agent, the less you should have to repeat.
+
+Decisions and lessons from previous tasks should carry forward. Work in progress
+should survive a restart. Saving the conversation history is a start, but agents
+also need to extract useful knowledge and find it when it matters.
+
+The MongoDB team built `strands-mongodb`, a Python integration that adds
+persistent sessions and searchable long-term memory to Strands Agents. Both
+backends can use the same MongoDB deployment.
+
+## Why two backends?
+
+To resume a conversation, Strands loads its saved state by session ID. A new
+task needs a different operation: searching for relevant facts from earlier
+work.
+
+The integration connects to two Strands interfaces that handle those jobs:
+
+| Job | MongoDB backend | How the agent uses it |
+| --- | --- | --- |
+| Resume a conversation | `MongoDBStorage`, used by `SnapshotSessionManager` | Loads saved session state using a session ID. |
+| Recall knowledge across conversations | `MongoDBMemoryStore`, used by `MemoryManager` | Searches stored facts within a scope, such as a project or user. |
+
+Suppose an agent learns that a project's integration tests use a separate
+database. Session storage preserves the conversation in which that came up.
+Long-term memory can retain the database requirement as a fact and retrieve it
+when the agent works on another test in a later session.
+
+Session management keeps the current conversation available after a restart.
+Long-term memory carries knowledge across conversations, and semantic search
+finds that knowledge by meaning.
+
+Use either backend independently or point both at the same MongoDB deployment.
+
+## Getting started
+
+The [MongoDB integration guide](/docs/integrations/integrations/mongodb/) now
+includes installation, Atlas setup, credentials, and a cross-session recall
+test. After completing that setup, save this example as `mongodb_memory.py`:
+
+```python
+"""Persist Strands sessions and long-term memory in MongoDB."""
+
+import asyncio
+import os
+
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.models import BedrockModel
+from strands.session import SnapshotSessionManager
+from strands_mongodb import MongoDBMemoryStore, MongoDBStorage
+
+
+MEMORY_SCOPE = "project-123"
+DEFAULT_PROMPT = (
+    "Remember: this project uses pytest, and integration tests "
+    "use a separate database."
+)
+
+
+async def main():
+    session_id = os.getenv("SESSION_ID", "conversation-001")
+    prompt = os.getenv("PROMPT", DEFAULT_PROMPT)
+
+    # Session state and long-term memory share this deployment.
+    config = {
+        "connection_string": os.environ["MONGODB_URI"],
+        "database": "agents",
+        "search_type": "vector",
+    }
+
+    storage = MongoDBStorage(config, collection="sessions")
+    memories = MongoDBMemoryStore(
+        name="project_notes",
+        config=config,
+        scope=MEMORY_SCOPE,  # Keep stable to share facts across conversations.
+        writable=True,
+        extraction=True,  # Extract facts into long-term memory.
+    )
+
+    try:
+        async with Agent(
+            model=BedrockModel(
+                model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                region_name="us-east-1",
+            ),
+            storage=storage,
+            session_manager=SnapshotSessionManager(
+                session_id=session_id,  # Reuse to resume; change to start fresh.
+                save_latest_on="message",  # Save after every message.
+            ),
+            # Adds memory search and injects relevant memories into context.
+            memory_manager=MemoryManager(stores=[memories]),
+        ) as agent:
+            response = await agent.invoke_async(prompt)
+            print(response)
+
+        # Leaving the context flushes pending memory extraction.
+    finally:
+        await memories.close()
+        await storage.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+The first run stores the project's test requirements under `project-123` and
+saves the conversation as `conversation-001`. The integration guide shows how
+to start a new session with the same memory scope and verify that the agent
+recalls the separate-database requirement without receiving the original
+message again.
+
+## Search and memory controls
+
+- **Vector, full-text, and hybrid search.** Retrieve memories by meaning, match
+  specific terms, or combine both approaches on a supported deployment.
+- **Automated embedding.** A compatible Atlas deployment can generate
+  embeddings for stored memories and queries, removing the need for embedding
+  code in your agent.
+- **Scoped retrieval.** Scope memories by user or project. The integration
+  applies this filter; your application still owns authorization.
+- **Deduplication and expiration.** Repeated writes of identical content are
+  deduplicated within a scope and store. Set `ttl_seconds` when memories should
+  expire.
+
+The snippet selects vector search explicitly. If you use an automatic search
+mode that can fall back to text search, check the active mode when testing
+semantic recall.
+
+Thanks to the MongoDB team for building this integration and contributing it to
+the Strands ecosystem.
+
+Get started with the
+[MongoDB integration guide](/docs/integrations/integrations/mongodb/), then join
+us in the [Strands Discord](https://discord.gg/strands) to ask questions, share
+what you are building, and help shape what comes next.

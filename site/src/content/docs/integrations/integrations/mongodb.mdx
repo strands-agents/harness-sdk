@@ -1,0 +1,216 @@
+---
+title: Store sessions and long-term memory in MongoDB
+description: >-
+  Configure MongoDB Atlas to persist Strands sessions and recall knowledge
+  across conversations.
+community: true
+integrationType: integration
+languages: Python
+sidebar:
+  label: MongoDB
+---
+
+{/* Publication blocker: verify the distribution name, all extra, imports,
+    constructors, configuration keys, close methods, search modes, retention
+    settings, and index behavior against the public strands-mongodb release. */}
+
+The `strands-mongodb` integration connects one MongoDB deployment to two Strands
+interfaces:
+
+- `MongoDBStorage` persists agent state for `SnapshotSessionManager`. Reuse a
+  session ID to resume the saved conversation.
+- `MongoDBMemoryStore` gives `MemoryManager` searchable knowledge that can be
+  recalled across conversations. Reuse a memory scope to share that knowledge.
+
+You can use either backend independently or configure both in the same agent.
+
+## Prerequisites
+
+Before you start, you need:
+
+- Python 3.10 or later
+- A MongoDB Atlas account
+- An Atlas database deployment that supports Vector Search and automated
+  embedding
+- A database user and an Atlas IP access list entry for your client
+- AWS credentials and access to the model used in the example
+
+The example uses Amazon Bedrock. You can replace `BedrockModel` with another
+[Strands model provider](/docs/user-guide/sdk/model-providers/).
+
+## Install the packages
+
+Create a virtual environment and install Strands with the MongoDB integration:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install strands-agents "strands-mongodb[all]"
+```
+
+## Configure MongoDB Atlas
+
+Complete these steps in Atlas:
+
+1. Create a project and a database deployment.
+2. Create a database user with read and write access to the deployment.
+3. Add the IP address of the machine that will run the agent to the project's
+   network access list.
+4. Open **Connect**, choose **Drivers**, and copy the connection string.
+5. Replace the password placeholder in the connection string.
+
+Export the connection string instead of placing it in source code:
+
+```bash
+export MONGODB_URI='mongodb+srv://<username>:<password>@<cluster>/'
+```
+
+The vector-search configuration also needs an automated embedding model and an
+index for the memory collection. In Atlas, register a supported embedding model,
+then create the automated embedding index required by the integration. On a
+dedicated cluster, enable storage autoscaling before automated embedding.
+
+{/* TODO(mongodb): Add the tested Atlas UI steps or index JSON. Verify the
+    collection, index name, source-text field, filter fields, model, and whether
+    strands-mongodb creates or updates the index automatically. */}
+
+See the MongoDB documentation for the Atlas screens and supported models:
+
+- [Get started with Atlas](https://www.mongodb.com/docs/atlas/getting-started/)
+- [Automated embedding][automated-embedding]
+- [Manage embedding models][embedding-models]
+
+## Configure Amazon Bedrock
+
+Configure AWS credentials in your environment and confirm that your account can
+invoke the model in the example. The
+[Amazon Bedrock provider guide](/docs/user-guide/sdk/model-providers/amazon-bedrock/)
+covers credentials, permissions, Regions, and model access.
+
+## Create the agent
+
+Save the following example as `mongodb_memory.py`. The comments place each
+session and memory behavior beside the setting that controls it.
+
+```python
+"""Persist Strands sessions and long-term memory in MongoDB."""
+
+import asyncio
+import os
+
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.models import BedrockModel
+from strands.session import SnapshotSessionManager
+from strands_mongodb import MongoDBMemoryStore, MongoDBStorage
+
+
+MEMORY_SCOPE = "project-123"
+DEFAULT_PROMPT = (
+    "Remember: this project uses pytest, and integration tests "
+    "use a separate database."
+)
+
+
+async def main():
+    session_id = os.getenv("SESSION_ID", "conversation-001")
+    prompt = os.getenv("PROMPT", DEFAULT_PROMPT)
+
+    # Session state and long-term memory share this deployment.
+    config = {
+        "connection_string": os.environ["MONGODB_URI"],
+        "database": "agents",
+        "search_type": "vector",
+    }
+
+    storage = MongoDBStorage(config, collection="sessions")
+    memories = MongoDBMemoryStore(
+        name="project_notes",
+        config=config,
+        scope=MEMORY_SCOPE,  # Keep stable to share facts across conversations.
+        writable=True,
+        extraction=True,  # Extract facts into long-term memory.
+    )
+
+    try:
+        async with Agent(
+            model=BedrockModel(
+                model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                region_name="us-east-1",
+            ),
+            storage=storage,
+            session_manager=SnapshotSessionManager(
+                session_id=session_id,  # Reuse to resume; change to start fresh.
+                save_latest_on="message",  # Save after every message.
+            ),
+            # Adds memory search and injects relevant memories into context.
+            memory_manager=MemoryManager(stores=[memories]),
+        ) as agent:
+            response = await agent.invoke_async(prompt)
+            print(response)
+
+        # Leaving the context flushes pending memory extraction.
+    finally:
+        await memories.close()
+        await storage.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run the example:
+
+```bash
+python mongodb_memory.py
+```
+
+This run saves the conversation under `conversation-001`. It also extracts the
+test requirements into long-term memory under the `project-123` scope.
+
+## Verify cross-session recall
+
+Start a new conversation while keeping the same memory scope:
+
+```bash
+SESSION_ID=conversation-002 \
+PROMPT="What test setup does this project require?" \
+python mongodb_memory.py
+```
+
+The new conversation does not contain the original message. The answer should
+still mention pytest and the separate integration-test database because the
+agent can search memories in `project-123`.
+
+If the fact is missing, allow time for Atlas to finish indexing it. Then confirm
+that both runs use the same database, memory-store name, and scope.
+
+## Choose IDs for your application
+
+Treat session IDs and memory scopes as separate application boundaries:
+
+- Reuse a session ID when the user should continue the same conversation.
+- Use a new session ID when the user should start with fresh conversation state.
+- Reuse a memory scope when conversations should share stored knowledge.
+- Use separate scopes for users, teams, or projects that must not share memory.
+
+The scope filters retrieval. Your application remains responsible for
+authentication and authorization.
+
+## Search and retention controls
+
+The integration supports vector, full-text, and hybrid retrieval on compatible
+Atlas deployments. It can also deduplicate identical content within a store and
+scope, and expire memories when you set `ttl_seconds`.
+
+The example selects vector search explicitly. When testing another search mode,
+check which mode is active before evaluating semantic recall.
+
+{/* TODO(mongodb): Verify search modes, fallback behavior, deduplication, and
+    ttl_seconds against the public release before merging. */}
+
+[automated-embedding]:
+  https://www.mongodb.com/docs/vector-search/crud-embeddings/automated-embedding/
+[embedding-models]:
+  https://www.mongodb.com/docs/vector-search/crud-embeddings/automated-embedding/models/
