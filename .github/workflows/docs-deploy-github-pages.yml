@@ -25,11 +25,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout samples
+      - name: Checkout samples snapshot
         uses: actions/checkout@v7
         with:
-          # Intentionally unpinned: each site build imports the latest samples default branch.
+          # Resolve main once; the checked-out commit stays immutable for the rest of the job.
           repository: strands-agents/samples
+          ref: main
           path: samples-source
           persist-credentials: false
 
@@ -62,19 +63,26 @@ jobs:
           fi
           [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
-      - name: Resolve external documentation snapshot
-        id: external_docs
+      - name: Resolve documentation inputs snapshot
+        id: content_snapshot
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           npm run external-docs:update-lock
-          revision="$(node -p "require('./external-docs.lock.json').products.find(({ id }) => id === 'strands-box')?.revision ?? ''")"
-          if ! [[ "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+          box_revision="$(node -p "require('./external-docs.lock.json').products.find(({ id }) => id === 'strands-box')?.revision ?? ''")"
+          samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
+          if ! [[ "$box_revision" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::The resolved Box documentation revision is not a full lowercase commit SHA."
             exit 1
           fi
-          echo "box_revision=$revision" >> "$GITHUB_OUTPUT"
-          printf 'Box documentation snapshot: `%s`\n' "$revision" >> "$GITHUB_STEP_SUMMARY"
+          if ! [[ "$samples_revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The resolved samples revision is not a full lowercase commit SHA."
+            exit 1
+          fi
+          echo "box_revision=$box_revision" >> "$GITHUB_OUTPUT"
+          echo "samples_revision=$samples_revision" >> "$GITHUB_OUTPUT"
+          printf 'Box documentation snapshot: `%s`\n' "$box_revision" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Samples snapshot: `%s`\n' "$samples_revision" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CMS
         run: npm run cms:build
@@ -92,7 +100,8 @@ jobs:
       - name: Deploy to gh-pages branch
         working-directory: .
         env:
-          BOX_DOCS_REVISION: ${{ steps.external_docs.outputs.box_revision }}
+          BOX_DOCS_REVISION: ${{ steps.content_snapshot.outputs.box_revision }}
+          SAMPLES_REVISION: ${{ steps.content_snapshot.outputs.samples_revision }}
           SITE_REVISION: ${{ github.sha }}
         run: |
           git config user.name github-actions[bot]
@@ -102,5 +111,5 @@ jobs:
           rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
           cd gh-pages-deploy
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION (Box docs $BOX_DOCS_REVISION)"
+          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION (Box docs $BOX_DOCS_REVISION, samples $SAMPLES_REVISION)"
           git push origin HEAD:gh-pages

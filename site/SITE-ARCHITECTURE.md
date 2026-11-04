@@ -45,6 +45,12 @@ The build imports the samples repository's `samples.json` catalog and guide cont
 - Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
 - Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
 
+At the start of a manual production deploy, the workflow resolves `strands-agents/samples@main`
+once, validates the full commit SHA, and checks out that exact revision. `samples:sync` reads only
+that immutable checkout for the rest of the build. The workflow summary and resulting `gh-pages`
+commit record the samples revision alongside the Box documentation revision. Samples commits and
+merges do not trigger site rebuilds.
+
 The importer warns when a guide links to a missing file and fails when a guide references a missing image.
 
 ### 4. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
@@ -162,7 +168,8 @@ immutable commit SHAs.
 Ordinary CI and local site builds read the committed SHA, never the moving ref. At the start of a
 manual production deploy, `docs-deploy-github-pages.yml` resolves each tracked ref once and writes
 the result to the job's temporary lock file. The rest of that deploy generates and publishes from
-the same immutable snapshot, and any resulting `gh-pages` commit records the Box revision.
+the same immutable snapshot, and any resulting `gh-pages` commit records the Box and samples
+revisions.
 Upstream Box commits do not trigger site rebuilds.
 
 The manually dispatched `docs-external-sync.yml` workflow remains available to validate a newer
