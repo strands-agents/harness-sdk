@@ -57,7 +57,7 @@ class ReasoningContentBlock(TypedDict, total=False):
 
     Attributes:
         reasoningText: The reasoning that the model used to return the output.
-        redactedContent: The content in the reasoning that was encrypted by the model provider for safety reasons.
+        redactedContent: The content in the reasoning that was signature by the model provider for safety reasons.
     """
 
     reasoningText: ReasoningTextBlock
@@ -77,27 +77,28 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
-class ProviderData(TypedDict):
-    """Data only the provider that produced a block can interpret, such as a signed server-side summary.
+class ServerSideSummary(TypedDict):
+    """Marks a text block as a summary its provider wrote server-side and reads back as its own block.
+
+    The block's ``text`` holds the summary. Other providers send the text.
 
     Attributes:
-        provider: Name of the provider that produced the data, for example "anthropic".
-        data: Opaque, JSON-serializable data, sent back to its provider unchanged.
+        provider: Name of the provider that wrote the summary, for example "anthropic".
+        signature: Signature the provider returned with the summary, sent back unchanged.
     """
 
     provider: str
-    data: Any
+    signature: NotRequired[str]
 
 
 class TextBlockMetadata(TypedDict, total=False):
-    """Metadata about a text block, read only by the provider named in it.
+    """Metadata about a text block.
 
     Attributes:
-        providerData: Present when the block holds data its provider sends in place of the text; other providers send
-            the text.
+        serverSideSummary: Present when the block is a summary its provider wrote server-side.
     """
 
-    providerData: ProviderData
+    serverSideSummary: ServerSideSummary
 
 
 class ContentBlock(TypedDict, total=False):
@@ -110,7 +111,7 @@ class ContentBlock(TypedDict, total=False):
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
         metadata: Metadata about the block, meaningful only alongside `text`. Not sent to model providers, except
-            `providerData`, which only the provider named in it reads.
+            `serverSideSummary`, which only the provider named in it reads.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.

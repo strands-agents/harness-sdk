@@ -350,8 +350,8 @@ def _describe_message(message: Message | None) -> str:
 def _describe_block(block: ContentBlock) -> str:
     kind = next((key for key in block if key != "metadata"), "empty")
     metadata: dict[str, Any] = cast(dict[str, Any], block).get("metadata") or {}
-    provider_data = metadata.get("providerData")
-    return f"{kind}+{provider_data['provider']}" if provider_data else kind
+    server_side = metadata.get("serverSideSummary")
+    return f"{kind}+{server_side['provider']}" if server_side else kind
 
 
 def _pin(messages: Messages, index: int) -> None:

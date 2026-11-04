@@ -355,7 +355,7 @@ class AnthropicModel(Model):
                 it already carries the cache point.
             dynamic_trailing_blocks: How many trailing blocks of the cache-target message are rebuilt on
                 every call, so the cache point stays ahead of them.
-            sends_native_blocks: Whether a text block holding Anthropic provider data is sent as that data.
+            sends_native_blocks: Whether a summary Anthropic wrote server-side is sent as its compaction block.
 
         Returns:
             An Anthropic messages array.
@@ -418,7 +418,7 @@ class AnthropicModel(Model):
         return formatted_messages
 
     def _format_message_block(self, content: ContentBlock, sends_native_blocks: bool) -> dict[str, Any] | None:
-        """Format a message block, sending a block that holds Anthropic provider data as that data when enabled."""
+        """Format a message block, sending a server-side summary as its compaction block when enabled."""
         native_block = format_native_block(content) if sends_native_blocks else None
         return native_block if native_block is not None else self._format_request_message_content(content)
 
@@ -1251,7 +1251,8 @@ class AnthropicModel(Model):
         ``model_info`` config.
 
         The returned compaction block is stored as a text block whose ``text`` is the summary, for other providers,
-        and whose ``metadata.providerData`` holds the block, which later requests send back exactly as returned.
+        and whose ``metadata.serverSideSummary`` holds its ``signature``. Later requests rebuild the block
+        from the two.
 
         Args:
             messages: The opening messages to summarize, left unmodified.

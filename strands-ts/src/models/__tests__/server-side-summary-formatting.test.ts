@@ -7,7 +7,6 @@ import { formatMessages as formatGoogleMessages } from '../google/adapters.js'
 import { formatChatRequest } from '../openai/chat-adapter.js'
 import { formatResponsesRequest } from '../openai/responses-adapter.js'
 import { Message, TextBlock } from '../../types/messages.js'
-import type { ProviderData } from '../../types/messages.js'
 import { AnthropicWire } from '../../__fixtures__/anthropic-wire.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { logger } from '../../logging/logger.js'
@@ -15,13 +14,11 @@ import { logger } from '../../logging/logger.js'
 const OPAQUE = 'OPAQUE-PROVIDER-FIELD'
 const COMPACTS = { modelInfo: { capabilities: { serverSideSummary: true } } }
 
-/** A summary block carrying metadata and provider data for `provider`, after a user turn. */
+/** A server-side summary written by `provider`, after a user turn. */
 function history(provider: string): Message[] {
-  const providerData: ProviderData = {
-    provider,
-    data: { type: 'compaction', signature: OPAQUE, content: 'SUMMARY TEXT' },
-  }
-  const summary = new TextBlock('SUMMARY TEXT', { metadata: { providerData } })
+  const summary = new TextBlock('SUMMARY TEXT', {
+    metadata: { serverSideSummary: { provider, signature: OPAQUE } },
+  })
   return [
     new Message({ role: 'assistant', content: [summary] }),
     new Message({ role: 'user', content: [new TextBlock('next')] }),
@@ -32,10 +29,10 @@ function expectPlainText(request: unknown): void {
   const wire = JSON.stringify(request)
   expect(wire).toContain('SUMMARY TEXT')
   expect(wire).not.toContain(OPAQUE)
-  expect(wire).not.toContain('providerData')
+  expect(wire).not.toContain('serverSideSummary')
 }
 
-describe('provider data on the wire', () => {
+describe('server-side summaries on the wire', () => {
   describe('providers other than the producer send only the text', () => {
     it('bedrock', () => {
       const model = new BedrockModel({ region: 'us-east-1', modelId: 'test-model' })
@@ -95,7 +92,7 @@ describe('provider data on the wire', () => {
       })
       await collectIterator(model.stream(history('anthropic')))
       expect(wire.bodies[0]!.messages).toStrictEqual([
-        { role: 'assistant', content: [{ type: 'compaction', signature: OPAQUE, content: 'SUMMARY TEXT' }] },
+        { role: 'assistant', content: [{ type: 'compaction', content: 'SUMMARY TEXT', signature: OPAQUE }] },
         { role: 'user', content: [{ type: 'text', text: 'next' }] },
       ])
       expect(wire.requests[0]!.headers['anthropic-beta']).toBe('compact-2026-09-04')
@@ -145,7 +142,10 @@ describe('provider data on the wire', () => {
       expect(countTokens).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [
-            { role: 'assistant', content: [{ type: 'compaction', signature: OPAQUE, content: 'SUMMARY TEXT' }] },
+            {
+              role: 'assistant',
+              content: [{ type: 'compaction', content: 'SUMMARY TEXT', signature: OPAQUE }],
+            },
             { role: 'user', content: [{ type: 'text', text: 'next' }] },
           ],
         }),
@@ -169,7 +169,7 @@ describe('anthropic, for messages before its own block', () => {
     const earlier = new Message({ role: 'assistant', content: [new TextBlock('earlier'), ...summary!.content] })
     await collectIterator(model.stream([task, earlier, next!]))
     expect(wire.bodies[0]!.messages).toStrictEqual([
-      { role: 'assistant', content: [{ type: 'compaction', signature: OPAQUE, content: 'SUMMARY TEXT' }] },
+      { role: 'assistant', content: [{ type: 'compaction', content: 'SUMMARY TEXT', signature: OPAQUE }] },
       { role: 'user', content: [{ type: 'text', text: 'next' }] },
     ])
   })

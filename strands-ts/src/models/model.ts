@@ -448,7 +448,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Providers with server-side summaries override this method and set
    * `modelInfo.capabilities.serverSideSummary`. For such a model the context manager calls this method only with
    * the conversation's opening messages, from message 0, and uses the base implementation for every other summary.
-   * A returned block whose `metadata.providerData` names this provider is sent back in place of its text.
+   * A returned block whose `metadata.serverSideSummary` names this provider is sent back as its own block.
    *
    * @param messages - The messages to summarize, left unmodified
    * @param options - The live system prompt and tools, for an override, a custom summarization system prompt, and

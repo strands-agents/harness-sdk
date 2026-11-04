@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AnthropicModel } from '../anthropic.js'
-import { carriesNativeBlock, formatTextBlock, fromLastNativeBlock } from '../anthropic-compaction.js'
+import { carriesNativeBlock, formatTextBlock, fromLastNativeBlock, readCompaction } from '../anthropic-compaction.js'
+import { formatSummarized } from '../summarize.js'
 import { ModelThrottledError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import type { ToolSpec } from '../../tools/types.js'
@@ -12,7 +13,12 @@ const SYSTEM = 'You plan releases.'
 const TOOLS: ToolSpec[] = [
   { name: 'lookup', description: 'Look up.', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } },
 ]
-const RETURNED = { type: 'compaction', content: 'Summary: the user plans a release.', signature: 'EuYBCkQY-opaque' }
+const RETURNED = {
+  type: 'compaction',
+  content: 'Summary: the user plans a release.',
+  signature: 'EuYBCkQY-opaque',
+}
+const STORED_METADATA = { serverSideSummary: { provider: 'anthropic', signature: 'EuYBCkQY-opaque' } }
 const COMPACTED = {
   content: [RETURNED],
   stopReason: 'compaction',
@@ -98,12 +104,10 @@ describe('AnthropicModel.summarize', () => {
     expect(compaction!.output_config).toStrictEqual({ task_budget: { total: 9 } })
   })
 
-  it('returns the summary text with the returned block as provider data, and the compaction usage', async () => {
+  it('returns the summary text with its signature as a server-side summary, and the compaction usage', async () => {
     const wire = new AnthropicWire().reply(COMPACTED)
     expect(await model(wire).summarize(body())).toStrictEqual({
-      content: [
-        new TextBlock(RETURNED.content, { metadata: { providerData: { provider: 'anthropic', data: RETURNED } } }),
-      ],
+      content: [new TextBlock(RETURNED.content, { metadata: STORED_METADATA })],
       usage: { inputTokens: 144, outputTokens: 276, totalTokens: 420 },
     })
   })
@@ -146,18 +150,31 @@ describe('AnthropicModel.summarize', () => {
 })
 
 describe('formatTextBlock', () => {
-  const stored = (provider: string, data: unknown): TextBlock =>
-    new TextBlock('summary', { metadata: { providerData: { provider, data } } })
+  it('rebuilds the returned block from an Anthropic server-side summary', () => {
+    expect(formatTextBlock(new TextBlock(RETURNED.content, { metadata: STORED_METADATA }))).toStrictEqual(RETURNED)
+  })
 
-  it('sends Anthropic provider data that is an object as the block itself', () => {
-    expect(formatTextBlock(stored('anthropic', RETURNED))).toStrictEqual(RETURNED)
+  it('leaves out a signature the summary has none of', () => {
+    const block = new TextBlock('summary', { metadata: { serverSideSummary: { provider: 'anthropic' } } })
+    expect(formatTextBlock(block)).toStrictEqual({ type: 'compaction', content: 'summary' })
   })
 
   it.each([
-    ['another provider', stored('bedrock', RETURNED)],
-    ['null data', stored('anthropic', null)],
-    ['array data', stored('anthropic', [RETURNED])],
-    ['string data', stored('anthropic', 'opaque')],
+    'Summary: the user plans a release.',
+    '  leading and trailing whitespace\n',
+    'line one\n\n[Summarized: inner]',
+  ])('round-trips the content %j through the summarized header', (summary) => {
+    const returned = { type: 'compaction', content: summary, signature: 'opaque' }
+    const stored = readCompaction({ content: [returned], stop_reason: 'compaction', usage: {} } as never, 'm1')!
+    const block = stored.block
+    const marker = new TextBlock(formatSummarized('3 messages', 5000, block.text), { metadata: block.metadata! })
+    expect(formatTextBlock(marker)).toStrictEqual(returned)
+  })
+
+  it.each([
+    ['another provider', new TextBlock('summary', { metadata: { serverSideSummary: { provider: 'bedrock' } } })],
+    ['no server-side summary', new TextBlock('summary', { metadata: {} })],
+    ['no metadata', new TextBlock('summary')],
   ])('sends a block with %s as text, which no request trims to or needs the beta for', (_, block) => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('first')] }),
@@ -171,9 +188,7 @@ describe('formatTextBlock', () => {
 
 describe('AnthropicModel.countTokens', () => {
   it('estimates from the last compaction block, as a request sends', async () => {
-    const compaction = new TextBlock(RETURNED.content, {
-      metadata: { providerData: { provider: 'anthropic', data: RETURNED } },
-    })
+    const compaction = new TextBlock(RETURNED.content, { metadata: STORED_METADATA })
     const history = [
       new Message({ role: 'user', content: [new TextBlock('earlier context '.repeat(500))] }),
       new Message({ role: 'assistant', content: [compaction] }),

@@ -35,12 +35,42 @@ export interface SummarizeOptions {
 }
 
 /**
+ * Prefix of a `[Summarized: ...]` marker.
+ *
+ * @internal
+ */
+export const SUMMARIZED_PREFIX = '[Summarized:'
+
+const SUMMARIZED_HEADER_END = ']\n\n'
+
+/**
+ * Formats a `[Summarized: ...]` marker with an optional summary body.
+ *
+ * @internal
+ */
+export function formatSummarized(description: string, tokens: number, summary?: string): string {
+  const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
+  return summary ? `${header}\n\n${summary}` : header
+}
+
+/**
+ * Returns the summary in a {@link formatSummarized} marker, or `text` itself when it has no header.
+ *
+ * @internal
+ */
+export function summaryBody(text: string): string {
+  if (!text.startsWith(SUMMARIZED_PREFIX)) return text
+  const end = text.indexOf(SUMMARIZED_HEADER_END)
+  return end < 0 ? '' : text.slice(end + SUMMARIZED_HEADER_END.length)
+}
+
+/**
  * Result of a {@link Model.summarize} call.
  */
 export interface SummarizeResult {
   /**
-   * The summary, empty when the model wrote none. A block may carry `metadata.providerData` that its provider sends
-   * in place of the text, such as Anthropic's compaction block.
+   * The summary, empty when the model wrote none. A block may carry `metadata.serverSideSummary` when its provider
+   * wrote it server-side and reads it back as its own block, such as Anthropic's compaction block.
    */
   content: ContentBlock[]
 
@@ -222,7 +252,7 @@ function toolResultToContentBlocks(content: ToolResultContent[]): ContentBlock[]
 /**
  * Converts a block to what the summarizer accepts in a user turn: text, images, and documents pass
  * through, other content is rendered as text or a placeholder, and the rest is left out. A text block passes
- * through as its text alone, so provider data it carries is read as text.
+ * through as its text alone, so a server-side summary is read as text.
  */
 function toSummarizerBlocks(block: ContentBlock | ToolResultContent): ContentBlock[] {
   if (block instanceof TextBlock) return [new TextBlock(block.text)]

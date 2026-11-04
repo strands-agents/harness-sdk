@@ -28,13 +28,32 @@ _DEFAULT_SUMMARIZE_INSTRUCTIONS = (
 )
 
 
+_SUMMARIZED_PREFIX = "[Summarized:"
+_SUMMARIZED_HEADER_END = "]\n\n"
+
+
+def _format_summarized(description: str, tokens: int, summary: str | None = None) -> str:
+    """Format a ``[Summarized: ...]`` marker with an optional summary body."""
+    header = f"{_SUMMARIZED_PREFIX} {description}, ~{tokens:,} tokens]"
+    return f"{header}\n\n{summary}" if summary else header
+
+
+def _summary_body(text: str) -> str:
+    """Return the summary in a :func:`_format_summarized` marker, or ``text`` itself when it has no header."""
+    if not text.startswith(_SUMMARIZED_PREFIX):
+        return text
+    _, separator, summary = text.partition(_SUMMARIZED_HEADER_END)
+    return summary if separator else ""
+
+
 @dataclass
 class SummarizeResult:
     """Result of a :meth:`Model.summarize` call.
 
     Attributes:
-        content: The summary, empty when the model wrote none. A block may carry ``metadata.providerData`` that its
-            provider sends in place of the text, such as Anthropic's compaction block.
+        content: The summary, empty when the model wrote none. A block may carry ``metadata.serverSideSummary`` when
+            its provider wrote it server-side and reads it back as its own block, such as Anthropic's compaction
+            block.
         usage: Token usage of the summary call, ``None`` when the provider reports none.
     """
 
@@ -145,7 +164,7 @@ def _to_summarizer_blocks(block: ContentBlock) -> list[ContentBlock]:
     """Convert a block to what the summarizer accepts in a user turn.
 
     Text, images, and documents pass through; other content is rendered as text or a placeholder, and the rest
-    is left out. A text block passes through as its text alone, so provider data it carries is read as text.
+    is left out. A text block passes through as its text alone, so a server-side summary is read as text.
     """
     if "text" in block:
         return [ContentBlock(text=block["text"])]

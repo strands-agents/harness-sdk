@@ -242,7 +242,7 @@ def test_message_text_block_metadata_persists(file_manager, sample_session, samp
 
     summary = ContentBlock(
         text="[Summarized: 3 messages]\n\nsummary",
-        metadata={"providerData": {"provider": "anthropic", "data": {"type": "compaction", "content": "summary"}}},
+        metadata={"serverSideSummary": {"provider": "anthropic", "signature": "opaque"}},
     )
     message = SessionMessage.from_message(message={"role": "user", "content": [summary]}, index=0)
     file_manager.create_message(sample_session.session_id, sample_agent.agent_id, message)

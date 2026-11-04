@@ -202,29 +202,30 @@ export type ContentBlock =
   | CitationsBlock
 
 /**
- * Data only the provider that produced a block can interpret, such as a signed server-side summary.
+ * Marks a text block as a summary its provider wrote server-side and reads back as its own block. The block's
+ * `text` holds the summary. Other providers send the text.
  */
-export interface ProviderData {
+export interface ServerSideSummary {
   /**
-   * Name of the provider that produced the data, for example `'anthropic'`.
+   * Name of the provider that wrote the summary, for example `'anthropic'`.
    */
   provider: string
 
   /**
-   * Opaque, JSON-serializable data, sent back to its provider unchanged.
+   * Signature the provider returned with the summary, sent back unchanged.
    */
-  data: unknown
+  signature?: string
 }
 
 /**
- * Metadata attached to a text block. Not sent to model providers, except `providerData`, which only the provider
- * named in it reads.
+ * Metadata attached to a text block. Not sent to model providers, except `serverSideSummary`, which only the
+ * provider named in it reads.
  */
 export interface TextBlockMetadata {
   /**
-   * Present when the block holds data its provider sends in place of the text; other providers send the text.
+   * Present when the block is a summary its provider wrote server-side.
    */
-  providerData?: ProviderData
+  serverSideSummary?: ServerSideSummary
 }
 
 /**

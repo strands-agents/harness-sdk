@@ -78,7 +78,7 @@ export interface HarnessReport {
   finalText: string
   usage: { inputTokens: number; outputTokens: number; totalTokens: number }
   messageZeroAfter: string
-  /** Role and block types of `messages[1]`, and whether its text block carries provider data. */
+  /** Role and block types of `messages[1]`, and whether its text block is a server-side summary. */
   messageOneAfter: string
 }
 
@@ -202,8 +202,8 @@ function describeMessageOne(
 ): string {
   if (!message) return 'none'
   const blocks = message.content.map((block) => {
-    const providerData = (block.metadata as { providerData?: { provider: string } } | undefined)?.providerData
-    return providerData ? `${block.type}+${providerData.provider}` : block.type
+    const serverSide = (block.metadata as { serverSideSummary?: { provider: string } } | undefined)?.serverSideSummary
+    return serverSide ? `${block.type}+${serverSide.provider}` : block.type
   })
   return `${message.role}:${blocks.join(',')}`
 }

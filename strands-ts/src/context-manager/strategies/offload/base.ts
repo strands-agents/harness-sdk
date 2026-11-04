@@ -477,8 +477,10 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (block instanceof ToolUseBlock) return false
     if (block instanceof CachePointBlock) return false
     if (block instanceof ReasoningBlock) return false
-    // Provider data is signed over the block as returned, so an in-place edit would invalidate it.
-    if (block instanceof TextBlock) return !block.metadata?.providerData && targetMatchesMessage(this._target, message)
+    // The provider reads a server-side summary back from its text, so an in-place edit would corrupt it.
+    if (block instanceof TextBlock) {
+      return !block.metadata?.serverSideSummary && targetMatchesMessage(this._target, message)
+    }
     if (block instanceof ToolResultBlock) {
       if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
       return (

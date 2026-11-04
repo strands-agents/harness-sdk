@@ -448,14 +448,14 @@ describe('summarizing whole messages', () => {
 })
 
 describe('server-side summary', () => {
-  const COMPACTION = { provider: 'test', data: { type: 'compaction', signature: 'opaque' } }
+  const COMPACTION = { provider: 'test', signature: 'opaque' }
 
-  /** A model with server-side summaries whose override returns a block with provider data. */
+  /** A model with server-side summaries whose override returns a server-side summary. */
   function summarizingModel(): MockMessageModel {
     const model = new MockMessageModel()
     model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: true } } })
     vi.spyOn(model, 'summarize').mockResolvedValue({
-      content: [new TextBlock('compacted', { metadata: { providerData: COMPACTION } })],
+      content: [new TextBlock('compacted', { metadata: { serverSideSummary: COMPACTION } })],
       usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
     })
     return model
@@ -489,10 +489,33 @@ describe('server-side summary', () => {
     const tokens = heuristicCountTokens([a1!, u2!, a3!])
     expect(messages[1]!.content).toEqual([
       new TextBlock(`[Summarized: 3 messages, ~${tokens} tokens]\n\ncompacted`, {
-        metadata: { providerData: COMPACTION },
+        metadata: { serverSideSummary: COMPACTION },
       }),
     ])
     expect(invocationContext.usage).toEqual(expect.objectContaining({ inputTokens: 3, outputTokens: 4 }))
+  })
+
+  it('keeps the first server-side summary verbatim', async () => {
+    const model = summarizingModel()
+    vi.mocked(model.summarize).mockResolvedValueOnce({
+      content: [
+        new TextBlock('plain'),
+        new TextBlock('  compacted\n', { metadata: { serverSideSummary: COMPACTION } }),
+        new TextBlock('more', { metadata: { serverSideSummary: { provider: 'other' } } }),
+      ],
+    })
+    const messages = turns('task', 'a1', 'u2', 'a3', 'u4', 'a5', 'u6')
+    const [, a1, u2, a3] = messages
+    const strategy = Offload.summarize('*', { model }).when({ utilization: 0.5, preserveRecent: 3 })
+
+    expect(await strategy.apply(nativeContext(messages))).toBe(true)
+
+    const tokens = heuristicCountTokens([a1!, u2!, a3!])
+    expect(messages[1]!.content).toStrictEqual([
+      new TextBlock(`[Summarized: 3 messages, ~${tokens} tokens]\n\n  compacted\n`, {
+        metadata: { serverSideSummary: COMPACTION },
+      }),
+    ])
   })
 
   it('compacts a run that ends on a tool result, placing the summary ahead of the next assistant message', async () => {
@@ -511,7 +534,7 @@ describe('server-side summary', () => {
     expect(model.summarize).toHaveBeenCalledOnce()
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     const [summary, toolUse] = messages[1]!.content
-    expect((summary as TextBlock).metadata?.providerData).toEqual(COMPACTION)
+    expect((summary as TextBlock).metadata?.serverSideSummary).toEqual(COMPACTION)
     expect(toolUse).toBeInstanceOf(ToolUseBlock)
   })
 
@@ -532,7 +555,7 @@ describe('server-side summary', () => {
     expect(messages[0]).toBe(task)
     expect(messages[1]!.content).toStrictEqual([
       new TextBlock(`[Summarized: 3 messages, ~${await model.countTokens([a1!, u2!, a3!])} tokens]\n\ncompacted`, {
-        metadata: { providerData: COMPACTION },
+        metadata: { serverSideSummary: COMPACTION },
       }),
     ])
     expect(messages[1]!.metadata?.custom?.pinned).toBeUndefined()
@@ -569,7 +592,7 @@ describe('server-side summary', () => {
 
     expect(model.summarize).not.toHaveBeenCalled()
     expect(JSON.stringify(messages)).toContain('base summary')
-    expect(JSON.stringify(messages)).not.toContain('providerData')
+    expect(JSON.stringify(messages)).not.toContain('serverSideSummary')
   })
 
   it('gives the opening run the base summary when compaction writes none', async () => {
@@ -584,7 +607,7 @@ describe('server-side summary', () => {
     expect(model.summarize).toHaveBeenCalledOnce()
     expect(messages[0]!.content).toEqual([new TextBlock('task')])
     expect(JSON.stringify(messages)).toContain('base summary')
-    expect(JSON.stringify(messages)).not.toContain('providerData')
+    expect(JSON.stringify(messages)).not.toContain('serverSideSummary')
   })
 
   it('does not compact a run holding only the earlier summary again', async () => {
@@ -610,7 +633,7 @@ describe('server-side summary', () => {
     expect(model.summarize).not.toHaveBeenCalled()
     expect(messages[0]!.content).toEqual([new TextBlock('task')])
     expect(JSON.stringify(messages)).toContain('base summary')
-    expect(JSON.stringify(messages)).not.toContain('providerData')
+    expect(JSON.stringify(messages)).not.toContain('serverSideSummary')
   })
 
   it('summarizes blocks with the base summary, not the override', async () => {

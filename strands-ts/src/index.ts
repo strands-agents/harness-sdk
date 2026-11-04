@@ -69,7 +69,7 @@ export type {
   StopReason,
   TextBlockData,
   TextBlockMetadata,
-  ProviderData,
+  ServerSideSummary,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,

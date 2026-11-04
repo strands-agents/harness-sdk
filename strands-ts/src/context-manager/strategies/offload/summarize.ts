@@ -8,9 +8,15 @@ import { logger } from '../../../logging/logger.js'
 import { normalizeError } from '../../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../../types/media.js'
-import type { ContentBlock, ProviderData } from '../../../types/messages.js'
+import type { ContentBlock } from '../../../types/messages.js'
 import type { Model } from '../../../models/model.js'
-import { summarizeWithStream, type SummarizeOptions, type SummarizeResult } from '../../../models/summarize.js'
+import {
+  SUMMARIZED_PREFIX,
+  formatSummarized,
+  summarizeWithStream,
+  type SummarizeOptions,
+  type SummarizeResult,
+} from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
@@ -26,8 +32,6 @@ import {
   type OffloadTarget,
 } from './base.js'
 
-const SUMMARIZED_PREFIX = '[Summarized:'
-
 /**
  * Configuration for the summarize method.
  *
@@ -39,14 +43,6 @@ export interface SummarizeConfig {
 
   /** Custom system prompt for the summarization model. */
   systemPrompt?: string
-}
-
-/**
- * Format a `[Summarized: ...]` marker with an optional summary body.
- */
-function formatSummarized(description: string, tokens: number, summary?: string): string {
-  const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
-  return summary ? `${header}\n\n${summary}` : header
 }
 
 export class SummarizeStrategy extends BaseOffloadStrategy {
@@ -141,19 +137,21 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   /**
    * Summarizes message 0 and `run` server-side, keeping message 0 in place. The summary
    * takes the run's place as an assistant message, ahead of any assistant content that follows, and the provider
-   * sends its block, which covers message 0, in place of the text.
+   * sends its block, which covers message 0, in place of the text. A server-side summary is kept verbatim, since the
+   * provider reads it back from the marker.
    */
   private async _summarizeOpeningServerSide(context: ContextState, model: Model, run: Message[]): Promise<boolean> {
     if (holdsOnlySummaries(run)) return false
     const { messages, agent, invocationContext } = context
     const result = await this._trySummarize([messages[0]!, ...run], model, agent, invocationContext, true)
-    const summary = summaryText(result)
+    const serverSide = serverSideSummaryOf(result)
+    const summary = serverSide?.text ?? summaryText(result)
     if (!result || !summary) return false
 
     const totalTokens = await model.countTokens(run)
-    const providerData = providerDataOf(result.content)
     const text = formatSummarized(`${run.length} messages`, totalTokens, summary)
-    const block = new TextBlock(text, providerData ? { metadata: { providerData } } : undefined)
+    const serverSideSummary = serverSide?.metadata?.serverSideSummary
+    const block = new TextBlock(text, serverSideSummary ? { metadata: { serverSideSummary } } : undefined)
     messages.splice(1, run.length, markerMessage([block]))
     logger.debug(`summarized=<${run.length}>, tokens=<${totalTokens}> | summarized opening messages server-side`)
     return true
@@ -385,11 +383,10 @@ function summaryText(result: SummarizeResult | null): string {
     .trim()
 }
 
-function providerDataOf(content: ContentBlock[]): ProviderData | undefined {
-  for (const block of content) {
-    if (block instanceof TextBlock && block.metadata?.providerData) return block.metadata.providerData
-  }
-  return undefined
+function serverSideSummaryOf(result: SummarizeResult | null): TextBlock | undefined {
+  return result?.content.find(
+    (block): block is TextBlock => block instanceof TextBlock && block.metadata?.serverSideSummary !== undefined
+  )
 }
 
 /**

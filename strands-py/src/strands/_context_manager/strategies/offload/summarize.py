@@ -10,8 +10,8 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import _get_tool_use_ids, _has_pinned_flag
 from ....event_loop.streaming import _record_usage
-from ....models._summarize import SummarizeResult, _summarize_with_stream
-from ....types.content import ContentBlock, Message, Messages, ProviderData
+from ....models._summarize import _SUMMARIZED_PREFIX, SummarizeResult, _format_summarized, _summarize_with_stream
+from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolResult, ToolResultContent
 from ...stash import MERGED_MESSAGES_KEY, _format_stash_refs
 from ...types import ContextState
@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SUMMARIZED_PREFIX = "[Summarized:"
-
 
 class SummarizeConfig(TypedDict, total=False):
     """Configuration for the summarize method.
@@ -47,12 +45,6 @@ class SummarizeConfig(TypedDict, total=False):
 
     model: Model
     system_prompt: str
-
-
-def _format_summarized(description: str, tokens: int, summary: str | None = None) -> str:
-    """Format a ``[Summarized: ...]`` marker with an optional summary body."""
-    header = f"{_SUMMARIZED_PREFIX} {description}, ~{tokens:,} tokens]"
-    return f"{header}\n\n{summary}" if summary else header
 
 
 _LIMIT_STATEMENTS = {
@@ -169,13 +161,12 @@ def _summary_text(result: SummarizeResult | None) -> str:
     return "\n".join(block["text"] for block in result.content if "text" in block).strip()
 
 
-def _provider_data_of(content: list[ContentBlock]) -> ProviderData | None:
-    """Return the provider data of the first text block in ``content`` that carries any."""
-    for block in content:
-        provider_data = block.get("metadata", {}).get("providerData") if "text" in block else None
-        if provider_data:
-            return provider_data
-    return None
+def _server_side_summary_of(result: SummarizeResult | None) -> ContentBlock | None:
+    """Return the first text block of ``result`` that its provider wrote server-side, or None."""
+    content = result.content if result else []
+    return next(
+        (block for block in content if "text" in block and "serverSideSummary" in block.get("metadata", {})), None
+    )
 
 
 def _block_request(block: ContentBlock, message: Message, messages: Messages) -> Messages:
@@ -295,21 +286,22 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Summarize message 0 and ``run`` server-side, keeping message 0 in place.
 
         The summary takes the run's place as an assistant message, ahead of any assistant content that follows, and
-        the provider sends its block, which covers message 0, in place of the text.
+        the provider sends its block, which covers message 0, in place of the text. A server-side summary is kept
+        verbatim, since the provider reads it back from the marker.
         """
         if _holds_only_summaries(run):
             return False
         messages = context.messages
         request = [messages[0], *run]
         result = await self._try_summarize(request, model, context.agent, context.invocation_context, opening=True)
-        summary = _summary_text(result)
+        server_side = _server_side_summary_of(result)
+        summary = server_side["text"] if server_side else _summary_text(result)
         if not result or not summary:
             return False
         total_tokens = await model.count_tokens(run)
         marker = ContentBlock(text=_format_summarized(f"{len(run)} messages", total_tokens, summary))
-        provider_data = _provider_data_of(result.content)
-        if provider_data:
-            marker["metadata"] = {"providerData": provider_data}
+        if server_side:
+            marker["metadata"] = {"serverSideSummary": server_side["metadata"]["serverSideSummary"]}
         messages[1 : 1 + len(run)] = [Message(role="assistant", content=[marker])]
         logger.debug("summarized=<%s>, tokens=<%s> | summarized opening messages server-side", len(run), total_tokens)
         return True

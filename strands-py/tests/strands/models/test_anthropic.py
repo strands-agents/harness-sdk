@@ -1675,12 +1675,12 @@ class TestCountTokens:
         mock_response = unittest.mock.MagicMock()
         mock_response.input_tokens = 10
         anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=mock_response)
-        stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "c"}}}}
+        stored = {"text": "summary", "metadata": {"serverSideSummary": {"provider": "anthropic"}}}
 
         await model_with_client.count_tokens(messages=[{"role": "user", "content": [stored]}])
 
         call_kwargs = anthropic_client.messages.count_tokens.call_args[1]
-        assert call_kwargs["messages"] == [{"role": "user", "content": [{"type": "c"}]}]
+        assert call_kwargs["messages"] == [{"role": "user", "content": [{"type": "compaction", "content": "summary"}]}]
         assert call_kwargs["extra_headers"] == {"anthropic-beta": "compact-2026-09-04"}
 
     @pytest.mark.parametrize("use_native_token_count", [False, True])
@@ -1693,7 +1693,7 @@ class TestCountTokens:
             use_native_token_count=use_native_token_count,
             model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
         )
-        stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "c"}}}}
+        stored = {"text": "summary", "metadata": {"serverSideSummary": {"provider": "anthropic"}}}
         compacted = [{"role": "user", "content": [{"text": "x" * 4000}]}, {"role": "assistant", "content": [stored]}]
 
         tru_count = await model_with_client.count_tokens(messages=compacted)
@@ -3264,7 +3264,7 @@ RETURNED_COMPACTION = {
 }
 STORED_COMPACTION = {
     "text": RETURNED_COMPACTION["content"],
-    "metadata": {"providerData": {"provider": "anthropic", "data": RETURNED_COMPACTION}},
+    "metadata": {"serverSideSummary": {"provider": "anthropic", "signature": "EuYBCkQY-opaque"}},
 }
 COMPACTED_REPLY = {
     "content": [RETURNED_COMPACTION],
@@ -3594,14 +3594,14 @@ def test_format_request_composes_native_blocks_with_cache_points_and_drop_block(
     }
 
 
-def test_format_request_sends_a_block_whose_provider_data_is_not_a_block_as_text(anthropic_client):
+def test_format_request_sends_another_providers_server_side_summary_as_text(anthropic_client):
     _ = anthropic_client
     model = AnthropicModel(
         model_id="m1",
         max_tokens=1,
         model_info=ModelInfo(capabilities=ModelCapabilities(server_side_summary=True)),
     )
-    stored = {"text": "summary", "metadata": {"providerData": {"provider": "anthropic", "data": "opaque"}}}
+    stored = {"text": "summary", "metadata": {"serverSideSummary": {"provider": "openai"}}}
     messages = [{"role": "user", "content": [{"text": "first"}]}, {"role": "assistant", "content": [stored]}]
 
     tru_request = model.format_request(messages)

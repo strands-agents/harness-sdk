@@ -1,4 +1,4 @@
-"""Provider data on a text block reaches the wire only through the provider that produced it."""
+"""A server-side summary reaches the wire as its own block only through the provider that wrote it."""
 
 import json
 import unittest.mock
@@ -20,9 +20,9 @@ OPAQUE = "OPAQUE-PROVIDER-FIELD"
 
 
 def _history(provider: str) -> list:
-    provider_data = {"provider": provider, "data": {"type": "compaction", "signature": OPAQUE, "content": "SUMMARY"}}
+    server_side = {"provider": provider, "signature": OPAQUE}
     return [
-        {"role": "assistant", "content": [{"text": "SUMMARY TEXT", "metadata": {"providerData": provider_data}}]},
+        {"role": "assistant", "content": [{"text": "SUMMARY TEXT", "metadata": {"serverSideSummary": server_side}}]},
         {"role": "user", "content": [{"text": "next"}]},
     ]
 
@@ -31,7 +31,7 @@ def _assert_plain_text(request: object) -> None:
     wire = json.dumps(request, default=str)
     assert "SUMMARY TEXT" in wire
     assert OPAQUE not in wire
-    assert "providerData" not in wire
+    assert "serverSideSummary" not in wire
 
 
 def _bedrock(messages: list) -> object:

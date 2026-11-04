@@ -501,7 +501,7 @@ class TestSummarizeRuns:
         assert messages[1]["metadata"]["custom"]["source"] == "planner"
 
 
-_COMPACTION = {"provider": "test", "data": {"type": "compaction", "signature": "opaque"}}
+_COMPACTION = {"provider": "test", "signature": "opaque"}
 
 
 class TestServerSideSummary:
@@ -510,7 +510,7 @@ class TestServerSideSummary:
     @pytest.fixture
     def summarizing_agent(self, mock_agent):
         mock_agent.model.model_info = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
-        compacted = ContentBlock(text="compacted", metadata={"providerData": _COMPACTION})
+        compacted = ContentBlock(text="compacted", metadata={"serverSideSummary": _COMPACTION})
         mock_agent.model.summarize = unittest.mock.AsyncMock(
             return_value=SummarizeResult(content=[compacted], usage=None)
         )
@@ -529,7 +529,7 @@ class TestServerSideSummary:
         assert summarizing_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
         assert messages[0] is task
         summary = ContentBlock(
-            text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
+            text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"serverSideSummary": _COMPACTION}
         )
         assert messages[1] == Message(role="assistant", content=[summary])
         assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant", "user"]
@@ -547,7 +547,7 @@ class TestServerSideSummary:
 
         assert summarizing_agent.model.summarize.await_args.args[0] == [task, a1, u2, a3]
         summary = ContentBlock(
-            text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"providerData": _COMPACTION}
+            text="[Summarized: 3 messages, ~5,000 tokens]\n\ncompacted", metadata={"serverSideSummary": _COMPACTION}
         )
         assert messages == [task, Message(role="assistant", content=[summary]), *_turns("u4", "a5", "u6")]
 
@@ -577,7 +577,7 @@ class TestServerSideSummary:
         await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9))
 
         summarizing_agent.model.summarize.assert_not_awaited()
-        assert "providerData" not in json.dumps(messages)
+        assert "serverSideSummary" not in json.dumps(messages)
 
     @pytest.mark.asyncio
     async def test_places_the_summary_ahead_of_the_next_assistant_message(self, summarizing_agent):
@@ -608,7 +608,7 @@ class TestServerSideSummary:
         summarizing_agent.model.summarize.assert_awaited_once()
         assert messages[0]["content"] == [{"text": "task"}]
         assert any("Summary of content." in text for message in _texts(messages) for text in message)
-        assert "providerData" not in json.dumps(messages)
+        assert "serverSideSummary" not in json.dumps(messages)
 
     @pytest.mark.asyncio
     async def test_uses_the_base_summary_when_only_the_summarizer_compacts_server_side(self, summarizing_agent):
@@ -623,7 +623,7 @@ class TestServerSideSummary:
         summarizer.summarize.assert_not_awaited()
         assert messages[0]["content"] == [{"text": "task"}]
         assert any("Summary of content." in text for message in _texts(messages) for text in message)
-        assert "providerData" not in json.dumps(messages)
+        assert "serverSideSummary" not in json.dumps(messages)
 
     @pytest.mark.asyncio
     async def test_summarizes_blocks_with_the_base_summary(self, summarizing_agent):
@@ -672,7 +672,7 @@ class TestServerSideSummary:
                 content=[
                     ContentBlock(
                         text="[Summarized: 2 messages, ~5,000 tokens]\n\ncompacted",
-                        metadata={"providerData": _COMPACTION},
+                        metadata={"serverSideSummary": _COMPACTION},
                     ),
                     ContentBlock(toolUse={"toolUseId": "t2", "name": "read", "input": {}}),
                 ],
@@ -688,13 +688,13 @@ class TestServerSideSummary:
         assert messages == exp_messages
 
     @pytest.mark.asyncio
-    async def test_copies_the_provider_data_of_the_first_block_that_carries_any(self, summarizing_agent):
-        other = {"provider": "test", "data": {"type": "other"}}
+    async def test_keeps_the_first_server_side_summary_verbatim(self, summarizing_agent):
+        other = {"provider": "other"}
         summarizing_agent.model.summarize.return_value = SummarizeResult(
             content=[
                 ContentBlock(text="plain"),
-                ContentBlock(text="compacted", metadata={"providerData": _COMPACTION}),
-                ContentBlock(text="more", metadata={"providerData": other}),
+                ContentBlock(text="  compacted\n", metadata={"serverSideSummary": _COMPACTION}),
+                ContentBlock(text="more", metadata={"serverSideSummary": other}),
             ]
         )
         messages = _turns("task", "a1", "u2", "a3", "u4", "a5", "u6")
@@ -704,8 +704,8 @@ class TestServerSideSummary:
         assert await strategy.apply(ContextState(messages=messages, agent=summarizing_agent, utilization=0.9)) is True
 
         assert messages[1]["content"][0] == ContentBlock(
-            text="[Summarized: 3 messages, ~5,000 tokens]\n\nplain\ncompacted\nmore",
-            metadata={"providerData": _COMPACTION},
+            text="[Summarized: 3 messages, ~5,000 tokens]\n\n  compacted\n",
+            metadata={"serverSideSummary": _COMPACTION},
         )
 
     @pytest.mark.asyncio
@@ -721,9 +721,9 @@ class TestServerSideSummary:
         summarizing_agent.model.summarize.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_leaves_a_block_with_provider_data_in_place(self, summarizing_agent):
+    async def test_leaves_a_server_side_summary_in_place(self, summarizing_agent):
         summary = ContentBlock(
-            text="[Summarized: 3 messages]\n\n" + "a" * 10000, metadata={"providerData": _COMPACTION}
+            text="[Summarized: 3 messages]\n\n" + "a" * 10000, metadata={"serverSideSummary": _COMPACTION}
         )
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="task")]),

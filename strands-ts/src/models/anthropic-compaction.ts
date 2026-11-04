@@ -1,17 +1,19 @@
 /**
  * Anthropic on-demand compaction: the beta, and how a compaction block is stored and sent back.
  *
- * A compaction block is stored as a {@link TextBlock} whose `text` is the block's `content`, for other providers,
- * and whose `metadata.providerData.data` is the block the API returned, sent back unchanged.
+ * A compaction block is stored as a {@link TextBlock} whose `text` is the block's `content` and whose
+ * `metadata.serverSideSummary` marks it as Anthropic's, with the block's `signature`. The block is rebuilt
+ * from the two when it is sent back; other providers send the text.
  *
  * @internal
  */
 
 import type Anthropic from '@anthropic-ai/sdk'
 import { Message, TextBlock } from '../types/messages.js'
-import type { ContentBlock } from '../types/messages.js'
+import type { ContentBlock, ServerSideSummary } from '../types/messages.js'
 import { logger } from '../logging/logger.js'
 import type { Usage } from './streaming.js'
+import { summaryBody } from './summarize.js'
 
 /**
  * Beta that enables on-demand compaction and compaction blocks in later requests.
@@ -21,33 +23,29 @@ import type { Usage } from './streaming.js'
 export const COMPACTION_BETA = 'compact-2026-09-04'
 
 /**
- * `metadata.providerData.provider` of a block only Anthropic can read.
+ * `metadata.serverSideSummary.provider` of a summary only Anthropic can read.
  */
 const ANTHROPIC_PROVIDER = 'anthropic'
 
 /**
- * Formats a block that holds Anthropic provider data as the block the API returned.
+ * Formats a summary Anthropic wrote server-side as the compaction block the API returned. The block's `content` is
+ * the text without the context manager's `[Summarized: ...]` header.
  * @param block - A text block
- * @returns The returned block, or undefined for any other text block
+ * @returns The compaction block, or undefined for any other text block
  */
 function formatNativeBlock(block: TextBlock): Anthropic.ContentBlockParam | undefined {
-  return nativeData(block) as Anthropic.ContentBlockParam | undefined
+  if (!isNativeBlock(block)) return undefined
+  const signature = block.metadata?.serverSideSummary?.signature
+  const compaction = {
+    type: 'compaction',
+    content: summaryBody(block.text),
+    ...(signature !== undefined && { signature: signature }),
+  }
+  return compaction as unknown as Anthropic.ContentBlockParam
 }
 
 /**
- * The block the API returned, held as Anthropic provider data: an object, not null or an array.
- * @param block - A text block
- * @returns The returned block, or undefined when the block holds none
- */
-function nativeData(block: TextBlock): object | undefined {
-  const providerData = block.metadata?.providerData
-  if (providerData?.provider !== ANTHROPIC_PROVIDER) return undefined
-  const { data } = providerData
-  return typeof data === 'object' && data !== null && !Array.isArray(data) ? data : undefined
-}
-
-/**
- * Formats a text block: Anthropic's own provider data as the block the API returned, anything else as plain text.
+ * Formats a text block: a summary Anthropic wrote server-side as its compaction block, anything else as plain text.
  *
  * @internal
  * @param block - A text block
@@ -62,7 +60,7 @@ export function formatTextBlock(block: TextBlock): Anthropic.ContentBlockParam {
  *
  * @internal
  * @param messages - The messages of a request
- * @returns True when a block with Anthropic provider data is present
+ * @returns True when a summary Anthropic wrote server-side is present
  */
 export function carriesNativeBlock(messages: Message[]): boolean {
   return messages.some((message) => message.content.some(isNativeBlock))
@@ -87,19 +85,21 @@ export function fromLastNativeBlock(messages: Message[]): Message[] {
   return messages
 }
 
-function isNativeBlock(block: ContentBlock): boolean {
-  return block instanceof TextBlock && nativeData(block) !== undefined
+function isNativeBlock(block: ContentBlock): block is TextBlock {
+  return block instanceof TextBlock && block.metadata?.serverSideSummary?.provider === ANTHROPIC_PROVIDER
 }
 
 /**
- * Stores a returned compaction block: `content` as the text, the whole block as opaque provider data.
+ * Stores a returned compaction block: `content` as the text, `signature` in its metadata.
  * @param block - A `compaction` block from a response
  * @returns The stored block, or undefined when the block holds no summary
  */
 function storeCompactionBlock(block: Record<string, unknown>): TextBlock | undefined {
   const { content } = block
   if (typeof content !== 'string' || content.length === 0) return undefined
-  return new TextBlock(content, { metadata: { providerData: { provider: ANTHROPIC_PROVIDER, data: block } } })
+  const serverSideSummary: ServerSideSummary = { provider: ANTHROPIC_PROVIDER }
+  if (typeof block.signature === 'string') serverSideSummary.signature = block.signature
+  return new TextBlock(content, { metadata: { serverSideSummary } })
 }
 
 /**

@@ -162,10 +162,12 @@ class TestFlattenMessagesToContent:
         ]
         assert tru_result == exp_result
 
-    def test_passes_a_text_block_holding_provider_data_as_its_text(self):
-        provider_data = {"provider": "anthropic", "data": {"type": "compaction", "content": "summary"}}
+    def test_passes_a_server_side_summary_as_its_text(self):
+        server_side = {"provider": "anthropic", "signature": "opaque"}
         messages: Messages = [
-            Message(role="assistant", content=[ContentBlock(text="summary", metadata={"providerData": provider_data})])
+            Message(
+                role="assistant", content=[ContentBlock(text="summary", metadata={"serverSideSummary": server_side})]
+            )
         ]
 
         tru_result = _flatten_messages_to_content(messages)

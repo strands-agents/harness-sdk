@@ -1,8 +1,8 @@
 """Anthropic on-demand compaction: the beta, and how a compaction block is stored and sent back.
 
 A compaction block is stored as a text :class:`~strands.types.content.ContentBlock` whose ``text`` is the block's
-``content``, for other providers, and whose ``metadata.providerData.data`` is the block the API returned, sent back
-unchanged.
+``content`` and whose ``metadata.serverSideSummary`` marks it as Anthropic's, with the block's ``signature``.
+The block is rebuilt from the two when it is sent back; other providers send the text.
 """
 
 import asyncio
@@ -11,8 +11,9 @@ import threading
 from typing import Any
 
 from .._async import _poll_cancel_signal
-from ..types.content import ContentBlock, Message, Messages
+from ..types.content import ContentBlock, Message, Messages, ServerSideSummary
 from ..types.event_loop import Usage
+from ._summarize import _summary_body
 
 logger = logging.getLogger(__name__)
 
@@ -20,33 +21,36 @@ COMPACTION_BETA = "compact-2026-09-04"
 """Beta that enables on-demand compaction and compaction blocks in later requests."""
 
 _ANTHROPIC_PROVIDER = "anthropic"
-"""``metadata.providerData.provider`` of a block only Anthropic can read."""
+"""``metadata.serverSideSummary.provider`` of a summary only Anthropic can read."""
 
 _FORCING_TOOL_CHOICES = frozenset({"any", "tool"})
 
 
 def _is_native_block(block: ContentBlock) -> bool:
-    """Whether ``block`` is a text block holding an Anthropic block as its provider data."""
-    provider_data = block.get("metadata", {}).get("providerData")
-    if "text" not in block or not isinstance(provider_data, dict):
-        return False
-    return provider_data.get("provider") == _ANTHROPIC_PROVIDER and isinstance(provider_data.get("data"), dict)
+    """Whether ``block`` is a text block holding a summary Anthropic wrote server-side."""
+    server_side = block.get("metadata", {}).get("serverSideSummary")
+    return "text" in block and isinstance(server_side, dict) and server_side.get("provider") == _ANTHROPIC_PROVIDER
 
 
 def format_native_block(block: ContentBlock) -> dict[str, Any] | None:
-    """Format a block that holds Anthropic provider data as the block the API returned.
+    """Format a summary Anthropic wrote server-side as the compaction block the API returned.
+
+    The block's ``content`` is the text without the context manager's ``[Summarized: ...]`` header.
 
     Args:
         block: A content block.
 
     Returns:
-        The returned block, unchanged, or None for any other block, including one whose provider data is not a
-        block.
+        The compaction block, or None for any other block.
     """
     if not _is_native_block(block):
         return None
-    data: dict[str, Any] = block["metadata"]["providerData"]["data"]
-    return data
+    signature = block["metadata"]["serverSideSummary"].get("signature")
+    return {
+        "type": "compaction",
+        "content": _summary_body(block["text"]),
+        **({"signature": signature} if signature is not None else {}),
+    }
 
 
 def carries_native_block(messages: Messages) -> bool:
@@ -56,7 +60,7 @@ def carries_native_block(messages: Messages) -> bool:
         messages: The messages of a request.
 
     Returns:
-        True when a block with Anthropic provider data is present.
+        True when a summary Anthropic wrote server-side is present.
     """
     return any(_is_native_block(block) for message in messages for block in message["content"])
 
@@ -83,7 +87,7 @@ def from_last_native_block(messages: Messages) -> Messages:
 
 
 def _store_compaction_block(block: dict[str, Any]) -> ContentBlock | None:
-    """Store a returned compaction block: ``content`` as the text, the whole block as opaque provider data.
+    """Store a returned compaction block: ``content`` as the text, ``signature`` in its metadata.
 
     Returns:
         The stored block, or None when the block holds no summary.
@@ -91,7 +95,11 @@ def _store_compaction_block(block: dict[str, Any]) -> ContentBlock | None:
     content = block.get("content")
     if not isinstance(content, str) or not content:
         return None
-    return ContentBlock(text=content, metadata={"providerData": {"provider": _ANTHROPIC_PROVIDER, "data": block}})
+    server_side = ServerSideSummary(provider=_ANTHROPIC_PROVIDER)
+    signature = block.get("signature")
+    if isinstance(signature, str):
+        server_side["signature"] = signature
+    return ContentBlock(text=content, metadata={"serverSideSummary": server_side})
 
 
 _DROPPED_FIELDS = frozenset({"stop_sequences", "context_management", "tool_choice", "output_config"})

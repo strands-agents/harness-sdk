@@ -47,8 +47,8 @@ describe('flattenMessagesToContent', () => {
 
     expect(flattenMessagesToContent(messages)).toEqual([new TextBlock('\n---\n[assistant]'), new TextBlock('hi')])
   })
-  it('sends a text block as its text alone, without its provider data', () => {
-    const metadata = { providerData: { provider: 'anthropic', data: { type: 'compaction', content: 'summary' } } }
+  it('sends a text block as its text alone, without its server-side summary metadata', () => {
+    const metadata = { serverSideSummary: { provider: 'anthropic', signature: 'opaque' } }
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('summary', { metadata })] }),
       new Message({

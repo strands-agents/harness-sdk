@@ -112,7 +112,7 @@ def test_session_message_preserves_durable_id():
 def test_session_message_preserves_text_block_metadata():
     summary = {
         "text": "[Summarized: 3 messages]\n\nsummary",
-        "metadata": {"providerData": {"provider": "anthropic", "data": {"type": "compaction", "content": "summary"}}},
+        "metadata": {"serverSideSummary": {"provider": "anthropic", "signature": "opaque"}},
     }
     message = {"role": "user", "content": [summary]}
 

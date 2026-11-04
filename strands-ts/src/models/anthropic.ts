@@ -568,7 +568,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    * `AnthropicModel` leaves the capability unknown unless set through the `modelInfo` config.
    *
    * The returned compaction block is stored as a {@link TextBlock} whose `text` is the summary, for other providers,
-   * and whose `metadata.providerData` holds the block, which later requests send back exactly as returned.
+   * and whose `metadata.serverSideSummary` holds its `signature`. Later requests rebuild the block from the
+   * two.
    *
    * @param messages - The opening messages to summarize, left unmodified
    * @param options - The live system prompt and tools, summarization instructions, and a cancellation signal

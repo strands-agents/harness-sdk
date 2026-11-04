@@ -12,25 +12,48 @@ from strands.models._anthropic_compaction import (
     read_compaction,
     until_cancelled,
 )
+from strands.models._summarize import _format_summarized
 
-RETURNED = {"type": "compaction", "content": "Summary: the user plans a release.", "signature": "EuYBCkQY-opaque"}
-STORED = {"text": RETURNED["content"], "metadata": {"providerData": {"provider": "anthropic", "data": RETURNED}}}
+RETURNED = {
+    "type": "compaction",
+    "content": "Summary: the user plans a release.",
+    "signature": "EuYBCkQY-opaque",
+}
+STORED = {
+    "text": RETURNED["content"],
+    "metadata": {"serverSideSummary": {"provider": "anthropic", "signature": "EuYBCkQY-opaque"}},
+}
 
 
-def test_format_native_block_returns_anthropic_provider_data_unchanged():
-    assert format_native_block(STORED) is RETURNED
+def test_format_native_block_rebuilds_the_returned_block():
+    assert format_native_block(STORED) == RETURNED
+
+
+def test_format_native_block_without_signature_leaves_it_out():
+    stored = {"text": "summary", "metadata": {"serverSideSummary": {"provider": "anthropic"}}}
+
+    assert format_native_block(stored) == {"type": "compaction", "content": "summary"}
+
+
+@pytest.mark.parametrize(
+    "summary",
+    ["Summary: the user plans a release.", "  leading and trailing whitespace\n", "line one\n\n[Summarized: inner]"],
+)
+def test_format_native_block_round_trips_the_content_through_the_summarized_header(summary):
+    returned = {"type": "compaction", "content": summary, "signature": "opaque"}
+    stored, _ = read_compaction({"content": [returned], "stop_reason": "compaction", "usage": {}}, "m1")
+    marker = {**stored, "text": _format_summarized("3 messages", 5000, stored["text"])}
+
+    assert format_native_block(marker) == returned
 
 
 @pytest.mark.parametrize(
     "block",
     [
         {"text": "plain"},
-        {"text": "other", "metadata": {"providerData": {"provider": "bedrock", "data": {"type": "x"}}}},
-        {"text": "no data", "metadata": {}},
-        {"text": "string data", "metadata": {"providerData": {"provider": "anthropic", "data": "opaque"}}},
-        {"text": "list data", "metadata": {"providerData": {"provider": "anthropic", "data": [RETURNED]}}},
-        {"text": "null data", "metadata": {"providerData": {"provider": "anthropic", "data": None}}},
-        {"text": "missing data", "metadata": {"providerData": {"provider": "anthropic"}}},
+        {"text": "other", "metadata": {"serverSideSummary": {"provider": "bedrock"}}},
+        {"text": "no summary", "metadata": {}},
+        {"text": "not a dict", "metadata": {"serverSideSummary": "opaque"}},
         {"image": {"format": "png", "source": {"bytes": b""}}},
     ],
 )
@@ -191,6 +214,14 @@ def test_read_compaction_without_a_compaction_iteration_has_no_usage():
     response = {"content": [RETURNED], "stop_reason": "compaction", "usage": {"input_tokens": 0}}
 
     assert read_compaction(response, "m1") == (STORED, None)
+
+
+def test_read_compaction_without_signature_stores_only_the_provider():
+    response = {"content": [{"type": "compaction", "content": "summary"}], "stop_reason": "compaction", "usage": {}}
+
+    tru_block, _ = read_compaction(response, "m1")
+
+    assert tru_block == {"text": "summary", "metadata": {"serverSideSummary": {"provider": "anthropic"}}}
 
 
 @pytest.mark.parametrize(
