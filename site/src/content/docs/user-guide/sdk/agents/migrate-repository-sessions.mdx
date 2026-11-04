@@ -30,7 +30,8 @@ state with `SnapshotSessionManager`.
 
 ## Customize the procedure
 
-Match the migrating agent to the production agent before restoring its state:
+Edit `build_agent()` in the script to match the production agent. The script uses it both
+to check for an existing snapshot and to restore the source session:
 
 - **Storage**: Configure the repository-based source and snapshot target. The example
   reads local records with `FileSessionManager` and writes to `LocalFileStorage`. For an
@@ -38,12 +39,12 @@ Match the migrating agent to the production agent before restoring its state:
   same `SessionRepository` implementation used by the application.
 - **Identifiers**: Use the same `session_id` and `agent_id` for the source and target.
   Migrate each agent ID in a session separately.
-- **Conversation manager**: Use the same type and settings so the restored message offset
-  and compaction behavior match the production agent.
-- **System prompt**: Pass the production system prompt. Repository-based managers do not
-  restore it, but the new snapshot records it.
-- **Model and tools**: Recreate the production model, tools, and custom components that
-  affect agent initialization or restored behavior.
+- **Conversation manager**: Set the same type and settings in `build_agent()` so the
+  restored message offset and compaction behavior match the production agent.
+- **System prompt**: Set the production system prompt in `build_agent()`. Repository-based
+  managers do not restore it, but the new snapshot records it.
+- **Model and tools**: Set the production model, tools, and custom components that affect
+  agent initialization or restored behavior in `build_agent()`.
 
 ## Review what restoration preserves
 
@@ -78,7 +79,9 @@ with the snapshot manager.
 
 :::caution
 The script can complete even when its configuration does not match the production agent.
-Complete the customization and data-protection checks above before running it.
+Complete the customization and data-protection checks above before running it. The script
+is a starting point to adapt to your application through `build_agent()` and the storage
+configuration, not a batch migration tool.
 :::
 
 ```python
@@ -91,6 +94,11 @@ from strands.storage import LocalFileStorage
 SYSTEM_PROMPT = "<your production system prompt>"
 
 
+def build_agent(agent_id: str, **kwargs) -> Agent:
+    """Build the agent the same way as production: model, conversation manager, tools."""
+    return Agent(agent_id=agent_id, system_prompt=SYSTEM_PROMPT, **kwargs)
+
+
 async def migrate_session(session_id: str, *, agent_id: str = "default") -> None:
     """Migrate one repository-format session without overwriting the target."""
     snapshot = SnapshotSessionManager(
@@ -99,7 +107,7 @@ async def migrate_session(session_id: str, *, agent_id: str = "default") -> None
     )
 
     # Stop rather than overwrite an existing target snapshot.
-    if await snapshot.restore_snapshot(Agent(agent_id=agent_id)):
+    if await snapshot.restore_snapshot(build_agent(agent_id)):
         raise RuntimeError(
             f"session={session_id!r} agent={agent_id!r} already migrated"
         )
@@ -109,11 +117,7 @@ async def migrate_session(session_id: str, *, agent_id: str = "default") -> None
         session_id=session_id,
         storage_dir="./repository-sessions",
     )
-    agent = Agent(
-        agent_id=agent_id,
-        system_prompt=SYSTEM_PROMPT,
-        session_manager=source,
-    )
+    agent = build_agent(agent_id, session_manager=source)
 
     # Stateful models restore only model state, so check it as well.
     restored = agent.take_snapshot(preset="session").data
@@ -139,8 +143,8 @@ python migrate_repository_session.py
 
 - **Get the source session ID** from the existing agent or session manager. See
   [Reading the session ID](./session-management.mdx#reading-the-session-id).
-- **Migrate many sessions** by calling `migrate_session` per session and per `agent_id`.
-  Keep each call independent and idempotent so an interrupted run can resume.
+- **Run once per session** and `agent_id`. If a run fails, run it again for that session.
+  An "already migrated" error means the session is done.
 - **Verify, then cut over:**
   1. Dry-run against a copy of the session store.
   2. Attach `SnapshotSessionManager` to a fresh agent with the same `session_id` and
