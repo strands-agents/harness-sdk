@@ -9,7 +9,7 @@ import { type MakeWebFetchOptions, WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DES
 
 export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 // 5 MiB
 export const DEFAULT_MAX_CONTENT_CHARS = 50_000
-// Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.45.
+// Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.41.
 const UNDECODABLE_RATIO = 0.3
 
 const _HEADERS = {
@@ -138,7 +138,7 @@ export const webFetch = makeWebFetch()
 
 // ---- Internals ----
 
-/** One HTTP GET, resolving to `[contentType, bodyText, binaryMarker]`; `binaryMarker` is set when the body is binary. */
+/** One HTTP GET, resolving to `[contentType, bodyText, binaryMarker]`; `binaryMarker` is set when the body is binary or undecodable. */
 async function fetchOnce(
   url: string,
   maxBytes: number,

@@ -45,7 +45,7 @@ _HEADERS = {
 
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
 _DEFAULT_MAX_CONTENT_CHARS = 50_000
-# Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.45.
+# Share of body bytes that decode to U+FFFD above which the body is not shown; random bytes measure ~0.41.
 _UNDECODABLE_RATIO = 0.3
 
 _ANALYST_PROMPT = (
@@ -95,8 +95,9 @@ def make_web_fetch(
           the main agent's context.
         - ``markdown``: HTML converted to clean markdown; other content
           types returned as-is.
-        In both modes a body that contains NUL or mostly fails to decode is replaced
-        by a short marker such as ``[binary image/png, 48,213 bytes; not shown]``.
+        In both modes a body that contains NUL or largely fails to decode is replaced
+        by a short marker such as ``[binary image/png, 48,213 bytes; not shown]``
+        (``[undecodable text/...]`` for text types).
     """
     if max_bytes <= 0:
         raise ValueError(f"max_bytes must be positive, got {max_bytes}")
