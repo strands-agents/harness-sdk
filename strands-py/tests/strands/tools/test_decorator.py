@@ -2295,3 +2295,25 @@ def test_basemodel_parameters_in_containers_are_coerced_from_dicts():
     assert validated["items"] == [Payload(name="a", count=1)]
     assert isinstance(validated["items"][0], Payload)
     assert isinstance(validated["maybe"], Payload)
+
+
+def test_dict_parameter_is_copied_from_tool_input():
+    """Mutating a dict tool arg must not rewrite tool_use input (#4383)."""
+
+    @strands.tool
+    def takes_config(config: dict) -> str:
+        """Accept a config mapping.
+
+        Args:
+            config: Arbitrary config.
+        """
+        config["db"]["host"] = config["db"]["host"].lower()
+        config["tags"].append("normalized")
+        return config["db"]["host"]
+
+    tool_input = {"config": {"db": {"host": "PROD-DB"}, "tags": ["a"]}}
+    validated = takes_config._metadata.validate_input(tool_input)
+    validated["config"]["db"]["host"] = "changed"
+    validated["config"]["tags"].append("mutated")
+    assert tool_input["config"]["db"]["host"] == "PROD-DB"
+    assert tool_input["config"]["tags"] == ["a"]
