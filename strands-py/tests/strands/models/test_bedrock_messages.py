@@ -68,6 +68,8 @@ def _exception_event(exception_type: str, message: str) -> bytes:
     return _event_stream_message(headers, json.dumps({"message": message}).encode())
 
 
+# Other error events pass through as the SDK raises them: ValueError before anthropic 1.0, APIStatusError since.
+PASS_THROUGH_ERROR = ValueError if anthropic.__version__.startswith("0.") else anthropic.APIStatusError
 THROTTLING_EVENT = _exception_event("throttlingException", "Too many requests, please wait before trying again.")
 OVERFLOW_EVENT = _exception_event("validationException", "Input is too long for requested model.")
 OTHER_ERROR_EVENT = _exception_event("internalServerException", "The system encountered an unexpected error.")
@@ -181,8 +183,7 @@ def test_runtime_url_encodes_arn_model_ids(captured_requests):
     [
         (THROTTLING_EVENT, ModelThrottledException),
         (OVERFLOW_EVENT, ContextWindowOverflowException),
-        # The SDK raises other events as ValueError before 1.0 and as APIStatusError since; they pass through.
-        (OTHER_ERROR_EVENT, (ValueError, anthropic.APIStatusError)),
+        (OTHER_ERROR_EVENT, PASS_THROUGH_ERROR),
     ],
     ids=["throttling", "overflow", "other"],
 )
@@ -199,8 +200,7 @@ async def test_runtime_error_events_mid_stream_are_mapped(expected):
         ContextWindowOverflowException: "Input is too long",
     }
     assert expected_event.get(expected, "internalServerException") in str(raised.value)
-    if expected is ValueError:
-        assert type(raised.value) is ValueError
+    assert type(raised.value) is expected
 
 
 @requires_mantle_client
