@@ -29,7 +29,7 @@ from ..types.citations import (
     WebLocation,
     WebLocationDict,
 )
-from ..types.content import ContentBlock, Message, Messages, ServerSideSummary, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SummaryBlock, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
@@ -55,8 +55,8 @@ COMPACTION_BETA = "compact-2026-09-04"
 
 
 def _is_compaction(block: ContentBlock) -> bool:
-    """Whether ``block`` holds a compaction block Anthropic returned, stored as text."""
-    return "text" in block and block.get("metadata", {}).get("serverSideSummary", {}).get("provider") == "anthropic"
+    """Whether ``block`` holds a compaction block Anthropic returned."""
+    return "summary" in block and block["summary"].get("provider") == "anthropic"
 
 
 def _from_last_compaction(messages: Messages) -> Messages:
@@ -265,9 +265,8 @@ class AnthropicModel(Model):
             TypeError: If the content block type or document format cannot be converted to an
                 Anthropic-compatible format.
         """
-        if self._server_side_summary and _is_compaction(content):
-            signature = content["metadata"]["serverSideSummary"].get("signature")
-            return {"type": "compaction", "content": content["text"], **({"signature": signature} if signature else {})}
+        if "summary" in content:
+            return self._format_summary(content["summary"])
 
         if "document" in content:
             document_format = content["document"]["format"]
@@ -636,7 +635,7 @@ class AnthropicModel(Model):
             ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
                 request uses an API version other than 2023-06-01.
         """
-        if self._server_side_summary:
+        if self.model_info.capabilities.server_side_summary is True:
             messages = _from_last_compaction(messages)
         messages, cache_target_idx = self._manage_cache_points(messages)
 
@@ -678,7 +677,7 @@ class AnthropicModel(Model):
             "tools": tools,
         }
 
-        if self._server_side_summary and any(
+        if self.model_info.capabilities.server_side_summary is True and any(
             _is_compaction(block) for message in messages for block in message["content"]
         ):
             request = self._with_beta(request, COMPACTION_BETA)
@@ -687,10 +686,12 @@ class AnthropicModel(Model):
 
         return request
 
-    @property
-    def _server_side_summary(self) -> bool:
-        """Whether stored compaction blocks are sent as such; otherwise their text is sent."""
-        return self.model_info.capabilities.server_side_summary is True
+    def _format_summary(self, summary: SummaryBlock) -> dict[str, Any]:
+        """Format a summary as a compaction block when Anthropic wrote it and compaction is enabled, else as text."""
+        if summary.get("provider") != "anthropic" or self.model_info.capabilities.server_side_summary is not True:
+            return {"type": "text", "text": summary["text"]}
+        signature = summary.get("signature")
+        return {"type": "compaction", "content": summary["text"], **({"signature": signature} if signature else {})}
 
     def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
         """Return the request with ``beta`` added to its ``anthropic-beta`` header."""
@@ -702,6 +703,7 @@ class AnthropicModel(Model):
             betas.append(beta)
         extra_headers["anthropic-beta"] = ",".join(value for value in betas if value)
         return {**request, "extra_headers": extra_headers}
+
     def _format_request_params(self) -> dict[str, Any]:
         """Return the config params with sampling parameters routed through ``extra_body``.
 
@@ -1080,7 +1082,7 @@ class AnthropicModel(Model):
         Returns:
             Total input token count.
         """
-        if self._server_side_summary:
+        if self.model_info.capabilities.server_side_summary is True:
             # Count what a request sends, which starts at the last compaction block.
             messages = _from_last_compaction(messages)
         if self.config.get("use_native_token_count") is not True:
@@ -1298,13 +1300,13 @@ class AnthropicModel(Model):
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
         **kwargs: Any,
-    ) -> ContentBlock | None:
+    ) -> ContentBlock:
         """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
 
         Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
-        after the summary stays valid. The returned compaction block is stored as a text block holding the summary,
-        which other providers send, with its signature in ``metadata.serverSideSummary``; later requests from a model
-        with ``server_side_summary`` rebuild the compaction block from the two and start from it.
+        after the summary stays valid. The returned compaction block is stored as a ``summary`` block holding its
+        text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
+        from it and start from it, and requests without it send the summary text.
 
         Args:
             messages: The opening messages to summarize, from message 0, left unmodified.
@@ -1315,7 +1317,10 @@ class AnthropicModel(Model):
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            The summary block, or None when the response holds no compaction block.
+            The summary block.
+
+        Raises:
+            RuntimeError: If the response holds no compaction block.
         """
         request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
         # The API rejects these on a compaction request.
@@ -1330,16 +1335,18 @@ class AnthropicModel(Model):
 
         block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
         if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
-            logger.warning(
-                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary",
-                self.config["model_id"],
-                response.get("stop_reason"),
+            raise RuntimeError(
+                f"model_id=<{self.config['model_id']}>, stop_reason=<{response.get('stop_reason')}>"
+                " | compaction returned no summary"
             )
-            return None
-        server_side = ServerSideSummary(provider="anthropic")
-        if isinstance(block.get("signature"), str):
-            server_side["signature"] = block["signature"]
-        return ContentBlock(text=block["content"], metadata={"serverSideSummary": server_side})
+        signature = block.get("signature")
+        return ContentBlock(
+            summary=SummaryBlock(
+                provider="anthropic",
+                signature=signature if isinstance(signature, str) else None,
+                text=block["content"],
+            )
+        )
 
     def _record_rejected_mechanism(
         self,

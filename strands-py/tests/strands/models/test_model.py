@@ -1,5 +1,4 @@
 import json
-import logging
 import math
 import warnings
 from unittest.mock import MagicMock
@@ -11,7 +10,7 @@ from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models import Model as SAModel
 from strands.models._model_info import lookup_model_info
-from strands.models.model import _ModelPlugin
+from strands.models.model import _estimate_tokens_with_heuristic, _ModelPlugin
 
 
 class Person(BaseModel):
@@ -800,7 +799,11 @@ class TestCacheConfig:
 
 
 @pytest.mark.asyncio
-async def test_summarize_base_has_no_server_side_summary(model, caplog):
-    with caplog.at_level(logging.WARNING):
-        assert await model.summarize([{"role": "user", "content": [{"text": "hi"}]}]) is None
-    assert "summarizing client-side instead" in caplog.text
+async def test_summarize_base_has_no_server_side_summary(model):
+    with pytest.raises(NotImplementedError, match="model has no server-side summary"):
+        await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+def test_heuristic_counts_summary_text():
+    summary = _estimate_tokens_with_heuristic([{"role": "assistant", "content": [{"summary": {"text": "x" * 400}}]}])
+    assert summary == _estimate_tokens_with_heuristic([{"role": "assistant", "content": [{"text": "x" * 400}]}])

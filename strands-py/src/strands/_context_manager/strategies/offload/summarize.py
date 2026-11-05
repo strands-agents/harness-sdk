@@ -139,7 +139,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         assistant message at index 1, leading any assistant content after it once alternation is repaired.
 
         Returns:
-            False when the model wrote no summary or the request failed, so the caller summarizes client-side instead.
+            False when the server-side summary failed, so the caller summarizes client-side instead.
         """
         messages = context.messages
         safe_ids = {id(message) for message in safe}
@@ -179,8 +179,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
         except Exception as error:
             _warn_client_side_fallback(model, repr(error), exc_info=True)
             return None
-        if summary is None:
-            _warn_client_side_fallback(model, "no summary returned")
         return summary
 
     async def _replace_block(

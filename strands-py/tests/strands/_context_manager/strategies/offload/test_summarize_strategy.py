@@ -406,7 +406,7 @@ class TestServerSideSummary:
     @pytest.mark.asyncio
     async def test_replaces_opening_run_with_server_side_summary(self, mock_agent):
         mock_agent.model.model_info.capabilities.server_side_summary = True
-        summary = ContentBlock(text="compacted", metadata={"serverSideSummary": {"provider": "anthropic"}})
+        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=summary)
         messages = self._messages()
         mock_agent.messages = messages
@@ -426,7 +426,11 @@ class TestServerSideSummary:
     @pytest.mark.parametrize(
         ("summarize_result", "reason"),
         [
-            pytest.param({"return_value": None}, "no summary returned", id="no_summary"),
+            pytest.param(
+                {"side_effect": NotImplementedError("no server-side summary")},
+                "no server-side summary",
+                id="not_implemented",
+            ),
             pytest.param({"side_effect": RuntimeError("compaction rejected")}, "compaction rejected", id="error"),
         ],
     )

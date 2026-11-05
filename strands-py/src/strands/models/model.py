@@ -57,6 +57,9 @@ def _count_content_block_tokens(
     if "text" in block:
         total += count_text(block["text"])
 
+    if "summary" in block:
+        total += count_text(block["summary"].get("text", ""))
+
     if "toolUse" in block:
         tool_use = block["toolUse"]
         total += count_text(tool_use.get("name", ""))
@@ -406,13 +409,13 @@ class Model(abc.ABC):
         system_prompt_content: list[SystemContentBlock] | None = None,
         instructions: str | None = None,
         **kwargs: Any,
-    ) -> ContentBlock | None:
+    ) -> ContentBlock:
         """Summarize the conversation's opening ``messages`` server-side.
 
         The summarize strategy calls this instead of its client-side summary when
         ``model_info.capabilities.server_side_summary`` is True, with the messages from message 0 through the
-        last one it summarizes. Providers with server-side summaries override it. The base implementation has
-        none, so it logs a warning and returns None, and the strategy summarizes client-side instead.
+        last one it summarizes. Providers with server-side summaries override it. When this raises, the strategy
+        summarizes client-side instead.
 
         Args:
             messages: The opening messages to summarize, from message 0, left unmodified.
@@ -423,14 +426,12 @@ class Model(abc.ABC):
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            The summary block that takes the summarized messages' place, or None when no summary was written.
+            A ``summary`` block that takes the summarized messages' place.
+
+        Raises:
+            NotImplementedError: If the model has no server-side summary.
         """
-        logger.warning(
-            "model=<%s> | server_side_summary is set but the model has no server-side summary"
-            " | summarizing client-side instead",
-            type(self).__name__,
-        )
-        return None
+        raise NotImplementedError(f"model=<{type(self).__name__}> | model has no server-side summary")
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.

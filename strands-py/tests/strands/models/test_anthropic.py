@@ -3322,7 +3322,7 @@ def _compaction_model(anthropic_client):
 
 
 def _stored_compaction(text="summary", signature="sig"):
-    return {"text": text, "metadata": {"serverSideSummary": {"provider": "anthropic", "signature": signature}}}
+    return {"summary": {"provider": "anthropic", "signature": signature, "text": text}}
 
 
 def _mock_compaction_response(anthropic_client, response):
@@ -3354,13 +3354,12 @@ async def test_summarize_sends_compaction_request_and_stores_block(anthropic_cli
 
 
 @pytest.mark.asyncio
-async def test_summarize_returns_none_without_compaction_block(anthropic_client, caplog):
+async def test_summarize_raises_without_compaction_block(anthropic_client):
     model = _compaction_model(anthropic_client)
     _mock_compaction_response(anthropic_client, {"stop_reason": "end_turn", "content": [{"type": "text", "text": "x"}]})
 
-    with caplog.at_level(logging.WARNING):
-        assert await model.summarize([{"role": "user", "content": [{"text": "hi"}]}]) is None
-    assert "compaction returned no summary" in caplog.text
+    with pytest.raises(RuntimeError, match="compaction returned no summary"):
+        await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
 
 
 def test_format_request_sends_from_last_compaction_block(anthropic_client):
@@ -3395,6 +3394,8 @@ def test_format_request_sends_compaction_text_without_capability(model):
 
     assert request["messages"][1]["content"] == [{"type": "text", "text": "old"}]
     assert "extra_headers" not in request
+
+
 @pytest.fixture
 def wire():
     """A real client over a fake transport; records the request it receives and answers with a 400."""
