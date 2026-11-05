@@ -20,6 +20,8 @@ Teams commonly deploy agents in containers or micro-VMs to isolate them from oth
 
 [Strands Box](https://github.com/strands-agents/box) is an open source, operating-system-level sandbox that lets you define and enforce those limits. We first launched Box on macOS, and now it supports Linux, bringing a complementary layer of containment and policy enforcement to agents running on your own Linux hosts or in the cloud on AWS and other providers.
 
+Linux support is in preview and runs on ARM64 hosts.
+
 With Box, you control which files an agent can read or change, which tools it can call, which commands it can run, and where it can send network requests. Box enforces those limits so the agent cannot freely use every file or permission available in its deployment environment. It also injects credentials into approved requests, letting the agent call APIs without being able to read the secrets directly.
 
 Even within those boundaries, some actions should only happen after specific checks have passed. An incident response agent might need to pause deployment retries after several failures in a short period while continuing to check the service's status. A customer service agent might need confirmation that an order qualifies before requesting a replacement. Box lets you express these requirements as custom rules written in Dogwood, the policy language it supports. These rules can check earlier actions and results, including how long ago they happened, and Box enforces them outside the agent’s control.
