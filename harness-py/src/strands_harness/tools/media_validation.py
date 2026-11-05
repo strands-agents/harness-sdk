@@ -56,17 +56,15 @@ def _jpeg_size(data: bytes) -> tuple[int, int] | None:
 
 
 def _webp_size(data: bytes) -> tuple[int, int] | None:
-    if len(data) < 30:
-        return None
     kind = data[12:16]
-    if kind == b"VP8X":
-        return 1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(data[27:30], "little")
-    if kind == b"VP8 ":
-        width, height = struct.unpack_from("<HH", data, 26)
-        return width & 0x3FFF, height & 0x3FFF
-    if kind == b"VP8L":
+    if kind == b"VP8L" and len(data) >= 25:
         (bits,) = struct.unpack_from("<I", data, 21)
         return 1 + (bits & 0x3FFF), 1 + (bits >> 14 & 0x3FFF)
+    if kind == b"VP8X" and len(data) >= 30:
+        return 1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(data[27:30], "little")
+    if kind == b"VP8 " and len(data) >= 30:
+        width, height = struct.unpack_from("<HH", data, 26)
+        return width & 0x3FFF, height & 0x3FFF
     return None
 
 

@@ -541,6 +541,8 @@ def _webp_extended_sized(width, height):
     return _riff((b"VP8X", bytes(4) + canvas), (b"VP8L", _WEBP[20:]))
 
 
+# 28 bytes, 9000x10: shorter than the VP8X and VP8 headers.
+_WEBP_TINY_LOSSLESS = bytes.fromhex("5249464614000000574542505650384c080000002f27630200888808")
 _LIMITED_READ = make_read(max_image_bytes=4096, max_image_dimension=8000)
 
 
@@ -555,6 +557,7 @@ _LIMITED_READ = make_read(max_image_bytes=4096, max_image_dimension=8000)
         ("lossy.webp", _webp_lossy_sized(2, 8001), "2x8001 px webp"),
         ("extended.webp", _webp_extended_sized(9000, 3), "9000x3 px webp"),
         ("heavy.png", _png_sized(2, 2, padding=4096), "2x2 px png"),
+        ("tiny.webp", _WEBP_TINY_LOSSLESS, "9000x10 px webp"),
     ],
 )
 async def test_read_rejects_an_image_larger_than_the_model_accepts(ctx, tmp_path, name, data, size):

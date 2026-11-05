@@ -595,6 +595,11 @@ function webpExtendedSized(width: number, height: number): Uint8Array {
   return riff(['VP8X', vp8x], ['VP8L', WEBP.subarray(20)])
 }
 
+/** 28 bytes, 9000x10: shorter than the VP8X and VP8 headers. */
+const WEBP_TINY_LOSSLESS = new Uint8Array(
+  Buffer.from('5249464614000000574542505650384c080000002f27630200888808', 'hex')
+)
+
 describe('read image limits', () => {
   const limited = makeRead({ maxImageBytes: 4096, maxImageDimension: 8000 })
 
@@ -607,6 +612,7 @@ describe('read image limits', () => {
     ['lossy.webp', webpLossySized(2, 8001), '2x8001 px webp'],
     ['extended.webp', webpExtendedSized(9000, 3), '9000x3 px webp'],
     ['heavy.png', pngSized(2, 2, 4096), '2x2 px png'],
+    ['tiny.webp', WEBP_TINY_LOSSLESS, '9000x10 px webp'],
   ])('rejects %s, larger than the model accepts', async (name, data, size) => {
     const path = join(dir, name)
     writeFileSync(path, data)

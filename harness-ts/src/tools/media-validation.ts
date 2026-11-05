@@ -59,13 +59,16 @@ function jpegSize(data: Uint8Array, dv: DataView): [number, number] | undefined 
 }
 
 function webpSize(data: Uint8Array, dv: DataView): [number, number] | undefined {
-  if (data.length < 30) return undefined
   const kind = ascii(data.subarray(12, 16))
-  if (kind === 'VP8X') return [1 + (dv.getUint32(24, true) & 0xffffff), 1 + (dv.getUint32(26, true) >>> 8)]
-  if (kind === 'VP8 ') return [dv.getUint16(26, true) & 0x3fff, dv.getUint16(28, true) & 0x3fff]
-  if (kind === 'VP8L') {
+  if (kind === 'VP8L' && data.length >= 25) {
     const bits = dv.getUint32(21, true)
     return [1 + (bits & 0x3fff), 1 + ((bits >>> 14) & 0x3fff)]
+  }
+  if (kind === 'VP8X' && data.length >= 30) {
+    return [1 + (dv.getUint32(24, true) & 0xffffff), 1 + (dv.getUint32(26, true) >>> 8)]
+  }
+  if (kind === 'VP8 ' && data.length >= 30) {
+    return [dv.getUint16(26, true) & 0x3fff, dv.getUint16(28, true) & 0x3fff]
   }
   return undefined
 }

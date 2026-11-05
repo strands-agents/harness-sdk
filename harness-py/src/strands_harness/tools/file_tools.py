@@ -103,7 +103,9 @@ def _raise_if_too_large(
 ) -> None:
     # The model rejects a larger image, and the rejected block stays in history, failing every later turn.
     width, height = image_size(data, image_format) or (0, 0)
-    if (max_bytes is None or len(data) <= max_bytes) and (max_dimension is None or max(width, height) <= max_dimension):
+    too_heavy = max_bytes is not None and len(data) > max_bytes
+    too_wide = max_dimension is not None and max(width, height) > max_dimension
+    if not too_heavy and not too_wide:
         return
     limits = [f"{max_bytes} bytes" if max_bytes else "", f"{max_dimension} px per side" if max_dimension else ""]
     raise ValueError(

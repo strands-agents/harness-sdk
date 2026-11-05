@@ -562,14 +562,10 @@ export async function supportsMedia(model: Model | ModelRouter | string | undefi
 export async function imageLimits(model: Model | ModelRouter | string | undefined): Promise<ImageLimits> {
   if (model instanceof ModelRouter) {
     const candidates = await Promise.all(model.candidates.map((candidate) => imageLimits(candidate.model)))
-    const strictest = (key: keyof ImageLimits): number | undefined => {
-      const values = candidates.map((limits) => limits[key]).filter((value) => value !== undefined)
-      return values.length ? Math.min(...values) : undefined
-    }
     const limits: ImageLimits = {}
     for (const key of ['maxImageBytes', 'maxImageDimension'] as const) {
-      const value = strictest(key)
-      if (value !== undefined) limits[key] = value
+      const values = candidates.flatMap((candidate) => candidate[key] ?? [])
+      if (values.length) limits[key] = Math.min(...values)
     }
     return limits
   }
