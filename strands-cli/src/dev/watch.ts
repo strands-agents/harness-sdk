@@ -87,7 +87,7 @@ export function watchSources(options: SourceWatcherOptions): SourceWatcher {
       watchers.delete(path)
     }
   }
-  const handle = (directory: string, name: string): void => {
+  const handle = (directory: string, name: string, event: string): void => {
     const path = join(directory, name)
     if (name === VIRTUAL_ENVIRONMENT_MARKER && directory !== root) {
       unwatch(directory)
@@ -95,6 +95,8 @@ export function watchSources(options: SourceWatcherOptions): SourceWatcher {
     }
     const kind = entryKind(path)
     if (kind === 'directory') {
+      // A rename event for a watched folder means that it was replaced. The old watch can point at the old folder.
+      if (event === 'rename' && watchers.has(path)) unwatch(path)
       if (isProjectFolder(path, name) && addTree(path)) buffer.add(relative(root, path))
       return
     }
@@ -111,8 +113,8 @@ export function watchSources(options: SourceWatcherOptions): SourceWatcher {
       return false
     }
     try {
-      const watcher = watch(directory, (_event, name) => {
-        if (!closed && name) handle(directory, name.toString())
+      const watcher = watch(directory, (event, name) => {
+        if (!closed && name) handle(directory, name.toString(), event)
       })
       watcher.on('error', () => unwatch(directory))
       watchers.set(directory, watcher)
@@ -122,13 +124,21 @@ export function watchSources(options: SourceWatcherOptions): SourceWatcher {
       return false
     }
   }
+  const readableChildren = (directory: string): string[] => {
+    try {
+      return childDirectories(directory)
+    } catch (error) {
+      warn(directory, `Cannot read ${relative(root, directory) || '.'}: ${errorMessage(error)}`)
+      return []
+    }
+  }
   // Breadth first, so that the folder limit drops the deepest folders, not the agent's own.
   const addTree = (start: string): boolean => {
     if (!addDirectory(start)) return false
     const queue = [start]
     while (queue.length > 0) {
       const directory = queue.shift()!
-      for (const name of childDirectories(directory)) {
+      for (const name of readableChildren(directory)) {
         const child = join(directory, name)
         if (addDirectory(child)) queue.push(child)
       }

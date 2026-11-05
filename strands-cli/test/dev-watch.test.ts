@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -176,6 +176,32 @@ describe('watchSources', () => {
     await live(join(root, 'z'))
     expect(warnings).toHaveLength(1)
   })
+
+  it('watches a folder again after it is deleted and created again', async () => {
+    await mkdir(join(root, 'src', 'generated'))
+    start()
+    await live(join(root, 'src', 'generated'))
+    await rm(join(root, 'src', 'generated'), { recursive: true, force: true })
+    await mkdir(join(root, 'src', 'generated'))
+    await vi.waitFor(() => expect(changes).toContain(join('src', 'generated')), settled)
+    await live(join(root, 'src', 'generated'))
+  })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'warns about a folder that it cannot read and watches the rest',
+    async () => {
+      await mkdir(join(root, 'src', 'locked'))
+      await chmod(join(root, 'src', 'locked'), 0o000)
+      try {
+        expect(() => start()).not.toThrow()
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toMatch(new RegExp(`^Cannot (read|watch) src[/\\\\]locked: `, 'u'))
+        await live(join(root, 'src'))
+      } finally {
+        await chmod(join(root, 'src', 'locked'), 0o700)
+      }
+    }
+  )
 
   it('warns once when the folder limit stops the watch', async () => {
     await mkdir(join(root, 'a'))
