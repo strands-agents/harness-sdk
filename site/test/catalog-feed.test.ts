@@ -95,10 +95,12 @@ describe('integrations feed from the catalog collection', () => {
     expect(catalogFeedSchema.parse(feed)).toEqual(feed)
   })
 
-  it('pins schemaVersion in the JSON Schema and leaves objects open for additive fields', () => {
+  it('publishes the JSON Schema contract unchanged', async () => {
     const schema = buildCatalogFeedJsonSchema(ORIGIN)
 
-    expect(schema.properties?.schemaVersion).toEqual({ type: 'number', const: 1 })
     expect(JSON.stringify(schema)).not.toContain('additionalProperties')
+    await expect(JSON.stringify(schema, null, 2) + '\n').toMatchFileSnapshot(
+      './snapshots/catalog-feed/integrations.schema.json'
+    )
   })
 })
