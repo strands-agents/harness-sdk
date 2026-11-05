@@ -157,11 +157,13 @@ components, title, description, and `nav: { group: string, order: positive integ
 Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
 import/export-like prose remain literal text.
 
-The upstream product status is `preview` or `stable`. The site may keep stable upstream docs in
-preview, but it cannot set `publicationStatus` to `stable` while the upstream status is still
-`preview`. Preview pages render a documentation-preview caution and remain out of search and
-machine-readable publication surfaces. Promotion to `stable` requires a coordinated site change;
-a lock-only update cannot promote pages.
+The manifest's optional `product.status` field is deprecated schema-v1 compatibility metadata.
+When present, it must be `preview` or `stable`, but it never gates publication. The site registry
+is the publication authority: its `publicationStatus` determines whether imported pages are
+preview or stable on this site. Preview pages render a documentation-preview caution and remain
+out of search and machine-readable publication surfaces. Stable imported pages are automatically
+included in `llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate
+machine-readable indexing switch. A lock-only update cannot promote pages.
 
 #### Site registry and lock
 
@@ -184,9 +186,9 @@ Automatic refreshes are intentionally disabled so upstream activity does not cre
 lock PRs. There is no fixed refresh cadence: maintainers run the workflow on demand before site
 changes that affect federation compatibility, or when they intentionally want CI and local builds
 to adopt a newer upstream baseline.
-An upstream stable commit may be pinned while the site keeps the pages in preview. A site-side
-promotion fails generation until the upstream status is also `stable`. The workflow summary and PR
-body link to each upstream old-to-new commit comparison.
+The deprecated upstream status does not gate publication. This lets the site promote or preview a
+pinned snapshot without requiring a coordinated source-repository change. The workflow summary and
+PR body link to each upstream old-to-new commit comparison.
 
 #### Generated layout
 
@@ -235,8 +237,8 @@ The importer core is reusable, but each product still requires explicit site wir
    generated route that the content collection failed to load.
 
 Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and
-machine-readable documentation endpoints also omit them until a coordinated promotion changes
-both the upstream status and the site's publication status to `stable`.
+machine-readable documentation endpoints also omit them until the site's publication status
+changes to `stable`. Once stable, every page is included automatically.
 
 Build and development scripts generate external docs before Astro starts. To preview changes
 from a local product checkout instead of the lock, set its source environment variable:
@@ -904,7 +906,7 @@ Our implementation renders documentation through Astro's container API, applies 
 
 ### Endpoints
 
-- `/llms.txt` - Index with links to docs, generated sample guides, blog posts, and changelog entries
+- `/llms.txt` - Index with every live doc plus generated sample guides, blog posts, and changelog entries
 - `/llms-full.txt` - Complete docs, generated sample guide, and blog content (excludes API reference)
 - `/{slug}/index.md` - Any doc page in raw markdown format
 - `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
@@ -913,7 +915,7 @@ Our implementation renders documentation through Astro's container API, applies 
 
 | File | Purpose |
 |------|---------|
-| `src/pages/llms.txt.ts` | Generates index from sidebar structure |
+| `src/pages/llms.txt.ts` | Generates a sidebar-ordered index, then appends any remaining live docs |
 | `src/pages/llms-full.txt.ts` | Renders all docs inline |
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
 | `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
