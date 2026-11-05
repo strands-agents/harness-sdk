@@ -1,15 +1,14 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { ContentBlock, Message } from '../types/messages.js'
 import type { Model, StreamAggregatedResult, StreamOptions } from './model.js'
-import type { ModelStreamEvent } from './streaming.js'
+import type { ModelStreamEvent, Usage } from './streaming.js'
 
 /**
  * SDK-internal wrapper that adds a model call's token usage to its request. The
  * agent loop and every auxiliary call route their model calls through it. The
  * {@link InvocationContext} is passed per call rather than on {@link StreamOptions},
- * so providers never see request state. Usage is added only when the call
- * returns normally and the provider reported it; a thrown error passes through
- * and adds nothing.
+ * so providers never see request state. Usage is added whenever the provider
+ * reported it, including a call that throws after its metadata event.
  *
  * @internal
  */
@@ -34,14 +33,28 @@ export class ModelProxy {
     options?: StreamOptions,
     invocationContext?: InvocationContext
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
-    const result = yield* this._model.streamAggregated(messages, options)
-    this._record(result, invocationContext)
-    return result
+    const stream = this._model.streamAggregated(messages, options)
+    let streamedUsage: Usage | undefined
+    try {
+      let next = await stream.next()
+      while (!next.done) {
+        if (next.value?.type === 'modelMetadataEvent') {
+          streamedUsage = next.value.usage
+        }
+        yield next.value
+        next = await stream.next()
+      }
+      this._record(next.value?.metadata?.usage, invocationContext)
+      return next.value
+    } catch (error) {
+      // Usage the provider already reported is spent even though the call failed.
+      this._record(streamedUsage, invocationContext)
+      throw error
+    }
   }
 
-  /** Adds a completed call's reported usage to the request. */
-  private _record(result: StreamAggregatedResult, invocationContext?: InvocationContext): void {
-    const usage = result?.metadata?.usage
+  /** Adds a call's reported usage to the request. */
+  private _record(usage: Usage | undefined, invocationContext?: InvocationContext): void {
     const context = unwrapInvocationContext(invocationContext)
     if (usage !== undefined && context !== undefined) {
       context.recordUsage(usage)

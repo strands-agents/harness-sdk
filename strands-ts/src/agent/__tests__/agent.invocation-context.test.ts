@@ -13,6 +13,14 @@ import type { ToolContext } from '../../tools/tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { ModelThrottledError } from '../../errors.js'
+import { accumulateUsage } from '../../models/streaming.js'
+import { ConstantBackoff } from '../../retry/backoff-strategy.js'
+import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strategy.js'
+
+function noDelayRetry(): DefaultModelRetryStrategy {
+  return new DefaultModelRetryStrategy({ maxAttempts: 2, backoff: new ConstantBackoff({ delayMs: 0 }) })
+}
 
 describe('Agent request-wide limits', () => {
   it('leaves the parent limit intact and the child uncounted when a hand-written tool forwards invocationState', async () => {
@@ -128,6 +136,70 @@ describe('Agent request-wide limits', () => {
     expect({ requestUsage: result.invocationContext?.usage, agentUsage: result.metrics?.accumulatedUsage }).toEqual({
       requestUsage: { turnsTaken: 3, inputTokens: 7, outputTokens: 10, totalTokens: 17 },
       agentUsage: expect.objectContaining({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
+    })
+  })
+
+  it('records the usage streamed before a retried failure, matching the streamed metadata', async () => {
+    const model = new MockMessageModel()
+      .addTurn(new ModelThrottledError('throttled'), { usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } })
+      .addTurn({ type: 'textBlock', text: 'done' }, { usage: { inputTokens: 10, outputTokens: 17, totalTokens: 27 } })
+    const agent = new Agent({ model, retryStrategy: noDelayRetry(), printer: false })
+
+    const streamed = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    const stream = agent.stream('go')
+    let next = await stream.next()
+    while (!next.done) {
+      if (next.value.type === 'modelStreamUpdateEvent' && next.value.event.type === 'modelMetadataEvent') {
+        accumulateUsage(streamed, next.value.event.usage!)
+      }
+      next = await stream.next()
+    }
+    const result = next.value
+
+    expect({
+      streamed,
+      requestUsage: result.invocationContext?.usage,
+      agentUsage: result.metrics?.accumulatedUsage,
+    }).toEqual({
+      streamed: { inputTokens: 13, outputTokens: 21, totalTokens: 34 },
+      requestUsage: { turnsTaken: 1, inputTokens: 13, outputTokens: 21, totalTokens: 34 },
+      agentUsage: expect.objectContaining({ inputTokens: 13, outputTokens: 21, totalTokens: 34 }),
+    })
+  })
+
+  it("records a nested agent's usage streamed before a retried failure", async () => {
+    const inner = new Agent({
+      model: new MockMessageModel()
+        .addTurn(new ModelThrottledError('throttled'), { usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } })
+        .addTurn(
+          { type: 'textBlock', text: 'inner done' },
+          { usage: { inputTokens: 5, outputTokens: 7, totalTokens: 12 } }
+        ),
+      name: 'inner',
+      description: 'inner agent',
+      retryStrategy: noDelayRetry(),
+      printer: false,
+    })
+    const outer = new Agent({
+      model: new MockMessageModel()
+        .addTurn([{ type: 'toolUseBlock', name: 'inner', toolUseId: 'tu-1', input: { input: 'hi' } }], {
+          usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        })
+        .addTurn(
+          { type: 'textBlock', text: 'outer done' },
+          { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }
+        ),
+      tools: [inner.asTool()],
+      printer: false,
+    })
+
+    const result = await outer.invoke('go')
+
+    expect(result.invocationContext?.usage).toEqual({
+      turnsTaken: 3,
+      inputTokens: 10,
+      outputTokens: 14,
+      totalTokens: 24,
     })
   })
 

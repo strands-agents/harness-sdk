@@ -4,6 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from strands import Agent, tool
+from strands.agent import ModelRetryStrategy
 from strands.agent.conversation_manager import NullConversationManager
 from strands.agent.invocation_context import (
     InvocationContext,
@@ -12,6 +13,7 @@ from strands.agent.invocation_context import (
 )
 from strands.hooks import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.tools.executors import SequentialToolExecutor
+from strands.types.exceptions import ModelThrottledException
 from strands.types.tools import ToolContext
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -331,6 +333,72 @@ async def test_invoke_async_records_nothing_when_model_call_raises():
 
     context = before_invocation[0].invocation_context
     assert context.usage == {"turns_taken": 1, "inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+
+
+class _ThrottledAfterMetadataModel(MockedModelProvider):
+    """Streams a metadata chunk on its first call, then fails it with a throttle."""
+
+    def __init__(self, failed_usage, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.failed_usage = failed_usage
+        self.failed = False
+
+    async def stream(self, *args, **kwargs):
+        if not self.failed:
+            self.failed = True
+            yield {"metadata": {"usage": self.failed_usage, "metrics": {"latencyMs": 0}}}
+            raise ModelThrottledException("throttled")
+        async for event in super().stream(*args, **kwargs):
+            yield event
+
+
+def _no_delay_retry():
+    return ModelRetryStrategy(max_attempts=2, initial_delay=0, max_delay=0)
+
+
+@pytest.mark.asyncio
+async def test_invoke_async_records_usage_streamed_before_a_retried_failure():
+    model = _ThrottledAfterMetadataModel(_usage(3, 4), [_text("done")], [_usage(10, 17)])
+    agent = Agent(model=model, retry_strategy=_no_delay_retry(), callback_handler=None)
+
+    streamed = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+    result = None
+    async for event in agent.stream_async("go"):
+        if "metadata" in event.get("event", {}):
+            for key in streamed:
+                streamed[key] += event["event"]["metadata"]["usage"][key]
+        result = event.get("result", result)
+
+    assert streamed == {"inputTokens": 13, "outputTokens": 21, "totalTokens": 34}
+    assert result.invocation_context.usage == {"turns_taken": 1, **streamed}
+    assert result.metrics.accumulated_usage == streamed
+
+
+@pytest.mark.asyncio
+async def test_invoke_async_records_nested_agent_usage_streamed_before_a_retried_failure():
+    inner = Agent(
+        model=_ThrottledAfterMetadataModel(_usage(3, 4), [_text("inner done")], [_usage(5, 7)]),
+        name="inner",
+        description="inner agent",
+        retry_strategy=_no_delay_retry(),
+        callback_handler=None,
+    )
+    outer = Agent(
+        model=MockedModelProvider(
+            [_tool_use("inner", "tu-1", input="hi"), _text("outer done")], [_usage(1, 2), _usage(1, 1)]
+        ),
+        tools=[inner.as_tool()],
+        callback_handler=None,
+    )
+
+    result = await outer.invoke_async("go")
+
+    assert result.invocation_context.usage == {
+        "turns_taken": 3,
+        "inputTokens": 10,
+        "outputTokens": 14,
+        "totalTokens": 24,
+    }
 
 
 @pytest.mark.asyncio

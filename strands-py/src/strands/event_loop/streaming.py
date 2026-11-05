@@ -442,8 +442,8 @@ async def process_stream(
         chunks: The chunks of the response stream from the model.
         start_time: Time when the model request is initiated
         cancel_signal: Optional threading.Event to check for cancellation during streaming.
-        invocation_context: The request the call's usage adds to once the stream ends. A cancelled stream adds the
-            usage reported before it stopped; a stream that raises adds nothing.
+        invocation_context: The request the call's usage adds to once the stream ends. A cancelled stream, or one that
+            raises after its metadata chunk, adds the usage reported before it stopped.
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
@@ -464,45 +464,50 @@ async def process_stream(
     usage: Usage = Usage(inputTokens=0, outputTokens=0, totalTokens=0)
     metrics: Metrics = Metrics(latencyMs=0, timeToFirstByteMs=0)
 
-    async for chunk in chunks:
-        # Check for cancellation during stream processing
-        if cancel_signal and cancel_signal.is_set():
-            logger.debug("cancellation detected during stream processing")
-            _record_usage(invocation_context, usage)
-            # Return cancelled stop reason with cancellation message
-            # The incomplete message in state["message"] is discarded and never added to agent.messages
-            yield ModelStopReason(
-                stop_reason="cancelled",
-                message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
-                usage=usage,
-                metrics=metrics,
-            )
-            return
+    try:
+        async for chunk in chunks:
+            # Check for cancellation during stream processing
+            if cancel_signal and cancel_signal.is_set():
+                logger.debug("cancellation detected during stream processing")
+                _record_usage(invocation_context, usage)
+                # Return cancelled stop reason with cancellation message
+                # The incomplete message in state["message"] is discarded and never added to agent.messages
+                yield ModelStopReason(
+                    stop_reason="cancelled",
+                    message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+                    usage=usage,
+                    metrics=metrics,
+                )
+                return
 
-        # Track first byte time when we get first content
-        if first_byte_time is None and ("contentBlockDelta" in chunk or "contentBlockStart" in chunk):
-            first_byte_time = time.time()
-        yield ModelStreamChunkEvent(chunk=chunk)
+            # Track first byte time when we get first content
+            if first_byte_time is None and ("contentBlockDelta" in chunk or "contentBlockStart" in chunk):
+                first_byte_time = time.time()
+            yield ModelStreamChunkEvent(chunk=chunk)
 
-        if "messageStart" in chunk:
-            state["message"] = handle_message_start(chunk["messageStart"], state["message"])
-        elif "contentBlockStart" in chunk:
-            state["current_tool_use"] = handle_content_block_start(chunk["contentBlockStart"])
-        elif "contentBlockDelta" in chunk:
-            state, typed_event = handle_content_block_delta(chunk["contentBlockDelta"], state)
-            yield typed_event
-        elif "contentBlockStop" in chunk:
-            state = handle_content_block_stop(state)
-        elif "messageStop" in chunk:
-            saw_message_stop = True
-            stop_reason = handle_message_stop(chunk["messageStop"], state["message"].get("content", []))
-        elif "metadata" in chunk:
-            time_to_first_byte_ms = (
-                int(1000 * (first_byte_time - start_time)) if (start_time and first_byte_time) else None
-            )
-            usage, metrics = extract_usage_metrics(chunk["metadata"], time_to_first_byte_ms)
-        elif "redactContent" in chunk:
-            handle_redact_content(chunk["redactContent"], state)
+            if "messageStart" in chunk:
+                state["message"] = handle_message_start(chunk["messageStart"], state["message"])
+            elif "contentBlockStart" in chunk:
+                state["current_tool_use"] = handle_content_block_start(chunk["contentBlockStart"])
+            elif "contentBlockDelta" in chunk:
+                state, typed_event = handle_content_block_delta(chunk["contentBlockDelta"], state)
+                yield typed_event
+            elif "contentBlockStop" in chunk:
+                state = handle_content_block_stop(state)
+            elif "messageStop" in chunk:
+                saw_message_stop = True
+                stop_reason = handle_message_stop(chunk["messageStop"], state["message"].get("content", []))
+            elif "metadata" in chunk:
+                time_to_first_byte_ms = (
+                    int(1000 * (first_byte_time - start_time)) if (start_time and first_byte_time) else None
+                )
+                usage, metrics = extract_usage_metrics(chunk["metadata"], time_to_first_byte_ms)
+            elif "redactContent" in chunk:
+                handle_redact_content(chunk["redactContent"], state)
+    except Exception:
+        # Usage the provider already reported is spent even though the call failed.
+        _record_usage(invocation_context, usage)
+        raise
 
     # A provider that aborts in flight ends the stream without messageStop; the in-loop check
     # above cannot see it, so report the cancellation here rather than a truncated end_turn.

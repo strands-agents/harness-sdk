@@ -66,6 +66,19 @@ describe('ModelProxy', () => {
       expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
     })
 
+    it('records the usage the model streamed before it threw', async () => {
+      const model = new MockMessageModel().addTurn(new Error('boom'), {
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      })
+      const invocationContext = new InvocationContextImpl()
+
+      await expect(
+        drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
+      ).rejects.toThrow('boom')
+
+      expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 3, outputTokens: 4, totalTokens: 7 })
+    })
+
     it('records nothing when the model reports no usage', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
       const invocationContext = new InvocationContextImpl()
