@@ -85,11 +85,6 @@ describe("OpenAIModel (api: 'responses')", () => {
     })
   })
 
-  it('reports no temporary messages, even for a model that takes them', () => {
-    const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, modelId: 'claude-opus-5-5' })
-    expect(model.modelInfo.capabilities?.temporaryMessages).toBe(false)
-  })
-
   describe('stateful', () => {
     it('defaults to false', () => {
       const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI })

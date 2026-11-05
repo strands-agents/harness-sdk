@@ -213,6 +213,29 @@ describe('ModelProxy', () => {
       ])
     })
 
+    it('sends text to a custom provider serving a model that takes temporary messages', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      model.updateConfig({ modelId: 'claude-opus-5-5' })
+      const streamSpy = vi.spyOn(model, 'stream')
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'reminder', source: 'test' })],
+          trackingId: 'msg-1',
+        }),
+      ]
+
+      await drain(new ModelProxy(model).streamAggregated(messages))
+
+      expect(streamSpy.mock.calls[0]![0]).toEqual([
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new TextBlock('\n\nreminder')],
+          trackingId: 'msg-1',
+        }),
+      ])
+    })
+
     it('passes injected blocks through to a model that takes temporary messages', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       model.updateConfig({ modelInfo: { capabilities: { temporaryMessages: true } } })

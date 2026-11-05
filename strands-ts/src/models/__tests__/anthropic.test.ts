@@ -204,8 +204,8 @@ describe('AnthropicModel', () => {
     it.each([
       ['claude-opus-5-5', true],
       ['claude-opus-5-5-20260401', true],
-      ['claude-sonnet-5', undefined],
-      ['claude-sonnet-4-6', undefined],
+      ['claude-sonnet-5', false],
+      ['claude-sonnet-4-6', false],
     ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
       expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)

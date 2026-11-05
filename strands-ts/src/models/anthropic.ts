@@ -19,6 +19,7 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
+import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
@@ -285,6 +286,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       })
       this._resolveApiVersion(clientConfig)
     }
+  }
+
+  /** Turns temporary messages back on for the models the shared model info lists. */
+  override get modelInfo(): ModelInfo {
+    const temporaryMessages = lookupModelInfo(this.modelId ?? '').capabilities?.temporaryMessages
+    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
