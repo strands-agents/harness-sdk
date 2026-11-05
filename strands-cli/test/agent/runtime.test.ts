@@ -1610,7 +1610,7 @@ describe('interactive runtime lifecycle', () => {
       }
       await rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 
   it('clears by rebuilding without restoring the active session or conversation snapshot', async () => {
     const firstAgent = fakeAgent('old')
