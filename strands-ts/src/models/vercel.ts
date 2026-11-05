@@ -39,7 +39,7 @@ import {
   type CacheTTL,
   type StreamOptions,
 } from './model.js'
-import type { ModelInfo } from './model-info.js'
+import { mergeModelInfo, type ModelInfo } from './model-info.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -166,6 +166,17 @@ export class VercelModel extends Model<VercelModelConfig> {
    */
   override get modelId(): string {
     return this._config.modelId ?? this._provider.modelId
+  }
+
+  /**
+   * Reports OpenAI models on Bedrock as implicitly cached, which a `modelInfo` override still wins over.
+   * The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
+   * implicitly and rejects cache points.
+   */
+  override get modelInfo(): ModelInfo {
+    const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
+    if (!bedrock || !this.modelId.toLowerCase().includes('openai.')) return super.modelInfo
+    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
   }
 
   updateConfig(config: VercelModelConfig): void {

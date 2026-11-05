@@ -99,7 +99,8 @@ class SystemOneHttpError extends Error {
 export async function askSystemOne<const Q extends Record<string, Question>>(
   config: SystemOneProviderConfig,
   state: DecisionInput,
-  questions: Q
+  questions: Q,
+  cancelSignal?: AbortSignal
 ): Promise<DecisionResult<Q>> {
   const questionIds = Object.keys(questions)
   if (config.maxQuestions !== undefined && questionIds.length > config.maxQuestions) {
@@ -128,6 +129,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
         'Content-Type': 'application/json',
       },
       body,
+      ...(cancelSignal !== undefined && { signal: cancelSignal }),
     })
   } catch (error) {
     throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
