@@ -1646,7 +1646,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       }
 
       case 'injectedBlock':
-        // ModelProxy turns the ones Bedrock should see into text.
+        // ModelProxy turns the ones Bedrock should see into text, so only a direct call or a modelInfo override that
+        // turns temporaryMessages on gets here.
+        warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
         return undefined
     }
   }
