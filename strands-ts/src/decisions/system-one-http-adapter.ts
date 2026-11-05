@@ -8,16 +8,42 @@ const PROBABILITY_TOLERANCE = 1e-6
 // so a distribution over N choices may sum to 1 within N * 5e-5.
 const PROBABILITY_ROUNDING_TOLERANCE = 5e-5
 
-/** @internal */
-export interface SystemOneProviderConfig {
+/**
+ * Request mapping and limits shared by every System One transport.
+ *
+ * @internal
+ */
+export interface SystemOneRequestConfig {
   providerName: string
+  /** Sent as the request's `model`; omitted when undefined so the server uses its own. */
+  modelId?: string
+  defaultMinConfidence: number
+  maxQuestions?: number
+  maxBodyBytes: number
+}
+
+/** @internal */
+export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   endpoint: string
   apiKey: string
   modelId: string
-  defaultMinConfidence: number
   fetch: typeof globalThis.fetch
-  maxQuestions?: number
-  maxBodyBytes: number
+}
+
+/**
+ * Sends a serialized System One request and resolves to the parsed JSON response payload.
+ * Rejects with a {@link ModelError} subclass when the request fails.
+ *
+ * @internal
+ */
+export type SystemOneTransport = (body: string, cancelSignal?: AbortSignal) => Promise<unknown>
+
+/** @internal */
+export function resolveDefaultMinConfidence(value: number, className: string): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${className} defaultMinConfidence must be in [0.0, 1.0]`)
+  }
+  return value
 }
 
 /** @internal */
@@ -46,10 +72,10 @@ export function resolveSystemOneProviderConfig(
   }
 
   const modelId = options.modelId?.trim() || defaults.modelId
-  const defaultMinConfidence = options.defaultMinConfidence ?? defaults.defaultMinConfidence
-  if (!Number.isFinite(defaultMinConfidence) || defaultMinConfidence < 0 || defaultMinConfidence > 1) {
-    throw new Error(`${defaults.className} defaultMinConfidence must be in [0.0, 1.0]`)
-  }
+  const defaultMinConfidence = resolveDefaultMinConfidence(
+    options.defaultMinConfidence ?? defaults.defaultMinConfidence,
+    defaults.className
+  )
 
   const fetchImplementation = options.fetch ?? globalThis.fetch
   if (typeof fetchImplementation !== 'function') {
@@ -99,8 +125,24 @@ class SystemOneHttpError extends Error {
 }
 
 /** @internal */
-export async function askSystemOne<const Q extends Record<string, Question>>(
+export function askSystemOne<const Q extends Record<string, Question>>(
   config: SystemOneProviderConfig,
+  state: DecisionInput,
+  questions: Q,
+  cancelSignal?: AbortSignal
+): Promise<DecisionResult<Q>> {
+  return askSystemOneWith(config, (body, signal) => sendHttp(config, body, signal), state, questions, cancelSignal)
+}
+
+/**
+ * Maps a decision request to the System One wire format, sends it through `transport`,
+ * and maps the response back to a {@link DecisionResult}.
+ *
+ * @internal
+ */
+export async function askSystemOneWith<const Q extends Record<string, Question>>(
+  config: SystemOneRequestConfig,
+  transport: SystemOneTransport,
   state: DecisionInput,
   questions: Q,
   cancelSignal?: AbortSignal
@@ -112,7 +154,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
 
   const body = JSON.stringify({
     state: toWireState(state),
-    model: config.modelId,
+    ...(config.modelId !== undefined && { model: config.modelId }),
     questions: toWireQuestions(questions),
   })
   const bodyBytes = new TextEncoder().encode(body).byteLength
@@ -123,25 +165,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
   }
 
   const startedAt = globalThis.performance.now()
-  let response: Response
-  try {
-    response = await config.fetch(config.endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body,
-      ...(cancelSignal !== undefined && { signal: cancelSignal }),
-    })
-  } catch (error) {
-    throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
-      cause: error,
-    })
-  }
-
-  const payload = await readPayload(response)
-  if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
+  const payload = await transport(body, cancelSignal)
 
   const result = parseResult(payload, questions, config.defaultMinConfidence)
   return {
@@ -193,6 +217,29 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
       return [id, { type: 'choice', instructions: question.question, criteria } satisfies WireChoiceQuestion]
     })
   )
+}
+
+async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {
+  let response: Response
+  try {
+    response = await config.fetch(config.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+      ...(cancelSignal !== undefined && { signal: cancelSignal }),
+    })
+  } catch (error) {
+    throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
+      cause: error,
+    })
+  }
+
+  const payload = await readPayload(response)
+  if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
+  return payload
 }
 
 async function readPayload(response: Response): Promise<unknown> {
