@@ -783,58 +783,6 @@ const model = new BedrockModel({
 </Tab>
 </Tabs>
 
-### Other Bedrock APIs
-
-Besides Converse, Bedrock serves the Anthropic Messages API and the OpenAI Chat Completions and Responses APIs. Each has a class nested in `BedrockModel`, named after the API:
-
-| Class | API | Settings from |
-|---|---|---|
-| `BedrockModel` (also `BedrockModel.ConverseStream`) | Converse | this page |
-| `BedrockModel.Messages` | Anthropic Messages | [Anthropic provider](./anthropic) |
-| `BedrockModel.ChatCompletions` | OpenAI Chat Completions | [OpenAI provider](./openai) |
-| `BedrockModel.Responses` | OpenAI Responses | [OpenAI Responses provider](./openai-responses) |
-
-Use them for features Converse doesn't offer, for example Claude's compaction and mid-conversation system messages through `BedrockModel.Messages`:
-
-<Tabs>
-<Tab label="Python">
-
-```python
-from strands import Agent
-from strands.models import BedrockModel
-
-model = BedrockModel.Messages(
-    model_id="global.anthropic.claude-sonnet-4-6",
-    max_tokens=4096,
-    region_name="us-west-2",
-)
-
-agent = Agent(model=model)
-response = agent("What is 2+2?")
-print(response)
-```
-</Tab>
-<Tab label="TypeScript">
-
-These classes are not yet available in TypeScript.
-</Tab>
-</Tabs>
-
-All three take the same Bedrock options:
-
-- `endpoint`: `"bedrock-runtime"` (default) or `"bedrock-mantle"`. Model ids differ between the two, for example `openai.gpt-oss-120b-1:0` on bedrock-runtime and `openai.gpt-oss-120b` on bedrock-mantle, and not every model serves every API on both. See [endpoint availability by model](https://docs.aws.amazon.com/bedrock/latest/userguide/models-endpoint-availability.html).
-- `region_name`: defaults to your AWS session's region, then `AWS_REGION`.
-- `api_key`: an Amazon Bedrock API key. Defaults to the `AWS_BEARER_TOKEN_BEDROCK` environment variable, so unset it when you sign with an `aws_profile` instead.
-- `client_args`: options for the vendor SDK's client, such as `timeout` or `max_retries`.
-
-Authentication is handled by the vendor SDKs, following AWS's guidance for each API:
-
-- `BedrockModel.Messages` uses the Anthropic SDK's Bedrock clients, which sign each request with your AWS credentials (default credential chain, or `aws_profile` / `aws_access_key` in `client_args`) unless you pass an API key.
-  On bedrock-runtime it always sends InvokeModel's documented API version, `bedrock-2023-05-31`. On bedrock-mantle it follows the Anthropic SDK's default, as the [Anthropic provider](./anthropic) does: with anthropic 2.x that is `2026-10-21`, which rejects sampling parameters, so pin `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}` to use them.
-- `BedrockModel.ChatCompletions` and `BedrockModel.Responses` use the OpenAI SDK with an API key, or a short-lived bearer token minted from your AWS credentials for each request. Bearer tokens need the `bedrock:CallWithBearerToken` IAM permission.
-
-They subclass the provider for their API, not `BedrockModel`, so guardrails and the other Converse options on this page don't apply to them. `BedrockModel.Messages` needs `pip install 'strands-agents[anthropic]'` (anthropic 0.91.0 or later for bedrock-mantle), and the OpenAI classes need `pip install 'strands-agents[openai]'`. Imported models (Custom Model Import) are served only through InvokeModel and aren't supported by these classes.
-
 ### OpenAI-Compatible Endpoints (Mantle)
 
 Mantle is not a separate service or model catalog: it is Amazon Bedrock's second
