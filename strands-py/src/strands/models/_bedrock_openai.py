@@ -7,9 +7,8 @@ import openai
 from typing_extensions import Unpack, override
 
 from ._bedrock_auth import (
-    BedrockApiKeyAuth,
-    BedrockSigV4Auth,
     bedrock_api_key,
+    bedrock_http_client,
     check_bedrock_options,
     require_sdk_version,
 )
@@ -48,8 +47,10 @@ class _BedrockOpenAIClient:
             raise ValueError(f"client_args=<{sorted(conflicting)}> | set by {owner}, remove them")
 
         session, region = _resolve_bedrock_region(region_name, boto_session)
-        api_key = bedrock_api_key(api_key)
-        self._auth = BedrockApiKeyAuth(api_key) if api_key else BedrockSigV4Auth(session, region, openai.OpenAIError)
+        self._endpoint = endpoint
+        self._region = region
+        self._session = session
+        self._api_key = bedrock_api_key(api_key)
         client_args = client_args or {}
         self.client_args = {
             **client_args,
@@ -58,12 +59,24 @@ class _BedrockOpenAIClient:
             | dict(client_args.get("default_headers") or {}),
             # The OpenAI SDK requires an api_key; the auth below replaces the header it produces.
             "api_key": _PLACEHOLDER_KEY,
-            "base_url": _resolve_base_url(BedrockMantleConfig(endpoint=endpoint), region, model_id),
         }
 
-    def per_request(self, client_args: dict[str, Any]) -> dict[str, Any]:
-        """Add an authenticating HTTP client; the parent model closes its OpenAI client, and this one, per request."""
-        return {**client_args, "http_client": openai.DefaultAsyncHttpxClient(auth=self._auth)}
+    def per_request(self, client_args: dict[str, Any], model_id: str) -> dict[str, Any]:
+        """Add the base URL for the current model and an authenticating HTTP client.
+
+        The mantle base path depends on the model, which ``update_config`` can change. The parent model closes its
+        OpenAI client, and with it this HTTP client, after each request.
+        """
+        http_client = bedrock_http_client(
+            openai.DefaultAsyncHttpxClient,
+            endpoint=self._endpoint,
+            region=self._region,
+            session=self._session,
+            api_key=self._api_key,
+            error_type=openai.OpenAIError,
+        )
+        base_url = _resolve_base_url(BedrockMantleConfig(endpoint=self._endpoint), self._region, model_id)
+        return {**client_args, "base_url": base_url, "http_client": http_client}
 
 
 class BedrockChatCompletionsModel(OpenAIModel):
@@ -113,7 +126,7 @@ class BedrockChatCompletionsModel(OpenAIModel):
 
     @override
     def _resolve_client_args(self) -> dict[str, Any]:
-        return self._bedrock.per_request(super()._resolve_client_args())
+        return self._bedrock.per_request(super()._resolve_client_args(), str(self.config.get("model_id", "")))
 
 
 class BedrockResponsesModel(OpenAIResponsesModel):
@@ -163,4 +176,4 @@ class BedrockResponsesModel(OpenAIResponsesModel):
 
     @override
     def _resolve_client_args(self) -> dict[str, Any]:
-        return self._bedrock.per_request(super()._resolve_client_args())
+        return self._bedrock.per_request(super()._resolve_client_args(), str(self.config.get("model_id", "")))

@@ -1,13 +1,13 @@
 import unittest.mock
 
 import boto3
-import httpx
 import openai
 import pytest
 from botocore.credentials import Credentials
 
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models._bedrock_auth import _http_package
 from strands.models._bedrock_openai import BedrockChatCompletionsModel, BedrockResponsesModel
 from strands.models.openai import OpenAIModel
 from strands.models.openai_responses import OpenAIResponsesModel
@@ -34,23 +34,22 @@ def captured_requests():
     return []
 
 
-@pytest.fixture
-def transport(captured_requests):
-    def handler(request):
-        captured_requests.append(request)
-        if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={"object": "list", "data": []})
-        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=CHAT_SSE_RESPONSE)
-
-    return httpx.MockTransport(handler)
+# The installed openai release decides the HTTP package: httpx before 3.0, httpx2 since.
+HTTP = _http_package(openai.DefaultAsyncHttpxClient)
 
 
 @pytest.fixture(autouse=True)
-def signing_http_client(monkeypatch, transport):
-    """Keep the provider's signing HTTP client, but send its requests to the mock transport."""
-    monkeypatch.setattr(
-        openai, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(**{**kwargs, "transport": transport})
-    )
+def network(monkeypatch, captured_requests):
+    """Answer at the innermost transport, so the SDK's real client and the provider's auth both run."""
+
+    async def handle_async_request(self, request):
+        await request.aread()
+        captured_requests.append(request)
+        if request.url.path.endswith("/models"):
+            return HTTP.Response(200, json={"object": "list", "data": []})
+        return HTTP.Response(200, headers={"content-type": "text/event-stream"}, text=CHAT_SSE_RESPONSE)
+
+    monkeypatch.setattr(HTTP.AsyncHTTPTransport, "handle_async_request", handle_async_request)
 
 
 def test_nested_names():
@@ -80,7 +79,8 @@ def test_chat_completions_agent_call_is_sigv4_signed(endpoint, model_id, expecte
     request = captured_requests[0]
     assert str(request.url) == expected_url
     assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
-    assert "/us-west-2/bedrock/aws4_request" in request.headers["authorization"]
+    service = "bedrock-mantle" if endpoint == "bedrock-mantle" else "bedrock"
+    assert f"/us-west-2/{service}/aws4_request" in request.headers["authorization"]
 
 
 def test_each_request_is_signed_with_the_sessions_current_credentials(captured_requests):
@@ -165,6 +165,16 @@ async def test_responses_requests_are_signed(boto_session, captured_requests):
     request = captured_requests[0]
     assert str(request.url) == "https://bedrock-mantle.us-west-2.api.aws/v1/models"
     assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
+
+
+@pytest.mark.parametrize("model_class", [BedrockChatCompletionsModel, BedrockResponsesModel])
+def test_mantle_base_path_follows_the_current_model(model_class, boto_session):
+    model = model_class(model_id="openai.gpt-oss-120b", endpoint="bedrock-mantle", boto_session=boto_session)
+    assert model._resolve_client_args()["base_url"] == "https://bedrock-mantle.us-west-2.api.aws/v1"
+
+    model.update_config(model_id="openai.gpt-5.1")
+
+    assert model._resolve_client_args()["base_url"] == "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
 
 
 @pytest.mark.parametrize("model_class", [BedrockChatCompletionsModel, BedrockResponsesModel])

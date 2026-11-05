@@ -8,10 +8,8 @@ import boto3
 from typing_extensions import Unpack, override
 
 from ._bedrock_auth import (
-    BedrockApiKeyAuth,
-    BedrockPerLoopTransport,
-    BedrockSigV4Auth,
     bedrock_api_key,
+    bedrock_http_client,
     check_bedrock_options,
     require_sdk_version,
 )
@@ -86,13 +84,20 @@ class BedrockMessagesModel(AnthropicModel):
 
         session, region = _resolve_bedrock_region(region_name, boto_session)
         api_key = bedrock_api_key(api_key)
-        auth = BedrockApiKeyAuth(api_key) if api_key else BedrockSigV4Auth(session, region, anthropic.AnthropicError)
-        transport = BedrockPerLoopTransport(anthropic.DEFAULT_CONNECTION_LIMITS)
+        http_client = bedrock_http_client(
+            anthropic.DefaultAsyncHttpxClient,
+            endpoint=endpoint,
+            region=region,
+            session=session,
+            api_key=api_key,
+            error_type=anthropic.AnthropicError,
+            per_loop_limits=anthropic.DEFAULT_CONNECTION_LIMITS,
+        )
         super().__init__(
             client_args={
                 **(client_args or {}),
                 "skip_auth": True,
-                "http_client": anthropic.DefaultAsyncHttpxClient(auth=auth, transport=transport),
+                "http_client": http_client,
                 "base_url": _BASE_URLS[endpoint].format(region=region),
                 "aws_region": region,
             },

@@ -13,7 +13,7 @@ from botocore.credentials import Credentials
 
 from strands import Agent
 from strands.models import BedrockModel
-from strands.models._bedrock_auth import BedrockPerLoopTransport
+from strands.models._bedrock_auth import _per_loop_transport_class
 from strands.models._bedrock_messages import BedrockMessagesModel
 from strands.models.anthropic import AnthropicModel
 
@@ -54,24 +54,19 @@ def captured_requests():
     return []
 
 
-@pytest.fixture
-def transport(responses, captured_requests):
-    def handler(request):
+@pytest.fixture(autouse=True)
+def network(monkeypatch, responses, captured_requests):
+    """Answer at the innermost transport, so the SDK's real client, the auth, and the per-loop pools all run."""
+
+    async def handle_async_request(self, request):
+        await request.aread()
         captured_requests.append(request)
         status = responses.pop(0) if responses else 200
         if status != 200:
             return httpx.Response(status, json={"type": "error", "error": {"type": "overloaded_error", "message": "x"}})
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=SSE_TEXT_RESPONSE)
 
-    return httpx.MockTransport(handler)
-
-
-@pytest.fixture(autouse=True)
-def signing_http_client(monkeypatch, transport):
-    """Keep the provider's signing HTTP client, but send its requests to the mock transport."""
-    monkeypatch.setattr(
-        anthropic, "DefaultAsyncHttpxClient", lambda **kwargs: httpx.AsyncClient(**{**kwargs, "transport": transport})
-    )
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
 
 
 def test_nested_names():
@@ -104,7 +99,8 @@ def test_agent_call_is_sigv4_signed_for_endpoint(endpoint, expected_url, boto_se
     request = captured_requests[0]
     assert str(request.url) == expected_url
     assert request.headers["authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
-    assert "/us-west-2/bedrock/aws4_request" in request.headers["authorization"]
+    service = "bedrock-mantle" if endpoint == "bedrock-mantle" else "bedrock"
+    assert f"/us-west-2/{service}/aws4_request" in request.headers["authorization"]
     assert "x-api-key" not in request.headers
 
 
@@ -185,7 +181,7 @@ def test_imported_models_and_parent_client_option_are_rejected():
 
 
 def test_connection_pools_are_per_event_loop_and_released_with_the_loop():
-    transport = BedrockPerLoopTransport(httpx.Limits())
+    transport = _per_loop_transport_class(httpx)(httpx.Limits())
     pools = []
 
     async def send():
@@ -201,6 +197,7 @@ def test_connection_pools_are_per_event_loop_and_released_with_the_loop():
 
 
 def test_proxy_environment_variables_apply(monkeypatch):
+    monkeypatch.undo()
     seen = []
 
     class Proxy(http.server.BaseHTTPRequestHandler):
@@ -218,7 +215,7 @@ def test_proxy_environment_variables_apply(monkeypatch):
     monkeypatch.setenv("HTTP_PROXY", f"http://127.0.0.1:{server.server_port}")
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
-    transport = BedrockPerLoopTransport(httpx.Limits())
+    transport = _per_loop_transport_class(httpx)(httpx.Limits())
 
     async def get():
         async with httpx.AsyncClient(transport=transport) as client:
@@ -228,6 +225,7 @@ def test_proxy_environment_variables_apply(monkeypatch):
         assert asyncio.run(get()) == 200
     finally:
         server.shutdown()
+        server.server_close()
     assert seen == ["http://bedrock.invalid/path"]
 
 
