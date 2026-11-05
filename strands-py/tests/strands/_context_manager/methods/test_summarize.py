@@ -165,10 +165,12 @@ class TestFlattenMessagesToContent:
         ]
         assert tru_result == exp_result
 
-    def test_strips_server_side_summary_metadata_from_text(self):
-        server_side = {"serverSideSummary": {"provider": "anthropic", "signature": "sig"}}
+    def test_renders_summary_block_as_its_text(self):
         messages: Messages = [
-            Message(role="assistant", content=[ContentBlock(text="earlier facts", metadata=server_side)]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(summary={"provider": "anthropic", "signature": "sig", "text": "earlier facts"})],
+            ),
         ]
 
         tru_result = _flatten_messages_to_content(messages)

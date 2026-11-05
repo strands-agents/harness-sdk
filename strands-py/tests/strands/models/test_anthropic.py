@@ -3321,7 +3321,7 @@ def _compaction_model(anthropic_client):
 
 
 def _stored_compaction(text="summary", signature="sig"):
-    return {"text": text, "metadata": {"serverSideSummary": {"provider": "anthropic", "signature": signature}}}
+    return {"summary": {"provider": "anthropic", "signature": signature, "text": text}}
 
 
 def _mock_compaction_response(anthropic_client, response):

@@ -29,7 +29,7 @@ from ..types.citations import (
     WebLocation,
     WebLocationDict,
 )
-from ..types.content import ContentBlock, Message, Messages, ServerSideSummary, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SummaryBlock, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
@@ -55,8 +55,8 @@ COMPACTION_BETA = "compact-2026-09-04"
 
 
 def _is_compaction(block: ContentBlock) -> bool:
-    """Whether ``block`` holds a compaction block Anthropic returned, stored as text."""
-    return "text" in block and block.get("metadata", {}).get("serverSideSummary", {}).get("provider") == "anthropic"
+    """Whether ``block`` holds a compaction block Anthropic returned."""
+    return "summary" in block and block["summary"].get("provider") == "anthropic"
 
 
 def _from_last_compaction(messages: Messages) -> Messages:
@@ -265,9 +265,8 @@ class AnthropicModel(Model):
             TypeError: If the content block type or document format cannot be converted to an
                 Anthropic-compatible format.
         """
-        if self.model_info.capabilities.server_side_summary is True and _is_compaction(content):
-            signature = content["metadata"]["serverSideSummary"].get("signature")
-            return {"type": "compaction", "content": content["text"], **({"signature": signature} if signature else {})}
+        if "summary" in content:
+            return self._format_summary(content["summary"])
 
         if "document" in content:
             document_format = content["document"]["format"]
@@ -686,6 +685,13 @@ class AnthropicModel(Model):
             request = self._request_with_drop_block(request) or request
 
         return request
+
+    def _format_summary(self, summary: SummaryBlock) -> dict[str, Any]:
+        """Format a summary as a compaction block when Anthropic wrote it and compaction is enabled, else as text."""
+        if summary.get("provider") != "anthropic" or self.model_info.capabilities.server_side_summary is not True:
+            return {"type": "text", "text": summary["text"]}
+        signature = summary.get("signature")
+        return {"type": "compaction", "content": summary["text"], **({"signature": signature} if signature else {})}
 
     def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
         """Return the request with ``beta`` added to its ``anthropic-beta`` header."""
@@ -1298,9 +1304,9 @@ class AnthropicModel(Model):
         """Summarize the conversation's opening ``messages`` with Anthropic on-demand compaction.
 
         Sends the live system prompt and tools unchanged under beta ``compact-2026-09-04``, so the thinking kept
-        after the summary stays valid. The returned compaction block is stored as a text block holding the summary,
-        which other providers send, with its signature in ``metadata.serverSideSummary``; later requests from a model
-        with ``server_side_summary`` rebuild the compaction block from the two and start from it.
+        after the summary stays valid. The returned compaction block is stored as a ``summary`` block holding its
+        text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
+        from it and start from it, and requests without it send the summary text.
 
         Args:
             messages: The opening messages to summarize, from message 0, left unmodified.
@@ -1311,7 +1317,7 @@ class AnthropicModel(Model):
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
-            The summary as a text block.
+            The summary block.
 
         Raises:
             RuntimeError: If the response holds no compaction block.
@@ -1333,10 +1339,14 @@ class AnthropicModel(Model):
                 f"model_id=<{self.config['model_id']}>, stop_reason=<{response.get('stop_reason')}>"
                 " | compaction returned no summary"
             )
-        server_side = ServerSideSummary(provider="anthropic")
-        if isinstance(block.get("signature"), str):
-            server_side["signature"] = block["signature"]
-        return ContentBlock(text=block["content"], metadata={"serverSideSummary": server_side})
+        signature = block.get("signature")
+        return ContentBlock(
+            summary=SummaryBlock(
+                provider="anthropic",
+                signature=signature if isinstance(signature, str) else None,
+                text=block["content"],
+            )
+        )
 
     def _record_rejected_mechanism(
         self,
