@@ -1,35 +1,52 @@
+import path from 'node:path'
+
 import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 
-import { buildBreadcrumbItems, serializeJsonLd } from '../src/util/structured-data'
+import { loadProductsFromConfig } from '../src/sidebar'
+import { buildBreadcrumbItems, PRODUCT_SOURCE, serializeJsonLd } from '../src/util/structured-data'
 
 describe('buildBreadcrumbItems', () => {
-  it('links regular route ancestors and labels the current page', () => {
+  const pageIds = new Set(['docs/user-guide/sdk', 'docs/user-guide/sdk/agents'])
+
+  it('links only ancestors that have a page and labels the current page', () => {
     expect(
-      buildBreadcrumbItems('docs/user-guide/sdk/quickstart', 'SDK quickstart', 'https://strandsagents.com')
+      buildBreadcrumbItems('docs/user-guide/sdk/agents/agent-loop', 'Agent loop', 'https://strandsagents.com', pageIds)
     ).toEqual([
       {
         '@type': 'ListItem',
         position: 1,
-        name: 'Docs',
-        item: 'https://strandsagents.com/docs/',
-      },
-      {
-        '@type': 'ListItem',
-        position: 2,
-        name: 'User Guide',
-        item: 'https://strandsagents.com/docs/user-guide/',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: 'Sdk',
+        name: 'Harness SDK',
         item: 'https://strandsagents.com/docs/user-guide/sdk/',
       },
       {
         '@type': 'ListItem',
-        position: 4,
-        name: 'SDK quickstart',
+        position: 2,
+        name: 'Agents',
+        item: 'https://strandsagents.com/docs/user-guide/sdk/agents/',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: 'Agent loop',
+      },
+    ])
+  })
+
+  it('links section landing pages outside the docs collection', () => {
+    expect(
+      buildBreadcrumbItems('changelog/sdk/python-v1.9.0', 'SDK Python v1.9.0', 'https://strandsagents.com', pageIds)
+    ).toEqual([
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Changelog',
+        item: 'https://strandsagents.com/changelog/',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'SDK Python v1.9.0',
       },
     ])
   })
@@ -40,6 +57,7 @@ describe('buildBreadcrumbItems', () => {
         'examples/typescript/use-cases/first-agent',
         'First agent',
         'https://strandsagents.com',
+        pageIds,
         '/preview'
       )
     ).toEqual([
@@ -55,6 +73,13 @@ describe('buildBreadcrumbItems', () => {
         name: 'First agent',
       },
     ])
+  })
+})
+
+describe('product structured data', () => {
+  it('every product has a source repository', () => {
+    const products = loadProductsFromConfig(path.resolve('./src/config/navigation.yml'))
+    expect(Object.keys(PRODUCT_SOURCE).sort()).toEqual(products.map((p) => p.label).sort())
   })
 })
 

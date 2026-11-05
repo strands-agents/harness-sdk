@@ -1,7 +1,16 @@
 /**
  * Shared JSON-LD structured data schemas for SEO.
- * Used by Head.astro (docs, blog, and changelog pages).
+ * Head.astro emits one @graph per page; pages that own a node pass it in via
+ * `Astro.locals.structuredData`.
  */
+
+import { LANGUAGE_META, SDK_META } from '../config/changelog'
+import { pathWithBase } from './links'
+import type { CatalogCardModel } from './catalog'
+import type { ChangelogFrontmatter } from '../content.config'
+import type { Product } from '../sidebar'
+
+export type JsonLdNode = Record<string, unknown>
 
 /**
  * Serialize JSON-LD for insertion into a script element with `set:html`.
@@ -37,6 +46,7 @@ const breadcrumbLabels: Record<string, string> = {
   quickstart: 'Quickstart',
   experimental: 'Experimental',
   python: 'Python',
+  sdk: 'Harness SDK',
   typescript: 'TypeScript',
   integrations: 'Integrations',
   'session-managers': 'Session Managers',
@@ -50,66 +60,55 @@ export interface BreadcrumbItem {
   item?: string
 }
 
+// Landing pages outside the docs collection; every other ancestor must be a docs page.
+const sectionPages = new Set(['blog', 'changelog', 'examples', 'integrations'])
+
 function segmentLabel(segment: string): string {
   return (
     breadcrumbLabels[segment] ?? segment.replace(/-/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase())
   )
 }
 
-function breadcrumbItem(
-  segments: string[],
-  position: number,
-  name: string,
-  siteUrl: string,
-  basePath: string,
-  link: boolean
-): BreadcrumbItem {
-  const path = `/${segments.join('/')}/`
-  return {
-    '@type': 'ListItem',
-    position,
-    name,
-    ...(link ? { item: `${siteUrl}${basePath}${path}` } : {}),
-  }
-}
-
 /**
- * Build breadcrumb JSON-LD from the canonical route id.
- *
- * Sample guide language and category segments are navigation groupings without
- * landing routes, so sample breadcrumbs link only the real `/examples/` parent.
+ * Build breadcrumb JSON-LD from the canonical route id. Ancestors without a page
+ * (e.g. `/docs/api/`, `/changelog/sdk/`) are dropped: every linked crumb must resolve.
  */
-export function buildBreadcrumbItems(routeId: string, title: string, siteUrl: string, basePath = ''): BreadcrumbItem[] {
+export function buildBreadcrumbItems(
+  routeId: string,
+  title: string,
+  siteUrl: string,
+  pageIds: Set<string>,
+  basePath = ''
+): BreadcrumbItem[] {
   const segments = routeId
     .replace(/^\/|\/$/g, '')
     .split('/')
     .filter(Boolean)
-  if (segments.length === 0) return []
+  const ancestors = segments
+    .slice(0, -1)
+    .map((_, index) => segments.slice(0, index + 1).join('/'))
+    .filter((id) => pageIds.has(id) || sectionPages.has(id))
 
-  if (segments[0] === 'examples' && segments.length > 1) {
-    return [
-      breadcrumbItem(['examples'], 1, 'Examples', siteUrl, basePath, true),
-      breadcrumbItem(segments, 2, title, siteUrl, basePath, false),
-    ]
-  }
-
-  return segments.map((segment, index) => {
-    const isLast = index === segments.length - 1
-    return breadcrumbItem(
-      segments.slice(0, index + 1),
-      index + 1,
-      isLast ? title : segmentLabel(segment),
-      siteUrl,
-      basePath,
-      !isLast
-    )
-  })
+  return [
+    ...ancestors.map((id) => ({
+      name: segmentLabel(id.split('/').at(-1) ?? id),
+      item: `${siteUrl}${basePath}/${id}/`,
+    })),
+    { name: title },
+  ].map((crumb, index) => ({ '@type': 'ListItem', position: index + 1, ...crumb }))
 }
 
-export function baseSchemas(siteUrl: string) {
+const APACHE_LICENSE = 'https://www.apache.org/licenses/LICENSE-2.0'
+
+export function organizationRef(siteUrl: string): JsonLdNode {
+  return { '@id': `${siteUrl}/#organization` }
+}
+
+export function baseSchemas(siteUrl: string): JsonLdNode[] {
   return [
     {
       '@type': 'Organization',
+      '@id': `${siteUrl}/#organization`,
       name: 'Strands Agents',
       url: siteUrl,
       logo: siteUrl + '/favicon.svg',
@@ -124,20 +123,135 @@ export function baseSchemas(siteUrl: string) {
     // modal with no query-parameter URL — a SearchAction target would be fake.
     {
       '@type': 'WebSite',
+      '@id': `${siteUrl}/#website`,
       name: 'Strands Agents',
       url: siteUrl,
-      publisher: { '@type': 'Organization', name: 'Strands Agents', url: siteUrl },
-    },
-    {
-      '@type': 'SoftwareApplication',
-      name: 'Strands Agents SDK',
-      applicationCategory: 'DeveloperApplication',
-      operatingSystem: 'Cross-platform',
-      programmingLanguage: ['Python', 'TypeScript'],
-      license: 'https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE',
-      url: siteUrl,
-      author: { '@type': 'Organization', name: 'Strands Agents' },
-      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      publisher: organizationRef(siteUrl),
     },
   ]
+}
+
+/** Source repository and implementation languages per navbar product label. */
+export const PRODUCT_SOURCE: Record<string, { repository: string; languages: string[] }> = {
+  Harness: { repository: 'https://github.com/strands-agents/harness-sdk', languages: ['Python', 'TypeScript'] },
+  'Harness SDK': { repository: 'https://github.com/strands-agents/harness-sdk', languages: ['Python', 'TypeScript'] },
+  Shell: { repository: 'https://github.com/strands-agents/shell', languages: ['Rust'] },
+  Box: { repository: 'https://github.com/strands-agents/box', languages: ['Rust'] },
+  Evals: { repository: 'https://github.com/strands-agents/evals', languages: ['Python'] },
+}
+
+export function productId(product: Product, siteUrl: string): string {
+  return `${siteUrl}${product.href}#software`
+}
+
+export function productSchema(product: Product, siteUrl: string): JsonLdNode {
+  const source = PRODUCT_SOURCE[product.label]
+  return {
+    '@type': 'SoftwareApplication',
+    '@id': productId(product, siteUrl),
+    name: product.name,
+    description: product.description,
+    url: siteUrl + product.href,
+    applicationCategory: 'DeveloperApplication',
+    license: APACHE_LICENSE,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    publisher: organizationRef(siteUrl),
+    ...(source && {
+      isBasedOn: {
+        '@type': 'SoftwareSourceCode',
+        codeRepository: source.repository,
+        programmingLanguage: source.languages,
+      },
+    }),
+  }
+}
+
+export interface ArticleSource {
+  programmingLanguage: string
+  codeRepository: string
+  url: string
+}
+
+export interface ArticleInput {
+  type: 'TechArticle' | 'APIReference'
+  title: string
+  description?: string | undefined
+  url: string
+  dateModified?: Date | undefined
+  keywords?: string[]
+  relatedLinks?: string[]
+  sources?: ArticleSource[]
+  product?: Product | undefined
+}
+
+export function articleSchema(input: ArticleInput, siteUrl: string): JsonLdNode {
+  const { keywords = [], relatedLinks = [], sources = [] } = input
+  return {
+    '@type': input.type,
+    headline: input.title,
+    ...(input.description && { description: input.description }),
+    url: input.url,
+    // relatedLink is a WebPage property, so it lives on the page, not the article.
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': input.url,
+      ...(relatedLinks.length > 0 && { relatedLink: relatedLinks }),
+    },
+    ...(input.dateModified && { dateModified: input.dateModified.toISOString() }),
+    author: organizationRef(siteUrl),
+    publisher: organizationRef(siteUrl),
+    ...(input.product && { about: { '@id': productId(input.product, siteUrl) } }),
+    ...(keywords.length > 0 && { keywords: keywords.join(', ') }),
+    ...(sources.length > 0 && {
+      isBasedOn: sources.map((source) => ({ '@type': 'SoftwareSourceCode', ...source })),
+    }),
+  }
+}
+
+/** One release of a product's stream, linked to the product node when it has one. */
+export function releaseSchema(
+  release: ChangelogFrontmatter,
+  pageUrl: string,
+  siteUrl: string,
+  product: Product | undefined
+): JsonLdNode {
+  const name = [
+    product?.name ?? `Strands ${SDK_META[release.sdk].label}`,
+    release.language && LANGUAGE_META[release.language].label,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  return {
+    '@type': 'SoftwareApplication',
+    '@id': `${pageUrl}#release`,
+    name,
+    softwareVersion: release.version,
+    datePublished: release.date.toISOString(),
+    releaseNotes: pageUrl,
+    downloadUrl: release.packageUrl,
+    applicationCategory: 'DeveloperApplication',
+    publisher: organizationRef(siteUrl),
+    ...(product && { isPartOf: { '@id': productId(product, siteUrl) } }),
+  }
+}
+
+export function integrationsSchema(cards: CatalogCardModel[], pageUrl: string, siteUrl: string): JsonLdNode {
+  return {
+    '@type': 'ItemList',
+    '@id': `${pageUrl}#integrations`,
+    name: 'Strands Agents integrations',
+    numberOfItems: cards.length,
+    itemListElement: cards.map((card, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      item: {
+        '@type': 'SoftwareSourceCode',
+        name: card.name,
+        description: card.description,
+        url: card.external ? card.href : siteUrl + pathWithBase(card.href),
+        codeRepository: card.github,
+        programmingLanguage: card.languages.map((language) => LANGUAGE_META[language].label),
+      },
+    })),
+  }
 }

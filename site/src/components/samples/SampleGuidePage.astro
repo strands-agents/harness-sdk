@@ -2,6 +2,8 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { render } from 'astro:content'
 import { buildSampleGuideSidebar, type SampleGuideEntry } from '../../util/sample-guides'
+import { languageLabel } from '../../util/source-links'
+import { articleSchema } from '../../util/structured-data'
 
 interface Props {
   guide: SampleGuideEntry
@@ -11,6 +13,27 @@ interface Props {
 const { guide, guides } = Astro.props
 const sidebar = buildSampleGuideSidebar(guides, guide)
 const { Content, headings } = await render(guide)
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const pageUrl = siteUrl + Astro.url.pathname
+Astro.locals.structuredData = [
+  articleSchema(
+    {
+      type: 'TechArticle',
+      title: guide.data.title,
+      description: guide.data.description,
+      url: pageUrl,
+      sources: [
+        {
+          programmingLanguage: languageLabel(guide.data.language),
+          codeRepository: guide.data.sourceUrl.split('/').slice(0, 5).join('/'),
+          url: guide.data.sourceUrl,
+        },
+      ],
+    },
+    siteUrl
+  ),
+]
 ---
 
 <StarlightPage

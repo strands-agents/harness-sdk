@@ -38,7 +38,7 @@ describe('homepage machine-readable metadata', () => {
     expect(alternate?.getAttribute('href')).toBe(configuredPathWithBase('/index.md'))
   })
 
-  it('includes the shared base schemas as JSON-LD', () => {
+  it('includes the shared base schemas and product nodes as JSON-LD', () => {
     const script = homepage.querySelector('script[type="application/ld+json"]')
     const structuredData = JSON.parse(script?.innerHTML ?? '{}')
 
@@ -46,6 +46,10 @@ describe('homepage machine-readable metadata', () => {
     expect(structuredData['@graph'].map((schema: { '@type': string }) => schema['@type'])).toEqual([
       'Organization',
       'WebSite',
+      'SoftwareApplication',
+      'SoftwareApplication',
+      'SoftwareApplication',
+      'SoftwareApplication',
       'SoftwareApplication',
     ])
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
