@@ -37,8 +37,8 @@ export interface ModelCapabilities {
    * Whether the model and provider take temporary messages: injected text the model reads only until the next user
    * message, such as Anthropic's turn-scoped system messages. When `true`, the provider receives each `InjectedBlock`
    * as stored and formats it; otherwise it receives only the latest user message's injected text, as text. The shared
-   * data lists the models that take them; a provider that cannot send them, such as `BedrockModel`, reports `false`
-   * in its `modelInfo`.
+   * data lists the models that take them; a provider that cannot send them (`BedrockModel`, `VercelModel`,
+   * `OpenAIModel`) reports `false` in its `modelInfo`.
    */
   readonly temporaryMessages?: boolean | undefined
 }
